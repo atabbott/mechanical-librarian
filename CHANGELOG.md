@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Explain terminal preparation failures safely in Library and authenticated
+  operational evidence. (#831)
+
 - Refresh Library and Attention immediately when automatic capability suspension
   changes current review work. Scheduler, direct apply, reconciliation, and
   readiness now publish the same ordered Activity then Library update. (#794)

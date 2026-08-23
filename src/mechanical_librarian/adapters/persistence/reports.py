@@ -27,6 +27,7 @@ from mechanical_librarian.adapters.persistence.transactions import ConnectionSco
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
+    ReportNotFoundError,
     ReportRepository,
 )
 from mechanical_librarian.domain.metadata_report import (
@@ -235,6 +236,22 @@ class SQLiteReportRepository(ConnectionScoped):
             if isinstance(error, MetadataReportError):
                 raise
             raise MetadataReportError("persisted report is invalid") from error
+
+    def get_proposal_input(self, report_id: str) -> str:
+        """Read proposal input without collapsing absence into a store fault."""
+        try:
+            row = self._connection.execute(
+                "SELECT report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports WHERE report_id=?",
+                (report_id,),
+            ).fetchone()
+        except sqlite3.Error as error:
+            raise MetadataReportError("persisted report is unavailable") from error
+        if row is None:
+            raise ReportNotFoundError("persisted report is unavailable")
+        try:
+            return _validate_report_row(row)
+        except MetadataReportError as error:
+            raise ReportValueError("persisted report is invalid") from error
 
     def current_optional(
         self, connection: str, library: str, item: str, file_identity: str

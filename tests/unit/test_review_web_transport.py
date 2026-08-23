@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import tempfile
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -26,8 +27,15 @@ from mechanical_librarian.adapters.operational_evidence import (
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_repository,
 )
+from mechanical_librarian.adapters.persistence.review_preparation import _FAILURE_CODES
+from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.application.operations import (
+    OperationalStatus,
+    support_preparation_incidents,
+)
 from mechanical_librarian.application.review_web import (
+    BrowseReviewLibrary,
     OwnerSessionService,
     ReviewWebError,
 )
@@ -73,14 +81,15 @@ def test_operational_status_and_support_are_authenticated_bounded_surfaces(
     web.repository.operational_snapshot = lambda: {
         "signals": [
             {
-                "kind": "backup_failure",
-                "cause": "backup",
-                "scope": "field",
-                "connection": "primary",
-                "library": "fiction",
-                "category": None,
-                "work_id": "book-1",
-                "field": "title",
+                "attempt": 1,
+                "cause": "preparation_failure",
+                "code": "unreadable_media",
+                "diagnostic_reference": "prep-0123456789abcdef",
+                "kind": "owner_action_required",
+                "path": "/private/book.epub",
+                "scope": "work",
+                "stage": "extraction",
+                "work_id": "private-book-1",
             }
         ]
     }
@@ -98,6 +107,12 @@ def test_operational_status_and_support_are_authenticated_bounded_surfaces(
                     "status": "degraded",
                     "secret": "never-export",
                 },
+            ),
+            (
+                "operational_incidents",
+                lambda: support_preparation_incidents(
+                    web.repository.operational_snapshot()
+                ),
             ),
         )
     )
@@ -122,18 +137,126 @@ def test_operational_status_and_support_are_authenticated_bounded_surfaces(
     preview = web.client.get("/api/v1/operations/support/preview")
     assert preview.status_code == 200
     assert "never-export" not in preview.text
+    assert "/private/book.epub" not in preview.text
+    support_incident = preview.json()["payload"]["sections"]["operational_incidents"][
+        "incidents"
+    ][0]
+    status_incident = status.json()["incidents"][0]
+    assert support_incident == {
+        key: status_incident[key]
+        for key in ("attempt", "code", "diagnostic_reference", "stage")
+    }
     exported = web.client.post(
         "/api/v1/operations/support/export",
         headers={**web.origin, "x-csrf-token": session["csrf_token"]},
     )
     assert exported.status_code == 200
     assert "never-export" not in exported.text
+    assert (
+        exported.json()["sections"]["operational_incidents"]
+        == preview.json()["payload"]["sections"]["operational_incidents"]
+    )
     web.repository.operational_snapshot = lambda: (_ for _ in ()).throw(
         FieldEffectError("persistence")
     )
     failed = web.client.get("/api/v1/operations/status")
     assert failed.status_code == 503
     assert failed.json()["error"]["code"] == "operations_unavailable"
+
+
+def test_real_terminal_configuration_failure_correlates_library_and_support_without_raw_work_values() -> (
+    None
+):
+    """One persisted terminal work row supplies every value-free diagnostic surface."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        database = root / "review.sqlite"
+        repository = open_repository(database)
+        repository.request_review_scan("primary", "fiction", "lib-1", "f" * 64, 10)
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+        repository.complete_review_discovery(
+            discovery,
+            1,
+            "a" * 64,
+            (
+                CatalogueEntry(
+                    "primary",
+                    "fiction",
+                    "lib-1",
+                    "terminal-item",
+                    1,
+                    "Terminal title",
+                    (),
+                    True,
+                    False,
+                    "singular-supported",
+                    "b" * 64,
+                    "/private/work/path/credential.epub",
+                    "epub",
+                    "/private/root",
+                ),
+            ),
+            12,
+        )
+        extraction = repository.claim_review_pipeline_action(13)
+        assert extraction is not None
+        repository.fail_review_pipeline_action(extraction, "configuration", False, 14)
+        support = SupportBundle(
+            (
+                (
+                    "operational_incidents",
+                    lambda: support_preparation_incidents(
+                        repository.operational_snapshot()
+                    ),
+                ),
+            )
+        )
+        library = BrowseReviewLibrary(repository).library(
+            lens="all", search=None, limit=25, cursor=None
+        )
+        operations = OperationalStatus(
+            snapshot=repository.operational_snapshot,
+            timings=LocalTimingStore(root / "timings.json"),
+            support=support,
+        )
+        status = operations.status()
+        preview = operations.support_preview()
+        exported = json.loads(operations.support_export())
+        repository.close()
+    preparation = library["items"][0]["preparation"]
+    assert isinstance(preparation, dict)
+    incident = next(
+        item for item in status["incidents"] if item["diagnostic_reference"] is not None
+    )
+    support_incident = preview["payload"]["sections"]["operational_incidents"][
+        "incidents"
+    ][0]
+    expected = {
+        "diagnostic_reference": preparation["diagnostic_reference"],
+        "stage": preparation["stage"],
+        "code": preparation["status"],
+    }
+    assert expected == {
+        key: incident[key] for key in ("diagnostic_reference", "stage", "code")
+    }
+    assert expected == {
+        key: support_incident[key] for key in ("diagnostic_reference", "stage", "code")
+    }
+    assert (
+        preview["payload"]["sections"]["operational_incidents"]
+        == exported["sections"]["operational_incidents"]
+    )
+    operational_payload = " ".join(
+        json.dumps(value) for value in (status, preview, exported)
+    )
+    for raw in (
+        "terminal-item",
+        "/private/work/path/credential.epub",
+        "/private/root",
+        "configuration exception",
+    ):
+        assert raw not in operational_payload
 
 
 def test_trust_boundary_failures_match_declared_api_statuses(
@@ -834,6 +957,14 @@ def test_openapi_is_deterministic_and_secret_free(
         Path("docs/reference/review-openapi-v1.json").read_text(encoding="utf-8")
     )
     assert first.json() == expected
+    assert (
+        set(
+            first.json()["components"]["schemas"]["_OperationalIncident"]["properties"][
+                "code"
+            ]["anyOf"][0]["enum"]
+        )
+        == _FAILURE_CODES
+    )
     assert (
         "413"
         in expected["paths"]["/api/v1/metadata-policy/drafts"]["post"]["responses"]

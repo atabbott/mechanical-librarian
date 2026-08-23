@@ -35,11 +35,23 @@ from mechanical_librarian.application.configuration import (
 )
 from mechanical_librarian.application.metadata_report import (
     CredentialError,
+    ItemInspectionError,
     MetadataReportError,
     TargetNotFoundError,
+    UnsupportedMediaError,
 )
 from mechanical_librarian.application.operations import StageTimer
-from mechanical_librarian.application.proposal_sets import ProposalCurrentnessError
+from mechanical_librarian.application.proposal_sets import (
+    CreateProposalSet,
+    ProposalCurrentnessError,
+    ProposalEvaluationError,
+    ProposalInternalError,
+    ProposalMissingInputError,
+    ProposalPolicyError,
+    ProposalPublicationError,
+    ProposalRetainedDataError,
+    ProposalSetError,
+)
 from mechanical_librarian.application.provider_recovery_evidence import (
     ProviderFailureObserver,
 )
@@ -53,6 +65,7 @@ from mechanical_librarian.application.review_pipeline import (
 )
 from mechanical_librarian.application.review_pipeline_stages import ReviewPipelineStages
 from mechanical_librarian.application.review_web import BrowseReviewLibrary
+from mechanical_librarian.domain.epub_inspection import EpubInspectionOutcome
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ProviderObservation,
@@ -63,6 +76,218 @@ from mechanical_librarian.domain.provider_recovery import MAX_TIMESTAMP
 from tests.support.review_cases import _report
 
 _PRODUCER = "f" * 64
+
+
+def _proposal_stages(
+    create_proposal_set: Callable[[str, ReviewPipelineRepository], str],
+) -> ReviewPipelineStages:
+    def unreachable(*_arguments: object, **_keywords: object) -> None:
+        raise AssertionError
+
+    return ReviewPipelineStages(
+        configuration=ApplicationConfiguration((), (), (), ()),
+        catalogue=unreachable,
+        catalogue_reader=cast("CatalogueReader", unreachable),
+        probe_connection=unreachable,
+        connections=frozenset(),
+        repository_factory=unreachable,
+        recover_artifacts=unreachable,
+        generate_report=unreachable,
+        create_proposal_set=create_proposal_set,
+        admit_review_case=unreachable,
+        cover_considerations=unreachable,
+        recovery_observer=cast("ProviderFailureObserver", unreachable),
+        drain_outbox=unreachable,
+        discovery_lock=threading.Lock(),
+        clock=lambda: 7,
+    )
+
+
+@pytest.mark.parametrize(
+    ("failure", "code"),
+    (
+        (UnsupportedMediaError("unsupported"), "unsupported_media"),
+        (
+            ItemInspectionError(EpubInspectionOutcome.UNAVAILABLE_SOURCE),
+            "unreadable_media",
+        ),
+        (ItemInspectionError(EpubInspectionOutcome.RESOURCE_LIMIT), "parser_refused"),
+        (
+            ItemInspectionError(EpubInspectionOutcome.INTERNAL_FAILURE),
+            "internal_failure",
+        ),
+        (ItemInspectionError(), "unknown"),
+    ),
+    ids=("unsupported", "unreadable", "parser-refused", "internal", "unknown"),
+)
+def test_extraction_stage_projects_only_declared_failure_boundaries(
+    failure: Exception, code: str
+) -> None:
+    def unreachable(*_arguments: object, **_keywords: object) -> None:
+        raise AssertionError
+
+    stages = ReviewPipelineStages(
+        configuration=ApplicationConfiguration((), (), (), ()),
+        catalogue=unreachable,
+        catalogue_reader=cast("CatalogueReader", unreachable),
+        probe_connection=unreachable,
+        connections=frozenset(),
+        repository_factory=unreachable,
+        recover_artifacts=lambda: None,
+        generate_report=lambda *_: (_ for _ in ()).throw(failure),
+        create_proposal_set=unreachable,
+        admit_review_case=unreachable,
+        cover_considerations=unreachable,
+        recovery_observer=cast("ProviderFailureObserver", unreachable),
+        drain_outbox=unreachable,
+        discovery_lock=threading.Lock(),
+        clock=lambda: 7,
+    )
+
+    with (
+        patch.object(stages, "_require_eligible_entry"),
+        pytest.raises(ReviewPipelineError) as raised,
+    ):
+        stages.extract(
+            cast("ReviewPipelineRepository", object()),
+            cast("PipelineAction", object()),
+            False,
+        )
+    assert raised.value.code == code
+    assert raised.value.__cause__ is failure
+
+
+@pytest.mark.parametrize(
+    ("failure", "code"),
+    (
+        (ProposalMissingInputError("missing"), "missing_required_input"),
+        (ProposalRetainedDataError("retained"), "malformed_retained_data"),
+        (ProposalCurrentnessError("stale"), "stale"),
+        (ProposalPolicyError("policy"), "internal_failure"),
+        (ProposalEvaluationError("evaluation"), "internal_failure"),
+        (ProposalPublicationError("publication"), "internal_failure"),
+        (ProposalInternalError("internal"), "internal_failure"),
+        (ProposalSetError("undeclared closed type"), "unknown"),
+        (RuntimeError("undeclared stage exception"), "unknown"),
+    ),
+)
+def test_proposal_stage_projects_only_closed_failure_codes(
+    failure: Exception, code: str
+) -> None:
+    stages = _proposal_stages(
+        lambda _report_id, _repository: (_ for _ in ()).throw(failure)
+    )
+
+    with pytest.raises(ReviewPipelineError) as raised:
+        stages.propose(cast("ReviewPipelineRepository", object()), "report-id")
+    assert raised.value.code == code
+    assert raised.value.__cause__ is failure
+
+
+def test_proposal_stage_preserves_target_connection_for_recovery() -> None:
+    failure = TargetConnectionError("unavailable")
+    stages = _proposal_stages(
+        lambda _report_id, _repository: (_ for _ in ()).throw(failure)
+    )
+
+    with pytest.raises(TargetConnectionError) as raised:
+        stages.propose(cast("ReviewPipelineRepository", object()), "report-id")
+    assert raised.value is failure
+
+
+@pytest.mark.parametrize(
+    ("prepare", "expected_failure", "code", "proposal_count"),
+    (
+        (
+            lambda repository, report: None,
+            ProposalMissingInputError,
+            "missing_required_input",
+            0,
+        ),
+        (
+            lambda repository, report: (
+                repository.publish(report, lambda: True),
+                repository._connection.execute(
+                    "DROP TRIGGER metadata_reports_no_update"
+                ),
+                repository._connection.execute(
+                    "UPDATE metadata_reports SET connection_name='other' WHERE report_id=?",
+                    (report.report_id,),
+                ),
+            ),
+            ProposalRetainedDataError,
+            "malformed_retained_data",
+            0,
+        ),
+        (
+            lambda repository, report: (
+                repository.publish(report, lambda: True),
+                repository._connection.execute(
+                    "DROP TRIGGER metadata_reports_no_update"
+                ),
+                repository._connection.execute(
+                    "UPDATE metadata_reports SET document_digest=? WHERE report_id=?",
+                    ("0" * 64, report.report_id),
+                ),
+            ),
+            ProposalRetainedDataError,
+            "malformed_retained_data",
+            0,
+        ),
+        (
+            lambda repository, report: (
+                repository.publish(report, lambda: True),
+                repository._connection.set_authorizer(
+                    lambda action, table, *_: (
+                        sqlite3.SQLITE_DENY
+                        if action == sqlite3.SQLITE_READ and table == "metadata_reports"
+                        else sqlite3.SQLITE_OK
+                    )
+                ),
+            ),
+            ProposalInternalError,
+            "internal_failure",
+            0,
+        ),
+        (
+            lambda repository, report: repository.publish(report, lambda: True),
+            None,
+            None,
+            1,
+        ),
+    ),
+    ids=("absent", "envelope", "digest", "persistence-fault", "valid"),
+)
+def test_sqlite_proposal_stage_keeps_input_failure_types_distinct(
+    application_path: Path,
+    prepare: Callable[[object, MetadataReport], object],
+    expected_failure: type[Exception] | None,
+    code: str | None,
+    proposal_count: int,
+) -> None:
+    """The live adapter classifies retained input before proposal publication."""
+    repository = open_repository(application_path)
+    report = _report()
+    prepare(repository, report)
+    stages = _proposal_stages(
+        lambda value, store: CreateProposalSet(store, lambda _: True).run(value)
+    )
+
+    if expected_failure is None:
+        assert (
+            stages.propose(repository, report.report_id)
+            == evaluate_report(report).proposal_set_id
+        )
+    else:
+        with pytest.raises(ReviewPipelineError) as raised:
+            stages.propose(repository, report.report_id)
+        assert raised.value.code == code
+        assert isinstance(raised.value.__cause__, expected_failure)
+
+    assert repository._connection.execute(
+        "SELECT COUNT(*) FROM proposal_sets"
+    ).fetchone() == (proposal_count,)
+    repository.close()
 
 
 @pytest.fixture
@@ -605,6 +830,10 @@ def test_delayed_work_remains_visible_recovers_when_due_and_retires_with_removed
         "SELECT state FROM review_preparation_work WHERE work_id=?",
         (recovered.action_id,),
     ).fetchone()
+    assert not any(
+        "diagnostic_reference" in signal
+        for signal in repository.operational_snapshot()["signals"]
+    )
     repository.close()
     assert retired == ("stale",)
 
@@ -2885,9 +3114,22 @@ def test_projection_crash_rolls_back_staged_shadow_outcome_before_requeue(
             "SELECT (SELECT COUNT(*) FROM current_review_packages),"
             "(SELECT COUNT(*) FROM automatic_decisions)"
         ).fetchone()
-        assert ("failed", "failed") == observer._connection.execute(
+        assert ("failed", "unknown") == observer._connection.execute(
             "SELECT state,failure_code FROM review_preparation_work"
         ).fetchone()
+        incident = next(
+            signal
+            for signal in cast(
+                "list[dict[str, object]]", observer.operational_snapshot()["signals"]
+            )
+            if signal["cause"] == "preparation_failure"
+        )
+        assert {
+            "attempt": 1,
+            "code": "unknown",
+            "stage": "projection",
+        }.items() <= incident.items()
+        assert str(incident["diagnostic_reference"]).startswith("prep-")
     finally:
         observer.close()
 

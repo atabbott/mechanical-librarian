@@ -75,6 +75,13 @@ _FAILURE_CODES = frozenset(
         "failed",
         "currentness",
         "persistence",
+        "unsupported_media",
+        "unreadable_media",
+        "parser_refused",
+        "missing_required_input",
+        "malformed_retained_data",
+        "internal_failure",
+        "unknown",
     )
 )
 

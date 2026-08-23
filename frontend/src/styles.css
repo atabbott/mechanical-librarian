@@ -86,6 +86,8 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .library-work-row:hover { border-color:var(--line-strong); background:color-mix(in srgb,var(--surface) 60%,var(--page)); }
 .library-work-row.active { border-color:var(--accent); border-width:2px; padding:calc(.7rem - 1px); background:var(--accent-soft); }
 .library-work-row.active .library-work-title { color:var(--accent-strong); }
+.library-work-row.is-terminal { align-items:start; border-color:var(--line); background:color-mix(in srgb,var(--danger-soft) 42%,var(--surface)); cursor:default; }
+.library-work-status .terminal-preparation-copy { display:block; max-inline-size:72ch; padding:0; border-radius:0; color:var(--soft); background:transparent; font-weight:400; line-height:1.5; overflow-wrap:anywhere; word-break:break-word; }
 .library-book-mark { display:grid; width:42px; height:58px; place-items:center; border-radius:2px 5px 5px 2px; color:#f5ead2; background:#3b5550; font-family:Georgia,serif; font-size:.66rem; letter-spacing:.07em; }
 :root[data-theme='dark'] .library-book-mark { background:#315c52; }
 .library-work-copy { display:grid; gap:.15rem; min-width:0; }

@@ -9,6 +9,10 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_repository,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.proposal_sets import (
+    GetProposalSet,
+    ProposalMissingInputError,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -121,6 +125,17 @@ def test_publish_is_idempotent_and_reopens_exact_document() -> None:
             "SELECT policy_version FROM proposal_sets"
         ).fetchone()
         assert (POLICY_VERSION,) == policy
+        repository.close()
+
+
+def test_missing_proposal_is_a_typed_absence_and_does_not_publish() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        repository = open_repository(Path(directory) / "reports.sqlite")
+        with pytest.raises(ProposalMissingInputError):
+            GetProposalSet(repository).run("proposal_set_" + "0" * 64)
+        assert repository._connection.execute(
+            "SELECT COUNT(*) FROM proposal_sets"
+        ).fetchone() == (0,)
         repository.close()
 
 

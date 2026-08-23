@@ -111,9 +111,10 @@ describe('Library route', () => {
       attention: 'no_attention_needed',
       preparation: {
         attempt: 1,
+        diagnosticReference: 'prep-0123456789abcdef',
         provider: 'hardcover-main',
         reason: 'Provider credentials need owner attention.',
-        recovery: 'Retry review preparation after correcting the reported condition.',
+        recovery: 'Update the configured provider credentials, then scan this library again.',
         recoveryAttempt: 0,
         stage: 'provider',
         status: 'authentication',
@@ -145,20 +146,57 @@ describe('Library route', () => {
     renderRoute('/library?lens=all', http)
 
     expect(await screen.findByText('Preparation failed safely')).toBeVisible()
-    // The card carries no provider disclosure of its own any more.
-    expect(document.querySelector('.library-work-list details')).toBeNull()
-    await userEvent.click(screen.getByRole('button', { name: /^Preparation unavailable\./u }))
+    const terminal = document.querySelector('.library-work-row.is-terminal')
+    expect(terminal?.tagName).toBe('ARTICLE')
+    expect(terminal).toHaveAttribute('aria-label', 'Terminal preparation failure')
+    expect(terminal?.querySelector('button, a, details, [tabindex]')).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Preparation unavailable\./u })).toBeNull()
+    expect(terminal).toHaveTextContent(
+      'Update the configured provider credentials, then scan this library again.',
+    )
+    expect(screen.getByText('prep-0123456789abcdef')).toBeVisible()
+  })
 
-    expect(
-      await screen.findByRole('heading', { level: 2, name: 'Preparation unavailable' }),
-    ).toBeVisible()
-    expect(screen.getByText('Provider credentials need owner attention.')).toBeVisible()
-    expect(screen.getByText('Authentication at Provider')).toBeVisible()
-    const sources = screen.getByText('Sources').closest('details')
-    expect(sources).not.toHaveAttribute('open')
-    expect(sources).toHaveTextContent('Provider failure')
-    expect(sources).toHaveTextContent('Refused the credentials it was given; nothing was retained.')
-    expect(sources).toHaveTextContent('Work lookup · 1 bounded request')
+  it('keeps a current case selectable while exposing its terminal preparation diagnostic', async () => {
+    const user = userEvent.setup()
+    const firstWork = library.works[0]
+    if (!firstWork) throw new Error('library fixture requires one work')
+    const current = {
+      ...firstWork,
+      preparation: {
+        attempt: 1,
+        diagnosticReference: 'prep-safe-0123456789abcdef',
+        provider: 'hardcover-main',
+        reason: 'A <script> hostile diagnostic remains safe.',
+        recovery: 'Scan again only after the source condition is corrected.',
+        recoveryAttempt: 0,
+        stage: 'provider',
+        status: 'failed',
+      },
+    }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getLibrary: vi.fn(async () => ({
+        lens: 'all' as const,
+        page: 1,
+        counts: { attention: 1, all: 1, clear: 0 },
+        works: [current],
+      })),
+    }
+    renderRoute('/library?lens=all', http)
+
+    const card = await screen.findByRole('button', { name: /^A Book./u })
+    expect(card).not.toHaveClass('is-terminal')
+    expect(card).toHaveTextContent('A <script> hostile diagnostic remains safe.')
+    expect(card).toHaveAccessibleDescription(
+      /provider: A <script> hostile diagnostic remains safe\. Scan again only after the source condition is corrected\. Reference: prep-safe-0123456789abcdef/u,
+    )
+    expect(screen.getByText('prep-safe-0123456789abcdef')).toBeVisible()
+    expect(screen.queryByRole('button', { name: /retry/i })).toBeNull()
+    card.focus()
+    fireEvent.keyDown(card, { key: 'Enter' })
+    await user.click(card)
+    expect(await screen.findByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
   })
 
   it('keeps an open case-less work open when a search hides its card', async () => {
@@ -1757,11 +1795,7 @@ describe('Library route', () => {
       ),
       getCaseSuccessor,
     }
-    const { router } = renderRoute(
-      '/library?lens=all&preview=case-1&field=title',
-      http,
-      updates,
-    )
+    const { router } = renderRoute('/library?lens=all&preview=case-1&field=title', http, updates)
     expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
 
     stale = true
@@ -1869,11 +1903,7 @@ describe('Library route', () => {
       getCaseDetail: vi.fn(async (id: string) => (id === 'case-2' ? second : first)),
       getCaseSuccessor,
     }
-    const { router } = renderRoute(
-      '/library?lens=all&preview=case-1&field=title',
-      http,
-      updates,
-    )
+    const { router } = renderRoute('/library?lens=all&preview=case-1&field=title', http, updates)
     expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
 
     updates.announce({ sequence: 83, subject: null, topic: 'library' })

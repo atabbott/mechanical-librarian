@@ -2847,13 +2847,190 @@
         "title": "_LoginRequest",
         "type": "object"
       },
+      "_OperationalIncident": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt": {
+            "anyOf": [
+              {
+                "maximum": 3.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "cause": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Cause",
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "enum": [
+                  "provider",
+                  "configuration",
+                  "authentication",
+                  "stale",
+                  "transient",
+                  "projection",
+                  "failed",
+                  "currentness",
+                  "persistence",
+                  "unsupported_media",
+                  "unreadable_media",
+                  "parser_refused",
+                  "missing_required_input",
+                  "malformed_retained_data",
+                  "internal_failure",
+                  "unknown"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "connection": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connection"
+          },
+          "count": {
+            "maximum": 10000.0,
+            "minimum": 1.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "diagnostic_reference": {
+            "anyOf": [
+              {
+                "maxLength": 21,
+                "pattern": "^prep-[0-9a-f]{16}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diagnostic Reference"
+          },
+          "field": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Field"
+          },
+          "incident_id": {
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Incident Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "library": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "enum": [
+                  "extraction",
+                  "provider",
+                  "proposal",
+                  "admission",
+                  "projection"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage"
+          },
+          "work_id": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Work Id"
+          }
+        },
+        "required": [
+          "cause",
+          "count",
+          "incident_id",
+          "kind",
+          "scope"
+        ],
+        "title": "_OperationalIncident",
+        "type": "object"
+      },
       "_OperationalResponse": {
         "additionalProperties": false,
         "properties": {
           "incidents": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/_OperationalIncident"
             },
             "title": "Incidents",
             "type": "array"
@@ -3340,6 +3517,10 @@
             "title": "Attempt",
             "type": "integer"
           },
+          "diagnostic_reference": {
+            "title": "Diagnostic Reference",
+            "type": "string"
+          },
           "provider": {
             "title": "Provider",
             "type": "string"
@@ -3367,6 +3548,7 @@
         },
         "required": [
           "attempt",
+          "diagnostic_reference",
           "provider",
           "reason",
           "recovery",

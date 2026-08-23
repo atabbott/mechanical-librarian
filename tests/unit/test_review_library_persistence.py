@@ -30,6 +30,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
 )
+from mechanical_librarian.adapters.persistence.review_preparation import _FAILURE_CODES
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
@@ -42,6 +43,7 @@ from mechanical_librarian.application.review_application import (
     ReviewApplicationError,
 )
 from mechanical_librarian.application.review_web import (
+    _TERMINAL_PREPARATION_GUIDANCE,
     BrowseReviewLibrary,
     InspectCurrentReviewCase,
     RecordHumanDecision,
@@ -409,9 +411,10 @@ def test_terminal_failed_work_is_library_only_and_safe() -> None:
     )
     assert item["preparation"] == {
         "attempt": 1,
+        "diagnostic_reference": "prep-adcd2c66d60d4c88",
         "provider": "hardcover-main",
         "reason": "Provider credentials need owner attention.",
-        "recovery": "Retry review preparation after correcting the reported condition.",
+        "recovery": "Update the configured provider credentials, then scan this library again.",
         "recovery_attempt": 0,
         "stage": "provider",
         "status": "authentication",
@@ -425,6 +428,229 @@ def test_terminal_failed_work_is_library_only_and_safe() -> None:
         "state": "preparation_failed",
     }
     assert "credential unavailable" not in json.dumps(item)
+
+
+def test_real_sqlite_progress_reconciles_mixed_terminal_and_active_work() -> None:
+    """A stale item is terminally blocked beside failed, ready, and active work.
+
+    The persisted state is deliberately mixed in one current scan: progress is
+    a projection over the durable work rows, not a story reconstructed from a
+    single pipeline transition.  Stale stays in the failed bucket and names no
+    separate retry or recovery work.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        database = Path(directory) / "review.sqlite"
+        repository = open_repository(database)
+        repository.request_review_scan("primary", "fiction", "lib-1", "f" * 64, 10)
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+        from mechanical_librarian.application.catalogue import CatalogueEntry
+
+        repository.complete_review_discovery(
+            discovery,
+            1,
+            "a" * 64,
+            tuple(
+                CatalogueEntry(
+                    "primary",
+                    "fiction",
+                    "lib-1",
+                    f"item-{ordinal}",
+                    ordinal,
+                    f"Synthetic {ordinal}",
+                    (),
+                    True,
+                    False,
+                    "singular-supported",
+                    f"{ordinal + 1:064x}",
+                    f"/synthetic-{ordinal}.epub",
+                    "epub",
+                    "/media",
+                )
+                for ordinal in range(4)
+            ),
+            12,
+        )
+        active = repository.claim_review_pipeline_action(13)
+        assert active is not None
+        assert active.stage == "extraction"
+        report = _report()
+        repository.publish(report, lambda: True)
+        proposal = evaluate_report(report)
+        repository.publish_proposal(proposal)
+        review_case_id = json.loads(repository.admit_review_case(proposal))[
+            "review_case_id"
+        ]
+
+        with sqlite3.connect(database) as connection:
+            work_ids = [
+                row[0]
+                for row in connection.execute(
+                    "SELECT work_id FROM review_preparation_work "
+                    "WHERE scan_id=? ORDER BY ordinal",
+                    (active.scan_id,),
+                )
+            ]
+            assert len(work_ids) == 4
+            active_state = connection.execute(
+                "SELECT state FROM review_preparation_work WHERE work_id=?",
+                (work_ids[0],),
+            ).fetchone()
+            connection.executemany(
+                "UPDATE review_preparation_work "
+                "SET stage=?,state=?,failure_code=?,review_case_id=?,updated_at=? "
+                "WHERE work_id=?",
+                (
+                    ("provider", "stale", "stale", None, 14, work_ids[1]),
+                    ("proposal", "failed", "failed", None, 14, work_ids[2]),
+                    ("complete", "complete", None, review_case_id, 14, work_ids[3]),
+                ),
+            )
+            stale = connection.execute(
+                "SELECT state,recovery_attempt FROM review_preparation_work WHERE work_id=?",
+                (work_ids[1],),
+            ).fetchone()
+
+        progress = repository.review_pipeline_progress("primary", "fiction")
+        repository.close()
+
+    assert progress is not None
+    assert active_state == ("running",)
+    assert (progress.total, progress.checked, progress.ready, progress.blocked) == (
+        4,
+        3,
+        1,
+        2,
+    )
+    assert dict(progress.stages) == {
+        "queued": 0,
+        "extracting": 1,
+        "providers": 0,
+        "proposals": 0,
+        "admission": 0,
+        "projection": 0,
+        "ready": 1,
+        "failed": 2,
+    }
+    assert progress.checked == progress.ready + progress.blocked
+    assert progress.total == sum(count for _stage, count in progress.stages)
+    # Stale is terminally blocked: it remains in place, has no retry count,
+    # and this read path creates no manual retry or recovery work.
+    assert stale == ("stale", 0)
+
+
+@pytest.mark.parametrize(
+    ("status", "reason", "recovery"),
+    (
+        (
+            "provider",
+            "A provider ended without a usable result.",
+            "No owner action is currently available.",
+        ),
+        (
+            "configuration",
+            "Provider configuration needs owner attention.",
+            "Update the configured provider, then scan this library again.",
+        ),
+        (
+            "authentication",
+            "Provider credentials need owner attention.",
+            "Update the configured provider credentials, then scan this library again.",
+        ),
+        (
+            "stale",
+            "The item changed while preparation was in progress.",
+            "Automatic recovery is pending for the current item.",
+        ),
+        (
+            "transient",
+            "Bounded automatic recovery attempts were exhausted.",
+            "No owner action is currently available.",
+        ),
+        (
+            "projection",
+            "Review projection could not be completed.",
+            "No owner action is currently available.",
+        ),
+        (
+            "failed",
+            "Preparation failed; no safe detail is available.",
+            "No owner action is currently available.",
+        ),
+        (
+            "currentness",
+            "The source changed before preparation could be completed.",
+            "Automatic recovery is pending for the current source.",
+        ),
+        (
+            "persistence",
+            "Preparation state could not be durably recorded.",
+            "No owner action is currently available.",
+        ),
+        (
+            "unsupported_media",
+            "This media type is not supported for review preparation.",
+            "Use a supported EPUB edition, then scan this library again.",
+        ),
+        (
+            "unreadable_media",
+            "The local media file could not be read.",
+            "Restore a readable media file in the library, then scan this library again.",
+        ),
+        (
+            "parser_refused",
+            "The EPUB could not be safely read within supported parsing limits.",
+            "Use an EPUB that meets the supported parsing limits, then scan this library again.",
+        ),
+        (
+            "missing_required_input",
+            "Required preparation input is unavailable.",
+            "Provide the required supported item input, then scan this library again.",
+        ),
+        (
+            "malformed_retained_data",
+            "Retained preparation data could not be safely reopened.",
+            "No owner action is currently available.",
+        ),
+        (
+            "internal_failure",
+            "Preparation stopped before a usable review package was produced.",
+            "No owner action is currently available.",
+        ),
+        (
+            "unknown",
+            "Preparation failed; no safe detail is available.",
+            "No owner action is currently available.",
+        ),
+    ),
+)
+def test_terminal_preparation_guidance_is_total_and_closed(
+    status: str, reason: str, recovery: str
+) -> None:
+    assert set(_TERMINAL_PREPARATION_GUIDANCE) == _FAILURE_CODES
+    item = _library_item(
+        None,
+        json.dumps(
+            {
+                "attempt": 1,
+                "failure_root": None,
+                "item": "synthetic-item",
+                "lane": "extraction",
+                "library": "Synthetic library",
+                "recovery_attempt": 0,
+                "schema_version": "review-terminal-work-v1",
+                "status": status,
+                "work_id": "review_work_" + "a" * 64,
+            }
+        ),
+        (),
+    )
+
+    preparation = item["preparation"]
+    assert isinstance(preparation, dict)
+    assert preparation["reason"] == reason
+    assert preparation["recovery"] == recovery
+    assert "reported condition" not in recovery
 
 
 def test_cover_state_is_inside_the_current_case_read_snapshot() -> None:

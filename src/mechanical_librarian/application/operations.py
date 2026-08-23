@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -38,6 +39,30 @@ SCOPES = ("runtime", "connection", "library", "category", "work", "field")
 MAX_TIMINGS = 256
 MAX_INCIDENTS = 64
 MAX_SUPPORT_BYTES = 65_536
+_PREPARATION_REFERENCE = re.compile(r"^prep-[0-9a-f]{16}$")
+_PREPARATION_STAGES = frozenset(
+    ("extraction", "provider", "proposal", "admission", "projection")
+)
+_TERMINAL_PREPARATION_CODES = frozenset(
+    (
+        "provider",
+        "configuration",
+        "authentication",
+        "stale",
+        "transient",
+        "projection",
+        "failed",
+        "currentness",
+        "persistence",
+        "unsupported_media",
+        "unreadable_media",
+        "parser_refused",
+        "missing_required_input",
+        "malformed_retained_data",
+        "internal_failure",
+        "unknown",
+    )
+)
 
 
 class OperationsError(RuntimeError):
@@ -100,6 +125,10 @@ class Incident:
     category: str | None = None
     work_id: str | None = None
     field: str | None = None
+    diagnostic_reference: str | None = None
+    stage: str | None = None
+    code: str | None = None
+    attempt: int | None = None
     count: int = 1
 
     def __post_init__(self) -> None:
@@ -109,7 +138,9 @@ class Incident:
             self.category,
             self.work_id,
             self.field,
+            self.diagnostic_reference,
         )
+        preparation = (self.diagnostic_reference, self.stage, self.code, self.attempt)
         if (
             self.kind not in KINDS
             or self.scope not in SCOPES
@@ -121,21 +152,37 @@ class Incident:
                 value is not None and (not value or len(value) > 512)
                 for value in identifiers
             )
+            or (
+                preparation != (None, None, None, None)
+                and (
+                    type(self.diagnostic_reference) is not str
+                    or _PREPARATION_REFERENCE.fullmatch(self.diagnostic_reference)
+                    is None
+                    or self.stage not in _PREPARATION_STAGES
+                    or self.code not in _TERMINAL_PREPARATION_CODES
+                    or type(self.attempt) is not int
+                    or not 0 <= self.attempt <= 3
+                )
+            )
         ):
             raise OperationsError("invalid_incident")
 
     def to_data(self) -> dict[str, object]:
         return {
             "category": self.category,
+            "code": self.code,
             "cause": self.cause,
             "connection": self.connection,
             "count": self.count,
             "field": self.field,
+            "diagnostic_reference": self.diagnostic_reference,
             "incident_id": self.incident_id,
             "kind": self.kind,
             "library": self.library,
             "scope": self.scope,
+            "stage": self.stage,
             "work_id": self.work_id,
+            "attempt": self.attempt,
         }
 
 
@@ -232,8 +279,7 @@ class OperationalStatus:
         return self._started and not self._draining
 
     def status(self) -> dict[str, object]:
-        raw = self._snapshot()
-        incidents = aggregate_incidents(raw.get("signals", ()))
+        incidents = operational_incidents(self._snapshot())
         return {
             "incidents": [value.to_data() for value in incidents],
             "readiness": "ready" if self.ready() else "draining",
@@ -284,12 +330,42 @@ def aggregate_incidents(signals: object) -> tuple[Incident, ...]:
         category = signal.get("category")
         work_id = signal.get("work_id")
         field = signal.get("field")
+        diagnostic_reference = signal.get("diagnostic_reference")
+        stage = signal.get("stage")
+        code = signal.get("code")
+        attempt = signal.get("attempt")
         # Currentness conflicts are intentionally work/field-local. Shared
         # service causes aggregate at their narrow service scope.
         key = (
-            (kind, cause, scope, connection, library, category, work_id, field)
+            (
+                kind,
+                cause,
+                scope,
+                connection,
+                library,
+                category,
+                work_id,
+                field,
+                diagnostic_reference,
+                stage,
+                code,
+                attempt,
+            )
             if cause == "currentness_conflict"
-            else (kind, cause, scope, connection, library, category, None, field)
+            else (
+                kind,
+                cause,
+                scope,
+                connection,
+                library,
+                category,
+                None,
+                field,
+                diagnostic_reference,
+                stage,
+                code,
+                attempt,
+            )
         )
         previous = aggregated.get(key)
         readable_key = ":".join("-" if value is None else str(value) for value in key)
@@ -314,12 +390,39 @@ def aggregate_incidents(signals: object) -> tuple[Incident, ...]:
             category,
             work_id if cause == "currentness_conflict" else None,
             field,
+            diagnostic_reference,
+            stage,
+            code,
+            attempt,
             1 if previous is None else previous.count + 1,
         )
         aggregated[key] = candidate
     return tuple(sorted(aggregated.values(), key=lambda item: item.incident_id))[
         :MAX_INCIDENTS
     ]
+
+
+def operational_incidents(snapshot: dict[str, object]) -> tuple[Incident, ...]:
+    """Project the bounded incident contract from one repository snapshot."""
+    return aggregate_incidents(snapshot.get("signals", ()))
+
+
+def support_preparation_incidents(snapshot: dict[str, object]) -> dict[str, object]:
+    """Return only terminal preparation diagnostics for a re-redacted bundle."""
+    incidents = operational_incidents(snapshot)
+    return {
+        "incidents": [
+            {
+                "attempt": incident.attempt,
+                "code": incident.code,
+                "diagnostic_reference": incident.diagnostic_reference,
+                "stage": incident.stage,
+            }
+            for incident in incidents
+            if incident.diagnostic_reference is not None
+        ],
+        "schema_version": "support-preparation-incidents-v1",
+    }
 
 
 def canonical_support(value: dict[str, object]) -> bytes:

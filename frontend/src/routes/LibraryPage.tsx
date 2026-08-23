@@ -1606,15 +1606,11 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                       ? '1 field needs attention'
                       : `${String(work.attentionCount)} fields need attention`
                     : 'No attention needed'
-                return (
-                  <button
-                    key={work.id}
-                    type="button"
-                    className={`library-work-row${selectedWorkRow ? ' active' : ''}`}
-                    aria-current={selectedWorkRow ? 'true' : undefined}
-                    aria-label={`${work.title}. ${authorLine(work)}. ${status}`}
-                    onClick={() => void select(work)}
-                  >
+                const terminalFailure = work.preparation !== null && !work.reviewCaseId
+                const preparation = work.preparation
+                const preparationId = preparation ? `preparation-${work.id}` : undefined
+                const row = (
+                  <>
                     <span className="library-book-mark" aria-hidden="true">
                       {initials(work.title)}
                     </span>
@@ -1632,8 +1628,35 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                         >
                           {status}
                         </span>
+                        {preparation ? (
+                          <span id={preparationId} className="terminal-preparation-copy">
+                            {preparation.stage}: {preparation.reason} {preparation.recovery}{' '}
+                            Reference: <code>{preparation.diagnosticReference}</code>
+                          </span>
+                        ) : null}
                       </span>
                     </span>
+                  </>
+                )
+                return terminalFailure ? (
+                  <article
+                    key={work.id}
+                    className="library-work-row is-terminal"
+                    aria-label="Terminal preparation failure"
+                  >
+                    {row}
+                  </article>
+                ) : (
+                  <button
+                    key={work.id}
+                    type="button"
+                    className={`library-work-row${selectedWorkRow ? ' active' : ''}`}
+                    aria-current={selectedWorkRow ? 'true' : undefined}
+                    aria-label={`${work.title}. ${authorLine(work)}. ${status}`}
+                    aria-describedby={preparationId}
+                    onClick={() => void select(work)}
+                  >
+                    {row}
                   </button>
                 )
               })

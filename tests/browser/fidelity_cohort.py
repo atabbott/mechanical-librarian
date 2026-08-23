@@ -13,6 +13,12 @@ from starlette.types import ASGIApp
 
 BUILD_IDENTITY = "a" * 64
 HOSTILE_TEXT = "Hostile <img src=x onerror=window.__metadataExecuted=true>"
+TERMINAL_FAILURE_COPY = (
+    "Provider credentials need owner attention. "
+    "<img src=x onerror=window.__terminalFailureExecuted=true> "
+    + "UnbrokenTerminalPreparationCondition"
+    * 12
+)
 UNBROKEN_TITLE_SEGMENT = "UnbrokenSyntheticCatalogueToken" * 12
 LONG_TITLE = (
     "The Clockmaker's Cartography of Quietly Impossible Libraries — "
@@ -95,6 +101,42 @@ def _work(
     }
 
 
+TERMINAL_LIBRARY_WORK = _work(
+    6,
+    "Catalogue-only work",
+    ["Oren Finch"],
+    "Household ebooks",
+    "epub",
+    case=None,
+    attention=0,
+    dispositions=[],
+    preparation={
+        "attempt": 1,
+        "diagnostic_reference": "prep-0123456789abcdef",
+        "provider": "hardcover-main",
+        "reason": TERMINAL_FAILURE_COPY,
+        "recovery": "Update the configured provider credentials, then scan this library again.",
+        "recovery_attempt": 0,
+        "stage": "provider",
+        "status": "authentication",
+    },
+    preparation_outcomes=[
+        {
+            "provider_requests": 1,
+            "lane_kind": "work",
+            "provider": "hardcover-main",
+            "reason": "Provider credentials need owner attention.",
+            "status": "authentication",
+        }
+    ],
+    summary={
+        "fields": [],
+        "reason": "Provider credentials need owner attention.",
+        "state": "preparation_failed",
+    },
+)
+
+
 LIBRARY_WORKS: tuple[dict[str, object], ...] = (
     _work(
         1,
@@ -146,39 +188,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         attention=0,
         dispositions=["automatic"],
     ),
-    _work(
-        6,
-        "Catalogue-only work",
-        ["Oren Finch"],
-        "Household ebooks",
-        "epub",
-        case=None,
-        attention=0,
-        dispositions=[],
-        preparation={
-            "attempt": 1,
-            "provider": "hardcover-main",
-            "reason": "Provider credentials need owner attention.",
-            "recovery": "Retry review preparation after correcting the reported condition.",
-            "recovery_attempt": 0,
-            "stage": "provider",
-            "status": "authentication",
-        },
-        preparation_outcomes=[
-            {
-                "provider_requests": 1,
-                "lane_kind": "work",
-                "provider": "hardcover-main",
-                "reason": "Provider credentials need owner attention.",
-                "status": "authentication",
-            }
-        ],
-        summary={
-            "fields": [],
-            "reason": "Provider credentials need owner attention.",
-            "state": "preparation_failed",
-        },
-    ),
+    TERMINAL_LIBRARY_WORK,
     _work(
         7,
         "Resolved work with retained history",
@@ -1702,6 +1712,8 @@ __all__ = [
     "HOSTILE_TEXT",
     "LIBRARY_WORKS",
     "LONG_TITLE",
+    "TERMINAL_FAILURE_COPY",
+    "TERMINAL_LIBRARY_WORK",
     "UNBROKEN_TITLE_SEGMENT",
     "RichFidelityApiMiddleware",
     "rich_payload",

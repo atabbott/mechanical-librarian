@@ -66,12 +66,22 @@ class MetadataReportError(RuntimeError):
     """A value-free operational failure at the command boundary."""
 
 
+class ReportNotFoundError(MetadataReportError):
+    """The requested immutable report is absent from retained storage."""
+
+
+class ProposalNotFoundError(MetadataReportError):
+    """The requested immutable proposal is absent from retained storage."""
+
+
 class UnsupportedMediaError(MetadataReportError):
     pass
 
 
 class ItemInspectionError(MetadataReportError):
-    pass
+    def __init__(self, outcome: object = None) -> None:
+        super().__init__("EPUB inspection failed")
+        self.outcome = outcome
 
 
 class ArtifactAuthorityError(MetadataReportError):
@@ -1584,6 +1594,7 @@ __all__ = [
     "ProviderCoverDescriptor",
     "ProviderLaneResult",
     "ReportRepository",
+    "ReportNotFoundError",
     "TargetFile",
     "TargetNotFoundError",
     "TargetReader",

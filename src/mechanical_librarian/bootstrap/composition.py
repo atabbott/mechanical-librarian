@@ -214,6 +214,7 @@ from mechanical_librarian.domain.proposal_set import ProposalSet
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 from mechanical_librarian.infrastructure.local_media import (
     LocalMediaError,
+    LocalMediaLimitError,
     open_local_media,
     sha256_descriptor,
 )
@@ -537,7 +538,7 @@ class _IsolatedEpubInspector:
                 EpubInspectionOutcome.SUCCESS,
                 EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE,
             }:
-                raise ItemInspectionError("EPUB inspection failed")
+                raise ItemInspectionError(inspection.outcome)
             claims: list[LocalClaim] = []
             for occurrence, fact in enumerate(inspection.facts, 1):
                 claim = LocalClaim.create(
@@ -630,7 +631,17 @@ class _IsolatedEpubInspector:
             raise
         except MetadataReportError:
             raise
-        except (LocalMediaError, OSError, ValueError) as error:
+        except LocalMediaLimitError as error:
+            raise ItemInspectionError(EpubInspectionOutcome.RESOURCE_LIMIT) from error
+        except LocalMediaError as error:
+            raise ItemInspectionError(
+                EpubInspectionOutcome.UNAVAILABLE_SOURCE
+            ) from error
+        except OSError as error:
+            raise ItemInspectionError(
+                EpubInspectionOutcome.UNAVAILABLE_SOURCE
+            ) from error
+        except ValueError as error:
             raise ItemInspectionError("EPUB inspection failed") from error
         finally:
             if opened is not None:
@@ -2042,7 +2053,10 @@ def run_review_server(
                 private_root / "stage-timings.json",
                 enabled=review.diagnostic_timings_enabled,
             )
-            from mechanical_librarian.application.operations import StageTimer
+            from mechanical_librarian.application.operations import (
+                StageTimer,
+                support_preparation_incidents,
+            )
 
             timing = StageTimer(timing_store)
             provider_recovery = SQLiteProviderRecoveryStore.open(
@@ -2080,6 +2094,12 @@ def run_review_server(
                             "schema_state": "exact_current",
                             "timing_records": len(timing_store.list()),
                         },
+                    ),
+                    (
+                        "operational_incidents",
+                        lambda: support_preparation_incidents(
+                            repository.operational_snapshot()
+                        ),
                     ),
                 )
             )

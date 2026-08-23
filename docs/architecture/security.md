@@ -6,6 +6,12 @@ modules named in each section for the checks they perform, and
 `.github/workflows/public-gate.yml` with `osv-scanner.toml` for scanning. This
 document states the invariants those artifacts must keep.
 
+Terminal preparation failure evidence is value-free. Its versioned `prep-`
+reference derives only from durable action identity, stage, attempts, and a
+normalized code; authenticated operations and re-redacted support evidence may
+carry that same bounded reference, never a path, report, provider payload,
+credential, root, item, or exception.
+
 ## Authority
 
 Qualified automatic policy is decision-only. Its clean-schema built-in profile

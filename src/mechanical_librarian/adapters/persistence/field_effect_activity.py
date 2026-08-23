@@ -52,6 +52,9 @@ from mechanical_librarian.adapters.persistence.field_effect_validation import (
 from mechanical_librarian.adapters.persistence.schema import _validate_report_row
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.review_pipeline import (
+    preparation_failure_reference,
+)
 from mechanical_librarian.domain.activity_records import activity_search_text
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
@@ -115,8 +118,12 @@ def _operational_signal(
     category: str | None = None,
     work_id: str | None = None,
     field: str | None = None,
+    diagnostic_reference: str | None = None,
+    stage: str | None = None,
+    code: str | None = None,
+    attempt: int | None = None,
 ) -> dict[str, object]:
-    return {
+    value: dict[str, object] = {
         "category": category,
         "cause": cause,
         "connection": connection,
@@ -126,6 +133,15 @@ def _operational_signal(
         "scope": scope,
         "work_id": work_id,
     }
+    if diagnostic_reference is not None:
+        value["diagnostic_reference"] = diagnostic_reference
+    if stage is not None:
+        value["stage"] = stage
+    if code is not None:
+        value["code"] = code
+    if attempt is not None:
+        value["attempt"] = attempt
+    return value
 
 
 def _policy_changes(
@@ -2188,6 +2204,34 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         "provider_authentication",
                         "connection",
                         connection=provider_root,
+                    )
+                )
+            terminal_failures = self._connection.execute(
+                "SELECT work_id,stage,attempt,recovery_attempt,failure_code "
+                "FROM review_preparation_work WHERE state='failed' "
+                "AND failure_code IS NOT NULL "
+                "ORDER BY updated_at DESC,work_id LIMIT 256"
+            ).fetchall()
+            for work_id, stage, attempt, recovery_attempt, code in terminal_failures:
+                if (
+                    type(work_id) is not str
+                    or type(stage) is not str
+                    or type(attempt) is not int
+                    or type(recovery_attempt) is not int
+                    or type(code) is not str
+                ):
+                    raise FieldEffectError("persistence")
+                signals.append(
+                    _operational_signal(
+                        "owner_action_required",
+                        "preparation_failure",
+                        "work",
+                        diagnostic_reference=preparation_failure_reference(
+                            work_id, stage, attempt, recovery_attempt, code
+                        ),
+                        stage=stage,
+                        code=code,
+                        attempt=attempt,
                     )
                 )
             rows = self._connection.execute(

@@ -26,6 +26,7 @@ from tests.browser.fidelity_cohort import (
 )
 from tests.browser.fidelity_cohort import (
     LONG_TITLE,
+    TERMINAL_FAILURE_COPY,
     UNBROKEN_TITLE_SEGMENT,
     rich_payload,
 )
@@ -1335,24 +1336,64 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             "synthetic-item-1"
             not in page.locator(".library-work-row").first.inner_text()
         )
-        no_case_row = page.locator(".library-work-row").filter(
-            has_text="Catalogue-only work"
-        )
-        assert no_case_row.get_by_role("link").count() == 0
-        # A work with no review case is still openable: the row is one target
-        # and the detail pane names the condition and every source consulted.
-        no_case_row.click()
+        no_case_row = page.locator(".library-work-row.is-terminal")
         work_detail = page.locator(".workspace-detail")
-        work_detail.get_by_role("heading", name="Catalogue-only work").wait_for()
-        assert "Authentication at Provider" in work_detail.inner_text()
-        assert "Retry review preparation" in work_detail.inner_text()
-        sources = work_detail.locator(".work-sources")
-        assert sources.count() == 1
-        assert sources.evaluate("node => node.open") is False
-        sources.get_by_text("Sources", exact=True).click()
-        assert sources.evaluate("node => node.open") is True
-        assert "hardcover-main" in sources.inner_text()
-        assert "Work lookup · 1 bounded request" in sources.inner_text()
+        assert no_case_row.get_by_role("link").count() == 0
+        # A terminal case-less failure is information, not an unavailable
+        # decision target: no click, detail surface, retry, or provider record.
+        assert no_case_row.evaluate("node => node.tagName") == "ARTICLE"
+        assert no_case_row.get_attribute("aria-label") == "Terminal preparation failure"
+        assert no_case_row.get_by_role("button").count() == 0
+        assert no_case_row.locator("a, button, details, [tabindex]").count() == 0
+        assert "Reference: prep-" in no_case_row.inner_text()
+        assert TERMINAL_FAILURE_COPY in no_case_row.inner_text()
+        assert "retry" not in no_case_row.inner_text().casefold()
+        assert (
+            no_case_row.locator("img, svg, video, audio, iframe, object").count() == 0
+        )
+        assert (
+            page.evaluate("() => window.__terminalFailureExecuted === true") is not True
+        )
+        # This canonical fixture has long, hostile-looking terminal copy. The
+        # semantic and layout assertions are unconditional; visual capture is
+        # supplemental and cannot be the only proof of this terminal state.
+        for scheme in ("light", "dark"):
+            stage[0] = f"library:terminal:{scheme}"
+            toggle = "Use dark mode" if scheme == "dark" else "Use light mode"
+            if page.get_by_role("button", name=toggle).count():
+                page.get_by_role("button", name=toggle).click()
+            expect(page.locator("html")).to_have_attribute("data-theme", scheme)
+            for width in (1440, 390):
+                page.set_viewport_size({"width": width, "height": 844})
+                page.goto("https://react-platform.invalid/library?lens=all")
+                terminal = page.locator(".library-work-row.is-terminal")
+                expect(terminal).to_be_visible()
+                assert TERMINAL_FAILURE_COPY in terminal.inner_text()
+                assert "Reference: prep-" in terminal.inner_text()
+                assert terminal.locator("a, button, details, [tabindex]").count() == 0
+                assert (
+                    terminal.locator("img, svg, video, audio, iframe, object").count()
+                    == 0
+                )
+                assert "retry" not in terminal.inner_text().casefold()
+                _fits_its_container(page, ".library-work-row.is-terminal", width)
+                assert (
+                    page.evaluate("() => document.documentElement.scrollWidth") <= width
+                )
+                url_before_focus = page.url
+                terminal.focus()
+                assert page.evaluate(
+                    "() => document.activeElement !== document.querySelector('.library-work-row.is-terminal')"
+                )
+                page.locator(".library-work-row").nth(4).focus()
+                page.keyboard.press("Tab")
+                assert page.evaluate(
+                    "() => !document.querySelector('.library-work-row.is-terminal')?.contains(document.activeElement)"
+                )
+                assert page.url == url_before_focus
+            if scheme == "dark":
+                page.get_by_role("button", name="Use light mode").click()
+        page.set_viewport_size({"width": 1440, "height": 900})
         capture_visual_proof("library-work-summary")
         page.get_by_role("link", name="Needs attention", exact=True).click()
         expect(page.locator(".library-work-row")).to_have_count(5)

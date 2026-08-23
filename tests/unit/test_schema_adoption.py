@@ -69,6 +69,10 @@ def _freeze_review_field_facts_predecessor(connection: sqlite3.Connection) -> No
         "UPDATE sqlite_master SET sql=replace(sql,\"'queued','delayed','running'\",\"'queued','running'\") "
         "WHERE type='table' AND name='review_preparation_work'"
     )
+    connection.execute(
+        "UPDATE sqlite_master SET sql=replace(sql,\"'provider','configuration','authentication','stale','transient','projection','failed','currentness','persistence','unsupported_media','unreadable_media','parser_refused','missing_required_input','malformed_retained_data','internal_failure','unknown'\",\"'provider','configuration','authentication','stale','transient','projection','failed','currentness','persistence'\") "
+        "WHERE type='table' AND name='review_preparation_work'"
+    )
     connection.execute("PRAGMA writable_schema=OFF")
     # Every malformed-document test starts from the one frozen schema the
     # offline plan accepts, so its later rejection proves canonical validation.

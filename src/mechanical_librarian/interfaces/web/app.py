@@ -474,6 +474,7 @@ class _ReviewCounts(_ClosedModel):
 
 class _PreparationFailure(_ClosedModel):
     attempt: int
+    diagnostic_reference: str
     provider: str
     reason: str
     recovery: str
@@ -967,11 +968,52 @@ class _AutomaticSafetyResponse(_ClosedModel):
 
 
 class _OperationalResponse(_ClosedModel):
-    incidents: list[dict[str, object]]
+    incidents: list["_OperationalIncident"]
     readiness: str
     schema_version: str
     summary: dict[str, object]
     timings: list[dict[str, object]]
+
+
+class _OperationalIncident(_ClosedModel):
+    attempt: int | None = Field(default=None, ge=0, le=3)
+    category: StrictStr | None = Field(default=None, min_length=1, max_length=512)
+    cause: StrictStr = Field(min_length=1, max_length=64)
+    code: (
+        Literal[
+            "provider",
+            "configuration",
+            "authentication",
+            "stale",
+            "transient",
+            "projection",
+            "failed",
+            "currentness",
+            "persistence",
+            "unsupported_media",
+            "unreadable_media",
+            "parser_refused",
+            "missing_required_input",
+            "malformed_retained_data",
+            "internal_failure",
+            "unknown",
+        ]
+        | None
+    ) = None
+    connection: StrictStr | None = Field(default=None, min_length=1, max_length=512)
+    count: int = Field(ge=1, le=10_000)
+    diagnostic_reference: StrictStr | None = Field(
+        default=None, max_length=21, pattern=r"^prep-[0-9a-f]{16}$"
+    )
+    field: StrictStr | None = Field(default=None, min_length=1, max_length=512)
+    incident_id: StrictStr = Field(min_length=1, max_length=96)
+    kind: StrictStr
+    library: StrictStr | None = Field(default=None, min_length=1, max_length=512)
+    scope: StrictStr
+    stage: (
+        Literal["extraction", "provider", "proposal", "admission", "projection"] | None
+    ) = None
+    work_id: StrictStr | None = Field(default=None, min_length=1, max_length=512)
 
 
 class _SupportPreviewResponse(_ClosedModel):
