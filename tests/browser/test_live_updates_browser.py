@@ -82,6 +82,33 @@ _CONTENT_OVERFLOW = """
 """
 
 
+def _activity_surface_order(
+    page: Page, *, width: int, semantic: list[str], visual: list[str]
+) -> None:
+    """Keep Activity's semantic order separate from its responsive layout."""
+    page.set_viewport_size({"width": width, "height": 844})
+    order = page.evaluate(
+        """() => {
+          const root = document.querySelector('.cm-activity-route');
+          if (root === null) return null;
+          const name = (node) => node.className;
+          const children = [...root.children].filter((node) =>
+            node.matches('.cm-page-heading, .cm-activity-ledger, .cm-write-consent, .cm-activity-status, .connection-notice, .activity-command-status')
+          );
+          return {
+            dom: children.map(name),
+            visual: children
+              .map((node, index) => ({ index, name: name(node), order: Number(getComputedStyle(node).order) }))
+              .sort((left, right) => left.order - right.order || left.index - right.index)
+              .map((item) => item.name),
+          };
+        }"""
+    )
+    assert order is not None
+    assert order["dom"] == semantic
+    assert order["visual"] == visual
+
+
 # The same measurement, reported as the node that lost rather than as the
 # number it lost by. A bare pixel count says a surface is wrong; this says
 # which element inside it is, which is the difference between a finding and a
@@ -436,6 +463,60 @@ def test_the_write_surfaces_reflow_rather_than_depend_on_how_wide_their_text_ren
                 _an_open_record_survives_a_viewport_change(page)
                 _reflows_at_two_hundred_percent_zoom(page)
                 _long_values_stay_inside_the_narrowest_card(page)
+                page.route(
+                    "**/api/v1/review-preparation",
+                    lambda route: route.fulfill(
+                        json={
+                            "schema_version": "review-preparation-v1",
+                            "active": True,
+                            "actionable": False,
+                            "paused": True,
+                            "libraries": [],
+                            "connections": [
+                                {
+                                    "connection": "primary",
+                                    "code": "unavailable",
+                                    "state": "paused",
+                                    "affected": 2,
+                                    "updated_at": 1,
+                                }
+                            ],
+                        }
+                    ),
+                )
+                page.reload()
+                page.locator(".connection-notice").wait_for(timeout=8_000)
+                semantic = [
+                    "cm-page-heading",
+                    "cm-activity-ledger",
+                    "cm-activity-status",
+                    "connection-notice is-paused",
+                    "activity-command-status",
+                ]
+                _activity_surface_order(
+                    page,
+                    width=1440,
+                    semantic=semantic,
+                    visual=[
+                        "cm-page-heading",
+                        "connection-notice is-paused",
+                        "cm-activity-status",
+                        "cm-activity-ledger",
+                        "activity-command-status",
+                    ],
+                )
+                _activity_surface_order(
+                    page,
+                    width=390,
+                    semantic=semantic,
+                    visual=[
+                        "cm-page-heading",
+                        "cm-activity-ledger",
+                        "cm-activity-status",
+                        "connection-notice is-paused",
+                        "activity-command-status",
+                    ],
+                )
 
 
 def _an_open_record_survives_a_viewport_change(page: Page) -> None:

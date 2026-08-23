@@ -148,6 +148,7 @@ function PageJump({
 function ActivityTransitions({ eventId }: { eventId: string }) {
   const { http } = useReviewContext()
   const [extraPages, setExtraPages] = useState<ActivityTransitionView[][]>([])
+  const [hasMore, setHasMore] = useState(false)
   const query = useQuery({
     queryKey: ['activity-transitions', eventId],
     queryFn: ({ signal }) => http.getActivityTransitions(eventId, undefined, signal),
@@ -155,7 +156,10 @@ function ActivityTransitions({ eventId }: { eventId: string }) {
   })
   const more = useMutation({
     mutationFn: (afterSequence: number) => http.getActivityTransitions(eventId, afterSequence),
-    onSuccess: (page) => setExtraPages((current) => [...current, [...page.events]]),
+    onSuccess: (page) => {
+      setExtraPages((current) => [...current, [...page.events]])
+      setHasMore(page.has_more)
+    },
   })
   if (query.isLoading) return <p>Loading recorded transitions…</p>
   if (query.isError)
@@ -168,7 +172,7 @@ function ActivityTransitions({ eventId }: { eventId: string }) {
       </p>
     )
   const events = [...(query.data?.events ?? []), ...extraPages.flat()]
-  const hasMore = extraPages.length ? Boolean(more.data?.has_more) : Boolean(query.data?.has_more)
+  const moreAvailable = extraPages.length ? hasMore : Boolean(query.data?.has_more)
   if (!events.length) return null
   return (
     <ol className="cm-activity-transitions" aria-label="Recorded lifecycle transitions">
@@ -180,7 +184,7 @@ function ActivityTransitions({ eventId }: { eventId: string }) {
           <span>{stateLabel(transition.state)}</span>
         </li>
       ))}
-      {hasMore ? (
+      {moreAvailable ? (
         <li>
           <button
             type="button"
@@ -577,7 +581,240 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                         : 'No action required'}
         </span>
       </header>
-      <PreparationNotice routeIdentity={routeIdentity} />
+      <section className="cm-activity-ledger" aria-labelledby="activity-ledger-title">
+        <header className="cm-activity-ledger-heading">
+          <div>
+            <h2 id="activity-ledger-title">Activity ledger</h2>
+            <p>
+              One record for review decisions, policy changes, safeguards, writes, and verification.
+            </p>
+          </div>
+          <label className="cm-activity-range">
+            <span>Date range</span>
+            <Dropdown
+              compact
+              focusKey="date-range"
+              ariaLabel="Activity date range"
+              value={String(search.rangeDays)}
+              options={[
+                { value: '7', label: 'Last 7 days' },
+                { value: '30', label: 'Last 30 days' },
+                { value: '90', label: 'Last 90 days' },
+              ]}
+              onChange={(value) =>
+                changeSearch(
+                  { rangeDays: Number(value) as ActivitySearch['rangeDays'] },
+                  'date-range',
+                )
+              }
+            />
+          </label>
+        </header>
+        <div className="cm-activity-tools">
+          <label className="cm-activity-search">
+            <span>Search activity</span>
+            <input
+              data-activity-focus="search"
+              aria-label="Search activity"
+              type="search"
+              value={queryText}
+              placeholder="Work, outcome, or status"
+              onChange={(event) => changeQuery(event.target.value)}
+            />
+          </label>
+          <div className="cm-activity-filters" aria-label="Filter activity by type">
+            {typeOptions.map((item) => (
+              <button
+                data-activity-focus={`type-${item.id}`}
+                key={item.id}
+                aria-pressed={search.eventType === item.id}
+                onClick={() => changeSearch({ eventType: item.id }, `type-${item.id}`)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="cm-activity-columns" aria-hidden="true">
+          <span>When</span>
+          <span>Type</span>
+          <span>Work and field</span>
+          <span>Change</span>
+          <span>Result</span>
+          <span />
+        </div>
+        <div className="cm-activity-events">
+          {data.events.length ? (
+            data.events.map((event, index) => {
+              const changeId = event.change_id || event.event_id
+              const expanded = expandedId === changeId
+              const currentDate = dateParts(event.occurred_at)
+              const previousDate = index
+                ? dateParts(data.events[index - 1]?.occurred_at ?? null).day
+                : null
+              return (
+                <div className="cm-activity-event-group" key={changeId}>
+                  {currentDate.day !== previousDate ? <h3>{currentDate.day}</h3> : null}
+                  <article className={expanded ? 'is-expanded' : ''}>
+                    <time>{currentDate.time}</time>
+                    <span className={`cm-activity-category is-${event.category}`}>
+                      {categoryLabel[event.category]}
+                    </span>
+                    <div className="cm-activity-work">
+                      <strong title={event.work_label}>{event.work_label}</strong>
+                      <span>
+                        {event.field_label} · {event.library}
+                      </span>
+                    </div>
+                    {/*
+                      The arrow in `change` is a glyph most screen readers drop,
+                      so the announced row carries the same change as a whole
+                      sentence. Both come from the one projection, so they
+                      cannot come to disagree.
+                    */}
+                    <div className="cm-activity-change" aria-label={event.change_detail}>
+                      <span aria-hidden="true">{event.change}</span>
+                    </div>
+                    <b>{stateLabel(event.state)}</b>
+                    <button
+                      aria-expanded={expanded}
+                      aria-controls={`activity-evidence-${event.event_id}`}
+                      onClick={() => setExpandedId(expanded ? null : changeId)}
+                    >
+                      {expanded ? 'Hide details' : 'Details'}
+                    </button>
+                    {expanded ? (
+                      <div
+                        className={`cm-activity-evidence${
+                          event.policy_changes.length ? ' has-policy-changes' : ''
+                        }`}
+                        id={`activity-evidence-${event.event_id}`}
+                      >
+                        {event.policy_changes.length ? (
+                          <section
+                            className="cm-activity-policy-changes"
+                            aria-label={`${String(event.policy_changes.length)} exact policy changes`}
+                          >
+                            <header>
+                              <strong>
+                                {event.policy_changes.length} exact{' '}
+                                {event.policy_changes.length === 1 ? 'change' : 'changes'}
+                              </strong>
+                              <span>Field and setting</span>
+                              <span>From</span>
+                              <span>To</span>
+                            </header>
+                            <ul>
+                              {event.policy_changes.map((change) => (
+                                <li key={`${change.field}-${change.setting}`}>
+                                  <span>
+                                    <strong>{change.field}</strong>
+                                    <small>{change.setting}</small>
+                                  </span>
+                                  <b>{change.previous}</b>
+                                  <b>{change.next}</b>
+                                </li>
+                              ))}
+                            </ul>
+                          </section>
+                        ) : null}
+                        <dl>
+                          {event.evidence.map((item) => (
+                            <div key={item.label}>
+                              <dt>{item.label}</dt>
+                              <dd>{item.value}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                        {event.transition_id ? (
+                          <ActivityTransitions key={changeId} eventId={event.transition_id} />
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </article>
+                </div>
+              )
+            })
+          ) : (
+            <div className="cm-activity-empty">
+              <strong>No activity matches these filters</strong>
+              <span>Try another term or activity type.</span>
+              <button data-activity-focus="clear-filters" onClick={clearFilters}>
+                Clear filters
+              </button>
+            </div>
+          )}
+        </div>
+        <footer className="cm-activity-pagination">
+          <div className="cm-activity-pagination-summary">
+            <strong>
+              {ledger.total
+                ? `${String((ledger.page - 1) * ledger.page_size + 1)}–${String(Math.min(ledger.page * ledger.page_size, ledger.total))}`
+                : '0'}
+            </strong>
+            <span>of {ledger.total} events</span>
+            <label className="cm-activity-page-size">
+              <span>Rows</span>
+              <Dropdown
+                compact
+                focusKey="page-size"
+                ariaLabel="Rows per activity page"
+                value={String(search.pageSize)}
+                options={[
+                  { value: '25', label: '25 per page' },
+                  { value: '50', label: '50 per page' },
+                  { value: '100', label: '100 per page' },
+                ]}
+                onChange={(value) =>
+                  changeSearch(
+                    { pageSize: Number(value) as ActivitySearch['pageSize'] },
+                    'page-size',
+                  )
+                }
+              />
+            </label>
+          </div>
+          <nav className="cm-activity-pagination-nav" aria-label="Activity pages">
+            <button
+              data-activity-focus="first"
+              disabled={ledger.page === 1}
+              onClick={() => goToPage(1, 'first')}
+            >
+              First
+            </button>
+            <button
+              data-activity-focus="previous"
+              disabled={ledger.page === 1}
+              onClick={() => goToPage((page) => page - 1, 'previous')}
+            >
+              Previous
+            </button>
+            <PageJump
+              key={`${String(ledger.page)}:${search.q ?? ''}:${search.eventType}:${String(search.rangeDays)}:${String(search.pageSize)}`}
+              page={ledger.page}
+              pageCount={ledger.page_count}
+              onCommit={goToPage}
+              onEdit={() => {
+                ++focusVersion.current
+              }}
+            />
+            <button
+              data-activity-focus="next"
+              disabled={ledger.page >= ledger.page_count}
+              onClick={() => goToPage((page) => page + 1, 'next')}
+            >
+              Next
+            </button>
+            <button
+              data-activity-focus="last"
+              disabled={ledger.page >= ledger.page_count}
+              onClick={() => goToPage(ledger.page_count, 'last')}
+            >
+              Last
+            </button>
+          </nav>
+        </footer>
+      </section>
       {consentActionable ? (
         <section
           className={`cm-write-consent is-${consentState}`}
@@ -899,237 +1136,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
           </details>
         ) : null}
       </section>
-      <section className="cm-activity-ledger" aria-labelledby="activity-ledger-title">
-        <header className="cm-activity-ledger-heading">
-          <div>
-            <h2 id="activity-ledger-title">Activity ledger</h2>
-            <p>
-              One record for review decisions, policy changes, safeguards, writes, and verification.
-            </p>
-          </div>
-          <label className="cm-activity-range">
-            <span>Date range</span>
-            <Dropdown
-              compact
-              focusKey="date-range"
-              ariaLabel="Activity date range"
-              value={String(search.rangeDays)}
-              options={[
-                { value: '7', label: 'Last 7 days' },
-                { value: '30', label: 'Last 30 days' },
-                { value: '90', label: 'Last 90 days' },
-              ]}
-              onChange={(value) =>
-                changeSearch(
-                  { rangeDays: Number(value) as ActivitySearch['rangeDays'] },
-                  'date-range',
-                )
-              }
-            />
-          </label>
-        </header>
-        <div className="cm-activity-tools">
-          <label className="cm-activity-search">
-            <span>Search activity</span>
-            <input
-              data-activity-focus="search"
-              aria-label="Search activity"
-              type="search"
-              value={queryText}
-              placeholder="Work, outcome, or status"
-              onChange={(event) => changeQuery(event.target.value)}
-            />
-          </label>
-          <div className="cm-activity-filters" aria-label="Filter activity by type">
-            {typeOptions.map((item) => (
-              <button
-                data-activity-focus={`type-${item.id}`}
-                key={item.id}
-                aria-pressed={search.eventType === item.id}
-                onClick={() => changeSearch({ eventType: item.id }, `type-${item.id}`)}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="cm-activity-columns" aria-hidden="true">
-          <span>When</span>
-          <span>Type</span>
-          <span>Work and field</span>
-          <span>Change</span>
-          <span>Result</span>
-          <span />
-        </div>
-        <div className="cm-activity-events">
-          {data.events.length ? (
-            data.events.map((event, index) => {
-              const expanded = expandedId === event.event_id
-              const currentDate = dateParts(event.occurred_at)
-              const previousDate = index
-                ? dateParts(data.events[index - 1]?.occurred_at ?? null).day
-                : null
-              return (
-                <div className="cm-activity-event-group" key={event.event_id}>
-                  {currentDate.day !== previousDate ? <h3>{currentDate.day}</h3> : null}
-                  <article className={expanded ? 'is-expanded' : ''}>
-                    <time>{currentDate.time}</time>
-                    <span className={`cm-activity-category is-${event.category}`}>
-                      {categoryLabel[event.category]}
-                    </span>
-                    <div className="cm-activity-work">
-                      <strong title={event.work_label}>{event.work_label}</strong>
-                      <span>
-                        {event.field_label} · {event.library}
-                      </span>
-                    </div>
-                    {/*
-                      The arrow in `change` is a glyph most screen readers drop,
-                      so the announced row carries the same change as a whole
-                      sentence. Both come from the one projection, so they
-                      cannot come to disagree.
-                    */}
-                    <div className="cm-activity-change" aria-label={event.change_detail}>
-                      <span aria-hidden="true">{event.change}</span>
-                    </div>
-                    <b>{stateLabel(event.state)}</b>
-                    <button
-                      aria-expanded={expanded}
-                      aria-controls={`activity-evidence-${event.event_id}`}
-                      onClick={() => setExpandedId(expanded ? null : event.event_id)}
-                    >
-                      {expanded ? 'Hide details' : 'Details'}
-                    </button>
-                    {expanded ? (
-                      <div
-                        className={`cm-activity-evidence${
-                          event.policy_changes.length ? ' has-policy-changes' : ''
-                        }`}
-                        id={`activity-evidence-${event.event_id}`}
-                      >
-                        {event.policy_changes.length ? (
-                          <section
-                            className="cm-activity-policy-changes"
-                            aria-label={`${String(event.policy_changes.length)} exact policy changes`}
-                          >
-                            <header>
-                              <strong>
-                                {event.policy_changes.length} exact{' '}
-                                {event.policy_changes.length === 1 ? 'change' : 'changes'}
-                              </strong>
-                              <span>Field and setting</span>
-                              <span>From</span>
-                              <span>To</span>
-                            </header>
-                            <ul>
-                              {event.policy_changes.map((change) => (
-                                <li key={`${change.field}-${change.setting}`}>
-                                  <span>
-                                    <strong>{change.field}</strong>
-                                    <small>{change.setting}</small>
-                                  </span>
-                                  <b>{change.previous}</b>
-                                  <b>{change.next}</b>
-                                </li>
-                              ))}
-                            </ul>
-                          </section>
-                        ) : null}
-                        <dl>
-                          {event.evidence.map((item) => (
-                            <div key={item.label}>
-                              <dt>{item.label}</dt>
-                              <dd>{item.value}</dd>
-                            </div>
-                          ))}
-                        </dl>
-                        <ActivityTransitions key={event.event_id} eventId={event.event_id} />
-                      </div>
-                    ) : null}
-                  </article>
-                </div>
-              )
-            })
-          ) : (
-            <div className="cm-activity-empty">
-              <strong>No activity matches these filters</strong>
-              <span>Try another term or activity type.</span>
-              <button data-activity-focus="clear-filters" onClick={clearFilters}>
-                Clear filters
-              </button>
-            </div>
-          )}
-        </div>
-        <footer className="cm-activity-pagination">
-          <div className="cm-activity-pagination-summary">
-            <strong>
-              {ledger.total
-                ? `${String((ledger.page - 1) * ledger.page_size + 1)}–${String(Math.min(ledger.page * ledger.page_size, ledger.total))}`
-                : '0'}
-            </strong>
-            <span>of {ledger.total} events</span>
-            <label className="cm-activity-page-size">
-              <span>Rows</span>
-              <Dropdown
-                compact
-                focusKey="page-size"
-                ariaLabel="Rows per activity page"
-                value={String(search.pageSize)}
-                options={[
-                  { value: '25', label: '25 per page' },
-                  { value: '50', label: '50 per page' },
-                  { value: '100', label: '100 per page' },
-                ]}
-                onChange={(value) =>
-                  changeSearch(
-                    { pageSize: Number(value) as ActivitySearch['pageSize'] },
-                    'page-size',
-                  )
-                }
-              />
-            </label>
-          </div>
-          <nav className="cm-activity-pagination-nav" aria-label="Activity pages">
-            <button
-              data-activity-focus="first"
-              disabled={ledger.page === 1}
-              onClick={() => goToPage(1, 'first')}
-            >
-              First
-            </button>
-            <button
-              data-activity-focus="previous"
-              disabled={ledger.page === 1}
-              onClick={() => goToPage((page) => page - 1, 'previous')}
-            >
-              Previous
-            </button>
-            <PageJump
-              key={`${String(ledger.page)}:${search.q ?? ''}:${search.eventType}:${String(search.rangeDays)}:${String(search.pageSize)}`}
-              page={ledger.page}
-              pageCount={ledger.page_count}
-              onCommit={goToPage}
-              onEdit={() => {
-                ++focusVersion.current
-              }}
-            />
-            <button
-              data-activity-focus="next"
-              disabled={ledger.page >= ledger.page_count}
-              onClick={() => goToPage((page) => page + 1, 'next')}
-            >
-              Next
-            </button>
-            <button
-              data-activity-focus="last"
-              disabled={ledger.page >= ledger.page_count}
-              onClick={() => goToPage(ledger.page_count, 'last')}
-            >
-              Last
-            </button>
-          </nav>
-        </footer>
-      </section>
+      <PreparationNotice routeIdentity={routeIdentity} />
       <p className="activity-command-status" role={mutation.isError ? 'alert' : 'status'}>
         {status}
       </p>

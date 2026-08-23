@@ -950,7 +950,7 @@ describe('Activity route', () => {
     let failFirst = true
     const http: ReviewHttp = {
       ...createHttp(),
-      getActivity: vi.fn(async () => activity({ events: [{ event_id: 'lifecycle' }] })),
+      getActivity: vi.fn(async () => activity({ events: [{ event_id: 'lifecycle', transition_id: 'effect_plan_' + 'a'.repeat(64) }] })),
       getActivityTransitions: vi.fn(async (_eventId: string, afterSequence?: number) => {
         if (failFirst) {
           failFirst = false
@@ -972,7 +972,34 @@ describe('Activity route', () => {
     expect(lifecycle.querySelectorAll('li')).toHaveLength(21)
     await user.click(screen.getByRole('button', { name: 'Load more transitions' }))
     await waitFor(() => expect(lifecycle.querySelectorAll('li')).toHaveLength(25))
-    expect(http.getActivityTransitions).toHaveBeenLastCalledWith('lifecycle', 20)
+    expect(http.getActivityTransitions).toHaveBeenLastCalledWith(
+      'effect_plan_' + 'a'.repeat(64),
+      20,
+    )
+  })
+
+  it('does not request lifecycle transitions for human, policy, or no-change rows', async () => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivityTransitions: vi.fn(async () => ({ events: [], has_more: false })),
+      getActivity: vi.fn(async () =>
+        activity({
+          events: [
+            { event_id: 'human-row', origin: 'human' },
+            { event_id: 'policy-row', category: 'policy', origin: 'policy' },
+            { event_id: 'no-change-row', state: 'no_change_required' },
+          ],
+        }),
+      ),
+    }
+    renderRoute('/activity', http)
+
+    for (const button of await screen.findAllByRole('button', { name: 'Details' }))
+      await user.click(button)
+
+    expect(http.getActivityTransitions).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('never says no action is required while its own prepared work awaits consent', async () => {

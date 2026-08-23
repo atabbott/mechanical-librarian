@@ -1228,6 +1228,11 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
                 "state": state,
                 "origin": origin,
                 "occurred_at": 1_754_858_100 + index * 300,
+                **(
+                    {"transition_id": "effect_plan_" + "a" * 64}
+                    if work == "The Glass Orchard"
+                    else {}
+                ),
                 **({"failure": failure} if failure else {}),
             }
             for index, (

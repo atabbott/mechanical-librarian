@@ -1202,6 +1202,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "policy_transition",
             }:
                 raise FieldEffectError("persistence")
+            change_id = source_parent_id if source_kind == "field_effect" else event_id
+            if type(change_id) is not str or not change_id or len(change_id) > 128:
+                raise FieldEffectError("persistence")
             if source_document is not None and (
                 type(source_document) is not str
                 or not 2 <= len(source_document.encode("utf-8")) <= document_limit
@@ -1468,6 +1471,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     durable["degraded_reason"] = AUTOMATIC_AUTHORITY_UNAVAILABLE
                     projected_events.append(
                         {
+                            "change_id": change_id,
                             "connection": connection,
                             "destination": destination,
                             "event_id": event_id,
@@ -1509,6 +1513,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     durable["degraded_reason"] = AUTOMATIC_AUTHORITY_UNAVAILABLE
                     projected_events.append(
                         {
+                            "change_id": change_id,
                             "connection": connection,
                             "destination": destination,
                             "event_id": event_id,
@@ -1558,6 +1563,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 raise FieldEffectError("persistence")
             projected_events.append(
                 {
+                    "change_id": change_id,
+                    **(
+                        {"transition_id": change_id}
+                        if source_kind == "field_effect"
+                        else {}
+                    ),
                     "connection": connection,
                     "destination": destination,
                     "event_id": event_id,
@@ -1928,7 +1939,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         try:
             transaction.begin()
             row = self._connection.execute(
-                "SELECT plan_id FROM field_effect_events WHERE event_id=?", (event_id,)
+                "SELECT plan_id FROM field_effect_events WHERE event_id=? "
+                "UNION SELECT plan_id FROM field_effects WHERE plan_id=?",
+                (event_id, event_id),
             ).fetchone()
             if row is None:
                 transaction.commit()

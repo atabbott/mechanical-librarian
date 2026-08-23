@@ -161,6 +161,12 @@
             "title": "Change Detail",
             "type": "string"
           },
+          "change_id": {
+            "default": "recorded-change",
+            "maxLength": 128,
+            "title": "Change Id",
+            "type": "string"
+          },
           "destination": {
             "maxLength": 512,
             "title": "Destination",
@@ -247,6 +253,18 @@
             "maxLength": 512,
             "title": "State",
             "type": "string"
+          },
+          "transition_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transition Id"
           },
           "work_id": {
             "maxLength": 512,

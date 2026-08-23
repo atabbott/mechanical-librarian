@@ -257,6 +257,8 @@ export interface ActivityEventView {
   change: string
   /** The same change as a whole sentence, for a reader who hears the row. */
   change_detail: string
+  /** Stable grouped identity for a change whose latest transition may move. */
+  change_id: string
   destination: string
   diagnostic?: ActivityDiagnosticView | null
   event_id: string
@@ -269,6 +271,7 @@ export interface ActivityEventView {
   origin: string
   policy_changes: readonly ActivityPolicyChangeView[]
   state: string
+  transition_id?: string
   work_id: string
   work_label: string
 }
@@ -1110,6 +1113,10 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
         category: category as ActivityCategory,
         change: stringValue(event.change, 'activity_event_change'),
         change_detail: stringValue(event.change_detail, 'activity_event_change_detail'),
+        change_id:
+          event.change_id === undefined
+            ? stringValue(event.event_id, 'activity_event_id')
+            : stringValue(event.change_id, 'activity_change_id'),
         field_label: stringValue(event.field_label, 'activity_event_field_label'),
         policy_changes: policyChanges.map((item) => {
           if (!record(item)) throw new ApiError(502, 'invalid_activity_policy_change')
@@ -1134,6 +1141,9 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
         library: stringValue(event.library, 'activity_event_library'),
         origin: stringValue(event.origin, 'activity_event_origin'),
         state: stringValue(event.state, 'activity_event_state'),
+        ...(event.transition_id === undefined || event.transition_id === null
+          ? {}
+          : { transition_id: stringValue(event.transition_id, 'activity_transition_id') }),
         work_id: stringValue(event.work_id, 'activity_work_id'),
         work_label:
           event.work_label === undefined
