@@ -19,6 +19,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -70,6 +71,22 @@ _REVIEW_SERVER_START_SECONDS = 60
 _REVIEW_SERVER_PORT_ATTEMPTS = 3
 _REVIEW_SERVER_PORT_WAIT_SECONDS = 10
 _MEASUREMENT_SAMPLES = 20
+
+
+def _validate_receipt_budgets(
+    receipt: dict[str, object],
+) -> dict[str, dict[str, float]]:
+    phases = cast(dict[str, dict[str, dict[str, float | int]]], receipt["phases"])
+    budgets: dict[str, dict[str, float]] = {}
+    for phase in ("quiescent", "early", "peak", "late"):
+        for route, values in phases[phase].items():
+            assert values["n"] >= _MEASUREMENT_SAMPLES
+            assert values["5xx_or_transport"] == 0
+            if phase != "quiescent":
+                budget = max(float(phases["quiescent"][route]["p95_ms"]) * 2, 2_000)
+                budgets.setdefault(phase, {})[route] = budget
+                assert float(values["p95_ms"]) <= budget
+    return budgets
 
 
 class _RouteMeasurements:
@@ -167,6 +184,13 @@ class _AudiobookshelfFixture:
         self.discovery_started = threading.Event()
         self.discovery_release = threading.Event()
         self.discovery_release.set()
+        self.detail_started = threading.Event()
+        self.detail_release = threading.Event()
+        self.detail_release.set()
+        self._detail_hold_armed = False
+        self._detail_hold_lock = threading.Lock()
+        self.requests: list[tuple[str, str]] = []
+        self._requests_lock = threading.Lock()
         offset = 0
         for library, count in counts.items():
             values: list[dict[str, object]] = []
@@ -181,6 +205,8 @@ class _AudiobookshelfFixture:
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:
+                with fixture._requests_lock:
+                    fixture.requests.append((self.command, urlsplit(self.path).path))
                 if self.headers.get("Authorization") != "Bearer synthetic-token":
                     self.send_response(403)
                     self.end_headers()
@@ -208,6 +234,15 @@ class _AudiobookshelfFixture:
                         "results": rows[page * 100 : (page + 1) * 100],
                     }
                 elif route.startswith("/api/items/"):
+                    with fixture._detail_hold_lock:
+                        hold_detail = fixture._detail_hold_armed
+                        fixture._detail_hold_armed = False
+                    if hold_detail:
+                        fixture.detail_started.set()
+                        if not fixture.detail_release.wait(timeout=15):
+                            self.send_response(503)
+                            self.end_headers()
+                            return
                     time.sleep(0.001)
                     value = fixture.details[route.rsplit("/", 1)[-1]]
                 else:
@@ -269,6 +304,15 @@ class _AudiobookshelfFixture:
     def release_discovery(self) -> None:
         self.discovery_release.set()
 
+    def hold_next_detail(self) -> None:
+        self.detail_started.clear()
+        self.detail_release.clear()
+        with self._detail_hold_lock:
+            self._detail_hold_armed = True
+
+    def release_next_detail(self) -> None:
+        self.detail_release.set()
+
     def start(self) -> None:
         self.thread.start()
 
@@ -284,6 +328,7 @@ def qualify_installed_pipeline(
     expected_total: int,
     memory_ceiling_kib: int | None = None,
     receipt_path: Path | None = None,
+    phase_callback: Callable[[str, str, str], None] | None = None,
 ) -> None:
     # `closing` is entered first so it exits last, which is the order
     # `addCleanup(fixture.close)` gave the fixture under `TestCase`: the
@@ -399,6 +444,7 @@ def qualify_installed_pipeline(
         proposals = {}
         report_items: dict[str, str] = {}
         provider_attempts: dict[str, int] = {}
+        review_case_ids: list[str] = []
         extracted: list[str] = []
         transient_item = "history-0000"
         credential_item = "science-0000"
@@ -479,6 +525,8 @@ def qualify_installed_pipeline(
 
         def admit(_, proposal_id: str):
             result = json.loads(repository.admit_review_case(proposals[proposal_id]))
+            if review_case_id := result.get("review_case_id"):
+                review_case_ids.append(str(review_case_id))
             return result["status"], result.get("review_case_id")
 
         def pipeline() -> ReviewPreparationPipeline:
@@ -651,6 +699,7 @@ def qualify_installed_pipeline(
             " supported restart this qualification proves: "
             + ", ".join(path.name for path in _database_sidecars(database))
         )
+        fixture.hold_discovery()
         second_process = _start_review_server(review_port, arguments, origin)
         peak_rss_kib = 0
         measurements = _RouteMeasurements()
@@ -662,8 +711,15 @@ def qualify_installed_pipeline(
                     json={"password": "synthetic password"},
                 )
                 assert login.status_code == 200, login.text
+                at_zero = client.get(origin + "/api/v1/review-preparation")
+                assert at_zero.status_code == 200, at_zero.text
+                assert at_zero.json()["active"] is True
+                assert sum(item["checked"] for item in at_zero.json()["libraries"]) == 0
+                installed_reconciliation_started = time.monotonic()
+                fixture.release_discovery()
                 phase_thresholds = (("early", 0.05), ("peak", 0.45), ("late", 0.85))
                 sampled_phases: set[str] = set()
+                actual_fractions: dict[str, float] = {}
                 deadline = time.monotonic() + 60
                 while True:
                     if second_process.poll() is not None:
@@ -692,7 +748,25 @@ def qualify_installed_pipeline(
                     fraction = checked / total if total else 0
                     for phase, threshold in phase_thresholds:
                         if phase not in sampled_phases and fraction >= threshold:
-                            _sample_routes(client, origin, phase, measurements)
+                            fixture.hold_next_detail()
+                            try:
+                                assert fixture.detail_started.wait(15), (
+                                    f"{phase} detail hold was not reached"
+                                )
+                                active = client.get(
+                                    origin + "/api/v1/review-preparation"
+                                )
+                                assert active.status_code == 200, active.text
+                                assert active.json()["active"] is True
+                                actual_fractions[phase] = fraction
+                                _sample_routes(client, origin, phase, measurements)
+                                if phase_callback is not None:
+                                    assert review_case_ids, (
+                                        "installed pipeline did not admit a manual review case"
+                                    )
+                                    phase_callback(phase, origin, review_case_ids[0])
+                            finally:
+                                fixture.release_next_detail()
                             sampled_phases.add(phase)
                     if (
                         not projection["active"]
@@ -708,6 +782,9 @@ def qualify_installed_pipeline(
                     time.sleep(0.02)
                 assert sampled_phases == {"early", "peak", "late"}
                 _sample_routes(client, origin, "quiescent", measurements)
+                installed_reconciliation_elapsed = (
+                    time.monotonic() - installed_reconciliation_started
+                )
             assert (
                 sum(item["total"] for item in projection["libraries"]) == expected_total
             )
@@ -733,32 +810,44 @@ def qualify_installed_pipeline(
         assert work_count == expected_total
         assert tuple(media.iterdir()) == ()
         assert tuple(artifacts.iterdir()) == ()
+        assert all(method == "GET" for method, _path in fixture.requests)
+        installed_reconciliation_rate = (
+            expected_total / installed_reconciliation_elapsed
+        )
         receipt = {
             "schema": "m27-828-candidate-v2",
             "works": expected_total,
             "phases": measurements.receipt(),
-            "throughput_works_per_second": round(
+            "direct_pipeline_control_works_per_second": round(
                 expected_total / processing_elapsed, 3
             ),
+            "installed_reconciliation_works_per_second": round(
+                installed_reconciliation_rate, 3
+            ),
+            "installed_reconciliation_elapsed_seconds": round(
+                installed_reconciliation_elapsed, 3
+            ),
             "rss_kib_max": peak_rss_kib,
-            "starvation_control": "passed",
-            "fairness": "passed",
-            "pacing": "passed",
-            "restart": "passed",
+            "actual_phase_fractions": actual_fractions,
+            "fairness": {
+                "first_library_positions": {
+                    library: initial_extracted.index(
+                        next(
+                            item
+                            for item in initial_extracted
+                            if item.startswith(library + "-")
+                        )
+                    )
+                    + 1
+                    for library in counts
+                },
+                "new_work_position": extracted[before_new:].index("fiction-new") + 1,
+            },
+            "restart": {"first_ready": True, "second_ready": True},
         }
-        budgets: dict[str, dict[str, float]] = {}
-        for phase in ("quiescent", "early", "peak", "late"):
-            for _route, values in receipt["phases"][phase].items():
-                assert values["n"] >= _MEASUREMENT_SAMPLES
-                assert values["5xx_or_transport"] == 0
-                if phase != "quiescent":
-                    baseline = receipt["phases"]["quiescent"][_route]["p95_ms"]
-                    budget = max(float(baseline) * 2, 2_000)
-                    budgets.setdefault(phase, {})[_route] = budget
-                    assert float(values["p95_ms"]) <= budget
-        receipt["p95_budgets_ms"] = budgets
-        assert receipt["throughput_works_per_second"] >= 5
-        assert receipt["rss_kib_max"] < 524_288
+        receipt["p95_budgets_ms"] = _validate_receipt_budgets(receipt)
+        assert installed_reconciliation_rate >= 5
+        assert peak_rss_kib < 524_288
         if receipt_path is not None:
             receipt_path.write_text(
                 json.dumps(receipt, indent=2) + "\n", encoding="utf-8"
