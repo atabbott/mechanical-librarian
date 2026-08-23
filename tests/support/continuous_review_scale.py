@@ -449,6 +449,7 @@ def qualify_installed_pipeline(
         report_items: dict[str, str] = {}
         provider_attempts: dict[str, int] = {}
         review_case_ids: list[str] = []
+        admission_results: dict[str, tuple[str, str | None]] = {}
         extracted: list[str] = []
         transient_item = "history-0000"
         credential_item = "science-0000"
@@ -547,9 +548,12 @@ def qualify_installed_pipeline(
 
         def admit(_, proposal_id: str):
             result = json.loads(repository.admit_review_case(proposals[proposal_id]))
+            item_id = report_items[proposals[proposal_id].report_id]
             if review_case_id := result.get("review_case_id"):
                 review_case_ids.append(str(review_case_id))
-            return result["status"], result.get("review_case_id")
+            admission = result["status"], result.get("review_case_id")
+            admission_results[item_id] = admission
+            return admission
 
         def pipeline() -> ReviewPreparationPipeline:
             return ReviewPreparationPipeline(
@@ -580,6 +584,14 @@ def qualify_installed_pipeline(
         ).fetchone()[0]
         assert circuit == 0
         assert retry_at > clock[0]
+        discrepancy_admission = admission_results["fiction-0000"]
+        assert discrepancy_admission[0] == "admitted"
+        assert discrepancy_admission[1] is not None
+        assert all(
+            status == "no_case"
+            for item_id, (status, _case_id) in admission_results.items()
+            if item_id != "fiction-0000"
+        )
 
         restarted = pipeline()
         restarted.recover()
@@ -588,7 +600,7 @@ def qualify_installed_pipeline(
         while True:
             if (
                 cast(PipelineProgress, restarted.progress("primary", "fiction")).state
-                == "completed"
+                == "completed_with_failures"
             ):
                 break
             advanced = run_next(restarted)
@@ -598,7 +610,7 @@ def qualify_installed_pipeline(
                         PipelineProgress,
                         restarted.progress("primary", "fiction"),
                     ).state
-                    == "completed"
+                    == "completed_with_failures"
                 )
 
         before_new = len(extracted)
@@ -652,8 +664,12 @@ def qualify_installed_pipeline(
         assert all(value is not None for value in final)
         assert sum(value.total for value in final if value) == expected_total
         assert sum(value.checked for value in final if value) == expected_total
-        assert sum(value.blocked for value in final if value) == 0
-        assert all(value.state == "completed" for value in final if value)
+        assert sum(value.blocked for value in final if value) == 1
+        assert [value.state for value in final if value] == [
+            "completed_with_failures",
+            "completed",
+            "completed",
+        ]
         assert provider_attempts[transient_item] == 2
         assert provider_attempts[credential_item] == 2
         stored_repository.close()
