@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -711,6 +712,22 @@ def qualify_installed_pipeline(
                     json={"password": "synthetic password"},
                 )
                 assert login.status_code == 200, login.text
+                workspace = client.get(origin + "/library")
+                assert workspace.status_code == 200, workspace.text
+                build_identity = re.search(
+                    r'data-build-identity="([0-9a-f]{64})"', workspace.text
+                )
+                assert build_identity is not None
+                action_headers = {
+                    "x-csrf-token": login.json()["csrf_token"],
+                    "x-ml-build-identity": build_identity.group(1),
+                }
+                for library in ("fiction", "history", "science"):
+                    requested = client.post(
+                        origin + f"/api/v1/review-preparation/primary/{library}/scan",
+                        headers=action_headers,
+                    )
+                    assert requested.status_code == 202, requested.text
                 zero_deadline = time.monotonic() + 15
                 while True:
                     if second_process.poll() is not None:
