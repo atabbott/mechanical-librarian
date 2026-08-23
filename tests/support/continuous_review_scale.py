@@ -718,7 +718,7 @@ def qualify_installed_pipeline(
                     r'data-build-identity="([0-9a-f]{64})"', workspace.text
                 )
                 browser_csrf = re.search(
-                    r'data-csrf-token="([0-9a-f]{64})"', workspace.text
+                    r'data-csrf-token="([A-Za-z0-9_-]{32,128})"', workspace.text
                 )
                 assert build_identity is not None
                 assert browser_csrf is not None
