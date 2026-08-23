@@ -1922,37 +1922,50 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             or limit not in {10, 20}
         ):
             raise FieldEffectError("invalid_activity_query")
+        transaction = self._transaction(
+            "field_effect_activity_transitions", deferred=True
+        )
         try:
+            transaction.begin()
             row = self._connection.execute(
                 "SELECT plan_id FROM field_effect_events WHERE event_id=?", (event_id,)
             ).fetchone()
             if row is None:
+                transaction.commit()
                 return ()
             documents = self._field_effect_event_documents(row[0])
-        except sqlite3.Error as error:
+            transitions = tuple(json.loads(document) for document in documents)
+            if any(
+                type(item) is not dict
+                or type(item.get("event_id")) is not str
+                or type(item.get("occurred_at")) is not int
+                or type(item.get("state")) is not str
+                or type(item.get("sequence")) is not int
+                for item in transitions
+            ):
+                raise FieldEffectError("persistence")
+            result = tuple(
+                {
+                    "event_id": item["event_id"],
+                    "occurred_at": item["occurred_at"],
+                    "state": item["state"],
+                    "sequence": item["sequence"],
+                }
+                for item in transitions
+                if after_sequence is None or item["sequence"] > after_sequence
+            )[: limit + 1]
+            transaction.commit()
+            return result
+        except (
+            FieldEffectError,
+            json.JSONDecodeError,
+            RecursionError,
+            sqlite3.Error,
+            TypeError,
+            ValueError,
+        ) as error:
+            transaction.rollback()
             raise FieldEffectError("persistence") from error
-        except (FieldEffectError, json.JSONDecodeError, TypeError, ValueError) as error:
-            raise FieldEffectError("persistence") from error
-        transitions = tuple(json.loads(document) for document in documents)
-        if any(
-            type(item) is not dict
-            or type(item.get("event_id")) is not str
-            or type(item.get("occurred_at")) is not int
-            or type(item.get("state")) is not str
-            or type(item.get("sequence")) is not int
-            for item in transitions
-        ):
-            raise FieldEffectError("persistence")
-        return tuple(
-            {
-                "event_id": item["event_id"],
-                "occurred_at": item["occurred_at"],
-                "state": item["state"],
-                "sequence": item["sequence"],
-            }
-            for item in transitions
-            if after_sequence is None or item["sequence"] > after_sequence
-        )[: limit + 1]
 
     def claim_field_effect(
         self, plan_id: str, expected_state: str, claim_token: str, claimed_at: int
