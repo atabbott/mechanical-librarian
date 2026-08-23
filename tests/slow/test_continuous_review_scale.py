@@ -118,7 +118,19 @@ class _WorkspaceProbe:
         self._assert_library_query(
             page, lens="all", query=None, preview=preserved_preview
         )
-        page.locator(".library-work-row[aria-current='true']").click()
+        cohort_row = page.locator(".library-work-row").first
+        cohort_row.click()
+        expect(cohort_row).to_have_attribute("aria-current", "true")
+        cohort_preview = parse_qs(urlparse(page.url).query).get("preview")
+        assert cohort_preview is not None and len(cohort_preview) == 1
+        assert cohort_preview[0] != review_case_id
+        detail = page.locator(".workspace-detail")
+        detail.get_by_role("heading").wait_for()
+        assert detail.inner_text().strip()
+
+        # The seeded manual case deliberately sits outside the reconciliation
+        # cohort, so return to its direct route for the owner-decision proof.
+        page.goto(f"{origin}/library?lens=all&preview={review_case_id}&field=title")
         page.get_by_role("heading", name="Which title should this work use?").wait_for()
 
         if phase == "early":
