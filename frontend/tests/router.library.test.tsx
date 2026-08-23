@@ -1640,7 +1640,7 @@ describe('Library route', () => {
     await waitFor(() => expect([libraryReads, attentionReads]).toEqual([2, 2]))
   })
 
-  it('follows a later-page provider-retry successor without borrowing another work\'s update', async () => {
+  const renderLaterPageProviderRetry = () => {
     const predecessor = { ...detail, id: 'case-1', current: true }
     const successor: CaseDetailView = {
       ...detail,
@@ -1660,7 +1660,22 @@ describe('Library route', () => {
       ...createHttp(),
       getLibrary: vi.fn(async () =>
         ++libraryReads === 1
-          ? { ...library, lens: 'needs_attention' as const }
+          ? {
+              ...library,
+              lens: 'needs_attention' as const,
+              works: library.works.map((work) => ({
+                ...work,
+                preparationOutcomes: [
+                  {
+                    providerRequests: 1,
+                    laneKind: 'work',
+                    provider: 'catalogue',
+                    reason: 'Provider retry is awaiting its next permitted request.',
+                    status: 'rate_limited',
+                  },
+                ],
+              })),
+            }
           : {
               ...library,
               lens: 'needs_attention' as const,
@@ -1669,7 +1684,13 @@ describe('Library route', () => {
             },
       ),
       getCaseDetail: vi.fn(async (id: string) =>
-        id === 'case-2' ? successor : id === 'case-3' ? unrelated : predecessor,
+        id === 'case-2'
+          ? successor
+          : id === 'case-3'
+            ? unrelated
+            : libraryReads > 1
+              ? { ...predecessor, current: false }
+              : predecessor,
       ),
     }
     const updates = createLiveStream()
@@ -1678,14 +1699,16 @@ describe('Library route', () => {
       http,
       updates,
     )
+    return { http, libraryReads: () => libraryReads, router, updates }
+  }
+
+  it('follows a rightful later-page provider-retry successor when an unrelated frame arrives last', async () => {
+    const { http, libraryReads, router, updates } = renderLaterPageProviderRetry()
 
     expect(await screen.findByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
     await act(async () => {
-      updates.announce({ sequence: 76, subject: 'case-3', topic: 'library' })
-    })
-    expect(router.state.location.search.preview).toBe('case-1')
-    await act(async () => {
-      updates.announce({ sequence: 77, subject: 'case-2', topic: 'library' })
+      updates.announce({ sequence: 76, subject: 'case-2', topic: 'library' })
+      updates.announce({ sequence: 77, subject: 'case-3', topic: 'library' })
     })
 
     await waitFor(() =>
@@ -1698,7 +1721,45 @@ describe('Library route', () => {
     )
     expect(await screen.findByRole('heading', { level: 2, name: 'Recovered work' })).toBeVisible()
     expect(http.getCaseDetail).toHaveBeenCalledWith('case-2')
-    await waitFor(() => expect(libraryReads).toBe(2))
+    expect(http.getCaseDetail).not.toHaveBeenCalledWith('case-3')
+    await waitFor(() => expect(libraryReads()).toBe(2))
+  })
+
+  it('inspects every coalesced later-page provider-retry candidate until it finds the rightful successor', async () => {
+    const { http, libraryReads, router, updates } = renderLaterPageProviderRetry()
+
+    expect(await screen.findByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
+    await act(async () => {
+      updates.announce({ sequence: 76, subject: 'case-3', topic: 'library' })
+      updates.announce({ sequence: 77, subject: 'case-2', topic: 'library' })
+    })
+
+    await waitFor(() =>
+      expect(router.state.location.search).toEqual({
+        lens: 'needs_attention',
+        cursor: 'later-page',
+        preview: 'case-2',
+        field: 'title',
+      }),
+    )
+    expect(await screen.findByRole('heading', { level: 2, name: 'Recovered work' })).toBeVisible()
+    expect(http.getCaseDetail).toHaveBeenCalledWith('case-3')
+    expect(http.getCaseDetail).toHaveBeenCalledWith('case-2')
+    await waitFor(() => expect(libraryReads()).toBe(2))
+  })
+
+  it('keeps a later-page provider-retry selection when no coalesced candidate has its target', async () => {
+    const { http, libraryReads, router, updates } = renderLaterPageProviderRetry()
+
+    expect(await screen.findByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
+    await act(async () => {
+      updates.announce({ sequence: 76, subject: 'case-3', topic: 'library' })
+    })
+
+    await waitFor(() => expect(libraryReads()).toBe(2))
+    await waitFor(() => expect(http.getCaseDetail).toHaveBeenCalledWith('case-3'))
+    expect(router.state.location.search.preview).toBe('case-1')
+    expect(http.getCaseDetail).not.toHaveBeenCalledWith('case-2')
   })
 
   it('acts on every Library announcement except the echo of its own decision', async () => {

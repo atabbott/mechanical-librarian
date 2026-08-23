@@ -23,6 +23,11 @@ import { ownerChoiceCount } from '../reviewChoiceCounts'
 
 type ReviewField = CaseDetailView['fields'][number]
 const searchNavigationDelay = 150
+// Live Library invalidation batches the documented fifty-work burst for 120 ms.
+// Keep each distinct subject from that bounded batch long enough to compare it
+// with the next bounded page read, but never treat a frame as selection
+// authority.
+const maxCoalescedSuccessorCandidates = 50
 const librarySearchIdentity = (search: object) =>
   JSON.stringify(Object.entries(search).sort(([left], [right]) => left.localeCompare(right)))
 // What the owner has chosen for one field and how far that choice has got.
@@ -794,7 +799,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     library: string
     item: string
   } | null>(null)
-  const pendingSuccessorRef = useRef<string | null>(null)
+  const pendingSuccessorRef = useRef(new Set<string>())
   const [frozenFieldOrders, setFrozenFieldOrders] = useState<
     Readonly<Record<string, readonly string[]>>
   >({})
@@ -936,39 +941,59 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         selectedTarget.caseId !== search.preview
       )
         return
-      pendingSuccessorRef.current = update.subject
+      if (pendingSuccessorRef.current.size < maxCoalescedSuccessorCandidates)
+        pendingSuccessorRef.current.add(update.subject)
     })
   }, [search.preview, updates])
   useEffect(() => {
     const selectedTarget = selectedTargetRef.current
-    const successorId = pendingSuccessorRef.current
+    const successorIds = [...pendingSuccessorRef.current]
     if (
       !selectedTarget ||
-      !successorId ||
+      !successorIds.length ||
       selectedTarget.caseId !== search.preview ||
       data.works.some((work) => work.reviewCaseId === search.preview)
     )
       return
-    pendingSuccessorRef.current = null
-    void http
-      .getCaseDetail(successorId)
-      .then((successor) => {
+    pendingSuccessorRef.current.clear()
+    void (async () => {
+      try {
+        const predecessor = await http.getCaseDetail(selectedTarget.caseId)
         if (
-          !successor.current ||
-          successor.target.connection !== selectedTarget.connection ||
-          successor.target.library !== selectedTarget.library ||
-          successor.target.item !== selectedTarget.item
+          predecessor.current ||
+          predecessor.target.connection !== selectedTarget.connection ||
+          predecessor.target.library !== selectedTarget.library ||
+          predecessor.target.item !== selectedTarget.item
         )
           return
-        void navigate({
-          replace: true,
-          search: (current) =>
-            current.preview === selectedTarget.caseId
-              ? { ...current, preview: successor.id }
-              : current,
-        })
-      })
-      .catch(() => undefined)
+      } catch {
+        return
+      }
+      for (const successorId of successorIds) {
+        try {
+          const successor = await http.getCaseDetail(successorId)
+          if (
+            !successor.current ||
+            successor.target.connection !== selectedTarget.connection ||
+            successor.target.library !== selectedTarget.library ||
+            successor.target.item !== selectedTarget.item
+          )
+            continue
+          await navigate({
+            replace: true,
+            search: (current) =>
+              current.preview === selectedTarget.caseId
+                ? { ...current, preview: successor.id }
+                : current,
+          })
+          return
+        } catch {
+          // A case can disappear again between the bounded page read and its
+          // authoritative detail read. The remaining coalesced candidates may
+          // still name its replacement.
+        }
+      }
+    })()
   }, [data.works, http, navigate, search.preview])
   const completionIdentity = complete?.id === selectedReviewCaseId ? complete.identity : undefined
   const displayedIdentity = selectedIdentity ?? completionIdentity

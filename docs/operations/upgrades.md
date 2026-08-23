@@ -15,7 +15,8 @@ it.
 The pre-release review-preparation claim index now orders each library's queued
 cohort by its persisted discovery ordinal. Earlier state with the former
 updated-time claim index is rejected at bootstrap and requires a clean rebuild;
-there is no adoption plan because this change is not a reconstructible object.
+this increment delivers no exact-predecessor adoption plan. The index remains
+reconstructible derived state under ADR-0013, for which such a plan is allowed.
 
 ## Offline derived-schema adoption
 
