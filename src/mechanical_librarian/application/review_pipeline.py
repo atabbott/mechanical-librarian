@@ -422,7 +422,7 @@ class ReviewPreparationPipeline:
     def _with_foreground_repository(
         self, call: Callable[[ReviewPipelineRepository], _ForegroundResult]
     ) -> _ForegroundResult:
-        """Run one owner control against the lifecycle-owned handle when present."""
+        """Serialize one foreground snapshot or control on the lifecycle handle."""
         with self._observation_lock:
             repository = self._observation_repository
             if repository is not None:
@@ -469,26 +469,9 @@ class ReviewPreparationPipeline:
 
     def status(self) -> tuple[tuple[PipelineProgress | None, ...], bool]:
         libraries = tuple(sorted(self._libraries))
-        with self._observation_lock:
-            if self._observation_repository is not None:
-                try:
-                    return self._observation_repository.review_pipeline_status(
-                        libraries
-                    )
-                except ReviewPipelineError:
-                    raise
-                except Exception as error:
-                    raise ReviewPipelineError("persistence") from error
-        repository = self._open_repository()
-        try:
-            try:
-                return repository.review_pipeline_status(libraries)
-            except ReviewPipelineError:
-                raise
-            except Exception as error:
-                raise ReviewPipelineError("persistence") from error
-        finally:
-            repository.close()
+        return self._with_foreground_repository(
+            lambda repository: repository.review_pipeline_status(libraries)
+        )
 
     def recover(self) -> None:
         repository = self._open_repository()
@@ -535,29 +518,9 @@ class ReviewPreparationPipeline:
         self._announce("preparation", None)
 
     def connection_conditions(self) -> tuple[TargetConnectionCondition, ...]:
-        with self._observation_lock:
-            if self._observation_repository is not None:
-                try:
-                    return self._observation_repository.target_connection_conditions()
-                except ReviewPipelineError:
-                    raise
-                except Exception as error:
-                    raise ReviewPipelineError("persistence") from error
-        repository = self._open_repository()
-        try:
-            return repository.target_connection_conditions()
-        except ReviewPipelineError:
-            raise
-        except Exception as error:
-            # This read feeds the recovery runner's blocked-target callback on
-            # the supervisor's own lane, and that lane survives only a
-            # ``ReviewPipelineError``. Left unconverted, the repository's own
-            # error ended the lane thread outright, stopping recovery and
-            # ordinary preparation with it, so the conversion this layer owes
-            # its caller is also what keeps the lane running.
-            raise ReviewPipelineError("persistence") from error
-        finally:
-            repository.close()
+        return self._with_foreground_repository(
+            lambda repository: repository.target_connection_conditions()
+        )
 
     def open_observation(self) -> None:
         """Validate the foreground preparation reader before workers start."""

@@ -78,8 +78,20 @@ class _WorkspaceProbe:
             self._page.wait_for_url(f"{origin}/library")
 
         page = self._page
-        preserved_preview = review_case_id if phase != "early" else None
-        page.get_by_role("link", name="Needs attention", exact=True).click()
+        page.goto(f"{origin}/library?lens=all&preview={review_case_id}&field=title")
+        page.get_by_role("heading", name="Which title should this work use?").wait_for()
+        preserved_preview = review_case_id
+        if phase == "early":
+            with page.expect_response(
+                lambda response: response.url.startswith(
+                    f"{origin}/api/v1/library?lens=needs_attention"
+                ),
+                timeout=2_000,
+            ) as observed:
+                page.get_by_role("link", name="Needs attention", exact=True).click()
+            assert observed.value.status < 500
+        else:
+            page.get_by_role("link", name="Needs attention", exact=True).click()
         self._assert_library_query(
             page,
             lens="needs_attention",
@@ -101,8 +113,7 @@ class _WorkspaceProbe:
         self._assert_library_query(
             page, lens="all", query=None, preview=preserved_preview
         )
-        page.locator(".library-work-row").first.click()
-        page.goto(f"{origin}/library?lens=all&preview={review_case_id}&field=title")
+        page.locator(".library-work-row[aria-current='true']").click()
         page.get_by_role("heading", name="Which title should this work use?").wait_for()
 
         if phase == "early":
