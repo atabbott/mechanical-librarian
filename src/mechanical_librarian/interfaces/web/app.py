@@ -981,6 +981,15 @@ class _OperationalIncident(_ClosedModel):
     cause: StrictStr = Field(min_length=1, max_length=64)
     code: (
         Literal[
+            "provider",
+            "configuration",
+            "authentication",
+            "stale",
+            "transient",
+            "projection",
+            "failed",
+            "currentness",
+            "persistence",
             "unsupported_media",
             "unreadable_media",
             "parser_refused",

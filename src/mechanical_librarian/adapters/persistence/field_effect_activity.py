@@ -2209,7 +2209,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             terminal_failures = self._connection.execute(
                 "SELECT work_id,stage,attempt,recovery_attempt,failure_code "
                 "FROM review_preparation_work WHERE state='failed' "
-                "AND failure_code IN ('unsupported_media','unreadable_media','parser_refused','missing_required_input','malformed_retained_data','internal_failure','unknown') "
+                "AND failure_code IS NOT NULL "
                 "ORDER BY updated_at DESC,work_id LIMIT 256"
             ).fetchall()
             for work_id, stage, attempt, recovery_attempt, code in terminal_failures:

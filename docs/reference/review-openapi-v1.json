@@ -2886,6 +2886,15 @@
             "anyOf": [
               {
                 "enum": [
+                  "provider",
+                  "configuration",
+                  "authentication",
+                  "stale",
+                  "transient",
+                  "projection",
+                  "failed",
+                  "currentness",
+                  "persistence",
                   "unsupported_media",
                   "unreadable_media",
                   "parser_refused",

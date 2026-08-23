@@ -45,6 +45,15 @@ _PREPARATION_STAGES = frozenset(
 )
 _TERMINAL_PREPARATION_CODES = frozenset(
     (
+        "provider",
+        "configuration",
+        "authentication",
+        "stale",
+        "transient",
+        "projection",
+        "failed",
+        "currentness",
+        "persistence",
         "unsupported_media",
         "unreadable_media",
         "parser_refused",
