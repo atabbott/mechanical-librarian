@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from urllib.parse import parse_qs, urlparse
 
@@ -127,11 +128,36 @@ class _WorkspaceProbe:
                 == 1
             )
         elif phase == "peak":
-            page.get_by_role(
-                "button", name="Choose current value:", exact=False
-            ).click()
+            with page.expect_response(
+                lambda response: (
+                    response.url
+                    == f"{origin}/api/v1/review-cases/{review_case_id}/decisions"
+                    and response.request.method == "POST"
+                ),
+                timeout=2_000,
+            ) as observed:
+                page.get_by_role(
+                    "button", name="Choose current value:", exact=False
+                ).click()
+            assert observed.value.status == 200
+            acknowledgement = observed.value.json()
+            command = json.loads(observed.value.request.post_data or "{}")
+            assert acknowledgement["schema_version"] == "human-decision-ack-v1"
+            assert acknowledgement["review_case_id"] == review_case_id
+            assert acknowledgement["outcome"] == "keep_current"
+            assert acknowledgement["selected_value"] is None
+            assert acknowledgement["destination"] == command["destination"] == "title"
+            assert acknowledgement["proposal_id"] == command["proposal_id"]
+            assert (
+                acknowledgement["target_fingerprint"] == command["target_fingerprint"]
+            )
+            page.get_by_role("heading", name="Review complete").wait_for()
             page.get_by_text(
-                "Decision recorded from the authoritative case.", exact=True
+                "1 recorded field outcome. No library data changed.", exact=True
+            ).wait_for()
+            page.get_by_text(
+                "Nothing is written yet — applying happens separately, behind your consent.",
+                exact=True,
             ).wait_for()
         else:
             page.reload()
