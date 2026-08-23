@@ -868,14 +868,22 @@ def qualify_installed_pipeline(
                         _assert_phase_fraction(phase, fraction)
                         if installed_review_case_id is None:
                             library_view = client.get(
-                                origin + "/api/v1/library?lens=needs_attention"
+                                origin
+                                + "/api/v1/library?lens=needs_attention&q=fiction-0000"
                             )
                             assert library_view.status_code == 200, library_view.text
                             items = library_view.json()["items"]
                             matches = [
                                 item
                                 for item in items
-                                if item["work_id"] == "fiction-0000"
+                                if item["title"] == "fiction-0000"
+                                and item["library"] == "fiction"
+                                and item["summary"] is not None
+                                and any(
+                                    field["destination"] == "title"
+                                    and field["value"] == "fiction-0000"
+                                    for field in item["summary"]["fields"]
+                                )
                             ]
                             assert len(matches) == 1
                             installed_review_case_id = matches[0]["review_case_id"]
