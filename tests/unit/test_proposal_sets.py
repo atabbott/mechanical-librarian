@@ -2,6 +2,7 @@ from collections.abc import Callable
 
 import pytest
 
+from mechanical_librarian.application.metadata_report import ReportNotFoundError
 from mechanical_librarian.application.proposal_sets import (
     CreateProposalSet,
     GetProposalSet,
@@ -57,7 +58,7 @@ class _Repository:
         self.proposals: dict[str, str] = {}
         self.events: list[str] = []
 
-    def get(self, report_id: str) -> str:
+    def get_proposal_input(self, report_id: str) -> str:
         self.events.append("get_report")
         if report_id != self.report.report_id:
             raise ValueError
@@ -106,12 +107,16 @@ def test_stale_report_publishes_nothing() -> None:
     ("configure", "expected"),
     (
         (
-            lambda repository: setattr(repository, "get", _raise(KeyError("report"))),
+            lambda repository: setattr(
+                repository,
+                "get_proposal_input",
+                _raise(ReportNotFoundError("report")),
+            ),
             ProposalMissingInputError,
         ),
         (
             lambda repository: setattr(
-                repository, "get", _raise(RuntimeError("store fault"))
+                repository, "get_proposal_input", _raise(RuntimeError("store fault"))
             ),
             ProposalInternalError,
         ),
@@ -132,7 +137,7 @@ def test_report_reopen_uses_closed_failure_taxonomy(
 def test_malformed_report_is_retained_data() -> None:
     report = _report()
     repository = _Repository(report)
-    repository.get = lambda _report_id: "{}"  # type: ignore[assignment, method-assign]  # reason: this test fixes malformed stored report bytes at the repository boundary
+    repository.get_proposal_input = lambda _report_id: "{}"  # type: ignore[assignment, method-assign]  # reason: this test fixes malformed stored report bytes at the repository boundary
 
     with pytest.raises(ProposalRetainedDataError):
         CreateProposalSet(repository, lambda _: True).run(report.report_id)
@@ -143,7 +148,7 @@ def test_report_identity_disagreement_is_retained_data() -> None:
     report = _report()
     repository = _Repository(report)
     requested_id = "report_" + "c" * 64
-    repository.get = lambda _report_id: report.to_json()  # type: ignore[assignment]  # reason: this test fixes the stored report independently of the requested identity
+    repository.get_proposal_input = lambda _report_id: report.to_json()  # type: ignore[assignment]  # reason: this test fixes the stored report independently of the requested identity
 
     with pytest.raises(ProposalRetainedDataError):
         CreateProposalSet(repository, lambda _: True).run(requested_id)

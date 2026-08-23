@@ -66,6 +66,10 @@ class MetadataReportError(RuntimeError):
     """A value-free operational failure at the command boundary."""
 
 
+class ReportNotFoundError(MetadataReportError):
+    """The requested immutable report is absent from retained storage."""
+
+
 class UnsupportedMediaError(MetadataReportError):
     pass
 
@@ -1586,6 +1590,7 @@ __all__ = [
     "ProviderCoverDescriptor",
     "ProviderLaneResult",
     "ReportRepository",
+    "ReportNotFoundError",
     "TargetFile",
     "TargetNotFoundError",
     "TargetReader",

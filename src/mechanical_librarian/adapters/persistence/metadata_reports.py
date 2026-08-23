@@ -1048,6 +1048,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def get(self, report_id: str) -> str:
         return self._reports.get(report_id)
 
+    def get_proposal_input(self, report_id: str) -> str:
+        return self._reports.get_proposal_input(report_id)
+
     def publish_proposal(self, proposal_set: ProposalSet) -> str:
         return self._proposal_sets.publish_proposal(proposal_set)
 
