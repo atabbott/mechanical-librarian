@@ -695,6 +695,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 @media (max-width:390px) { .cm-activity-event-group article { grid-template-columns:44px minmax(0,1fr) auto; }.cm-activity-pagination-summary { display:grid; grid-template-columns:auto minmax(0,1fr); gap:.15rem .3rem; }.cm-activity-page-size { grid-column:1 / -1; justify-content:space-between; margin:.35rem 0 0; }.cm-activity-page-size .cm-dropdown { min-width:9rem; }.cm-activity-pagination-nav { grid-template-columns:repeat(4,minmax(0,1fr)); }.cm-activity-pagination-nav button { padding-inline:.45rem; }.cm-activity-page-jump { grid-column:1 / -1; grid-row:1; min-height:44px; } }
 @media (max-width:760px) { .cm-activity-route > .connection-notice { order:5; } }
 @media (max-width:760px) { .cm-activity-filters button:focus-visible { outline-offset:-3px; } }
+@media (max-width:760px) { .cm-activity-route > .cm-page-heading { margin-bottom:.25rem; padding-bottom:.5rem; }.cm-activity-ledger-heading { padding:.75rem .9rem .35rem; }.cm-activity-tools { padding:.5rem .9rem .75rem; } }
 @media (prefers-reduced-motion:reduce) { .cm-activity-pulse { box-shadow:none; }.cm-activity-event-group article { scroll-behavior:auto; } }
 
 /* Live invalidation, the write-consent offer, and the completion handoff (#641, #639) */
