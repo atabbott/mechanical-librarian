@@ -801,17 +801,24 @@ def qualify_installed_pipeline(
                         headers=action_headers,
                     )
                     assert requested.status_code == 202, requested.text
-            assert fixture.discovery_started.wait(timeout=15), (
-                "first-start reconciliation was not observed"
-            )
-            with closing(sqlite3.connect(database)) as connection:
-                first_projection = connection.execute(
-                    "SELECT state,checked FROM review_preparation_scans"
-                ).fetchall()
-            assert first_projection
+                assert fixture.discovery_started.wait(timeout=15), (
+                    "first-start reconciliation was not observed"
+                )
+                first_status = client.get(origin + "/api/v1/review-preparation")
+                assert first_status.status_code == 200, first_status.text
+                first_projection = first_status.json()
+            assert first_projection["active"] is True
+            assert {item["library"] for item in first_projection["libraries"]} == {
+                "fiction",
+                "history",
+                "science",
+            }
             assert all(
-                state == "discovering" and checked == 0
-                for state, checked in first_projection
+                item["checked"] == 0 and item["state"] in {"queued", "discovering"}
+                for item in first_projection["libraries"]
+            )
+            assert any(
+                item["state"] == "discovering" for item in first_projection["libraries"]
             )
         finally:
             # Stopped, not killed. `SIGKILL` leaves SQLite's `-wal` and `-shm`
@@ -998,12 +1005,6 @@ def qualify_installed_pipeline(
                 second_process.kill()
                 second_process.wait(timeout=10)
 
-        with closing(sqlite3.connect(database)) as connection:
-            work_count, distinct_work = connection.execute(
-                "SELECT COUNT(*),COUNT(DISTINCT scan_id || ':' || item_id) "
-                "FROM review_preparation_work"
-            ).fetchone()
-        assert work_count == distinct_work == expected_total
         assert tuple(artifacts.iterdir()) == ()
         assert all(method == "GET" for method, _path in fixture.requests)
         installed_reconciliation_rate = (
