@@ -184,6 +184,17 @@ def test_proposal_stage_projects_only_closed_failure_codes(
     assert raised.value.__cause__ is failure
 
 
+def test_proposal_stage_preserves_target_connection_for_recovery() -> None:
+    failure = TargetConnectionError("unavailable")
+    stages = _proposal_stages(
+        lambda _report_id, _repository: (_ for _ in ()).throw(failure)
+    )
+
+    with pytest.raises(TargetConnectionError) as raised:
+        stages.propose(cast("ReviewPipelineRepository", object()), "report-id")
+    assert raised.value is failure
+
+
 @pytest.mark.parametrize(
     ("prepare", "expected_failure", "code", "proposal_count"),
     (

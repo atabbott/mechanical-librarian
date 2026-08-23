@@ -214,6 +214,7 @@ from mechanical_librarian.domain.proposal_set import ProposalSet
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 from mechanical_librarian.infrastructure.local_media import (
     LocalMediaError,
+    LocalMediaLimitError,
     open_local_media,
     sha256_descriptor,
 )
@@ -630,7 +631,13 @@ class _IsolatedEpubInspector:
             raise
         except MetadataReportError:
             raise
-        except (LocalMediaError, OSError) as error:
+        except LocalMediaLimitError as error:
+            raise ItemInspectionError(EpubInspectionOutcome.RESOURCE_LIMIT) from error
+        except LocalMediaError as error:
+            raise ItemInspectionError(
+                EpubInspectionOutcome.UNAVAILABLE_SOURCE
+            ) from error
+        except OSError as error:
             raise ItemInspectionError(
                 EpubInspectionOutcome.UNAVAILABLE_SOURCE
             ) from error

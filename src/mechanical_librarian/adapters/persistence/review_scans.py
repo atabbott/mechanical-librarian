@@ -51,7 +51,7 @@ _STAGE_BUCKETS = (
         "w.state IN ('queued','delayed','running') AND w.stage='projection'",
     ),
     ("ready", "w.state='complete'"),
-    ("failed", "w.state='failed'"),
+    ("failed", "w.state IN ('failed','stale')"),
 )
 _STAGE_COUNT_SQL = ",".join(
     f"COALESCE(SUM(CASE WHEN {predicate} THEN 1 ELSE 0 END),0)"

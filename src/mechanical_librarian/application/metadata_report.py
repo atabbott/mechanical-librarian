@@ -70,6 +70,10 @@ class ReportNotFoundError(MetadataReportError):
     """The requested immutable report is absent from retained storage."""
 
 
+class ProposalNotFoundError(MetadataReportError):
+    """The requested immutable proposal is absent from retained storage."""
+
+
 class UnsupportedMediaError(MetadataReportError):
     pass
 

@@ -6,7 +6,10 @@ from collections.abc import Callable
 from typing import Protocol, cast
 
 from mechanical_librarian.application.catalogue import TargetConnectionError
-from mechanical_librarian.application.metadata_report import ReportNotFoundError
+from mechanical_librarian.application.metadata_report import (
+    ProposalNotFoundError,
+    ReportNotFoundError,
+)
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
     ResolvedMetadataPolicy,
@@ -185,7 +188,7 @@ class GetProposalSet:
     def run(self, proposal_set_id: str) -> str:
         try:
             serialized = self._repository.get_proposal(proposal_set_id)
-        except KeyError as error:
+        except (KeyError, ProposalNotFoundError) as error:
             raise ProposalMissingInputError("proposal is unavailable") from error
         except Exception as error:
             raise ProposalInternalError("proposal could not be reopened") from error

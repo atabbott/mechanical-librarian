@@ -1627,7 +1627,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                         >
                           {status}
                         </span>
-                        {terminalFailure && preparation ? (
+                        {preparation ? (
                           <span className="terminal-preparation-copy">
                             {preparation.stage}: {preparation.reason} {preparation.recovery}{' '}
                             Reference: <code>{preparation.diagnosticReference}</code>

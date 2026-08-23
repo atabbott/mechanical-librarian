@@ -12,6 +12,10 @@ class LocalMediaError(OSError):
     """A controlled unavailable local-source boundary failure."""
 
 
+class LocalMediaLimitError(LocalMediaError):
+    """A local media source exceeded a configured byte limit."""
+
+
 @dataclass(frozen=True)
 class OpenedLocalMedia:
     descriptor: int
@@ -96,7 +100,7 @@ def open_local_media(container_path: str, reference: str) -> OpenedLocalMedia:
 
 def sha256_descriptor(descriptor: int, length: int, *, maximum: int) -> str:
     if type(length) is not int or length < 0 or length > maximum:
-        raise LocalMediaError("local media source exceeds its byte limit")
+        raise LocalMediaLimitError("local media source exceeds its byte limit")
     digest = hashlib.sha256()
     offset = 0
     while offset < length:

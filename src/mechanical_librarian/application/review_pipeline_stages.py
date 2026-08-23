@@ -303,6 +303,8 @@ class ReviewPipelineStages:
     ) -> str:
         try:
             serialized = self._create_proposal_set(report_id, pipeline_repository)
+        except TargetConnectionError:
+            raise
         except ProposalCurrentnessError as error:
             raise ReviewPipelineError("stale") from error
         except ProposalMissingInputError as error:

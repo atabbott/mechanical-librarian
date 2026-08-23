@@ -17,7 +17,10 @@ from collections.abc import Callable
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.schema import _validate_report_row
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
-from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.metadata_report import (
+    MetadataReportError,
+    ProposalNotFoundError,
+)
 from mechanical_librarian.domain.metadata_policy import (
     ResolvedMetadataPolicy,
     human_review_destinations,
@@ -149,7 +152,7 @@ class SQLiteProposalSetRepository(ConnectionScoped):
                 (proposal_set_id,),
             ).fetchone()
             if row is None:
-                raise MetadataReportError("persisted proposal is unavailable")
+                raise ProposalNotFoundError("persisted proposal is unavailable")
             return _validate_proposal_row(row)
         except MetadataReportError:
             raise
