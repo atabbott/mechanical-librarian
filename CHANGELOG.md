@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Refresh Library and Attention immediately when automatic capability suspension
+  changes current review work. Scheduler, direct apply, reconciliation, and
+  readiness now publish the same ordered Activity then Library update. (#794)
 - Keep each preparation cohort's persisted discovery order across every
   eligible stage, so early works reach Library without waiting for a stage
   drain; attention rows with complete provider evidence now precede currently

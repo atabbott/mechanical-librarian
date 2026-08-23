@@ -596,6 +596,7 @@ class FieldEffectOperation:
     updated_at: int = 0
     failure: str | None = None
     claim_token: str | None = None
+    affected_review_case_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -612,6 +613,10 @@ class FieldEffectOperation:
                     or _HEX.fullmatch(self.claim_token) is None
                 )
             )
+            or type(self.affected_review_case_ids) is not tuple
+            or any(type(value) is not str for value in self.affected_review_case_ids)
+            or self.affected_review_case_ids
+            != tuple(sorted(set(self.affected_review_case_ids)))
         ):
             raise FieldEffectError("invalid_state")
         if (
