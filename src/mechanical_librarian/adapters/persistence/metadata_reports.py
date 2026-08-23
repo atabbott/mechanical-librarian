@@ -683,8 +683,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         destination: str,
         reason: str,
         changed_at: int,
-    ) -> None:
-        self._field_effects.suspend_field_effect_capability(
+    ) -> tuple[str, ...]:
+        return self._field_effects.suspend_field_effect_capability(
             scope=scope,
             connection=connection,
             destination=destination,

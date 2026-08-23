@@ -107,7 +107,7 @@ class ContinuousFieldEffectRepository(Protocol):
         destination: str,
         reason: str,
         changed_at: int,
-    ) -> None: ...
+    ) -> tuple[str, ...]: ...
     def clear_field_effect_capability_suspension(
         self,
         *,
@@ -582,6 +582,7 @@ class ContinuousGuardedApplication:
         with self._slot:
             applied = application.apply(plan_id)
         self._announce("activity", None)
+        self._announce_affected_review_cases(applied)
         return applied
 
     def reconcile(self, plan_id: str) -> FieldEffectOperation:
@@ -590,9 +591,30 @@ class ContinuousGuardedApplication:
         with self._slot:
             reconciled = application.reconcile(plan_id)
         self._announce("activity", None)
+        self._announce_affected_review_cases(reconciled)
         return reconciled
 
+    def _announce_affected_review_cases(self, operation: FieldEffectOperation) -> None:
+        for review_case_id in operation.affected_review_case_ids:
+            self._announce("library", review_case_id)
+
+    def _flush_affected_review_case_ids(
+        self, affected_review_case_ids: set[str]
+    ) -> None:
+        if not affected_review_case_ids:
+            return
+        self._announce("activity", None)
+        for review_case_id in sorted(affected_review_case_ids):
+            self._announce("library", review_case_id)
+
     def schedule(self, limit: int = 100) -> int:
+        affected_review_case_ids: set[str] = set()
+        try:
+            return self._schedule(limit, affected_review_case_ids)
+        finally:
+            self._flush_affected_review_case_ids(affected_review_case_ids)
+
+    def _schedule(self, limit: int, affected_review_case_ids: set[str]) -> int:
         self._release_completed_manual_returns()
         with self._schedule_lock:
             generation = self._schedule_generation
@@ -659,12 +681,14 @@ class ContinuousGuardedApplication:
                     if observed.category == "connection_unavailable"
                     else "destination"
                 )
-                self._repository.suspend_field_effect_capability(
-                    scope=scope,
-                    connection=snapshot.connection,
-                    destination=snapshot.destination,
-                    reason=observed.category,
-                    changed_at=observed_at,
+                affected_review_case_ids.update(
+                    self._repository.suspend_field_effect_capability(
+                        scope=scope,
+                        connection=snapshot.connection,
+                        destination=snapshot.destination,
+                        reason=observed.category,
+                        changed_at=observed_at,
+                    )
                 )
                 self._advance_schedule_cursor(decision, generation)
                 continue
@@ -709,7 +733,7 @@ class ContinuousGuardedApplication:
             if operation is not None:
                 planned += 1
             self._advance_schedule_cursor(decision, generation)
-        if planned:
+        if planned and not affected_review_case_ids:
             self._announce("activity", None)
         return planned
 
@@ -1009,6 +1033,23 @@ class ContinuousGuardedApplication:
         *,
         force: bool,
     ) -> list[dict[str, object]]:
+        affected_review_case_ids: set[str] = set()
+        try:
+            return self._collect_capability_readiness(
+                libraries,
+                force=force,
+                affected_review_case_ids=affected_review_case_ids,
+            )
+        finally:
+            self._flush_affected_review_case_ids(affected_review_case_ids)
+
+    def _collect_capability_readiness(
+        self,
+        libraries: tuple[str, ...],
+        *,
+        force: bool,
+        affected_review_case_ids: set[str],
+    ) -> list[dict[str, object]]:
         """Project least-authority readiness before consent can be granted."""
         if self._activity_only:
             results: list[dict[str, object]] = []
@@ -1140,12 +1181,14 @@ class ContinuousGuardedApplication:
                             destinations[-1]["state"] = remaining
                     elif observed.category == "connection_unavailable":
                         if not self._activity_only:
-                            self._repository.suspend_field_effect_capability(
-                                scope="connection",
-                                connection=connection,
-                                destination=destination,
-                                reason=observed.category,
-                                changed_at=observed_at,
+                            affected_review_case_ids.update(
+                                self._repository.suspend_field_effect_capability(
+                                    scope="connection",
+                                    connection=connection,
+                                    destination=destination,
+                                    reason=observed.category,
+                                    changed_at=observed_at,
+                                )
                             )
                         destinations = [
                             {"destination": name, "state": "connection_unavailable"}
@@ -1161,12 +1204,14 @@ class ContinuousGuardedApplication:
                                 reason="connection_unavailable",
                                 observed_at=observed_at,
                             )
-                            self._repository.suspend_field_effect_capability(
-                                scope="destination",
-                                connection=connection,
-                                destination=destination,
-                                reason=observed.category,
-                                changed_at=observed_at,
+                            affected_review_case_ids.update(
+                                self._repository.suspend_field_effect_capability(
+                                    scope="destination",
+                                    connection=connection,
+                                    destination=destination,
+                                    reason=observed.category,
+                                    changed_at=observed_at,
+                                )
                             )
                         remaining = self._repository.field_effect_capability_suspension(
                             connection, destination

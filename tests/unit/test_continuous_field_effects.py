@@ -43,7 +43,8 @@ class _Repository:
         self.ready = [("plan-a1", "alpha"), ("plan-a2", "alpha"), ("plan-b1", "beta")]
         self.operations = {
             plan_id: SimpleNamespace(
-                plan=SimpleNamespace(connection="primary", library=library)
+                plan=SimpleNamespace(connection="primary", library=library),
+                affected_review_case_ids=(),
             )
             for plan_id, library in self.ready
         }
@@ -102,7 +103,8 @@ class _RecoveryRepository(_Repository):
         self.actions = [f"action-{index}" for index in range(205)]
         self.operations = {
             plan_id: SimpleNamespace(
-                plan=SimpleNamespace(connection="primary", library="alpha")
+                plan=SimpleNamespace(connection="primary", library="alpha"),
+                affected_review_case_ids=(),
             )
             for plan_id in self.plans + self.actions
         }
@@ -150,7 +152,8 @@ class _StuckRecoveryRepository(_Repository):
         self.actions: list[str] = []
         self.operations = {
             plan_id: SimpleNamespace(
-                plan=SimpleNamespace(connection="primary", library="alpha")
+                plan=SimpleNamespace(connection="primary", library="alpha"),
+                affected_review_case_ids=(),
             )
             for plan_id in self.plans
         }
@@ -261,8 +264,9 @@ class _PagedRepository:
         key = (scope, connection, "" if scope == "connection" else destination)
         current = self.suspensions.get(key)
         if current is not None and current[0] == "unexpected_effect_behavior":
-            return
+            return ()
         self.suspensions[key] = (reason, changed_at)
+        return ()
 
     def clear_field_effect_capability_suspension(
         self,
@@ -592,7 +596,7 @@ def test_return_to_automatic_releases_only_after_current_scan_completes() -> Non
             return object()
 
         def suspend_field_effect_capability(self, **_values):
-            return None
+            return ()
 
         def clear_field_effect_capability_suspension(self, **_values):
             return None

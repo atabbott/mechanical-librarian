@@ -49,6 +49,11 @@ from collections.abc import Callable
 from typing import cast
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
+from mechanical_librarian.adapters.persistence.review_sql import (
+    _CURRENT_REVIEW_FROM_SQL,
+    _EPUB_INAPPLICABLE_ATTENTION_SQL,
+    _REVIEW_FIELD_ATTENTION_SQL,
+)
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
@@ -1058,7 +1063,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
         destination: str,
         reason: str,
         changed_at: int,
-    ) -> None:
+    ) -> tuple[str, ...]:
         reasons = {
             "connection_unavailable",
             "insufficient_permission",
@@ -1097,6 +1102,14 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             ).fetchone()
             if existing is not None and existing[0] > changed_at:
                 raise FieldEffectError("invalid_suspension")
+            affected_review_case_ids = (
+                ()
+                if existing is not None
+                else self._current_attention_review_case_ids(
+                    connection,
+                    None if scope == "connection" else destination,
+                )
+            )
             self._connection.execute(
                 "INSERT INTO field_effect_suspensions(scope,connection_name,destination,reason,updated_at,document) "
                 "VALUES(?,?,?,?,?,?) ON CONFLICT(scope,connection_name,destination) DO UPDATE SET "
@@ -1106,11 +1119,36 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 (scope, connection, stored_destination, reason, changed_at, document),
             )
             transaction.commit()
+            return affected_review_case_ids
         except (sqlite3.Error, FieldEffectError) as error:
             transaction.rollback()
             if isinstance(error, FieldEffectError):
                 raise
             raise FieldEffectError("persistence") from error
+
+    def _current_attention_review_case_ids(
+        self, connection: str, destination: str | None
+    ) -> tuple[str, ...]:
+        """Read the authoritative Library/Attention filter under the write lock."""
+        clause = "" if destination is None else " AND result.destination=?"
+        parameters: tuple[str, ...] = (
+            (connection,) if destination is None else (connection, destination)
+        )
+        rows = self._connection.execute(
+            "SELECT DISTINCT rc.review_case_id "
+            + _CURRENT_REVIEW_FROM_SQL
+            + " JOIN review_case_field_facts result "
+            "ON result.review_case_id=rc.review_case_id WHERE c.connection_name=?"
+            + clause
+            + " AND "
+            + _REVIEW_FIELD_ATTENTION_SQL
+            + _EPUB_INAPPLICABLE_ATTENTION_SQL
+            + " ORDER BY rc.review_case_id",
+            parameters,
+        ).fetchall()
+        if any(len(row) != 1 or type(row[0]) is not str for row in rows):
+            raise FieldEffectError("persistence")
+        return tuple(row[0] for row in rows)
 
     def field_effect_capability_suspension(
         self, connection: str, destination: str

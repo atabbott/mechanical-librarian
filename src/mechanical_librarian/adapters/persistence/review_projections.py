@@ -35,7 +35,10 @@ from typing import Iterator, cast
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.review_sql import (
+    _CURRENT_REVIEW_FROM_SQL,
+    _EPUB_INAPPLICABLE_ATTENTION_SQL,
     _LATEST_PREPARATION_WORK_SQL,
+    _REVIEW_FIELD_ATTENTION_SQL,
 )
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.application.catalogue import TargetConnectionError
@@ -249,6 +252,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                     tuple[str, ...],
                     tuple[str, ...],
                     str | None,
+                    int,
                 ]
             ] = []
             for case_document, report_document in rows:
@@ -257,7 +261,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                     and '"schema_version":"review-terminal-work-v1"' in report_document
                 ):
                     projected_rows.append(
-                        (case_document, report_document, (), (), (), (), None)
+                        (case_document, report_document, (), (), (), (), None, 0)
                     )
                     continue
                 report = browse_report(report_document)
@@ -322,6 +326,9 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                         if case_id is None
                         else self._shadow_abstention_destinations(case_id),
                         terminal_document,
+                        0
+                        if case_id is None
+                        else self._current_attention_count(case_id),
                     )
                 )
             projected = tuple(projected_rows)
@@ -386,6 +393,22 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         except (HumanDecisionError, AutomaticDecisionError, TypeError) as error:
             raise MetadataReportError("review library is unavailable") from error
         return tuple(documents)
+
+    def _current_attention_count(self, review_case_id: str) -> int:
+        """Use the same persisted field-membership predicate as every attention view."""
+        row = self._connection.execute(
+            "SELECT count(*) "
+            + _CURRENT_REVIEW_FROM_SQL
+            + " JOIN review_case_field_facts result "
+            "ON result.review_case_id=c.review_case_id "
+            "WHERE result.review_case_id=? AND "
+            + _REVIEW_FIELD_ATTENTION_SQL
+            + _EPUB_INAPPLICABLE_ATTENTION_SQL,
+            (review_case_id,),
+        ).fetchone()
+        if row is None or len(row) != 1 or type(row[0]) is not int or row[0] < 0:
+            raise MetadataReportError("review library is unavailable")
+        return row[0]
 
     def _automatic_attention_destinations(self, review_case_id: str) -> tuple[str, ...]:
         rows = self._connection.execute(

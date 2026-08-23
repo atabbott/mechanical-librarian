@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Refresh Library and Attention immediately when automatic capability suspension
+  changes current review work. Scheduler, direct apply, reconciliation, and
+  readiness now publish the same ordered Activity then Library update. (#794)
+
 - Keep one retained Activity event with unavailable automatic authority from
   taking down the ledger. The row explains its bounded limitation while valid
   neighbours, filters, totals, ordering, and pagination remain usable. (#786)
