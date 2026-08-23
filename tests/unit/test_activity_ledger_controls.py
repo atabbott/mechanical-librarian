@@ -146,7 +146,11 @@ def test_search_narrows_on_the_work_the_field_and_the_status(
     """
     by_work = _all_rows(ledger, search="Larkspur")
     assert by_work
-    assert all("larkspur" in str(row["work_label"]).casefold() for row in by_work)
+    assert all(
+        "larkspur" in str(row["change"]).casefold()
+        or "larkspur" in str(row["change_detail"]).casefold()
+        for row in by_work
+    )
 
     by_field = _all_rows(ledger, search="isbn")
     assert by_field
@@ -159,26 +163,68 @@ def test_search_narrows_on_the_work_the_field_and_the_status(
     assert _all_rows(ledger, search="no such work anywhere in this ledger") == []
 
 
-def test_the_changed_value_itself_is_not_searchable(
+@pytest.mark.parametrize(
+    ("term", "destination"),
+    (
+        ("9780060512750", "isbn"),
+        ("雨の地図", "authors"),
+        ("Larkspur Cycle", "series"),
+        ("1974-05-13", "publishedDate"),
+    ),
+)
+def test_each_public_changed_value_shape_is_searchable(
+    ledger: ContinuousGuardedApplication, term: str, destination: str
+) -> None:
+    """Scalar, list, structured series and date leaves stay searchable (#787)."""
+    rows = _all_rows(ledger, search=term)
+    assert rows
+    assert {str(row["destination"]) for row in rows} == {destination}
+
+
+@pytest.mark.parametrize(
+    "term",
+    ("field-effect-event-v1", "schema_version", "decision_id", "automatic_bundle_"),
+)
+def test_activity_search_never_exposes_immutable_internal_keys_or_identifiers(
+    ledger: ContinuousGuardedApplication, term: str
+) -> None:
+    assert _all_rows(ledger, search=term) == []
+
+
+def test_the_changed_value_itself_is_searchable(
     ledger: ContinuousGuardedApplication,
 ) -> None:
-    """A row's own new value cannot be found by searching for it.
-
-    This is asserted as current behaviour rather than as a fault, so that the
-    limitation is visible and a later change to it is a deliberate one. The
-    ledger's search predicate covers ``work_id``, ``library``, ``destination``,
-    ``state`` and the report's title and detail; the durable before and after
-    are read out of each event's own document one layer further out, after the
-    row has already been selected, so they are not available to the query.
-
-    It is worth stating plainly: an owner who remembers the value but not the
-    work cannot find the record of it on this page.
-    """
+    """An owner can find an immutable row by its own changed value (#787)."""
     written = [
         row for row in _all_rows(ledger) if "9780060512750" in str(row["change"])
     ]
     assert written, "the seeded ledger should contain this exact new value"
-    assert _all_rows(ledger, search="9780060512750") == []
+    matched = _all_rows(ledger, search="9780060512750")
+    assert [row["event_id"] for row in matched] == [row["event_id"] for row in written]
+    assert all("9780060512750" in str(row["change"]) for row in matched)
+
+
+def test_search_uses_the_same_automatic_and_policy_words_the_owner_reads(
+    ledger: ContinuousGuardedApplication,
+) -> None:
+    automatic = _all_rows(ledger, search="A later automatic choice")
+    assert automatic
+    assert {str(row["event_type"]) for row in automatic} == {"metadata"}
+    assert all(
+        "a later automatic choice" in str(row["change"]).casefold() for row in automatic
+    )
+
+    policy = _all_rows(ledger, search="Ask me")
+    assert policy
+    assert {str(row["event_type"]) for row in policy} == {"policy"}
+    assert all(
+        any(
+            fact.get("previous") == "Ask me"
+            for fact in row.get("policy_changes", [])
+            if isinstance(fact, dict)
+        )
+        for row in policy
+    )
 
 
 def test_the_date_range_excludes_what_falls_outside_it(

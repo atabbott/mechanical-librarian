@@ -7,6 +7,13 @@
   drain; attention rows with complete provider evidence now precede currently
   provider-limited rows without hiding either. (#826, #827)
 
+- Keep one retained Activity event with unavailable automatic authority from
+  taking down the ledger. The row explains its bounded limitation while valid
+  neighbours, filters, totals, ordering, and pagination remain usable. (#786)
+- Let Activity search find durable displayed values, including automatic,
+  no-change, decision, and policy before/after wording. It streams immutable
+  authority in order without an index, duplicate audit document, or new
+  private output. (#787)
 - Set the first-run and in-app settings authority: file-managed deployments
   remain unchanged, store-mode secrets are write-only and backup-protected, and
   only an empty `/data` volume may enter setup. (#762)

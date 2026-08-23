@@ -108,6 +108,27 @@
         "title": "_ActivityDestination",
         "type": "object"
       },
+      "_ActivityDiagnostic": {
+        "additionalProperties": false,
+        "properties": {
+          "event_class": {
+            "const": "automatic_decision",
+            "title": "Event Class",
+            "type": "string"
+          },
+          "reason": {
+            "const": "automatic_authority_unavailable",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_class",
+          "reason"
+        ],
+        "title": "_ActivityDiagnostic",
+        "type": "object"
+      },
       "_ActivityEvent": {
         "additionalProperties": false,
         "properties": {
@@ -144,6 +165,16 @@
             "maxLength": 512,
             "title": "Destination",
             "type": "string"
+          },
+          "diagnostic": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_ActivityDiagnostic"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "event_id": {
             "default": "recorded-event",

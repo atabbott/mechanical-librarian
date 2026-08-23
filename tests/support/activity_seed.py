@@ -8,11 +8,9 @@ application -- real durable documents, real timestamps, past a page boundary --
 so the surface can be driven and measured against what an owner would actually
 see (#636).
 
-Two of the ledger's seven source kinds are absent by necessity rather than by
-choice: ``automatic_decision`` and ``no_change`` both need a durable automatic
-decision, and reaching one requires evidence the shadow evaluator will decide
-on rather than abstain from. ``tests/unit/test_activity_end_to_end.py`` records
-that finding in full. Everything here is written through a supported seam.
+Everything here is written through a supported seam. The dedicated Activity
+end-to-end proof also drives automatic decisions and no-change facts through
+the qualified policy and shadow-evaluation path (#789).
 """
 
 from __future__ import annotations

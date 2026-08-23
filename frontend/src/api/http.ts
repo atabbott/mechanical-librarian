@@ -245,6 +245,10 @@ export interface ActivityPolicyChangeView {
   previous: string
   next: string
 }
+export interface ActivityDiagnosticView {
+  event_class: 'automatic_decision'
+  reason: 'automatic_authority_unavailable'
+}
 export interface ActivityEventView {
   author_label?: string
   category: ActivityCategory
@@ -253,6 +257,7 @@ export interface ActivityEventView {
   /** The same change as a whole sentence, for a reader who hears the row. */
   change_detail: string
   destination: string
+  diagnostic?: ActivityDiagnosticView | null
   event_id: string
   event_type: ActivityEventType
   evidence: readonly ActivityEvidenceView[]
@@ -1010,6 +1015,26 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
       const eventType = stringValue(event.event_type, 'activity_event_type')
       const category = stringValue(event.category, 'activity_event_category')
       const policyChanges = event.policy_changes === undefined ? [] : event.policy_changes
+      const diagnostic: ActivityDiagnosticView | null =
+        event.diagnostic === undefined || event.diagnostic === null
+          ? null
+          : (() => {
+              if (!record(event.diagnostic)) throw new ApiError(502, 'invalid_activity_diagnostic')
+              const eventClass = stringValue(
+                event.diagnostic.event_class,
+                'activity_diagnostic_event_class',
+              )
+              const reason = stringValue(event.diagnostic.reason, 'activity_diagnostic_reason')
+              if (
+                eventClass !== 'automatic_decision' ||
+                reason !== 'automatic_authority_unavailable'
+              )
+                throw new ApiError(502, 'invalid_activity_diagnostic')
+              return {
+                event_class: 'automatic_decision',
+                reason: 'automatic_authority_unavailable',
+              }
+            })()
       if (
         !['review', 'policy', 'metadata', 'safety', 'unknown'].includes(eventType) ||
         !['owner', 'automatic', 'policy', 'recovery'].includes(category) ||
@@ -1033,6 +1058,7 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
           }
         }),
         destination: stringValue(event.destination, 'activity_event_destination'),
+        diagnostic,
         event_id: stringValue(event.event_id, 'activity_event_id'),
         event_type: eventType as ActivityEventType,
         evidence: event.evidence.map((item) => {

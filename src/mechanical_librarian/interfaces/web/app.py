@@ -580,6 +580,11 @@ class _ActivityPolicyChange(_ClosedModel):
     next: str = Field(max_length=512)
 
 
+class _ActivityDiagnostic(_ClosedModel):
+    event_class: Literal["automatic_decision"]
+    reason: Literal["automatic_authority_unavailable"]
+
+
 class _ActivityEvent(_ClosedModel):
     author_label: str = Field(default="Author details are not recorded", max_length=512)
     # What the owner reads across the row, in order: which work or setting
@@ -590,6 +595,7 @@ class _ActivityEvent(_ClosedModel):
     change: str = Field(default="Recorded", max_length=512)
     change_detail: str = Field(default="Recorded", max_length=512)
     destination: str = Field(max_length=512)
+    diagnostic: _ActivityDiagnostic | None = None
     event_id: str = Field(default="recorded-event", max_length=128)
     event_type: str = Field(default="unknown", max_length=32)
     evidence: list[_ActivityEvidence] = Field(default_factory=list, max_length=8)

@@ -5,38 +5,17 @@ assert the record the query projects; the composer tests build that record in
 Python and assert the words; the component tests are given the words as props.
 Each passes while the join between them is wrong, and a broken lookup renders
 as ``Recorded`` -- which reads as a reasonable non-change row rather than as a
-fault. This module closes that gap for the kinds it covers: the documents are
+fault. This module closes that gap: the documents are
 written through the real guarded application, read back through the real
 activity query, and joined to their real report by the real application layer,
 and what is asserted is the sentence an owner would read (#636).
-
-Two of the ledger's source kinds are deliberately absent here, and the reason
-is worth more than the coverage would have been.
-
-``automatic_decision`` and ``no_change`` both require a durable automatic
-decision document. Reaching one through supported seams gets a long way and
-then stops: activating a policy that qualifies a destination works (the
-built-in profile already sends ``title_layout`` to ``automatic`` under the
-qualified ``preserve`` option), proposals evaluated under that resolved policy
-are admitted, and ``persist_shadow_outcome`` runs. But every field of the
-resulting outcome carries ``abstention``, and ``_record_automatic_outcomes``
-only admits ``candidate``/``keep_current``/``ignore``. Turning an abstention
-into a decision is a property of the *evidence in the report*, not of the
-policy -- it needs provider claims the shadow evaluator will actually decide
-on, which is evaluator work rather than test setup.
-
-``record_current_field_effect_no_change`` is a real public seam that the
-application itself calls, but it resolves authority from a persisted decision
-and so raises ``authority_binding`` without one; it inherits the same block.
-
-The suite's existing automatic-decision fixtures reach behind the product with
-a raw ``INSERT INTO automatic_decisions``. Rows built that way would prove the
-insert, not the join these tests exist to check, so they are not used here.
 """
 
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
+from typing import cast
 
 from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
@@ -44,13 +23,37 @@ from mechanical_librarian.adapters.field_effect_authority import (
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
+from mechanical_librarian.application.field_effects import (
+    AuthoritySnapshot,
+    GuardedFieldApplication,
+)
 from mechanical_librarian.domain.automatic_decision import (
     F19A_QUALIFICATION_MANIFEST_SHA256,
     AutomaticDecision,
 )
+from mechanical_librarian.domain.field_effect import EffectAuthority
 from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.metadata_policy import (
+    DEFAULT_OPTIONS,
+    OPTION_CATALOGUE,
+    MetadataPolicyProfile,
+    human_review_destinations,
+    resolve_policy,
+)
+from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    ClaimScope,
+    MetadataReport,
+    TargetDestination,
+    TargetField,
+    TargetFieldState,
+)
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+from tests.support.automatic_no_change import _automatic_no_change_inputs
+from tests.support.proposal_evidence import _claim, _fields, _provider
+from tests.support.proposal_evidence import _report as _proposal_report
 from tests.unit.test_field_effects import (  # noqa: F401
     CAPABILITY,
     DEPENDENCY,
@@ -63,7 +66,9 @@ from tests.unit.test_field_effects import (  # noqa: F401
 )
 
 
-def _ledger(environment: _EffectEnvironment) -> list[dict[str, object]]:
+def _ledger(
+    environment: _EffectEnvironment, *, search: str | None = None
+) -> list[dict[str, object]]:
     """Read the ledger exactly as the web transport reads it.
 
     The collaborators here are the ones ``bootstrap.composition`` supplies for
@@ -80,7 +85,7 @@ def _ledger(environment: _EffectEnvironment) -> list[dict[str, object]]:
         lambda *_: None,
         activity_only=True,
     )
-    events = service.activity()["events"]
+    events = service.activity(search=search)["events"]
     assert isinstance(events, list)
     return events
 
@@ -89,6 +94,217 @@ def _facts(event: dict[str, object]) -> dict[str, str]:
     evidence = event["evidence"]
     assert isinstance(evidence, list)
     return {str(item["label"]): str(item["value"]) for item in evidence}
+
+
+def _automatic_decisions(
+    environment: _EffectEnvironment,
+    report: MetadataReport,
+    category: str,
+    option: str,
+    *,
+    qualified: bool,
+) -> tuple[AutomaticDecision, ...]:
+    """Persist naturally supported automatic outcomes through public seams."""
+    options = dict(DEFAULT_OPTIONS)
+    options[category] = option
+    destinations = {
+        name: "unsupported" if name == "explicit" else "ask"
+        for name in OPTION_CATALOGUE
+    }
+    destinations[category] = "automatic"
+    profile = MetadataPolicyProfile.create("Activity automatic", options, destinations)
+    resolved = resolve_policy(profile, report.target.library)
+    environment.repository.enter_shadow_preview(1)
+    environment.repository.create_metadata_policy_draft(profile.canonical_json)
+    environment.repository.activate_metadata_policy(
+        profile.policy_id,
+        MetadataPolicyProfile.builtin().policy_id,
+        ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+        2,
+    )
+    if qualified:
+        environment.repository.activate_qualified_automatic(3)
+    proposal_set = evaluate_report(
+        report, resolved.resolved_id, human_review_destinations(resolved)
+    )
+    environment.repository.publish(report, lambda: True)
+    environment.repository.publish_proposal(proposal_set)
+    case_id = json.loads(environment.repository.admit_review_case(proposal_set))[
+        "review_case_id"
+    ]
+    assert type(case_id) is str
+    ShadowOutcomeSet.from_json(
+        environment.repository.persist_shadow_outcome(case_id, 4)
+    )
+    return tuple(
+        AutomaticDecision.from_json(value)
+        for value in environment.repository.get_review_case_decisions(case_id)
+    )
+
+
+def _automatic_no_change_decisions(
+    environment: _EffectEnvironment, *, qualified: bool
+) -> tuple[AutomaticDecision, ...]:
+    report, category, option, destination = _automatic_no_change_inputs("exact_title")
+    decisions = _automatic_decisions(
+        environment, report, category, option, qualified=qualified
+    )
+    assert not decisions or any(
+        value.destination == destination and value.outcome == "keep_current"
+        for value in decisions
+    )
+    return decisions
+
+
+def _automatic_candidate_decision(
+    environment: _EffectEnvironment,
+) -> AutomaticDecision:
+    description = "An exact source-bound description."
+    report = _proposal_report(
+        fields=_fields(
+            description=TargetField(
+                TargetDestination.DESCRIPTION, TargetFieldState.MISSING
+            )
+        ),
+        providers=(
+            _provider(
+                "catalogue",
+                "edition-1",
+                (
+                    _claim(
+                        "catalogue",
+                        "edition-1",
+                        ClaimKind.DESCRIPTION,
+                        description,
+                        scope=ClaimScope.WORK,
+                    ),
+                ),
+            ),
+        ),
+    )
+    decisions = _automatic_decisions(
+        environment,
+        report,
+        "description_fill",
+        "safe_plain_text",
+        qualified=True,
+    )
+    return next(
+        value
+        for value in decisions
+        if value.destination == "description" and value.outcome == "candidate"
+    )
+
+
+def _qualified_no_change_decision(environment: _EffectEnvironment) -> AutomaticDecision:
+    decisions = _automatic_no_change_decisions(environment, qualified=True)
+    return next(value for value in decisions if value.destination == "title")
+
+
+def test_a_qualified_automatic_decision_reaches_activity_without_raw_inserts(
+    effects: _EffectEnvironment,  # noqa: F811
+) -> None:
+    decision = _qualified_no_change_decision(effects)
+
+    automatic = next(
+        event for event in _ledger(effects) if event["event_id"] == decision.decision_id
+    )
+    assert automatic["category"] == "automatic"
+    assert automatic["state"] == "recorded"
+    assert automatic["change"] == "Chose a title value automatically"
+    assert _facts(automatic)["New value"] == "Secret History"
+
+
+def test_missing_authority_degrades_one_supported_automatic_decision(
+    effects: _EffectEnvironment,  # noqa: F811
+) -> None:
+    decision = _qualified_no_change_decision(effects)
+    effects.repository._connection.execute(
+        "DROP TRIGGER shadow_decision_outcomes_no_delete"
+    )
+    effects.repository._connection.execute(
+        "DELETE FROM shadow_outcome_field_facts WHERE review_case_id=?",
+        (decision.review_case_id,),
+    )
+    effects.repository._connection.execute(
+        "DELETE FROM shadow_decision_outcomes WHERE review_case_id=?",
+        (decision.review_case_id,),
+    )
+    effects.repository._connection.commit()
+
+    retained = effects.repository.field_effect_activity_page(
+        search=None,
+        event_type="metadata",
+        occurred_after=0,
+        page=1,
+        page_size=25,
+    )
+    assert retained["total"] == 1
+    assert retained["events"][0]["record"] == {
+        "source_kind": "degraded",
+        "degraded_reason": "automatic_authority_unavailable",
+    }
+
+
+def test_an_unqualified_policy_records_no_automatic_decision(
+    effects: _EffectEnvironment,  # noqa: F811
+) -> None:
+    assert _automatic_no_change_decisions(effects, qualified=False) == ()
+    assert not [event for event in _ledger(effects) if event["category"] == "automatic"]
+
+
+def test_a_qualified_automatic_no_change_is_recorded_by_normal_scheduling(
+    effects: _EffectEnvironment,  # noqa: F811
+) -> None:
+    report = metadata_report("Paper Moons: Larkspur", "a", "b", item_id="book-1")
+    effects.repository.publish(report, lambda: True)
+    retry = _plan(
+        effects,
+        destination="subtitle",
+        pre="Original subtitle",
+        desired="Replacement subtitle",
+        suffix="e",
+    )
+    effects.target.fail_next = True
+    assert effects.service.apply(retry.plan.plan_id).state == "retryable"
+
+    decision = _qualified_no_change_decision(effects)
+
+    class UnexpectedAuthority:
+        def resolve(
+            self, _decision: HumanDecision | AutomaticDecision
+        ) -> AuthoritySnapshot:
+            raise AssertionError("keep-current decision reached authority")
+
+        def current(self, _authority: EffectAuthority) -> bool:
+            raise AssertionError("keep-current decision reached authority")
+
+    scheduler = ContinuousGuardedApplication(
+        effects.repository,
+        {("primary", "ebooks"): cast(GuardedFieldApplication, SimpleNamespace())},
+        {("primary", "ebooks"): SimpleNamespace()},
+        UnexpectedAuthority(),
+        (("primary", "ebooks"),),
+        lambda: 10,
+        lambda *_: None,
+    )
+    assert scheduler.schedule() == 0
+    no_change = next(
+        event for event in _ledger(effects) if event["state"] == "no_change_required"
+    )
+    assert decision.to_json() in effects.repository.get_review_case_decisions(
+        decision.review_case_id
+    )
+    assert no_change["change"] == "Kept Secret History"
+
+    waiting = _ledger(effects, search="Waiting safely")
+    assert [(event["state"], event["destination"]) for event in waiting] == [
+        ("retryable", "subtitle")
+    ]
+    no_change_rows = _ledger(effects, search="No change required")
+    assert [event["state"] for event in no_change_rows] == ["no_change_required"]
+    assert _ledger(effects, search="retryable") == []
+    assert _ledger(effects, search="no_change_required") == []
 
 
 def test_a_real_write_reaches_the_owner_as_one_exact_sentence(

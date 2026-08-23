@@ -17,6 +17,7 @@ because it was that state.
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import cast
 
 from mechanical_librarian.domain.metadata_report import (
@@ -28,6 +29,7 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.proposal_set import canonical_target_fields
 from mechanical_librarian.domain.readable_activity import (
     ABSENT,
+    AUTOMATIC_AUTHORITY_UNAVAILABLE,
     ReadableChange,
     chooser_label,
     destination_label,
@@ -39,9 +41,41 @@ from mechanical_librarian.domain.readable_activity import (
     value_text,
 )
 
-__all__ = ["ACTIVITY_CATEGORIES", "readable_activity_event"]
+__all__ = [
+    "ACTIVITY_CATEGORIES",
+    "ActivityResult",
+    "activity_result_label",
+    "activity_search_text",
+    "readable_activity_event",
+]
 
 ACTIVITY_CATEGORIES = ("owner", "automatic", "policy", "recovery")
+
+
+class ActivityResult(StrEnum):
+    """The closed result vocabulary the Activity owner can read and search."""
+
+    ACCEPTED = "Accepted"
+    KEPT_CURRENT = "Kept current"
+    REJECTED = "Rejected"
+    COVER_ADVICE_COMPLETED = "Cover advice completed"
+    COVER_ADVICE_UNAVAILABLE = "Cover advice unavailable"
+    COVER_ADVICE_FAILED_SAFELY = "Cover advice failed safely"
+    OWNER_COVER_CHOICE_RECORDED = "Owner cover choice recorded"
+    MANUAL_COVER_RETRY = "Manual cover retry"
+    NO_CHANGE_REQUIRED = "No change required"
+    APPLYING = "Applying"
+    PREPARING = "Preparing"
+    PLANNED = "Planned"
+    CHECKING = "Checking"
+    WAITING_SAFELY = "Waiting safely"
+    VERIFIED = "Verified"
+    STALE = "Stale"
+    SUPERSEDED = "Superseded"
+    STOPPED_SAFELY = "Stopped safely"
+    RECORDED = "Recorded"
+
+
 # The write lifecycle states that are still moving or already closed without
 # an applied value. Neither is a completed change, so neither claims one.
 _UNSETTLED = frozenset({"planned", "claimed", "applying", "reconciling"})
@@ -58,6 +92,32 @@ _CATEGORIES = {
     "safety": "recovery",
     "unknown": "recovery",
 }
+
+_RESULT_LABELS = {
+    "accept": ActivityResult.ACCEPTED,
+    "keep_current": ActivityResult.KEPT_CURRENT,
+    "reject": ActivityResult.REJECTED,
+    "completed": ActivityResult.COVER_ADVICE_COMPLETED,
+    "unavailable": ActivityResult.COVER_ADVICE_UNAVAILABLE,
+    "failed": ActivityResult.COVER_ADVICE_FAILED_SAFELY,
+    "selected": ActivityResult.OWNER_COVER_CHOICE_RECORDED,
+    "retry": ActivityResult.MANUAL_COVER_RETRY,
+    "no_change_required": ActivityResult.NO_CHANGE_REQUIRED,
+    "applying": ActivityResult.APPLYING,
+    "claimed": ActivityResult.PREPARING,
+    "planned": ActivityResult.PLANNED,
+    "reconciling": ActivityResult.CHECKING,
+    "retryable": ActivityResult.WAITING_SAFELY,
+    "verified": ActivityResult.VERIFIED,
+    "stale": ActivityResult.STALE,
+    "superseded": ActivityResult.SUPERSEDED,
+    "abandoned": ActivityResult.STOPPED_SAFELY,
+}
+
+
+def activity_result_label(state: str) -> ActivityResult:
+    """Return the closed owner-visible result word for one durable state."""
+    return _RESULT_LABELS.get(state, ActivityResult.RECORDED)
 
 
 def _reported_value(report: MetadataReport | None, destination: str) -> object:
@@ -304,6 +364,25 @@ def readable_activity_event(
             },
         ]
         event["policy_changes"] = changes
+    elif source_kind == "degraded":
+        degraded_reason = cast(str, record.get("degraded_reason", ""))
+        unavailable = {
+            AUTOMATIC_AUTHORITY_UNAVAILABLE: "The automatic authority is no longer available",
+        }.get(degraded_reason, "Details cannot be read")
+        change = ReadableChange(
+            "Details unavailable", "Recorded details are unavailable"
+        )
+        facts = [
+            {
+                "label": "Record status",
+                "value": "This retained event cannot be fully projected",
+            },
+            {"label": "Disclosure", "value": unavailable},
+        ]
+        event["diagnostic"] = {
+            "event_class": "automatic_decision",
+            "reason": degraded_reason,
+        }
     else:
         change = ReadableChange("Recorded", "Recorded")
         facts = [{"label": "Chosen by", "value": chooser_label(origin)}]
@@ -314,3 +393,45 @@ def readable_activity_event(
     event["change"] = change.compact
     event["change_detail"] = change.sentence
     event["evidence"] = facts
+
+
+def activity_search_text(
+    event: dict[str, object], report: MetadataReport | None
+) -> str:
+    """Return exactly the owner-readable Activity words that may be searched."""
+    projected = dict(event)
+    readable_activity_event(projected, report)
+    values: list[str] = []
+    for key in (
+        "work_id",
+        "library",
+        "destination",
+        "work_label",
+        "detail",
+        "field_label",
+        "change",
+        "change_detail",
+    ):
+        value = projected.get(key)
+        if type(value) is str:
+            values.append(value)
+    state = projected.get("state")
+    if type(state) is str:
+        values.append(activity_result_label(state).value)
+    if report is not None:
+        values.append(report.target.current_title or "Untitled")
+    evidence = projected.get("evidence")
+    for fact in evidence if type(evidence) is list else ():
+        if type(fact) is dict:
+            for key in ("label", "value"):
+                value = fact.get(key)
+                if type(value) is str:
+                    values.append(value)
+    policy_changes = projected.get("policy_changes")
+    for change in policy_changes if type(policy_changes) is list else ():
+        if type(change) is dict:
+            for key in ("field", "setting", "previous", "next"):
+                value = change.get(key)
+                if type(value) is str:
+                    values.append(value)
+    return "\n".join(values).casefold()

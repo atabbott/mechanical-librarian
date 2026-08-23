@@ -8,7 +8,6 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Protocol, cast
 
-from mechanical_librarian.application.activity_records import readable_activity_event
 from mechanical_librarian.application.field_effects import (
     AuthorityCurrentness,
     CapabilityObserver,
@@ -16,6 +15,7 @@ from mechanical_librarian.application.field_effects import (
     GuardedFieldApplication,
 )
 from mechanical_librarian.application.operations import StageTimer
+from mechanical_librarian.domain.activity_records import readable_activity_event
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.field_effect import (
     SUPPORTED_DESTINATIONS,
