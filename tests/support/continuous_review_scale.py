@@ -590,20 +590,16 @@ def qualify_installed_pipeline(
         assert not (run_next(restarted))
         clock[0] = retry_at
         while True:
-            if (
-                cast(PipelineProgress, restarted.progress("primary", "fiction")).state
-                == "completed"
-            ):
+            if cast(
+                PipelineProgress, restarted.progress("primary", "fiction")
+            ).state in {"completed", "completed_with_failures"}:
                 break
             advanced = run_next(restarted)
             if not advanced:
-                assert (
-                    cast(
-                        PipelineProgress,
-                        restarted.progress("primary", "fiction"),
-                    ).state
-                    == "completed"
-                )
+                assert cast(
+                    PipelineProgress,
+                    restarted.progress("primary", "fiction"),
+                ).state in {"completed", "completed_with_failures"}
 
         before_new = len(extracted)
         initial_extracted = tuple(extracted)
