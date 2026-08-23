@@ -12,7 +12,11 @@ import pytest
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
-from mechanical_librarian.application.field_effects import GuardedApplicationError
+from mechanical_librarian.application.field_effects import (
+    GuardedApplicationError,
+    GuardedFieldApplication,
+    TargetServiceUnavailable,
+)
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.field_effect import (
     SUPPORTED_DESTINATIONS,
@@ -76,7 +80,7 @@ class _Application:
         self.shared = shared
         self.applied: list[str] = []
 
-    def apply(self, plan_id):
+    def apply(self, plan_id, _affected_review_case_ids=None):
         with self.shared["guard"]:
             self.shared["active"] += 1
             self.shared["maximum"] = max(self.shared["maximum"], self.shared["active"])
@@ -130,11 +134,11 @@ class _RecoveryApplication:
     def begin_drain(self):
         pass
 
-    def apply(self, plan_id):
+    def apply(self, plan_id, _affected_review_case_ids=None):
         self.repository.plans.remove(plan_id)
         return self.repository.operations[plan_id]
 
-    def reconcile(self, plan_id):
+    def reconcile(self, plan_id, _affected_review_case_ids=None):
         self.repository.actions.remove(plan_id)
         return self.repository.operations[plan_id]
 
@@ -177,11 +181,11 @@ class _StuckRecoveryApplication(_RecoveryApplication):
         self.stuck = stuck
         self.attempted: list[str] = []
 
-    def apply(self, plan_id):
+    def apply(self, plan_id, affected_review_case_ids=None):
         self.attempted.append(plan_id)
         if plan_id in self.stuck:
             raise GuardedApplicationError("authority")
-        return super().apply(plan_id)
+        return super().apply(plan_id, affected_review_case_ids)
 
 
 class _StallingRecoveryApplication(_RecoveryApplication):
@@ -191,7 +195,7 @@ class _StallingRecoveryApplication(_RecoveryApplication):
         super().__init__(repository)
         self.cleanups = 0
 
-    def apply(self, plan_id):
+    def apply(self, plan_id, _affected_review_case_ids=None):
         return self.repository.operations[plan_id]
 
 
@@ -386,6 +390,111 @@ class _MixedCapability:
 class _ConnectionUnavailableCapability:
     def observe(self, _):
         return SimpleNamespace(category="connection_unavailable", digest="d" * 64)
+
+
+@pytest.mark.parametrize("method_name", ("apply", "reconcile"))
+@pytest.mark.parametrize(
+    ("affected_review_case_ids", "expected_announcements"),
+    (
+        (
+            ("case-b", "case-a", "case-b"),
+            [("activity", None), ("library", "case-a"), ("library", "case-b")],
+        ),
+        ((), []),
+    ),
+)
+def test_guarded_suspension_commit_flushes_affected_cases_before_propagating(
+    method_name, affected_review_case_ids, expected_announcements
+) -> None:
+    plan = SimpleNamespace(
+        plan_id="plan", connection="primary", library="alpha", destination="title"
+    )
+
+    class Repository:
+        def __init__(self) -> None:
+            self.operation = SimpleNamespace(
+                plan=plan,
+                state="planned" if method_name == "apply" else "reconciling",
+                affected_review_case_ids=(),
+            )
+            self.suspension_committed = False
+
+        def get_field_effect(self, _plan_id):
+            return self.operation
+
+        def field_effect_capability_suspension(self, *_):
+            return None
+
+        def suspend_field_effect_capability(self, **_):
+            self.suspension_committed = True
+            return affected_review_case_ids
+
+        def transition_field_effect(self, *_):
+            raise GuardedApplicationError("after_suspension")
+
+        def claim_next_field_effect_action(self, *_):
+            return (
+                None
+                if method_name == "apply"
+                else {"kind": "targeted_read", "plan_id": "plan"}
+            )
+
+        def complete_field_effect_reconciliation(self, *_):
+            raise GuardedApplicationError("after_suspension")
+
+    class Target:
+        def read(self, _plan):
+            raise TargetServiceUnavailable("destination")
+
+        def apply(self, _plan):
+            raise AssertionError("capability preclaim must stop before apply")
+
+    repository = Repository()
+    guarded = GuardedFieldApplication(
+        repository,
+        Target(),
+        SimpleNamespace(ready=lambda _: True),
+        SimpleNamespace(
+            observe=lambda _: SimpleNamespace(
+                category="field_unavailable", digest="capability"
+            )
+        ),
+        SimpleNamespace(current=lambda _: True),
+        SimpleNamespace(current=lambda _: True),
+        SimpleNamespace(current=lambda _: True),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        lambda: 1,
+    )
+    service = ContinuousGuardedApplication(
+        repository,
+        {("primary", "alpha"): guarded},
+        {("primary", "alpha"): _AllowedCapability()},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
+    )
+    announcements: list[tuple[str, str | None]] = []
+    service.attach_updates(
+        lambda topic, case_id: announcements.append((topic, case_id))
+    )
+
+    with pytest.raises(GuardedApplicationError, match="after_suspension"):
+        getattr(service, method_name)("plan")
+
+    assert repository.suspension_committed
+    assert repository.operation.affected_review_case_ids == ()
+    assert announcements == expected_announcements
+
+    if affected_review_case_ids:
+
+        def failing_update(*_: object) -> None:
+            raise RuntimeError("flush")
+
+        service.attach_updates(failing_update)
+        with pytest.raises(GuardedApplicationError, match="after_suspension"):
+            getattr(service, method_name)("plan")
 
 
 def test_preplan_cover_authority_drift_retires_the_selected_consideration() -> None:

@@ -579,23 +579,52 @@ class ContinuousGuardedApplication:
     def apply(self, plan_id: str) -> FieldEffectOperation:
         operation = self._repository.get_field_effect(plan_id)
         application = self._application(operation)
-        with self._slot:
-            applied = application.apply(plan_id)
-        self._announce("activity", None)
-        self._announce_affected_review_cases(applied)
-        return applied
+        affected_review_case_ids: set[str] = set()
+        completed = False
+        delegated_error: BaseException | None = None
+        try:
+            with self._slot:
+                applied = application.apply(plan_id, affected_review_case_ids)
+            completed = True
+            return applied
+        except BaseException as error:
+            delegated_error = error
+            raise
+        finally:
+            try:
+                self._flush_application_updates(affected_review_case_ids, completed)
+            except BaseException:
+                if delegated_error is None:
+                    raise
 
     def reconcile(self, plan_id: str) -> FieldEffectOperation:
         operation = self._repository.get_field_effect(plan_id)
         application = self._application(operation)
-        with self._slot:
-            reconciled = application.reconcile(plan_id)
-        self._announce("activity", None)
-        self._announce_affected_review_cases(reconciled)
-        return reconciled
+        affected_review_case_ids: set[str] = set()
+        completed = False
+        delegated_error: BaseException | None = None
+        try:
+            with self._slot:
+                reconciled = application.reconcile(plan_id, affected_review_case_ids)
+            completed = True
+            return reconciled
+        except BaseException as error:
+            delegated_error = error
+            raise
+        finally:
+            try:
+                self._flush_application_updates(affected_review_case_ids, completed)
+            except BaseException:
+                if delegated_error is None:
+                    raise
 
-    def _announce_affected_review_cases(self, operation: FieldEffectOperation) -> None:
-        for review_case_id in operation.affected_review_case_ids:
+    def _flush_application_updates(
+        self, affected_review_case_ids: set[str], completed: bool
+    ) -> None:
+        if not completed and not affected_review_case_ids:
+            return
+        self._announce("activity", None)
+        for review_case_id in sorted(affected_review_case_ids):
             self._announce("library", review_case_id)
 
     def _flush_affected_review_case_ids(

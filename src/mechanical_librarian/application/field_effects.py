@@ -422,25 +422,27 @@ class GuardedFieldApplication:
             FieldEffectOperation(plan, updated_at=plan.created_at)
         )
 
-    def apply(self, plan_id: str) -> FieldEffectOperation:
+    def apply(
+        self, plan_id: str, affected_review_case_ids: set[str] | None = None
+    ) -> FieldEffectOperation:
         operation = self._repository.get_field_effect(plan_id)
         if operation.state in {"verified", "stale", "superseded", "abandoned"}:
             self._recover_cleanup(operation)
             return operation
         if operation.state == "reconciling":
-            return self.reconcile(plan_id)
+            return self.reconcile(plan_id, affected_review_case_ids)
         if operation.state == "claimed":
-            return self._execute_claimed(operation)
+            return self._execute_claimed(operation, affected_review_case_ids)
         if operation.state == "applying":
             operation = self._repository.schedule_field_effect_reconciliation(
                 plan_id, operation.state, self._clock(), "restart_readback"
             )
             self._recovery_hook(operation.plan)
-            return self.reconcile(plan_id)
+            return self.reconcile(plan_id, affected_review_case_ids)
         if self._draining.is_set():
             raise GuardedApplicationError("draining")
         plan = operation.plan
-        guarded = self._preclaim(operation)
+        guarded = self._preclaim(operation, affected_review_case_ids)
         if guarded is not None:
             return guarded
         if plan.destination == "cover":
@@ -454,7 +456,7 @@ class GuardedFieldApplication:
         # Refresh every guard at the last feasible point before the repository's
         # atomic pause/state claim. Target behavior is adapter-specific.
         self._preclaim_hook(plan)
-        guarded = self._preclaim(operation)
+        guarded = self._preclaim(operation, affected_review_case_ids)
         if guarded is not None:
             return guarded
         token = hashlib.sha256(
@@ -479,7 +481,7 @@ class GuardedFieldApplication:
             raise GuardedApplicationError(
                 error.code if isinstance(error, FieldEffectError) else "claim_failed"
             ) from error
-        return self._execute_claimed(operation)
+        return self._execute_claimed(operation, affected_review_case_ids)
 
     def _discard_cover_capture(self, plan: FieldEffectPlan) -> None:
         """Drop a captured cover whose plan already reached a terminal state.
@@ -505,7 +507,11 @@ class GuardedFieldApplication:
             # adapter fault escape; the cleanup fault still wins the code.
             raise GuardedApplicationError("cover_recovery") from error
 
-    def _execute_claimed(self, operation: FieldEffectOperation) -> FieldEffectOperation:
+    def _execute_claimed(
+        self,
+        operation: FieldEffectOperation,
+        affected_review_case_ids: set[str] | None,
+    ) -> FieldEffectOperation:
         plan = operation.plan
         operation = self._repository.transition_field_effect(
             plan.plan_id, "claimed", "applying", self._clock()
@@ -518,7 +524,9 @@ class GuardedFieldApplication:
             # breadth is the contract. Every one persists a typed suspension
             # when it carries one and lands the operation on ``retryable`` with
             # a recorded failure; none is discarded.
-            target_error_affected = self._persist_target_suspension(plan, error)
+            target_error_affected = self._persist_target_suspension(
+                plan, error, affected_review_case_ids
+            )
             return self._with_affected_review_cases(
                 self._repository.transition_field_effect(
                     plan.plan_id,
@@ -532,19 +540,22 @@ class GuardedFieldApplication:
         affected: tuple[str, ...] = ()
         if result.suspension_scope is not None:
             assert result.suspension_reason is not None
-            affected = self._repository.suspend_field_effect_capability(
+            affected = self._suspend_field_effect_capability(
                 scope=result.suspension_scope,
                 connection=plan.connection,
                 destination=plan.destination,
                 reason=result.suspension_reason,
                 changed_at=self._clock(),
+                affected_review_case_ids=affected_review_case_ids,
             )
         if result.outcome == "ambiguous":
             operation = self._repository.schedule_field_effect_reconciliation(
                 plan.plan_id, "applying", self._clock()
             )
             self._recovery_hook(plan)
-            inline = self._run_next_field_effect_action(plan.plan_id)
+            inline = self._run_next_field_effect_action(
+                plan.plan_id, affected_review_case_ids
+            )
             return self._with_affected_review_cases(
                 self.status(plan.plan_id),
                 affected + (() if inline is None else inline.affected_review_case_ids),
@@ -553,12 +564,20 @@ class GuardedFieldApplication:
             return self._with_affected_review_cases(
                 self._stale(operation, "target_changed"), affected
             )
-        return self._with_affected_review_cases(self._verify(operation), affected)
+        return self._with_affected_review_cases(
+            self._verify(operation, affected_review_case_ids), affected
+        )
 
-    def reconcile(self, plan_id: str) -> FieldEffectOperation:
-        return self._run_next_field_effect_action(plan_id) or self.status(plan_id)
+    def reconcile(
+        self, plan_id: str, affected_review_case_ids: set[str] | None = None
+    ) -> FieldEffectOperation:
+        return self._run_next_field_effect_action(
+            plan_id, affected_review_case_ids
+        ) or self.status(plan_id)
 
-    def _reconcile_action(self, plan_id: str) -> FieldEffectOperation:
+    def _reconcile_action(
+        self, plan_id: str, affected_review_case_ids: set[str] | None
+    ) -> FieldEffectOperation:
         operation = self._repository.get_field_effect(plan_id)
         if operation.state != "reconciling":
             return operation
@@ -569,7 +588,9 @@ class GuardedFieldApplication:
             # Same undeclared target seam as ``_execute_claimed``: the failure
             # is recorded on the operation as ``target_failure`` and the action
             # is completed, so the reconciliation obligation is never stranded.
-            affected = self._persist_target_suspension(operation.plan, error)
+            affected = self._persist_target_suspension(
+                operation.plan, error, affected_review_case_ids
+            )
             return self._with_affected_review_cases(
                 self._repository.complete_field_effect_reconciliation(
                     plan_id, "retryable", "target_failure", self._clock()
@@ -631,14 +652,20 @@ class GuardedFieldApplication:
             self._recover_cleanup(result)
         return result
 
-    def _verify(self, operation: FieldEffectOperation) -> FieldEffectOperation:
+    def _verify(
+        self,
+        operation: FieldEffectOperation,
+        affected_review_case_ids: set[str] | None,
+    ) -> FieldEffectOperation:
         try:
             with self._timing.measure("verification", "target"):
                 observed = self._target.read(operation.plan)
         except Exception as error:
             # The same undeclared target seam, and breadth is required here:
             # any readback failure whatsoever leaves the write outcome unknown.
-            affected = self._persist_target_suspension(operation.plan, error)
+            affected = self._persist_target_suspension(
+                operation.plan, error, affected_review_case_ids
+            )
             # The write may already have succeeded. Persist a targeted read;
             # never infer failure and blindly write the desired value again.
             return self._with_affected_review_cases(
@@ -676,7 +703,11 @@ class GuardedFieldApplication:
             self._recover_cleanup(result)
         return result
 
-    def _preclaim(self, operation: FieldEffectOperation) -> FieldEffectOperation | None:
+    def _preclaim(
+        self,
+        operation: FieldEffectOperation,
+        affected_review_case_ids: set[str] | None,
+    ) -> FieldEffectOperation | None:
         """Evaluate current guards in their fixed order without claiming."""
         plan = operation.plan
         if not self._backup.ready(plan):
@@ -695,12 +726,13 @@ class GuardedFieldApplication:
                 if capability.category == "connection_unavailable"
                 else "destination"
             )
-            affected = self._repository.suspend_field_effect_capability(
+            affected = self._suspend_field_effect_capability(
                 scope=scope,
                 connection=plan.connection,
                 destination=plan.destination,
                 reason=capability.category,
                 changed_at=self._clock(),
+                affected_review_case_ids=affected_review_case_ids,
             )
             return self._with_affected_review_cases(
                 self._stale(operation, "capability"), affected
@@ -719,7 +751,9 @@ class GuardedFieldApplication:
             # Breadth only reaches the typed suspension record: every error that
             # is not a declared target unavailability is re-raised unchanged, so
             # this handler classifies nothing it has not recognised.
-            affected = self._persist_target_suspension(plan, error)
+            affected = self._persist_target_suspension(
+                plan, error, affected_review_case_ids
+            )
             if isinstance(error, TargetServiceUnavailable):
                 return self._with_affected_review_cases(
                     self._stale(operation, "capability"), affected
@@ -736,17 +770,42 @@ class GuardedFieldApplication:
         return None
 
     def _persist_target_suspension(
-        self, plan: FieldEffectPlan, error: Exception
+        self,
+        plan: FieldEffectPlan,
+        error: Exception,
+        affected_review_case_ids: set[str] | None,
     ) -> tuple[str, ...]:
         if not isinstance(error, TargetServiceUnavailable):
             return ()
-        return self._repository.suspend_field_effect_capability(
+        return self._suspend_field_effect_capability(
             scope=error.scope,
             connection=plan.connection,
             destination=plan.destination,
             reason=error.reason,
             changed_at=self._clock(),
+            affected_review_case_ids=affected_review_case_ids,
         )
+
+    def _suspend_field_effect_capability(
+        self,
+        *,
+        scope: str,
+        connection: str,
+        destination: str,
+        reason: str,
+        changed_at: int,
+        affected_review_case_ids: set[str] | None,
+    ) -> tuple[str, ...]:
+        affected = self._repository.suspend_field_effect_capability(
+            scope=scope,
+            connection=connection,
+            destination=destination,
+            reason=reason,
+            changed_at=changed_at,
+        )
+        if affected_review_case_ids is not None:
+            affected_review_case_ids.update(affected)
+        return affected
 
     @staticmethod
     def _with_affected_review_cases(
@@ -800,16 +859,24 @@ class GuardedFieldApplication:
         return completed
 
     def _run_next_field_effect_action(
-        self, plan_id: str
+        self, plan_id: str, affected_review_case_ids: set[str] | None = None
     ) -> FieldEffectOperation | None:
         action = self._repository.claim_next_field_effect_action(self._clock(), plan_id)
-        return None if action is None else self._run_claimed_field_effect_action(action)
+        return (
+            None
+            if action is None
+            else self._run_claimed_field_effect_action(action, affected_review_case_ids)
+        )
 
     def _run_claimed_field_effect_action(
-        self, action: dict[str, object]
+        self,
+        action: dict[str, object],
+        affected_review_case_ids: set[str] | None = None,
     ) -> FieldEffectOperation | None:
         if action["kind"] == "targeted_read":
-            return self._reconcile_action(cast("str", action["plan_id"]))
+            return self._reconcile_action(
+                cast("str", action["plan_id"]), affected_review_case_ids
+            )
         operation = self.status(cast("str", action["plan_id"]))
         self._reevaluation.emit(operation.plan)
         self._repository.complete_forward_reevaluation(
