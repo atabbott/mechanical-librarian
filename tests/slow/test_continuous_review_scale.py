@@ -119,14 +119,15 @@ class _WorkspaceProbe:
             page, lens="all", query=None, preview=preserved_preview
         )
         cohort_row = page.locator(".library-work-row").first
+        cohort_title = cohort_row.locator(".library-work-title").inner_text()
         cohort_row.click()
         expect(cohort_row).to_have_attribute("aria-current", "true")
         cohort_preview = parse_qs(urlparse(page.url).query).get("preview")
         assert cohort_preview is not None and len(cohort_preview) == 1
         assert cohort_preview[0] != review_case_id
-        detail = page.locator(".workspace-detail")
-        detail.get_by_role("heading").wait_for()
-        assert detail.inner_text().strip()
+        cohort_heading = page.locator(".workspace-detail > h2")
+        expect(cohort_heading).to_have_count(1)
+        expect(cohort_heading).to_have_text(cohort_title)
 
         # The seeded manual case deliberately sits outside the reconciliation
         # cohort, so return to its direct route for the owner-decision proof.
