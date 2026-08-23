@@ -719,6 +719,7 @@ def qualify_installed_pipeline(
                 )
                 assert build_identity is not None
                 action_headers = {
+                    "Origin": origin,
                     "x-csrf-token": login.json()["csrf_token"],
                     "x-ml-build-identity": build_identity.group(1),
                 }
