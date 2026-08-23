@@ -15,6 +15,9 @@ from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
 )
 from mechanical_librarian.application.operations import StageTimer
+from mechanical_librarian.application.review_pipeline import (
+    preparation_failure_reference,
+)
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
@@ -1553,7 +1556,14 @@ def _library_item(
                     "configuration": "Provider configuration needs owner attention.",
                     "provider": "Provider work ended without a usable result.",
                     "transient": "Provider recovery attempts were exhausted.",
-                    "failed": "Preparation ended before a usable review package was produced.",
+                    "unsupported_media": "This media type is not supported for review preparation.",
+                    "unreadable_media": "The local media file could not be read.",
+                    "parser_refused": "The EPUB could not be safely read.",
+                    "missing_required_input": "Required preparation input is unavailable.",
+                    "malformed_retained_data": "Retained preparation data could not be safely reopened.",
+                    "internal_failure": "Preparation stopped before a usable review package was produced.",
+                    "unknown": "Preparation failed; no safe detail is available.",
+                    "failed": "Preparation failed; no safe detail is available.",
                     "projection": "Review projection could not be completed.",
                 }
                 work_id, item, library = (
@@ -1581,11 +1591,29 @@ def _library_item(
                     "work_id": work_id,
                     "preparation": {
                         "attempt": terminal["attempt"],
+                        "diagnostic_reference": preparation_failure_reference(
+                            work_id,
+                            lane,
+                            terminal["attempt"],
+                            terminal["recovery_attempt"],
+                            status,
+                        ),
                         "provider": root or "provider",
                         "reason": reasons.get(
                             status, "Preparation ended without a usable review package."
                         ),
-                        "recovery": "Retry review preparation after correcting the reported condition.",
+                        "recovery": (
+                            "No owner action is currently available."
+                            if status
+                            in {
+                                "internal_failure",
+                                "unknown",
+                                "failed",
+                                "projection",
+                                "provider",
+                            }
+                            else "Scan this library again after correcting the reported condition."
+                        ),
                         "recovery_attempt": terminal["recovery_attempt"],
                         "stage": lane,
                         "status": status,

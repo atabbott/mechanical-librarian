@@ -13,6 +13,7 @@ from mechanical_librarian.application.catalogue import (
 )
 from mechanical_librarian.application.metadata_report import CredentialError
 from mechanical_librarian.application.operations import StageTimer
+from mechanical_librarian.domain.epub_inspection import EpubInspectionOutcome
 from mechanical_librarian.domain.metadata_report import ProviderStatus
 
 __all__ = [
@@ -23,6 +24,8 @@ __all__ = [
     "ReviewPreparationPipeline",
     "ReviewPreparationSupervisor",
     "TargetConnectionCondition",
+    "preparation_failure_reference",
+    "inspection_failure_code",
 ]
 
 
@@ -49,6 +52,69 @@ class ReviewPipelineError(RuntimeError):
         super().__init__(code)
         self.code = code
         self.root = root
+
+
+def preparation_failure_reference(
+    action_id: str, stage: str, attempt: int, recovery_attempt: int, code: str
+) -> str:
+    """Return a durable, value-free terminal preparation reference."""
+    if (
+        type(action_id) is not str
+        or type(stage) is not str
+        or type(code) is not str
+        or type(attempt) is not int
+        or type(recovery_attempt) is not int
+    ):
+        raise ReviewPipelineError("state")
+    material = "\0".join(
+        (
+            "review-preparation-failure-v1",
+            action_id,
+            stage,
+            str(attempt),
+            str(recovery_attempt),
+            code,
+        )
+    )
+    return "prep-" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
+
+
+def inspection_failure_code(outcome: EpubInspectionOutcome) -> str:
+    if outcome in {
+        EpubInspectionOutcome.SUCCESS,
+        EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE,
+    }:
+        return "success"
+    if outcome in {
+        EpubInspectionOutcome.UNSUPPORTED_FORMAT,
+        EpubInspectionOutcome.UNSUPPORTED_VERSION,
+        EpubInspectionOutcome.UNSUPPORTED_COMPRESSION,
+        EpubInspectionOutcome.UNSUPPORTED_MULTIPLE_RENDITIONS,
+        EpubInspectionOutcome.ENCRYPTED,
+    }:
+        return "unsupported_media"
+    if outcome in {
+        EpubInspectionOutcome.INTEGRITY_FAILURE,
+        EpubInspectionOutcome.UNSTABLE_SOURCE,
+        EpubInspectionOutcome.UNAVAILABLE_SOURCE,
+    }:
+        return "unreadable_media"
+    if outcome in {
+        EpubInspectionOutcome.INVALID_REFERENCE,
+        EpubInspectionOutcome.MALFORMED,
+        EpubInspectionOutcome.RESOURCE_LIMIT,
+        EpubInspectionOutcome.TIMEOUT,
+        EpubInspectionOutcome.CANCELLATION,
+    }:
+        return "parser_refused"
+    if outcome in {
+        EpubInspectionOutcome.INVALID_INVOCATION,
+        EpubInspectionOutcome.INVALID_CONFIGURATION,
+        EpubInspectionOutcome.CHILD_FAILURE,
+        EpubInspectionOutcome.INTERNAL_FAILURE,
+    }:
+        return "internal_failure"
+    raise ReviewPipelineError("state")
 
 
 @dataclass(frozen=True, slots=True)
@@ -734,7 +800,7 @@ class ReviewPreparationPipeline:
             # survives the failure.
             if output_transaction:
                 repository.rollback_review_pipeline_output()
-            self._fail(repository, action, "failed", False)
+            self._fail(repository, action, "unknown", False)
         return None
 
     def _complete_discovery(

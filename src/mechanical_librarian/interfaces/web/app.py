@@ -474,6 +474,7 @@ class _ReviewCounts(_ClosedModel):
 
 class _PreparationFailure(_ClosedModel):
     attempt: int
+    diagnostic_reference: str
     provider: str
     reason: str
     recovery: str

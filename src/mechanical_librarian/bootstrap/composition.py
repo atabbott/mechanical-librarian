@@ -537,7 +537,7 @@ class _IsolatedEpubInspector:
                 EpubInspectionOutcome.SUCCESS,
                 EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE,
             }:
-                raise ItemInspectionError("EPUB inspection failed")
+                raise ItemInspectionError(inspection.outcome)
             claims: list[LocalClaim] = []
             for occurrence, fact in enumerate(inspection.facts, 1):
                 claim = LocalClaim.create(

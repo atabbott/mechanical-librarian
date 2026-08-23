@@ -7,6 +7,10 @@ rebuild or delivers one explicit exact-predecessor adoption limited to
 reconstructible derived objects. This is not a general migration, import,
 conversion, compatibility, downgrade, or repair facility.
 
+The terminal preparation-failure codes in this increment change the
+exact-current review schema. Clean rebuild required; no compatibility reader or
+adoption is supplied.
+
 The `fixed-conservative-v9` proposal contract is not an exact predecessor of
 the installed v10 contract: its persisted decisions can disagree. It is rejected
 at bootstrap and requires a clean rebuild; `review-field-facts-v1` cannot adopt

@@ -100,6 +100,7 @@ class Incident:
     category: str | None = None
     work_id: str | None = None
     field: str | None = None
+    diagnostic_reference: str | None = None
     count: int = 1
 
     def __post_init__(self) -> None:
@@ -109,6 +110,7 @@ class Incident:
             self.category,
             self.work_id,
             self.field,
+            self.diagnostic_reference,
         )
         if (
             self.kind not in KINDS
@@ -131,6 +133,7 @@ class Incident:
             "connection": self.connection,
             "count": self.count,
             "field": self.field,
+            "diagnostic_reference": self.diagnostic_reference,
             "incident_id": self.incident_id,
             "kind": self.kind,
             "library": self.library,
@@ -284,12 +287,33 @@ def aggregate_incidents(signals: object) -> tuple[Incident, ...]:
         category = signal.get("category")
         work_id = signal.get("work_id")
         field = signal.get("field")
+        diagnostic_reference = signal.get("diagnostic_reference")
         # Currentness conflicts are intentionally work/field-local. Shared
         # service causes aggregate at their narrow service scope.
         key = (
-            (kind, cause, scope, connection, library, category, work_id, field)
+            (
+                kind,
+                cause,
+                scope,
+                connection,
+                library,
+                category,
+                work_id,
+                field,
+                diagnostic_reference,
+            )
             if cause == "currentness_conflict"
-            else (kind, cause, scope, connection, library, category, None, field)
+            else (
+                kind,
+                cause,
+                scope,
+                connection,
+                library,
+                category,
+                None,
+                field,
+                diagnostic_reference,
+            )
         )
         previous = aggregated.get(key)
         readable_key = ":".join("-" if value is None else str(value) for value in key)
@@ -314,6 +338,7 @@ def aggregate_incidents(signals: object) -> tuple[Incident, ...]:
             category,
             work_id if cause == "currentness_conflict" else None,
             field,
+            diagnostic_reference,
             1 if previous is None else previous.count + 1,
         )
         aggregated[key] = candidate

@@ -2885,7 +2885,7 @@ def test_projection_crash_rolls_back_staged_shadow_outcome_before_requeue(
             "SELECT (SELECT COUNT(*) FROM current_review_packages),"
             "(SELECT COUNT(*) FROM automatic_decisions)"
         ).fetchone()
-        assert ("failed", "failed") == observer._connection.execute(
+        assert ("failed", "unknown") == observer._connection.execute(
             "SELECT state,failure_code FROM review_preparation_work"
         ).fetchone()
     finally:

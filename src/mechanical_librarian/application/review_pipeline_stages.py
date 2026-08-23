@@ -34,9 +34,13 @@ from mechanical_librarian.application.catalogue import (
 from mechanical_librarian.application.metadata_report import (
     CredentialError,
     CurrentnessError,
+    ItemInspectionError,
     TargetNotFoundError,
 )
-from mechanical_librarian.application.proposal_sets import ProposalCurrentnessError
+from mechanical_librarian.application.proposal_sets import (
+    ProposalCurrentnessError,
+    ProposalSetError,
+)
 from mechanical_librarian.application.provider_recovery_evidence import (
     ProviderFailureObserver,
     provider_statuses,
@@ -51,7 +55,9 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPipelineError,
     ReviewPipelineRepository,
     ReviewPreparationPipeline,
+    inspection_failure_code,
 )
+from mechanical_librarian.domain.epub_inspection import EpubInspectionOutcome
 from mechanical_librarian.domain.metadata_report import MetadataReport, ProviderStatus
 from mechanical_librarian.domain.proposal_set import ProposalSet
 from mechanical_librarian.domain.review_case import (
@@ -206,6 +212,12 @@ class ReviewPipelineStages:
             raise self._credential_failure(error, action) from error
         except (CurrentnessError, TargetNotFoundError) as error:
             raise ReviewPipelineError("stale") from error
+        except ItemInspectionError as error:
+            if type(error.outcome) is EpubInspectionOutcome:
+                raise ReviewPipelineError(
+                    inspection_failure_code(error.outcome)
+                ) from error
+            raise ReviewPipelineError("unknown") from error
         return MetadataReport.from_json(serialized).report_id, True
 
     def _require_eligible_entry(self, action: PipelineAction) -> None:
@@ -284,6 +296,8 @@ class ReviewPipelineStages:
             serialized = self._create_proposal_set(report_id, pipeline_repository)
         except ProposalCurrentnessError as error:
             raise ReviewPipelineError("stale") from error
+        except ProposalSetError as error:
+            raise ReviewPipelineError("internal_failure") from error
         return ProposalSet.from_json(serialized).proposal_set_id
 
     def admit(

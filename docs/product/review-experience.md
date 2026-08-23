@@ -6,6 +6,10 @@ Mechanical Librarian keeps routine, qualified metadata work out of the active
 human queue. When a person is needed, the product presents one durable,
 target-shaped decision surface backed by server-authoritative state.
 
+Terminal preparation failures remain visible in Library as noninteractive rows.
+They show only a closed stage, safe reason, owner posture, and copyable bounded
+reference; no retry, case detail, item path, or provider payload is exposed.
+
 This document is the product contract for that experience. It incorporates the
 validated behavior from the retired prototype baseline, while rejecting the
 prototype's static-file delivery and browser-local workflow authority.

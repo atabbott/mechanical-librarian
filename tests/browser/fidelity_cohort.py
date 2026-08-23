@@ -157,6 +157,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         dispositions=[],
         preparation={
             "attempt": 1,
+            "diagnostic_reference": "prep-0123456789abcdef",
             "provider": "hardcover-main",
             "reason": "Provider credentials need owner attention.",
             "recovery": "Retry review preparation after correcting the reported condition.",

@@ -111,6 +111,7 @@ describe('Library route', () => {
       attention: 'no_attention_needed',
       preparation: {
         attempt: 1,
+        diagnosticReference: 'prep-0123456789abcdef',
         provider: 'hardcover-main',
         reason: 'Provider credentials need owner attention.',
         recovery: 'Retry review preparation after correcting the reported condition.',
@@ -147,18 +148,9 @@ describe('Library route', () => {
     expect(await screen.findByText('Preparation failed safely')).toBeVisible()
     // The card carries no provider disclosure of its own any more.
     expect(document.querySelector('.library-work-list details')).toBeNull()
-    await userEvent.click(screen.getByRole('button', { name: /^Preparation unavailable\./u }))
+    expect(screen.queryByRole('button', { name: /^Preparation unavailable\./u })).toBeNull()
 
-    expect(
-      await screen.findByRole('heading', { level: 2, name: 'Preparation unavailable' }),
-    ).toBeVisible()
-    expect(screen.getByText('Provider credentials need owner attention.')).toBeVisible()
-    expect(screen.getByText('Authentication at Provider')).toBeVisible()
-    const sources = screen.getByText('Sources').closest('details')
-    expect(sources).not.toHaveAttribute('open')
-    expect(sources).toHaveTextContent('Provider failure')
-    expect(sources).toHaveTextContent('Refused the credentials it was given; nothing was retained.')
-    expect(sources).toHaveTextContent('Work lookup · 1 bounded request')
+    expect(screen.getByText('prep-0123456789abcdef')).toBeVisible()
   })
 
   it('keeps an open case-less work open when a search hides its card', async () => {

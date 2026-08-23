@@ -3340,6 +3340,10 @@
             "title": "Attempt",
             "type": "integer"
           },
+          "diagnostic_reference": {
+            "title": "Diagnostic Reference",
+            "type": "string"
+          },
           "provider": {
             "title": "Provider",
             "type": "string"
@@ -3367,6 +3371,7 @@
         },
         "required": [
           "attempt",
+          "diagnostic_reference",
           "provider",
           "reason",
           "recovery",

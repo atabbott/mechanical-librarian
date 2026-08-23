@@ -41,6 +41,7 @@ export interface ProviderOutcomeView {
 }
 export interface PreparationFailureView {
   attempt: number
+  diagnosticReference: string
   provider: string
   reason: string
   recovery: string
@@ -1240,6 +1241,10 @@ export const mapLibrary = (value: unknown): LibraryView => {
           ? null
           : {
               attempt: integerValue(item.preparation.attempt, 'preparation_attempt'),
+              diagnosticReference: stringValue(
+                item.preparation.diagnostic_reference,
+                'preparation_diagnostic_reference',
+              ),
               provider: stringValue(item.preparation.provider, 'preparation_provider'),
               reason: stringValue(item.preparation.reason, 'preparation_reason'),
               recovery: stringValue(item.preparation.recovery, 'preparation_recovery'),

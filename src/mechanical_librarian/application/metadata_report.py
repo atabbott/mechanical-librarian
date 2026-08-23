@@ -71,7 +71,9 @@ class UnsupportedMediaError(MetadataReportError):
 
 
 class ItemInspectionError(MetadataReportError):
-    pass
+    def __init__(self, outcome: object = None) -> None:
+        super().__init__("EPUB inspection failed")
+        self.outcome = outcome
 
 
 class ArtifactAuthorityError(MetadataReportError):

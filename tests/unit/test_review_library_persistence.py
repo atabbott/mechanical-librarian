@@ -409,9 +409,10 @@ def test_terminal_failed_work_is_library_only_and_safe() -> None:
     )
     assert item["preparation"] == {
         "attempt": 1,
+        "diagnostic_reference": "prep-adcd2c66d60d4c88",
         "provider": "hardcover-main",
         "reason": "Provider credentials need owner attention.",
-        "recovery": "Retry review preparation after correcting the reported condition.",
+        "recovery": "Scan this library again after correcting the reported condition.",
         "recovery_attempt": 0,
         "stage": "provider",
         "status": "authentication",

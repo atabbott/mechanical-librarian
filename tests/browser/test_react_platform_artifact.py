@@ -1338,21 +1338,13 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         no_case_row = page.locator(".library-work-row").filter(
             has_text="Catalogue-only work"
         )
-        assert no_case_row.get_by_role("link").count() == 0
-        # A work with no review case is still openable: the row is one target
-        # and the detail pane names the condition and every source consulted.
-        no_case_row.click()
         work_detail = page.locator(".workspace-detail")
-        work_detail.get_by_role("heading", name="Catalogue-only work").wait_for()
-        assert "Authentication at Provider" in work_detail.inner_text()
-        assert "Retry review preparation" in work_detail.inner_text()
-        sources = work_detail.locator(".work-sources")
-        assert sources.count() == 1
-        assert sources.evaluate("node => node.open") is False
-        sources.get_by_text("Sources", exact=True).click()
-        assert sources.evaluate("node => node.open") is True
-        assert "hardcover-main" in sources.inner_text()
-        assert "Work lookup · 1 bounded request" in sources.inner_text()
+        assert no_case_row.get_by_role("link").count() == 0
+        # A terminal case-less failure is information, not an unavailable
+        # decision target: no click, detail surface, retry, or provider record.
+        assert no_case_row.evaluate("node => node.tagName") == "DIV"
+        assert no_case_row.get_by_role("button").count() == 0
+        assert "Reference: prep-" in no_case_row.inner_text()
         capture_visual_proof("library-work-summary")
         page.get_by_role("link", name="Needs attention", exact=True).click()
         expect(page.locator(".library-work-row")).to_have_count(5)
