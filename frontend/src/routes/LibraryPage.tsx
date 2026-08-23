@@ -1638,9 +1638,13 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                   </>
                 )
                 return terminalFailure ? (
-                  <div key={work.id} className="library-work-row is-terminal">
+                  <article
+                    key={work.id}
+                    className="library-work-row is-terminal"
+                    aria-label="Terminal preparation failure"
+                  >
                     {row}
-                  </div>
+                  </article>
                 ) : (
                   <button
                     key={work.id}

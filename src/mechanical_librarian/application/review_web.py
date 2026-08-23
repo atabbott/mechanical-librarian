@@ -1525,6 +1525,74 @@ def _provider_comparison_notices(report: MetadataReport) -> list[str]:
     return []
 
 
+_TERMINAL_PREPARATION_GUIDANCE: dict[str, tuple[str, str]] = {
+    "provider": (
+        "A provider ended without a usable result.",
+        "No owner action is currently available.",
+    ),
+    "configuration": (
+        "Provider configuration needs owner attention.",
+        "Update the configured provider, then scan this library again.",
+    ),
+    "authentication": (
+        "Provider credentials need owner attention.",
+        "Update the configured provider credentials, then scan this library again.",
+    ),
+    "stale": (
+        "The item changed while preparation was in progress.",
+        "Automatic recovery is pending for the current item.",
+    ),
+    "transient": (
+        "Bounded automatic recovery attempts were exhausted.",
+        "No owner action is currently available.",
+    ),
+    "projection": (
+        "Review projection could not be completed.",
+        "No owner action is currently available.",
+    ),
+    "failed": (
+        "Preparation failed; no safe detail is available.",
+        "No owner action is currently available.",
+    ),
+    "currentness": (
+        "The source changed before preparation could be completed.",
+        "Automatic recovery is pending for the current source.",
+    ),
+    "persistence": (
+        "Preparation state could not be durably recorded.",
+        "No owner action is currently available.",
+    ),
+    "unsupported_media": (
+        "This media type is not supported for review preparation.",
+        "Use a supported EPUB edition, then scan this library again.",
+    ),
+    "unreadable_media": (
+        "The local media file could not be read.",
+        "Restore a readable media file in the library, then scan this library again.",
+    ),
+    "parser_refused": (
+        "The EPUB could not be safely read within supported parsing limits.",
+        "Use an EPUB that meets the supported parsing limits, then scan this library again.",
+    ),
+    "missing_required_input": (
+        "Required preparation input is unavailable.",
+        "Provide the required supported item input, then scan this library again.",
+    ),
+    "malformed_retained_data": (
+        "Retained preparation data could not be safely reopened.",
+        "No owner action is currently available.",
+    ),
+    "internal_failure": (
+        "Preparation stopped before a usable review package was produced.",
+        "No owner action is currently available.",
+    ),
+    "unknown": (
+        "Preparation failed; no safe detail is available.",
+        "No owner action is currently available.",
+    ),
+}
+
+
 def _library_item(
     case_document: str | None,
     report_document: str,
@@ -1551,21 +1619,10 @@ def _library_item(
                     or (root is not None and type(root) is not str)
                 ):
                     raise ValueError
-                reasons = {
-                    "authentication": "Provider credentials need owner attention.",
-                    "configuration": "Provider configuration needs owner attention.",
-                    "provider": "Provider work ended without a usable result.",
-                    "transient": "Provider recovery attempts were exhausted.",
-                    "unsupported_media": "This media type is not supported for review preparation.",
-                    "unreadable_media": "The local media file could not be read.",
-                    "parser_refused": "The EPUB could not be safely read.",
-                    "missing_required_input": "Required preparation input is unavailable.",
-                    "malformed_retained_data": "Retained preparation data could not be safely reopened.",
-                    "internal_failure": "Preparation stopped before a usable review package was produced.",
-                    "unknown": "Preparation failed; no safe detail is available.",
-                    "failed": "Preparation failed; no safe detail is available.",
-                    "projection": "Review projection could not be completed.",
-                }
+                guidance = _TERMINAL_PREPARATION_GUIDANCE.get(status)
+                if guidance is None:
+                    raise ValueError
+                reason, recovery = guidance
                 work_id, item, library = (
                     terminal["work_id"],
                     terminal["item"],
@@ -1599,21 +1656,8 @@ def _library_item(
                             status,
                         ),
                         "provider": root or "provider",
-                        "reason": reasons.get(
-                            status, "Preparation ended without a usable review package."
-                        ),
-                        "recovery": (
-                            "No owner action is currently available."
-                            if status
-                            in {
-                                "internal_failure",
-                                "unknown",
-                                "failed",
-                                "projection",
-                                "provider",
-                            }
-                            else "Scan this library again after correcting the reported condition."
-                        ),
+                        "reason": reason,
+                        "recovery": recovery,
                         "recovery_attempt": terminal["recovery_attempt"],
                         "stage": lane,
                         "status": status,
@@ -1621,10 +1665,7 @@ def _library_item(
                     "preparation_outcomes": [],
                     "summary": {
                         "fields": [],
-                        "reason": reasons.get(
-                            status,
-                            "Preparation ended without a usable review package.",
-                        ),
+                        "reason": reason,
                         "state": "preparation_failed",
                     },
                 }

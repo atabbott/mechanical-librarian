@@ -30,6 +30,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
 )
+from mechanical_librarian.adapters.persistence.review_preparation import _FAILURE_CODES
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
@@ -45,6 +46,7 @@ from mechanical_librarian.application.review_web import (
     BrowseReviewLibrary,
     InspectCurrentReviewCase,
     RecordHumanDecision,
+    _TERMINAL_PREPARATION_GUIDANCE,
     _library_item,
     _provider_comparison_notices,
     _provider_outcomes,
@@ -412,7 +414,7 @@ def test_terminal_failed_work_is_library_only_and_safe() -> None:
         "diagnostic_reference": "prep-adcd2c66d60d4c88",
         "provider": "hardcover-main",
         "reason": "Provider credentials need owner attention.",
-        "recovery": "Scan this library again after correcting the reported condition.",
+        "recovery": "Update the configured provider credentials, then scan this library again.",
         "recovery_attempt": 0,
         "stage": "provider",
         "status": "authentication",
@@ -426,6 +428,120 @@ def test_terminal_failed_work_is_library_only_and_safe() -> None:
         "state": "preparation_failed",
     }
     assert "credential unavailable" not in json.dumps(item)
+
+
+@pytest.mark.parametrize(
+    ("status", "reason", "recovery"),
+    (
+        (
+            "provider",
+            "A provider ended without a usable result.",
+            "No owner action is currently available.",
+        ),
+        (
+            "configuration",
+            "Provider configuration needs owner attention.",
+            "Update the configured provider, then scan this library again.",
+        ),
+        (
+            "authentication",
+            "Provider credentials need owner attention.",
+            "Update the configured provider credentials, then scan this library again.",
+        ),
+        (
+            "stale",
+            "The item changed while preparation was in progress.",
+            "Automatic recovery is pending for the current item.",
+        ),
+        (
+            "transient",
+            "Bounded automatic recovery attempts were exhausted.",
+            "No owner action is currently available.",
+        ),
+        (
+            "projection",
+            "Review projection could not be completed.",
+            "No owner action is currently available.",
+        ),
+        (
+            "failed",
+            "Preparation failed; no safe detail is available.",
+            "No owner action is currently available.",
+        ),
+        (
+            "currentness",
+            "The source changed before preparation could be completed.",
+            "Automatic recovery is pending for the current source.",
+        ),
+        (
+            "persistence",
+            "Preparation state could not be durably recorded.",
+            "No owner action is currently available.",
+        ),
+        (
+            "unsupported_media",
+            "This media type is not supported for review preparation.",
+            "Use a supported EPUB edition, then scan this library again.",
+        ),
+        (
+            "unreadable_media",
+            "The local media file could not be read.",
+            "Restore a readable media file in the library, then scan this library again.",
+        ),
+        (
+            "parser_refused",
+            "The EPUB could not be safely read within supported parsing limits.",
+            "Use an EPUB that meets the supported parsing limits, then scan this library again.",
+        ),
+        (
+            "missing_required_input",
+            "Required preparation input is unavailable.",
+            "Provide the required supported item input, then scan this library again.",
+        ),
+        (
+            "malformed_retained_data",
+            "Retained preparation data could not be safely reopened.",
+            "No owner action is currently available.",
+        ),
+        (
+            "internal_failure",
+            "Preparation stopped before a usable review package was produced.",
+            "No owner action is currently available.",
+        ),
+        (
+            "unknown",
+            "Preparation failed; no safe detail is available.",
+            "No owner action is currently available.",
+        ),
+    ),
+)
+def test_terminal_preparation_guidance_is_total_and_closed(
+    status: str, reason: str, recovery: str
+) -> None:
+    assert set(_TERMINAL_PREPARATION_GUIDANCE) == _FAILURE_CODES
+    item = _library_item(
+        None,
+        json.dumps(
+            {
+                "attempt": 1,
+                "failure_root": None,
+                "item": "synthetic-item",
+                "lane": "extraction",
+                "library": "Synthetic library",
+                "recovery_attempt": 0,
+                "schema_version": "review-terminal-work-v1",
+                "status": status,
+                "work_id": "review_work_" + "a" * 64,
+            }
+        ),
+        (),
+    )
+
+    preparation = item["preparation"]
+    assert isinstance(preparation, dict)
+    assert preparation["reason"] == reason
+    assert preparation["recovery"] == recovery
+    assert "reported condition" not in recovery
 
 
 def test_cover_state_is_inside_the_current_case_read_snapshot() -> None:

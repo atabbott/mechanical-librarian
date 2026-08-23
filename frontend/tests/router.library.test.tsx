@@ -114,7 +114,7 @@ describe('Library route', () => {
         diagnosticReference: 'prep-0123456789abcdef',
         provider: 'hardcover-main',
         reason: 'Provider credentials need owner attention.',
-        recovery: 'Retry review preparation after correcting the reported condition.',
+        recovery: 'Update the configured provider credentials, then scan this library again.',
         recoveryAttempt: 0,
         stage: 'provider',
         status: 'authentication',
@@ -146,10 +146,14 @@ describe('Library route', () => {
     renderRoute('/library?lens=all', http)
 
     expect(await screen.findByText('Preparation failed safely')).toBeVisible()
-    // The card carries no provider disclosure of its own any more.
-    expect(document.querySelector('.library-work-list details')).toBeNull()
+    const terminal = document.querySelector('.library-work-row.is-terminal')
+    expect(terminal?.tagName).toBe('ARTICLE')
+    expect(terminal).toHaveAttribute('aria-label', 'Terminal preparation failure')
+    expect(terminal?.querySelector('button, a, details, [tabindex]')).toBeNull()
     expect(screen.queryByRole('button', { name: /^Preparation unavailable\./u })).toBeNull()
-
+    expect(terminal).toHaveTextContent(
+      'Update the configured provider credentials, then scan this library again.',
+    )
     expect(screen.getByText('prep-0123456789abcdef')).toBeVisible()
   })
 
@@ -1749,11 +1753,7 @@ describe('Library route', () => {
       ),
       getCaseSuccessor,
     }
-    const { router } = renderRoute(
-      '/library?lens=all&preview=case-1&field=title',
-      http,
-      updates,
-    )
+    const { router } = renderRoute('/library?lens=all&preview=case-1&field=title', http, updates)
     expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
 
     stale = true
@@ -1861,11 +1861,7 @@ describe('Library route', () => {
       getCaseDetail: vi.fn(async (id: string) => (id === 'case-2' ? second : first)),
       getCaseSuccessor,
     }
-    const { router } = renderRoute(
-      '/library?lens=all&preview=case-1&field=title',
-      http,
-      updates,
-    )
+    const { router } = renderRoute('/library?lens=all&preview=case-1&field=title', http, updates)
     expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
 
     updates.announce({ sequence: 83, subject: null, topic: 'library' })
