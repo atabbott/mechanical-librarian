@@ -3659,6 +3659,37 @@ def test_supervisor_closes_preopened_observation_when_start_fails() -> None:
     assert supervisor._threads == ()
 
 
+def test_supervisor_cleans_only_started_lane_after_second_thread_start_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pipeline = _LifecyclePipeline()
+    joined: list[str] = []
+    original_start = threading.Thread.start
+    original_join = threading.Thread.join
+
+    def start(thread: threading.Thread) -> None:
+        if thread.name == "review-preparation-1":
+            raise RuntimeError("synthetic second start failure")
+        original_start(thread)
+
+    def join(thread: threading.Thread, *args: object, **kwargs: object) -> None:
+        joined.append(thread.name)
+        original_join(thread, *args, **kwargs)
+
+    monkeypatch.setattr(threading.Thread, "start", start)
+    monkeypatch.setattr(threading.Thread, "join", join)
+    supervisor = ReviewPreparationSupervisor(
+        pipeline, on_stop=lambda: pipeline.events.append("on_stop")
+    )
+
+    with pytest.raises(RuntimeError, match="synthetic second start failure"):
+        supervisor.start()
+
+    assert joined == ["review-preparation-0"]
+    assert pipeline.events[-3:] == ["drain", "on_stop", "close"]
+    assert supervisor._threads == ()
+
+
 def test_supervisor_stops_then_closes_observation_in_existing_callback_order() -> None:
     pipeline = _LifecyclePipeline()
     supervisor = ReviewPreparationSupervisor(

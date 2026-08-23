@@ -1000,6 +1000,7 @@ class ReviewPreparationSupervisor:
             return
         self._stop.clear()
         self._pipeline.open_observation()
+        observation_closed = False
         try:
             if self._recovery_resume is not None:
                 self._recovery_resume()
@@ -1008,7 +1009,7 @@ class ReviewPreparationSupervisor:
                 resume()
             self._pipeline.recover()
             self._schedule_due()
-            self._threads = tuple(
+            threads = tuple(
                 threading.Thread(
                     target=self._run,
                     args=(lane,),
@@ -1017,11 +1018,28 @@ class ReviewPreparationSupervisor:
                 )
                 for lane in range(2)
             )
-            for thread in self._threads:
-                thread.start()
+            started: list[threading.Thread] = []
+            try:
+                for thread in threads:
+                    thread.start()
+                    started.append(thread)
+            except BaseException as error:
+                self._threads = tuple(started)
+                try:
+                    self.stop()
+                except BaseException as cleanup_error:
+                    error.add_note(
+                        "review preparation start cleanup failed: "
+                        + type(cleanup_error).__name__
+                    )
+                else:
+                    observation_closed = True
+                raise
+            self._threads = threads
             self._wake.set()
         except Exception:
-            self._pipeline.close_observation()
+            if not observation_closed and not self._threads:
+                self._pipeline.close_observation()
             raise
 
     def begin_drain(self) -> None:
