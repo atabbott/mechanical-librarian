@@ -30,21 +30,21 @@ class _WorkspaceProbe:
 
     @staticmethod
     def _assert_library_query(
-        page: Page, *, query: str | None, preview: str | None
+        page: Page, *, lens: str, query: str | None, preview: str | None
     ) -> None:
         page.wait_for_function(
-            """({query}) => {
+            """({lens, query}) => {
                 const location = new URL(window.location.href)
                 return location.pathname === '/library'
-                    && location.searchParams.get('lens') === 'all'
+                    && location.searchParams.get('lens') === lens
                     && (query === null
                         ? !location.searchParams.has('q')
                         : location.searchParams.get('q') === query)
             }""",
-            arg={"query": query},
+            arg={"lens": lens, "query": query},
         )
         parameters = parse_qs(urlparse(page.url).query)
-        assert parameters.get("lens") == ["all"]
+        assert parameters.get("lens") == [lens]
         assert parameters.get("q") == ([] if query is None else [query])
         if preview is not None:
             assert parameters.get("preview") == [preview]
@@ -79,15 +79,28 @@ class _WorkspaceProbe:
 
         page = self._page
         preserved_preview = review_case_id if phase != "early" else None
+        page.get_by_role("link", name="Needs attention", exact=True).click()
+        self._assert_library_query(
+            page,
+            lens="needs_attention",
+            query=None,
+            preview=preserved_preview,
+        )
         page.get_by_role("link", name="All", exact=True).click()
-        self._assert_library_query(page, query=None, preview=preserved_preview)
+        self._assert_library_query(
+            page, lens="all", query=None, preview=preserved_preview
+        )
         search = page.get_by_role(
             "searchbox", name="Search title, author, identifier, library, or format"
         )
         search.fill("fiction")
-        self._assert_library_query(page, query="fiction", preview=preserved_preview)
+        self._assert_library_query(
+            page, lens="all", query="fiction", preview=preserved_preview
+        )
         search.fill("")
-        self._assert_library_query(page, query=None, preview=preserved_preview)
+        self._assert_library_query(
+            page, lens="all", query=None, preview=preserved_preview
+        )
         page.locator(".library-work-row").first.click()
         page.goto(f"{origin}/library?lens=all&preview={review_case_id}&field=title")
         page.get_by_role("heading", name="Which title should this work use?").wait_for()
