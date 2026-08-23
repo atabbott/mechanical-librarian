@@ -32,6 +32,27 @@ const capabilityLabel = (state: string) =>
     field_unavailable: 'A field is unavailable',
     not_ready: 'Not ready yet',
   })[state] ?? 'Not ready yet'
+const stateLabel = (state: string) =>
+  ({
+    accept: 'Accepted',
+    keep_current: 'Kept current',
+    reject: 'Rejected',
+    completed: 'Cover advice completed',
+    unavailable: 'Cover advice unavailable',
+    failed: 'Cover advice failed safely',
+    selected: 'Owner cover choice recorded',
+    retry: 'Manual cover retry',
+    no_change_required: 'No change required',
+    applying: 'Applying',
+    claimed: 'Preparing',
+    planned: 'Planned',
+    reconciling: 'Checking',
+    retryable: 'Waiting safely',
+    verified: 'Verified',
+    stale: 'Stale',
+    superseded: 'Superseded',
+    abandoned: 'Stopped safely',
+  })[state] ?? 'Recorded'
 // What the owner calls a record, on the row and on the control that filters
 // for it, so a chip and the rows it selects never use different words. The
 // filter axis is still the durable event type the ledger is indexed by; only
@@ -910,7 +931,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                     <div className="cm-activity-change" aria-label={event.change_detail}>
                       <span aria-hidden="true">{event.change}</span>
                     </div>
-                    <b>{event.result}</b>
+                    <b>{stateLabel(event.state)}</b>
                     <button
                       aria-expanded={expanded}
                       aria-controls={`activity-evidence-${event.event_id}`}

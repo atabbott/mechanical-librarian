@@ -11,8 +11,6 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
-from mechanical_librarian.domain.activity_records import activity_result_label
-
 BUILD_IDENTITY = "a" * 64
 HOSTILE_TEXT = "Hostile <img src=x onerror=window.__metadataExecuted=true>"
 UNBROKEN_TITLE_SEGMENT = "UnbrokenSyntheticCatalogueToken" * 12
@@ -1227,7 +1225,6 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
                 "author_label": "Synthetic Author",
                 "library": library,
                 "destination": destination,
-                "result": activity_result_label(state),
                 "state": state,
                 "origin": origin,
                 "occurred_at": 1_754_858_100 + index * 300,

@@ -781,32 +781,6 @@ def test_openapi_is_deterministic_and_secret_free(
         Path("docs/reference/review-openapi-v1.json").read_text(encoding="utf-8")
     )
     assert first.json() == expected
-    activity_event = expected["components"]["schemas"]["_ActivityEvent"]
-    assert "result" in activity_event["required"]
-    assert activity_event["properties"]["result"] == {
-        "$ref": "#/components/schemas/ActivityResult"
-    }
-    assert expected["components"]["schemas"]["ActivityResult"]["enum"] == [
-        "Accepted",
-        "Kept current",
-        "Rejected",
-        "Cover advice completed",
-        "Cover advice unavailable",
-        "Cover advice failed safely",
-        "Owner cover choice recorded",
-        "Manual cover retry",
-        "No change required",
-        "Applying",
-        "Preparing",
-        "Planned",
-        "Checking",
-        "Waiting safely",
-        "Verified",
-        "Stale",
-        "Superseded",
-        "Stopped safely",
-        "Recorded",
-    ]
     assert (
         "413"
         in expected["paths"]["/api/v1/metadata-policy/drafts"]["post"]["responses"]

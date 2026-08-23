@@ -393,7 +393,6 @@ def readable_activity_event(
     event["change"] = change.compact
     event["change_detail"] = change.sentence
     event["evidence"] = facts
-    event["result"] = activity_result_label(state)
 
 
 def activity_search_text(
@@ -407,7 +406,6 @@ def activity_search_text(
         "work_id",
         "library",
         "destination",
-        "result",
         "work_label",
         "detail",
         "field_label",
@@ -417,8 +415,9 @@ def activity_search_text(
         value = projected.get(key)
         if type(value) is str:
             values.append(value)
-        elif type(value) is ActivityResult:
-            values.append(value.value)
+    state = projected.get("state")
+    if type(state) is str:
+        values.append(activity_result_label(state).value)
     if report is not None:
         values.append(report.target.current_title or "Untitled")
     evidence = projected.get("evidence")

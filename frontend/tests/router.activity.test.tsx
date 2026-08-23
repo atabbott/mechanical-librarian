@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 import { AmbiguousMutationError, ApiError, BuildMismatchError } from '../src/api/http'
-import type { ActivityResult, ActivitySearch, ActivityView, ReviewHttp } from '../src/api/http'
+import type { ActivitySearch, ActivityView, ReviewHttp } from '../src/api/http'
 import { activityRoute } from '../src/router'
 import { activity, createHttp, openActivityAuthority, renderRoute } from './fixtures'
 
@@ -485,7 +485,7 @@ describe('Activity route', () => {
       ...createHttp(),
       getActivity: vi.fn(async () => activity({
         ...current,
-        events: current.events.map((event) => ({ ...event, result: rowStatus as ActivityResult })),
+        events: current.events.map((event) => ({ ...event })),
       })),
     }
     renderRoute('/activity', http)

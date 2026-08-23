@@ -1,32 +1,6 @@
 {
   "components": {
     "schemas": {
-      "ActivityResult": {
-        "description": "The closed result vocabulary the Activity owner can read and search.",
-        "enum": [
-          "Accepted",
-          "Kept current",
-          "Rejected",
-          "Cover advice completed",
-          "Cover advice unavailable",
-          "Cover advice failed safely",
-          "Owner cover choice recorded",
-          "Manual cover retry",
-          "No change required",
-          "Applying",
-          "Preparing",
-          "Planned",
-          "Checking",
-          "Waiting safely",
-          "Verified",
-          "Stale",
-          "Superseded",
-          "Stopped safely",
-          "Recorded"
-        ],
-        "title": "ActivityResult",
-        "type": "string"
-      },
       "_ActivityCapability": {
         "additionalProperties": false,
         "properties": {
@@ -269,9 +243,6 @@
             "title": "Policy Changes",
             "type": "array"
           },
-          "result": {
-            "$ref": "#/components/schemas/ActivityResult"
-          },
           "state": {
             "maxLength": 512,
             "title": "State",
@@ -293,7 +264,6 @@
           "destination",
           "library",
           "origin",
-          "result",
           "state",
           "work_id"
         ],

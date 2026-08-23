@@ -52,7 +52,6 @@ from mechanical_librarian.application.review_application import (
     ReviewApplicationError,
 )
 from mechanical_librarian.application.review_web import ReviewWebError
-from mechanical_librarian.domain.activity_records import ActivityResult
 from mechanical_librarian.domain.field_effect import (
     SUPPORTED_DESTINATIONS,
     FieldEffectError,
@@ -610,7 +609,6 @@ class _ActivityEvent(_ClosedModel):
     library: str = Field(max_length=512)
     occurred_at: int | None = None
     origin: str = Field(max_length=512)
-    result: ActivityResult
     state: str = Field(max_length=512)
     work_label: str = Field(default="Recorded work", max_length=512)
     work_id: str = Field(max_length=512)
