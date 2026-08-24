@@ -308,15 +308,8 @@ class _AudiobookshelfFixture:
         self.details["fiction-new"] = detail
         return summary, detail
 
-    def prepare_installed_catalogue_selection_fixture(self, media: Path) -> None:
-        """Make one installed catalogue row an ebook for the Library selection proof."""
-
-        for item, detail in self.details.items():
-            if item == "fiction-0000":
-                continue
-            item_media = detail["media"]
-            assert type(item_media) is dict
-            del item_media["ebookFile"]
+    def materialize_installed_browser_selection_fixture(self, media: Path) -> None:
+        """Supply one neutral EPUB; the other declared ebooks exercise missing-media failures."""
 
         value = epub_bytes(
             package=b"""<?xml version="1.0" encoding="UTF-8"?>
@@ -761,7 +754,7 @@ def qualify_installed_pipeline(
         # no-change restart rather than a real 2,000-work reconciliation.
         database = root / "installed.sqlite3"
         catalogue = root / "installed-catalogue.sqlite3"
-        fixture.prepare_installed_catalogue_selection_fixture(media)
+        fixture.materialize_installed_browser_selection_fixture(media)
         command = shutil.which("mechanical-librarian")
         assert command is not None
         arguments = [
@@ -922,7 +915,7 @@ def qualify_installed_pipeline(
                         not projection["active"]
                         and len(projection["libraries"]) == 3
                         and all(
-                            item["state"] == "completed"
+                            item["state"] == "completed_with_failures"
                             for item in projection["libraries"]
                         )
                     ):
@@ -951,7 +944,10 @@ def qualify_installed_pipeline(
                 sum(item["checked"] for item in projection["libraries"])
                 == expected_total
             )
-            assert sum(item["blocked"] for item in projection["libraries"]) == 0
+            assert (
+                sum(item["blocked"] for item in projection["libraries"])
+                == expected_total - 1
+            )
             assert peak_rss_kib < 524_288
         finally:
             # A held discovery call has to return before a graceful shutdown.
@@ -989,8 +985,21 @@ def qualify_installed_pipeline(
                 "science",
             }
             assert all(
-                item["state"] == "completed" and item["checked"] == item["total"]
+                item["state"] == "completed_with_failures"
+                and item["checked"] == item["total"]
                 for item in completed_projection["libraries"]
+            )
+            assert (
+                sum(item["total"] for item in completed_projection["libraries"])
+                == expected_total
+            )
+            assert (
+                sum(item["checked"] for item in completed_projection["libraries"])
+                == expected_total
+            )
+            assert (
+                sum(item["blocked"] for item in completed_projection["libraries"])
+                == expected_total - 1
             )
         finally:
             if second_process.poll() is None:
@@ -1026,6 +1035,12 @@ def qualify_installed_pipeline(
             ),
             "rss_kib_max": peak_rss_kib,
             "actual_phase_fractions": actual_fractions,
+            "installed_terminal": {
+                "state": "completed_with_failures",
+                "total": expected_total,
+                "checked": expected_total,
+                "blocked": expected_total - 1,
+            },
             "fairness": {
                 "first_library_positions": {
                     library: initial_extracted.index(
@@ -1040,7 +1055,7 @@ def qualify_installed_pipeline(
                 },
                 "new_work_position": extracted[before_new:].index("fiction-new") + 1,
             },
-            "restart": {"completed_state_restart": True},
+            "restart": {"completed_with_failures_state_restart": True},
         }
         receipt["p95_budgets_ms"] = _validate_receipt_budgets(receipt)
         assert (
