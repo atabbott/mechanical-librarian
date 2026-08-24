@@ -33,7 +33,7 @@ dependencies = [
   # GHSA-86qp-5c8j-p5mr -- the `Host`-header path poisoning this project's own
   # trust boundary was decided on -- in 1.0.1.
   "starlette==1.6.0",
-  "uvicorn==0.52.1",
+  "uvicorn==0.52.3",
 ]
 
 [dependency-groups]
@@ -45,7 +45,7 @@ dev = [
   # `.pth` is inert unless `COVERAGE_PROCESS_START` is set, which only the
   # documented coverage command does.
   "coverage==7.13.0",
-  "hypothesis==6.165.2",
+  "hypothesis==6.165.10",
   # `starlette.testclient` prefers `httpx2` and warns on the
   # `StarletteDeprecationWarning` class when it has to fall back to `httpx`.
   # `scripts/qualify_exact_artifact.py` fails its installed-workspace probe on
