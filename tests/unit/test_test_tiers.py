@@ -231,7 +231,7 @@ def test_required_installed_adds_the_exact_wheel_scale_node_to_fast_contracts() 
     fast = set(collect_cohort(root, "fast"))
     installed = set(collect_cohort(root, "required-installed"))
     assert installed
-    scale = "test_continuous_review_scale.test_installed_pipeline_reconciles_then_restarts_completed_cohort"
+    scale = "test_continuous_review_scale.test_installed_owner_decision_activity_smoke"
     assert scale not in fast
     assert list(collect_cohort(root, "required-installed")).count(scale) == 1
     assert installed - {scale} < fast
