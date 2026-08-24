@@ -23,6 +23,7 @@ from tests.support.continuous_review_scale import (
     _MEASUREMENT_SAMPLES,
     _assert_distinct_phase_fractions,
     _validate_receipt_budgets,
+    qualify_installed_decision_activity,
     qualify_installed_pipeline,
 )
 
@@ -295,15 +296,14 @@ def test_installed_pipeline_reconciles_two_thousand_then_restarts_completed_coho
 def test_installed_decision_activity_projection_uses_the_authoritative_event() -> None:
     """Keep the decision-to-Activity projection proof narrow and exact-wheel runnable."""
 
-    workspace = _WorkspaceProbe()
-    try:
-        qualify_installed_pipeline(
-            {"fiction": 3, "history": 98, "science": 98},
-            expected_total=200,
-            phase_observer=workspace,
-        )
-    finally:
-        workspace.close()
+    evidence = qualify_installed_decision_activity(
+        {"fiction": 3, "history": 998, "science": 998},
+        expected_total=2_000,
+    )
+
+    assert evidence.history_events == 1
+    assert evidence.category == "owner"
+    assert evidence.outcome == "accept"
 
 
 def test_receipt_budget_rejects_two_over_budget_active_samples() -> None:

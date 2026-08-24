@@ -43,9 +43,11 @@ class _JoiningThread(threading.Thread):
 
 
 class _Response:
-    def __init__(self, status_code: int, payload: dict[str, object]) -> None:
+    def __init__(
+        self, status_code: int, payload: dict[str, object], text: str = "safe"
+    ) -> None:
         self.status_code = status_code
-        self.text = "safe"
+        self.text = text
         self._payload = payload
 
     def json(self) -> dict[str, object]:
@@ -71,6 +73,63 @@ class _TerminalClient:
                     {"state": "completed", "total": 1, "checked": 1, "blocked": 0},
                     {"state": "completed", "total": 1, "checked": 1, "blocked": 0},
                     {"state": "completed", "total": 1, "checked": 1, "blocked": 0},
+                ],
+            },
+        )
+
+
+class _DecisionClient:
+    def __init__(self) -> None:
+        self.payload: dict[str, object] | None = None
+
+    def __enter__(self) -> _DecisionClient:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        pass
+
+    def post(self, url: str, **kwargs: object) -> _Response:
+        if url.endswith("/session/login"):
+            return _Response(200, {})
+        self.payload = kwargs["json"]  # type: ignore[assignment]
+        return _Response(
+            200,
+            {
+                "actor": "owner",
+                "decision_id": "human_decision_" + "a" * 64,
+                "outcome": "accept",
+                "proposal_id": "review_proposal_" + "b" * 64,
+                "target_fingerprint": "c" * 64,
+            },
+        )
+
+    def get(self, url: str, **_: object) -> _Response:
+        if url.endswith("/library"):
+            return _Response(
+                200,
+                {},
+                (
+                    'data-csrf-token="'
+                    + "a" * 32
+                    + '" data-build-identity="'
+                    + "b" * 64
+                    + '"'
+                ),
+            )
+        return _Response(
+            200,
+            {
+                "writes_consented": False,
+                "fields": [
+                    {
+                        "destination": "title",
+                        "proposal_id": "review_proposal_" + "b" * 64,
+                        "target_fingerprint": "c" * 64,
+                        "current": {"value": "current"},
+                        "proposed_values": [
+                            {"kind": "text", "value": "Exact evaluator candidate"}
+                        ],
+                    }
                 ],
             },
         )
@@ -164,6 +223,32 @@ def test_installed_preparation_exposes_the_admitted_fixture_case() -> None:
     run._capture_fixture_case("case-1")
 
     assert run.wait_for_fixture_case() == "case-1"
+
+
+def test_installed_preparation_accepts_only_the_projected_fixture_title(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The public case projection, not fixture internals, binds the decision."""
+
+    client = _DecisionClient()
+    run = object.__new__(_InstalledPreparationRun)
+    run._origin = "https://127.0.0.1:1"
+    run._case_id = "review_case_" + "d" * 64
+    run._case_id_lock = threading.Lock()
+    run._case_admitted = threading.Event()
+    run._case_admitted.set()
+    monkeypatch.setattr(continuous_review_scale.httpx, "Client", lambda **_: client)
+
+    evidence = run.accept_fixture_title_proposal()
+
+    assert evidence.response_status == 200
+    assert client.payload == {
+        "destination": "title",
+        "outcome": "accept",
+        "proposal_id": "review_proposal_" + "b" * 64,
+        "selected_value": {"kind": "text", "value": "Exact evaluator candidate"},
+        "target_fingerprint": "c" * 64,
+    }
 
 
 def test_terminal_wait_has_no_phase_fixture_access(

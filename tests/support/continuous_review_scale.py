@@ -22,6 +22,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Protocol, cast
@@ -646,6 +647,39 @@ class _InstalledPhaseObserver(Protocol):
     def close(self) -> None: ...
 
 
+def _projection_shape(value: dict[str, object]) -> dict[str, object]:
+    """Describe malformed public projections without echoing their values."""
+
+    fields = value.get("fields")
+    return {
+        "keys": sorted(value),
+        "field_count": len(fields) if isinstance(fields, list) else None,
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class _InstalledDecisionEvidence:
+    """The installed run's bounded decision identity and safe diagnostics."""
+
+    review_case_id: str
+    decision_id: str
+    proposal_id: str
+    target_fingerprint: str
+    response_status: int
+
+
+@dataclass(frozen=True, slots=True)
+class _InstalledActivityEvidence:
+    """The public decision/activity chain retained for the browser assertion."""
+
+    event_id: str
+    category: str
+    outcome: str
+    history_events: int
+    unfiltered_events: int
+    filtered_events: int
+
+
 class _InstalledPreparationRun:
     """Own one installed preparation lifecycle and its bounded public observation."""
 
@@ -770,6 +804,254 @@ class _InstalledPreparationRun:
         with self._case_id_lock:
             assert self._case_id is not None
             return self._case_id
+
+    def assert_fixture_case_active(self) -> None:
+        """Confirm admission occurred while the installed scan is still active."""
+
+        with httpx.Client(verify=False, trust_env=False) as client:
+            login = client.post(
+                self._origin + "/api/v1/session/login",
+                headers={"Origin": self._origin},
+                json={"password": "synthetic password"},
+            )
+            assert login.status_code == 200, login.text
+            status = self.status(client)
+        assert status["active"] is True
+        libraries = status["libraries"]
+        assert isinstance(libraries, list)
+        assert any(
+            isinstance(library, dict) and library.get("state") != "completed"
+            for library in libraries
+        )
+
+    def accept_fixture_title_proposal(self) -> _InstalledDecisionEvidence:
+        """Record the fixture title choice from the authoritative public projection."""
+
+        review_case_id = self.wait_for_fixture_case()
+        with httpx.Client(verify=False, trust_env=False) as client:
+            login = client.post(
+                self._origin + "/api/v1/session/login",
+                headers={"Origin": self._origin},
+                json={"password": "synthetic password"},
+            )
+            assert login.status_code == 200, login.text
+            workspace = client.get(self._origin + "/library")
+            assert workspace.status_code == 200, workspace.text
+            csrf = re.search(
+                r'data-csrf-token="([A-Za-z0-9_-]{32,128})"', workspace.text
+            )
+            build_identity = re.search(
+                r'data-build-identity="([0-9a-f]{64})"', workspace.text
+            )
+            assert csrf is not None, "installed decision page omitted csrf token"
+            assert build_identity is not None, (
+                "installed decision page omitted build identity"
+            )
+            detail_response = client.get(
+                self._origin + f"/api/v1/review-cases/{review_case_id}"
+            )
+            assert detail_response.status_code == 200, detail_response.text
+            detail = cast(dict[str, object], detail_response.json())
+            assert detail.get("writes_consented") is False, _projection_shape(detail)
+            fields = detail.get("fields")
+            assert isinstance(fields, list), _projection_shape(detail)
+            title_fields = [
+                field
+                for field in fields
+                if isinstance(field, dict) and field.get("destination") == "title"
+            ]
+            assert len(title_fields) == 1, _projection_shape(detail)
+            title = title_fields[0]
+            proposal_id = title.get("proposal_id")
+            target_fingerprint = title.get("target_fingerprint")
+            current = title.get("current")
+            proposed_values = title.get("proposed_values")
+            assert isinstance(proposal_id, str), _projection_shape(title)
+            assert isinstance(target_fingerprint, str), _projection_shape(title)
+            assert isinstance(current, dict), _projection_shape(title)
+            assert isinstance(proposed_values, list), _projection_shape(title)
+            current_value = current.get("value")
+            proposed = next(
+                (
+                    value
+                    for value in proposed_values
+                    if isinstance(value, dict)
+                    and value.get("value") == "Exact evaluator candidate"
+                ),
+                None,
+            )
+            assert isinstance(proposed, dict), _projection_shape(title)
+            assert proposed.get("value") != current_value, _projection_shape(title)
+            response = client.post(
+                self._origin + f"/api/v1/review-cases/{review_case_id}/decisions",
+                headers={
+                    "Origin": self._origin,
+                    "X-CSRF-Token": csrf.group(1),
+                    "X-ML-Build-Identity": build_identity.group(1),
+                    "Idempotency-Key": "installed-decision-activity-0001",
+                },
+                json={
+                    "destination": "title",
+                    "outcome": "accept",
+                    "proposal_id": proposal_id,
+                    "selected_value": proposed,
+                    "target_fingerprint": target_fingerprint,
+                },
+            )
+        assert response.status_code == 200, response.text
+        acknowledgement = cast(dict[str, object], response.json())
+        assert acknowledgement.get("actor") == "owner", _projection_shape(
+            acknowledgement
+        )
+        assert acknowledgement.get("outcome") == "accept", _projection_shape(
+            acknowledgement
+        )
+        assert acknowledgement.get("proposal_id") == proposal_id, _projection_shape(
+            acknowledgement
+        )
+        assert acknowledgement.get("target_fingerprint") == target_fingerprint, (
+            _projection_shape(acknowledgement)
+        )
+        decision_id = acknowledgement.get("decision_id")
+        assert isinstance(decision_id, str), _projection_shape(acknowledgement)
+        return _InstalledDecisionEvidence(
+            review_case_id=review_case_id,
+            decision_id=decision_id,
+            proposal_id=proposal_id,
+            target_fingerprint=target_fingerprint,
+            response_status=response.status_code,
+        )
+
+    def assert_decision_activity(
+        self, decision: _InstalledDecisionEvidence
+    ) -> _InstalledActivityEvidence:
+        """Follow the durable decision through the supported public projections."""
+
+        with httpx.Client(verify=False, trust_env=False) as client:
+            login = client.post(
+                self._origin + "/api/v1/session/login",
+                headers={"Origin": self._origin},
+                json={"password": "synthetic password"},
+            )
+            assert login.status_code == 200, login.text
+            detail_response = client.get(
+                self._origin + f"/api/v1/review-cases/{decision.review_case_id}"
+            )
+            history_response = client.get(
+                self._origin + f"/api/v1/review-cases/{decision.review_case_id}/history"
+            )
+            activity_response = client.get(
+                self._origin + "/api/v1/activity?page=1&page_size=25"
+            )
+            filtered_response = client.get(
+                self._origin
+                + "/api/v1/activity?event_type=review&range_days=30&page=1&page_size=25"
+            )
+        assert detail_response.status_code == 200, detail_response.text
+        assert history_response.status_code == 200, history_response.text
+        assert activity_response.status_code == 200, activity_response.text
+        assert filtered_response.status_code == 200, filtered_response.text
+        detail = cast(dict[str, object], detail_response.json())
+        fields = detail.get("fields")
+        assert isinstance(fields, list), _projection_shape(detail)
+        title = next(
+            (
+                field
+                for field in fields
+                if isinstance(field, dict) and field.get("destination") == "title"
+            ),
+            None,
+        )
+        assert isinstance(title, dict), _projection_shape(detail)
+        recorded = title.get("human_decision")
+        assert isinstance(recorded, dict), _projection_shape(title)
+        assert recorded.get("decision_id") == decision.decision_id, _projection_shape(
+            recorded
+        )
+        assert recorded.get("outcome") == "accept", _projection_shape(recorded)
+        history = cast(dict[str, object], history_response.json())
+        history_events = history.get("events")
+        assert isinstance(history_events, list), _projection_shape(history)
+        decisions = [
+            event
+            for event in history_events
+            if isinstance(event, dict)
+            and event.get("kind") == "human_decision_recorded"
+            and event.get("decision_id") == decision.decision_id
+        ]
+        assert len(decisions) == 1, _projection_shape(history)
+        history_decision = decisions[0]
+        event_id = history_decision.get("event_id")
+        assert isinstance(event_id, str), _projection_shape(history_decision)
+        activity = cast(dict[str, object], activity_response.json())
+        filtered = cast(dict[str, object], filtered_response.json())
+        events = activity.get("events")
+        filtered_events = filtered.get("events")
+        assert isinstance(events, list), _projection_shape(activity)
+        assert isinstance(filtered_events, list), _projection_shape(filtered)
+        matching = [
+            event
+            for event in events
+            if isinstance(event, dict) and event.get("event_id") == event_id
+        ]
+        filtered_matching = [
+            event
+            for event in filtered_events
+            if isinstance(event, dict) and event.get("event_id") == event_id
+        ]
+        assert len(matching) == 1, _projection_shape(activity)
+        assert len(filtered_matching) == 1, _projection_shape(filtered)
+        event = matching[0]
+        assert filtered_matching[0] == event, _projection_shape(event)
+        assert event.get("category") == "owner", _projection_shape(event)
+        assert event.get("state") == "accept", _projection_shape(event)
+        category = event.get("category")
+        outcome = event.get("state")
+        assert isinstance(category, str)
+        assert isinstance(outcome, str)
+        return _InstalledActivityEvidence(
+            event_id=event_id,
+            category=category,
+            outcome=outcome,
+            history_events=len(decisions),
+            unfiltered_events=len(events),
+            filtered_events=len(filtered_events),
+        )
+
+    def assert_owner_choice_browser(self) -> None:
+        """Render the accepted owner choice in one self-contained browser session."""
+
+        from playwright.sync_api import expect, sync_playwright
+
+        playwright = sync_playwright().start()
+        browser = playwright.chromium.launch(headless=True)
+        context = browser.new_context(
+            ignore_https_errors=True, viewport={"width": 1280, "height": 800}
+        )
+        page = context.new_page()
+        try:
+            page.goto(self._origin + "/login")
+            page.get_by_label("Password").fill("synthetic password")
+            page.get_by_role("button", name="Sign in").click()
+            page.wait_for_url(self._origin + "/library")
+            page.get_by_role("link", name="Activity", exact=True).click()
+            page.get_by_role(
+                "heading", name="Activity and recovery", exact=True
+            ).wait_for(timeout=_FOREGROUND_RESPONSE_BUDGET_MS)
+            page.get_by_role("button", name="Owner choices", exact=True).click()
+            expect(
+                page.get_by_role("button", name="Owner choices", exact=True)
+            ).to_have_attribute("aria-pressed", "true")
+            page.get_by_text("Owner choice", exact=True).wait_for(
+                timeout=_FOREGROUND_RESPONSE_BUDGET_MS
+            )
+            page.get_by_text("Accepted", exact=True).wait_for(
+                timeout=_FOREGROUND_RESPONSE_BUDGET_MS
+            )
+        finally:
+            context.close()
+            browser.close()
+            playwright.stop()
 
     def wait_until_terminal(self) -> dict[str, object]:
         """Wait through the authenticated progress projection without profiling it."""
@@ -1569,6 +1851,40 @@ def qualify_installed_pipeline(
             receipt_path.write_text(
                 json.dumps(receipt, indent=2) + "\n", encoding="utf-8"
             )
+
+
+def qualify_installed_decision_activity(
+    counts: dict[str, int], *, expected_total: int
+) -> _InstalledActivityEvidence:
+    """Prove one report-only owner decision reaches the installed Activity view."""
+
+    with _installed_qualification_environment(counts, expected_total) as environment:
+        environment.ensure_new_fiction()
+        with environment.running_preparation() as installed:
+            installed.release_discovery()
+            installed.wait_for_fixture_case()
+            installed.assert_fixture_case_active()
+            decision = installed.accept_fixture_title_proposal()
+            terminal = installed.wait_until_terminal()
+            terminal_libraries = terminal["libraries"]
+            assert isinstance(terminal_libraries, list)
+            for field, expected in (
+                ("total", expected_total),
+                ("checked", expected_total),
+                ("blocked", 0),
+            ):
+                assert (
+                    sum(
+                        library[field]
+                        for library in terminal_libraries
+                        if isinstance(library, dict)
+                        and isinstance(library.get(field), int)
+                    )
+                    == expected
+                )
+            activity = installed.assert_decision_activity(decision)
+            installed.assert_owner_choice_browser()
+            return activity
 
 
 class _ServerExited(AssertionError):
