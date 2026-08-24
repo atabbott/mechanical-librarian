@@ -970,7 +970,7 @@ class _InstalledPreparationRun:
         )
         assert recorded.get("outcome") == "accept", _projection_shape(recorded)
         history = cast(dict[str, object], history_response.json())
-        history_events = history.get("events")
+        history_events = history.get("items")
         assert isinstance(history_events, list), _projection_shape(history)
         decisions = [
             event

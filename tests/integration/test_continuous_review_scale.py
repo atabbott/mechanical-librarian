@@ -135,6 +135,40 @@ class _DecisionClient:
         )
 
 
+class _ActivityClient:
+    def __init__(self, history: dict[str, object]) -> None:
+        self._history = history
+
+    def __enter__(self) -> _ActivityClient:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        pass
+
+    def post(self, *_: object, **__: object) -> _Response:
+        return _Response(200, {})
+
+    def get(self, url: str, **_: object) -> _Response:
+        if url.endswith("/history"):
+            return _Response(200, self._history)
+        if "/activity" in url:
+            return _Response(200, {"events": []})
+        return _Response(
+            200,
+            {
+                "fields": [
+                    {
+                        "destination": "title",
+                        "human_decision": {
+                            "decision_id": "human_decision_" + "a" * 64,
+                            "outcome": "accept",
+                        },
+                    }
+                ]
+            },
+        )
+
+
 def test_exited_installed_server_reports_its_exit_code() -> None:
     process = subprocess.Popen(
         (sys.executable, "-c", "raise SystemExit(2)"),
@@ -249,6 +283,35 @@ def test_installed_preparation_accepts_only_the_projected_fixture_title(
         "selected_value": {"kind": "text", "value": "Exact evaluator candidate"},
         "target_fingerprint": "c" * 64,
     }
+
+
+@pytest.mark.parametrize(
+    "history",
+    [
+        {"events": []},
+        {"items": [{"kind": "human_decision_recorded", "decision_id": "wrong"}]},
+    ],
+)
+def test_installed_activity_requires_the_authoritative_history_items(
+    monkeypatch: pytest.MonkeyPatch, history: dict[str, object]
+) -> None:
+    """A stale history alias or unrelated record cannot satisfy the Activity chain."""
+
+    run = object.__new__(_InstalledPreparationRun)
+    run._origin = "https://127.0.0.1:1"
+    decision = continuous_review_scale._InstalledDecisionEvidence(
+        review_case_id="review_case_" + "d" * 64,
+        decision_id="human_decision_" + "a" * 64,
+        proposal_id="review_proposal_" + "b" * 64,
+        target_fingerprint="c" * 64,
+        response_status=200,
+    )
+    monkeypatch.setattr(
+        continuous_review_scale.httpx, "Client", lambda **_: _ActivityClient(history)
+    )
+
+    with pytest.raises(AssertionError):
+        run.assert_decision_activity(decision)
 
 
 def test_terminal_wait_has_no_phase_fixture_access(
