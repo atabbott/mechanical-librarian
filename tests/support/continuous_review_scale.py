@@ -1007,6 +1007,7 @@ class _InstalledQualificationEnvironment:
         self.counts = counts
         self.expected_total = expected_total
         self.fixture = _AudiobookshelfFixture(counts)
+        self._new_fiction_added = False
         self.directory = tempfile.TemporaryDirectory()
         self.review_port = ReservedPort()
 
@@ -1120,6 +1121,44 @@ class _InstalledQualificationEnvironment:
         ]
         return self
 
+    def ensure_new_fiction(self) -> None:
+        """Add the one synthetic successor shared by installed scenarios."""
+
+        if self._new_fiction_added:
+            return
+        summary, detail = self.fixture.add_new_fiction()
+        self.entries["fiction"].append(
+            catalogue_entry(
+                "primary",
+                self.libraries["fiction"],
+                self.mount,
+                summary,
+                detail,
+            )
+        )
+        self._new_fiction_added = True
+
+    @contextmanager
+    def running_preparation(
+        self, phase_observer: _InstalledPhaseObserver | None = None
+    ) -> Iterator[_InstalledPreparationRun]:
+        with _running_installed_preparation(
+            database=self.database,
+            configuration=self.configuration,
+            artifacts=self.artifacts,
+            fixture=self.fixture,
+            entries=self.entries,
+            producers=self.producers,
+            owner_hash=self.owner_hash,
+            certificate=self.certificate,
+            private_key=self.private_key,
+            reservation=self.review_port,
+            origin=self.origin,
+            expected_total=self.expected_total,
+            phase_observer=phase_observer,
+        ) as run:
+            yield run
+
     def __exit__(self, *_: object) -> None:
         self.review_port.close()
         self.directory.cleanup()
@@ -1149,13 +1188,7 @@ def qualify_installed_pipeline(
         fixture = environment.fixture
         root = environment.root
         artifacts = environment.artifacts
-        owner_hash = environment.owner_hash
-        certificate = environment.certificate
-        private_key = environment.private_key
         origin = environment.origin
-        configuration = environment.configuration
-        mount = environment.mount
-        libraries = environment.libraries
         entries = environment.entries
         producers = environment.producers
         review_port = environment.review_port
@@ -1335,16 +1368,7 @@ def qualify_installed_pipeline(
                 if item_id.startswith(library + "-")
             )
             assert (first_library_position + 1) <= 6
-        new_summary, new_detail = fixture.add_new_fiction()
-        entries["fiction"].append(
-            catalogue_entry(
-                "primary",
-                libraries["fiction"],
-                mount,
-                new_summary,
-                new_detail,
-            )
-        )
+        environment.ensure_new_fiction()
         restarted.request("primary", "fiction")
         for _ in range(40):
             assert run_next(restarted)
@@ -1397,21 +1421,7 @@ def qualify_installed_pipeline(
         # no-change restart rather than a real 2,000-work reconciliation.
         database = environment.database
         arguments = environment.arguments
-        with _running_installed_preparation(
-            database=database,
-            configuration=configuration,
-            artifacts=artifacts,
-            fixture=fixture,
-            entries=entries,
-            producers=producers,
-            owner_hash=owner_hash,
-            certificate=certificate,
-            private_key=private_key,
-            reservation=review_port,
-            origin=origin,
-            expected_total=expected_total,
-            phase_observer=phase_observer,
-        ) as installed:
+        with environment.running_preparation(phase_observer) as installed:
             (
                 projection,
                 measurements,
