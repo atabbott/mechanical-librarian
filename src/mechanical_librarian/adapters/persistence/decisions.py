@@ -43,11 +43,11 @@ from mechanical_librarian.domain.automatic_decision import (
     AutomaticSafetyState,
     qualification_manifest_sha256,
 )
+from mechanical_librarian.domain.field_effect import FieldEffectOperation
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
 )
-from mechanical_librarian.domain.field_effect import FieldEffectOperation
 from mechanical_librarian.domain.review_case import (
     ReviewCase,
     ReviewCaseValueError,
@@ -809,11 +809,20 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     target.get("value") if target.get("state") == "value" else None
                 )
                 prior = self._connection.execute(
-                    "SELECT effect.document FROM field_effects effect JOIN human_decisions earlier "
-                    "ON earlier.decision_id=effect.decision_id WHERE earlier.review_case_id=? "
-                    "AND earlier.destination=? AND earlier.ordinal<? AND effect.state='verified' "
-                    "ORDER BY earlier.ordinal DESC LIMIT 1",
-                    (review_case_id, decision.destination, decision_row[0]),
+                    "SELECT effect.document FROM field_effects effect JOIN ("
+                    "SELECT earlier.decision_id,earlier.ordinal FROM human_decisions earlier "
+                    "WHERE earlier.review_case_id=? AND earlier.destination=? AND earlier.ordinal<? "
+                    "UNION ALL SELECT earlier.decision_id,-1 FROM automatic_decisions earlier "
+                    "WHERE earlier.review_case_id=? AND earlier.destination=?"
+                    ") recorded ON recorded.decision_id=effect.decision_id "
+                    "WHERE effect.state='verified' ORDER BY recorded.ordinal DESC LIMIT 1",
+                    (
+                        review_case_id,
+                        decision.destination,
+                        decision_row[0],
+                        review_case_id,
+                        decision.destination,
+                    ),
                 ).fetchone()
                 if prior is not None:
                     previous = FieldEffectOperation.from_json(
@@ -835,7 +844,8 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     decision.selected_value
                     if decision.outcome == "accept"
                     else {"kind": kind, "value": target.get("value")}
-                    if target.get("state") == "value"
+                    if decision.outcome == "keep_current"
+                    and target.get("state") == "value"
                     else None
                 )
                 events.append((row[6], int(decision_row[0]), value))

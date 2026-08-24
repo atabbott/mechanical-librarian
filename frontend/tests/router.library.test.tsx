@@ -1189,7 +1189,7 @@ describe('Library route', () => {
     ).toEqual(['Title✓', 'Subtitle✓', 'Authors•'])
   })
 
-  it('shows a recorded outcome only for its recorded field after reopening a context-only sibling', async () => {
+  it('omits an unsupported previous value for a blocked recorded replacement', async () => {
     const user = userEvent.setup()
     const source = detail.fields[0]
     if (!source) throw new Error('workspace fixture requires a title field')
@@ -1205,7 +1205,8 @@ describe('Library route', () => {
     }
     const recordedSeries = {
       ...series,
-      decisionActions: [],
+      decisionActions: ['keep_current', 'accept'] as const,
+      editable: false,
       needsAttention: false,
       humanDecision: {
         actor: 'owner' as const,
@@ -1253,8 +1254,9 @@ describe('Library route', () => {
 
     await user.click(within(rail).getByRole('button', { name: /^Series/u }))
     expect(await screen.findByLabelText('Series recorded outcome')).toHaveTextContent(
-      'Proposed value selectedPrevious valueNot setChosen valueMistborn',
+      'Proposed value selectedChosen valueMistborn',
     )
+    expect(screen.getByLabelText('Series recorded outcome')).not.toHaveTextContent('Previous value')
     expect(screen.queryByText('Decision recorded from the authoritative case.')).toBeNull()
   })
 

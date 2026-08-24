@@ -63,7 +63,14 @@ from mechanical_librarian.domain.automatic_decision import (
     AutomaticSafetyState,
 )
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
-from mechanical_librarian.domain.field_effect import FieldEffectError
+from mechanical_librarian.domain.field_effect import (
+    EffectAuthority,
+    EffectConsent,
+    FieldEffectError,
+    FieldEffectOperation,
+    FieldEffectPlan,
+    field_value_version,
+)
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_policy import (
     DEFAULT_OPTIONS,
@@ -3241,6 +3248,80 @@ def test_human_authority_supersedes_automatic_without_global_suspension() -> Non
         assert (
             AutomaticSafetyState(False, None, ()) == repository.automatic_safety_state()
         )
+        repository.close()
+
+
+def test_history_uses_a_verified_automatic_predecessor_for_a_human_override() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        repository = open_repository(Path(temporary) / "reports.sqlite")
+        case_id = _case(repository)
+        repository._record_automatic_outcomes(
+            _synthetic_automatic_tuple(repository, case_id, "title_layout"), 2
+        )
+        automatic = next(
+            AutomaticDecision.from_json(document)
+            for document in repository.get_review_case_decisions(case_id)
+            if AutomaticDecision.from_json(document).destination == "title"
+        )
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(case_id))["case"]
+        )
+        current = next(
+            field["value"]
+            for field in case.target["fields"]
+            if field["destination"] == "title" and field["state"] == "value"
+        )
+        automatic_value = "Automatic title"
+        plan = FieldEffectPlan.create(
+            connection=case.target["connection"],
+            library=case.target["library"],
+            work_id=case.target["item"],
+            destination="title",
+            pre_value=current,
+            desired_value=automatic_value,
+            target_fingerprint=case.target_fingerprint,
+            target_version=field_value_version("title", current),
+            dependency_digests=(case.target_fingerprint,),
+            authority=EffectAuthority(
+                automatic.decision_id,
+                automatic.review_case_id,
+                automatic.target_fingerprint,
+                "persisted_review_case",
+                "automatic_policy",
+                "candidate",
+                automatic.resolved_policy_id,
+                automatic.qualification_manifest_sha256,
+            ),
+            consent=EffectConsent.create(
+                connection=case.target["connection"],
+                library=case.target["library"],
+                destination="title",
+                envelope_identity=repository.field_effect_consent_envelope_identity(
+                    case.target["library"]
+                ),
+                granted_at=3,
+            ),
+            capability_digest="d" * 64,
+            created_at=3,
+        )
+        repository.record_field_effect(FieldEffectOperation(plan, updated_at=3))
+        repository.claim_field_effect(plan.plan_id, "planned", "a" * 64, 4)
+        repository.transition_field_effect(plan.plan_id, "claimed", "applying", 5)
+        repository.transition_field_effect(plan.plan_id, "applying", "verified", 6)
+
+        human = _human_title_decision(repository, case_id, 7)
+        repository.record_human_decision(human)
+        history = repository.get_review_case_history(case_id, 10)
+        override = next(
+            event
+            for event in history
+            if event.get("kind") == "human_decision_recorded"
+            and event.get("decision_id") == human.decision_id
+        )
+        assert override["previous_value"] == {
+            "kind": "text",
+            "value": automatic_value,
+        }
         repository.close()
 
 

@@ -378,7 +378,7 @@ class FakeReviewRepository:
                 "selected_value": decision.selected_value
                 if decision.outcome == "accept"
                 else None
-                if current is None
+                if decision.outcome == "reject" or current is None
                 else {"kind": kind, "value": current},
             }
         )

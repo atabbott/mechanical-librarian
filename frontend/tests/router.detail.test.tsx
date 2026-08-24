@@ -63,6 +63,19 @@ describe('Library review ownership', () => {
           schema_version: 'human-decision-event-v1',
           selected_value: { kind: 'text', value: 'Existing subtitle' },
         },
+        {
+          actor: 'owner',
+          decision_id: 'decision-reject',
+          destination: 'isbn',
+          event_id: 'event-reject',
+          kind: 'human_decision_recorded',
+          occurred_at: 0,
+          outcome: 'reject',
+          previous_value: { kind: 'text', value: '9780000000001' },
+          review_case_id: 'case-1',
+          schema_version: 'human-decision-event-v1',
+          selected_value: null,
+        },
       ],
     }))
     renderRoute('/review/case-1?field=title&subview=history', { ...createHttp(), getHistory })
@@ -72,6 +85,13 @@ describe('Library review ownership', () => {
     expect(screen.getByText('Chosen: <script>chosen</script>')).toBeVisible()
     expect(screen.getByText('Current value retained.')).toBeVisible()
     expect(screen.getByText('Retained: Existing subtitle')).toBeVisible()
+    const rejected = screen.getByRole('heading', { name: 'Isbn' }).closest('article')
+    if (!rejected) throw new Error('reject history article required')
+    expect(rejected).toHaveTextContent('No action was chosen.')
+    expect(rejected).toHaveTextContent('Previous: 9780000000001')
+    expect(rejected).not.toHaveTextContent('Proposed value selected.')
+    expect(rejected).not.toHaveTextContent('Chosen:')
+    expect(rejected).not.toHaveTextContent('Retained:')
     expect(document.querySelector('script')).toBeNull()
   })
 

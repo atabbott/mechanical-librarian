@@ -511,16 +511,10 @@ function RecordedOutcome({
       </p>
       <dl>
         {accepted ? (
-          <>
-            <div>
-              <dt>Previous value</dt>
-              <dd>{displayValue(field.currentValue)}</dd>
-            </div>
-            <div>
-              <dt>Chosen value</dt>
-              <dd>{decisionValue(field)}</dd>
-            </div>
-          </>
+          <div>
+            <dt>Chosen value</dt>
+            <dd>{decisionValue(field)}</dd>
+          </div>
         ) : (
           <div>
             <dt>{decision.outcome === 'keep_current' ? 'Retained value' : 'Current value'}</dt>
