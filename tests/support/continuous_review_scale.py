@@ -38,7 +38,10 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue imp
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.batch import BatchSelection, batch_fingerprint
 from mechanical_librarian.application.catalogue import CatalogueEntry
-from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.application.configuration import (
+    ApplicationConfiguration,
+    ReviewWebConfiguration,
+)
 from mechanical_librarian.application.review_application import (
     compose_review_application,
 )
@@ -48,6 +51,9 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPipelineError,
     ReviewPreparationPipeline,
     ReviewPreparationSupervisor,
+)
+from mechanical_librarian.bootstrap.composition import (
+    compose_field_effect_activity_projection,
 )
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -423,6 +429,7 @@ def _installed_timeout_diagnostics(
 def _start_deterministic_installed_server(
     *,
     database: Path,
+    configuration: ApplicationConfiguration,
     fixture: _AudiobookshelfFixture,
     entries: dict[str, list[CatalogueEntry]],
     producers: dict[str, str],
@@ -544,6 +551,9 @@ def _start_deterministic_installed_server(
         session_lifetime_seconds=review.session_lifetime_seconds,
         graceful_shutdown_seconds=review.graceful_shutdown_seconds,
         preparation=supervisor,
+        field_application=compose_field_effect_activity_projection(
+            configuration, observation
+        ),
     )
     server = uvicorn.Server(
         uvicorn.Config(
@@ -939,6 +949,7 @@ def qualify_installed_pipeline(
         fixture.hold_discovery()
         server, server_thread = _start_deterministic_installed_server(
             database=database,
+            configuration=configuration,
             fixture=fixture,
             entries=entries,
             producers=producers,
