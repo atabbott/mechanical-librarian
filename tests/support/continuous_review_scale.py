@@ -1903,10 +1903,11 @@ def qualify_installed_pipeline(
             )
 
 
-def qualify_installed_decision_activity(
+@contextmanager
+def _running_installed_decision_activity(
     counts: dict[str, int], *, expected_total: int
-) -> _InstalledActivityEvidence:
-    """Prove one report-only owner decision reaches the installed Activity view."""
+) -> Iterator[tuple[_InstalledPreparationRun, _InstalledActivityEvidence]]:
+    """Keep the phase-free installed decision/activity lifecycle alive for a caller."""
 
     with _installed_qualification_environment(counts, expected_total) as environment:
         environment.ensure_new_fiction()
@@ -1933,8 +1934,36 @@ def qualify_installed_decision_activity(
                     == expected
                 )
             activity = installed.assert_decision_activity(decision)
-            installed.assert_owner_choice_browser()
-            return activity
+            yield installed, activity
+
+
+def qualify_installed_decision_activity_http(
+    counts: dict[str, int], *, expected_total: int
+) -> _InstalledActivityEvidence:
+    """Prove the report-only decision and Activity projections without Chromium."""
+
+    with _running_installed_decision_activity(
+        counts, expected_total=expected_total
+    ) as (
+        _installed,
+        activity,
+    ):
+        return activity
+
+
+def qualify_installed_decision_activity(
+    counts: dict[str, int], *, expected_total: int
+) -> _InstalledActivityEvidence:
+    """Add the installed browser Owner-choice rendering proof to the HTTP lifecycle."""
+
+    with _running_installed_decision_activity(
+        counts, expected_total=expected_total
+    ) as (
+        installed,
+        activity,
+    ):
+        installed.assert_owner_choice_browser()
+        return activity
 
 
 class _ServerExited(AssertionError):

@@ -1,10 +1,12 @@
 """Installed-wheel phase-free owner-decision/Activity smoke qualification."""
 
-from tests.support.continuous_review_scale import qualify_installed_decision_activity
+from tests.support.continuous_review_scale import (
+    qualify_installed_decision_activity_http,
+)
 
 
 def test_installed_owner_decision_activity_smoke() -> None:
-    evidence = qualify_installed_decision_activity(
+    evidence = qualify_installed_decision_activity_http(
         {"fiction": 4, "history": 20, "science": 20},
         expected_total=45,
     )
