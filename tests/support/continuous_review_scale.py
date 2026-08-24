@@ -1068,14 +1068,25 @@ class _InstalledPreparationRun:
                 json={"password": "synthetic password"},
             )
             assert login.status_code == 200, login.text
-            deadline = time.monotonic() + _REVIEW_SERVER_START_SECONDS
+            started = time.monotonic()
+            deadline = started + max(
+                _REVIEW_SERVER_START_SECONDS,
+                self._expected_total
+                / _MINIMUM_INSTALLED_RECONCILIATION_WORKS_PER_SECOND,
+            )
+            libraries: list[dict[str, object]] = []
             while True:
                 if not self._server_thread.is_alive():
                     pytest.fail("installed review server exited during terminal wait")
                 response = client.get(self._origin + "/api/v1/review-preparation")
                 if response.status_code == 503:
                     if time.monotonic() >= deadline:
-                        pytest.fail("installed preparation status remained unavailable")
+                        pytest.fail(
+                            "installed preparation status remained unavailable: "
+                            + _installed_timeout_diagnostics(
+                                time.monotonic() - started, set(), libraries
+                            )
+                        )
                     time.sleep(0.02)
                     continue
                 assert response.status_code == 200, response.text
@@ -1097,7 +1108,12 @@ class _InstalledPreparationRun:
                     assert sum(cast(int, item["blocked"]) for item in libraries) == 0
                     return projection
                 if time.monotonic() >= deadline:
-                    pytest.fail("installed preparation did not complete")
+                    pytest.fail(
+                        "installed preparation did not complete: "
+                        + _installed_timeout_diagnostics(
+                            time.monotonic() - started, set(), libraries
+                        )
+                    )
                 time.sleep(0.02)
 
     def _wait_until_profiled_terminal(

@@ -78,6 +78,25 @@ class _TerminalClient:
         )
 
 
+class _PendingClient(_TerminalClient):
+    def get(self, *_: object, **__: object) -> _Response:
+        return _Response(
+            200,
+            {
+                "active": True,
+                "libraries": [
+                    {
+                        "library": "fiction",
+                        "state": "extracting",
+                        "total": 2,
+                        "checked": 1,
+                        "blocked": 0,
+                    }
+                ],
+            },
+        )
+
+
 class _DecisionClient:
     def __init__(self) -> None:
         self.payload: dict[str, object] | None = None
@@ -344,6 +363,30 @@ def test_terminal_wait_has_no_phase_fixture_access(
     projection = run.wait_until_terminal()
 
     assert projection["active"] is False
+
+
+def test_terminal_wait_uses_count_deadline_and_safe_aggregate_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = object.__new__(_InstalledPreparationRun)
+    run._origin = "https://127.0.0.1:1"
+    run._expected_total = 2
+    run._server_thread = _JoiningThread([])
+    values = iter((0.0, 0.0, 2.0, 2.0))
+    monkeypatch.setattr(continuous_review_scale.time, "monotonic", lambda: next(values))
+    monkeypatch.setattr(
+        continuous_review_scale, "_MINIMUM_INSTALLED_RECONCILIATION_WORKS_PER_SECOND", 1
+    )
+    monkeypatch.setattr(continuous_review_scale, "_REVIEW_SERVER_START_SECONDS", 1)
+    monkeypatch.setattr(
+        continuous_review_scale.httpx, "Client", lambda **_: _PendingClient()
+    )
+
+    with pytest.raises(pytest.fail.Exception, match="elapsed_seconds") as error:
+        run.wait_until_terminal()
+
+    assert "fiction" in str(error.value)
+    assert "Exact evaluator candidate" not in str(error.value)
 
 
 def test_installed_pipeline_reconciles_then_restarts_completed_cohort() -> None:
