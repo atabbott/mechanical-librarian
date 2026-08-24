@@ -127,7 +127,10 @@ describe('ReviewApiClient', () => {
         { alternative_id: 'preserves-target', evidence: [], limitations: [], rationale: 'Retained non-selectable evidence.', recommendation: 'no_recommendation', recommendation_reason: 'No recommendation retained.', selection: 'proposed' },
       ],
     })
-    expect(mapCaseDetail(response([retainedEvidence])).fields[0]?.choiceContexts).toHaveLength(3)
+    const retainedContexts = mapCaseDetail(response([retainedEvidence])).fields[0]?.choiceContexts
+    expect(retainedContexts).toHaveLength(3)
+    expect(retainedContexts?.[1]?.alternativeId).toBe('eligible')
+    expect(retainedContexts?.[2]?.alternativeId).toBe('preserves-target')
     for (const invalid of [null, 'field', field({ current: undefined }), field({ current: 'A Book' }), field({ proposed_values: undefined }), field({ proposed_values: {} })])
       expect(() => mapCaseDetail(response([invalid]))).toThrow(new ApiError(502, 'invalid_case_detail_field'))
     for (const actions of [

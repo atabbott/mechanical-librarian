@@ -41,6 +41,14 @@ from mechanical_librarian.application.review_web import (
 )
 from mechanical_librarian.bootstrap.composition import run_review_server
 from mechanical_librarian.domain.field_effect import FieldEffectError
+from mechanical_librarian.domain.proposal_set import (
+    ProposalAlternative,
+    ProposalAssessment,
+    ProposalOutcome,
+    ProposalResult,
+    ProposalSet,
+    ProposalValue,
+)
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_OPTION_DISPOSITIONS,
 )
@@ -493,6 +501,66 @@ def test_login_case_evidence_history_and_logout_round_trip(
     assert logout.status_code == 204
     denied = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}")
     assert denied.status_code == 401
+
+
+def test_case_detail_orders_selectable_contexts_before_preservation_contexts(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    proposal_set = ProposalSet.from_json(web.case.proposal_document)
+    original = next(
+        result for result in proposal_set.results if result.destination.value == "title"
+    )
+    original_alternative = original.alternatives[0]
+    preserved = ProposalAlternative.create(
+        ProposalValue(original_alternative.value.kind, "Title"),
+        ProposalAssessment.PRESERVES_TARGET,
+        original_alternative.evidence_references,
+        original_alternative.correlations,
+        original_alternative.scope,
+    )
+    eligible = ProposalAlternative.create(
+        ProposalValue(original_alternative.value.kind, "Zulu"),
+        ProposalAssessment.REPLACES_TARGET,
+        original_alternative.evidence_references,
+        original_alternative.correlations,
+        original_alternative.scope,
+    )
+    # Canonical alternative order can put a preserved incumbent first. The
+    # ordinary choice projection must still pair its first selectable value
+    # with the eligible context, keeping the retained context after it.
+    assert preserved.alternative_id < eligible.alternative_id
+    title = ProposalResult(
+        original.destination,
+        ProposalOutcome.UNRESOLVED_CHOICE,
+        tuple(sorted((preserved, eligible), key=lambda value: value.alternative_id)),
+        None,
+        ("competing_evidence",),
+    )
+    case = type(web.case).create(
+        ProposalSet.create(
+            report_id=proposal_set.report_id,
+            target_fingerprint=proposal_set.target_fingerprint,
+            results=tuple(
+                title if result.destination is title.destination else result
+                for result in proposal_set.results
+            ),
+            resolved_policy_id=proposal_set.resolved_policy_id,
+        ),
+        web.repository.report,
+    )
+    web.case = case
+    web.repository.case = case
+
+    web.login()
+    response = web.client.get(f"/api/v1/review-cases/{case.review_case_id}")
+    assert response.status_code == 200, response.text
+    title = next(
+        field for field in response.json()["fields"] if field["destination"] == "title"
+    )
+    assert [eligible.value.to_data()] == title["proposed_values"]
+    assert [None, eligible.alternative_id, preserved.alternative_id] == [
+        context["alternative_id"] for context in title["choice_contexts"]
+    ]
 
 
 def test_case_successor_is_authenticated_bounded_and_serialized(

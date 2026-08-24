@@ -396,7 +396,17 @@ class InspectCurrentReviewCase:
                     "selected_value": selected,
                 }
             choice_contexts = _choice_contexts(
-                alternatives,
+                # Direct choices pair projected values with proposed contexts by
+                # position. Keep their exact eligible order first, while
+                # retaining preservation lineage after it for inspection.
+                [
+                    *eligible_alternatives,
+                    *(
+                        alternative
+                        for alternative in all_alternatives
+                        if alternative["assessment"] == "preserves_target"
+                    ),
+                ],
                 result,
                 report,
                 target_fields[destination],

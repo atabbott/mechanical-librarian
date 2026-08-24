@@ -513,6 +513,22 @@ describe('Library route', () => {
                   },
                 ],
               },
+              {
+                alternativeId: 'alternative-title-preserves-target',
+                selection: 'proposed',
+                rationale: 'This retained alternative preserves the local value.',
+                recommendation: 'no_recommendation',
+                recommendationReason:
+                  'No deterministic recommendation is retained for this alternative.',
+                limitations: [],
+                evidence: [
+                  {
+                    source: 'Preserved catalogue record',
+                    observation: 'Title: Old title',
+                    role: 'external_corroboration',
+                  },
+                ],
+              },
             ] as const,
           },
           automaticField,
@@ -548,6 +564,7 @@ describe('Library route', () => {
     expect(await screen.findByText('Open Library')).toBeVisible()
     expect(screen.getByText('Title: New title')).toBeVisible()
     expect(screen.getByText('External corroboration')).toBeVisible()
+    expect(screen.queryByText('Preserved catalogue record')).not.toBeInTheDocument()
     expect(screen.getAllByText('Competing evidence').length).toBeGreaterThan(0)
     const fieldRail = screen.getByRole('navigation', { name: 'Review fields' })
     expect(
