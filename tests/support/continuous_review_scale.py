@@ -250,6 +250,32 @@ class _SharedRepository:
         pass
 
 
+class _InstalledRepositoryTopology:
+    """Private installed repository ownership split used by the server harness."""
+
+    @classmethod
+    def open(cls, database: Path) -> _InstalledRepositoryTopology:
+        instance = cls()
+        instance._database = database
+        instance.web_state_owner = open_repository(
+            database, create=True, cross_thread=True
+        )
+        return instance
+
+    def open_foreground_observation(self):
+        return open_repository(
+            self._database,
+            create=False,
+            authority=self.web_state_owner.authority,
+            cross_thread=True,
+        )
+
+    def open_action(self):
+        return open_repository(
+            self._database, create=False, authority=self.web_state_owner.authority
+        )
+
+
 class _AudiobookshelfFixture:
     def __init__(self, counts: dict[str, int]) -> None:
         self.summaries: dict[str, list[dict[str, object]]] = {}
@@ -461,7 +487,8 @@ def _start_deterministic_installed_server(
     admission and projection transactions against the server's SQLite store.
     """
 
-    web_state_owner = open_repository(database, create=True, cross_thread=True)
+    topology = _InstalledRepositoryTopology.open(database)
+    web_state_owner = topology.web_state_owner
     reports: dict[str, MetadataReport] = {}
     proposals: dict[str, object] = {}
     proposal_items: dict[str, str] = {}
@@ -483,17 +510,10 @@ def _start_deterministic_installed_server(
     )
 
     def workers():
-        return open_repository(
-            database, create=False, authority=web_state_owner.authority
-        )
+        return topology.open_action()
 
     def foreground_observation():
-        return open_repository(
-            database,
-            create=False,
-            authority=web_state_owner.authority,
-            cross_thread=True,
-        )
+        return topology.open_foreground_observation()
 
     def discover(_: str, library: str):
         fixture.discovery_started.set()

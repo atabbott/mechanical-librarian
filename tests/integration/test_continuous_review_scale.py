@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tempfile
 import threading
+from pathlib import Path
 
 import pytest
 
 from tests.support import continuous_review_scale
 from tests.support.continuous_review_scale import (
     _InstalledPreparationRun,
+    _InstalledRepositoryTopology,
     _route_failure_diagnostic,
     _wait_for_https,
     qualify_installed_pipeline,
@@ -201,6 +204,30 @@ def test_exited_installed_server_reports_its_exit_code() -> None:
         match=r"^installed review server exited before serving, exit code 2$",
     ):
         _wait_for_https(process, "https://127.0.0.1:1")
+
+
+def test_installed_repository_topology_keeps_web_and_pipeline_owners_independent() -> (
+    None
+):
+    with tempfile.TemporaryDirectory() as directory:
+        topology = _InstalledRepositoryTopology.open(Path(directory) / "state.sqlite3")
+        observation = topology.open_foreground_observation()
+        first_action = topology.open_action()
+        second_action = topology.open_action()
+        handles = (topology.web_state_owner, observation, first_action, second_action)
+        assert len({id(handle) for handle in handles}) == 4
+        assert all(
+            handle.authority is topology.web_state_owner.authority for handle in handles
+        )
+        observation.close()
+        topology.web_state_owner.operational_snapshot()
+        first_action.operational_snapshot()
+        second_action.operational_snapshot()
+        topology.web_state_owner.close()
+        first_action.operational_snapshot()
+        second_action.operational_snapshot()
+        first_action.close()
+        second_action.close()
 
 
 def test_unresponsive_installed_server_reports_the_deadline_it_reached(
