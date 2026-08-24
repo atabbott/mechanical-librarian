@@ -291,17 +291,12 @@ export const useReviewDecisionController = ({
       }
       if (retryableDecisionFailure(error)) mark(command, 'failed')
       else forget(command)
-      setStatus((current) =>
-        current.caseId === reviewCaseId
-          ? {
-              ...current,
-              destination: command.destination,
-              text:
-                classifyDecisionFailure(error) === 'uncertain'
-                  ? 'The response was lost. The current case was reloaded before any retry.'
-                  : 'The decision was not recorded. Your choice is unchanged.',
-            }
-          : current,
+      announce(
+        reviewCaseId,
+        command.destination,
+        classifyDecisionFailure(error) === 'uncertain'
+          ? 'The response was lost. The current case was reloaded before any retry.'
+          : 'The decision was not recorded. Your choice is unchanged.',
       )
       // The current field is already authoritative after reconciliation. Do
       // not make truthful failure feedback wait on a no-op same-field route

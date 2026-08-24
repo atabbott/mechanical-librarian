@@ -1540,9 +1540,9 @@ describe('Library route', () => {
     renderRoute('/library?lens=all&preview=case-1&field=title', http)
 
     await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
-    expect(
-      await screen.findByText('The decision was not recorded. Your choice is unchanged.'),
-    ).toBeVisible()
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'The decision was not recorded. Your choice is unchanged.',
+    )
     expect(
       screen.getByRole('button', { name: 'Choose current value: Old title' }),
     ).not.toHaveTextContent('Recording…')
@@ -1551,6 +1551,8 @@ describe('Library route', () => {
       'false',
     )
     expect(screen.queryByText('Recorded. Opening the next field…')).toBeNull()
+    expect(document.body.textContent).not.toContain('Recording accept…')
+    expect(document.body.textContent).not.toContain('Recording choice…')
     expect(screen.getByText('1 remaining · field 1 of 1')).toBeVisible()
     expect(screen.getByRole('button', { name: /Title.*Needs review/u })).toBeVisible()
     const retry = screen.getByRole('button', { name: 'Try the same decision again' })
