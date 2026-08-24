@@ -36,6 +36,9 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue imp
     _entry as catalogue_entry,
 )
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.provider_recovery import (
+    SQLiteProviderRecoveryStore,
+)
 from mechanical_librarian.application.batch import BatchSelection, batch_fingerprint
 from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.configuration import (
@@ -53,7 +56,7 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPreparationSupervisor,
 )
 from mechanical_librarian.bootstrap.composition import (
-    compose_field_effect_activity_projection,
+    compose_continuous_guarded_application,
 )
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -430,6 +433,7 @@ def _start_deterministic_installed_server(
     *,
     database: Path,
     configuration: ApplicationConfiguration,
+    artifacts: Path,
     fixture: _AudiobookshelfFixture,
     entries: dict[str, list[CatalogueEntry]],
     producers: dict[str, str],
@@ -438,7 +442,7 @@ def _start_deterministic_installed_server(
     private_key: Path,
     reservation: ReservedPort,
     origin: str,
-) -> tuple[uvicorn.Server, threading.Thread]:
+) -> tuple[uvicorn.Server, threading.Thread, SQLiteProviderRecoveryStore]:
     """Run installed-wheel HTTP over the production persisted pipeline boundary.
 
     The callbacks stand in only for expensive target/media/provider observation.
@@ -533,6 +537,11 @@ def _start_deterministic_installed_server(
         project=lambda *_: True,
     )
     supervisor = ReviewPreparationSupervisor(pipeline, polling_interval_seconds=None)
+    private_root = database.parent / "private"
+    private_root.mkdir(mode=0o700)
+    recovery = SQLiteProviderRecoveryStore.open(
+        private_root / "provider-recovery.sqlite"
+    )
     review = ReviewWebConfiguration(
         canonical_origin=origin,
         owner_password_hash_file=str(owner_hash),
@@ -551,8 +560,14 @@ def _start_deterministic_installed_server(
         session_lifetime_seconds=review.session_lifetime_seconds,
         graceful_shutdown_seconds=review.graceful_shutdown_seconds,
         preparation=supervisor,
-        field_application=compose_field_effect_activity_projection(
-            configuration, observation
+        field_application=compose_continuous_guarded_application(
+            configuration,
+            observation,
+            database,
+            artifacts,
+            supervisor,
+            private_root,
+            recovery,
         ),
     )
     server = uvicorn.Server(
@@ -573,7 +588,7 @@ def _start_deterministic_installed_server(
     while not server.started and thread.is_alive() and time.monotonic() < deadline:
         time.sleep(0.01)
     assert server.started is True
-    return server, thread
+    return server, thread, recovery
 
 
 def qualify_installed_pipeline(
@@ -947,9 +962,10 @@ def qualify_installed_pipeline(
             str(review_port.number),
         ]
         fixture.hold_discovery()
-        server, server_thread = _start_deterministic_installed_server(
+        server, server_thread, recovery = _start_deterministic_installed_server(
             database=database,
             configuration=configuration,
+            artifacts=artifacts,
             fixture=fixture,
             entries=entries,
             producers=producers,
@@ -1146,6 +1162,7 @@ def qualify_installed_pipeline(
                 server.force_exit = True
                 server_thread.join(timeout=10)
             assert server_thread.is_alive() is False
+            recovery.close()
 
         # An unclean stop is reported as itself rather than as whatever the
         # completed-state restart makes of it.
