@@ -357,6 +357,95 @@ def test_installed_decision_activity_wrappers_keep_browser_out_of_http_smoke(
     assert calls == ["browser"]
 
 
+def test_installed_decision_releases_the_post_advance_hold_before_reading_current(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    decision = continuous_review_scale._InstalledDecisionEvidence(
+        review_case_id="case",
+        decision_id="decision",
+        proposal_id="proposal",
+        target_fingerprint="fingerprint",
+        response_status=200,
+    )
+    activity = continuous_review_scale._InstalledActivityEvidence(
+        event_id="event",
+        category="owner",
+        outcome="accept",
+        history_events=1,
+        unfiltered_events=1,
+        filtered_events=1,
+    )
+
+    class Run:
+        def hold_fixture_case(self) -> None:
+            events.append("arm")
+
+        def release_discovery(self) -> None:
+            events.append("discover")
+
+        def wait_for_fixture_case(self) -> str:
+            events.append("case")
+            return "case"
+
+        def wait_for_fixture_case_hold(self) -> None:
+            events.append("held")
+
+        def assert_fixture_case_active(self) -> None:
+            events.append("active")
+
+        def release_fixture_case(self) -> None:
+            events.append("release")
+
+        def accept_fixture_title_proposal(self) -> object:
+            assert events[-1] == "release"
+            events.append("decision")
+            return decision
+
+        def wait_until_terminal(self) -> dict[str, object]:
+            events.append("terminal")
+            return {"libraries": [{"total": 1, "checked": 1, "blocked": 0}]}
+
+        def assert_decision_activity(self, received: object) -> object:
+            assert received is decision
+            events.append("activity")
+            return activity
+
+    class Environment:
+        def ensure_new_fiction(self) -> None:
+            events.append("fiction")
+
+        @contextmanager
+        def running_preparation(self):
+            yield Run()
+
+    @contextmanager
+    def environment(*_: object, **__: object):
+        yield Environment()
+
+    monkeypatch.setattr(
+        continuous_review_scale, "_installed_qualification_environment", environment
+    )
+
+    with continuous_review_scale._running_installed_decision_activity(
+        {}, expected_total=1
+    ) as (_, observed):
+        assert observed is activity
+
+    assert events == [
+        "fiction",
+        "arm",
+        "discover",
+        "case",
+        "held",
+        "active",
+        "release",
+        "decision",
+        "terminal",
+        "activity",
+    ]
+
+
 def test_installed_preparation_exposes_only_the_fixture_admitted_case() -> None:
     """Other workers cannot signal or replace the fixture-owned admission."""
 

@@ -874,6 +874,11 @@ class _InstalledPreparationRun:
             assert self._case_id is not None
             return self._case_id
 
+    def wait_for_fixture_case_hold(self) -> None:
+        assert self._fixture_case_held.wait(timeout=15), (
+            "fixture case post-advance hold was not reached"
+        )
+
     def assert_fixture_case_active(self) -> None:
         """Confirm admission occurred while the installed scan is still active."""
 
@@ -1951,11 +1956,12 @@ def _running_installed_decision_activity(
             installed.hold_fixture_case()
             installed.release_discovery()
             installed.wait_for_fixture_case()
-            installed.assert_fixture_case_active()
+            installed.wait_for_fixture_case_hold()
             try:
-                decision = installed.accept_fixture_title_proposal()
+                installed.assert_fixture_case_active()
             finally:
                 installed.release_fixture_case()
+            decision = installed.accept_fixture_title_proposal()
             terminal = installed.wait_until_terminal()
             terminal_libraries = terminal["libraries"]
             assert isinstance(terminal_libraries, list)
