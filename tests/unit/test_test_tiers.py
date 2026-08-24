@@ -226,12 +226,15 @@ def test_source_tiers_are_disjoint_and_own_every_public_test_file() -> None:
     } == expected_files
 
 
-def test_required_installed_is_an_explicit_fast_subset() -> None:
+def test_required_installed_adds_the_exact_wheel_scale_node_to_fast_contracts() -> None:
     root = Path(__file__).resolve().parents[2]
     fast = set(collect_cohort(root, "fast"))
     installed = set(collect_cohort(root, "required-installed"))
     assert installed
-    assert installed < fast
+    scale = "test_continuous_review_scale.test_installed_pipeline_reconciles_then_restarts_completed_cohort"
+    assert scale not in fast
+    assert list(collect_cohort(root, "required-installed")).count(scale) == 1
+    assert installed - {scale} < fast
 
 
 def test_the_tier_inventory_lists_standalone_and_a_bare_invocation_refuses() -> None:
