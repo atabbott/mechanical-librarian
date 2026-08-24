@@ -1927,10 +1927,14 @@ def _running_installed_decision_activity(
     with _installed_qualification_environment(counts, expected_total) as environment:
         environment.ensure_new_fiction()
         with environment.running_preparation() as installed:
+            installed.hold_fixture_case()
             installed.release_discovery()
             installed.wait_for_fixture_case()
             installed.assert_fixture_case_active()
-            decision = installed.accept_fixture_title_proposal()
+            try:
+                decision = installed.accept_fixture_title_proposal()
+            finally:
+                installed.release_fixture_case()
             terminal = installed.wait_until_terminal()
             terminal_libraries = terminal["libraries"]
             assert isinstance(terminal_libraries, list)
