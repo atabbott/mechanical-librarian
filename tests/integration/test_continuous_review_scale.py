@@ -42,6 +42,40 @@ class _JoiningThread(threading.Thread):
         return self._alive
 
 
+class _Response:
+    def __init__(self, status_code: int, payload: dict[str, object]) -> None:
+        self.status_code = status_code
+        self.text = "safe"
+        self._payload = payload
+
+    def json(self) -> dict[str, object]:
+        return self._payload
+
+
+class _TerminalClient:
+    def __enter__(self) -> _TerminalClient:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        pass
+
+    def post(self, *_: object, **__: object) -> _Response:
+        return _Response(200, {})
+
+    def get(self, *_: object, **__: object) -> _Response:
+        return _Response(
+            200,
+            {
+                "active": False,
+                "libraries": [
+                    {"state": "completed", "total": 1, "checked": 1, "blocked": 0},
+                    {"state": "completed", "total": 1, "checked": 1, "blocked": 0},
+                    {"state": "completed", "total": 1, "checked": 1, "blocked": 0},
+                ],
+            },
+        )
+
+
 def test_exited_installed_server_reports_its_exit_code() -> None:
     process = subprocess.Popen(
         (sys.executable, "-c", "raise SystemExit(2)"),
@@ -130,6 +164,32 @@ def test_installed_preparation_exposes_the_admitted_fixture_case() -> None:
     run._capture_fixture_case("case-1")
 
     assert run.wait_for_fixture_case() == "case-1"
+
+
+def test_terminal_wait_has_no_phase_fixture_access(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shared lifecycle does not inherit scale profiling behavior."""
+
+    run = object.__new__(_InstalledPreparationRun)
+    run._origin = "https://127.0.0.1:1"
+    run._expected_total = 3
+    run._server_thread = _JoiningThread([])
+    run._fixture = type(
+        "Fixture",
+        (),
+        {
+            "hold_next_detail": lambda _: pytest.fail("phase sampling reached"),
+            "release_next_detail": lambda _: pytest.fail("phase sampling reached"),
+        },
+    )()
+    monkeypatch.setattr(
+        continuous_review_scale.httpx, "Client", lambda **_: _TerminalClient()
+    )
+
+    projection = run.wait_until_terminal()
+
+    assert projection["active"] is False
 
 
 def test_installed_pipeline_reconciles_then_restarts_completed_cohort() -> None:

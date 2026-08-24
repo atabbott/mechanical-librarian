@@ -771,7 +771,50 @@ class _InstalledPreparationRun:
             assert self._case_id is not None
             return self._case_id
 
-    def wait_until_terminal(
+    def wait_until_terminal(self) -> dict[str, object]:
+        """Wait through the authenticated progress projection without profiling it."""
+
+        assert self._server_thread is not None
+        with httpx.Client(verify=False, trust_env=False) as client:
+            login = client.post(
+                self._origin + "/api/v1/session/login",
+                headers={"Origin": self._origin},
+                json={"password": "synthetic password"},
+            )
+            assert login.status_code == 200, login.text
+            deadline = time.monotonic() + _REVIEW_SERVER_START_SECONDS
+            while True:
+                if not self._server_thread.is_alive():
+                    pytest.fail("installed review server exited during terminal wait")
+                response = client.get(self._origin + "/api/v1/review-preparation")
+                if response.status_code == 503:
+                    if time.monotonic() >= deadline:
+                        pytest.fail("installed preparation status remained unavailable")
+                    time.sleep(0.02)
+                    continue
+                assert response.status_code == 200, response.text
+                projection = cast(dict[str, object], response.json())
+                libraries = cast(list[dict[str, object]], projection["libraries"])
+                if (
+                    not projection["active"]
+                    and len(libraries) == 3
+                    and all(item["state"] == "completed" for item in libraries)
+                ):
+                    assert (
+                        sum(cast(int, item["total"]) for item in libraries)
+                        == self._expected_total
+                    )
+                    assert (
+                        sum(cast(int, item["checked"]) for item in libraries)
+                        == self._expected_total
+                    )
+                    assert sum(cast(int, item["blocked"]) for item in libraries) == 0
+                    return projection
+                if time.monotonic() >= deadline:
+                    pytest.fail("installed preparation did not complete")
+                time.sleep(0.02)
+
+    def _wait_until_profiled_terminal(
         self,
     ) -> tuple[
         dict[str, object],
@@ -1349,7 +1392,7 @@ def qualify_installed_pipeline(
                 peak_rss_kib,
                 installed_reconciliation_elapsed,
                 decision_response_ms,
-            ) = installed.wait_until_terminal()
+            ) = installed._wait_until_profiled_terminal()
             installed.wait_for_fixture_case()
             terminal_libraries = cast(list[dict[str, object]], projection["libraries"])
             assert (
