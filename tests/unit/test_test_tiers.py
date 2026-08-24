@@ -197,7 +197,7 @@ def test_stall_diagnostic_exposes_only_a_safe_test_identifier() -> None:
     assert session.stalled_test(time.monotonic() + _STALL_DIAGNOSTIC_SECONDS) is None
 
 
-def test_source_tiers_are_disjoint_and_own_every_public_test_file() -> None:
+def test_source_tiers_are_disjoint_and_all_tiers_own_every_public_test_file() -> None:
     root = Path(__file__).resolve().parents[2]
     identifiers = {
         name: set(collect_cohort(root, name)) for name in ("fast", "browser", "slow")
@@ -211,7 +211,7 @@ def test_source_tiers_are_disjoint_and_own_every_public_test_file() -> None:
 
     owned_files = {
         path.resolve()
-        for cohort in ("fast", "browser", "slow")
+        for cohort in ("fast", "browser", "slow", "required-installed")
         for relative, pattern in COHORTS[cohort].discoveries
         for path in (root / relative).glob(pattern)
     }
@@ -221,7 +221,7 @@ def test_source_tiers_are_disjoint_and_own_every_public_test_file() -> None:
     # then sweep on its own collection rules.
     assert {
         Path(target).resolve()
-        for cohort in ("fast", "browser", "slow")
+        for cohort in ("fast", "browser", "slow", "required-installed")
         for target in cohort_targets(root, cohort)
     } == expected_files
 
