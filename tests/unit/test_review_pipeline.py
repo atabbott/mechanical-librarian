@@ -423,28 +423,43 @@ def test_preopened_observation_survives_delete_journal_writer(
     pipeline.open_observation()
     writer = sqlite3.connect(application_path, isolation_level=None)
     try:
-        writer.execute("BEGIN IMMEDIATE")
-        writer.execute(
-            "UPDATE review_preparation_control SET updated_at=1 WHERE singleton=1"
-        )
+        try:
+            writer.execute("BEGIN IMMEDIATE")
+            writer.execute(
+                "UPDATE review_preparation_control SET updated_at=1 WHERE singleton=1"
+            )
+            if sys.platform.startswith("linux"):
+                for operation in (
+                    pipeline.status,
+                    pipeline.connection_conditions,
+                    lambda: pipeline.request("primary", "fiction"),
+                    lambda: pipeline.progress("primary", "fiction"),
+                ):
+                    with pytest.raises(ReviewPipelineError, match="persistence"):
+                        operation()
+            else:
+                assert pipeline.status() == ((None,), False)
+                assert pipeline.connection_conditions() == ()
+                with pytest.raises(ReviewPipelineError, match="persistence"):
+                    pipeline.request("primary", "fiction")
+                assert pipeline.progress("primary", "fiction") is None
+            started = time.monotonic()
+            with pytest.raises(MetadataReportError):
+                open_repository(application_path)
+            if sys.platform.startswith("linux"):
+                assert time.monotonic() - started < 1
+        finally:
+            writer.rollback()
+            writer.close()
+
         assert pipeline.status() == ((None,), False)
         assert pipeline.connection_conditions() == ()
-        with pytest.raises(ReviewPipelineError, match="persistence"):
-            pipeline.request("primary", "fiction")
-        assert pipeline.progress("primary", "fiction") is None
-        started = time.monotonic()
-        with pytest.raises(MetadataReportError):
-            open_repository(application_path)
-        if sys.platform.startswith("linux"):
-            assert time.monotonic() - started < 1
+        requested = pipeline.request("primary", "fiction")
+        assert requested.state == "queued"
+        assert pipeline.progress("primary", "fiction") == requested
     finally:
-        writer.rollback()
-        writer.close()
         pipeline.close_observation()
 
-    requested = pipeline.request("primary", "fiction")
-    assert requested.state == "queued"
-    assert pipeline.progress("primary", "fiction") == requested
     reopened = open_repository(application_path)
     try:
         assert reopened.review_pipeline_progress("primary", "fiction") == requested
