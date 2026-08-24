@@ -1483,7 +1483,7 @@ const mapChoiceContexts = (
   if (
     current?.selection !== 'current' ||
     current.alternativeId !== null ||
-    proposed.length !== proposedValueCount ||
+    proposed.length < proposedValueCount ||
     proposed.some(
       (context) => context.selection !== 'proposed' || context.alternativeId === null,
     ) ||

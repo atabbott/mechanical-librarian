@@ -1151,7 +1151,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     "button", name="Evidence for Current cover"
                 )
                 current_evidence.click()
-                expect(current_evidence).to_have_count(0)
+                expect(current_evidence).to_have_count(1)
+                expect(current_evidence).to_have_attribute("aria-expanded", "true")
+                expect(current_evidence).to_have_text("Hide evidence")
                 comparison.get_by_text("Local library record", exact=True).wait_for()
                 expect(
                     comparison.locator(".library-cover-card.is-current")
@@ -1161,7 +1163,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 )
                 alternative_evidence.focus()
                 page.keyboard.press("Enter")
-                expect(alternative_evidence).to_have_count(0)
+                expect(alternative_evidence).to_have_count(1)
+                expect(alternative_evidence).to_have_attribute("aria-expanded", "true")
+                expect(alternative_evidence).to_have_text("Hide evidence")
                 comparison.get_by_text("Open Library", exact=True).wait_for()
                 comparison.get_by_text("External corroboration", exact=True).wait_for()
                 expect(
@@ -1173,7 +1177,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 )
                 unavailable_evidence.focus()
                 page.keyboard.press("Enter")
-                expect(unavailable_evidence).to_have_count(0)
+                expect(unavailable_evidence).to_have_count(1)
+                expect(unavailable_evidence).to_have_attribute("aria-expanded", "true")
+                expect(unavailable_evidence).to_have_text("Hide evidence")
                 comparison.get_by_text("Local presence", exact=True).wait_for()
                 comparison.get_by_text("Preview unavailable", exact=True).wait_for()
 
@@ -1264,10 +1270,12 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert "Subtitle" in automatic_context
         assert "Series" not in automatic_context
         page.locator(".field-filmstrip button", has_text="Publication date").click()
+        # A current-only automatic outcome stays inspect-only: it remains
+        # readable in the primary field strip without fabricating owner work.
+        expect(page.get_by_role("heading", name="Publication date")).to_be_visible()
+        expect(page.locator(".direct-choice-grid")).to_have_count(0)
         expect(
-            page.get_by_role(
-                "heading", name="Which publishedDate should this work use?"
-            )
+            page.get_by_role("region", name="Publication date recorded outcome")
         ).to_be_visible()
         capture_visual_proof("canonical-field-inventory")
         page.locator(".field-filmstrip button", has_text="Title").click()
@@ -1520,7 +1528,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         expect(page).to_have_url(
             "https://react-platform.invalid/library?lens=all&preview=case-1"
         )
-        expect(page.locator(".library-works")).to_be_visible()
+        # At the #830 compact-workspace boundary, selection becomes a
+        # single-pane composition; the explicit Back control restores the rail.
+        expect(page.locator(".library-works")).to_be_hidden()
         expect(page.locator(".workspace-detail")).to_be_visible()
         assert overrunning_rail_controls() == []
         assert (
@@ -1549,9 +1559,10 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert compact_evidence.bounding_box()["height"] >= 44
         compact_evidence.click()
         expect(page.locator("#choice-evidence-current")).to_be_visible()
+        expect(page.get_by_role("button", name="Back to works")).to_be_visible()
         page.get_by_role("button", name="Attention queue").click()
         expect(page.locator(".attention-rail")).to_be_visible()
-        expect(page.locator(".library-works")).to_be_visible()
+        expect(page.locator(".library-works")).to_be_hidden()
         expect(page.locator(".workspace-detail")).to_be_visible()
         assert (
             page.locator(".attention-rail").evaluate(
@@ -1595,8 +1606,8 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
 
         stage[0] = "library:viewport:761"
         page.set_viewport_size({"width": 761, "height": 900})
-        expect(page.locator(".library-works")).to_be_visible()
-        expect(page.get_by_role("button", name="Back to works")).to_be_hidden()
+        expect(page.locator(".library-works")).to_be_hidden()
+        expect(page.get_by_role("button", name="Back to works")).to_be_visible()
         expect(page.get_by_role("button", name="Attention queue")).to_be_visible()
 
         stage[0] = "library:viewport:760"
@@ -1643,6 +1654,10 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         for zoom_width, zoom_height in ((1440, 900), (900, 900), (390, 844)):
             page.set_viewport_size({"width": zoom_width, "height": zoom_height})
             page.goto("https://react-platform.invalid/library?lens=all")
+            if zoom_width == 900:
+                # The compact selected-work route hides its rail at this
+                # boundary; return explicitly before measuring rail controls.
+                page.get_by_role("button", name="Back to works").click()
             page.locator(".library-work-row").first.wait_for()
             page.locator("html").evaluate("node => { node.style.fontSize = '200%' }")
             page.locator(".library-work-row").first.wait_for()

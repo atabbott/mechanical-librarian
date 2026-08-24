@@ -118,6 +118,16 @@ describe('ReviewApiClient', () => {
     })
 
     expect(mapCaseDetail(response([field()])).fields[0]?.currentValue).toBe('A Book')
+    const retainedEvidence = field({
+      decision_actions: ['keep_current', 'accept'],
+      proposed_values: [{ kind: 'text', value: 'Alternative' }],
+      choice_contexts: [
+        { alternative_id: null, evidence: [], limitations: [], rationale: 'Current evidence.', recommendation: 'no_recommendation', recommendation_reason: 'No recommendation retained.', selection: 'current' },
+        { alternative_id: 'eligible', evidence: [], limitations: [], rationale: 'Eligible evidence.', recommendation: 'no_recommendation', recommendation_reason: 'No recommendation retained.', selection: 'proposed' },
+        { alternative_id: 'preserves-target', evidence: [], limitations: [], rationale: 'Retained non-selectable evidence.', recommendation: 'no_recommendation', recommendation_reason: 'No recommendation retained.', selection: 'proposed' },
+      ],
+    })
+    expect(mapCaseDetail(response([retainedEvidence])).fields[0]?.choiceContexts).toHaveLength(3)
     for (const invalid of [null, 'field', field({ current: undefined }), field({ current: 'A Book' }), field({ proposed_values: undefined }), field({ proposed_values: {} })])
       expect(() => mapCaseDetail(response([invalid]))).toThrow(new ApiError(502, 'invalid_case_detail_field'))
     for (const actions of [

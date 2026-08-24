@@ -329,8 +329,10 @@ def test_a_change_in_one_tab_reaches_another_without_a_reload() -> None:
                 actor.get_by_role(
                     "button", name="Choose current value:", exact=False
                 ).first.click()
-                actor.get_by_text(
-                    "Decision recorded from the authoritative case.", exact=True
+                # The authoritative acknowledgement advances to the next exact
+                # field; it is not retained as a cross-field status message.
+                actor.get_by_role(
+                    "heading", name="Which series should this work use?"
                 ).wait_for()
 
                 # The other tab looked again, at the same bounded page it was

@@ -106,7 +106,7 @@ def _report():
             _bibliographic_source(
                 "catalogue",
                 "edition-1",
-                titles=(),
+                titles=("Mistborn: The Final Empire",),
                 series="Mistborn",
             ),
         ),
@@ -812,19 +812,21 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                     page.get_by_role(
                         "button", name="Choose proposed value", exact=False
                     ).count()
-                    == 0
+                    == 1
                 )
                 page.get_by_role("button", name="Use dark mode").click()
                 page.get_by_role("button", name="Use light mode").wait_for()
                 page.get_by_role(
                     "button", name="Choose current value:", exact=False
                 ).first.click()
-                page.get_by_text(
-                    "Decision recorded from the authoritative case.", exact=True
+                # The acknowledgement advances to the next field rather than
+                # leaking a recorded status across the selected-work surface.
+                page.get_by_role(
+                    "heading", name="Which series should this work use?"
                 ).wait_for()
                 page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
                 page.get_by_role(
-                    "heading", name="Which title should this work use?"
+                    "heading", name="Title"
                 ).wait_for()
                 # #635: revisiting a recorded field restores the whole choice
                 # composition and marks the recorded answer, rather than
@@ -838,7 +840,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                 page.get_by_role("heading", name="Activity and recovery").wait_for()
                 page.go_back()
                 page.get_by_role(
-                    "heading", name="Which title should this work use?"
+                    "heading", name="Title"
                 ).wait_for()
                 page.go_forward()
                 page.get_by_role("heading", name="Activity and recovery").wait_for()
