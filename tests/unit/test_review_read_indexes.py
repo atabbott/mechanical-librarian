@@ -61,6 +61,14 @@ _READ_WALL_BUDGET_SECONDS = 1.0
 _Result = TypeVar("_Result")
 
 
+def _representative_owner_action_count(works: int) -> int:
+    return len(range(0, works, 2))
+
+
+def _representative_human_decision_count(works: int) -> int:
+    return max(1, min(10, works // 8))
+
+
 def _field_fact_digest(value: object) -> str:
     serialized = json.dumps(
         value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
@@ -258,7 +266,7 @@ def _representative_database(path: Path, works: int = _WORKS) -> sqlite3.Connect
     repository = SQLiteMetadataReportRepository(connection)
     repository.enter_shadow_preview(1)
     automatic_count = max(1, min(20, works // 4))
-    human_count = max(1, min(10, works // 8))
+    human_count = _representative_human_decision_count(works)
     cover_count = max(1, min(10, works // 8))
     shadow_documents = []
     for index, case_id in enumerate(case_ids[::2]):
@@ -513,6 +521,44 @@ def test_indexes_preserve_exact_browse_search_detail_and_history_results() -> No
         connection.commit()
         assert results() == indexed
         repository.close()
+
+
+def test_representative_attention_expectation_counts_only_remaining_owner_actions() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        connection = _representative_database(
+            Path(directory) / "application.sqlite3", works=24
+        )
+        try:
+            action_items = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT report.item_id FROM current_review_packages current "
+                    "JOIN review_cases case_record "
+                    "ON case_record.review_case_id=current.review_case_id "
+                    "JOIN metadata_reports report ON report.report_id=case_record.report_id "
+                    "JOIN review_case_field_facts fact "
+                    "ON fact.review_case_id=case_record.review_case_id "
+                    "WHERE fact.has_owner_decision_actions=1"
+                )
+            }
+            recorded_items = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT report.item_id FROM human_decisions decision "
+                    "JOIN review_cases case_record "
+                    "ON case_record.review_case_id=decision.review_case_id "
+                    "JOIN metadata_reports report ON report.report_id=case_record.report_id"
+                )
+            }
+            assert action_items == {f"item-{index:04d}" for index in range(0, 24, 2)}
+            assert recorded_items == {
+                f"item-{index:04d}" for index in range(12, 18, 2)
+            }
+            assert _representative_owner_action_count(24) == 12
+            assert _representative_human_decision_count(24) == 3
+            assert _count_with_step_limit(connection, 1_000_000)[0] == (24, 9)
+        finally:
+            connection.close()
 
 
 @pytest.mark.parametrize(
