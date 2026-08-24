@@ -748,6 +748,8 @@ class _InstalledPreparationRun:
         self._case_id: str | None = None
         self._case_id_lock = threading.Lock()
         self._case_admitted = threading.Event()
+        self._fixture_case_hold = threading.Event()
+        self._fixture_case_release = threading.Event()
         self._server: uvicorn.Server | None = None
         self._server_thread: threading.Thread | None = None
         self._recovery: SQLiteProviderRecoveryStore | None = None
@@ -822,6 +824,18 @@ class _InstalledPreparationRun:
             if self._case_id is None:
                 self._case_id = case_id
         self._case_admitted.set()
+        if self._fixture_case_hold.is_set():
+            assert self._fixture_case_release.wait(timeout=15), (
+                "fixture case hold timed out"
+            )
+
+    def hold_fixture_case(self) -> None:
+        self._fixture_case_release.clear()
+        self._fixture_case_hold.set()
+
+    def release_fixture_case(self) -> None:
+        self._fixture_case_release.set()
+        self._fixture_case_hold.clear()
 
     def release_discovery(self) -> None:
         self._fixture.release_discovery()
@@ -1278,6 +1292,7 @@ class _InstalledPreparationRun:
             )
 
     def close(self) -> None:
+        self.release_fixture_case()
         if self._phase_observer is not None:
             self._phase_observer.close()
         self._fixture.release_discovery()

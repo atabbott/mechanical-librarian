@@ -350,6 +350,37 @@ def test_installed_preparation_exposes_only_the_fixture_admitted_case() -> None:
     assert run.wait_for_fixture_case() == "case-1"
 
 
+def test_fixture_admission_hold_signals_before_blocking_and_close_releases() -> None:
+    run = object.__new__(_InstalledPreparationRun)
+    run._case_id = None
+    run._case_id_lock = threading.Lock()
+    run._case_admitted = threading.Event()
+    run._fixture_case_hold = threading.Event()
+    run._fixture_case_release = threading.Event()
+    run.hold_fixture_case()
+    worker = threading.Thread(
+        target=run._capture_fixture_case, args=("fiction-0000", "case-1")
+    )
+    worker.start()
+    assert run.wait_for_fixture_case() == "case-1"
+    assert worker.is_alive()
+    run.release_fixture_case()
+    worker.join(timeout=1)
+    assert not worker.is_alive()
+
+
+def test_nonfixture_admission_does_not_hold() -> None:
+    run = object.__new__(_InstalledPreparationRun)
+    run._case_id = None
+    run._case_id_lock = threading.Lock()
+    run._case_admitted = threading.Event()
+    run._fixture_case_hold = threading.Event()
+    run._fixture_case_release = threading.Event()
+    run.hold_fixture_case()
+    run._capture_fixture_case("history-0000", "case-other")
+    assert not run._case_admitted.is_set()
+
+
 def test_installed_preparation_accepts_only_the_projected_fixture_title(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
