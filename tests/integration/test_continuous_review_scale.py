@@ -9,6 +9,7 @@ import pytest
 
 from tests.support import continuous_review_scale
 from tests.support.continuous_review_scale import (
+    _route_failure_diagnostic,
     _wait_for_https,
     qualify_installed_pipeline,
 )
@@ -58,6 +59,19 @@ def test_unresponsive_installed_server_reports_the_deadline_it_reached(
     finally:
         process.kill()
         process.wait(timeout=10)
+
+
+def test_route_failure_diagnostic_keeps_only_the_stable_error_category() -> None:
+    response = continuous_review_scale.httpx.Response(
+        503,
+        json={"error": {"code": "persistence", "detail": "private value"}},
+    )
+    assert _route_failure_diagnostic("early", "library_default", response) == {
+        "phase": "early",
+        "route": "library_default",
+        "status": 503,
+        "category": "persistence",
+    }
 
 
 def test_installed_pipeline_reconciles_then_restarts_completed_cohort() -> None:

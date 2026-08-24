@@ -147,6 +147,32 @@ class _RouteMeasurements:
         return result
 
 
+def _route_failure_diagnostic(
+    phase: str, route: str, response: httpx.Response
+) -> dict[str, object]:
+    """Retain the bounded route/error identity, never a failing response body."""
+
+    category = "transport"
+    try:
+        payload = response.json()
+    except (UnicodeError, ValueError):
+        payload = None
+    if type(payload) is dict:
+        error = payload.get("error")
+        if type(error) is dict and type(error.get("code")) is str:
+            candidate = error["code"]
+            if re.fullmatch(r"[a-z_]{1,64}", candidate):
+                category = candidate
+            else:
+                category = "unrecognized"
+    return {
+        "phase": phase,
+        "route": route,
+        "status": response.status_code,
+        "category": category,
+    }
+
+
 def _sample_routes(
     client: httpx.Client, origin: str, phase: str, measurements: _RouteMeasurements
 ) -> None:
@@ -187,7 +213,9 @@ def _sample_routes(
                 measurements.observe(
                     phase, f"{category}:{route}", response, time.monotonic() - started
                 )
-                assert response.status_code < 500
+                assert response.status_code < 500, _route_failure_diagnostic(
+                    phase, route, response
+                )
 
 
 class _SharedRepository:
