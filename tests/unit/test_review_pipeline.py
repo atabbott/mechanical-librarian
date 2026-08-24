@@ -455,10 +455,16 @@ def test_preopened_observation_survives_delete_journal_writer(
 def test_lifecycle_foreground_request_uses_one_clean_atomic_pause_boundary(
     application_path: Path,
 ) -> None:
+    owner = open_repository(application_path)
     pipeline = ReviewPreparationPipeline(
-        repository_factory=lambda: open_repository(application_path),
+        repository_factory=lambda: open_repository(
+            application_path, create=False, authority=owner.authority
+        ),
         observation_repository_factory=lambda: open_repository(
-            application_path, cross_thread=True
+            application_path,
+            create=False,
+            cross_thread=True,
+            authority=owner.authority,
         ),
         libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
         discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
@@ -479,6 +485,7 @@ def test_lifecycle_foreground_request_uses_one_clean_atomic_pause_boundary(
             pipeline.request("primary", "fiction")
     finally:
         pipeline.close_observation()
+        owner.close()
 
     reopened = open_repository(application_path)
     try:

@@ -590,33 +590,39 @@ def test_impossible_transition_pointer_combination_fails_closed() -> None:
 def test_concurrent_identical_admission_converges() -> None:
     with tempfile.TemporaryDirectory() as directory:
         database = Path(directory) / "reports.sqlite"
-        repository = open_repository(database)
+        owner = open_repository(database)
         report = _report()
-        repository.publish(report, lambda: True)
+        owner.publish(report, lambda: True)
         proposal = _actionable(report)
-        repository.publish_proposal(proposal)
-        repository.close()
+        owner.publish_proposal(proposal)
         barrier, results = threading.Barrier(2), []
+        failures: list[Exception] = []
 
         def admit() -> None:
-            if sys.platform.startswith("linux"):
-                barrier.wait()
-                local = open_repository(database, create=False)
-            else:
-                local = open_repository(database, create=False)
-                barrier.wait()
+            local = None
             try:
+                local = open_repository(
+                    database, create=False, authority=owner.authority
+                )
+                barrier.wait(timeout=5)
                 results.append(json.loads(local.admit_review_case(proposal)))
+            except Exception as error:
+                failures.append(error)
             finally:
-                local.close()
+                if local is not None:
+                    local.close()
 
-        threads = [threading.Thread(target=admit) for _ in range(2)]
-        # The comprehensions are used for their effect; the collected `None`
-        # results are discarded.
-        [thread.start() for thread in threads]  # type: ignore[func-returns-value]  # reason: the record-then-yield idiom is deliberate; the discarded None never reaches an assertion
-        [thread.join() for thread in threads]  # type: ignore[func-returns-value]  # reason: the record-then-yield idiom is deliberate; the discarded None never reaches an assertion
-        assert 2 == len(results)
-        assert 1 == len({value["review_case_id"] for value in results})
+        try:
+            threads = [threading.Thread(target=admit) for _ in range(2)]
+            # The comprehensions are used for their effect; the collected `None`
+            # results are discarded.
+            [thread.start() for thread in threads]  # type: ignore[func-returns-value]  # reason: the record-then-yield idiom is deliberate; the discarded None never reaches an assertion
+            [thread.join() for thread in threads]  # type: ignore[func-returns-value]  # reason: the record-then-yield idiom is deliberate; the discarded None never reaches an assertion
+            assert [] == failures
+            assert 2 == len(results)
+            assert 1 == len({value["review_case_id"] for value in results})
+        finally:
+            owner.close()
 
 
 def test_transition_failure_rolls_back_case_and_pointer() -> None:
