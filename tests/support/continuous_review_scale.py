@@ -308,8 +308,15 @@ class _AudiobookshelfFixture:
         self.details["fiction-new"] = detail
         return summary, detail
 
-    def materialize_browser_selection_fixture(self, media: Path) -> None:
-        """Supply one neutral file for the installed Library selection proof."""
+    def prepare_installed_catalogue_selection_fixture(self, media: Path) -> None:
+        """Make one installed catalogue row an ebook for the Library selection proof."""
+
+        for item, detail in self.details.items():
+            if item == "fiction-0000":
+                continue
+            item_media = detail["media"]
+            assert type(item_media) is dict
+            del item_media["ebookFile"]
 
         value = epub_bytes(
             package=b"""<?xml version="1.0" encoding="UTF-8"?>
@@ -436,7 +443,6 @@ def qualify_installed_pipeline(
         secret.chmod(0o600)
         media = root / "media"
         media.mkdir(mode=0o700)
-        fixture.materialize_browser_selection_fixture(media)
         artifacts = root / "artifacts"
         artifacts.mkdir(mode=0o700)
         owner_hash = root / "owner.hash"
@@ -755,6 +761,7 @@ def qualify_installed_pipeline(
         # no-change restart rather than a real 2,000-work reconciliation.
         database = root / "installed.sqlite3"
         catalogue = root / "installed-catalogue.sqlite3"
+        fixture.prepare_installed_catalogue_selection_fixture(media)
         command = shutil.which("mechanical-librarian")
         assert command is not None
         arguments = [
