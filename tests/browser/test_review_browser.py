@@ -991,18 +991,15 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 with page.expect_response(
                     lambda response: response.url.endswith("/decisions")
                 ) as override_response:
+                    before = page.locator(_CURRENT_FIELD_SELECTOR).first.inner_text()
                     title_current.focus()
                     page.keyboard.press("Enter")
                 assert 200 == override_response.value.status
-                # Recording advances off the title field, so its recorded state
-                # is read where the owner would find it: back on that field.
-                page.get_by_text(
-                    "Decision recorded from the authoritative case.", exact=True
-                ).wait_for()
+                # Acknowledged exact-case state advances the owner. Reopening
+                # remains the place to inspect and revise the recorded title.
+                page.wait_for_function(_CURRENT_FIELD_CHANGED, arg=before)
                 page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
-                page.get_by_role(
-                    "heading", name="Which title should this work use?"
-                ).wait_for()
+                expect(title_current).to_have_attribute("aria-pressed", "true")
                 page.goto(f"{origin}/library?lens=all&preview={case_id}&field=series")
                 series_current = page.get_by_role(
                     "button", name="Choose current value:", exact=False
@@ -1042,10 +1039,6 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                     page.locator(".library-cover-card")
                     .filter(has_text="Alternative 1 cover")
                     .evaluate("node => node.classList.contains('is-selected')")
-                )
-                assert (
-                    "Automatic handling recorded this field"
-                    in page.locator("body").inner_text()
                 )
                 with (
                     page.expect_response(
@@ -1358,6 +1351,7 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
         announced: list[Any] = []
         library_requests: list[str] = []
         library_responses: list[float] = []
+        decision_requests: list[str | None] = []
         decision_responses: list[str] = []
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
@@ -1387,6 +1381,11 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
             page.on(
                 "request",
                 lambda request: (
+                    decision_requests.append(request.headers.get("idempotency-key"))
+                    if request.url.endswith("/decisions")
+                    else None
+                )
+                or (
                     library_requests.append(request.url)
                     if "/api/v1/library" in request.url
                     else None
@@ -1460,9 +1459,11 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                 # figures of milliseconds, and a whole-Library projection over
                 # this cohort is two orders of magnitude slower.
                 assert elapsed < 1.0, elapsed
-                # The acknowledgement is local: the durable write has not even
-                # answered yet, which is what "immediate" has to mean.
-                assert decision_responses == [], decision_responses
+                # The exact decision acknowledgement is the authority for this
+                # advance; aggregate Library reads remain out of the path.
+                assert len(decision_responses) == 1, decision_responses
+                assert len(decision_requests) == 1, decision_requests
+                assert decision_requests[0]
                 assert page.evaluate("() => window.scrollY") == scroll_before
                 assert page.evaluate(
                     "() => document.activeElement?.matches('.decision-canvas button:not(:disabled)')"
@@ -1513,13 +1514,6 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                 assert reduced_animation == {"name": "", "transform": "none"} or (
                     reduced_animation == {"name": "none", "transform": "none"}
                 )
-                # It still lands, and the authoritative case replaces the
-                # local acknowledgement rather than standing in for it.
-                page.get_by_text(
-                    "Decision recorded from the authoritative case.", exact=True
-                ).wait_for()
-                assert len(decision_responses) == 1, decision_responses
-
                 # The next field is actionable by keyboard without a pointer.
                 assert page.evaluate(
                     "() => document.activeElement !== null &&"
@@ -1548,10 +1542,13 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                     page.get_by_role(
                         "button", name="Take no action", exact=True
                     ).count()
-                    == 1
+                    == 0
                 )
+                assert page.get_by_role(
+                    "button", name="Choose proposed value", exact=False
+                ).count()
                 assert (
-                    "You can change it here"
+                    "You can select another eligible value"
                     in page.locator(".decision-canvas").first.inner_text()
                 )
 
@@ -1576,17 +1573,16 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                 while len(decision_responses) < 2 and time.monotonic() < deadline:
                     page.wait_for_timeout(25)
                 assert len(decision_responses) == 2, decision_responses
+                assert len(decision_requests) == 2, decision_requests
+                assert all(decision_requests)
+                assert decision_requests[0] != decision_requests[1]
 
-                # Both decisions have landed durably, and both announcements
-                # have had five times the client's 120 ms coalescing window to
-                # turn into a request. Neither did: an owner recording in a
-                # case holds the Library and the rail beside it, marking them
-                # stale to be read once on the way out, so the decision path
-                # carries no Library work at all rather than merely not
-                # awaiting it. Waiting here can only expose a request that was
-                # issued, never hide one.
+                # Aggregate refreshes may now converge badges and the work rail,
+                # but remain background work: the exact-case acknowledgement
+                # above advanced and focused the next field before either one
+                # completed.
                 page.wait_for_timeout(600)
-                assert library_requests[issued:] == [], library_requests[issued:]
+                assert len(library_requests[issued:]) == 2, library_requests[issued:]
 
                 # And the other half of the same rule: everything this tab did
                 # not cause still reaches it while the owner keeps recording.
@@ -1651,7 +1647,7 @@ def test_compact_lower_choice_reveals_only_the_next_focused_control() -> None:
                 ]
                 before = page.locator(_CURRENT_FIELD_SELECTOR).first.inner_text()
                 lower_choice = page.get_by_role(
-                    "button", name="Take no action", exact=True
+                    "button", name="Choose proposed value", exact=False
                 )
                 lower_choice.scroll_into_view_if_needed()
                 scroll_before = page.evaluate("() => window.scrollY")
