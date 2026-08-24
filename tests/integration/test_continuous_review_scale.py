@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -289,6 +290,45 @@ def test_installed_preparation_closes_browser_observer_before_server() -> None:
     run.close()
 
     assert events == ["observer", "join:30", "recovery"]
+
+
+def test_installed_decision_activity_wrappers_keep_browser_out_of_http_smoke(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    activity = continuous_review_scale._InstalledActivityEvidence(
+        event_id="event",
+        category="owner",
+        outcome="accept",
+        history_events=1,
+        unfiltered_events=1,
+        filtered_events=1,
+    )
+    run = type(
+        "Run", (), {"assert_owner_choice_browser": lambda _: calls.append("browser")}
+    )()
+
+    @contextmanager
+    def lifecycle(*_: object, **__: object):
+        yield run, activity
+
+    monkeypatch.setattr(
+        continuous_review_scale, "_running_installed_decision_activity", lifecycle
+    )
+    assert (
+        continuous_review_scale.qualify_installed_decision_activity_http(
+            {}, expected_total=1
+        )
+        == activity
+    )
+    assert calls == []
+    assert (
+        continuous_review_scale.qualify_installed_decision_activity(
+            {}, expected_total=1
+        )
+        == activity
+    )
+    assert calls == ["browser"]
 
 
 def test_installed_preparation_exposes_only_the_fixture_admitted_case() -> None:

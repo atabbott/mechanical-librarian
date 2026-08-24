@@ -19,9 +19,10 @@ untracked artifact.
 
 The public suite has four explicit qualification tiers, declared in `COHORTS`.
 The three source cohorts — `fast`, `browser` and `slow` — are disjoint by
-directory. `required-installed` is not: it names five files that `fast` also
-collects, deliberately, because its distinct invariant is execution through the
-installed wheel rather than a different set of tests.
+directory. `required-installed` is not: it is the existing fast-source subset
+plus one installed-only exact-wheel smoke, deliberately, because its distinct
+invariant is execution through the installed wheel rather than a different set
+of source tests.
 `scripts/run_test_tier.py` is the only way a tier is run
 or listed, so a cohort admits exactly the paths its declared patterns match.
 `scripts/run_test_tier.py --list`, with no tier, emits a
