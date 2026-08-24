@@ -282,14 +282,19 @@ describe('Library review ownership', () => {
     await user.click(evidence)
     expect(screen.getByText('Hardcover')).toBeVisible()
     expect(screen.getAllByText('Retained recommendation.')).not.toHaveLength(0)
-    expect(screen.queryByRole('button', { name: /Evidence for Current value/u })).toBeNull()
-    await user.click(screen.getByRole('button', { name: 'Current value evidence' }))
+    expect(evidence).toHaveAttribute('aria-expanded', 'true')
+    expect(evidence).toHaveTextContent('Hide evidence')
+    await user.click(evidence)
+    expect(evidence).toHaveFocus()
     await waitFor(() =>
-      expect(screen.queryByRole('button', { name: /Evidence for Current value/u })).toBeNull(),
+      expect(screen.getByRole('button', { name: /Evidence for Current value/u })).toHaveAttribute(
+        'aria-expanded',
+        'false',
+      ),
     )
   })
 
-  it('renders recorded and automatic fields as safe Library context rather than a retired review surface', async () => {
+  it('renders recorded fields as safely escaped voluntary revisits outside Attention', async () => {
     const field = detail.fields[0]
     if (!field) throw new Error('title fixture required')
     const recorded = {
@@ -297,6 +302,8 @@ describe('Library review ownership', () => {
       needsAttention: false,
       classification: 'automatic_recorded' as const,
       classificationReason: '<script>untrusted</script>',
+      currentValue: '<script>untrusted</script>',
+      currentRaw: '<script>untrusted</script>',
       automaticDecision: {
         candidate_id: null,
         decision_id: 'automatic-1',
@@ -314,7 +321,12 @@ describe('Library review ownership', () => {
       getCaseDetail: vi.fn(async () => ({ ...detail, fields: [recorded] })),
     })
     await screen.findByRole('heading', { name: 'A Book' })
-    expect(document.body.textContent).toContain('<script>untrusted</script>')
+    expect(screen.getByText('<script>untrusted</script>')).toBeVisible()
+    expect(document.querySelector('script')).toBeNull()
+    expect(
+      screen.getByText('The recorded outcome is marked below. You can select another eligible value.'),
+    ).toBeVisible()
+    expect(screen.getByRole('button', { name: /Choose current value/u })).toBeVisible()
     expect(screen.queryByText('Current review case')).toBeNull()
   })
 
