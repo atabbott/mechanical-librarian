@@ -452,7 +452,7 @@ def _start_deterministic_installed_server(
     private_key: Path,
     reservation: ReservedPort,
     origin: str,
-    admit_case: Callable[[str], None],
+    admit_case: Callable[[str, str], None],
 ) -> tuple[uvicorn.Server, threading.Thread, SQLiteProviderRecoveryStore]:
     """Run installed-wheel HTTP over the production persisted pipeline boundary.
 
@@ -464,6 +464,7 @@ def _start_deterministic_installed_server(
     observation = open_repository(database, create=True, cross_thread=True)
     reports: dict[str, MetadataReport] = {}
     proposals: dict[str, object] = {}
+    proposal_items: dict[str, str] = {}
     private_root = database.parent / "private"
     private_root.mkdir(mode=0o700)
     review = ReviewWebConfiguration(
@@ -543,13 +544,14 @@ def _start_deterministic_installed_server(
     def propose(repository, report_id: str) -> str:
         proposal = evaluate_report(reports[report_id])
         proposals[proposal.proposal_set_id] = proposal
+        proposal_items[proposal.proposal_set_id] = reports[report_id].target.item
         repository.publish_proposal(proposal)
         return proposal.proposal_set_id
 
     def admit(repository, proposal_id: str):
         result = json.loads(repository.admit_review_case(proposals[proposal_id]))
         if review_case_id := result.get("review_case_id"):
-            admit_case(str(review_case_id))
+            admit_case(proposal_items[proposal_id], str(review_case_id))
         return result["status"], result.get("review_case_id")
 
     pipeline = ReviewPreparationPipeline(
@@ -783,7 +785,9 @@ class _InstalledPreparationRun:
         assert any(item["state"] == "discovering" for item in first_status["libraries"])
         return self
 
-    def _capture_fixture_case(self, case_id: str) -> None:
+    def _capture_fixture_case(self, item_id: str, case_id: str) -> None:
+        if item_id != "fiction-0000":
+            return
         with self._case_id_lock:
             if self._case_id is None:
                 self._case_id = case_id

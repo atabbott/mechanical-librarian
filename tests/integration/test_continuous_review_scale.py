@@ -246,15 +246,21 @@ def test_installed_preparation_closes_browser_observer_before_server() -> None:
     assert events == ["observer", "join:30", "recovery"]
 
 
-def test_installed_preparation_exposes_the_admitted_fixture_case() -> None:
-    """Admission hand-off is locked because the pipeline worker is concurrent."""
+def test_installed_preparation_exposes_only_the_fixture_admitted_case() -> None:
+    """Other workers cannot signal or replace the fixture-owned admission."""
 
     run = object.__new__(_InstalledPreparationRun)
     run._case_id = None
     run._case_id_lock = threading.Lock()
     run._case_admitted = threading.Event()
 
-    run._capture_fixture_case("case-1")
+    run._capture_fixture_case("history-0000", "case-other")
+
+    assert not run._case_admitted.is_set()
+    assert run._case_id is None
+
+    run._capture_fixture_case("fiction-0000", "case-1")
+    run._capture_fixture_case("fiction-0000", "case-replaced")
 
     assert run.wait_for_fixture_case() == "case-1"
 
