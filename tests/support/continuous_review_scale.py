@@ -1781,11 +1781,32 @@ def qualify_installed_pipeline(
             restarted.progress("primary", library)
             for library in ("fiction", "history", "science")
         ]
+        final_progress = tuple(
+            (
+                value.library,
+                value.state,
+                value.total,
+                value.checked,
+                value.blocked,
+            )
+            for value in final
+            if value is not None
+        )
+        final_diagnostic = {
+            "expected_total": expected_total,
+            "libraries": final_progress,
+        }
         assert all(value is not None for value in final)
-        assert sum(value.total for value in final if value) == expected_total
-        assert sum(value.checked for value in final if value) == expected_total
-        assert sum(value.blocked for value in final if value) == 0
-        assert all(value.state == "completed" for value in final if value)
+        assert sum(value.total for value in final if value) == expected_total, (
+            final_diagnostic
+        )
+        assert sum(value.checked for value in final if value) == expected_total, (
+            final_diagnostic
+        )
+        assert sum(value.blocked for value in final if value) == 0, final_diagnostic
+        assert all(value.state == "completed" for value in final if value), (
+            final_diagnostic
+        )
         discrepancy_admission = admission_results["fiction-0000"]
         assert discrepancy_admission[0] == "admitted"
         assert discrepancy_admission[1] is not None
