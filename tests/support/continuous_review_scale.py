@@ -642,6 +642,7 @@ def qualify_installed_pipeline(
     memory_ceiling_kib: int | None = None,
     receipt_path: Path | None = None,
     phase_callback: Callable[[str, str], float | None] | None = None,
+    phase_cleanup: Callable[[], None] | None = None,
 ) -> None:
     # `closing` is entered first so it exits last, which is the order
     # `addCleanup(fixture.close)` gave the fixture under `TestCase`: the
@@ -1198,6 +1199,11 @@ def qualify_installed_pipeline(
             assert sum(item["blocked"] for item in projection["libraries"]) == 0
             assert peak_rss_kib < 524_288
         finally:
+            # The phase callback may own a persistent browser. Close its page
+            # and live stream before application shutdown starts draining the
+            # same server, including when a callback assertion failed.
+            if phase_cleanup is not None:
+                phase_cleanup()
             # A held discovery call has to return before a graceful shutdown.
             fixture.release_discovery()
             server.should_exit = True

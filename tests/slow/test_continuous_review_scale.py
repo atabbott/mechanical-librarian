@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import re
 import time
 from urllib.parse import parse_qs, urlparse
 
 import pytest
-from playwright.sync_api import Browser, Page, expect, sync_playwright
+from playwright.sync_api import Browser, BrowserContext, Page, expect, sync_playwright
 
 from tests.support.continuous_review_scale import (
     _FOREGROUND_RESPONSE_BUDGET_MS,
@@ -26,12 +27,20 @@ class _WorkspaceProbe:
     def __init__(self) -> None:
         self._playwright = sync_playwright().start()
         self._browser: Browser = self._playwright.chromium.launch(headless=True)
+        self._context: BrowserContext | None = None
         self._page: Page | None = None
+        self._closed = False
         self._case_id: str | None = None
         self.errors: list[str] = []
         self.failures: list[int] = []
 
     def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if self._context is not None:
+            self._context.close()
+            self._context = None
         self._browser.close()
         self._playwright.stop()
 
@@ -60,10 +69,10 @@ class _WorkspaceProbe:
 
     def observe(self, phase: str, origin: str) -> float | None:
         if self._page is None:
-            context = self._browser.new_context(
+            self._context = self._browser.new_context(
                 ignore_https_errors=True, viewport={"width": 1280, "height": 800}
             )
-            self._page = context.new_page()
+            self._page = self._context.new_page()
             self._page.on("pageerror", lambda error: self.errors.append(str(error)))
             self._page.on(
                 "console",
@@ -162,14 +171,25 @@ class _WorkspaceProbe:
         if phase == "late":
             assert self._case_id is not None
             page.goto(f"{origin}/library?lens=all&preview={self._case_id}&field=title")
-            page.get_by_text(
-                "Decision recorded from the authoritative case.", exact=True
-            ).wait_for()
+            recorded_field = page.get_by_role(
+                "button", name=re.compile(r"^Title.*Decision recorded$")
+            )
+            expect(recorded_field).to_have_count(1)
+            recorded_field.click()
+            recorded_choice = page.get_by_role(
+                "button",
+                name=f"Choose proposed value: {_FIXTURE_PROPOSED_TITLE}",
+                exact=True,
+            )
+            expect(recorded_choice).to_have_count(1)
+            expect(recorded_choice).to_have_attribute("aria-pressed", "true")
         page.get_by_role("link", name="Activity", exact=True).click()
         page.get_by_role("button", name="Owner choices", exact=True).click()
         expect(
             page.get_by_role("button", name="Owner choices", exact=True)
         ).to_have_attribute("aria-pressed", "true")
+        page.get_by_text("Owner choice", exact=True).wait_for()
+        page.get_by_text("Accepted", exact=True).wait_for()
 
         assert self.errors == []
         assert self.failures == []
@@ -186,6 +206,7 @@ def test_installed_pipeline_reconciles_two_thousand_then_restarts_completed_coho
             expected_total=2_000,
             memory_ceiling_kib=524_288,
             phase_callback=workspace.observe,
+            phase_cleanup=workspace.close,
         )
     finally:
         workspace.close()
