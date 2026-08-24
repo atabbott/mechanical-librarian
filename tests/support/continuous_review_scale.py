@@ -461,7 +461,7 @@ def _start_deterministic_installed_server(
     admission and projection transactions against the server's SQLite store.
     """
 
-    observation = open_repository(database, create=True, cross_thread=True)
+    web_state_owner = open_repository(database, create=True, cross_thread=True)
     reports: dict[str, MetadataReport] = {}
     proposals: dict[str, object] = {}
     proposal_items: dict[str, str] = {}
@@ -483,7 +483,17 @@ def _start_deterministic_installed_server(
     )
 
     def workers():
-        return open_repository(database, create=False, authority=observation.authority)
+        return open_repository(
+            database, create=False, authority=web_state_owner.authority
+        )
+
+    def foreground_observation():
+        return open_repository(
+            database,
+            create=False,
+            authority=web_state_owner.authority,
+            cross_thread=True,
+        )
 
     def discover(_: str, library: str):
         fixture.discovery_started.set()
@@ -556,7 +566,7 @@ def _start_deterministic_installed_server(
 
     pipeline = ReviewPreparationPipeline(
         repository_factory=workers,
-        observation_repository_factory=lambda: observation,
+        observation_repository_factory=foreground_observation,
         libraries=tuple(
             ("primary", library, library, producers[library]) for library in entries
         ),
@@ -582,18 +592,18 @@ def _start_deterministic_installed_server(
             (
                 "operational_incidents",
                 lambda: support_preparation_incidents(
-                    observation.operational_snapshot()
+                    web_state_owner.operational_snapshot()
                 ),
             ),
         )
     )
     application = compose_review_application(
-        state_owner=observation,
-        session_store=observation,
-        case_store=observation,
-        decision_store=observation,
-        library_store=observation,
-        policy_store=observation,
+        state_owner=web_state_owner,
+        session_store=web_state_owner,
+        case_store=web_state_owner,
+        decision_store=web_state_owner,
+        library_store=web_state_owner,
+        policy_store=web_state_owner,
         verify_password=load_owner_password_verifier(owner_hash),
         clock=lambda: int(time.time()),
         session_lifetime_seconds=review.session_lifetime_seconds,
@@ -609,7 +619,7 @@ def _start_deterministic_installed_server(
         operational_timer=timing,
         field_application=compose_continuous_guarded_application(
             configuration,
-            observation,
+            web_state_owner,
             database,
             artifacts,
             supervisor,
@@ -617,7 +627,7 @@ def _start_deterministic_installed_server(
             recovery,
         ),
         cover_considerations=_compose_cover_considerations(
-            observation, artifacts, review
+            web_state_owner, artifacts, review
         ),
     )
     server = uvicorn.Server(
