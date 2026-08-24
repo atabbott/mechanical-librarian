@@ -215,6 +215,8 @@ class PipelineAction:
 
 
 class ReviewPipelineRepository(Protocol):
+    def require_current(self) -> None: ...
+
     def request_review_scan(
         self,
         connection: str,
@@ -427,6 +429,7 @@ class ReviewPreparationPipeline:
             repository = self._observation_repository
             if repository is not None:
                 try:
+                    repository.require_current()
                     return call(repository)
                 except ReviewPipelineError:
                     raise
@@ -1062,10 +1065,12 @@ class ReviewPreparationSupervisor:
         self._threads = active
         if active:
             raise ReviewPipelineError("shutdown_timeout")
-        if self._on_stop is not None:
-            self._on_stop()
-            self._on_stop = None
-        self._pipeline.close_observation()
+        try:
+            if self._on_stop is not None:
+                self._on_stop()
+                self._on_stop = None
+        finally:
+            self._pipeline.close_observation()
 
     def request(self, connection: str, library: str) -> PipelineProgress:
         progress = self._pipeline.request(connection, library)

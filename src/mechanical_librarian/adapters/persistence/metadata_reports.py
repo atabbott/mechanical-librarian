@@ -861,6 +861,10 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     ) -> None:
         self._field_effects._append_field_effect_event(operation, kind, occurred_at)
 
+    def require_current(self) -> None:
+        if self._binding is not None:
+            self._binding.require_current()
+
     @property
     def authority(self) -> object | None:
         return self._binding
