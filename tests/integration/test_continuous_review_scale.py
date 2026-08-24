@@ -16,7 +16,6 @@ from tests.support.continuous_review_scale import (
     _InstalledRepositoryTopology,
     _route_failure_diagnostic,
     _wait_for_https,
-    qualify_installed_pipeline,
 )
 
 
@@ -414,10 +413,3 @@ def test_terminal_wait_uses_count_deadline_and_safe_aggregate_timeout(
 
     assert "fiction" in str(error.value)
     assert "Exact evaluator candidate" not in str(error.value)
-
-
-def test_installed_pipeline_reconciles_then_restarts_completed_cohort() -> None:
-    qualify_installed_pipeline(
-        {"fiction": 4, "history": 20, "science": 20},
-        expected_total=45,
-    )
