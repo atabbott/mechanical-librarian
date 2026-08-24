@@ -9,6 +9,7 @@ import pytest
 from playwright.sync_api import Browser, Page, expect, sync_playwright
 
 from tests.support.continuous_review_scale import (
+    _FOREGROUND_RESPONSE_BUDGET_MS,
     _MEASUREMENT_SAMPLES,
     _assert_distinct_phase_fractions,
     _validate_receipt_budgets,
@@ -23,6 +24,7 @@ class _WorkspaceProbe:
         self._playwright = sync_playwright().start()
         self._browser: Browser = self._playwright.chromium.launch(headless=True)
         self._page: Page | None = None
+        self._case_id: str | None = None
         self.errors: list[str] = []
         self.failures: list[int] = []
 
@@ -53,7 +55,7 @@ class _WorkspaceProbe:
         if preview is not None:
             assert parameters.get("preview") == [preview]
 
-    def observe(self, phase: str, origin: str) -> None:
+    def observe(self, phase: str, origin: str) -> float | None:
         if self._page is None:
             context = self._browser.new_context(
                 ignore_https_errors=True, viewport={"width": 1280, "height": 800}
@@ -115,6 +117,39 @@ class _WorkspaceProbe:
         cohort_heading = page.get_by_role("heading", name=cohort_title, exact=True)
         expect(cohort_heading).to_have_count(1)
         expect(cohort_heading).to_be_visible()
+        choice = page.get_by_role("button", name="Choose proposed value", exact=False)
+        if phase == "early":
+            expect(choice).to_have_count(1)
+            expect(choice).to_be_enabled()
+            preview = parse_qs(urlparse(page.url).query).get("preview")
+            assert preview is not None and len(preview) == 1
+            self._case_id = preview[0]
+        if phase == "peak":
+            assert self._case_id is not None
+            expect(choice).to_have_count(1)
+            started = time.monotonic()
+            with page.expect_response(
+                lambda response: response.url.endswith("/decisions"),
+                timeout=_FOREGROUND_RESPONSE_BUDGET_MS,
+            ) as decision_response:
+                choice.click()
+            response = decision_response.value
+            elapsed_ms = (time.monotonic() - started) * 1_000
+            assert response.status == 200, response.text()
+            acknowledgement = response.json()
+            assert acknowledgement["schema_version"] == "human-decision-ack-v1"
+            assert acknowledgement["outcome"] == "accept"
+            page.get_by_role("heading", name="Review complete").wait_for(
+                timeout=_FOREGROUND_RESPONSE_BUDGET_MS
+            )
+            page.get_by_text("No library data changed.", exact=False).wait_for()
+            assert elapsed_ms <= _FOREGROUND_RESPONSE_BUDGET_MS
+        if phase == "late":
+            assert self._case_id is not None
+            page.goto(f"{origin}/library?lens=all&preview={self._case_id}&field=title")
+            page.get_by_text(
+                "Decision recorded from the authoritative case.", exact=True
+            ).wait_for()
         page.get_by_role("link", name="Activity", exact=True).click()
         page.get_by_role("button", name="Owner choices", exact=True).click()
         expect(
@@ -123,6 +158,7 @@ class _WorkspaceProbe:
 
         assert self.errors == []
         assert self.failures == []
+        return elapsed_ms if phase == "peak" else None
 
 
 def test_installed_pipeline_reconciles_two_thousand_then_restarts_completed_cohort() -> (

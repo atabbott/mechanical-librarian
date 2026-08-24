@@ -82,6 +82,7 @@ _PHASE_BANDS = (
     ("late", 0.85, 1.0),
 )
 _MINIMUM_INSTALLED_RECONCILIATION_WORKS_PER_SECOND = 5.0
+_FOREGROUND_RESPONSE_BUDGET_MS = 2_000
 
 
 def _validate_receipt_budgets(
@@ -94,7 +95,10 @@ def _validate_receipt_budgets(
             assert values["n"] >= _MEASUREMENT_SAMPLES
             assert values["5xx_or_transport"] == 0
             if phase != "quiescent":
-                budget = max(float(phases["quiescent"][route]["p95_ms"]) * 2, 2_000)
+                budget = max(
+                    float(phases["quiescent"][route]["p95_ms"]) * 2,
+                    _FOREGROUND_RESPONSE_BUDGET_MS,
+                )
                 budgets.setdefault(phase, {})[route] = budget
                 assert float(values["p95_ms"]) <= budget
     return budgets
@@ -308,30 +312,46 @@ class _AudiobookshelfFixture:
         self.details["fiction-new"] = detail
         return summary, detail
 
-    def materialize_installed_browser_selection_fixture(self, media: Path) -> None:
-        """Supply one neutral EPUB; the other declared ebooks exercise missing-media failures."""
+    def materialize_installed_current_workspace(self, media: Path) -> None:
+        """Give every declared work a readable EPUB and one early manual title case."""
 
-        value = epub_bytes(
-            package=b"""<?xml version="1.0" encoding="UTF-8"?>
-<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="identifier" version="3.0">
-  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="identifier">fiction-0000</dc:identifier><dc:title>fiction-0000</dc:title><dc:creator>Synthetic Author</dc:creator><dc:language>en</dc:language></metadata>
-  <manifest><item id="opening" href="opening.xhtml" media-type="application/xhtml+xml"/></manifest>
-  <spine><itemref idref="opening"/></spine>
-</package>""",
-            include_default_content=False,
-            extra_entries=(
-                (
-                    "EPUB/opening.xhtml",
-                    b"""<?xml version="1.0" encoding="UTF-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml"><body><h1>fiction-0000</h1><p>Synthetic Author</p></body></html>""",
-                    8,
+        for item, detail in self.details.items():
+            opening_title = (
+                "Exact evaluator candidate" if item == "fiction-0000" else item
+            )
+            value = epub_bytes(
+                package=(
+                    '<?xml version="1.0" encoding="UTF-8"?>\n'
+                    '<package xmlns="http://www.idpf.org/2007/opf" '
+                    'unique-identifier="identifier" version="3.0">\n'
+                    '  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+                    f'<dc:identifier id="identifier">{item}</dc:identifier>'
+                    f"<dc:title>{item}</dc:title>"
+                    "<dc:creator>Synthetic Author</dc:creator>"
+                    "<dc:language>en</dc:language></metadata>\n"
+                    '  <manifest><item id="opening" href="opening.xhtml" '
+                    'media-type="application/xhtml+xml"/></manifest>\n'
+                    '  <spine><itemref idref="opening"/></spine>\n'
+                    "</package>"
+                ).encode(),
+                include_default_content=False,
+                extra_entries=(
+                    (
+                        "EPUB/opening.xhtml",
+                        (
+                            '<?xml version="1.0" encoding="UTF-8"?>\n'
+                            '<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+                            f"<h1>{opening_title}</h1>"
+                            "<p>Synthetic Author</p></body></html>"
+                        ).encode(),
+                        8,
+                    ),
                 ),
-            ),
-        )
-        (media / "fiction-0000.epub").write_bytes(value)
-        file_metadata = self.details["fiction-0000"]["media"]["ebookFile"]["metadata"]
-        assert type(file_metadata) is dict
-        file_metadata["size"] = len(value)
+            )
+            (media / f"{item}.epub").write_bytes(value)
+            file_metadata = detail["media"]["ebookFile"]["metadata"]
+            assert type(file_metadata) is dict
+            file_metadata["size"] = len(value)
 
     def hold_discovery(self) -> None:
         self.discovery_started.clear()
@@ -408,7 +428,7 @@ def qualify_installed_pipeline(
     expected_total: int,
     memory_ceiling_kib: int | None = None,
     receipt_path: Path | None = None,
-    phase_callback: Callable[[str, str], None] | None = None,
+    phase_callback: Callable[[str, str], float | None] | None = None,
 ) -> None:
     # `closing` is entered first so it exits last, which is the order
     # `addCleanup(fixture.close)` gave the fixture under `TestCase`: the
@@ -422,7 +442,7 @@ def qualify_installed_pipeline(
         # window between allocation and the installed server's own `bind()`
         # spans writing `config.json`, the entire in-process pipeline over
         # the whole cohort, `Popen`, and the child's interpreter start-up,
-        # which at the slow tier's thousand works is minutes wide. That is
+        # which at the slow tier's two thousand works is minutes wide. That is
         # far wider than any other caller of `ReservedPort`, and it is why
         # this one alone cannot stop at holding: the child binds a number it
         # is handed on its command line, and there is no channel for giving
@@ -754,7 +774,7 @@ def qualify_installed_pipeline(
         # no-change restart rather than a real 2,000-work reconciliation.
         database = root / "installed.sqlite3"
         catalogue = root / "installed-catalogue.sqlite3"
-        fixture.materialize_installed_browser_selection_fixture(media)
+        fixture.materialize_installed_current_workspace(media)
         command = shutil.which("mechanical-librarian")
         assert command is not None
         arguments = [
@@ -838,6 +858,7 @@ def qualify_installed_pipeline(
                 sampled_phases: set[str] = set()
                 actual_fractions: dict[str, float] = {}
                 active_observed = False
+                decision_response_ms: float | None = None
                 deadline = time.monotonic() + (
                     expected_total / _MINIMUM_INSTALLED_RECONCILIATION_WORKS_PER_SECOND
                 )
@@ -907,7 +928,10 @@ def qualify_installed_pipeline(
                             actual_fractions[phase] = fraction
                             _sample_routes(client, origin, phase, measurements)
                             if phase_callback is not None:
-                                phase_callback(phase, origin)
+                                observed_decision = phase_callback(phase, origin)
+                                if phase == "peak":
+                                    assert observed_decision is not None
+                                    decision_response_ms = observed_decision
                         finally:
                             fixture.release_next_detail()
                         sampled_phases.add(phase)
@@ -915,7 +939,7 @@ def qualify_installed_pipeline(
                         not projection["active"]
                         and len(projection["libraries"]) == 3
                         and all(
-                            item["state"] == "completed_with_failures"
+                            item["state"] == "completed"
                             for item in projection["libraries"]
                         )
                     ):
@@ -933,6 +957,9 @@ def qualify_installed_pipeline(
                 assert sampled_phases == {"early", "peak", "late"}
                 _assert_distinct_phase_fractions(actual_fractions)
                 assert active_observed is True
+                if phase_callback is not None:
+                    assert decision_response_ms is not None
+                    assert decision_response_ms <= _FOREGROUND_RESPONSE_BUDGET_MS
                 _sample_routes(client, origin, "quiescent", measurements)
                 installed_reconciliation_elapsed = (
                     time.monotonic() - installed_reconciliation_started
@@ -944,10 +971,7 @@ def qualify_installed_pipeline(
                 sum(item["checked"] for item in projection["libraries"])
                 == expected_total
             )
-            assert (
-                sum(item["blocked"] for item in projection["libraries"])
-                == expected_total - 1
-            )
+            assert sum(item["blocked"] for item in projection["libraries"]) == 0
             assert peak_rss_kib < 524_288
         finally:
             # A held discovery call has to return before a graceful shutdown.
@@ -966,6 +990,20 @@ def qualify_installed_pipeline(
             "the installed server left recovery sidecars before completed-state "
             "restart: " + ", ".join(path.name for path in _database_sidecars(database))
         )
+
+        with closing(sqlite3.connect(database)) as connection:
+            installed_reports = connection.execute(
+                "SELECT COUNT(*) FROM metadata_reports"
+            ).fetchone()[0]
+            installed_proposals = connection.execute(
+                "SELECT COUNT(*) FROM proposal_sets"
+            ).fetchone()[0]
+            installed_cases = connection.execute(
+                "SELECT COUNT(*) FROM review_cases"
+            ).fetchone()[0]
+        assert installed_reports == expected_total
+        assert installed_proposals == expected_total
+        assert installed_cases == 1
         second_process = _start_review_server(review_port, arguments, origin)
         try:
             with httpx.Client(verify=False, trust_env=False) as client:
@@ -985,8 +1023,7 @@ def qualify_installed_pipeline(
                 "science",
             }
             assert all(
-                item["state"] == "completed_with_failures"
-                and item["checked"] == item["total"]
+                item["state"] == "completed" and item["checked"] == item["total"]
                 for item in completed_projection["libraries"]
             )
             assert (
@@ -998,8 +1035,7 @@ def qualify_installed_pipeline(
                 == expected_total
             )
             assert (
-                sum(item["blocked"] for item in completed_projection["libraries"])
-                == expected_total - 1
+                sum(item["blocked"] for item in completed_projection["libraries"]) == 0
             )
         finally:
             if second_process.poll() is None:
@@ -1021,7 +1057,7 @@ def qualify_installed_pipeline(
             expected_total / installed_reconciliation_elapsed
         )
         receipt = {
-            "schema": "m27-828-candidate-v2",
+            "schema": "m27-828-candidate-v3",
             "works": expected_total,
             "phases": measurements.receipt(),
             "direct_pipeline_control_works_per_second": round(
@@ -1035,11 +1071,17 @@ def qualify_installed_pipeline(
             ),
             "rss_kib_max": peak_rss_kib,
             "actual_phase_fractions": actual_fractions,
+            "installed_successful_transitions": {
+                "reports": installed_reports,
+                "proposals": installed_proposals,
+                "admitted_cases": installed_cases,
+            },
+            "peak_decision_response_ms": decision_response_ms,
             "installed_terminal": {
-                "state": "completed_with_failures",
+                "state": "completed",
                 "total": expected_total,
                 "checked": expected_total,
-                "blocked": expected_total - 1,
+                "blocked": 0,
             },
             "fairness": {
                 "first_library_positions": {
@@ -1055,7 +1097,7 @@ def qualify_installed_pipeline(
                 },
                 "new_work_position": extracted[before_new:].index("fiction-new") + 1,
             },
-            "restart": {"completed_with_failures_state_restart": True},
+            "restart": {"completed_state_restart": True},
         }
         receipt["p95_budgets_ms"] = _validate_receipt_budgets(receipt)
         assert (

@@ -79,24 +79,25 @@ slow test is never silently skipped: delivery documentation identifies when
 exact-head slow evidence is required.
 
 The continuous-review slow qualifier advances 2,000 deterministic synthetic
-works through the installed process, then its restart. Its installed path is a
-missing-media failure-write stress: one neutral EPUB supports real Library
-selection while the remaining declared ebook paths prove bounded, persisted
-`completed_with_failures` handling. The independent direct 2,000-work control
+works through the installed process, then its restart. Its installed path gives
+every declared ebook a readable synthetic EPUB, proving sustained report,
+proposal, and admission writes while foreground routes are sampled. One opening
+title differs from its current target so the persistent Chromium owner workspace
+can prove early case availability, a bounded report-only choice at peak, and
+durable Activity/case readback late. The independent direct 2,000-work control
 remains the clean completed/zero-blocked proof for fairness, provider recovery,
 and full-stage throughput. The installed path controls restart recovery,
 foreground response budgets, and RSS. It holds one discovery request at zero
-progress and one detail request at actual early, peak, and late progress, then
-exercises the installed owner workspace in one persistent Chromium page.
+progress and one detail request at actual early, peak, and late progress.
 Chromium must be installed and verified with `uv run playwright install
 chromium` and `uv run python scripts/verify_playwright_browser.py` before that
 slow proof. Its synthetic fixture and installed process never use a live
 library, provider, or private work identity. The retained receipt contains only
 phase fractions, route-class sample counts, p50/p95/max, 5xx/transport totals,
 computed quiescent-relative budgets, reconciliation elapsed time and
-throughput, terminal failure-write totals, fairness positions, restart facts,
-and RSS; it never records routes, identifiers, paths, SQL, credentials, or
-request values.
+throughput, terminal successful-transition totals, fairness positions, restart
+facts, and RSS; it never records routes, identifiers, paths, SQL, credentials,
+or request values.
 
 The same source job runs the frontend on the exact pinned Node and npm
 toolchain; [what merging proves](../../CONTRIBUTING.md#what-merging-proves)
