@@ -1561,6 +1561,33 @@ describe('Library route', () => {
     expect(document.activeElement).toHaveClass('review-complete')
   })
 
+  it('clears a stale attempt before reopening its actionable current field', async () => {
+    const user = userEvent.setup()
+    const recordDecision = vi.fn<ReviewHttp['recordDecision']>(async () => {
+      throw new ApiError(409, 'stale')
+    })
+    renderRoute('/library?lens=all&preview=case-1&field=title', {
+      ...createHttp(),
+      recordDecision,
+    })
+
+    await user.click(await screen.findByRole('button', { name: 'Choose proposed value: New title' }))
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { level: 2, name: 'Works' })).toBeVisible(),
+    )
+    await user.click(
+      screen.getByRole('button', { name: 'A Book. Author details unavailable. 1 field needs attention' }),
+    )
+
+    const proposed = await screen.findByRole('button', { name: 'Choose proposed value: New title' })
+    expect(recordDecision).toHaveBeenCalledOnce()
+    expect(document.body.textContent).not.toContain('Recording choice…')
+    expect(proposed).toHaveAttribute('aria-pressed', 'false')
+    expect(proposed).not.toHaveTextContent('Recording…')
+    expect(screen.getByText('1 remaining · field 1 of 1')).toBeVisible()
+    expect(screen.getByRole('button', { name: /Title.*Needs review/u })).toBeVisible()
+  })
+
   it('does not carry failed same-field advancement into a manual field change', async () => {
     const user = userEvent.setup()
     const titleField = detail.fields[0]

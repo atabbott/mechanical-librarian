@@ -256,15 +256,11 @@ export const useReviewDecisionController = ({
       )
       if (refreshedField && !choiceAvailable(refreshedField)) forget(command)
       if (classifyDecisionFailure(error) === 'stale') {
-        setStatus((current) =>
-          current.caseId === reviewCaseId
-            ? {
-                ...current,
-                destination: command.destination,
-                text: 'This case was superseded. Reopen its current replacement from Library.',
-              }
-            : current,
-        )
+        // Stale authority has no local outcome. Drop this attempt before
+        // returning to Library so reopening a current replacement cannot
+        // inherit its pressed/recording presentation or destination guard.
+        forget(command)
+        announce(reviewCaseId, command.destination, '')
         await onStale()
         return
       }
