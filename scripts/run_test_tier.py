@@ -132,7 +132,7 @@ COHORTS = {
             ("tests/architecture", "test_import_boundaries.py"),
             ("tests/architecture", "test_epub_fixture_distribution.py"),
             ("tests/integration", "test_review_case_lifecycle.py"),
-            ("tests/integration", "test_continuous_review_scale.py"),
+            ("tests/installed", "test_continuous_review_scale.py"),
         )
     ),
 }

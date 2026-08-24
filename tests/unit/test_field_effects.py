@@ -1589,13 +1589,11 @@ def _faulted_repository(
 ) -> SQLiteMetadataReportRepository:
     """Open, then close, a repository in a directory of its very own.
 
-    The private binding takes a *blocking* exclusive `flock` on the database's
-    parent directory (`adapters/persistence/binding.py`), so opening a second
-    repository beside the fixture's own waits on the fixture's lock forever.
-    macOS has no `fcntl`, so the whole lock path is skipped there and a shared
-    directory looks harmless -- it deadlocks only on Linux, where the gate runs.
-    Give every extra handle its own owner-only directory and neither can wait
-    on the other.
+    The private binding owns an exclusive `flock` on the database's parent
+    directory (`adapters/persistence/binding.py`), so a second independent
+    repository beside the fixture's own is refused on Linux. Give every extra
+    handle its own owner-only directory so its root authority can be admitted
+    independently.
     """
     root = Path(effects.temporary.name) / name
     root.mkdir()

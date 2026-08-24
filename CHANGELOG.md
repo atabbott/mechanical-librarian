@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Keep authenticated preparation status available while local preparation writes
+  hold SQLite's DELETE journal, without weakening recovery-sidecar rejection.
+  (#828)
+
 - Explain terminal preparation failures safely in Library and authenticated
   operational evidence. (#831)
 

@@ -131,6 +131,8 @@ class ReviewPipelineStages:
         drain_outbox: Callable[[ReviewPipelineRepository], None],
         discovery_lock: threading.Lock,
         clock: Callable[[], int],
+        observation_repository_factory: Callable[[], ReviewPipelineRepository]
+        | None = None,
     ) -> None:
         self._configuration = configuration
         self._catalogue = catalogue
@@ -138,6 +140,7 @@ class ReviewPipelineStages:
         self._probe_connection = probe_connection
         self._connections = connections
         self._repository_factory = repository_factory
+        self._observation_repository_factory = observation_repository_factory
         self._recover_artifacts = recover_artifacts
         self._generate_report = generate_report
         self._create_proposal_set = create_proposal_set
@@ -152,6 +155,7 @@ class ReviewPipelineStages:
         """Assemble the one pipeline these stages advance."""
         return ReviewPreparationPipeline(
             repository_factory=self._repository_factory,
+            observation_repository_factory=self._observation_repository_factory,
             libraries=tuple(
                 (
                     library.connection,

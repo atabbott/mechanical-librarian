@@ -590,6 +590,27 @@ def test_review_preparation_is_authenticated_csrf_bound_and_bounded(
     )
     assert requested.status_code == 202
     assert requested.json()["state"] == "processing"
+    retried = web.client.post(
+        "/api/v1/review-preparation/primary/fiction/retry",
+        headers={**web.origin, "x-csrf-token": session["csrf_token"]},
+    )
+    assert retried.status_code == 202
+    with patch.object(
+        preparation, "request", side_effect=ReviewPipelineError("paused")
+    ):
+        paused_request = web.client.post(
+            "/api/v1/review-preparation/primary/fiction/scan",
+            headers={**web.origin, "x-csrf-token": session["csrf_token"]},
+        )
+    assert paused_request.status_code == 409
+    assert paused_request.json()["error"]["code"] == "paused"
+    with patch.object(preparation, "retry", side_effect=ReviewPipelineError("retry")):
+        unavailable_retry = web.client.post(
+            "/api/v1/review-preparation/primary/fiction/retry",
+            headers={**web.origin, "x-csrf-token": session["csrf_token"]},
+        )
+    assert unavailable_retry.status_code == 409
+    assert unavailable_retry.json()["error"]["code"] == "retry"
     paused = web.client.post(
         "/api/v1/review-preparation/pause",
         headers={**web.origin, "x-csrf-token": session["csrf_token"]},

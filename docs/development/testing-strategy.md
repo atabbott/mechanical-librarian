@@ -19,9 +19,10 @@ untracked artifact.
 
 The public suite has four explicit qualification tiers, declared in `COHORTS`.
 The three source cohorts — `fast`, `browser` and `slow` — are disjoint by
-directory. `required-installed` is not: it names five files that `fast` also
-collects, deliberately, because its distinct invariant is execution through the
-installed wheel rather than a different set of tests.
+directory. `required-installed` is not: it is the existing fast-source subset
+plus one installed-only exact-wheel smoke, deliberately, because its distinct
+invariant is execution through the installed wheel rather than a different set
+of source tests.
 `scripts/run_test_tier.py` is the only way a tier is run
 or listed, so a cohort admits exactly the paths its declared patterns match.
 `scripts/run_test_tier.py --list`, with no tier, emits a
@@ -77,6 +78,30 @@ is scale, endurance, exhaustive breadth, or resource measurement and a smaller
 required test preserves the same functional path and failure transitions. A
 slow test is never silently skipped: delivery documentation identifies when
 exact-head slow evidence is required.
+
+The continuous-review slow qualifier advances 2,000 deterministic synthetic
+works through an exact installed-wheel in-process application, then checks a
+separate `review-serve` restart. Its deterministic callbacks replace only
+target/media/provider observation while preserving the production action queue,
+SQLite publication, proposal, admission, projection, and foreground
+serialization boundaries for all 2,000 works. One fixture-owned title proposal
+differs from its current value so persistent Chromium proves early availability,
+a bounded report-only choice at peak, and durable Activity/case readback late.
+The independent direct 2,000-work control remains the clean completed/zero-
+blocked proof for fairness, provider recovery, and full-stage throughput. The
+installed path controls foreground response budgets and RSS; the retained CLI
+control proves composition, shutdown, restart, and readiness. It holds one
+discovery request at zero progress and one deterministic extraction at actual
+early, peak, and late progress.
+Chromium must be installed and verified with `uv run playwright install
+chromium` and `uv run python scripts/verify_playwright_browser.py` before that
+slow proof. Its synthetic fixture and installed process never use a live
+library, provider, or private work identity. The retained receipt contains only
+phase fractions, route-class sample counts, p50/p95/max, 5xx/transport totals,
+computed quiescent-relative budgets, reconciliation elapsed time and
+throughput, terminal successful-transition totals, fairness positions, restart
+facts, and RSS; it never records routes, identifiers, paths, SQL, credentials,
+or request values.
 
 The same source job runs the frontend on the exact pinned Node and npm
 toolchain; [what merging proves](../../CONTRIBUTING.md#what-merging-proves)

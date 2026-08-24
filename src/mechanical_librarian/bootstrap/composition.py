@@ -1376,6 +1376,14 @@ def create_review_pipeline(
             database_path, create=False, authority=database_authority
         )
 
+    def observation_repository_factory() -> SQLiteMetadataReportRepository:
+        return open_repository(
+            database_path,
+            create=False,
+            authority=database_authority,
+            cross_thread=True,
+        )
+
     def retry_resolver(
         connection_name: str,
         library_name: str,
@@ -1593,6 +1601,7 @@ def create_review_pipeline(
         probe_connection=reader.probe_connection,
         connections=frozenset(clients),
         repository_factory=repository_factory,
+        observation_repository_factory=observation_repository_factory,
         recover_artifacts=recover_artifacts_once,
         generate_report=generate_report,
         create_proposal_set=create_proposal_set_for,

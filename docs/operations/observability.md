@@ -43,6 +43,13 @@ verification and reconciliation. Timing is advisory and never audit authority.
 Timing-store failure cannot change a preparation, decision or field-effect
 outcome; unreadable advisory evidence produces a bounded authenticated 503.
 
+Preparation status keeps one validated, lifecycle-owned foreground repository
+open before its two worker lanes start. It serializes independent preparation
+progress and connection-condition snapshots with owner scan and retry controls,
+and closes only after both lanes stop. Worker and recovery actions continue to
+open their own exact-current repositories; recovery-sidecar rejection remains
+fail-closed.
+
 `GET /api/v1/operations/support/preview` shows the exact allow-listed bundle
 shape and size. Authenticated, CSRF-bound
 `POST /api/v1/operations/support/export` creates it again and re-runs redaction.

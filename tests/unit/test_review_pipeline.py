@@ -6,6 +6,7 @@ import sqlite3
 import sys
 import tempfile
 import threading
+import time
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack
 from dataclasses import replace
@@ -403,6 +404,171 @@ def test_pipeline_preflight_is_once_per_cycle_and_recovery_retains_qualification
     assert checks == ["primary", "primary"]
 
 
+def test_preopened_observation_survives_delete_journal_writer(
+    application_path: Path,
+) -> None:
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: open_repository(application_path),
+        observation_repository_factory=lambda: open_repository(
+            application_path, cross_thread=True
+        ),
+        libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+        discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_: (_ for _ in ()).throw(AssertionError()),
+    )
+    pipeline.open_observation()
+    writer = sqlite3.connect(application_path, isolation_level=None)
+    try:
+        try:
+            writer.execute("BEGIN IMMEDIATE")
+            writer.execute(
+                "UPDATE review_preparation_control SET updated_at=1 WHERE singleton=1"
+            )
+            if sys.platform.startswith("linux"):
+                for operation in (
+                    pipeline.status,
+                    pipeline.connection_conditions,
+                    lambda: pipeline.request("primary", "fiction"),
+                    lambda: pipeline.progress("primary", "fiction"),
+                ):
+                    with pytest.raises(ReviewPipelineError, match="persistence"):
+                        operation()
+            else:
+                assert pipeline.status() == ((None,), False)
+                assert pipeline.connection_conditions() == ()
+                with pytest.raises(ReviewPipelineError, match="persistence"):
+                    pipeline.request("primary", "fiction")
+                assert pipeline.progress("primary", "fiction") is None
+            started = time.monotonic()
+            with pytest.raises(MetadataReportError):
+                open_repository(application_path)
+            if sys.platform.startswith("linux"):
+                assert time.monotonic() - started < 1
+        finally:
+            writer.rollback()
+            writer.close()
+
+        assert pipeline.status() == ((None,), False)
+        assert pipeline.connection_conditions() == ()
+        requested = pipeline.request("primary", "fiction")
+        assert requested.state == "queued"
+        assert pipeline.progress("primary", "fiction") == requested
+    finally:
+        pipeline.close_observation()
+
+    reopened = open_repository(application_path)
+    try:
+        assert reopened.review_pipeline_progress("primary", "fiction") == requested
+    finally:
+        reopened.close()
+
+
+def test_lifecycle_foreground_request_uses_one_clean_atomic_pause_boundary(
+    application_path: Path,
+) -> None:
+    owner = open_repository(application_path)
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: open_repository(
+            application_path, create=False, authority=owner.authority
+        ),
+        observation_repository_factory=lambda: open_repository(
+            application_path,
+            create=False,
+            cross_thread=True,
+            authority=owner.authority,
+        ),
+        libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+        discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        clock=lambda: 10,
+    )
+    pipeline.open_observation()
+    try:
+        requested = pipeline.request("primary", "fiction")
+        assert requested.state == "queued"
+        assert pipeline.progress("primary", "fiction") == requested
+        pipeline.set_paused(True)
+        with pytest.raises(ReviewPipelineError, match="paused"):
+            pipeline.request("primary", "fiction")
+    finally:
+        pipeline.close_observation()
+        owner.close()
+
+    reopened = open_repository(application_path)
+    try:
+        assert reopened.review_pipeline_progress("primary", "fiction") == requested
+        assert reopened.review_pipeline_paused()
+    finally:
+        reopened.close()
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="Linux descriptor proof"
+)
+def test_lifecycle_foreground_rejects_replaced_linux_binding(
+    application_path: Path,
+) -> None:
+    with tempfile.TemporaryDirectory() as replacement_directory:
+        replacement_path = Path(replacement_directory) / "replacement.sqlite"
+        replacement = open_repository(replacement_path)
+        replacement.close()
+        owner = open_repository(application_path)
+        pipeline = ReviewPreparationPipeline(
+            repository_factory=lambda: open_repository(
+                application_path, create=False, authority=owner.authority
+            ),
+            observation_repository_factory=lambda: open_repository(
+                application_path,
+                create=False,
+                cross_thread=True,
+                authority=owner.authority,
+            ),
+            libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+            discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            providers=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            propose=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            project=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            clock=lambda: 10,
+        )
+        pipeline.open_observation()
+        obsolete_path = application_path.with_name("obsolete.sqlite")
+        application_path.rename(obsolete_path)
+        replacement_path.rename(application_path)
+        try:
+            for operation in (
+                lambda: pipeline.progress("primary", "fiction"),
+                pipeline.status,
+                pipeline.connection_conditions,
+                lambda: pipeline.request("primary", "fiction"),
+            ):
+                with pytest.raises(ReviewPipelineError, match="persistence"):
+                    operation()
+        finally:
+            pipeline.close_observation()
+            owner.close()
+
+        replacement = open_repository(application_path)
+        try:
+            assert replacement.review_pipeline_progress("primary", "fiction") is None
+        finally:
+            replacement.close()
+        obsolete = open_repository(obsolete_path)
+        try:
+            assert obsolete.review_pipeline_progress("primary", "fiction") is None
+        finally:
+            obsolete.close()
+
+
 def test_composed_currentness_preserves_target_connection_errors(
     application_path: Path,
 ) -> None:
@@ -644,9 +810,12 @@ def test_post_cutover_delivery_failure_requeues_the_claimed_successor() -> None:
         clock=lambda: 9,
         announce=lambda topic, subject: announcements.append((topic, subject)),
     )
+    pauses: list[None] = []
+    pipeline._cooperative_wait = lambda: pauses.append(None)
 
     assert pipeline._advance(repository, action, "complete", claim_next=True) is None
     assert [(successor, "persistence", True, 9)] == repository.failures
+    assert pauses == []
     assert [
         ("preparation", None),
         ("library", "case-1"),
@@ -654,6 +823,105 @@ def test_post_cutover_delivery_failure_requeues_the_claimed_successor() -> None:
         ("preparation", None),
         ("library", None),
     ] == announcements
+
+
+def test_committed_advance_pauses_before_processing_claimed_successor() -> None:
+    class Repository:
+        def __init__(self, successor: PipelineAction) -> None:
+            self.successor = successor
+
+        def advance_review_pipeline_action(self, *_args, **_kwargs):
+            return self.successor
+
+    action = PipelineAction(
+        "action-1",
+        "scan-1",
+        "projection",
+        1,
+        "primary",
+        "ebooks",
+        "library-id",
+        _PRODUCER,
+        1,
+        "a" * 64,
+        "item-1",
+        "b" * 64,
+        0,
+        "report-1",
+        review_case_id="case-1",
+        source_fingerprint="c" * 64,
+    )
+    successor = replace(action, action_id="action-2", stage="proposal")
+    repository = Repository(successor)
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: cast(ReviewPipelineRepository, repository),
+        libraries=(("primary", "ebooks", "library-id", _PRODUCER),),
+        discover=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        clock=lambda: 9,
+    )
+    pauses: list[None] = []
+    pipeline._cooperative_wait = lambda: pauses.append(None)
+
+    assert (
+        pipeline._advance(repository, action, "complete", claim_next=True) == successor
+    )
+    assert pauses == [None]
+
+
+def test_committed_extraction_checkpoint_pauses_only_for_claimed_successor() -> None:
+    class Repository:
+        def __init__(self, successor: PipelineAction | None) -> None:
+            self.successor = successor
+
+        def take_review_pipeline_claim(self):
+            return self.successor
+
+    action = PipelineAction(
+        "action-1",
+        "scan-1",
+        "extraction",
+        1,
+        "primary",
+        "ebooks",
+        "library-id",
+        _PRODUCER,
+        1,
+        "a" * 64,
+        "item-1",
+        "b" * 64,
+        0,
+        source_fingerprint="c" * 64,
+    )
+    successor = replace(action, action_id="action-2", stage="provider")
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: cast(ReviewPipelineRepository, Repository(None)),
+        libraries=(("primary", "ebooks", "library-id", _PRODUCER),),
+        discover=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_args: ("report-1", True),
+        providers=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        clock=lambda: 9,
+    )
+    pauses: list[None] = []
+    pipeline._cooperative_wait = lambda: pauses.append(None)
+
+    assert (
+        pipeline._execute_claimed_action(Repository(successor), action, claim_next=True)
+        == successor
+    )
+    assert pauses == [None]
+    assert (
+        pipeline._execute_claimed_action(Repository(None), action, claim_next=True)
+        is None
+    )
+    assert pauses == [None]
 
 
 def test_post_cutover_delivery_failure_announces_committed_package_without_successor() -> (
@@ -3521,6 +3789,414 @@ class _ScheduledPipeline:
         self.is_paused = paused
 
 
+class _LifecyclePipeline:
+    """Small supervisor double that records only its lifecycle contract."""
+
+    libraries: tuple[tuple[str, str, str], ...] = ()
+
+    def __init__(self, *, fail_recover: bool = False, hold_run: bool = False) -> None:
+        self.events: list[str] = []
+        self.maximum_actions: list[int] = []
+        self.fail_recover = fail_recover
+        self.run_started = threading.Event()
+        self.release_run = threading.Event()
+        if not hold_run:
+            self.release_run.set()
+
+    def open_observation(self) -> None:
+        self.events.append("open")
+
+    def close_observation(self) -> None:
+        self.events.append("close")
+
+    def resume_claiming(self) -> None:
+        self.events.append("resume")
+
+    def recover(self) -> None:
+        self.events.append("recover")
+        if self.fail_recover:
+            raise ReviewPipelineError("persistence")
+
+    def run_next(self, maximum_actions: int = 64) -> bool:
+        self.events.append("run")
+        self.maximum_actions.append(maximum_actions)
+        self.run_started.set()
+        self.release_run.wait(3)
+        return False
+
+    def begin_drain(self) -> None:
+        self.events.append("drain")
+
+    def paused(self) -> bool:
+        return False
+
+    def status(self) -> tuple[tuple[PipelineProgress | None, ...], bool]:
+        return (), False
+
+
+def test_supervisor_opens_observation_before_recovery_and_workers() -> None:
+    pipeline = _LifecyclePipeline()
+    supervisor = ReviewPreparationSupervisor(pipeline)
+    supervisor.start()
+    try:
+        assert pipeline.events[:3] == ["open", "resume", "recover"]
+        assert pipeline.run_started.wait(1)
+        assert pipeline.maximum_actions
+        assert set(pipeline.maximum_actions) == {64}
+    finally:
+        supervisor.stop()
+
+
+def test_supervisor_closes_preopened_observation_when_start_fails() -> None:
+    pipeline = _LifecyclePipeline(fail_recover=True)
+    supervisor = ReviewPreparationSupervisor(pipeline)
+
+    with pytest.raises(ReviewPipelineError, match="persistence"):
+        supervisor.start()
+
+    assert pipeline.events == ["open", "resume", "recover", "close"]
+    assert supervisor._threads == ()
+
+
+def test_supervisor_cleans_only_started_lane_after_second_thread_start_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pipeline = _LifecyclePipeline()
+    joined: list[str] = []
+    original_start = threading.Thread.start
+    original_join = threading.Thread.join
+
+    def start(thread: threading.Thread) -> None:
+        if thread.name == "review-preparation-1":
+            raise RuntimeError("synthetic second start failure")
+        original_start(thread)
+
+    def join(thread: threading.Thread, *args: object, **kwargs: object) -> None:
+        joined.append(thread.name)
+        original_join(thread, *args, **kwargs)
+
+    monkeypatch.setattr(threading.Thread, "start", start)
+    monkeypatch.setattr(threading.Thread, "join", join)
+    supervisor = ReviewPreparationSupervisor(
+        pipeline, on_stop=lambda: pipeline.events.append("on_stop")
+    )
+
+    with pytest.raises(RuntimeError, match="synthetic second start failure"):
+        supervisor.start()
+
+    assert joined == ["review-preparation-0"]
+    assert pipeline.events[-3:] == ["drain", "on_stop", "close"]
+    assert supervisor._threads == ()
+
+
+def test_supervisor_stops_then_closes_observation_in_existing_callback_order() -> None:
+    pipeline = _LifecyclePipeline()
+    supervisor = ReviewPreparationSupervisor(
+        pipeline, on_stop=lambda: pipeline.events.append("on_stop")
+    )
+    supervisor.start()
+    supervisor.stop()
+
+    assert pipeline.events[-3:] == ["drain", "on_stop", "close"]
+
+
+def test_supervisor_closes_observation_when_stop_callback_fails() -> None:
+    pipeline = _LifecyclePipeline()
+    error = RuntimeError("synthetic stop callback failure")
+
+    def fail_stop() -> None:
+        pipeline.events.append("on_stop")
+        raise error
+
+    supervisor = ReviewPreparationSupervisor(pipeline, on_stop=fail_stop)
+    supervisor.start()
+
+    with pytest.raises(RuntimeError) as raised:
+        supervisor.stop()
+
+    assert raised.value is error
+    assert pipeline.events[-3:] == ["drain", "on_stop", "close"]
+    assert supervisor._threads == ()
+
+
+def test_supervisor_timeout_retains_observation_until_workers_stop() -> None:
+    pipeline = _LifecyclePipeline(hold_run=True)
+    supervisor = ReviewPreparationSupervisor(pipeline, graceful_shutdown_seconds=1)
+    supervisor.start()
+    assert pipeline.run_started.wait(1)
+
+    with pytest.raises(ReviewPipelineError, match="shutdown_timeout"):
+        supervisor.stop(deadline=time.monotonic())
+    assert "close" not in pipeline.events
+
+    pipeline.release_run.set()
+    supervisor.stop()
+    assert pipeline.events[-1] == "close"
+
+
+def test_supervisor_restart_opens_a_fresh_observation() -> None:
+    pipeline = _LifecyclePipeline()
+    supervisor = ReviewPreparationSupervisor(pipeline)
+    supervisor.start()
+    supervisor.stop()
+    supervisor.start()
+    supervisor.stop()
+
+    assert [event for event in pipeline.events if event == "open"] == ["open", "open"]
+    assert [event for event in pipeline.events if event == "close"] == [
+        "close",
+        "close",
+    ]
+
+
+def test_lifecycle_foreground_controls_share_one_reentrant_lock_and_workers_keep_their_factory() -> (
+    None
+):
+    status_entered = threading.Event()
+    release_status = threading.Event()
+    conditions_called = threading.Event()
+    request_called = threading.Event()
+    regular_opens = 0
+    observation_opens = 0
+    progress = PipelineProgress(
+        "review_scan_" + "a" * 64,
+        "primary",
+        "fiction",
+        "queued",
+        0,
+        0,
+        0,
+        0,
+        False,
+        1,
+    )
+
+    class ObservationRepository:
+        def require_current(self) -> None:
+            return None
+
+        def review_pipeline_status(self, *_):
+            status_entered.set()
+            assert release_status.wait(2)
+            return (), False
+
+        def target_connection_conditions(self):
+            conditions_called.set()
+            return ()
+
+        def request_review_scan(self, *_):
+            request_called.set()
+            return progress
+
+        def review_pipeline_progress(self, *_):
+            return progress
+
+        def close(self) -> None:
+            return None
+
+    observation = ObservationRepository()
+    action_repository = _ConcurrentRepository([])
+
+    def regular_factory() -> ReviewPipelineRepository:
+        nonlocal regular_opens
+        regular_opens += 1
+        return cast(ReviewPipelineRepository, action_repository)
+
+    def observation_factory() -> ReviewPipelineRepository:
+        nonlocal observation_opens
+        observation_opens += 1
+        return cast(ReviewPipelineRepository, observation)
+
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=regular_factory,
+        observation_repository_factory=observation_factory,
+        libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+        discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_: (_ for _ in ()).throw(AssertionError()),
+    )
+    pipeline.open_observation()
+    status_thread = threading.Thread(target=pipeline.status)
+    conditions_thread = threading.Thread(target=pipeline.connection_conditions)
+    request_thread = threading.Thread(
+        target=lambda: pipeline.request("primary", "fiction")
+    )
+    status_thread.start()
+    assert status_entered.wait(1)
+    conditions_thread.start()
+    request_thread.start()
+    assert not conditions_called.wait(0.1)
+    assert not request_called.wait(0.1)
+    release_status.set()
+    status_thread.join(timeout=1)
+    conditions_thread.join(timeout=1)
+    request_thread.join(timeout=1)
+    assert not status_thread.is_alive()
+    assert not conditions_thread.is_alive()
+    assert not request_thread.is_alive()
+    assert conditions_called.is_set()
+    assert request_called.is_set()
+    assert pipeline.progress("primary", "fiction") == progress
+    assert pipeline.run_next() is False
+    pipeline.close_observation()
+
+    assert observation_opens == 1
+    assert regular_opens == 1
+
+
+def test_lifecycle_foreground_operations_validate_before_each_repository_call() -> None:
+    calls: list[str] = []
+    progress = PipelineProgress(
+        "review_scan_" + "c" * 64,
+        "primary",
+        "fiction",
+        "queued",
+        0,
+        0,
+        0,
+        0,
+        False,
+        1,
+    )
+
+    class ObservationRepository:
+        def require_current(self) -> None:
+            calls.append("validate")
+
+        def request_review_scan(self, *_):
+            calls.append("request")
+            return progress
+
+        def review_pipeline_progress(self, *_):
+            calls.append("progress")
+            return progress
+
+        def review_pipeline_status(self, *_):
+            calls.append("status")
+            return (), False
+
+        def target_connection_conditions(self):
+            calls.append("conditions")
+            return ()
+
+        def close(self) -> None:
+            return None
+
+    observation = ObservationRepository()
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: cast(ReviewPipelineRepository, observation),
+        observation_repository_factory=lambda: cast(
+            ReviewPipelineRepository, observation
+        ),
+        libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+        discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_: (_ for _ in ()).throw(AssertionError()),
+    )
+    pipeline.open_observation()
+    try:
+        assert pipeline.request("primary", "fiction") == progress
+        assert pipeline.progress("primary", "fiction") == progress
+        assert pipeline.status() == ((), False)
+        assert pipeline.connection_conditions() == ()
+    finally:
+        pipeline.close_observation()
+
+    assert calls == [
+        "validate",
+        "request",
+        "validate",
+        "progress",
+        "validate",
+        "status",
+        "validate",
+        "conditions",
+    ]
+
+
+def test_foreground_control_holds_observation_through_close_then_falls_back() -> None:
+    request_started = threading.Event()
+    release_request = threading.Event()
+    close_started = threading.Event()
+    regular_opens = 0
+    progress = PipelineProgress(
+        "review_scan_" + "b" * 64,
+        "primary",
+        "fiction",
+        "queued",
+        0,
+        0,
+        0,
+        0,
+        False,
+        1,
+    )
+
+    class ObservationRepository:
+        closed = 0
+
+        def require_current(self) -> None:
+            return None
+
+        def request_review_scan(self, *_):
+            request_started.set()
+            assert release_request.wait(2)
+            return progress
+
+        def review_pipeline_progress(self, *_):
+            return progress
+
+        def close(self) -> None:
+            self.closed += 1
+            close_started.set()
+
+    observation = ObservationRepository()
+    fallback = _ConcurrentRepository([])
+
+    def regular_factory() -> ReviewPipelineRepository:
+        nonlocal regular_opens
+        regular_opens += 1
+        return cast(ReviewPipelineRepository, fallback)
+
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=regular_factory,
+        observation_repository_factory=lambda: cast(
+            ReviewPipelineRepository, observation
+        ),
+        libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+        discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_: (_ for _ in ()).throw(AssertionError()),
+    )
+    pipeline.open_observation()
+    request = threading.Thread(target=lambda: pipeline.request("primary", "fiction"))
+    request.start()
+    assert request_started.wait(1)
+    closing = threading.Thread(target=pipeline.close_observation)
+    closing.start()
+    assert not close_started.wait(0.1)
+    release_request.set()
+    request.join(timeout=1)
+    closing.join(timeout=1)
+    assert not request.is_alive()
+    assert not closing.is_alive()
+    assert observation.closed == 1
+
+    assert pipeline.progress("primary", "fiction") is None
+    pipeline.close_observation()
+    assert observation.closed == 1
+    assert regular_opens == 1
+
+
 @pytest.fixture
 def reports_path() -> Iterator[Path]:
     """An uncreated report database pathname in a directory of its own."""
@@ -3801,7 +4477,7 @@ def test_lane_zero_rechecks_due_deadline_between_bounded_work_batches() -> None:
     supervisor._schedule_due()
     assert pipeline.requests == []
 
-    def run_next() -> bool:
+    def run_next(maximum_actions: int = 64) -> bool:
         clock[0] = 160
         supervisor._stop.set()
         return True
@@ -3820,7 +4496,7 @@ def test_lane_zero_wakes_recovery_with_the_supervisor_clock() -> None:
         pipeline, clock=lambda: clock[0], recovery_wake=woken.append
     )
 
-    def run_next() -> bool:
+    def run_next(maximum_actions: int = 64) -> bool:
         supervisor._stop.set()
         return False
 
@@ -3846,7 +4522,7 @@ def test_lane_zero_contains_recovery_store_failure_and_continues() -> None:
         recovery_wake=recovery,
     )
 
-    def run_next() -> bool:
+    def run_next(maximum_actions: int = 64) -> bool:
         nonlocal runs
         runs += 1
         if runs == 3:
