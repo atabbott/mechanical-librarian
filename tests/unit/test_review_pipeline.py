@@ -810,9 +810,12 @@ def test_post_cutover_delivery_failure_requeues_the_claimed_successor() -> None:
         clock=lambda: 9,
         announce=lambda topic, subject: announcements.append((topic, subject)),
     )
+    pauses: list[None] = []
+    pipeline._cooperative_wait = lambda: pauses.append(None)
 
     assert pipeline._advance(repository, action, "complete", claim_next=True) is None
     assert [(successor, "persistence", True, 9)] == repository.failures
+    assert pauses == []
     assert [
         ("preparation", None),
         ("library", "case-1"),
@@ -820,6 +823,105 @@ def test_post_cutover_delivery_failure_requeues_the_claimed_successor() -> None:
         ("preparation", None),
         ("library", None),
     ] == announcements
+
+
+def test_committed_advance_pauses_before_processing_claimed_successor() -> None:
+    class Repository:
+        def __init__(self, successor: PipelineAction) -> None:
+            self.successor = successor
+
+        def advance_review_pipeline_action(self, *_args, **_kwargs):
+            return self.successor
+
+    action = PipelineAction(
+        "action-1",
+        "scan-1",
+        "projection",
+        1,
+        "primary",
+        "ebooks",
+        "library-id",
+        _PRODUCER,
+        1,
+        "a" * 64,
+        "item-1",
+        "b" * 64,
+        0,
+        "report-1",
+        review_case_id="case-1",
+        source_fingerprint="c" * 64,
+    )
+    successor = replace(action, action_id="action-2", stage="proposal")
+    repository = Repository(successor)
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: cast(ReviewPipelineRepository, repository),
+        libraries=(("primary", "ebooks", "library-id", _PRODUCER),),
+        discover=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        clock=lambda: 9,
+    )
+    pauses: list[None] = []
+    pipeline._cooperative_wait = lambda: pauses.append(None)
+
+    assert (
+        pipeline._advance(repository, action, "complete", claim_next=True) == successor
+    )
+    assert pauses == [None]
+
+
+def test_committed_extraction_checkpoint_pauses_only_for_claimed_successor() -> None:
+    class Repository:
+        def __init__(self, successor: PipelineAction | None) -> None:
+            self.successor = successor
+
+        def take_review_pipeline_claim(self):
+            return self.successor
+
+    action = PipelineAction(
+        "action-1",
+        "scan-1",
+        "extraction",
+        1,
+        "primary",
+        "ebooks",
+        "library-id",
+        _PRODUCER,
+        1,
+        "a" * 64,
+        "item-1",
+        "b" * 64,
+        0,
+        source_fingerprint="c" * 64,
+    )
+    successor = replace(action, action_id="action-2", stage="provider")
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: cast(ReviewPipelineRepository, Repository(None)),
+        libraries=(("primary", "ebooks", "library-id", _PRODUCER),),
+        discover=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_args: ("report-1", True),
+        providers=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        clock=lambda: 9,
+    )
+    pauses: list[None] = []
+    pipeline._cooperative_wait = lambda: pauses.append(None)
+
+    assert (
+        pipeline._execute_claimed_action(Repository(successor), action, claim_next=True)
+        == successor
+    )
+    assert pauses == [None]
+    assert (
+        pipeline._execute_claimed_action(Repository(None), action, claim_next=True)
+        is None
+    )
+    assert pauses == [None]
 
 
 def test_post_cutover_delivery_failure_announces_committed_package_without_successor() -> (
@@ -3740,7 +3842,7 @@ def test_supervisor_opens_observation_before_recovery_and_workers() -> None:
         assert pipeline.events[:3] == ["open", "resume", "recover"]
         assert pipeline.run_started.wait(1)
         assert pipeline.maximum_actions
-        assert set(pipeline.maximum_actions) == {1}
+        assert set(pipeline.maximum_actions) == {64}
     finally:
         supervisor.stop()
 

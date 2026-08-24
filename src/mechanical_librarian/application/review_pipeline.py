@@ -38,6 +38,8 @@ _STAGES = (
     "projection",
 )
 
+_COOPERATIVE_ACTION_DWELL_SECONDS = 0.01
+
 
 _ForegroundResult = TypeVar("_ForegroundResult")
 
@@ -397,6 +399,9 @@ class ReviewPreparationPipeline:
         self._clock = clock
         self._announce = announce
         self._timing = timing or StageTimer(None)
+        self._cooperative_wait: Callable[[], None] = lambda: time.sleep(
+            _COOPERATIVE_ACTION_DWELL_SECONDS
+        )
         self._draining = threading.Event()
         self._claim_lock = threading.Lock()
         self._observation_lock = threading.RLock()
@@ -745,7 +750,10 @@ class ReviewPreparationPipeline:
                     repository, action, claim_next
                 )
                 if checkpoint_committed:
-                    return repository.take_review_pipeline_claim()
+                    successor = repository.take_review_pipeline_claim()
+                    if successor is not None:
+                        self._cooperative_wait()
+                    return successor
             elif action.stage == "provider":
                 if action.report_id is None:
                     raise ReviewPipelineError("state")
@@ -898,6 +906,8 @@ class ReviewPreparationPipeline:
         except Exception as error:
             raise ReviewPipelineError("persistence") from error
         self._announce_stage(action, output_id)
+        if advanced is not None:
+            self._cooperative_wait()
         return advanced
 
     def _announce_stage(self, action: PipelineAction, output_id: str | None) -> None:
@@ -1187,11 +1197,7 @@ class ReviewPreparationSupervisor:
                             pass
                     self._schedule_due()
                 while not self._stop.is_set():
-                    # A worker releases its action repository after each committed
-                    # action.  In DELETE-journal SQLite this gives the retained
-                    # foreground owner a bounded opportunity to read or decide
-                    # while a large preparation queue is active.
-                    advanced = self._pipeline.run_next(1)
+                    advanced = self._pipeline.run_next()
                     if lane == 0:
                         self._schedule_due()
                     if not advanced:
