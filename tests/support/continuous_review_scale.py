@@ -931,9 +931,20 @@ class _InstalledPreparationRun:
             assert build_identity is not None, (
                 "installed decision page omitted build identity"
             )
-            detail_response = client.get(
-                self._origin + f"/api/v1/review-cases/{review_case_id}"
-            )
+            deadline = time.monotonic() + 5
+            while True:
+                detail_response = client.get(
+                    self._origin + f"/api/v1/review-cases/{review_case_id}"
+                )
+                if detail_response.status_code == 200:
+                    break
+                # The release signal comes from the admission callback, just
+                # before its transaction returns the current pointer. Await
+                # that committed exact-case projection rather than accepting a
+                # stale case or choosing a successor by assumption.
+                if detail_response.status_code != 409 or time.monotonic() >= deadline:
+                    break
+                time.sleep(0.01)
             assert detail_response.status_code == 200, detail_response.text
             detail = cast(dict[str, object], detail_response.json())
             assert detail.get("writes_consented") is False, _projection_shape(detail)
