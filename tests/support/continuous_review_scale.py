@@ -20,11 +20,11 @@ import subprocess
 import tempfile
 import threading
 import time
-from collections.abc import Callable
-from contextlib import closing
+from collections.abc import Callable, Iterator
+from contextlib import closing, contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import cast
+from typing import Protocol, cast
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -451,6 +451,7 @@ def _start_deterministic_installed_server(
     private_key: Path,
     reservation: ReservedPort,
     origin: str,
+    admit_case: Callable[[str], None],
 ) -> tuple[uvicorn.Server, threading.Thread, SQLiteProviderRecoveryStore]:
     """Run installed-wheel HTTP over the production persisted pipeline boundary.
 
@@ -546,6 +547,8 @@ def _start_deterministic_installed_server(
 
     def admit(repository, proposal_id: str):
         result = json.loads(repository.admit_review_case(proposals[proposal_id]))
+        if review_case_id := result.get("review_case_id"):
+            admit_case(str(review_case_id))
         return result["status"], result.get("review_case_id")
 
     pipeline = ReviewPreparationPipeline(
@@ -635,14 +638,332 @@ def _start_deterministic_installed_server(
     return server, thread, recovery
 
 
+class _InstalledPhaseObserver(Protocol):
+    """A persistent owner-facing probe that must close before server shutdown."""
+
+    def observe(self, phase: str, origin: str) -> float | None: ...
+
+    def close(self) -> None: ...
+
+
+class _InstalledPreparationRun:
+    """Own one installed preparation lifecycle and its bounded public observation."""
+
+    def __init__(
+        self,
+        *,
+        database: Path,
+        configuration: ApplicationConfiguration,
+        artifacts: Path,
+        fixture: _AudiobookshelfFixture,
+        entries: dict[str, list[CatalogueEntry]],
+        producers: dict[str, str],
+        owner_hash: Path,
+        certificate: Path,
+        private_key: Path,
+        reservation: ReservedPort,
+        origin: str,
+        expected_total: int,
+        phase_observer: _InstalledPhaseObserver | None,
+    ) -> None:
+        self._database = database
+        self._configuration = configuration
+        self._artifacts = artifacts
+        self._fixture = fixture
+        self._entries = entries
+        self._producers = producers
+        self._owner_hash = owner_hash
+        self._certificate = certificate
+        self._private_key = private_key
+        self._reservation = reservation
+        self._origin = origin
+        self._expected_total = expected_total
+        self._phase_observer = phase_observer
+        self._case_id: str | None = None
+        self._case_id_lock = threading.Lock()
+        self._case_admitted = threading.Event()
+        self._server: uvicorn.Server | None = None
+        self._server_thread: threading.Thread | None = None
+        self._recovery: SQLiteProviderRecoveryStore | None = None
+
+    def __enter__(self) -> _InstalledPreparationRun:
+        self._fixture.hold_discovery()
+        self._server, self._server_thread, self._recovery = (
+            _start_deterministic_installed_server(
+                database=self._database,
+                configuration=self._configuration,
+                artifacts=self._artifacts,
+                fixture=self._fixture,
+                entries=self._entries,
+                producers=self._producers,
+                owner_hash=self._owner_hash,
+                certificate=self._certificate,
+                private_key=self._private_key,
+                reservation=self._reservation,
+                origin=self._origin,
+                admit_case=self._capture_fixture_case,
+            )
+        )
+        with httpx.Client(verify=False, trust_env=False) as client:
+            login = client.post(
+                self._origin + "/api/v1/session/login",
+                headers={"Origin": self._origin},
+                json={"password": "synthetic password"},
+            )
+            assert login.status_code == 200, login.text
+            workspace = client.get(self._origin + "/library")
+            assert workspace.status_code == 200, workspace.text
+            build_identity = re.search(
+                r'data-build-identity="([0-9a-f]{64})"', workspace.text
+            )
+            browser_csrf = re.search(
+                r'data-csrf-token="([A-Za-z0-9_-]{32,128})"', workspace.text
+            )
+            assert build_identity is not None
+            assert browser_csrf is not None
+            action_headers = {
+                "Origin": self._origin,
+                "x-csrf-token": browser_csrf.group(1),
+                "x-ml-build-identity": build_identity.group(1),
+            }
+            for library in ("fiction", "history", "science"):
+                requested = client.post(
+                    self._origin + f"/api/v1/review-preparation/primary/{library}/scan",
+                    headers=action_headers,
+                )
+                assert requested.status_code == 202, requested.text
+            assert self._fixture.discovery_started.wait(timeout=15), (
+                "first-start reconciliation was not observed"
+            )
+            first_status = self.status(client)
+        assert first_status["active"] is True
+        assert {item["library"] for item in first_status["libraries"]} == {
+            "fiction",
+            "history",
+            "science",
+        }
+        assert all(
+            item["checked"] == 0 and item["state"] in {"queued", "discovering"}
+            for item in first_status["libraries"]
+        )
+        assert any(item["state"] == "discovering" for item in first_status["libraries"])
+        return self
+
+    def _capture_fixture_case(self, case_id: str) -> None:
+        with self._case_id_lock:
+            if self._case_id is None:
+                self._case_id = case_id
+        self._case_admitted.set()
+
+    def release_discovery(self) -> None:
+        self._fixture.release_discovery()
+
+    def status(self, client: httpx.Client) -> dict[str, object]:
+        response = client.get(self._origin + "/api/v1/review-preparation")
+        assert response.status_code == 200, response.text
+        return cast(dict[str, object], response.json())
+
+    def wait_for_fixture_case(self) -> str:
+        assert self._case_admitted.wait(timeout=15), (
+            "fixture review case was not admitted"
+        )
+        with self._case_id_lock:
+            assert self._case_id is not None
+            return self._case_id
+
+    def wait_until_terminal(
+        self,
+    ) -> tuple[
+        dict[str, object],
+        _RouteMeasurements,
+        dict[str, float],
+        int,
+        float,
+        float | None,
+    ]:
+        assert self._server_thread is not None
+        with httpx.Client(verify=False, trust_env=False) as client:
+            login = client.post(
+                self._origin + "/api/v1/session/login",
+                headers={"Origin": self._origin},
+                json={"password": "synthetic password"},
+            )
+            assert login.status_code == 200, login.text
+            assert self._fixture.discovery_release.is_set() is False
+            started = time.monotonic()
+            self.release_discovery()
+            sampled_phases: set[str] = set()
+            actual_fractions: dict[str, float] = {}
+            active_observed = False
+            decision_response_ms: float | None = None
+            peak_rss_kib = 0
+            measurements = _RouteMeasurements()
+            deadline = started + (
+                self._expected_total
+                / _MINIMUM_INSTALLED_RECONCILIATION_WORKS_PER_SECOND
+            )
+            while True:
+                if not self._server_thread.is_alive():
+                    pytest.fail("installed review server exited during reconciliation")
+                peak_rss_kib = max(peak_rss_kib, _rss_kib(os.getpid()))
+                response = client.get(self._origin + "/api/v1/review-preparation")
+                if response.status_code == 503:
+                    if time.monotonic() >= deadline:
+                        with closing(sqlite3.connect(self._database)) as connection:
+                            observed = connection.execute(
+                                "SELECT library_name,state,total,checked,blocked "
+                                "FROM review_preparation_scans ORDER BY library_name"
+                            ).fetchall()
+                        pytest.fail(
+                            "installed reconciliation status remained unavailable: "
+                            + _installed_timeout_diagnostics(
+                                time.monotonic() - started,
+                                sampled_phases,
+                                [
+                                    {
+                                        "library": library,
+                                        "state": state,
+                                        "total": total,
+                                        "checked": checked,
+                                        "blocked": blocked,
+                                    }
+                                    for library, state, total, checked, blocked in observed
+                                ],
+                            )
+                        )
+                    time.sleep(0.02)
+                    continue
+                assert response.status_code == 200, response.text
+                projection = cast(dict[str, object], response.json())
+                libraries = cast(list[dict[str, object]], projection["libraries"])
+                active_observed = active_observed or bool(projection["active"])
+                total = sum(cast(int, item["total"]) for item in libraries)
+                assert total <= self._expected_total
+                fraction = (
+                    sum(cast(int, item["checked"]) for item in libraries)
+                    / self._expected_total
+                )
+                phase = next(
+                    (
+                        name
+                        for name, threshold, _upper in _PHASE_BANDS
+                        if name not in sampled_phases and fraction >= threshold
+                    ),
+                    None,
+                )
+                if phase is not None:
+                    _assert_phase_fraction(phase, fraction)
+                    self._fixture.hold_next_detail()
+                    try:
+                        assert self._fixture.detail_started.wait(15), (
+                            f"{phase} detail hold was not reached"
+                        )
+                        active = self.status(client)
+                        assert active["active"] is True
+                        actual_fractions[phase] = fraction
+                        _sample_routes(client, self._origin, phase, measurements)
+                        if self._phase_observer is not None:
+                            observed_decision = self._phase_observer.observe(
+                                phase, self._origin
+                            )
+                            if phase == "peak":
+                                assert observed_decision is not None
+                                decision_response_ms = observed_decision
+                    finally:
+                        self._fixture.release_next_detail()
+                    sampled_phases.add(phase)
+                if (
+                    not projection["active"]
+                    and len(libraries) == 3
+                    and all(item["state"] == "completed" for item in libraries)
+                ):
+                    break
+                if time.monotonic() >= deadline:
+                    pytest.fail(
+                        "installed reconciliation did not complete: "
+                        + _installed_timeout_diagnostics(
+                            time.monotonic() - started, sampled_phases, libraries
+                        )
+                    )
+                time.sleep(0.02)
+            assert sampled_phases == {"early", "peak", "late"}
+            _assert_distinct_phase_fractions(actual_fractions)
+            assert active_observed is True
+            if self._phase_observer is not None:
+                assert decision_response_ms is not None
+                assert decision_response_ms <= _FOREGROUND_RESPONSE_BUDGET_MS
+            _sample_routes(client, self._origin, "quiescent", measurements)
+            return (
+                projection,
+                measurements,
+                actual_fractions,
+                peak_rss_kib,
+                time.monotonic() - started,
+                decision_response_ms,
+            )
+
+    def close(self) -> None:
+        if self._phase_observer is not None:
+            self._phase_observer.close()
+        self._fixture.release_discovery()
+        if self._server is not None and self._server_thread is not None:
+            self._server.should_exit = True
+            self._server_thread.join(timeout=30)
+            if self._server_thread.is_alive():
+                self._server.force_exit = True
+                self._server_thread.join(timeout=10)
+            assert self._server_thread.is_alive() is False
+        if self._recovery is not None:
+            self._recovery.close()
+
+
+@contextmanager
+def _running_installed_preparation(
+    *,
+    database: Path,
+    configuration: ApplicationConfiguration,
+    artifacts: Path,
+    fixture: _AudiobookshelfFixture,
+    entries: dict[str, list[CatalogueEntry]],
+    producers: dict[str, str],
+    owner_hash: Path,
+    certificate: Path,
+    private_key: Path,
+    reservation: ReservedPort,
+    origin: str,
+    expected_total: int,
+    phase_observer: _InstalledPhaseObserver | None,
+) -> Iterator[_InstalledPreparationRun]:
+    """Close a phase observer before the installed server drains its lifecycle."""
+
+    run = _InstalledPreparationRun(
+        database=database,
+        configuration=configuration,
+        artifacts=artifacts,
+        fixture=fixture,
+        entries=entries,
+        producers=producers,
+        owner_hash=owner_hash,
+        certificate=certificate,
+        private_key=private_key,
+        reservation=reservation,
+        origin=origin,
+        expected_total=expected_total,
+        phase_observer=phase_observer,
+    )
+    try:
+        yield run.__enter__()
+    finally:
+        run.close()
+
+
 def qualify_installed_pipeline(
     counts: dict[str, int],
     *,
     expected_total: int,
     memory_ceiling_kib: int | None = None,
     receipt_path: Path | None = None,
-    phase_callback: Callable[[str, str], float | None] | None = None,
-    phase_cleanup: Callable[[], None] | None = None,
+    phase_observer: _InstalledPhaseObserver | None = None,
 ) -> None:
     # `closing` is entered first so it exits last, which is the order
     # `addCleanup(fixture.close)` gave the fixture under `TestCase`: the
@@ -1006,8 +1327,7 @@ def qualify_installed_pipeline(
             "--port",
             str(review_port.number),
         ]
-        fixture.hold_discovery()
-        server, server_thread, recovery = _start_deterministic_installed_server(
+        with _running_installed_preparation(
             database=database,
             configuration=configuration,
             artifacts=artifacts,
@@ -1019,200 +1339,29 @@ def qualify_installed_pipeline(
             private_key=private_key,
             reservation=review_port,
             origin=origin,
-        )
-        peak_rss_kib = 0
-        measurements = _RouteMeasurements()
-        try:
-            with httpx.Client(verify=False, trust_env=False) as client:
-                login = client.post(
-                    origin + "/api/v1/session/login",
-                    headers={"Origin": origin},
-                    json={"password": "synthetic password"},
-                )
-                assert login.status_code == 200, login.text
-                workspace = client.get(origin + "/library")
-                assert workspace.status_code == 200, workspace.text
-                build_identity = re.search(
-                    r'data-build-identity="([0-9a-f]{64})"', workspace.text
-                )
-                browser_csrf = re.search(
-                    r'data-csrf-token="([A-Za-z0-9_-]{32,128})"', workspace.text
-                )
-                assert build_identity is not None
-                assert browser_csrf is not None
-                action_headers = {
-                    "Origin": origin,
-                    "x-csrf-token": browser_csrf.group(1),
-                    "x-ml-build-identity": build_identity.group(1),
-                }
-                for library in ("fiction", "history", "science"):
-                    requested = client.post(
-                        origin + f"/api/v1/review-preparation/primary/{library}/scan",
-                        headers=action_headers,
-                    )
-                    assert requested.status_code == 202, requested.text
-                assert fixture.discovery_started.wait(timeout=15), (
-                    "first-start reconciliation was not observed"
-                )
-                first_status = client.get(origin + "/api/v1/review-preparation")
-                assert first_status.status_code == 200, first_status.text
-                first_projection = first_status.json()
-            assert first_projection["active"] is True
-            assert {item["library"] for item in first_projection["libraries"]} == {
-                "fiction",
-                "history",
-                "science",
-            }
-            assert all(
-                item["checked"] == 0 and item["state"] in {"queued", "discovering"}
-                for item in first_projection["libraries"]
-            )
-            assert any(
-                item["state"] == "discovering" for item in first_projection["libraries"]
-            )
-            with httpx.Client(verify=False, trust_env=False) as client:
-                login = client.post(
-                    origin + "/api/v1/session/login",
-                    headers={"Origin": origin},
-                    json={"password": "synthetic password"},
-                )
-                assert login.status_code == 200, login.text
-                assert fixture.discovery_release.is_set() is False
-                installed_reconciliation_started = time.monotonic()
-                fixture.release_discovery()
-                sampled_phases: set[str] = set()
-                actual_fractions: dict[str, float] = {}
-                active_observed = False
-                decision_response_ms: float | None = None
-                deadline = time.monotonic() + (
-                    expected_total / _MINIMUM_INSTALLED_RECONCILIATION_WORKS_PER_SECOND
-                )
-                while True:
-                    if not server_thread.is_alive():
-                        pytest.fail(
-                            "installed review server exited during reconciliation"
-                        )
-                    peak_rss_kib = max(peak_rss_kib, _rss_kib(os.getpid()))
-                    status = client.get(origin + "/api/v1/review-preparation")
-                    if status.status_code == 503:
-                        if time.monotonic() >= deadline:
-                            with closing(sqlite3.connect(database)) as connection:
-                                observed = connection.execute(
-                                    "SELECT library_name,state,total,checked,blocked "
-                                    "FROM review_preparation_scans "
-                                    "ORDER BY library_name"
-                                ).fetchall()
-                            pytest.fail(
-                                "installed reconciliation status remained unavailable: "
-                                + _installed_timeout_diagnostics(
-                                    time.monotonic() - installed_reconciliation_started,
-                                    sampled_phases,
-                                    [
-                                        {
-                                            "library": library,
-                                            "state": state,
-                                            "total": total,
-                                            "checked": checked,
-                                            "blocked": blocked,
-                                        }
-                                        for library, state, total, checked, blocked in observed
-                                    ],
-                                )
-                            )
-                        time.sleep(0.02)
-                        continue
-                    assert status.status_code == 200, status.text
-                    projection = status.json()
-                    active_observed = active_observed or bool(projection["active"])
-                    total = sum(item["total"] for item in projection["libraries"])
-                    assert total <= expected_total
-                    # Discovery commits library totals independently; progress
-                    # remains relative to the known full installed cohort.
-                    fraction = (
-                        sum(item["checked"] for item in projection["libraries"])
-                        / expected_total
-                    )
-                    phase = next(
-                        (
-                            name
-                            for name, threshold, _upper in _PHASE_BANDS
-                            if name not in sampled_phases and fraction >= threshold
-                        ),
-                        None,
-                    )
-                    if phase is not None:
-                        _assert_phase_fraction(phase, fraction)
-                        fixture.hold_next_detail()
-                        try:
-                            assert fixture.detail_started.wait(15), (
-                                f"{phase} detail hold was not reached"
-                            )
-                            active = client.get(origin + "/api/v1/review-preparation")
-                            assert active.status_code == 200, active.text
-                            assert active.json()["active"] is True
-                            actual_fractions[phase] = fraction
-                            _sample_routes(client, origin, phase, measurements)
-                            if phase_callback is not None:
-                                observed_decision = phase_callback(phase, origin)
-                                if phase == "peak":
-                                    assert observed_decision is not None
-                                    decision_response_ms = observed_decision
-                        finally:
-                            fixture.release_next_detail()
-                        sampled_phases.add(phase)
-                    if (
-                        not projection["active"]
-                        and len(projection["libraries"]) == 3
-                        and all(
-                            item["state"] == "completed"
-                            for item in projection["libraries"]
-                        )
-                    ):
-                        break
-                    if time.monotonic() >= deadline:
-                        pytest.fail(
-                            "installed reconciliation did not complete: "
-                            + _installed_timeout_diagnostics(
-                                time.monotonic() - installed_reconciliation_started,
-                                sampled_phases,
-                                cast(list[dict[str, object]], projection["libraries"]),
-                            )
-                        )
-                    time.sleep(0.02)
-                assert sampled_phases == {"early", "peak", "late"}
-                _assert_distinct_phase_fractions(actual_fractions)
-                assert active_observed is True
-                if phase_callback is not None:
-                    assert decision_response_ms is not None
-                    assert decision_response_ms <= _FOREGROUND_RESPONSE_BUDGET_MS
-                _sample_routes(client, origin, "quiescent", measurements)
-                installed_reconciliation_elapsed = (
-                    time.monotonic() - installed_reconciliation_started
-                )
+            expected_total=expected_total,
+            phase_observer=phase_observer,
+        ) as installed:
+            (
+                projection,
+                measurements,
+                actual_fractions,
+                peak_rss_kib,
+                installed_reconciliation_elapsed,
+                decision_response_ms,
+            ) = installed.wait_until_terminal()
+            installed.wait_for_fixture_case()
+            terminal_libraries = cast(list[dict[str, object]], projection["libraries"])
             assert (
-                sum(item["total"] for item in projection["libraries"]) == expected_total
-            )
-            assert (
-                sum(item["checked"] for item in projection["libraries"])
+                sum(cast(int, item["total"]) for item in terminal_libraries)
                 == expected_total
             )
-            assert sum(item["blocked"] for item in projection["libraries"]) == 0
+            assert (
+                sum(cast(int, item["checked"]) for item in terminal_libraries)
+                == expected_total
+            )
+            assert sum(cast(int, item["blocked"]) for item in terminal_libraries) == 0
             assert peak_rss_kib < 524_288
-        finally:
-            # The phase callback may own a persistent browser. Close its page
-            # and live stream before application shutdown starts draining the
-            # same server, including when a callback assertion failed.
-            if phase_cleanup is not None:
-                phase_cleanup()
-            # A held discovery call has to return before a graceful shutdown.
-            fixture.release_discovery()
-            server.should_exit = True
-            server_thread.join(timeout=30)
-            if server_thread.is_alive():
-                server.force_exit = True
-                server_thread.join(timeout=10)
-            assert server_thread.is_alive() is False
-            recovery.close()
 
         # An unclean stop is reported as itself rather than as whatever the
         # completed-state restart makes of it.

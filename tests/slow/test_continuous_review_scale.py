@@ -286,8 +286,7 @@ def test_installed_pipeline_reconciles_two_thousand_then_restarts_completed_coho
             {"fiction": 3, "history": 998, "science": 998},
             expected_total=2_000,
             memory_ceiling_kib=524_288,
-            phase_callback=workspace.observe,
-            phase_cleanup=workspace.close,
+            phase_observer=workspace,
         )
     finally:
         workspace.close()
@@ -301,8 +300,7 @@ def test_installed_decision_activity_projection_uses_the_authoritative_event() -
         qualify_installed_pipeline(
             {"fiction": 3, "history": 98, "science": 98},
             expected_total=200,
-            phase_callback=workspace.observe,
-            phase_cleanup=workspace.close,
+            phase_observer=workspace,
         )
     finally:
         workspace.close()
