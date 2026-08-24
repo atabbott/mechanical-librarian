@@ -297,8 +297,8 @@ def test_installed_decision_activity_projection_uses_the_authoritative_event() -
     """Keep the decision-to-Activity projection proof narrow and exact-wheel runnable."""
 
     evidence = qualify_installed_decision_activity(
-        {"fiction": 3, "history": 998, "science": 998},
-        expected_total=2_000,
+        {"fiction": 3, "history": 3, "science": 3},
+        expected_total=10,
     )
 
     assert evidence.history_events == 1
