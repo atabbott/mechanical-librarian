@@ -395,8 +395,11 @@ def test_installed_decision_releases_the_post_advance_hold_before_reading_curren
         def release_fixture_case(self) -> None:
             events.append("release")
 
+        def wait_for_fixture_case_release(self) -> None:
+            events.append("released")
+
         def accept_fixture_title_proposal(self) -> object:
-            assert events[-1] == "release"
+            assert events[-1] == "released"
             events.append("decision")
             return decision
 
@@ -438,6 +441,7 @@ def test_installed_decision_releases_the_post_advance_hold_before_reading_curren
         "held",
         "active",
         "release",
+        "released",
         "decision",
         "terminal",
         "activity",
@@ -471,6 +475,7 @@ def test_fixture_capture_is_nonblocking_and_post_advance_hold_releases() -> None
     run._fixture_case_hold = threading.Event()
     run._fixture_case_held = threading.Event()
     run._fixture_case_release = threading.Event()
+    run._fixture_case_released = threading.Event()
     run.hold_fixture_case()
     run._capture_fixture_case("fiction-0000", "case-1")
     assert run.wait_for_fixture_case() == "case-1"
@@ -482,6 +487,7 @@ def test_fixture_capture_is_nonblocking_and_post_advance_hold_releases() -> None
     assert run._fixture_case_held.wait(timeout=1)
     assert worker.is_alive()
     run.release_fixture_case()
+    run.wait_for_fixture_case_release()
     worker.join(timeout=1)
     assert not worker.is_alive()
 
@@ -494,6 +500,7 @@ def test_nonfixture_or_duplicate_post_advance_callbacks_do_not_hold() -> None:
     run._fixture_case_hold = threading.Event()
     run._fixture_case_held = threading.Event()
     run._fixture_case_release = threading.Event()
+    run._fixture_case_released = threading.Event()
     run.hold_fixture_case()
     run._capture_fixture_case("history-0000", "case-other")
     assert not run._case_admitted.is_set()
@@ -525,6 +532,7 @@ def test_post_advance_hold_leaves_the_web_owner_readable() -> None:
         run._fixture_case_hold = threading.Event()
         run._fixture_case_held = threading.Event()
         run._fixture_case_release = threading.Event()
+        run._fixture_case_released = threading.Event()
         run.hold_fixture_case()
         worker = threading.Thread(
             target=run._hold_fixture_case_after_advance,

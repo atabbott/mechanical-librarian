@@ -753,6 +753,7 @@ class _InstalledPreparationRun:
         self._fixture_case_hold = threading.Event()
         self._fixture_case_held = threading.Event()
         self._fixture_case_release = threading.Event()
+        self._fixture_case_released = threading.Event()
         self._server: uvicorn.Server | None = None
         self._server_thread: threading.Thread | None = None
         self._recovery: SQLiteProviderRecoveryStore | None = None
@@ -845,12 +846,16 @@ class _InstalledPreparationRun:
                 return
             self._fixture_case_hold.clear()
         self._fixture_case_held.set()
-        assert self._fixture_case_release.wait(timeout=15), (
-            "fixture case hold timed out"
-        )
+        try:
+            assert self._fixture_case_release.wait(timeout=15), (
+                "fixture case hold timed out"
+            )
+        finally:
+            self._fixture_case_released.set()
 
     def hold_fixture_case(self) -> None:
         self._fixture_case_release.clear()
+        self._fixture_case_released.clear()
         self._fixture_case_held.clear()
         self._fixture_case_hold.set()
 
@@ -877,6 +882,11 @@ class _InstalledPreparationRun:
     def wait_for_fixture_case_hold(self) -> None:
         assert self._fixture_case_held.wait(timeout=15), (
             "fixture case post-advance hold was not reached"
+        )
+
+    def wait_for_fixture_case_release(self) -> None:
+        assert self._fixture_case_released.wait(timeout=15), (
+            "fixture case post-advance hold did not release"
         )
 
     def assert_fixture_case_active(self) -> None:
@@ -1961,6 +1971,7 @@ def _running_installed_decision_activity(
                 installed.assert_fixture_case_active()
             finally:
                 installed.release_fixture_case()
+            installed.wait_for_fixture_case_release()
             decision = installed.accept_fixture_title_proposal()
             terminal = installed.wait_until_terminal()
             terminal_libraries = terminal["libraries"]
