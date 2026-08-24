@@ -3622,7 +3622,7 @@ def test_incomplete_series_memberships_remain_in_attention_after_persistence() -
         repository.close()
 
 
-def test_paused_or_category_suspended_automatic_tuple_remains_in_every_attention_projection() -> (
+def test_paused_or_category_suspended_actionless_tuple_stays_context_only() -> (
     None
 ):
     local_title = LocalClaim.create(
@@ -3700,7 +3700,10 @@ def test_paused_or_category_suspended_automatic_tuple_remains_in_every_attention
             title = next(
                 field for field in detail["fields"] if field["destination"] == "title"
             )
-            assert title["needs_attention"]
+            # Automatic-safety context remains inspectable, but an equivalent
+            # title has no owner action and cannot enter Attention.
+            assert title["decision_actions"] == []
+            assert not title["needs_attention"]
             assert (
                 "Automatic handling is suspended pending a safety recovery."
                 == title["classification_reason"]
@@ -3709,26 +3712,30 @@ def test_paused_or_category_suspended_automatic_tuple_remains_in_every_attention
             assert 1 == library.total
             assert 1 == library.attention_total
             attention = repository.read_review_attention(None, 50, 0)
-            assert attention.total >= 1
-            assert "title" in tuple(row[2] for row in attention.rows)
-            assert "automatic_safety_suspended" == next(
-                row[5]
-                for row in cast(
-                    "tuple[tuple[str, str, str, int, str, str], ...]", attention.rows
-                )
-                if row[2] == "title"
+            # The subtitle has an exact eligible alternative, so a suspended
+            # automatic tuple remains in every Attention projection when an
+            # owner decision is actually available.
+            subtitle = next(
+                field
+                for field in detail["fields"]
+                if field["destination"] == "subtitle"
             )
+            assert subtitle["decision_actions"]
+            assert subtitle["needs_attention"]
+            assert 1 == attention.total
+            assert ("subtitle",) == tuple(row[2] for row in attention.rows)
+            assert "automatic_safety_suspended" == attention.rows[0][5]
             projected = BrowseReviewLibrary(repository).attention(
                 search=None,
                 limit=50,
                 cursor=None,
             )
             assert attention.total == projected["total"]
-            assert "title" in [item["destination"] for item in projected["items"]]
+            assert ["subtitle"] == [item["destination"] for item in projected["items"]]
             assert "Automatic handling is suspended pending a safety recovery." == next(
                 item["classification_reason"]
                 for item in projected["items"]
-                if item["destination"] == "title"
+                if item["destination"] == "subtitle"
             )
             repository.close()
 
