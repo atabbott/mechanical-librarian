@@ -30,7 +30,7 @@ class HumanDecisionError(ValueError):
 def decision_actions(proposal: Mapping[str, object]) -> tuple[HumanDecisionAction, ...]:
     """Return exactly the new owner choices the immutable proposal admits."""
     result = proposal.get("result")
-    if not _actionable(proposal):
+    if not _actionable(proposal) or type(result) is not dict:
         return ()
     alternatives = result.get("alternatives")
     if type(alternatives) is not list:
@@ -38,7 +38,8 @@ def decision_actions(proposal: Mapping[str, object]) -> tuple[HumanDecisionActio
     eligible = [
         alternative
         for alternative in alternatives
-        if type(alternative) is dict and alternative.get("assessment") != "preserves_target"
+        if type(alternative) is dict
+        and alternative.get("assessment") != "preserves_target"
     ]
     # ``reject`` remains readable historical state. A retain-current choice is
     # meaningful only beside an eligible alternative.

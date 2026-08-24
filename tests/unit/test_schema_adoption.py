@@ -22,10 +22,10 @@ from mechanical_librarian.adapters.persistence.schema import (
     _NO_UPDATE_SQL,
     _PROPOSAL_NO_UPDATE_SQL,
     _REVIEW_NO_UPDATE_SQL,
-    _REVIEW_WORK_AGED_CLAIM_INDEX_SQL,
     _REVIEW_OWNER_DECISION_ACTIONS_V1_SOURCE_FACT_VALUES_SQL,
     _REVIEW_OWNER_DECISION_ACTIONS_V1_SOURCE_FACTS_INSERT_SQL,
     _REVIEW_OWNER_DECISION_ACTIONS_V1_SOURCE_FACTS_SQL,
+    _REVIEW_WORK_AGED_CLAIM_INDEX_SQL,
 )
 from mechanical_librarian.adapters.persistence.schema_adoption import (
     _application_table_digest,
@@ -34,8 +34,6 @@ from mechanical_librarian.adapters.persistence.schema_adoption import (
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.schema_adoption import (
     REVIEW_OWNER_DECISION_ACTIONS_V1,
-)
-from mechanical_librarian.application.schema_adoption import (
     SchemaAdoptionRecoveryRequired,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision, decision_actions
@@ -234,9 +232,9 @@ def test_adoption_backfill_matches_the_domain_action_contract(tmp_path: Path) ->
     }
     connection.close()
     assert (
-        adopt_schema(database, tmp_path / "backup.sqlite3", REVIEW_OWNER_DECISION_ACTIONS_V1)[
-            "status"
-        ]
+        adopt_schema(
+            database, tmp_path / "backup.sqlite3", REVIEW_OWNER_DECISION_ACTIONS_V1
+        )["status"]
         == "adopted"
     )
     connection = sqlite3.connect(database)
@@ -297,7 +295,9 @@ def test_plan_target_is_frozen_against_future_current_schema(
         lambda _path: pytest.fail("future schema check accessed a pathname"),
     )
     with pytest.raises(MetadataReportError, match="unavailable for this build"):
-        adopt_schema(database, tmp_path / "backup.sqlite3", REVIEW_OWNER_DECISION_ACTIONS_V1)
+        adopt_schema(
+            database, tmp_path / "backup.sqlite3", REVIEW_OWNER_DECISION_ACTIONS_V1
+        )
 
 
 @pytest.mark.parametrize("suffix", ("-journal", "-wal", "-shm"))
@@ -321,7 +321,9 @@ def test_symlink_source_and_unknown_plan_are_rejected(tmp_path: Path) -> None:
     alias.symlink_to(database)
 
     with pytest.raises((MetadataReportError, OSError)):
-        adopt_schema(alias, tmp_path / "backup.sqlite3", REVIEW_OWNER_DECISION_ACTIONS_V1)
+        adopt_schema(
+            alias, tmp_path / "backup.sqlite3", REVIEW_OWNER_DECISION_ACTIONS_V1
+        )
     with pytest.raises(MetadataReportError, match="plan is unsupported"):
         adopt_schema(database, tmp_path / "backup.sqlite3", "arbitrary-sql")
 
@@ -655,7 +657,10 @@ def test_backup_directory_entry_is_durable_before_index_commit(
         real_fsync(descriptor)
 
     monkeypatch.setattr(adoption.os, "fsync", record_fsync)
-    assert adopt_schema(database, backup, REVIEW_OWNER_DECISION_ACTIONS_V1)["status"] == "adopted"
+    assert (
+        adopt_schema(database, backup, REVIEW_OWNER_DECISION_ACTIONS_V1)["status"]
+        == "adopted"
+    )
     assert directory_synced
 
 

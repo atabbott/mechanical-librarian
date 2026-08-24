@@ -735,9 +735,10 @@ def test_one_explicit_decision_requires_csrf_and_is_server_authoritative(
         == accepted.json()["decision_id"]
     )
     assert refreshed["fields"][0]["current"] == field["current"]
-    assert refreshed["fields"][0]["human_decision"]["selected_value"] == field[
-        "proposed_values"
-    ][0]
+    assert (
+        refreshed["fields"][0]["human_decision"]["selected_value"]
+        == field["proposed_values"][0]
+    )
     history = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}/history")
     assert history.status_code == 200, history.text
     recorded = next(
@@ -747,7 +748,10 @@ def test_one_explicit_decision_requires_csrf_and_is_server_authoritative(
         and item["destination"] == field["destination"]
         and item["outcome"] == "accept"
     )
-    assert recorded["previous_value"] == {"kind": "text", "value": field["current"]["value"]}
+    assert recorded["previous_value"] == {
+        "kind": "text",
+        "value": field["current"]["value"],
+    }
     assert recorded["selected_value"] == field["proposed_values"][0]
     web.repository.case_current = False
     web.now += 1

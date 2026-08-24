@@ -567,13 +567,15 @@ def test_verified_owner_replacement_retains_history_and_activity_predecessor(
         if value["assessment"] != "preserves_target"
     }
     first_value, second_value = choices["en"], choices["eng"]
+    proposal_id = proposal["proposal_id"]
+    assert type(proposal_id) is str
 
     def decision(
         selected_value: dict[str, object], key: str, occurred_at: int
     ) -> HumanDecision:
         return HumanDecision.create(
             case,
-            proposal_id=proposal["proposal_id"],
+            proposal_id=proposal_id,
             target_fingerprint=case.target_fingerprint,
             destination="language",
             actor="owner",

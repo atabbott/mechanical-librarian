@@ -47,9 +47,9 @@ from mechanical_librarian.domain.metadata_policy import (
 )
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
+    TargetDestination,
     TargetFacts,
     TargetField,
-    TargetDestination,
     TargetFieldState,
 )
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report

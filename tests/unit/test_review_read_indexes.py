@@ -523,7 +523,9 @@ def test_indexes_preserve_exact_browse_search_detail_and_history_results() -> No
         repository.close()
 
 
-def test_representative_attention_expectation_counts_only_remaining_owner_actions() -> None:
+def test_representative_attention_expectation_counts_only_remaining_owner_actions() -> (
+    None
+):
     with tempfile.TemporaryDirectory() as directory:
         connection = _representative_database(
             Path(directory) / "application.sqlite3", works=24
@@ -551,9 +553,7 @@ def test_representative_attention_expectation_counts_only_remaining_owner_action
                 )
             }
             assert action_items == {f"item-{index:04d}" for index in range(0, 24, 2)}
-            assert recorded_items == {
-                f"item-{index:04d}" for index in range(12, 18, 2)
-            }
+            assert recorded_items == {f"item-{index:04d}" for index in range(12, 18, 2)}
             assert _representative_owner_action_count(24) == 12
             assert _representative_human_decision_count(24) == 3
             assert _count_with_step_limit(connection, 1_000_000)[0] == (24, 9)
@@ -1040,8 +1040,8 @@ def test_attention_uses_the_newest_shadow_disposition(tmp_path: Path) -> None:
         "DELETE FROM review_case_field_facts WHERE (review_case_id,destination)="
         "(SELECT review_case_id,destination FROM review_case_field_facts LIMIT 1)",
         "INSERT INTO review_case_field_facts("
-            "review_case_id,destination,unresolved_choice,manual_bibliographic_attention,has_owner_decision_actions) "
-            "SELECT review_case_id,'unexpected',0,0,0 "
+        "review_case_id,destination,unresolved_choice,manual_bibliographic_attention,has_owner_decision_actions) "
+        "SELECT review_case_id,'unexpected',0,0,0 "
         "FROM review_cases LIMIT 1",
     ),
 )

@@ -19,6 +19,7 @@ from argon2 import PasswordHasher
 from playwright.sync_api import (
     BrowserContext,
     Page,
+    Request,
     expect,
     sync_playwright,
 )
@@ -825,9 +826,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                     "heading", name="Which series should this work use?"
                 ).wait_for()
                 page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
-                page.get_by_role(
-                    "heading", name="Title"
-                ).wait_for()
+                page.get_by_role("heading", name="Title").wait_for()
                 # #635: revisiting a recorded field restores the whole choice
                 # composition and marks the recorded answer, rather than
                 # replacing it with prose.
@@ -839,9 +838,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                 page.get_by_role("link", name="Activity", exact=True).click()
                 page.get_by_role("heading", name="Activity and recovery").wait_for()
                 page.go_back()
-                page.get_by_role(
-                    "heading", name="Title"
-                ).wait_for()
+                page.get_by_role("heading", name="Title").wait_for()
                 page.go_forward()
                 page.get_by_role("heading", name="Activity and recovery").wait_for()
                 assert documents == (initial_documents + 2)
@@ -1378,19 +1375,14 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                     else None
                 ),
             )
-            page.on(
-                "request",
-                lambda request: (
+
+            def capture_request(request: Request) -> None:
+                if request.url.endswith("/decisions"):
                     decision_requests.append(request.headers.get("idempotency-key"))
-                    if request.url.endswith("/decisions")
-                    else None
-                )
-                or (
+                elif "/api/v1/library" in request.url:
                     library_requests.append(request.url)
-                    if "/api/v1/library" in request.url
-                    else None
-                ),
-            )
+
+            page.on("request", capture_request)
             with (
                 closing(ReservedPort()) as reserved_port,
                 _server(

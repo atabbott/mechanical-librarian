@@ -3622,9 +3622,7 @@ def test_incomplete_series_memberships_remain_in_attention_after_persistence() -
         repository.close()
 
 
-def test_paused_or_category_suspended_actionless_tuple_stays_context_only() -> (
-    None
-):
+def test_paused_or_category_suspended_actionless_tuple_stays_context_only() -> None:
     local_title = LocalClaim.create(
         kind=ClaimKind.TITLE,
         observed="Secret History",

@@ -795,11 +795,15 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 ):
                     raise MetadataReportError("review history is invalid")
                 case = ReviewCase.create_from_data(case_document["case"])
+                fields = case.target.get("fields")
+                if type(fields) is not list:
+                    raise MetadataReportError("review history is invalid")
                 target = next(
                     (
                         field
-                        for field in case.target["fields"]
-                        if field["destination"] == decision.destination
+                        for field in fields
+                        if type(field) is dict
+                        and field.get("destination") == decision.destination
                     ),
                     None,
                 )

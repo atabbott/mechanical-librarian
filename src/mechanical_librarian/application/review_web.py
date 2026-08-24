@@ -473,7 +473,9 @@ class InspectCurrentReviewCase:
                 "inventory_role": inventory_role,
                 "preservation_only": classification.preservation_only,
                 "notices": reasons,
-                "proposed_values": [alternative["value"] for alternative in eligible_alternatives],
+                "proposed_values": [
+                    alternative["value"] for alternative in eligible_alternatives
+                ],
                 "choice_contexts": choice_contexts,
                 "provenance": references,
                 "corroboration_sources": _corroboration_source_labels(
