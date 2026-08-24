@@ -1000,50 +1000,34 @@ def _running_installed_preparation(
         run.close()
 
 
-def qualify_installed_pipeline(
-    counts: dict[str, int],
-    *,
-    expected_total: int,
-    memory_ceiling_kib: int | None = None,
-    receipt_path: Path | None = None,
-    phase_observer: _InstalledPhaseObserver | None = None,
-) -> None:
-    # `closing` is entered first so it exits last, which is the order
-    # `addCleanup(fixture.close)` gave the fixture under `TestCase`: the
-    # working directory is removed and only then is the fixture closed.
-    fixture = _AudiobookshelfFixture(counts)
-    fixture.start()
-    with (
-        closing(fixture),
-        tempfile.TemporaryDirectory() as directory,
-        # The port is held from here rather than picked and dropped: the
-        # window between allocation and the installed server's own `bind()`
-        # spans writing `config.json`, the entire in-process pipeline over
-        # the whole cohort, `Popen`, and the child's interpreter start-up,
-        # which at the slow tier's two thousand works is minutes wide. That is
-        # far wider than any other caller of `ReservedPort`, and it is why
-        # this one alone cannot stop at holding: the child binds a number it
-        # is handed on its command line, and there is no channel for giving
-        # it a descriptor instead, so its start-up stays a window that
-        # `_start_review_server` closes by detection rather than by hope.
-        closing(ReservedPort()) as review_port,
-    ):
-        root = Path(directory)
-        secret = root / "target.secret"
-        secret.write_text("synthetic-token", encoding="utf-8")
-        secret.chmod(0o600)
-        media = root / "media"
-        media.mkdir(mode=0o700)
-        artifacts = root / "artifacts"
-        artifacts.mkdir(mode=0o700)
-        owner_hash = root / "owner.hash"
-        owner_hash.write_text(
+class _InstalledQualificationEnvironment:
+    """Private synthetic resources shared by installed qualification scenarios."""
+
+    def __init__(self, counts: dict[str, int], expected_total: int) -> None:
+        self.counts = counts
+        self.expected_total = expected_total
+        self.fixture = _AudiobookshelfFixture(counts)
+        self.directory = tempfile.TemporaryDirectory()
+        self.review_port = ReservedPort()
+
+    def __enter__(self) -> _InstalledQualificationEnvironment:
+        self.fixture.start()
+        self.root = Path(self.directory.name)
+        self.secret = self.root / "target.secret"
+        self.secret.write_text("synthetic-token", encoding="utf-8")
+        self.secret.chmod(0o600)
+        self.media = self.root / "media"
+        self.media.mkdir(mode=0o700)
+        self.artifacts = self.root / "artifacts"
+        self.artifacts.mkdir(mode=0o700)
+        self.owner_hash = self.root / "owner.hash"
+        self.owner_hash.write_text(
             PasswordHasher().hash("synthetic password"), encoding="utf-8"
         )
-        owner_hash.chmod(0o600)
-        certificate, private_key = synthetic_tls_identity(root)
-        origin = f"https://127.0.0.1:{review_port.number}"
-        config_path = root / "config.json"
+        self.owner_hash.chmod(0o600)
+        self.certificate, self.private_key = synthetic_tls_identity(self.root)
+        self.origin = f"https://127.0.0.1:{self.review_port.number}"
+        config_path = self.root / "config.json"
         config_path.write_text(
             json.dumps(
                 {
@@ -1053,8 +1037,8 @@ def qualify_installed_pipeline(
                         {
                             "name": "primary",
                             "adapter": "audiobookshelf",
-                            "endpoint": f"http://127.0.0.1:{fixture.server.server_port}",
-                            "secret_file": str(secret),
+                            "endpoint": f"http://127.0.0.1:{self.fixture.server.server_port}",
+                            "secret_file": str(self.secret),
                         }
                     ],
                     "libraries": [
@@ -1065,55 +1049,116 @@ def qualify_installed_pipeline(
                             "mount": "books",
                             "provider_connections": [],
                         }
-                        for name in fixture.summaries
+                        for name in self.fixture.summaries
                     ],
                     "mounts": [
                         {
                             "name": "books",
-                            "container_path": str(media),
+                            "container_path": str(self.media),
                             "service_path": "/library",
                             "read_only": True,
                         }
                     ],
                     "providers": [],
                     "review": {
-                        "canonical_origin": origin,
-                        "owner_password_hash_file": str(owner_hash),
-                        "tls_certificate_file": str(certificate),
-                        "tls_private_key_file": str(private_key),
+                        "canonical_origin": self.origin,
+                        "owner_password_hash_file": str(self.owner_hash),
+                        "tls_certificate_file": str(self.certificate),
+                        "tls_private_key_file": str(self.private_key),
                         "library_polling_interval_seconds": 60,
                     },
                 }
             ),
             encoding="utf-8",
         )
-        configuration = load_configuration_file(config_path)
-        mount = configuration.mounts[0]
-        libraries = {value.name: value for value in configuration.libraries}
-        entries = {
+        self.configuration = load_configuration_file(config_path)
+        self.mount = self.configuration.mounts[0]
+        self.libraries = {value.name: value for value in self.configuration.libraries}
+        self.entries = {
             name: [
                 catalogue_entry(
                     "primary",
-                    libraries[name],
-                    mount,
+                    self.libraries[name],
+                    self.mount,
                     summary,
-                    fixture.details[str(summary["id"])],
+                    self.fixture.details[str(summary["id"])],
                 )
                 for summary in summaries
             ]
-            for name, summaries in fixture.summaries.items()
+            for name, summaries in self.fixture.summaries.items()
         }
-        producers = {
+        self.producers = {
             name: batch_fingerprint(
-                configuration,
+                self.configuration,
                 (
                     BatchSelection(
                         "primary", name, name, "producer", None, "producer", False
                     ),
                 ),
             )
-            for name in entries
+            for name in self.entries
         }
+        self.database = self.root / "installed.sqlite3"
+        self.catalogue = self.root / "installed-catalogue.sqlite3"
+        command = shutil.which("mechanical-librarian")
+        assert command is not None
+        self.arguments = [
+            str(command),
+            "review-serve",
+            "--config",
+            str(config_path),
+            "--database",
+            str(self.database),
+            "--catalogue",
+            str(self.catalogue),
+            "--artifacts",
+            str(self.artifacts),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(self.review_port.number),
+        ]
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.review_port.close()
+        self.directory.cleanup()
+        self.fixture.close()
+
+
+@contextmanager
+def _installed_qualification_environment(
+    counts: dict[str, int], expected_total: int
+) -> Iterator[_InstalledQualificationEnvironment]:
+    environment = _InstalledQualificationEnvironment(counts, expected_total)
+    try:
+        yield environment.__enter__()
+    finally:
+        environment.__exit__()
+
+
+def qualify_installed_pipeline(
+    counts: dict[str, int],
+    *,
+    expected_total: int,
+    memory_ceiling_kib: int | None = None,
+    receipt_path: Path | None = None,
+    phase_observer: _InstalledPhaseObserver | None = None,
+) -> None:
+    with _installed_qualification_environment(counts, expected_total) as environment:
+        fixture = environment.fixture
+        root = environment.root
+        artifacts = environment.artifacts
+        owner_hash = environment.owner_hash
+        certificate = environment.certificate
+        private_key = environment.private_key
+        origin = environment.origin
+        configuration = environment.configuration
+        mount = environment.mount
+        libraries = environment.libraries
+        entries = environment.entries
+        producers = environment.producers
+        review_port = environment.review_port
         direct_database = root / "direct-control.sqlite3"
         stored_repository = open_repository(direct_database)
         repository = _SharedRepository(stored_repository)
@@ -1350,26 +1395,8 @@ def qualify_installed_pipeline(
         # above remains a control for fairness and recovery only; carrying its
         # scan rows into this child would turn the installed qualifier into a
         # no-change restart rather than a real 2,000-work reconciliation.
-        database = root / "installed.sqlite3"
-        catalogue = root / "installed-catalogue.sqlite3"
-        command = shutil.which("mechanical-librarian")
-        assert command is not None
-        arguments = [
-            str(command),
-            "review-serve",
-            "--config",
-            str(config_path),
-            "--database",
-            str(database),
-            "--catalogue",
-            str(catalogue),
-            "--artifacts",
-            str(artifacts),
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(review_port.number),
-        ]
+        database = environment.database
+        arguments = environment.arguments
         with _running_installed_preparation(
             database=database,
             configuration=configuration,
