@@ -79,16 +79,19 @@ slow test is never silently skipped: delivery documentation identifies when
 exact-head slow evidence is required.
 
 The continuous-review slow qualifier advances 2,000 deterministic synthetic
-works through the installed process, then its restart. Its installed path gives
-every declared ebook a readable synthetic EPUB, proving sustained report,
-proposal, and admission writes while foreground routes are sampled. One opening
-title differs from its current target so the persistent Chromium owner workspace
-can prove early case availability, a bounded report-only choice at peak, and
-durable Activity/case readback late. The independent direct 2,000-work control
-remains the clean completed/zero-blocked proof for fairness, provider recovery,
-and full-stage throughput. The installed path controls restart recovery,
-foreground response budgets, and RSS. It holds one discovery request at zero
-progress and one detail request at actual early, peak, and late progress.
+works through an exact installed-wheel in-process application, then checks a
+separate `review-serve` restart. Its deterministic callbacks replace only
+target/media/provider observation while preserving the production action queue,
+SQLite publication, proposal, admission, projection, and foreground
+serialization boundaries for all 2,000 works. One fixture-owned title proposal
+differs from its current value so persistent Chromium proves early availability,
+a bounded report-only choice at peak, and durable Activity/case readback late.
+The independent direct 2,000-work control remains the clean completed/zero-
+blocked proof for fairness, provider recovery, and full-stage throughput. The
+installed path controls foreground response budgets and RSS; the retained CLI
+control proves composition, shutdown, restart, and readiness. It holds one
+discovery request at zero progress and one deterministic extraction at actual
+early, peak, and late progress.
 Chromium must be installed and verified with `uv run playwright install
 chromium` and `uv run python scripts/verify_playwright_browser.py` before that
 slow proof. Its synthetic fixture and installed process never use a live

@@ -29,6 +29,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
+import uvicorn
 from argon2 import PasswordHasher
 
 from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import (
@@ -36,10 +37,17 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue imp
 )
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.batch import BatchSelection, batch_fingerprint
+from mechanical_librarian.application.catalogue import CatalogueEntry
+from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.application.review_application import (
+    compose_review_application,
+)
 from mechanical_librarian.application.review_pipeline import (
     PipelineAction,
     PipelineProgress,
+    ReviewPipelineError,
     ReviewPreparationPipeline,
+    ReviewPreparationSupervisor,
 )
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -52,7 +60,10 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
-from tests.support.epub_packages import epub_bytes
+from mechanical_librarian.interfaces.web import (
+    create_review_app,
+    load_owner_password_verifier,
+)
 from tests.support.ports import ReservedPort
 from tests.support.tls import synthetic_tls_identity
 
@@ -312,49 +323,6 @@ class _AudiobookshelfFixture:
         self.details["fiction-new"] = detail
         return summary, detail
 
-    def materialize_installed_current_workspace(self, media: Path) -> None:
-        """Give every declared work a readable EPUB and one early manual title case."""
-
-        for item, detail in self.details.items():
-            opening_title = (
-                "Exact evaluator candidate" if item == "fiction-0000" else item
-            )
-            value = epub_bytes(
-                package=(
-                    '<?xml version="1.0" encoding="UTF-8"?>\n'
-                    '<package xmlns="http://www.idpf.org/2007/opf" '
-                    'unique-identifier="identifier" version="3.0">\n'
-                    '  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
-                    f'<dc:identifier id="identifier">{item}</dc:identifier>'
-                    f"<dc:title>{item}</dc:title>"
-                    "<dc:creator>Synthetic Author</dc:creator>"
-                    "<dc:language>en</dc:language></metadata>\n"
-                    '  <manifest><item id="opening" href="opening.xhtml" '
-                    'media-type="application/xhtml+xml"/></manifest>\n'
-                    '  <spine><itemref idref="opening"/></spine>\n'
-                    "</package>"
-                ).encode(),
-                include_default_content=False,
-                extra_entries=(
-                    (
-                        "EPUB/opening.xhtml",
-                        (
-                            '<?xml version="1.0" encoding="UTF-8"?>\n'
-                            '<html xmlns="http://www.w3.org/1999/xhtml"><body>'
-                            '<section epub:type="titlepage" '
-                            'xmlns:epub="http://www.idpf.org/2007/ops">'
-                            f"<h1>{opening_title}</h1>"
-                            "<p>Synthetic Author</p></section></body></html>"
-                        ).encode(),
-                        8,
-                    ),
-                ),
-            )
-            (media / f"{item}.epub").write_bytes(value)
-            file_metadata = detail["media"]["ebookFile"]["metadata"]
-            assert type(file_metadata) is dict
-            file_metadata["size"] = len(value)
-
     def hold_discovery(self) -> None:
         self.discovery_started.clear()
         self.discovery_release.clear()
@@ -422,6 +390,152 @@ def _installed_timeout_diagnostics(
             ],
         }
     )
+
+
+def _start_deterministic_installed_server(
+    *,
+    database: Path,
+    fixture: _AudiobookshelfFixture,
+    entries: dict[str, list[CatalogueEntry]],
+    producers: dict[str, str],
+    owner_hash: Path,
+    certificate: Path,
+    private_key: Path,
+    reservation: ReservedPort,
+    origin: str,
+) -> tuple[uvicorn.Server, threading.Thread]:
+    """Run installed-wheel HTTP over the production persisted pipeline boundary.
+
+    The callbacks stand in only for expensive target/media/provider observation.
+    They retain the production action queue, report publication, proposal,
+    admission and projection transactions against the server's SQLite store.
+    """
+
+    observation = open_repository(database, create=True, cross_thread=True)
+    reports: dict[str, MetadataReport] = {}
+    proposals: dict[str, object] = {}
+
+    def workers():
+        return open_repository(database, create=False, authority=observation.authority)
+
+    def discover(_: str, library: str):
+        fixture.discovery_started.set()
+        if not fixture.discovery_release.wait(timeout=15):
+            raise ReviewPipelineError("transient")
+        offset = {"fiction": 1, "history": 2, "science": 3}[library]
+        return offset, f"{offset:064x}", tuple(entries[library])
+
+    def extract(repository, action: PipelineAction, claim_next: bool):
+        assert action.item_id is not None
+        with fixture._detail_hold_lock:
+            held = fixture._detail_hold_armed
+            fixture._detail_hold_armed = False
+        if held:
+            fixture.detail_started.set()
+            if not fixture.detail_release.wait(timeout=15):
+                raise ReviewPipelineError("transient")
+        index = int(action.file_identity or "0", 16)
+        candidate = (
+            "Exact evaluator candidate"
+            if action.item_id == "fiction-0000"
+            else "Synthetic candidate " + action.item_id
+        )
+        report = MetadataReport.create(
+            target=TargetFacts(
+                action.connection,
+                action.library,
+                action.item_id,
+                default_target_fields(action.item_id),
+            ),
+            file=FileFacts(0, action.file_identity or "", f"{index + 10_001:064x}"),
+            local_claims=(
+                LocalClaim.create(
+                    kind=ClaimKind.TITLE,
+                    observed=candidate,
+                    canonical=candidate,
+                    excerpt=candidate,
+                    applicability="not_applicable",
+                    checksum="not_applicable",
+                    applicability_basis="not_applicable",
+                    scope=ClaimScope.WORK,
+                ),
+            ),
+            local_reasons=("opening_matter_title",),
+            providers=(),
+        )
+        reports[report.report_id] = report
+        repository.publish(
+            report,
+            lambda: True,
+            None,
+            lambda value, published: value.complete_review_extraction_publication(
+                action, published.report_id, int(time.time()), 0, None, claim_next
+            ),
+        )
+        return report.report_id, True
+
+    def propose(repository, report_id: str) -> str:
+        proposal = evaluate_report(reports[report_id])
+        proposals[proposal.proposal_set_id] = proposal
+        repository.publish_proposal(proposal)
+        return proposal.proposal_set_id
+
+    def admit(repository, proposal_id: str):
+        result = json.loads(repository.admit_review_case(proposals[proposal_id]))
+        return result["status"], result.get("review_case_id")
+
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=workers,
+        observation_repository_factory=lambda: observation,
+        libraries=tuple(
+            ("primary", library, library, producers[library]) for library in entries
+        ),
+        discover=discover,
+        extract=extract,
+        providers=lambda *_: (),
+        propose=propose,
+        admit=admit,
+        project=lambda *_: True,
+    )
+    supervisor = ReviewPreparationSupervisor(pipeline, polling_interval_seconds=None)
+    review = ReviewWebConfiguration(
+        canonical_origin=origin,
+        owner_password_hash_file=str(owner_hash),
+        tls_certificate_file=str(certificate),
+        tls_private_key_file=str(private_key),
+    )
+    application = compose_review_application(
+        state_owner=observation,
+        session_store=observation,
+        case_store=observation,
+        decision_store=observation,
+        library_store=observation,
+        policy_store=observation,
+        verify_password=load_owner_password_verifier(owner_hash),
+        clock=lambda: int(time.time()),
+        session_lifetime_seconds=review.session_lifetime_seconds,
+        graceful_shutdown_seconds=review.graceful_shutdown_seconds,
+        preparation=supervisor,
+    )
+    server = uvicorn.Server(
+        uvicorn.Config(
+            create_review_app(application, review),
+            host="127.0.0.1",
+            port=reservation.number,
+            log_level="error",
+            access_log=False,
+            ssl_certfile=str(certificate),
+            ssl_keyfile=str(private_key),
+        )
+    )
+    reservation.release()
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + _REVIEW_SERVER_START_SECONDS
+    while not server.started and thread.is_alive() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert server.started is True
+    return server, thread
 
 
 def qualify_installed_pipeline(
@@ -776,7 +890,6 @@ def qualify_installed_pipeline(
         # no-change restart rather than a real 2,000-work reconciliation.
         database = root / "installed.sqlite3"
         catalogue = root / "installed-catalogue.sqlite3"
-        fixture.materialize_installed_current_workspace(media)
         command = shutil.which("mechanical-librarian")
         assert command is not None
         arguments = [
@@ -796,7 +909,17 @@ def qualify_installed_pipeline(
             str(review_port.number),
         ]
         fixture.hold_discovery()
-        first_process = _start_review_server(review_port, arguments, origin)
+        server, server_thread = _start_deterministic_installed_server(
+            database=database,
+            fixture=fixture,
+            entries=entries,
+            producers=producers,
+            owner_hash=owner_hash,
+            certificate=certificate,
+            private_key=private_key,
+            reservation=review_port,
+            origin=origin,
+        )
         peak_rss_kib = 0
         measurements = _RouteMeasurements()
         try:
@@ -865,11 +988,11 @@ def qualify_installed_pipeline(
                     expected_total / _MINIMUM_INSTALLED_RECONCILIATION_WORKS_PER_SECOND
                 )
                 while True:
-                    if first_process.poll() is not None:
+                    if not server_thread.is_alive():
                         pytest.fail(
                             "installed review server exited during reconciliation"
                         )
-                    peak_rss_kib = max(peak_rss_kib, _rss_kib(first_process.pid))
+                    peak_rss_kib = max(peak_rss_kib, _rss_kib(os.getpid()))
                     status = client.get(origin + "/api/v1/review-preparation")
                     if status.status_code == 503:
                         if time.monotonic() >= deadline:
@@ -978,13 +1101,12 @@ def qualify_installed_pipeline(
         finally:
             # A held discovery call has to return before a graceful shutdown.
             fixture.release_discovery()
-            if first_process.poll() is None:
-                first_process.terminate()
-            try:
-                first_process.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                first_process.kill()
-                first_process.wait(timeout=10)
+            server.should_exit = True
+            server_thread.join(timeout=30)
+            if server_thread.is_alive():
+                server.force_exit = True
+                server_thread.join(timeout=10)
+            assert server_thread.is_alive() is False
 
         # An unclean stop is reported as itself rather than as whatever the
         # completed-state restart makes of it.
@@ -1005,7 +1127,7 @@ def qualify_installed_pipeline(
             ).fetchone()[0]
         assert installed_reports == expected_total
         assert installed_proposals == expected_total
-        assert installed_cases == 1
+        assert installed_cases == expected_total
         second_process = _start_review_server(review_port, arguments, origin)
         try:
             with httpx.Client(verify=False, trust_env=False) as client:
@@ -1059,7 +1181,8 @@ def qualify_installed_pipeline(
             expected_total / installed_reconciliation_elapsed
         )
         receipt = {
-            "schema": "m27-828-candidate-v3",
+            "schema": "m27-828-candidate-v4",
+            "installed_execution": "installed-wheel-in-process-deterministic-stages",
             "works": expected_total,
             "phases": measurements.receipt(),
             "direct_pipeline_control_works_per_second": round(
