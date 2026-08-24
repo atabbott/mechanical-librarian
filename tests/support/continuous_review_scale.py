@@ -35,6 +35,10 @@ from argon2 import PasswordHasher
 from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import (
     _entry as catalogue_entry,
 )
+from mechanical_librarian.adapters.operational_evidence import (
+    LocalTimingStore,
+    SupportBundle,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.provider_recovery import (
     SQLiteProviderRecoveryStore,
@@ -44,6 +48,10 @@ from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
     ReviewWebConfiguration,
+)
+from mechanical_librarian.application.operations import (
+    StageTimer,
+    support_preparation_incidents,
 )
 from mechanical_librarian.application.review_application import (
     compose_review_application,
@@ -56,6 +64,7 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPreparationSupervisor,
 )
 from mechanical_librarian.bootstrap.composition import (
+    _compose_cover_considerations,
     compose_continuous_guarded_application,
 )
 from mechanical_librarian.domain.metadata_report import (
@@ -453,6 +462,22 @@ def _start_deterministic_installed_server(
     observation = open_repository(database, create=True, cross_thread=True)
     reports: dict[str, MetadataReport] = {}
     proposals: dict[str, object] = {}
+    private_root = database.parent / "private"
+    private_root.mkdir(mode=0o700)
+    review = ReviewWebConfiguration(
+        canonical_origin=origin,
+        owner_password_hash_file=str(owner_hash),
+        tls_certificate_file=str(certificate),
+        tls_private_key_file=str(private_key),
+    )
+    timing_store = LocalTimingStore(
+        private_root / "stage-timings.json",
+        enabled=review.diagnostic_timings_enabled,
+    )
+    timing = StageTimer(timing_store)
+    recovery = SQLiteProviderRecoveryStore.open(
+        private_root / "provider-recovery.sqlite"
+    )
 
     def workers():
         return open_repository(database, create=False, authority=observation.authority)
@@ -535,18 +560,26 @@ def _start_deterministic_installed_server(
         propose=propose,
         admit=admit,
         project=lambda *_: True,
+        timing=timing,
     )
     supervisor = ReviewPreparationSupervisor(pipeline, polling_interval_seconds=None)
-    private_root = database.parent / "private"
-    private_root.mkdir(mode=0o700)
-    recovery = SQLiteProviderRecoveryStore.open(
-        private_root / "provider-recovery.sqlite"
-    )
-    review = ReviewWebConfiguration(
-        canonical_origin=origin,
-        owner_password_hash_file=str(owner_hash),
-        tls_certificate_file=str(certificate),
-        tls_private_key_file=str(private_key),
+    support_bundle = SupportBundle(
+        (
+            (
+                "runtime",
+                lambda: {
+                    "deployment": "single_container",
+                    "schema_state": "exact_current",
+                    "timing_records": len(timing_store.list()),
+                },
+            ),
+            (
+                "operational_incidents",
+                lambda: support_preparation_incidents(
+                    observation.operational_snapshot()
+                ),
+            ),
+        )
     )
     application = compose_review_application(
         state_owner=observation,
@@ -559,7 +592,15 @@ def _start_deterministic_installed_server(
         clock=lambda: int(time.time()),
         session_lifetime_seconds=review.session_lifetime_seconds,
         graceful_shutdown_seconds=review.graceful_shutdown_seconds,
+        close_state_owner=True,
         preparation=supervisor,
+        policy_libraries=tuple(
+            (library.name, cast("dict[str, object] | None", library.policy_override))
+            for library in configuration.libraries
+        ),
+        operational_timings=timing_store,
+        operational_support=support_bundle,
+        operational_timer=timing,
         field_application=compose_continuous_guarded_application(
             configuration,
             observation,
@@ -568,6 +609,9 @@ def _start_deterministic_installed_server(
             supervisor,
             private_root,
             recovery,
+        ),
+        cover_considerations=_compose_cover_considerations(
+            observation, artifacts, review
         ),
     )
     server = uvicorn.Server(
