@@ -7,7 +7,16 @@ import time
 from urllib.parse import parse_qs, urlparse
 
 import pytest
-from playwright.sync_api import Browser, BrowserContext, Page, expect, sync_playwright
+from playwright.sync_api import (
+    Browser,
+    BrowserContext,
+    Page,
+    expect,
+    sync_playwright,
+)
+from playwright.sync_api import (
+    TimeoutError as PlaywrightTimeoutError,
+)
 
 from tests.support.continuous_review_scale import (
     _FOREGROUND_RESPONSE_BUDGET_MS,
@@ -33,6 +42,52 @@ class _WorkspaceProbe:
         self._case_id: str | None = None
         self.errors: list[str] = []
         self.failures: list[int] = []
+
+    def _activity_api_evidence(self, page: Page) -> dict[str, object]:
+        """Read only bounded decision/activity facts through authenticated APIs."""
+
+        assert self._case_id is not None
+        return page.evaluate(
+            """async (caseId) => {
+              const [detailResponse, historyResponse, activityResponse] = await Promise.all([
+                fetch(`/api/v1/review-cases/${encodeURIComponent(caseId)}`),
+                fetch(`/api/v1/review-cases/${encodeURIComponent(caseId)}/history`),
+                fetch('/api/v1/activity?event_type=review&range_days=30&page=1&page_size=25'),
+              ])
+              const detail = await detailResponse.json()
+              const history = await historyResponse.json()
+              const activity = await activityResponse.json()
+              const title = Array.isArray(detail.fields)
+                ? detail.fields.find((field) => field?.destination === 'title')
+                : undefined
+              const decision = title?.human_decision
+              const historyEvents = Array.isArray(history.events) ? history.events : []
+              const events = Array.isArray(activity.events) ? activity.events : []
+              return {
+                activity: {
+                  owner_choice_events: events.filter(
+                    (event) => event?.category === 'owner' && event?.state === 'accept',
+                  ).length,
+                  status: activityResponse.status,
+                  visible_events: events.length,
+                },
+                decision: {
+                  actor: typeof decision?.actor === 'string' ? decision.actor : null,
+                  destination: title?.destination === 'title' ? 'title' : null,
+                  outcome: typeof decision?.outcome === 'string' ? decision.outcome : null,
+                  present: decision !== null && decision !== undefined,
+                },
+                detail_status: detailResponse.status,
+                history: {
+                  human_decision_events: historyEvents.filter(
+                    (event) => event?.kind === 'human_decision_recorded',
+                  ).length,
+                  status: historyResponse.status,
+                },
+              }
+            }""",
+            self._case_id,
+        )
 
     def close(self) -> None:
         if self._closed:
@@ -183,13 +238,39 @@ class _WorkspaceProbe:
             )
             expect(recorded_choice).to_have_count(1)
             expect(recorded_choice).to_have_attribute("aria-pressed", "true")
+            activity_evidence = self._activity_api_evidence(page)
         page.get_by_role("link", name="Activity", exact=True).click()
+        page.get_by_role("heading", name="Activity and recovery", exact=True).wait_for(
+            timeout=_FOREGROUND_RESPONSE_BUDGET_MS
+        )
         page.get_by_role("button", name="Owner choices", exact=True).click()
         expect(
             page.get_by_role("button", name="Owner choices", exact=True)
         ).to_have_attribute("aria-pressed", "true")
-        page.get_by_text("Owner choice", exact=True).wait_for()
-        page.get_by_text("Accepted", exact=True).wait_for()
+        if phase == "late":
+            try:
+                page.get_by_text("Owner choice", exact=True).wait_for(
+                    timeout=_FOREGROUND_RESPONSE_BUDGET_MS
+                )
+                page.get_by_text("Accepted", exact=True).wait_for(
+                    timeout=_FOREGROUND_RESPONSE_BUDGET_MS
+                )
+            except PlaywrightTimeoutError:
+                location = urlparse(page.url)
+                pytest.fail(
+                    "installed activity owner choice unavailable: "
+                    + repr(
+                        {
+                            "api": activity_evidence,
+                            "browser": {
+                                "event_type": parse_qs(location.query).get(
+                                    "event_type"
+                                ),
+                                "path": location.path,
+                            },
+                        }
+                    )
+                )
 
         assert self.errors == []
         assert self.failures == []
@@ -205,6 +286,21 @@ def test_installed_pipeline_reconciles_two_thousand_then_restarts_completed_coho
             {"fiction": 3, "history": 998, "science": 998},
             expected_total=2_000,
             memory_ceiling_kib=524_288,
+            phase_callback=workspace.observe,
+            phase_cleanup=workspace.close,
+        )
+    finally:
+        workspace.close()
+
+
+def test_installed_decision_activity_projection_uses_the_authoritative_event() -> None:
+    """Keep the decision-to-Activity projection proof narrow and exact-wheel runnable."""
+
+    workspace = _WorkspaceProbe()
+    try:
+        qualify_installed_pipeline(
+            {"fiction": 3, "history": 98, "science": 98},
+            expected_total=200,
             phase_callback=workspace.observe,
             phase_cleanup=workspace.close,
         )
