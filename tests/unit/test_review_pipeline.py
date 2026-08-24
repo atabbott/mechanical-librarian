@@ -432,12 +432,24 @@ def test_preopened_observation_survives_delete_journal_writer(
         with pytest.raises(ReviewPipelineError, match="persistence"):
             pipeline.request("primary", "fiction")
         assert pipeline.progress("primary", "fiction") is None
+        started = time.monotonic()
         with pytest.raises(MetadataReportError):
             open_repository(application_path)
+        if sys.platform.startswith("linux"):
+            assert time.monotonic() - started < 1
     finally:
         writer.rollback()
         writer.close()
         pipeline.close_observation()
+
+    requested = pipeline.request("primary", "fiction")
+    assert requested.state == "queued"
+    assert pipeline.progress("primary", "fiction") == requested
+    reopened = open_repository(application_path)
+    try:
+        assert reopened.review_pipeline_progress("primary", "fiction") == requested
+    finally:
+        reopened.close()
 
 
 def test_lifecycle_foreground_request_uses_one_clean_atomic_pause_boundary(

@@ -2051,7 +2051,9 @@ def open_repository(
                 raise MetadataReportError("database path is invalid")
             _validate_delete_mode_header(descriptor)
             if sys.platform.startswith("linux"):
-                binding = _LinuxDatabaseBinding.create(path, descriptor, authority)
+                binding = _LinuxDatabaseBinding.create(
+                    path, descriptor, authority, wait_for_authority=False
+                )
                 descriptor = -1
                 schema_validated = binding.borrows_schema_validation()
                 if not schema_validated:
@@ -2073,7 +2075,9 @@ def open_repository(
             created = True
             created_identity = (information.st_dev, information.st_ino)
             if sys.platform.startswith("linux"):
-                binding = _LinuxDatabaseBinding.create(path, descriptor, authority)
+                binding = _LinuxDatabaseBinding.create(
+                    path, descriptor, authority, wait_for_authority=False
+                )
                 descriptor = -1
         else:
             raise MetadataReportError("database is unavailable")
