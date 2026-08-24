@@ -3694,6 +3694,7 @@ class _LifecyclePipeline:
 
     def __init__(self, *, fail_recover: bool = False, hold_run: bool = False) -> None:
         self.events: list[str] = []
+        self.maximum_actions: list[int] = []
         self.fail_recover = fail_recover
         self.run_started = threading.Event()
         self.release_run = threading.Event()
@@ -3714,8 +3715,9 @@ class _LifecyclePipeline:
         if self.fail_recover:
             raise ReviewPipelineError("persistence")
 
-    def run_next(self) -> bool:
+    def run_next(self, maximum_actions: int = 64) -> bool:
         self.events.append("run")
+        self.maximum_actions.append(maximum_actions)
         self.run_started.set()
         self.release_run.wait(3)
         return False
@@ -3737,6 +3739,8 @@ def test_supervisor_opens_observation_before_recovery_and_workers() -> None:
     try:
         assert pipeline.events[:3] == ["open", "resume", "recover"]
         assert pipeline.run_started.wait(1)
+        assert pipeline.maximum_actions
+        assert set(pipeline.maximum_actions) == {1}
     finally:
         supervisor.stop()
 
@@ -4371,7 +4375,7 @@ def test_lane_zero_rechecks_due_deadline_between_bounded_work_batches() -> None:
     supervisor._schedule_due()
     assert pipeline.requests == []
 
-    def run_next() -> bool:
+    def run_next(maximum_actions: int = 64) -> bool:
         clock[0] = 160
         supervisor._stop.set()
         return True
@@ -4390,7 +4394,7 @@ def test_lane_zero_wakes_recovery_with_the_supervisor_clock() -> None:
         pipeline, clock=lambda: clock[0], recovery_wake=woken.append
     )
 
-    def run_next() -> bool:
+    def run_next(maximum_actions: int = 64) -> bool:
         supervisor._stop.set()
         return False
 
@@ -4416,7 +4420,7 @@ def test_lane_zero_contains_recovery_store_failure_and_continues() -> None:
         recovery_wake=recovery,
     )
 
-    def run_next() -> bool:
+    def run_next(maximum_actions: int = 64) -> bool:
         nonlocal runs
         runs += 1
         if runs == 3:

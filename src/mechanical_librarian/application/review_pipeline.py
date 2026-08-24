@@ -1187,7 +1187,11 @@ class ReviewPreparationSupervisor:
                             pass
                     self._schedule_due()
                 while not self._stop.is_set():
-                    advanced = self._pipeline.run_next()
+                    # A worker releases its action repository after each committed
+                    # action.  In DELETE-journal SQLite this gives the retained
+                    # foreground owner a bounded opportunity to read or decide
+                    # while a large preparation queue is active.
+                    advanced = self._pipeline.run_next(1)
                     if lane == 0:
                         self._schedule_due()
                     if not advanced:
