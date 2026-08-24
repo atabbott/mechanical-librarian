@@ -994,8 +994,8 @@ def test_attention_uses_the_newest_shadow_disposition(tmp_path: Path) -> None:
         "DELETE FROM review_case_field_facts WHERE (review_case_id,destination)="
         "(SELECT review_case_id,destination FROM review_case_field_facts LIMIT 1)",
         "INSERT INTO review_case_field_facts("
-        "review_case_id,destination,unresolved_choice,manual_bibliographic_attention) "
-        "SELECT review_case_id,'unexpected',0,0 "
+            "review_case_id,destination,unresolved_choice,manual_bibliographic_attention,has_owner_decision_actions) "
+            "SELECT review_case_id,'unexpected',0,0,0 "
         "FROM review_cases LIMIT 1",
     ),
 )

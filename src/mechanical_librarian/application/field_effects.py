@@ -224,10 +224,14 @@ class ForwardReevaluation(Protocol):
 
 def authority_from_decision(
     decision: HumanDecision | AutomaticDecision,
+    *,
+    allow_corrective_keep_current: bool = False,
 ) -> EffectAuthority | None:
     """Project only exact existing authoritative decisions; advice cannot enter."""
     if type(decision) is HumanDecision:
-        if decision.outcome != "accept":
+        if decision.outcome != "accept" and not (
+            allow_corrective_keep_current and decision.outcome == "keep_current"
+        ):
             return None
         return EffectAuthority(
             decision.decision_id,
@@ -325,8 +329,11 @@ class GuardedFieldApplication:
         target_version: str,
         dependency_digests: tuple[str, ...],
         capability_digest: str,
+        allow_corrective_keep_current: bool = False,
     ) -> FieldEffectOperation | None:
-        projected = authority_from_decision(decision)
+        projected = authority_from_decision(
+            decision, allow_corrective_keep_current=allow_corrective_keep_current
+        )
         if projected is None:
             return None
         try:

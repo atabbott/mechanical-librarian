@@ -761,6 +761,10 @@ class ContinuousGuardedApplication:
                     snapshot.dependency_digests or (snapshot.target_fingerprint,)
                 ),
                 capability_digest=observed.digest,
+                allow_corrective_keep_current=(
+                    type(decision) is HumanDecision
+                    and decision.outcome == "keep_current"
+                ),
             )
             if operation is not None:
                 planned += 1

@@ -6,7 +6,7 @@ import { ownerChoiceCount } from '../src/reviewChoiceCounts'
 type Field = CaseDetailView['fields'][number]
 
 const field = (coverConsideration: NonNullable<Field['coverConsideration']> | null): Field => ({
-  automaticDecision: null, choiceContexts: [], classification: 'needs_attention', classificationReason: 'This field needs your review.', corroborationSources: [], coverConsideration, currentRaw: null, currentValue: 'Current cover', destination: 'cover', disposition: 'review', editable: true, effectCapability: 'manual', humanDecision: null, manualHold: false, needsAttention: true, navigationRole: 'attention', notices: [], preservationOnly: false, proposalId: 'proposal-cover', proposedValues: [], provenance: [], targetFingerprint: 'fingerprint-cover',
+  automaticDecision: null, choiceContexts: [], classification: 'needs_attention', classificationReason: 'This field needs your review.', corroborationSources: [], coverConsideration, currentRaw: null, currentValue: 'Current cover', decisionActions: ['keep_current', 'accept'], destination: 'cover', disposition: 'review', editable: true, effectCapability: 'manual', humanDecision: null, manualHold: false, needsAttention: true, navigationRole: 'attention', notices: [], preservationOnly: false, proposalId: 'proposal-cover', proposedValues: [], provenance: [], targetFingerprint: 'fingerprint-cover',
 })
 
 const candidate = (ordinal: number, overrides: Partial<NonNullable<Field['coverConsideration']>['candidates'][number]> = {}) => ({
@@ -19,9 +19,9 @@ const consideration = (candidates: readonly ReturnType<typeof candidate>[], incu
 
 describe('ownerChoiceCount', () => {
   it('counts ordinary cover choices, unavailable incumbents, excluded candidates, and no comparison', () => {
-    expect(ownerChoiceCount(field(consideration([candidate(1, { incumbent: true }), candidate(2)])))).toBe(3)
-    expect(ownerChoiceCount(field(consideration([candidate(1)], 'unavailable')))).toBe(3)
+    expect(ownerChoiceCount(field(consideration([candidate(1, { incumbent: true }), candidate(2)])))).toBe(2)
+    expect(ownerChoiceCount(field(consideration([candidate(1)], 'unavailable')))).toBe(2)
     expect(ownerChoiceCount(field(consideration([candidate(1), candidate(2, { selectable: false })])))).toBe(2)
-    expect(ownerChoiceCount(field(null))).toBe(0)
+    expect(ownerChoiceCount(field(null))).toBe(1)
   })
 })

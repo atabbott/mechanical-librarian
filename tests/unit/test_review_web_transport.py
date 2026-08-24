@@ -666,6 +666,18 @@ def test_one_explicit_decision_requires_csrf_and_is_server_authoritative(
         refreshed["fields"][0]["human_decision"]["decision_id"]
         == accepted.json()["decision_id"]
     )
+    assert refreshed["fields"][0]["current"] == field["current"]
+    assert refreshed["fields"][0]["human_decision"]["selected_value"] == field[
+        "proposed_values"
+    ][0]
+    history = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}/history")
+    assert history.status_code == 200, history.text
+    assert any(
+        item["kind"] == "human_decision_recorded"
+        and item["destination"] == field["destination"]
+        and item["outcome"] == "accept"
+        for item in history.json()["items"]
+    )
     web.repository.case_current = False
     web.now += 1
     replay = web.client.post(

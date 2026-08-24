@@ -68,7 +68,7 @@ _COMMANDS: dict[str, tuple[tuple[str, str], ...]] = {
 
 _POSITIONALS: dict[str, tuple[str, ...]] = {
     "cover-review": ("show",),
-    "schema-adopt": ("review-field-facts-v1",),
+    "schema-adopt": ("review-owner-decision-actions-v1",),
 }
 
 # What each runner must receive for a complete invocation, including the two
@@ -103,7 +103,7 @@ _DELEGATED: dict[str, tuple[object, ...]] = {
     "schema-adopt": (
         Path("/state.sqlite3"),
         Path("/state.before.sqlite3"),
-        "review-field-facts-v1",
+        "review-owner-decision-actions-v1",
     ),
 }
 

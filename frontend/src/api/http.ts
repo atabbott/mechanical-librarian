@@ -9,6 +9,7 @@ export type LibraryLens = 'needs_attention' | 'all' | 'no_attention_needed'
 export type DetailSubview = 'evidence' | 'history'
 export type PolicySection = 'identity' | 'publication' | 'curation' | 'unsupported'
 export type DecisionOutcome = 'accept' | 'keep_current' | 'reject'
+export type DecisionAction = Exclude<DecisionOutcome, 'reject'>
 
 export interface LibrarySearch {
   lens: LibraryLens
@@ -118,6 +119,7 @@ export interface ReviewFieldView {
   classification: string
   classificationReason: string
   destination: string
+  decisionActions: readonly DecisionAction[]
   editable: boolean
   disposition: string
   effectCapability: string
@@ -826,6 +828,11 @@ const booleanValue = (value: unknown, field: string) => {
   if (typeof value !== 'boolean') throw new ApiError(502, `invalid_${field}`)
   return value
 }
+const decisionAction = (value: unknown): DecisionAction => {
+  if (value !== 'accept' && value !== 'keep_current')
+    throw new ApiError(502, 'invalid_case_detail_actions')
+  return value
+}
 const classificationValue = (value: unknown) => {
   const allowed = [
     'needs_attention',
@@ -1366,12 +1373,27 @@ export const mapCaseDetail = (value: unknown): CaseDetailView => {
       // The three fields dereferenced without a validator below: an entry that
       // is not an object, or that omits `current` or `proposed_values`, used to
       // surface as an unhandled TypeError instead of a rejected response.
-      if (!record(field) || !record(field.current) || !Array.isArray(field.proposed_values))
+      if (
+        !record(field) ||
+        !record(field.current) ||
+        !Array.isArray(field.proposed_values) ||
+        !Array.isArray(field.decision_actions)
+      )
         throw new ApiError(502, 'invalid_case_detail_field')
+      const decisionActions = field.decision_actions.map(decisionAction)
+      if (
+        new Set(decisionActions).size !== decisionActions.length ||
+        (decisionActions.length !== 0 &&
+          (decisionActions.length !== 2 ||
+            decisionActions[0] !== 'keep_current' ||
+            decisionActions[1] !== 'accept'))
+      )
+        throw new ApiError(502, 'invalid_case_detail_actions')
       return {
         classification: classificationValue(field.classification),
         classificationReason: stringValue(field.classification_reason, 'classification_reason'),
         destination: stringValue(field.destination, 'destination'),
+        decisionActions,
         disposition: stringValue(field.deterministic_disposition, 'disposition'),
         editable: booleanValue(field.editable, 'editable'),
         effectCapability: stringValue(field.effect_capability, 'effect_capability'),

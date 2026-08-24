@@ -21,6 +21,7 @@ from mechanical_librarian.application.review_pipeline import (
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
+    decision_actions,
 )
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
@@ -359,8 +360,14 @@ class InspectCurrentReviewCase:
             result = proposal["result"]
             assert type(result) is dict
             destination = cast(str, proposal["destination"])
-            alternatives = result["alternatives"]
-            assert type(alternatives) is list
+            all_alternatives = result["alternatives"]
+            assert type(all_alternatives) is list
+            eligible_alternatives = [
+                alternative
+                for alternative in all_alternatives
+                if alternative["assessment"] != "preserves_target"
+            ]
+            alternatives = all_alternatives
             references = sorted(
                 {
                     reference
@@ -423,6 +430,11 @@ class InspectCurrentReviewCase:
                     alternative["value"] for alternative in alternatives
                 ),
             )
+            actions = decision_actions(proposal)
+            # Classification retains the field's owner context. Action
+            # availability is a separate exact-proposal contract; an empty
+            # action list is context-only, never an implied choice envelope.
+            needs_attention = classification.needs_attention and bool(actions)
             inventory_role = _field_inventory_role(
                 classification.state,
                 destination,
@@ -444,15 +456,14 @@ class InspectCurrentReviewCase:
                 "manual_hold": decision is not None and automatic_decision is not None,
                 "classification": classification.state,
                 "classification_reason": classification.reason,
-                "editable": classification.editable,
+                "editable": classification.editable and bool(actions),
                 "navigation_role": classification.navigation_role,
-                "needs_attention": classification.needs_attention,
+                "needs_attention": needs_attention,
+                "decision_actions": list(actions),
                 "inventory_role": inventory_role,
                 "preservation_only": classification.preservation_only,
                 "notices": reasons,
-                "proposed_values": [
-                    alternative["value"] for alternative in alternatives
-                ],
+                "proposed_values": [alternative["value"] for alternative in eligible_alternatives],
                 "choice_contexts": choice_contexts,
                 "provenance": references,
                 "corroboration_sources": _corroboration_source_labels(

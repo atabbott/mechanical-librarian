@@ -31,7 +31,12 @@ from mechanical_librarian.domain.automatic_decision import (
     F19A_QUALIFICATION_MANIFEST_SHA256,
     AutomaticDecision,
 )
-from mechanical_librarian.domain.field_effect import EffectAuthority
+from mechanical_librarian.domain.field_effect import (
+    EffectAuthority,
+    EffectConsent,
+    FieldEffectOperation,
+    FieldEffectPlan,
+)
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_policy import (
     DEFAULT_OPTIONS,
@@ -205,6 +210,20 @@ def test_a_qualified_automatic_decision_reaches_activity_without_raw_inserts(
     effects: _EffectEnvironment,  # noqa: F811
 ) -> None:
     decision = _qualified_no_change_decision(effects)
+
+    # Replaying the exact successor's shadow outcome cannot manufacture a
+    # second automatic fact, and an automatic no-change is not owner work.
+    ShadowOutcomeSet.from_json(
+        effects.repository.persist_shadow_outcome(decision.review_case_id, 4)
+    )
+    assert effects.repository.count_current_attention_fields(None) == 0
+    assert [
+        AutomaticDecision.from_json(value)
+        for value in effects.repository.get_review_case_decisions(
+            decision.review_case_id
+        )
+        if AutomaticDecision.from_json(value).destination == decision.destination
+    ] == [decision]
 
     automatic = next(
         event for event in _ledger(effects) if event["event_id"] == decision.decision_id
@@ -490,6 +509,169 @@ def test_each_owner_outcome_reaches_the_ledger_in_its_own_words(
     assert rows["keep_current"]["change_detail"] == "Kept Title as Old title"
     assert rows["reject"]["change"] == "Left unchanged"
     assert rows["reject"]["change_detail"] == "Left Title unchanged"
+
+
+def test_verified_owner_replacement_retains_history_and_activity_predecessor(
+    effects: _EffectEnvironment,  # noqa: F811
+) -> None:
+    """The second verified plan reads its predecessor, not the original target."""
+    providers = (
+        _provider(
+            "alpha",
+            "alpha-edition",
+            (
+                _claim(
+                    "alpha",
+                    "alpha-edition",
+                    ClaimKind.LANGUAGE,
+                    "en",
+                    scope=ClaimScope.EDITION,
+                ),
+            ),
+        ),
+        _provider(
+            "beta",
+            "beta-edition",
+            (
+                _claim(
+                    "beta",
+                    "beta-edition",
+                    ClaimKind.LANGUAGE,
+                    "eng",
+                    scope=ClaimScope.EDITION,
+                ),
+            ),
+        ),
+    )
+    report = _proposal_report(
+        fields=_fields(
+            language=TargetField(TargetDestination.LANGUAGE, TargetFieldState.MISSING)
+        ),
+        providers=providers,
+    )
+    effects.repository.publish(report, lambda: True)
+    proposal_set = evaluate_report(report)
+    effects.repository.publish_proposal(proposal_set)
+    case_id = json.loads(effects.repository.admit_review_case(proposal_set))[
+        "review_case_id"
+    ]
+    case = ReviewCase.create_from_data(
+        json.loads(effects.repository.get_review_case(case_id))["case"]
+    )
+    proposal = next(
+        value for value in case.proposals if value["destination"] == "language"
+    )
+    choices = {
+        value["value"]["value"]: value["value"]
+        for value in proposal["result"]["alternatives"]
+        if value["assessment"] != "preserves_target"
+    }
+    first_value, second_value = choices["en"], choices["eng"]
+
+    def decision(
+        selected_value: dict[str, object], key: str, occurred_at: int
+    ) -> HumanDecision:
+        return HumanDecision.create(
+            case,
+            proposal_id=proposal["proposal_id"],
+            target_fingerprint=case.target_fingerprint,
+            destination="language",
+            actor="owner",
+            outcome="accept",
+            selected_value=selected_value,
+            idempotency_key=key,
+            occurred_at=occurred_at,
+        )
+
+    def verify(
+        source: HumanDecision,
+        pre_value: object,
+        desired_value: object,
+        occurred_at: int,
+    ) -> None:
+        plan = FieldEffectPlan.create(
+            connection=report.target.connection,
+            library=report.target.library,
+            work_id=report.target.item,
+            destination=source.destination,
+            pre_value=pre_value,
+            desired_value=desired_value,
+            target_fingerprint=source.target_fingerprint,
+            target_version="language-version-" + str(occurred_at),
+            dependency_digests=(source.target_fingerprint,),
+            authority=EffectAuthority(
+                source.decision_id,
+                source.review_case_id,
+                source.target_fingerprint,
+                "persisted_review_case",
+                "human",
+                "candidate",
+                None,
+                None,
+            ),
+            consent=EffectConsent.create(
+                connection=report.target.connection,
+                library=report.target.library,
+                destination=source.destination,
+                envelope_identity=effects.repository.field_effect_consent_envelope_identity(
+                    report.target.library
+                ),
+                granted_at=occurred_at,
+            ),
+            capability_digest="d" * 64,
+            created_at=occurred_at,
+        )
+        effects.repository.record_field_effect(
+            FieldEffectOperation(plan, updated_at=occurred_at)
+        )
+        effects.repository.claim_field_effect(
+            plan.plan_id, "planned", "a" * 64, occurred_at + 1
+        )
+        effects.repository.transition_field_effect(
+            plan.plan_id, "claimed", "applying", occurred_at + 2
+        )
+        effects.repository.transition_field_effect(
+            plan.plan_id, "applying", "verified", occurred_at + 3
+        )
+
+    first = decision(first_value, "activity-replacement-first-0001", 1_000)
+    effects.repository.record_human_decision(first)
+    verify(first, None, "en", 1_010)
+    second = decision(second_value, "activity-replacement-second-0001", 1_020)
+    effects.repository.record_human_decision(second)
+    verify(second, "en", "eng", 1_030)
+
+    decisions = [
+        HumanDecision.from_json(document)
+        for document in effects.repository.get_review_case_decisions(
+            case.review_case_id
+        )
+        if HumanDecision.from_json(document).destination == "language"
+    ]
+    assert [value.decision_id for value in decisions] == [
+        first.decision_id,
+        second.decision_id,
+    ]
+    history = [
+        event
+        for event in effects.repository.get_review_case_history(case.review_case_id, 10)
+        if event.get("kind") == "human_decision_recorded"
+    ]
+    assert [event["decision_id"] for event in history] == [
+        second.decision_id,
+        first.decision_id,
+    ]
+    replacement = next(
+        event
+        for event in _ledger(effects)
+        if event["change_id"] != first.decision_id
+        and event["destination"] == "language"
+        and event["state"] == "verified"
+        and _facts(event).get("New value") == "eng"
+    )
+    assert replacement["change"] == "en → eng"
+    assert _facts(replacement)["Previous value"] == "en"
+    assert _facts(replacement)["New value"] == "eng"
 
 
 def _automatic_write(

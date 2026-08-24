@@ -105,6 +105,14 @@ class FakeReviewRepository:
         self.failures: list[int] = []
         self.sessions: dict[str, tuple[str, str, int, int | None]] = {}
         self.decisions: dict[str, str] = {}
+        self.history: list[dict[str, object]] = [
+            {
+                "checkpoint": 1,
+                "kind": "admitted",
+                "reason": "actionable",
+                "transition_id": "review_transition_" + "a" * 64,
+            }
+        ]
         # Destinations whose recorded decision has advanced past the reversible
         # effect states, and can therefore no longer be changed.
         self.override_blocked_destinations: tuple[str, ...] = ()
@@ -305,14 +313,9 @@ class FakeReviewRepository:
     def get_review_case_history(
         self, review_case_id: str, limit: int
     ) -> tuple[dict[str, object], ...]:
-        return (
-            {
-                "checkpoint": 1,
-                "kind": "admitted",
-                "reason": "actionable",
-                "transition_id": "review_transition_" + "a" * 64,
-            },
-        )
+        if review_case_id != self.case.review_case_id:
+            raise RuntimeError
+        return tuple(self.history[-limit:])
 
     def get_review_case_decisions(self, review_case_id: str) -> tuple[str, ...]:
         return tuple(self.decisions.values())
@@ -339,6 +342,22 @@ class FakeReviewRepository:
         if existing is not None:
             return existing
         self.decisions[decision.destination] = decision.to_json()
+        event_id = "human_decision_event_" + hashlib.sha256(
+            ("human-decision-event-v1:" + decision.decision_id).encode("utf-8")
+        ).hexdigest()
+        self.history.append(
+            {
+                "actor": decision.actor,
+                "decision_id": decision.decision_id,
+                "destination": decision.destination,
+                "event_id": event_id,
+                "kind": "human_decision_recorded",
+                "occurred_at": decision.occurred_at,
+                "outcome": decision.outcome,
+                "review_case_id": decision.review_case_id,
+                "schema_version": "human-decision-event-v1",
+            }
+        )
         return decision.to_json()
 
     def get_review_case_report(self, review_case_id: str) -> str:

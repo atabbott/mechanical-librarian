@@ -56,6 +56,10 @@ from mechanical_librarian.domain.shadow_outcome import (
     ShadowOutcomeSet,
 )
 
+_REPLACEMENT_BLOCKING_EFFECT_SQL = (
+    "(state IN ('claimed','applying','reconciling') OR (state='verified' AND ?))"
+)
+
 
 class SQLiteDecisionRepository(ConnectionScoped):
     """Record and project one library's human and automatic review decisions."""
@@ -393,9 +397,11 @@ class SQLiteDecisionRepository(ConnectionScoped):
             ).fetchone()
             if previous is not None:
                 effect = self._connection.execute(
-                    "SELECT 1 FROM field_effects WHERE decision_id=? AND state NOT IN "
-                    "('planned','retryable','stale','superseded','abandoned') LIMIT 1",
-                    (previous[0],),
+                    "SELECT 1 FROM field_effects WHERE decision_id=? AND "
+                    + _REPLACEMENT_BLOCKING_EFFECT_SQL
+                    + " "
+                    "LIMIT 1",
+                    (previous[0], decision.destination == "cover"),
                 ).fetchone()
                 if effect is not None:
                     raise HumanDecisionError("already_decided")

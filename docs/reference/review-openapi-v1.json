@@ -3901,6 +3901,17 @@
           "current": {
             "$ref": "#/components/schemas/_TargetField"
           },
+          "decision_actions": {
+            "items": {
+              "enum": [
+                "accept",
+                "keep_current"
+              ],
+              "type": "string"
+            },
+            "title": "Decision Actions",
+            "type": "array"
+          },
           "destination": {
             "title": "Destination",
             "type": "string"
@@ -4002,6 +4013,7 @@
           "current",
           "deterministic_disposition",
           "destination",
+          "decision_actions",
           "editable",
           "effect_capability",
           "human_decision",

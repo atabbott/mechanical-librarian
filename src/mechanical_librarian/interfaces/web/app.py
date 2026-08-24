@@ -302,6 +302,7 @@ class _ReviewField(_ClosedModel):
     current: _TargetField
     deterministic_disposition: str
     destination: str
+    decision_actions: list[Literal["accept", "keep_current"]]
     editable: bool
     effect_capability: str
     human_decision: _DecisionProjection | None

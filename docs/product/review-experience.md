@@ -57,8 +57,9 @@ A new target fingerprint or materially changed proposal set supersedes an
 unresolved case rather than mutating it in place. Historical cases and
 decisions remain immutable.
 
-The #449 service records one exact ordinary-field `accept`, `keep_current`, or
-`reject` fact. It binds the current case, target fingerprint, field proposal,
+The #449 service retains exact ordinary-field `accept`, `keep_current`, or
+historical `reject` facts. New Library choices are current-value `keep_current`
+or exact eligible `accept`; it binds the current case, target fingerprint, field proposal,
 owner actor, selected value where applicable, and idempotency key. The decision
 and its current-case audit event are append-only and atomic; an acknowledged
 decision removes only that exact field from current attention. Browser decision
@@ -308,22 +309,22 @@ cannot be mistaken for cover content. Excluded candidates remain subordinate
 with their recorded reason. Reduced motion preserves the same status text,
 success state, focus, and polite announcement without nonessential movement.
 
-An unresolved field with no eligible proposal still presents its current value
-as the one direct choice; automatic, resolved, and stale fields never present a
+An unresolved field with no eligible alternative remains readable context, not
+owner work. Only an eligible alternative makes retaining the current value a
+meaningful direct choice; automatic, resolved, and stale fields never present a
 false choice.
 
-A decision is acknowledged locally and advances immediately through the
-displayed unresolved field order, wrapping once. The authoritative exact-case
-read follows and corrects the arrival if it disagrees; Library counts and
+A decision advances only after its server acknowledgement and authoritative
+exact-case read confirm the recorded field. Library counts and
 attention totals converge afterwards and are never waited on, so next-field
-authority never depends on a whole-Library projection. Commands leave in the
-order they were chosen, bounded per case, and a duplicate choice for a field
+authority never depends on a whole-Library projection. A field whose retained
+attention context has no admitted action remains readable but noninteractive;
+a duplicate choice for a field
 already settled becomes no second command. If no other unresolved field
 remains, the recorded field stays as the terminal case. Deliberate navigation
 away from that field while the refresh is pending is preserved rather than
-overwritten by automatic advancement. Revisiting a recorded field restores its
-full current-and-alternatives composition with the recorded answer marked, for
-as long as the store would still accept a replacement.
+overwritten by automatic advancement. Revisiting a recorded field retains its
+recorded outcome and context without offering a second current Library action.
 
 Recorded human decisions retain their exact selected value in the detail view.
 The deterministic disposition remains distinct from that live decision record.

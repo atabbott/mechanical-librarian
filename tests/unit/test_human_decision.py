@@ -7,6 +7,7 @@ import pytest
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
+    decision_actions,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
@@ -99,6 +100,42 @@ def test_invalid_selection_nonactionable_field_and_tampering_fail_closed(
         HumanDecision.from_json(
             json.dumps(tampered, separators=(",", ":"), sort_keys=True)
         )
+
+
+@pytest.mark.parametrize(
+    ("outcome", "manual_required", "alternatives", "expected"),
+    (
+        (
+            "unresolved_choice",
+            False,
+            [{"value": {"kind": "text", "value": "new"}}],
+            ("keep_current", "accept"),
+        ),
+        (
+            "propose_change",
+            False,
+            [{"value": {"kind": "text", "value": "new"}}],
+            ("keep_current", "accept"),
+        ),
+        ("acceptable_choice", False, [], ()),
+        ("keep", True, [], ()),
+        ("keep", False, [], ()),
+        ("defer", False, [], ()),
+        ("unresolved_choice", False, None, ()),
+    ),
+)
+def test_decision_actions_fail_closed_to_the_exact_human_decision_contract(
+    outcome: str,
+    manual_required: bool,
+    alternatives: object,
+    expected: tuple[str, ...],
+) -> None:
+    proposal: dict[str, object] = {
+        "destination": "title",
+        "manual_required": manual_required,
+        "result": {"outcome": outcome, "alternatives": alternatives},
+    }
+    assert decision_actions(proposal) == expected
 
 
 def test_owner_can_replace_an_automatic_actionable_selection(

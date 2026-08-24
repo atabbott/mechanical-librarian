@@ -44,6 +44,7 @@ export const detail: CaseDetailView = {
     classification: 'needs_attention',
     classificationReason: 'This field needs your review.',
     destination: 'title',
+    decisionActions: ['keep_current', 'accept'],
     editable: true,
     disposition: 'review',
     effectCapability: 'manual',

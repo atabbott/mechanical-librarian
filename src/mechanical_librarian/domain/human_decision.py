@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from typing import Self
+from typing import Literal, Mapping, Self
 
 from mechanical_librarian.domain.review_case import (
     ReviewCase,
@@ -16,6 +16,7 @@ from mechanical_librarian.domain.review_case import (
 
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._:-]{16,128}$")
 _OUTCOMES = {"accept", "keep_current", "reject"}
+HumanDecisionAction = Literal["accept", "keep_current"]
 
 
 class HumanDecisionError(ValueError):
@@ -24,6 +25,65 @@ class HumanDecisionError(ValueError):
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(code)
+
+
+def decision_actions(proposal: Mapping[str, object]) -> tuple[HumanDecisionAction, ...]:
+    """Return exactly the new owner choices the immutable proposal admits."""
+    result = proposal.get("result")
+    if not _actionable(proposal):
+        return ()
+    alternatives = result.get("alternatives")
+    if type(alternatives) is not list:
+        return ()
+    eligible = [
+        alternative
+        for alternative in alternatives
+        if type(alternative) is dict and alternative.get("assessment") != "preserves_target"
+    ]
+    # ``reject`` remains readable historical state. A retain-current choice is
+    # meaningful only beside an eligible alternative.
+    return ("keep_current", "accept") if eligible else ()
+
+
+def validate_decision_action(
+    proposal: Mapping[str, object],
+    outcome: str,
+    selected_value: dict[str, object] | None,
+) -> None:
+    """Apply the selection half of the human-decision contract."""
+    # Historical ``reject`` facts remain constructible and valid.  It is not
+    # returned by ``decision_actions``, so no current projection can offer it.
+    if outcome == "reject":
+        if not _actionable(proposal):
+            raise HumanDecisionError("unsupported")
+        if selected_value is not None:
+            raise HumanDecisionError("invalid_selection")
+        return
+    if outcome not in decision_actions(proposal):
+        raise HumanDecisionError("unsupported")
+    if outcome == "accept":
+        result = proposal["result"]
+        assert type(result) is dict
+        alternatives = result["alternatives"]
+        assert type(alternatives) is list
+        if type(selected_value) is not dict or selected_value not in [
+            alternative.get("value")
+            for alternative in alternatives
+            if type(alternative) is dict
+            and alternative.get("assessment") != "preserves_target"
+        ]:
+            raise HumanDecisionError("invalid_selection")
+    elif selected_value is not None:
+        raise HumanDecisionError("invalid_selection")
+
+
+def _actionable(proposal: Mapping[str, object]) -> bool:
+    result = proposal.get("result")
+    return type(result) is dict and (
+        result.get("outcome")
+        in {"propose_change", "acceptable_choice", "unresolved_choice"}
+        or proposal.get("manual_required") is True
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,35 +166,7 @@ class HumanDecision:
         )
         if proposal is None:
             raise HumanDecisionError("stale")
-        result = proposal["result"]
-        if type(result) is not dict:
-            raise HumanDecisionError("invalid")
-        actionable = (
-            result.get("outcome")
-            in {
-                "propose_change",
-                "acceptable_choice",
-                "unresolved_choice",
-            }
-            or proposal["manual_required"] is True
-        )
-        if not actionable:
-            raise HumanDecisionError("unsupported")
-        if outcome == "accept":
-            alternatives = result.get("alternatives")
-            if (
-                type(selected_value) is not dict
-                or type(alternatives) is not list
-                or selected_value
-                not in [
-                    alternative.get("value")
-                    for alternative in alternatives
-                    if type(alternative) is dict
-                ]
-            ):
-                raise HumanDecisionError("invalid_selection")
-        elif selected_value is not None:
-            raise HumanDecisionError("invalid_selection")
+        validate_decision_action(proposal, outcome, selected_value)
         idempotency_digest = cls.idempotency_digest_for(idempotency_key)
         request = {
             "actor": actor,
@@ -216,32 +248,7 @@ class HumanDecision:
             or proposal is None
         ):
             raise HumanDecisionError("stale")
-        result = proposal["result"]
-        if type(result) is not dict or not (
-            result.get("outcome")
-            in {
-                "propose_change",
-                "acceptable_choice",
-                "unresolved_choice",
-            }
-            or proposal["manual_required"] is True
-        ):
-            raise HumanDecisionError("unsupported")
-        alternatives = result.get("alternatives")
-        if self.outcome == "accept":
-            if (
-                type(self.selected_value) is not dict
-                or type(alternatives) is not list
-                or self.selected_value
-                not in [
-                    alternative.get("value")
-                    for alternative in alternatives
-                    if type(alternative) is dict
-                ]
-            ):
-                raise HumanDecisionError("invalid_selection")
-        elif self.selected_value is not None:
-            raise HumanDecisionError("invalid_selection")
+        validate_decision_action(proposal, self.outcome, self.selected_value)
         request = {
             "actor": self.actor,
             "destination": self.destination,

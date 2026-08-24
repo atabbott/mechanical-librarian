@@ -9,7 +9,6 @@ import sqlite3
 import stat
 import struct
 import sys
-import time
 from pathlib import Path
 
 from mechanical_librarian.adapters.persistence.binding import (
@@ -25,26 +24,17 @@ from mechanical_librarian.adapters.persistence.proposal_sets import (
     _validate_proposal_row,
 )
 from mechanical_librarian.adapters.persistence.schema import (
-    _REVIEW_CASE_FIELD_FACT_VALUES_SQL,
     _REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
     _REVIEW_CASE_FIELD_FACTS_SQL,
-    _REVIEW_WORK_AGED_CLAIM_INDEX_SQL,
-    _REVIEW_WORK_DUE_PROMOTION_INDEX_SQL,
-    _REVIEW_WORK_LINEAGE_HISTORY_INDEX_SQL,
-    _REVIEW_WORK_RECENT_CLAIM_INDEX_SQL,
-    _REVIEW_WORK_SQL,
-    _SHADOW_OUTCOME_FIELD_FACT_VALUES_SQL,
-    _SHADOW_OUTCOME_FIELD_FACTS_CASE_INDEX_SQL,
-    _SHADOW_OUTCOME_FIELD_FACTS_INSERT_SQL,
-    _SHADOW_OUTCOME_FIELD_FACTS_SQL,
     _expected_schema_objects,
+    _review_case_field_fact_values_sql,
     _validate_report_row,
-    _validate_review_field_facts_predecessor_schema,
+    _validate_review_owner_decision_actions_predecessor_schema,
     _validate_schema,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.schema_adoption import (
-    REVIEW_FIELD_FACTS_V1,
+    REVIEW_OWNER_DECISION_ACTIONS_V1,
     SchemaAdoptionRecoveryRequired,
 )
 from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
@@ -52,7 +42,18 @@ from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.review_case import ReviewCase
 
 _CHUNK_BYTES = 1024 * 1024
-_DERIVED_TABLES = {"review_case_field_facts", "shadow_outcome_field_facts"}
+_DERIVED_TABLES = {"review_case_field_facts"}
+_TARGET_SCHEMA_OBJECTS_SHA256 = (
+    "bab81844bec110fb9308b464865a9add452ca2ddc8a2c266621d0b5ffb97766f"
+)
+
+
+def _expected_schema_objects_digest() -> str:
+    return hashlib.sha256(
+        json.dumps(
+            _expected_schema_objects(), ensure_ascii=True, separators=(",", ":")
+        ).encode()
+    ).hexdigest()
 
 
 def _descriptor_digest(descriptor: int) -> str:
@@ -80,9 +81,7 @@ def _encode_value(value: object) -> bytes:
     raise MetadataReportError("database is unavailable or incompatible")
 
 
-def _application_table_digest(
-    connection: sqlite3.Connection, adoption_boundary: int | None = None
-) -> str:
+def _application_table_digest(connection: sqlite3.Connection) -> str:
     """Digest every application value in stable physical table order."""
     digest = hashlib.sha256()
     table_names = sorted(
@@ -96,13 +95,6 @@ def _application_table_digest(
         digest.update(encoded_name)
         quoted = '"' + table_name.replace('"', '""') + '"'
         for row in connection.execute(f"SELECT * FROM {quoted} NOT INDEXED"):
-            if (
-                table_name == "review_preparation_work"
-                and adoption_boundary is not None
-                and row[14] == "queued"
-                and row[17] > adoption_boundary
-            ):
-                row = (*row[:14], "delayed", *row[15:])
             digest.update(len(row).to_bytes(4, "big"))
             for value in row:
                 encoded = _encode_value(value)
@@ -368,14 +360,17 @@ def _close_adoption_resources(
 
 def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str, str]:
     """Apply one named exact-predecessor plan without changing application rows."""
-    if plan != REVIEW_FIELD_FACTS_V1:
+    if plan != REVIEW_OWNER_DECISION_ACTIONS_V1:
         raise MetadataReportError("schema adoption plan is unsupported")
+    # This check precedes pathname resolution and all filesystem access. The
+    # literal is the reviewed plan result, never a dynamically stored target.
+    if _expected_schema_objects_digest() != _TARGET_SCHEMA_OBJECTS_SHA256:
+        raise MetadataReportError("schema adoption is unavailable for this build")
     database = database_path.absolute()
     backup = backup_path.absolute()
     if database.parent != backup.parent or database.name == backup.name:
         raise MetadataReportError("schema adoption backup path is invalid")
 
-    adoption_boundary = -1
     descriptor = -1
     parent_descriptor = -1
     binding: _LinuxDatabaseBinding | None = None
@@ -420,19 +415,13 @@ def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str,
             source_descriptor,
             binding.require_current if binding is not None else None,
         )
-        # The one frozen predecessor has a narrower CHECK on preparation work.
-        # Its adoption rebuilds that derived operational row in the same
-        # exclusive transaction, so SQLite must not check child references
-        # during the table swap; every reference is checked immediately after.
-        connection.execute("PRAGMA foreign_keys=OFF")
         connection.execute("PRAGMA synchronous=FULL")
         connection.execute("PRAGMA busy_timeout=0")
         connection.execute("BEGIN EXCLUSIVE")
-        adoption_boundary = int(time.time())
         try:
             _validate_schema(connection)
         except MetadataReportError:
-            _validate_review_field_facts_predecessor_schema(connection)
+            _validate_review_owner_decision_actions_predecessor_schema(connection)
         else:
             _validate_canonical_documents(connection)
             connection.rollback()
@@ -442,76 +431,26 @@ def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str,
             return {"plan": plan, "status": "already-current"}
 
         _validate_canonical_documents(connection)
-        # The predecessor stored retry backoff as queued work. The current
-        # claimant only considers queued rows, so preserve a still-future
-        # backoff at this one explicit adoption boundary.
-        before = _application_table_digest(connection, adoption_boundary)
+        before = _application_table_digest(connection)
         backup_identity, backup_digest = _copy_verified_backup(
             source_descriptor, parent_descriptor, backup.name
         )
         if binding is not None:
             binding.require_current()
+        connection.execute("DROP TRIGGER review_cases_project_field_facts")
+        connection.execute("DROP TABLE review_case_field_facts")
         connection.execute(_REVIEW_CASE_FIELD_FACTS_SQL)
         connection.execute(
             "INSERT INTO review_case_field_facts("
-            "review_case_id,destination,unresolved_choice,manual_bibliographic_attention) "
-            "SELECT rc.review_case_id," + _REVIEW_CASE_FIELD_FACT_VALUES_SQL + " "
+            "review_case_id,destination,unresolved_choice,manual_bibliographic_attention,has_owner_decision_actions) "
+            "SELECT rc.review_case_id,"
+            + _review_case_field_fact_values_sql("rc.document")
+            + " "
             "FROM review_cases rc,json_each(rc.document,'$.results') result"
         )
         connection.execute(_REVIEW_CASE_FIELD_FACTS_INSERT_SQL)
-        connection.execute(_SHADOW_OUTCOME_FIELD_FACTS_SQL)
-        connection.execute(
-            "INSERT INTO shadow_outcome_field_facts("
-            "outcome_set_id,review_case_id,destination,disposition,"
-            "automatic_destination,policy_category) SELECT shadow.outcome_set_id,"
-            "shadow.review_case_id," + _SHADOW_OUTCOME_FIELD_FACT_VALUES_SQL + " FROM "
-            "shadow_decision_outcomes shadow,json_each(shadow.document,'$.outcomes') outcome"
-        )
-        connection.execute(_SHADOW_OUTCOME_FIELD_FACTS_CASE_INDEX_SQL)
-        connection.execute(_SHADOW_OUTCOME_FIELD_FACTS_INSERT_SQL)
-        connection.execute("DROP INDEX review_preparation_work_aged_claim")
-        connection.execute("DROP INDEX review_preparation_work_recent_claim")
-        connection.execute("DROP INDEX review_preparation_work_lineage_history")
-        connection.execute(
-            _REVIEW_WORK_SQL.replace(
-                "review_preparation_work (", "review_preparation_work_rebuilt (", 1
-            )
-        )
-        columns = (
-            "work_id,scan_id,ordinal,connection_name,library_name,library_id,item_id,"
-            "file_identity,source_revision,source_fingerprint,producer_fingerprint,"
-            "catalogue_generation,catalogue_fingerprint,stage,state,attempt,recovery_attempt,"
-            "retry_not_before,report_id,recovery_source_report_id,proposal_set_id,"
-            "review_case_id,failure_code,failure_root,updated_at"
-        )
-        connection.execute(
-            "INSERT INTO review_preparation_work_rebuilt("
-            + columns
-            + ") SELECT "
-            + columns.replace(
-                "stage,state,attempt",
-                "stage,CASE WHEN state='queued' AND retry_not_before>? THEN 'delayed' ELSE state END,attempt",
-            )
-            + " FROM review_preparation_work",
-            (adoption_boundary,),
-        )
-        connection.execute("DROP TABLE review_preparation_work")
-        connection.execute(_REVIEW_WORK_SQL)
-        connection.execute(
-            "INSERT INTO review_preparation_work("
-            + columns
-            + ") SELECT "
-            + columns
-            + " FROM review_preparation_work_rebuilt"
-        )
-        connection.execute("DROP TABLE review_preparation_work_rebuilt")
-        connection.execute(_REVIEW_WORK_AGED_CLAIM_INDEX_SQL)
-        connection.execute(_REVIEW_WORK_DUE_PROMOTION_INDEX_SQL)
-        connection.execute(_REVIEW_WORK_RECENT_CLAIM_INDEX_SQL)
-        connection.execute(_REVIEW_WORK_LINEAGE_HISTORY_INDEX_SQL)
         recovery_required = True
         connection.commit()
-        connection.execute("PRAGMA foreign_keys=ON")
         if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
             raise SchemaAdoptionRecoveryRequired
         if binding is not None:
