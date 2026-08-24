@@ -397,9 +397,7 @@ def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str,
         _validate_delete_mode_header(descriptor)
 
         if sys.platform.startswith("linux"):
-            binding = _LinuxDatabaseBinding.create(
-                database, descriptor, wait_for_authority=False
-            )
+            binding = _LinuxDatabaseBinding.create(database, descriptor)
             descriptor = -1
             database_for_sqlite = binding.alias_path
             source_descriptor = binding.descriptor

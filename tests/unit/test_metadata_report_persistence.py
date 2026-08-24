@@ -11,6 +11,7 @@ import sqlite3
 import sys
 import tempfile
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -995,7 +996,9 @@ def test_double_path_swap_cannot_hide_the_alternate_sqlite_connection() -> None:
 @pytest.mark.skipif(
     not sys.platform.startswith("linux"), reason="Linux descriptor proof"
 )
-def test_linux_descriptor_binding_allows_ordinary_open_and_reopen() -> None:
+def test_linux_descriptor_binding_refuses_competing_root_and_reopens_after_close() -> (
+    None
+):
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         path = root / "reports.sqlite"
@@ -1006,32 +1009,14 @@ def test_linux_descriptor_binding_allows_ordinary_open_and_reopen() -> None:
             if value.name.startswith(".metadata-report-binding-")
         )
         assert len(aliases) == 1
-        competing_open_started = threading.Event()
-        reopened_after_close: list[bool] = []
-        reopen_failures: list[Exception] = []
-
-        def competing_open() -> None:
-            try:
-                competing_open_started.set()
-                competing = open_repository(path)
-                reopened_after_close.append(True)
-                competing.close()
-            except Exception as error:
-                reopen_failures.append(error)
-
-        competitor = threading.Thread(target=competing_open)
-        competitor.start()
-        assert competing_open_started.wait(1)
-        competitor.join(0.05)
-        assert competitor.is_alive()
-        assert [] == reopened_after_close
         report = synthetic_report()
         repository.publish(report, lambda: True)
+        competing_open_started = time.monotonic()
+        with pytest.raises(MetadataReportError):
+            open_repository(path)
+        assert time.monotonic() - competing_open_started < 1
+        assert repository.get(report.report_id) == report.to_json()
         repository.close()
-        competitor.join(2)
-        assert not competitor.is_alive()
-        assert [] == reopen_failures
-        assert [True] == reopened_after_close
         assert (
             tuple(
                 value.name
