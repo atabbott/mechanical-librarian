@@ -479,6 +479,7 @@ def _start_deterministic_installed_server(
     reservation: ReservedPort,
     origin: str,
     admit_case: Callable[[str, str], None],
+    after_advance: Callable[[PipelineAction, str | None], None],
 ) -> tuple[uvicorn.Server, threading.Thread, SQLiteProviderRecoveryStore]:
     """Run installed-wheel HTTP over the production persisted pipeline boundary.
 
@@ -596,6 +597,7 @@ def _start_deterministic_installed_server(
         propose=propose,
         admit=admit,
         project=lambda *_: True,
+        after_advance=lambda _, action, output_id: after_advance(action, output_id),
         timing=timing,
     )
     supervisor = ReviewPreparationSupervisor(pipeline, polling_interval_seconds=None)
@@ -749,6 +751,7 @@ class _InstalledPreparationRun:
         self._case_id_lock = threading.Lock()
         self._case_admitted = threading.Event()
         self._fixture_case_hold = threading.Event()
+        self._fixture_case_held = threading.Event()
         self._fixture_case_release = threading.Event()
         self._server: uvicorn.Server | None = None
         self._server_thread: threading.Thread | None = None
@@ -770,6 +773,7 @@ class _InstalledPreparationRun:
                 reservation=self._reservation,
                 origin=self._origin,
                 admit_case=self._capture_fixture_case,
+                after_advance=self._hold_fixture_case_after_advance,
             )
         )
         with httpx.Client(verify=False, trust_env=False) as client:
@@ -824,13 +828,30 @@ class _InstalledPreparationRun:
             if self._case_id is None:
                 self._case_id = case_id
         self._case_admitted.set()
-        if self._fixture_case_hold.is_set():
-            assert self._fixture_case_release.wait(timeout=15), (
-                "fixture case hold timed out"
-            )
+
+    def _hold_fixture_case_after_advance(
+        self, action: PipelineAction, output_id: str | None
+    ) -> None:
+        """Hold only the committed fixture admission outside the action repository."""
+
+        if action.stage != "admission" or action.item_id != "fiction-0000":
+            return
+        with self._case_id_lock:
+            if (
+                not self._fixture_case_hold.is_set()
+                or output_id is None
+                or output_id != self._case_id
+            ):
+                return
+            self._fixture_case_hold.clear()
+        self._fixture_case_held.set()
+        assert self._fixture_case_release.wait(timeout=15), (
+            "fixture case hold timed out"
+        )
 
     def hold_fixture_case(self) -> None:
         self._fixture_case_release.clear()
+        self._fixture_case_held.clear()
         self._fixture_case_hold.set()
 
     def release_fixture_case(self) -> None:

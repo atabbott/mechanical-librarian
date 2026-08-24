@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from mechanical_librarian.application.review_pipeline import PipelineAction
 from tests.support import continuous_review_scale
 from tests.support.continuous_review_scale import (
     _InstalledPreparationRun,
@@ -43,6 +44,27 @@ class _JoiningThread(threading.Thread):
 
     def is_alive(self) -> bool:
         return self._alive
+
+
+def _admission_action(item_id: str) -> PipelineAction:
+    return PipelineAction(
+        "action",
+        "scan",
+        "admission",
+        1,
+        "primary",
+        "fiction",
+        "fiction",
+        "a" * 64,
+        catalogue_generation=1,
+        catalogue_fingerprint="b" * 64,
+        item_id=item_id,
+        file_identity="c" * 64,
+        source_revision=1,
+        report_id="report",
+        proposal_set_id="proposal",
+        source_fingerprint="d" * 64,
+    )
 
 
 class _Response:
@@ -281,6 +303,9 @@ def test_installed_preparation_closes_browser_observer_before_server() -> None:
     run = object.__new__(_InstalledPreparationRun)
     run._phase_observer = _ClosingObserver(events)
     run._fixture = type("Fixture", (), {"release_discovery": lambda _: None})()
+    run._fixture_case_hold = threading.Event()
+    run._fixture_case_held = threading.Event()
+    run._fixture_case_release = threading.Event()
     run._server = type("Server", (), {"should_exit": False, "force_exit": False})()
     run._server_thread = _JoiningThread(events)
     run._recovery = type(
@@ -290,6 +315,7 @@ def test_installed_preparation_closes_browser_observer_before_server() -> None:
     run.close()
 
     assert events == ["observer", "join:30", "recovery"]
+    assert run._fixture_case_release.is_set()
 
 
 def test_installed_decision_activity_wrappers_keep_browser_out_of_http_smoke(
@@ -350,35 +376,84 @@ def test_installed_preparation_exposes_only_the_fixture_admitted_case() -> None:
     assert run.wait_for_fixture_case() == "case-1"
 
 
-def test_fixture_admission_hold_signals_before_blocking_and_close_releases() -> None:
+def test_fixture_capture_is_nonblocking_and_post_advance_hold_releases() -> None:
     run = object.__new__(_InstalledPreparationRun)
     run._case_id = None
     run._case_id_lock = threading.Lock()
     run._case_admitted = threading.Event()
     run._fixture_case_hold = threading.Event()
+    run._fixture_case_held = threading.Event()
     run._fixture_case_release = threading.Event()
     run.hold_fixture_case()
+    run._capture_fixture_case("fiction-0000", "case-1")
+    assert run.wait_for_fixture_case() == "case-1"
     worker = threading.Thread(
-        target=run._capture_fixture_case, args=("fiction-0000", "case-1")
+        target=run._hold_fixture_case_after_advance,
+        args=(_admission_action("fiction-0000"), "case-1"),
     )
     worker.start()
-    assert run.wait_for_fixture_case() == "case-1"
+    assert run._fixture_case_held.wait(timeout=1)
     assert worker.is_alive()
     run.release_fixture_case()
     worker.join(timeout=1)
     assert not worker.is_alive()
 
 
-def test_nonfixture_admission_does_not_hold() -> None:
+def test_nonfixture_or_duplicate_post_advance_callbacks_do_not_hold() -> None:
     run = object.__new__(_InstalledPreparationRun)
     run._case_id = None
     run._case_id_lock = threading.Lock()
     run._case_admitted = threading.Event()
     run._fixture_case_hold = threading.Event()
+    run._fixture_case_held = threading.Event()
     run._fixture_case_release = threading.Event()
     run.hold_fixture_case()
     run._capture_fixture_case("history-0000", "case-other")
     assert not run._case_admitted.is_set()
+    run._hold_fixture_case_after_advance(
+        _admission_action("history-0000"), "case-other"
+    )
+    assert not run._fixture_case_held.is_set()
+
+    run._capture_fixture_case("fiction-0000", "case-1")
+    worker = threading.Thread(
+        target=run._hold_fixture_case_after_advance,
+        args=(_admission_action("fiction-0000"), "case-1"),
+    )
+    worker.start()
+    assert run._fixture_case_held.wait(timeout=1)
+    run._hold_fixture_case_after_advance(_admission_action("fiction-0000"), "case-1")
+    run.release_fixture_case()
+    worker.join(timeout=1)
+    assert not worker.is_alive()
+
+
+def test_post_advance_hold_leaves_the_web_owner_readable() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        topology = _InstalledRepositoryTopology.open(Path(directory) / "state.sqlite3")
+        run = object.__new__(_InstalledPreparationRun)
+        run._case_id = "case-1"
+        run._case_id_lock = threading.Lock()
+        run._case_admitted = threading.Event()
+        run._fixture_case_hold = threading.Event()
+        run._fixture_case_held = threading.Event()
+        run._fixture_case_release = threading.Event()
+        run.hold_fixture_case()
+        worker = threading.Thread(
+            target=run._hold_fixture_case_after_advance,
+            args=(_admission_action("fiction-0000"), "case-1"),
+        )
+        worker.start()
+        assert run._fixture_case_held.wait(timeout=1)
+        observation = topology.open_foreground_observation()
+        try:
+            observation.operational_snapshot()
+        finally:
+            observation.close()
+            run.release_fixture_case()
+            worker.join(timeout=1)
+            topology.web_state_owner.close()
+        assert not worker.is_alive()
 
 
 def test_installed_preparation_accepts_only_the_projected_fixture_title(
