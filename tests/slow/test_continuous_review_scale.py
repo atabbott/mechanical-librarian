@@ -16,6 +16,9 @@ from tests.support.continuous_review_scale import (
     qualify_installed_pipeline,
 )
 
+_FIXTURE_CURRENT_TITLE = "fiction-0000"
+_FIXTURE_PROPOSED_TITLE = "Exact evaluator candidate"
+
 
 class _WorkspaceProbe:
     """One real owner page reused across the three installed phases."""
@@ -109,7 +112,9 @@ class _WorkspaceProbe:
         )
         search.fill("fiction")
         self._assert_library_query(page, lens="all", query="fiction", preview=None)
-        cohort_row = page.locator(".library-work-row").filter(has_text="fiction-0000")
+        cohort_row = page.locator(".library-work-row").filter(
+            has_text=_FIXTURE_CURRENT_TITLE
+        )
         expect(cohort_row).to_have_count(1)
         cohort_title = cohort_row.locator(".library-work-title").inner_text()
         cohort_row.click()
@@ -117,8 +122,18 @@ class _WorkspaceProbe:
         cohort_heading = page.get_by_role("heading", name=cohort_title, exact=True)
         expect(cohort_heading).to_have_count(1)
         expect(cohort_heading).to_be_visible()
-        choice = page.get_by_role("button", name="Choose proposed value", exact=False)
+        current = page.get_by_role(
+            "button",
+            name=f"Choose current value: {_FIXTURE_CURRENT_TITLE}",
+            exact=True,
+        )
+        choice = page.get_by_role(
+            "button",
+            name=f"Choose proposed value: {_FIXTURE_PROPOSED_TITLE}",
+            exact=True,
+        )
         if phase == "early":
+            expect(current).to_have_count(1)
             expect(choice).to_have_count(1)
             expect(choice).to_be_enabled()
             preview = parse_qs(urlparse(page.url).query).get("preview")
