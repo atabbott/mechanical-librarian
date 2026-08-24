@@ -341,8 +341,10 @@ class _AudiobookshelfFixture:
                         (
                             '<?xml version="1.0" encoding="UTF-8"?>\n'
                             '<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+                            '<section epub:type="titlepage" '
+                            'xmlns:epub="http://www.idpf.org/2007/ops">'
                             f"<h1>{opening_title}</h1>"
-                            "<p>Synthetic Author</p></body></html>"
+                            "<p>Synthetic Author</p></section></body></html>"
                         ).encode(),
                         8,
                     ),
