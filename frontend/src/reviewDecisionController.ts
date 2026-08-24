@@ -245,10 +245,10 @@ export const useReviewDecisionController = ({
       if (active(command.destination)) await onAdvance(next.destination)
     },
     onError: async (error, command) => {
-      // No token is coming. Anything held on this decision's account belongs to
-      // someone else and is released by the same call.
+      // Release only this failed field. Another field may still be recording;
+      // clearing the whole case would let its repeated click escape its guard.
       endDecisionEcho(queryClient, reviewCaseId, [])
-      halt()
+      release(command.destination)
       converge()
       const refreshed = await refreshCase()
       const refreshedField = refreshed?.fields.find(

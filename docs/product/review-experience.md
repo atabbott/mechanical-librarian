@@ -323,8 +323,13 @@ a duplicate choice for a field
 already settled becomes no second command. If no other unresolved field
 remains, the recorded field stays as the terminal case. Deliberate navigation
 away from that field while the refresh is pending is preserved rather than
-overwritten by automatic advancement. Revisiting a recorded field retains its
-recorded outcome and context without offering a second current Library action.
+overwritten by automatic advancement. A recorded field leaves Attention but,
+when its exact current case still admits eligible replacements, direct
+revisiting restores those choices with the recorded choice marked; a later
+choice appends another immutable decision. Claimed, applying and reconciling
+effects remain temporarily non-replaceable, as does a verified cover effect;
+a verified reversible scalar effect may be replaced through the same current
+case's guarded correction path.
 
 Recorded human decisions retain their exact selected value in the detail view.
 The deterministic disposition remains distinct from that live decision record.

@@ -1317,7 +1317,7 @@ def test_verified_human_choice_can_be_corrected_on_the_same_current_case(
         outcome="keep_current",
         selected_value=None,
         idempotency_key="verified-replacement-keep-0001",
-        occurred_at=29,
+        occurred_at=24,
     )
     repository.record_human_decision(correction)
     source = repository.field_effect_authority_source(correction)
@@ -1335,11 +1335,20 @@ def test_verified_human_choice_can_be_corrected_on_the_same_current_case(
         for document in repository.get_review_case_decisions(case_id)
         if HumanDecision.from_json(document).destination == accepted.destination
     ] == [accepted.decision_id, correction.decision_id]
-    assert [
-        event["decision_id"]
+    history = [
+        event
         for event in repository.get_review_case_history(case_id, 10)
         if event.get("kind") == "human_decision_recorded"
-    ] == [correction.decision_id, accepted.decision_id]
+    ]
+    assert [event["decision_id"] for event in history] == [
+        correction.decision_id,
+        accepted.decision_id,
+    ]
+    assert history[0]["previous_value"] == {
+        "kind": selected["kind"],
+        "value": selected["value"],
+    }
+    assert history[0]["selected_value"] == {"kind": selected["kind"], "value": original}
     repository.close()
 
 

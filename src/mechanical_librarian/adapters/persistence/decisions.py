@@ -47,6 +47,7 @@ from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
 )
+from mechanical_librarian.domain.field_effect import FieldEffectOperation
 from mechanical_librarian.domain.review_case import (
     ReviewCase,
     ReviewCaseValueError,
@@ -750,7 +751,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 }
                 for row in transition_rows
             ]
-            events: list[tuple[int, str, dict[str, object]]] = []
+            events: list[tuple[int, int, dict[str, object]]] = []
             for row in event_rows:
                 value = json.loads(row[7])
                 if (
@@ -780,7 +781,64 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     != row[:7]
                 ):
                     raise MetadataReportError("review history is invalid")
-                events.append((row[6], row[0], value))
+                decision_row = self._connection.execute(
+                    "SELECT ordinal,document FROM human_decisions WHERE decision_id=?",
+                    (row[1],),
+                ).fetchone()
+                if decision_row is None:
+                    raise MetadataReportError("review history is invalid")
+                decision = HumanDecision.from_json(decision_row[1])
+                case_document = json.loads(self.get_review_case(review_case_id))
+                if (
+                    type(case_document) is not dict
+                    or type(case_document.get("case")) is not dict
+                ):
+                    raise MetadataReportError("review history is invalid")
+                case = ReviewCase.create_from_data(case_document["case"])
+                target = next(
+                    (
+                        field
+                        for field in case.target["fields"]
+                        if field["destination"] == decision.destination
+                    ),
+                    None,
+                )
+                if type(target) is not dict:
+                    raise MetadataReportError("review history is invalid")
+                previous = (
+                    target.get("value") if target.get("state") == "value" else None
+                )
+                prior = self._connection.execute(
+                    "SELECT effect.document FROM field_effects effect JOIN human_decisions earlier "
+                    "ON earlier.decision_id=effect.decision_id WHERE earlier.review_case_id=? "
+                    "AND earlier.destination=? AND earlier.ordinal<? AND effect.state='verified' "
+                    "ORDER BY earlier.ordinal DESC LIMIT 1",
+                    (review_case_id, decision.destination, decision_row[0]),
+                ).fetchone()
+                if prior is not None:
+                    previous = FieldEffectOperation.from_json(
+                        prior[0]
+                    ).plan.desired_value
+                kind = (
+                    "list"
+                    if decision.destination in {"authors", "genres", "tags"}
+                    else "series"
+                    if decision.destination == "series"
+                    else "cover"
+                    if decision.destination == "cover"
+                    else "text"
+                )
+                value["previous_value"] = (
+                    {"kind": kind, "value": previous} if previous is not None else None
+                )
+                value["selected_value"] = (
+                    decision.selected_value
+                    if decision.outcome == "accept"
+                    else {"kind": kind, "value": target.get("value")}
+                    if target.get("state") == "value"
+                    else None
+                )
+                events.append((row[6], int(decision_row[0]), value))
             for row in shadow_rows:
                 document, evaluated_at = self._validate_shadow_outcome_row(row)
                 outcome = ShadowOutcomeSet.from_json(document)
@@ -797,7 +855,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 events.append(
                     (
                         evaluated_at,
-                        row[0],
+                        0,
                         {
                             "authority": "none",
                             "dispositions": dispositions,
@@ -825,7 +883,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 events.append(
                     (
                         occurred_at,
-                        decision_id,
+                        0,
                         {
                             "decision_id": decision_id,
                             "destination": destination,

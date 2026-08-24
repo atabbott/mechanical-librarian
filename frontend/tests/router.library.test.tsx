@@ -1627,6 +1627,7 @@ describe('Library route', () => {
         command: DecisionCommand,
         _signal?: AbortSignal,
       ) => {
+        void _signal
         if (command.outcome === 'accept' && command.selectedValue === undefined) {
           throw new Error('accept command requires its selected value')
         }
@@ -2896,6 +2897,67 @@ describe('Library route', () => {
     expect(recordDecision.mock.calls[0]?.[1].destination).toBe('title')
     await act(async () => {
       release?.()
+    })
+  })
+
+  it('keeps another field guarded while a failed choice is reconciled', async () => {
+    const user = userEvent.setup()
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const authorsField = {
+      ...titleField,
+      destination: 'authors',
+      proposalId: 'proposal-authors',
+      targetFingerprint: 'fingerprint-authors',
+    }
+    let rejectTitle: ((error: Error) => void) | undefined
+    const titlePending = new Promise<never>((_resolve, reject) => {
+      rejectTitle = reject
+    })
+    let releaseAuthors: (() => void) | undefined
+    const authorsPending = new Promise<void>((resolve) => {
+      releaseAuthors = resolve
+    })
+    const recordDecision = vi.fn<ReviewHttp['recordDecision']>(async (_id, command) => {
+      if (command.destination === 'title') return await titlePending
+      await authorsPending
+      return {
+        invalidation_sequences: [],
+        schema_version: 'review-decision-v1' as const,
+        actor: 'owner' as const,
+        decision_id: 'decision-authors',
+        destination: 'authors',
+        occurred_at: 1,
+        outcome: 'keep_current' as const,
+        proposal_id: command.proposalId,
+        review_case_id: 'case-1',
+        selected_value: null,
+        target_fingerprint: command.targetFingerprint,
+      }
+    })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [titleField, authorsField] })),
+      recordDecision,
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
+    await user.click(screen.getByRole('button', { name: /Authors.*Needs review/u }))
+    await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
+    await waitFor(() => expect(recordDecision).toHaveBeenCalledTimes(2))
+    const authorsKey = recordDecision.mock.calls[1]?.[1].idempotencyKey
+
+    await act(async () => {
+      rejectTitle?.(new ApiError(422, 'unsupported'))
+    })
+    await user.click(screen.getByRole('button', { name: /Authors.*Needs review/u }))
+    await user.click(screen.getByRole('button', { name: 'Choose current value: Old title' }))
+    expect(recordDecision).toHaveBeenCalledTimes(2)
+    expect(recordDecision.mock.calls[1]?.[1].idempotencyKey).toBe(authorsKey)
+
+    await act(async () => {
+      releaseAuthors?.()
     })
   })
 

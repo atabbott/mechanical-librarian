@@ -2,7 +2,7 @@ import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { AttentionView, CaseDetailView } from '../src/api/http'
+import type { AttentionView, CaseDetailView, ReviewHttp } from '../src/api/http'
 import { createHttp, detail, renderRoute } from './fixtures'
 
 describe('Library review ownership', () => {
@@ -29,6 +29,50 @@ describe('Library review ownership', () => {
     await waitFor(() =>
       expect(router.state.location.search).toEqual({ field: 'title', subview: 'evidence' }),
     )
+  })
+
+  it('renders typed owner-history values as text, including retained outcomes', async () => {
+    const getHistory = vi.fn<ReviewHttp['getHistory']>(async () => ({
+      schema_version: 'review-case-history-v1',
+      review_case_id: 'case-1',
+      next_cursor: null,
+      items: [
+        {
+          actor: 'owner',
+          decision_id: 'decision-accept',
+          destination: 'title',
+          event_id: 'event-accept',
+          kind: 'human_decision_recorded',
+          occurred_at: 2,
+          outcome: 'accept',
+          previous_value: { kind: 'text', value: '<script>previous</script>' },
+          review_case_id: 'case-1',
+          schema_version: 'human-decision-event-v1',
+          selected_value: { kind: 'text', value: '<script>chosen</script>' },
+        },
+        {
+          actor: 'owner',
+          decision_id: 'decision-keep',
+          destination: 'subtitle',
+          event_id: 'event-keep',
+          kind: 'human_decision_recorded',
+          occurred_at: 1,
+          outcome: 'keep_current',
+          previous_value: { kind: 'text', value: 'Existing subtitle' },
+          review_case_id: 'case-1',
+          schema_version: 'human-decision-event-v1',
+          selected_value: { kind: 'text', value: 'Existing subtitle' },
+        },
+      ],
+    }))
+    renderRoute('/review/case-1?field=title&subview=history', { ...createHttp(), getHistory })
+
+    expect(await screen.findByText('Proposed value selected.')).toBeVisible()
+    expect(screen.getByText('Previous: <script>previous</script>')).toBeVisible()
+    expect(screen.getByText('Chosen: <script>chosen</script>')).toBeVisible()
+    expect(screen.getByText('Current value retained.')).toBeVisible()
+    expect(screen.getByText('Retained: Existing subtitle')).toBeVisible()
+    expect(document.querySelector('script')).toBeNull()
   })
 
   it.each(['evidence', 'history'] as const)(

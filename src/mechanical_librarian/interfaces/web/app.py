@@ -393,8 +393,10 @@ class _HistoryDecisionItem(_ClosedModel):
     kind: Literal["human_decision_recorded"]
     occurred_at: int
     outcome: Literal["accept", "keep_current", "reject"]
+    previous_value: _ProposedValue | None
     review_case_id: str
     schema_version: Literal["human-decision-event-v1"]
+    selected_value: _ProposedValue | None
 
 
 class _HistoryShadowItem(_ClosedModel):

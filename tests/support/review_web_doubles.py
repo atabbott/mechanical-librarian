@@ -342,9 +342,25 @@ class FakeReviewRepository:
         if existing is not None:
             return existing
         self.decisions[decision.destination] = decision.to_json()
-        event_id = "human_decision_event_" + hashlib.sha256(
-            ("human-decision-event-v1:" + decision.decision_id).encode("utf-8")
-        ).hexdigest()
+        event_id = (
+            "human_decision_event_"
+            + hashlib.sha256(
+                ("human-decision-event-v1:" + decision.decision_id).encode("utf-8")
+            ).hexdigest()
+        )
+        target = next(
+            field
+            for field in self.case.target["fields"]
+            if field["destination"] == decision.destination
+        )
+        current = target.get("value") if target.get("state") == "value" else None
+        kind = (
+            "list"
+            if decision.destination in {"authors", "genres", "tags"}
+            else "series"
+            if decision.destination == "series"
+            else "text"
+        )
         self.history.append(
             {
                 "actor": decision.actor,
@@ -354,8 +370,16 @@ class FakeReviewRepository:
                 "kind": "human_decision_recorded",
                 "occurred_at": decision.occurred_at,
                 "outcome": decision.outcome,
+                "previous_value": None
+                if current is None
+                else {"kind": kind, "value": current},
                 "review_case_id": decision.review_case_id,
                 "schema_version": "human-decision-event-v1",
+                "selected_value": decision.selected_value
+                if decision.outcome == "accept"
+                else None
+                if current is None
+                else {"kind": kind, "value": current},
             }
         )
         return decision.to_json()
