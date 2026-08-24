@@ -291,7 +291,6 @@ export const useReviewDecisionController = ({
       }
       if (retryableDecisionFailure(error)) mark(command, 'failed')
       else forget(command)
-      await onAdvance(command.destination)
       setStatus((current) =>
         current.caseId === reviewCaseId
           ? {
@@ -304,6 +303,10 @@ export const useReviewDecisionController = ({
             }
           : current,
       )
+      // The current field is already authoritative after reconciliation. Do
+      // not make truthful failure feedback wait on a no-op same-field route
+      // transition; only return from another field when the owner moved away.
+      if (!active(command.destination)) await onAdvance(command.destination)
     },
   })
   useEffect(

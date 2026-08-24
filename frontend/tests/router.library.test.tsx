@@ -1546,6 +1546,13 @@ describe('Library route', () => {
     expect(
       screen.getByRole('button', { name: 'Choose current value: Old title' }),
     ).not.toHaveTextContent('Recording…')
+    expect(screen.getByRole('button', { name: 'Choose current value: Old title' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+    expect(screen.queryByText('Recorded. Opening the next field…')).toBeNull()
+    expect(screen.getByText('1 remaining · field 1 of 1')).toBeVisible()
+    expect(screen.getByRole('button', { name: /Title.*Needs review/u })).toBeVisible()
     const retry = screen.getByRole('button', { name: 'Try the same decision again' })
     expect(retry).toHaveFocus()
     const firstCommand = recordDecision.mock.calls[0]?.[1]

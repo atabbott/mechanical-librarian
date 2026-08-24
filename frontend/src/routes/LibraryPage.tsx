@@ -162,8 +162,10 @@ const choiceSelected = (
   outcome: DecisionCommand['outcome'],
   selectedValue: DecisionCommand['selectedValue'] = null,
 ) =>
-  commandSelected(progress?.command ?? null, field.destination, outcome, selectedValue) ||
-  (progress === null && recordedSelected(field, outcome, selectedValue))
+  (progress?.phase !== 'failed' &&
+    commandSelected(progress?.command ?? null, field.destination, outcome, selectedValue)) ||
+  ((progress === null || progress.phase === 'failed') &&
+    recordedSelected(field, outcome, selectedValue))
 const choiceContext = (field: ReviewField, alternativeId: string | null) =>
   field.choiceContexts.find((context) => context.alternativeId === alternativeId)
 const materialComparisonReasons = new Set([
@@ -1593,9 +1595,9 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     selected.decisionActions.length > 0
   const selectedChoiceMode = selectedActionable || selectedRevisitable
   const selectedProgress = selected ? controller.phase(selected.destination) : null
-  const remainingFields = attentionFields.filter(
-    (field) => controller.phase(field.destination) === null,
-  ).length
+  // Attention membership comes from the authoritative exact case. A pending
+  // or failed local command has not yet changed it.
+  const remainingFields = attentionFields.length
   const railPosition =
     complete?.id === selectedReviewCaseId && completionInspection === null
       ? `${String(railFields.length)} recorded · work complete`
@@ -1608,7 +1610,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const teachingLine =
     selectedProgress?.phase === 'recording'
       ? 'Recording choice…'
-      : selectedProgress
+      : selectedProgress?.phase === 'confirmed'
         ? 'Recorded. Opening the next field…'
         : selectedActionable && frozenDestinations.indexOf(selected.destination) === 0
           ? 'One tap records and opens the next field'
