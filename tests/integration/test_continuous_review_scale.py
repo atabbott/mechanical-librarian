@@ -123,8 +123,10 @@ class _PendingClient(_TerminalClient):
 
 
 class _DecisionClient:
-    def __init__(self) -> None:
+    def __init__(self, detail_statuses: list[int] | None = None) -> None:
         self.payload: dict[str, object] | None = None
+        self.detail_requests = 0
+        self._detail_statuses = detail_statuses or []
 
     def __enter__(self) -> _DecisionClient:
         return self
@@ -160,8 +162,10 @@ class _DecisionClient:
                     + '"'
                 ),
             )
+        self.detail_requests += 1
+        status = self._detail_statuses.pop(0) if self._detail_statuses else 200
         return _Response(
-            200,
+            status,
             {
                 "writes_consented": False,
                 "fields": [
@@ -575,6 +579,27 @@ def test_installed_preparation_accepts_only_the_projected_fixture_title(
         "selected_value": {"kind": "text", "value": "Exact evaluator candidate"},
         "target_fingerprint": "c" * 64,
     }
+
+
+def test_installed_preparation_waits_for_the_admission_current_pointer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The post-admission callback may release before its current pointer commits."""
+
+    client = _DecisionClient([409, 200])
+    run = object.__new__(_InstalledPreparationRun)
+    run._origin = "https://127.0.0.1:1"
+    run._case_id = "review_case_" + "d" * 64
+    run._case_id_lock = threading.Lock()
+    run._case_admitted = threading.Event()
+    run._case_admitted.set()
+    monkeypatch.setattr(continuous_review_scale.httpx, "Client", lambda **_: client)
+    monkeypatch.setattr(continuous_review_scale.time, "sleep", lambda _: None)
+
+    evidence = run.accept_fixture_title_proposal()
+
+    assert evidence.response_status == 200
+    assert client.detail_requests == 2
 
 
 @pytest.mark.parametrize(

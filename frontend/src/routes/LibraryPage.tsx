@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query'
-import { Link, useNavigate } from '@tanstack/react-router'
+import { Link, useNavigate, useRouterState } from '@tanstack/react-router'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent, SyntheticEvent } from 'react'
 
@@ -21,6 +21,7 @@ import { WriteReadyNotice } from '../components/WriteReadyNotice'
 import { actionable, requestKey, useReviewDecisionController } from '../reviewDecisionController'
 import { automaticChoiceSelected, humanChoiceSelected } from '../reviewAutomaticSelection'
 import { ownerChoiceCount } from '../reviewChoiceCounts'
+import { advancePresentationSettled } from '../reviewAdvancePresentation'
 
 type ReviewField = CaseDetailView['fields'][number]
 const searchNavigationDelay = 150
@@ -87,14 +88,19 @@ const fieldState = (field: ReviewField) =>
         : 'No eligible change'
 const fieldReason = (field: ReviewField) =>
   bounded(
-    field.classificationReason ||
-      (field.humanDecision
-        ? `${fieldLabel(field.humanDecision.outcome)} recorded for this field.`
-        : field.automaticDecision
-          ? `${fieldLabel(field.automaticDecision.outcome)} selected by deterministic policy.`
-          : actionable(field)
-            ? `${fieldLabel(field.disposition)} requires an owner comparison of the retained values.`
-            : `${fieldLabel(field.disposition)} disposition; no human action is available.`),
+    field.humanDecision
+      ? field.classificationReason ||
+          `${fieldLabel(field.humanDecision.outcome)} recorded for this field.`
+      : field.automaticDecision
+        ? field.classificationReason ||
+          `${fieldLabel(field.automaticDecision.outcome)} selected by deterministic policy.`
+        : actionable(field)
+          ? field.classificationReason ||
+            `${fieldLabel(field.disposition)} requires an owner comparison of the retained values.`
+          : field.classificationReason &&
+              !/needs (?:your )?review/iu.test(field.classificationReason)
+            ? field.classificationReason
+            : 'No eligible owner decision is available.',
     'Retained reviewer notice',
   )
 const effectSummary = (field: ReviewField) =>
@@ -157,8 +163,10 @@ const choiceSelected = (
   outcome: DecisionCommand['outcome'],
   selectedValue: DecisionCommand['selectedValue'] = null,
 ) =>
-  commandSelected(progress?.command ?? null, field.destination, outcome, selectedValue) ||
-  (progress === null && recordedSelected(field, outcome, selectedValue))
+  (progress?.phase !== 'failed' &&
+    commandSelected(progress?.command ?? null, field.destination, outcome, selectedValue)) ||
+  ((progress === null || progress.phase === 'failed') &&
+    recordedSelected(field, outcome, selectedValue))
 const choiceContext = (field: ReviewField, alternativeId: string | null) =>
   field.choiceContexts.find((context) => context.alternativeId === alternativeId)
 const materialComparisonReasons = new Set([
@@ -402,7 +410,7 @@ function MetadataChoice({
           </p>
         </details>
       ) : null}
-      {hasEvidence && !expanded ? (
+      {hasEvidence ? (
         <button
           type="button"
           className="choice-evidence-toggle"
@@ -411,7 +419,7 @@ function MetadataChoice({
           aria-label={evidenceLabel}
           onClick={toggle}
         >
-          Evidence
+          {expanded ? 'Hide evidence' : 'Evidence'}
         </button>
       ) : null}
       {expanded ? (
@@ -423,6 +431,116 @@ function MetadataChoice({
         />
       ) : null}
     </article>
+  )
+}
+
+function ContextValue({
+  field,
+  expanded,
+  toggle,
+}: {
+  field: ReviewField
+  expanded: boolean
+  toggle: () => void
+}) {
+  const context = choiceContext(field, null)
+  const evidenceId = `context-evidence-${field.destination}`
+  return (
+    <section
+      className="context-value"
+      aria-label={`${fieldLabel(field.destination)} current value`}
+    >
+      <dl>
+        <div>
+          <dt>Current value</dt>
+          <dd>{displayValue(field.currentValue)}</dd>
+        </div>
+      </dl>
+      <button
+        type="button"
+        className="context-evidence-toggle"
+        aria-controls={evidenceId}
+        aria-expanded={expanded}
+        onClick={toggle}
+      >
+        {expanded ? 'Hide evidence' : 'Evidence'}
+      </button>
+      {expanded ? (
+        <ChoiceEvidencePanel
+          context={context}
+          evidenceId={evidenceId}
+          label={`${fieldLabel(field.destination)} current value`}
+        />
+      ) : null}
+    </section>
+  )
+}
+
+function RecordedOutcome({
+  field,
+  expanded,
+  toggle,
+}: {
+  field: ReviewField
+  expanded: boolean
+  toggle: () => void
+}) {
+  const decision = field.humanDecision ?? field.automaticDecision
+  if (!decision) return null
+  const proposed = field.proposedValues.findIndex((value) =>
+    sameSelectedValue(value, decision.selected_value),
+  )
+  const selectedProposed =
+    (decision.outcome === 'accept' || decision.outcome === 'candidate') && proposed >= 0
+  const context = selectedProposed
+    ? choiceContext(
+        field,
+        field.choiceContexts.filter((item) => item.selection === 'proposed')[proposed]
+          ?.alternativeId ?? null,
+      )
+    : choiceContext(field, null)
+  const evidenceId = `recorded-evidence-${field.destination}`
+  const accepted = decision.outcome === 'accept' || decision.outcome === 'candidate'
+  return (
+    <section
+      className="recorded-outcome"
+      aria-label={`${fieldLabel(field.destination)} recorded outcome`}
+    >
+      <p>
+        <strong>
+          {field.automaticDecision ? 'Resolved automatically' : completionOutcome(field)}
+        </strong>
+      </p>
+      <dl>
+        {accepted ? (
+          <div>
+            <dt>Chosen value</dt>
+            <dd>{decisionValue(field)}</dd>
+          </div>
+        ) : (
+          <div>
+            <dt>{decision.outcome === 'keep_current' ? 'Retained value' : 'Current value'}</dt>
+            <dd>{decisionValue(field)}</dd>
+          </div>
+        )}
+      </dl>
+      <button
+        type="button"
+        className="context-evidence-toggle"
+        aria-controls={evidenceId}
+        aria-expanded={expanded}
+        onClick={toggle}
+      >
+        {expanded ? 'Hide evidence' : 'Evidence'}
+      </button>
+      {expanded ? (
+        <ChoiceEvidencePanel
+          context={context}
+          evidenceId={evidenceId}
+          label={`${fieldLabel(field.destination)} recorded outcome`}
+        />
+      ) : null}
+    </section>
   )
 }
 
@@ -463,12 +581,19 @@ function LibraryCoverChoicesContent({
 }) {
   const cover = useCoverChoiceData(reviewCaseId)
   const consideration = field.coverConsideration
+  const keeps = field.decisionActions.includes('keep_current')
+  const accepts = field.decisionActions.includes('accept')
   if (!consideration)
     return (
       <section aria-label="Prepare cover comparison">
         <p role="status">
           No current cover comparison is available. The existing cover remains unchanged.
         </p>
+        {keeps ? (
+          <button type="button" disabled={disabled} onClick={() => choose('keep_current')}>
+            Keep current cover
+          </button>
+        ) : null}
         <button
           type="button"
           disabled={disabled || cover.prepare.isPending}
@@ -543,6 +668,7 @@ function LibraryCoverChoicesContent({
       ? null
       : { kind: 'cover', value: candidate.artifactId }
     const selected = choiceSelected(field, progress, outcome, value)
+    if ((candidate.incumbent && !keeps) || (!candidate.incumbent && !accepts)) return null
     const context = candidate.incumbent
       ? currentContext
       : coverContexts.find((item) => item.alternativeId === candidate.reference)
@@ -594,7 +720,7 @@ function LibraryCoverChoicesContent({
             {selected && progress?.phase === 'recording' ? <b>Recording…</b> : null}
           </span>
         </button>
-        {context && (context.evidence.length || context.limitations.length) && !open ? (
+        {context && (context.evidence.length || context.limitations.length) ? (
           <button
             type="button"
             className="choice-evidence-toggle"
@@ -603,7 +729,7 @@ function LibraryCoverChoicesContent({
             aria-label={`Evidence for ${label}`}
             onClick={() => revealEvidence(evidenceKey)}
           >
-            Evidence
+            {open ? 'Hide evidence' : 'Evidence'}
           </button>
         ) : null}
         {open ? (
@@ -676,7 +802,7 @@ function LibraryCoverChoicesContent({
       ) : (
         <div className="library-cover-layout">{candidates.map(card)}</div>
       )}
-      {consideration.incumbent.state === 'unavailable' && !incumbent ? (
+      {consideration.incumbent.state === 'unavailable' && !incumbent && keeps ? (
         <article className="cover-choice">
           <button
             type="button"
@@ -706,8 +832,7 @@ function LibraryCoverChoicesContent({
             </span>
           </button>
           {currentContext &&
-          (currentContext.evidence.length || currentContext.limitations.length) &&
-          !expandedEvidence.has('cover:current-unavailable') ? (
+          (currentContext.evidence.length || currentContext.limitations.length) ? (
             <button
               type="button"
               className="choice-evidence-toggle"
@@ -716,7 +841,7 @@ function LibraryCoverChoicesContent({
               aria-label="Evidence for Current cover"
               onClick={() => revealEvidence('cover:current-unavailable')}
             >
-              Evidence
+              {expandedEvidence.has('cover:current-unavailable') ? 'Hide evidence' : 'Evidence'}
             </button>
           ) : null}
           {expandedEvidence.has('cover:current-unavailable') ? (
@@ -748,19 +873,6 @@ function LibraryCoverChoicesContent({
           ))}
         </details>
       ) : null}
-      <button
-        className={`library-no-action${choiceSelected(field, progress, 'reject') ? ' is-selected' : ''}`}
-        type="button"
-        aria-pressed={choiceSelected(field, progress, 'reject')}
-        disabled={disabled}
-        onClick={() => choose('reject')}
-      >
-        Take no action
-        {commandSelected(progress?.command ?? null, field.destination, 'reject') &&
-        progress?.phase === 'recording'
-          ? ' · Recording…'
-          : ''}
-      </button>
     </section>
   )
 }
@@ -782,6 +894,19 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const fieldRail = useRef<HTMLElement>(null)
   const advanceFocus = useRef(false)
   const advanceScroll = useRef<number | null>(null)
+  const advancePresentation = useRef<{
+    destination: string
+    source: string
+    sourceRevision: string
+    target: string
+    resolve: () => void
+  } | null>(null)
+  const releaseAdvancePresentation = useCallback(() => {
+    const presentation = advancePresentation.current
+    if (!presentation) return
+    advancePresentation.current = null
+    presentation.resolve()
+  }, [])
   const automaticTrigger = useRef<HTMLButtonElement>(null)
   const keepManualHandling = useRef<HTMLButtonElement>(null)
   const restoreAutomaticTrigger = useRef(false)
@@ -801,6 +926,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     item: string
   } | null>(null)
   const selectedPreviewRef = useRef<string | undefined>(undefined)
+  const selectedDetailRetry = useRef<string | null>(null)
+  const selectedDetailRetryButton = useRef<HTMLButtonElement>(null)
   const pendingSuccessorRef = useRef(new Set<string>())
   const lineageGenerationRef = useRef(0)
   const [activeLineageGeneration, setActiveLineageGeneration] = useState<number | null>(null)
@@ -837,6 +964,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const [searchPending, setSearchPending] = useState(false)
   const urlQuery = search.q ?? ''
   const searchIdentity = librarySearchIdentity(search)
+  const locationRevision = useRouterState({
+    select: (state) =>
+      state.location.state.__TSR_key ?? state.location.state.key ?? state.location.href,
+  })
   const queryText = searchPending || typedQuery.echo === urlQuery ? typedQuery.text : urlQuery
   const selectedReviewCaseId = search.preview ?? ''
   useEffect(() => {
@@ -1111,7 +1242,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const railFields = frozenDestinations
     .map((destination) => visibleFields.find((field) => field.destination === destination))
     .filter((field): field is ReviewField => field !== undefined)
-  const actionableFields = railFields.filter(actionable)
+  const attentionFields = railFields.filter(actionable)
   const contextualFields =
     detail.data?.fields.filter((field) => field.inventoryRole === 'contextual') ?? []
   const activeQueueIndex = selected
@@ -1138,10 +1269,42 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       const advancing = field !== selected?.destination
       advanceFocus.current = advancing
       advanceScroll.current = advancing ? window.scrollY : null
-      await navigate({
-        resetScroll: false,
-        search: (current) => (current.preview === search.preview ? { ...current, field } : current),
-      })
+      const presented = advancing
+        ? new Promise<void>((resolve) => {
+            advancePresentation.current = {
+              destination: field,
+              source: searchIdentity,
+              sourceRevision: locationRevision,
+              target: librarySearchIdentity({ ...search, field }),
+              resolve,
+            }
+          })
+        : null
+      const navigation = { committed: false }
+      try {
+        await navigate({
+          resetScroll: false,
+          search: (current) => {
+            if (current.preview !== search.preview) return current
+            navigation.committed = true
+            return { ...current, field }
+          },
+        })
+      } catch {
+        advanceFocus.current = false
+        advanceScroll.current = null
+        releaseAdvancePresentation()
+        return
+      }
+      if (!navigation.committed) {
+        advanceFocus.current = false
+        advanceScroll.current = null
+        releaseAdvancePresentation()
+        return
+      }
+      // The controller may start background aggregate convergence only after
+      // this exact next field has committed to the DOM.
+      if (presented) await presented
     },
     onComplete: (fields) => {
       const retained = selectedIdentityRef.current
@@ -1184,6 +1347,27 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
 
   const routeIdentity = `${search.lens}:${search.q ?? ''}:${search.cursor ?? ''}:${search.attentionCursor ?? ''}:${search.preview ?? ''}:${search.work ?? ''}:${search.field ?? ''}:${search.attention ?? ''}`
   useRouteReadyFocus(routeIdentity)
+  const selectedDetailReady =
+    Boolean(search.preview) && search.attention !== 'open' && !detail.isPending && !detail.isError
+  useEffect(() => {
+    selectedDetailRetry.current = null
+  }, [search.preview])
+  useEffect(() => {
+    const selectedDetailSettled = selectedDetailReady || detail.isError
+    if (!selectedDetailSettled) return
+    const workspace = document.querySelector<HTMLElement>('#main-content .workspace-detail')
+    const active = document.activeElement
+    const restoreAfterRetry =
+      selectedDetailRetry.current === search.preview && active === document.body
+    if (workspace && active === workspace && selectedDetailReady)
+      workspace.querySelector<HTMLElement>('[data-route-focus]')?.focus({ preventScroll: true })
+    else if (restoreAfterRetry) {
+      if (detail.isError) selectedDetailRetryButton.current?.focus({ preventScroll: true })
+      else
+        workspace?.querySelector<HTMLElement>('[data-route-focus]')?.focus({ preventScroll: true })
+    }
+    selectedDetailRetry.current = null
+  }, [detail.isError, search.preview, selectedDetailReady])
   useEffect(() => {
     currentSearch.current = search
   }, [search])
@@ -1194,6 +1378,20 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     if (complete?.id === selectedReviewCaseId && completionInspection === null)
       completionRegion.current?.focus({ preventScroll: true })
   }, [complete, completionInspection, selectedReviewCaseId])
+  useLayoutEffect(() => {
+    const presentation = advancePresentation.current
+    if (!presentation) return
+    if (
+      advancePresentationSettled(
+        presentation,
+        searchIdentity,
+        locationRevision,
+        selected?.destination,
+      )
+    )
+      releaseAdvancePresentation()
+  }, [locationRevision, releaseAdvancePresentation, searchIdentity, selected?.destination])
+  useEffect(() => releaseAdvancePresentation, [releaseAdvancePresentation])
   useEffect(() => {
     const rail = fieldRail.current
     const active = activeFieldButton.current
@@ -1462,15 +1660,26 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const toggleChoiceEvidence = (key: string) =>
     setExpandedChoiceState((current) => {
       const next = current.work === selectedReviewCaseId ? new Set(current.keys) : new Set<string>()
-      next.add(key)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
       return { work: selectedReviewCaseId, keys: next }
     })
 
   const effect = selected ? effectSummary(selected) : undefined
+  const selectedRecorded =
+    selected !== undefined &&
+    (selected.humanDecision !== null || selected.automaticDecision !== null)
+  const selectedActionable = selected !== undefined && actionable(selected)
+  const selectedRevisitable =
+    selected !== undefined &&
+    selectedRecorded &&
+    selected.editable &&
+    selected.decisionActions.length > 0
+  const selectedChoiceMode = selectedActionable || selectedRevisitable
   const selectedProgress = selected ? controller.phase(selected.destination) : null
-  const remainingFields = actionableFields.filter(
-    (field) => controller.phase(field.destination) === null,
-  ).length
+  // Attention membership comes from the authoritative exact case. A pending
+  // or failed local command has not yet changed it.
+  const remainingFields = attentionFields.length
   const railPosition =
     complete?.id === selectedReviewCaseId && completionInspection === null
       ? `${String(railFields.length)} recorded · work complete`
@@ -1483,9 +1692,9 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const teachingLine =
     selectedProgress?.phase === 'recording'
       ? 'Recording choice…'
-      : selectedProgress
+      : selectedProgress?.phase === 'confirmed'
         ? 'Recorded. Opening the next field…'
-        : selected && frozenDestinations.indexOf(selected.destination) === 0
+        : selectedActionable && frozenDestinations.indexOf(selected.destination) === 0
           ? 'One tap records and opens the next field'
           : ''
   const writesActive = detail.data?.writesConsented === true
@@ -1714,7 +1923,15 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
           ) : detail.isError ? (
             <p role="alert">
               Selected work could not be loaded.{' '}
-              <button onClick={() => void detail.refetch()}>Try again</button>{' '}
+              <button
+                ref={selectedDetailRetryButton}
+                onClick={() => {
+                  selectedDetailRetry.current = search.preview ?? null
+                  void detail.refetch()
+                }}
+              >
+                Try again
+              </button>{' '}
             </p>
           ) : !detail.data.current ? (
             <div className="library-selection">
@@ -1748,7 +1965,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                 <dl className="selected-work-status">
                   <div>
                     <dt>Needs review</dt>
-                    <dd>{String(actionableFields.length)}</dd>
+                    <dd>{String(attentionFields.length)}</dd>
                   </div>
                   <div>
                     <dt>Resolved automatically</dt>
@@ -1875,7 +2092,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
               ) : selected ? (
                 <article
                   key={selected.destination}
-                  className={`decision-canvas${controller.recording ? ' is-recording' : ''}`}
+                  className={`decision-canvas${controller.recording ? ' is-recording' : ''}${selectedChoiceMode ? '' : ' is-context-only'}`}
                 >
                   {complete?.id === selectedReviewCaseId ? (
                     <button
@@ -1888,27 +2105,38 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                   ) : null}
                   <header>
                     <div>
-                      <h2>{decisionQuestion(selected.destination)}</h2>
-                      <p>
-                        {fieldLabel(selected.destination)} · {fieldReason(selected)}
-                      </p>
+                      <h2>
+                        {selectedActionable
+                          ? decisionQuestion(selected.destination)
+                          : fieldLabel(selected.destination)}
+                      </h2>
+                      {selectedActionable ? (
+                        <p>{`${fieldLabel(selected.destination)} · ${fieldReason(selected)}`}</p>
+                      ) : selectedRevisitable ? (
+                        <p>
+                          The recorded outcome is marked below. You can select another eligible
+                          value.
+                        </p>
+                      ) : null}
                     </div>
-                    <dl>
-                      <div>
-                        <dt>Queue position</dt>
-                        <dd>
-                          {activeQueueIndex >= 0
-                            ? `${String(activeQueueIndex + 1)} of ${String(attentionItems.length)}`
-                            : 'Selected work'}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>Choices</dt>
-                        <dd>{actionable(selected) ? String(ownerChoiceCount(selected)) : '0'}</dd>
-                      </div>
-                    </dl>
+                    {selectedActionable ? (
+                      <dl>
+                        <div>
+                          <dt>Queue position</dt>
+                          <dd>
+                            {activeQueueIndex >= 0
+                              ? `${String(activeQueueIndex + 1)} of ${String(attentionItems.length)}`
+                              : 'Selected work'}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Choices</dt>
+                          <dd>{String(ownerChoiceCount(selected))}</dd>
+                        </div>
+                      </dl>
+                    ) : null}
                   </header>
-                  {selected.editable && !controller.reloadRequired ? (
+                  {selectedChoiceMode && !controller.reloadRequired ? (
                     selected.destination === 'cover' ? (
                       <LibraryCoverChoices
                         reviewCaseId={selectedReviewCaseId}
@@ -1922,7 +2150,11 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                     ) : (
                       <section
                         className="direct-choice protected-choice"
-                        aria-label={decisionQuestion(selected.destination)}
+                        aria-label={
+                          selectedActionable
+                            ? decisionQuestion(selected.destination)
+                            : `${fieldLabel(selected.destination)} recorded choices`
+                        }
                       >
                         {/*
                           What a tap will do, said before the tap and in the
@@ -1939,29 +2171,32 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                         <div
                           className={`direct-choice-grid${selected.preservationOnly ? ' preservation-only' : ''}`}
                         >
-                          <MetadataChoice
-                            context={choiceContext(selected, null)}
-                            current
-                            disabled={false}
-                            expanded={expandedChoices.has(`${selected.destination}:current`)}
-                            label="Current value"
-                            longDescription={isLongDescription(
-                              selected.destination,
-                              selected.currentValue,
-                            )}
-                            onChoose={() => choose(selected, 'keep_current')}
-                            recording={
-                              commandSelected(
-                                selectedProgress?.command ?? null,
+                          {selected.decisionActions.includes('keep_current') ? (
+                            <MetadataChoice
+                              context={choiceContext(selected, null)}
+                              current
+                              disabled={false}
+                              expanded={expandedChoices.has(`${selected.destination}:current`)}
+                              label="Current value"
+                              longDescription={isLongDescription(
                                 selected.destination,
-                                'keep_current',
-                              ) && selectedProgress?.phase === 'recording'
-                            }
-                            selected={choiceSelected(selected, selectedProgress, 'keep_current')}
-                            toggle={() => toggleChoiceEvidence(`${selected.destination}:current`)}
-                            value={selected.currentValue}
-                          />
-                          {selected.preservationOnly ? null : (
+                                selected.currentValue,
+                              )}
+                              onChoose={() => choose(selected, 'keep_current')}
+                              recording={
+                                commandSelected(
+                                  selectedProgress?.command ?? null,
+                                  selected.destination,
+                                  'keep_current',
+                                ) && selectedProgress?.phase === 'recording'
+                              }
+                              selected={choiceSelected(selected, selectedProgress, 'keep_current')}
+                              toggle={() => toggleChoiceEvidence(`${selected.destination}:current`)}
+                              value={selected.currentValue}
+                            />
+                          ) : null}
+                          {selected.decisionActions.includes('accept') &&
+                          !selected.preservationOnly ? (
                             <div
                               className={`proposed-choice-list${selected.proposedValues.length === 1 ? ' has-one-choice' : ''}`}
                             >
@@ -2015,26 +2250,31 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                                 )
                               })}
                             </div>
-                          )}
+                          ) : null}
                         </div>
-                        <button
-                          className={`library-no-action${choiceSelected(selected, selectedProgress, 'reject') ? ' is-selected' : ''}`}
-                          type="button"
-                          aria-pressed={choiceSelected(selected, selectedProgress, 'reject')}
-                          disabled={false}
-                          onClick={() => choose(selected, 'reject')}
-                        >
-                          Take no action
-                        </button>
                       </section>
                     )
+                  ) : selectedRecorded ? (
+                    <RecordedOutcome
+                      field={selected}
+                      expanded={expandedChoices.has(`${selected.destination}:recorded`)}
+                      toggle={() => toggleChoiceEvidence(`${selected.destination}:recorded`)}
+                    />
                   ) : (
-                    <p className="decision-recorded">
-                      {selected.classificationReason}
-                      {selected.humanDecision || selected.automaticDecision
-                        ? ` The recorded value remains ${decisionValue(selected)}.`
-                        : ''}
-                    </p>
+                    <>
+                      <p className={selectedActionable ? 'decision-recorded' : 'decision-context'}>
+                        {selectedActionable
+                          ? `${fieldReason(selected)}${selected.humanDecision || selected.automaticDecision ? ` The recorded value remains ${decisionValue(selected)}.` : ''}`
+                          : 'There’s no other value to choose from.'}
+                      </p>
+                      {!selectedActionable ? (
+                        <ContextValue
+                          field={selected}
+                          expanded={expandedChoices.has(`${selected.destination}:context`)}
+                          toggle={() => toggleChoiceEvidence(`${selected.destination}:context`)}
+                        />
+                      ) : null}
+                    </>
                   )}
                   {selected.manualHold ? (
                     <section
@@ -2124,7 +2364,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                       Try the same decision again
                     </button>
                   ) : null}
-                  {effect ? (
+                  {selectedChoiceMode && effect ? (
                     <aside className="field-apply-context" aria-label="External update status">
                       <span className="activity-state-mark" aria-hidden="true"></span>
                       <span>
@@ -2134,7 +2374,9 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                       </span>
                     </aside>
                   ) : null}
-                  {controller.status || controller.message ? (
+                  {selectedChoiceMode &&
+                  (controller.statusFor(selected.destination) ||
+                    controller.messageFor(selected.destination)) ? (
                     <p
                       role={
                         controller.decision.isError || controller.reloadRequired
@@ -2142,7 +2384,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                           : 'status'
                       }
                     >
-                      {controller.status || controller.message}
+                      {controller.statusFor(selected.destination) ||
+                        controller.messageFor(selected.destination)}
                     </p>
                   ) : null}
                 </article>
@@ -2153,8 +2396,9 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                 <details className="automatic-resolution-details">
                   <summary>
                     <span>
-                      {String(contextualFields.length)} field with context
-                      {contextualFields.length === 1 ? '' : 's'}
+                      {contextualFields.length === 1
+                        ? '1 field has context'
+                        : `${String(contextualFields.length)} fields have context`}
                     </span>
                     <small>Inspect context</small>
                   </summary>
@@ -2176,7 +2420,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                   </div>
                 </details>
               ) : null}
-              <WorkSources comparison outcomes={selectedLibraryWork?.preparationOutcomes ?? []} />
+              <WorkSources
+                comparison={selectedChoiceMode}
+                outcomes={selectedLibraryWork?.preparationOutcomes ?? []}
+              />
             </>
           )}
         </section>

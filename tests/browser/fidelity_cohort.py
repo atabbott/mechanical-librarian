@@ -386,6 +386,14 @@ def _field(
     inventory_role: str | None = None,
     preservation_only: bool | None = None,
 ) -> dict[str, object]:
+    # The installed client fails closed to the exact owner-decision vocabulary.
+    # Synthetic cases mirror the domain rule: an owner can retain the incumbent
+    # only alongside at least one genuinely different eligible alternative.
+    decision_actions = (
+        ["keep_current", "accept"]
+        if any(value != current for value in proposed)
+        else []
+    )
     inferred_classification = (
         "human_recorded"
         if human_decision is not None
@@ -407,6 +415,7 @@ def _field(
         "classification": resolved_classification,
         "classification_reason": classification_reason or inferred_reason,
         "destination": destination,
+        "decision_actions": decision_actions,
         "deterministic_disposition": disposition,
         "effect_capability": "manual",
         "editable": editable

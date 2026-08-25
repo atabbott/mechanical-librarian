@@ -107,6 +107,26 @@ from mechanical_librarian.domain.shadow_outcome import (
     ShadowOutcomeSet,
 )
 
+_CORRECTIVE_KEEP_CURRENT_SQL = (
+    "human.outcome='keep_current' AND EXISTS (SELECT 1 FROM review_cases review, "
+    "json_each(review.document,'$.target.fields') target WHERE review.review_case_id=human.review_case_id "
+    "AND json_extract(target.value,'$.destination')=human.destination "
+    "AND json_extract(target.value,'$.state')='value' AND ((human.destination IN "
+    "('authors','genres','tags','series') AND json_type(target.value,'$.value')='array' "
+    "AND json_array_length(json_extract(target.value,'$.value'))>0) OR "
+    "(human.destination='cover' AND json_type(target.value,'$.value')='text' "
+    "AND json_extract(target.value,'$.value') GLOB 'cover_[0-9a-f]*') OR "
+    "(human.destination NOT IN ('authors','genres','tags','series','cover') "
+    "AND json_type(target.value,'$.value')='text' "
+    "AND length(json_extract(target.value,'$.value'))>0)) AND EXISTS (SELECT 1 FROM field_effects prior "
+    "JOIN (SELECT decision_id,ordinal FROM human_decisions earlier WHERE "
+    "earlier.review_case_id=human.review_case_id AND earlier.destination=human.destination "
+    "AND earlier.ordinal<human.ordinal UNION ALL SELECT decision_id,-1 FROM "
+    "automatic_decisions earlier WHERE earlier.review_case_id=human.review_case_id "
+    "AND earlier.destination=human.destination) recorded ON recorded.decision_id=prior.decision_id "
+    "WHERE prior.state='verified'))"
+)
+
 
 def _operational_signal(
     kind: str,
@@ -353,9 +373,45 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             "missing",
         }:
             raise FieldEffectError("authority_binding")
-        pre_value = (
+        case_pre_value = (
             target_field.get("value") if target_field["state"] == "value" else None
         )
+        pre_value = case_pre_value
+        predecessor = None
+        if type(decision) is HumanDecision:
+            predecessor = self._connection.execute(
+                "SELECT effect.document FROM field_effects effect JOIN ("
+                "SELECT decision_id,ordinal FROM human_decisions earlier WHERE "
+                "earlier.review_case_id=? AND earlier.destination=? AND earlier.ordinal<("
+                "SELECT ordinal FROM human_decisions WHERE decision_id=?) UNION ALL "
+                "SELECT decision_id,-1 FROM automatic_decisions earlier WHERE "
+                "earlier.review_case_id=? AND earlier.destination=?"
+                ") recorded ON recorded.decision_id=effect.decision_id "
+                "WHERE effect.state='verified' ORDER BY recorded.ordinal DESC LIMIT 1",
+                (
+                    decision.review_case_id,
+                    decision.destination,
+                    decision.decision_id,
+                    decision.review_case_id,
+                    decision.destination,
+                ),
+            ).fetchone()
+        if predecessor is not None:
+            try:
+                previous = FieldEffectOperation.from_json(predecessor[0])
+            except FieldEffectError as error:
+                raise FieldEffectError("authority_binding") from error
+            if (
+                previous.plan.authority.review_case_id != decision.review_case_id
+                or previous.plan.destination != decision.destination
+            ):
+                raise FieldEffectError("authority_binding")
+            pre_value = previous.plan.desired_value
+        if type(decision) is HumanDecision and decision.outcome == "keep_current":
+            if predecessor is not None:
+                value = self._decision_value_for_target(
+                    decision.destination, case_pre_value
+                )
         dependency_digests: tuple[str, ...] = (decision.target_fingerprint,)
         if type(decision) is HumanDecision and decision.destination == "cover":
             consideration_row = self._connection.execute(
@@ -390,7 +446,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 or consideration.get("replay_reference")
                 != self._current_cover_replay_reference
                 or (
-                    incumbent_digest is not None
+                    predecessor is None
+                    and incumbent_digest is not None
                     and pre_value != "cover_" + str(incumbent_digest)
                 )
             ):
@@ -412,6 +469,23 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             "pre_value": pre_value,
             "dependency_digests": dependency_digests,
         }
+
+    @staticmethod
+    def _decision_value_for_target(
+        destination: str, value: object
+    ) -> dict[str, object]:
+        if value is None:
+            raise FieldEffectError("authority_binding")
+        kind = (
+            "list"
+            if destination in {"authors", "genres", "tags"}
+            else "series"
+            if destination == "series"
+            else "cover"
+            if destination == "cover"
+            else "text"
+        )
+        return {"kind": kind, "value": value}
 
     def field_effect_authority_is_current(self, authority: EffectAuthority) -> bool:
         try:
@@ -517,7 +591,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             rows = self._connection.execute(
                 "SELECT pending.document FROM ("
                 "SELECT human.decision_id,human.occurred_at,human.document "
-                "FROM human_decisions human WHERE human.outcome='accept' AND "
+                "FROM human_decisions human WHERE (human.outcome='accept' OR ("
+                + _CORRECTIVE_KEEP_CURRENT_SQL
+                + ")) AND "
                 "(EXISTS (SELECT 1 FROM current_review_case_lineages lineage "
                 "WHERE lineage.review_case_id=human.review_case_id) OR ("
                 "human.destination='cover' AND EXISTS (SELECT 1 FROM "
@@ -575,7 +651,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             rows = self._connection.execute(
                 "WITH pending AS ("
                 "SELECT human.decision_id,human.review_case_id,human.destination,'human' origin "
-                "FROM human_decisions human WHERE human.outcome='accept' AND "
+                "FROM human_decisions human WHERE (human.outcome='accept' OR ("
+                + _CORRECTIVE_KEEP_CURRENT_SQL
+                + ")) AND "
                 "EXISTS (SELECT 1 FROM current_review_case_lineages lineage "
                 "WHERE lineage.review_case_id=human.review_case_id) AND "
                 "human.ordinal=(SELECT MAX(current.ordinal) FROM human_decisions current "

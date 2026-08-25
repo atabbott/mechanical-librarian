@@ -50,7 +50,7 @@ nearest KiB.
 | Current pointer/projection | `current_review_case_lineages` | 2,022 R / 816 KiB | admission, pipeline and policy activation; currentness/cover/effect readers | Latest transition plus checkpoint establishes one live case lineage and protects optimistic-currentness checks. |
 | Current pointer/projection | `current_review_packages` | 2,022 R / 628 KiB | report publication, admission and pipeline; Library/Attention/selected-work readers | The owner-visible package projection carries report-only as well as case outcomes. It is intentionally separate from the lineage's transition witness. |
 | Current pointer/projection | `current_cover_considerations` | 2,019 R / 356 KiB | cover preparation; cover readers | One current candidate per live case makes supersession/retry bounded while preserving packet history. |
-| Current pointer/projection | `review_case_field_facts` | 32,448 R / 3,568 KiB | insert trigger from `review_cases`; Library/Attention count/page and admission readers | #802's derived current facts replace repeated case-document JSON walks. Open-time equivalence validation rejects drift. |
+| Current pointer/projection | `review_case_field_facts` | 32,448 R / 3,568 KiB | insert trigger from `review_cases`; Library/Attention count/page and admission readers | #802's derived current facts, including owner actionability, replace repeated case-document JSON walks. Open-time equivalence validation rejects drift. |
 | Current pointer/projection | `shadow_outcome_field_facts` | 15,196 R / 3,660 KiB | insert trigger from `shadow_decision_outcomes`; Library/Attention and policy readers | #802's derived disposition facts replace repeated outcome-document JSON walks. Open-time equivalence validation rejects drift. |
 | Operational/recovery | `review_preparation_scans` | 3 R / 4 KiB | discovery scheduling/completion; pipeline activity readers | One scan is the bounded discovery lifecycle parent, distinct from its many item work rows. |
 | Operational/recovery | `review_preparation_work` | 2,053 R / 1,740 KiB | claim, advance, complete and fail pipeline actions; latest-work and recovery readers | Restart, attempt, fair claim and per-item state require a mutable work row; it is not audit history. |
@@ -74,6 +74,14 @@ nearest KiB.
 | Control/configuration | `field_effect_manual_holds` | 0 R / 4 KiB | owner-decision return/release; pipeline/effect readers | Manual hold controls automatic return independently of policy or consent. |
 
 ## Exact production owner matrix
+
+The offline `review-owner-decision-actions-v1` plan accepts only the frozen
+pre-#830 four-column `review_case_field_facts` schema. It checks the literal
+target against the installed build before filesystem access, then verifies the
+literal source and target after opening the bound database before replacing only that
+derived table and `review_cases_project_field_facts` trigger from
+immutable case JSON. Canonical, provider, decision, shadow, operational, and
+all other derived rows are digest-preserved.
 
 `W` names the persistence method that writes the relation. `O` names the
 owner-visible read path; a dash means the relation has no direct owner-visible

@@ -19,6 +19,7 @@ from argon2 import PasswordHasher
 from playwright.sync_api import (
     BrowserContext,
     Page,
+    Request,
     expect,
     sync_playwright,
 )
@@ -106,7 +107,7 @@ def _report():
             _bibliographic_source(
                 "catalogue",
                 "edition-1",
-                titles=(),
+                titles=("Mistborn: The Final Empire",),
                 series="Mistborn",
             ),
         ),
@@ -794,9 +795,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                 page.get_by_role(
                     "heading", name="Which title should this work use?"
                 ).wait_for()
-                assert page.locator(".workspace-detail").evaluate(
-                    "node => node === document.activeElement"
-                )
+                expect(page.locator(".selected-work-header")).to_be_focused()
                 assert page.locator("img,script:not([src])").count() == 0
                 assert "<img" in page.locator("body").inner_text()
                 assert (
@@ -812,20 +811,20 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                     page.get_by_role(
                         "button", name="Choose proposed value", exact=False
                     ).count()
-                    == 0
+                    == 1
                 )
                 page.get_by_role("button", name="Use dark mode").click()
                 page.get_by_role("button", name="Use light mode").wait_for()
                 page.get_by_role(
                     "button", name="Choose current value:", exact=False
                 ).first.click()
-                page.get_by_text(
-                    "Decision recorded from the authoritative case.", exact=True
+                # The acknowledgement advances to the next field rather than
+                # leaking a recorded status across the selected-work surface.
+                page.get_by_role(
+                    "heading", name="Which series should this work use?"
                 ).wait_for()
                 page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
-                page.get_by_role(
-                    "heading", name="Which title should this work use?"
-                ).wait_for()
+                page.get_by_role("heading", name="Title").wait_for()
                 # #635: revisiting a recorded field restores the whole choice
                 # composition and marks the recorded answer, rather than
                 # replacing it with prose.
@@ -837,9 +836,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                 page.get_by_role("link", name="Activity", exact=True).click()
                 page.get_by_role("heading", name="Activity and recovery").wait_for()
                 page.go_back()
-                page.get_by_role(
-                    "heading", name="Which title should this work use?"
-                ).wait_for()
+                page.get_by_role("heading", name="Title").wait_for()
                 page.go_forward()
                 page.get_by_role("heading", name="Activity and recovery").wait_for()
                 assert documents == (initial_documents + 2)
@@ -901,6 +898,8 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 # values already supplied by the current case.  It protects
                 # restoration of recorded automatic choices, including cover
                 # values, without widening the qualified-policy envelope.
+                read_only_title_candidate = False
+
                 def automatic_projection(route) -> None:
                     response = route.fetch()
                     payload = response.json()
@@ -936,6 +935,24 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                                 if field["destination"] == "cover"
                                 else field["proposed_values"][0]
                             )
+                        read_only_candidate = (
+                            field["destination"] == "title"
+                            and read_only_title_candidate
+                        )
+                        if read_only_candidate:
+                            field["human_decision"] = None
+                            for context in field["choice_contexts"]:
+                                context["evidence"] = [
+                                    {
+                                        "source": (
+                                            "Automatic candidate source"
+                                            if context["selection"] == "proposed"
+                                            else "Automatic current source"
+                                        ),
+                                        "observation": "Synthetic automatic evidence.",
+                                        "role": "external_corroboration",
+                                    }
+                                ]
                         field.update(
                             automatic_decision={
                                 "candidate_id": (
@@ -957,7 +974,10 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                                 "Automatic handling recorded this field; "
                                 "you may inspect or override it."
                             ),
-                            editable=True,
+                            decision_actions=[]
+                            if read_only_candidate
+                            else field["decision_actions"],
+                            editable=not read_only_candidate,
                             needs_attention=False,
                             navigation_role="inspect",
                         )
@@ -989,18 +1009,15 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 with page.expect_response(
                     lambda response: response.url.endswith("/decisions")
                 ) as override_response:
+                    before = page.locator(_CURRENT_FIELD_SELECTOR).first.inner_text()
                     title_current.focus()
                     page.keyboard.press("Enter")
                 assert 200 == override_response.value.status
-                # Recording advances off the title field, so its recorded state
-                # is read where the owner would find it: back on that field.
-                page.get_by_text(
-                    "Decision recorded from the authoritative case.", exact=True
-                ).wait_for()
+                # Acknowledged exact-case state advances the owner. Reopening
+                # remains the place to inspect and revise the recorded title.
+                page.wait_for_function(_CURRENT_FIELD_CHANGED, arg=before)
                 page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
-                page.get_by_role(
-                    "heading", name="Which title should this work use?"
-                ).wait_for()
+                expect(title_current).to_have_attribute("aria-pressed", "true")
                 page.goto(f"{origin}/library?lens=all&preview={case_id}&field=series")
                 series_current = page.get_by_role(
                     "button", name="Choose current value:", exact=False
@@ -1008,6 +1025,29 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 expect(series_current).to_have_attribute("aria-pressed", "true")
                 assert series_current.locator("xpath=..").evaluate(
                     "node => node.classList.contains('is-selected')"
+                )
+                read_only_title_candidate = True
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
+                page.get_by_role("heading", name="Title", exact=True).wait_for()
+                recorded = page.get_by_label("Title recorded outcome")
+                recorded.get_by_text("Resolved automatically", exact=True).wait_for()
+                expect(recorded.get_by_text("Chosen value", exact=True)).to_be_visible()
+                expect(
+                    recorded.get_by_text("Synthetic title revised", exact=True)
+                ).to_be_visible()
+                assert (
+                    page.get_by_role(
+                        "button", name="Choose proposed value", exact=False
+                    ).count()
+                    == 0
+                )
+                recorded.get_by_role("button", name="Evidence", exact=True).click()
+                recorded.get_by_text(
+                    "Automatic candidate source", exact=True
+                ).wait_for()
+                assert (
+                    recorded.get_by_text("Automatic current source", exact=True).count()
+                    == 0
                 )
                 page.goto(f"{origin}/library?lens=all&preview={case_id}&field=cover")
                 page.get_by_role("button", name="Prepare cover comparison").click()
@@ -1040,10 +1080,6 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                     page.locator(".library-cover-card")
                     .filter(has_text="Alternative 1 cover")
                     .evaluate("node => node.classList.contains('is-selected')")
-                )
-                assert (
-                    "Automatic handling recorded this field"
-                    in page.locator("body").inner_text()
                 )
                 with (
                     page.expect_response(
@@ -1340,10 +1376,9 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
     That ordering was the whole observable until #641 gave a decision a second
     reason to rebuild the Library, on a coalescing delay long enough that the
     refetch usually landed after the counter had already been read. So the
-    Library requests *issued* across the decision loop are counted too, and
-    that count is zero: a request is issued deterministically or not at all,
-    where a response landing inside a window is a race, and the race is what
-    four qualification runs of #641 saw as green.
+    each post-advance Library request is held and checked against the committed
+    field before it is released. That makes ordering observable directly rather
+    than inferring it from a response landing inside a timing window.
     """
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -1355,7 +1390,9 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
         errors: list[str] = []
         announced: list[Any] = []
         library_requests: list[str] = []
+        library_request_fields: list[str | None] = []
         library_responses: list[float] = []
+        decision_requests: list[str | None] = []
         decision_responses: list[str] = []
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
@@ -1382,14 +1419,18 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                     else None
                 ),
             )
-            page.on(
-                "request",
-                lambda request: (
+
+            def capture_request(request: Request) -> None:
+                if request.url.endswith("/decisions"):
+                    decision_requests.append(request.headers.get("idempotency-key"))
+                elif "/api/v1/library" in request.url:
                     library_requests.append(request.url)
-                    if "/api/v1/library" in request.url
-                    else None
-                ),
-            )
+                    field = page.locator(_CURRENT_FIELD_SELECTOR).first
+                    library_request_fields.append(
+                        field.inner_text() if field.count() else None
+                    )
+
+            page.on("request", capture_request)
             with (
                 closing(ReservedPort()) as reserved_port,
                 _server(
@@ -1423,11 +1464,17 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                 page.evaluate("window.scrollTo(0, 220)")
                 scroll_before = page.evaluate("() => window.scrollY")
                 page.emulate_media(reduced_motion="no-preference")
+                held_library_requests: list[Any] = []
+
+                def hold_library_request(route: Any) -> None:
+                    held_library_requests.append(route)
+
+                page.route("**/api/v1/library**", hold_library_request)
 
                 def current_field() -> str:
                     return page.locator(_CURRENT_FIELD_SELECTOR).first.inner_text()
 
-                def advance(*, pointer: bool = False) -> tuple[float, int, str]:
+                def advance(*, pointer: bool = False) -> tuple[float, int, str, str]:
                     before = current_field()
                     settled = len(library_responses)
                     choice = page.get_by_role(
@@ -1447,20 +1494,42 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                         time.monotonic() - started,
                         len(library_responses) - settled,
                         before,
+                        current_field(),
                     )
 
+                def release_aggregate_request(
+                    expected: int, *, previous: str, committed: str
+                ) -> None:
+                    deadline = time.monotonic() + 5
+                    while (
+                        len(held_library_requests) < expected
+                        or len(library_request_fields) < issued + expected
+                    ) and time.monotonic() < deadline:
+                        page.wait_for_timeout(10)
+                    assert len(held_library_requests) == expected, held_library_requests
+                    assert len(library_request_fields) == issued + expected
+                    field = library_request_fields[issued + expected - 1]
+                    assert field == committed
+                    assert field != previous
+                    held_library_requests[expected - 1].continue_()
+
                 issued = len(library_requests)
-                elapsed, projections, first_field = advance(pointer=True)
-                # The projection is invalidated, not awaited. Anything that
-                # completed inside this window was waited on.
+                elapsed, projections, first_field, first_next = advance(pointer=True)
+                # The aggregate request is held after it starts. The exact
+                # case still advances, proving this presentation-ready step
+                # does not await a whole-Library read; a request can only see
+                # the committed next field, never the recorded one.
                 assert projections == 0, (elapsed, projections)
+                release_aggregate_request(1, previous=first_field, committed=first_next)
                 # A generous ceiling: the measured exact-case read is single
                 # figures of milliseconds, and a whole-Library projection over
                 # this cohort is two orders of magnitude slower.
                 assert elapsed < 1.0, elapsed
-                # The acknowledgement is local: the durable write has not even
-                # answered yet, which is what "immediate" has to mean.
-                assert decision_responses == [], decision_responses
+                # The exact decision acknowledgement is the authority for this
+                # advance; aggregate Library reads remain out of the path.
+                assert len(decision_responses) == 1, decision_responses
+                assert len(decision_requests) == 1, decision_requests
+                assert decision_requests[0]
                 assert page.evaluate("() => window.scrollY") == scroll_before
                 assert page.evaluate(
                     "() => document.activeElement?.matches('.decision-canvas button:not(:disabled)')"
@@ -1511,13 +1580,6 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                 assert reduced_animation == {"name": "", "transform": "none"} or (
                     reduced_animation == {"name": "none", "transform": "none"}
                 )
-                # It still lands, and the authoritative case replaces the
-                # local acknowledgement rather than standing in for it.
-                page.get_by_text(
-                    "Decision recorded from the authoritative case.", exact=True
-                ).wait_for()
-                assert len(decision_responses) == 1, decision_responses
-
                 # The next field is actionable by keyboard without a pointer.
                 assert page.evaluate(
                     "() => document.activeElement !== null &&"
@@ -1546,10 +1608,13 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                     page.get_by_role(
                         "button", name="Take no action", exact=True
                     ).count()
-                    == 1
+                    == 0
                 )
+                assert page.get_by_role(
+                    "button", name="Choose proposed value", exact=False
+                ).count()
                 assert (
-                    "You can change it here"
+                    "You can select another eligible value"
                     in page.locator(".decision-canvas").first.inner_text()
                 )
 
@@ -1567,24 +1632,29 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
 
                 # A second choice is accepted while the first settlement is
                 # still converging, in order, without a reload.
-                second_elapsed, second_projections, second_field = advance()
+                second_elapsed, second_projections, second_field, second_next = (
+                    advance()
+                )
                 assert second_projections == 0, (second_elapsed, second_projections)
+                release_aggregate_request(
+                    2, previous=second_field, committed=second_next
+                )
                 assert second_field != first_field
                 deadline = time.monotonic() + 10
                 while len(decision_responses) < 2 and time.monotonic() < deadline:
                     page.wait_for_timeout(25)
                 assert len(decision_responses) == 2, decision_responses
+                assert len(decision_requests) == 2, decision_requests
+                assert all(decision_requests)
+                assert decision_requests[0] != decision_requests[1]
 
-                # Both decisions have landed durably, and both announcements
-                # have had five times the client's 120 ms coalescing window to
-                # turn into a request. Neither did: an owner recording in a
-                # case holds the Library and the rail beside it, marking them
-                # stale to be read once on the way out, so the decision path
-                # carries no Library work at all rather than merely not
-                # awaiting it. Waiting here can only expose a request that was
-                # issued, never hide one.
+                # Aggregate refreshes may now converge badges and the work rail,
+                # but remain background work: the exact-case acknowledgement
+                # above advanced and focused the next field before either one
+                # completed.
+                page.unroute("**/api/v1/library**", hold_library_request)
                 page.wait_for_timeout(600)
-                assert library_requests[issued:] == [], library_requests[issued:]
+                assert len(library_requests[issued:]) == 2, library_requests[issued:]
 
                 # And the other half of the same rule: everything this tab did
                 # not cause still reaches it while the owner keeps recording.
@@ -1649,7 +1719,7 @@ def test_compact_lower_choice_reveals_only_the_next_focused_control() -> None:
                 ]
                 before = page.locator(_CURRENT_FIELD_SELECTOR).first.inner_text()
                 lower_choice = page.get_by_role(
-                    "button", name="Take no action", exact=True
+                    "button", name="Choose proposed value", exact=False
                 )
                 lower_choice.scroll_into_view_if_needed()
                 scroll_before = page.evaluate("() => window.scrollY")
@@ -1751,21 +1821,26 @@ def test_z_compact_uncached_library_detail_keeps_visible_focus() -> None:
                 ) as (origin, case_id),
                 _closing_context(context),
             ):
+                held_selected_detail: list[Any] = []
 
-                def delay_selected_detail(route) -> None:
+                def hold_selected_detail(route) -> None:
                     if route.request.url.endswith(f"/api/v1/review-cases/{case_id}"):
-                        time.sleep(0.3)
-                    route.continue_()
+                        held_selected_detail.append(route)
+                    else:
+                        route.continue_()
 
-                page.route("**/api/v1/review-cases/**", delay_selected_detail)
+                page.route("**/api/v1/review-cases/**", hold_selected_detail)
                 _login(page, origin)
                 page.locator(".library-work-row").first.click()
                 page.get_by_text("Loading selected work…").wait_for()
+                assert len(held_selected_detail) == 1
                 pending_detail = page.locator(".workspace-detail")
                 expect(pending_detail).to_be_focused()
                 assert pending_detail.bounding_box() is not None
+                held_selected_detail[0].continue_()
                 page.get_by_role(
                     "button", name="Choose current value:", exact=False
                 ).wait_for()
-                page.unroute("**/api/v1/review-cases/**", delay_selected_detail)
+                expect(page.locator(".selected-work-header")).to_be_focused()
+                page.unroute("**/api/v1/review-cases/**", hold_selected_detail)
             browser.close()

@@ -431,6 +431,13 @@ def test_concurrent_http_decisions_preserve_both_immutable_revisions() -> None:
             assert repository._connection.execute(
                 "SELECT count(*) FROM human_decision_events"
             ).fetchone() == (2,)
+            historical_reject = next(
+                event
+                for event in repository.get_review_case_history(case_id, 10)
+                if event.get("kind") == "human_decision_recorded"
+                and event.get("outcome") == "reject"
+            )
+            assert historical_reject["selected_value"] is None
             library = client.get("/api/v1/library?lens=no_attention_needed")
             assert library.status_code == 200, library.text
             assert library.json()["counts"] == {

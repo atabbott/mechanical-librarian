@@ -65,16 +65,15 @@ def classify_review_field(
     )
     if has_human_decision:
         # A recorded decision stays revisable for exactly as long as the store
-        # will supersede it.  `record_human_decision` refuses only once an
-        # effect for the previous decision has left the reversible states, so
-        # editability here reports that same boundary rather than a second,
-        # stricter rule the API would not actually enforce.
+        # will supersede it. `record_human_decision` refuses only while an
+        # earlier effect is in flight, so editability reports that same
+        # boundary rather than a stricter projection-only rule.
         return ReviewFieldClassification(
             "human_recorded",
             (
                 "Your recorded decision is retained. You can change it here."
                 if override_available
-                else "Your recorded decision has advanced to external application and can no longer be changed."
+                else "Your recorded decision is being applied and cannot be changed yet."
             ),
             False,
             override_available,
@@ -108,7 +107,7 @@ def classify_review_field(
             (
                 "Automatic handling recorded this field; you may inspect or override it."
                 if override_available
-                else "Automatic handling has advanced to external application and can no longer be overridden."
+                else "Automatic handling is being applied and cannot be overridden yet."
             ),
             False,
             override_available,

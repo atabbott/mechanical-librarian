@@ -1519,6 +1519,167 @@ def test_sqlite_attention_keeps_manual_bibliographic_membership_field_local() ->
         repository.close()
 
 
+def test_current_pointer_excludes_current_only_successors_from_owner_attention() -> (
+    None
+):
+    """One work alternates between context-only and owner-actionable packets."""
+
+    def report(revision: str, *, actionable: bool) -> MetadataReport:
+        source = _report(
+            "Lifecycle work",
+            content_digest=revision,
+            file_identity=revision,
+            actionable=actionable,
+        )
+        return MetadataReport.create(
+            target=source.target,
+            file=source.file,
+            local_claims=source.local_claims,
+            local_reasons=source.local_reasons,
+            providers=source.providers,
+            cover_sources=source.cover_sources,
+        )
+
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "application.sqlite3"
+        repository = open_repository(path)
+
+        def admit(revision: str, *, actionable: bool) -> dict[str, object]:
+            source = report(revision, actionable=actionable)
+            repository.publish(source, lambda: True)
+            proposal = evaluate_report(source)
+            repository.publish_proposal(proposal)
+            return json.loads(repository.admit_review_case(proposal))
+
+        initial = admit("a", actionable=False)
+        assert initial["status"] == "no_case"
+        assert repository.count_current_review_cases(None) == (1, 0)
+        assert repository.count_current_attention_fields(None) == 0
+        assert repository.read_review_attention(None, 10, 0).total == 0
+
+        actionable = admit("b", actionable=True)
+        case_id = str(actionable["review_case_id"])
+        assert repository.count_current_review_cases(None) == (1, 1)
+        assert repository.count_current_attention_fields(None) == 1
+        assert [
+            ReviewCase.from_json(row[0]).review_case_id
+            for row in repository.read_review_attention(None, 10, 0).rows
+        ] == [case_id]
+        detail = InspectCurrentReviewCase(repository).run(case_id)
+        title = next(
+            field for field in detail["fields"] if field["destination"] == "title"
+        )
+        assert title["decision_actions"] == ["keep_current", "accept"]
+        assert title["needs_attention"] is True
+        assert (
+            ReviewCase.from_json(
+                repository.list_current_review_case_documents(None, 10, 0, True)[0][0]
+            ).review_case_id
+            == case_id
+        )
+
+        later = admit("c", actionable=False)
+        assert later["status"] in {"no_case", "retired"}
+        assert repository.count_current_review_cases(None) == (1, 0)
+        assert repository.count_current_attention_fields(None) == 0
+        assert repository.read_review_attention(None, 10, 0).rows == ()
+        repository.close()
+        reopened = open_repository(path, create=False)
+        assert reopened.count_current_review_cases(None) == (1, 0)
+        assert reopened.count_current_attention_fields(None) == 0
+        assert reopened.read_review_attention(None, 10, 0).rows == ()
+        reopened.close()
+
+
+def test_admitted_preservation_only_sibling_enters_attention_only_as_successor() -> (
+    None
+):
+    """An admitted case can retain readable non-owner sibling context."""
+
+    def revised(titles: tuple[str, ...], revision: str) -> MetadataReport:
+        providers = (
+            ()
+            if not titles
+            else (
+                _bibliographic_source(
+                    "catalogue-a", "edition-1", titles=(), series="One"
+                ),
+                _bibliographic_source(
+                    "catalogue-b", "edition-2", titles=(), series="Two"
+                ),
+            )
+        )
+        source = _bibliographic_report(
+            current_title="Old title",
+            providers=providers,
+            local_claims=_report().local_claims,
+        )
+        return MetadataReport.create(
+            target=source.target,
+            file=FileFacts(
+                1,
+                revision * 64,
+                ("b" if revision == "a" else "c") * 64,
+                source.file.format,
+            ),
+            local_claims=source.local_claims,
+            local_reasons=source.local_reasons,
+            providers=source.providers,
+            cover_sources=source.cover_sources,
+        )
+
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "application.sqlite3"
+        repository = open_repository(path)
+
+        def publish(report: MetadataReport) -> str:
+            repository.publish(report, lambda: True)
+            proposal = evaluate_report(report)
+            repository.publish_proposal(proposal)
+            return str(
+                json.loads(repository.admit_review_case(proposal))["review_case_id"]
+            )
+
+        first_case_id = publish(revised((), "a"))
+        first = InspectCurrentReviewCase(repository).run(first_case_id)
+        title = next(
+            field for field in first["fields"] if field["destination"] == "series"
+        )
+        assert title["decision_actions"] == []
+        assert title["needs_attention"] is False
+        assert [
+            row[2] for row in repository.list_current_attention_documents(None, 10, 0)
+        ] == ["title"]
+        assert repository.count_current_attention_fields(None) == 1
+
+        successor_id = publish(revised(("series now contested",), "b"))
+        assert successor_id != first_case_id
+        assert repository.current_review_case_successor(first_case_id) == successor_id
+        assert [
+            row[2] for row in repository.list_current_attention_documents(None, 10, 0)
+        ] == [
+            "series",
+            "title",
+        ]
+        successor = InspectCurrentReviewCase(repository).run(successor_id)
+        successor_title = next(
+            field for field in successor["fields"] if field["destination"] == "series"
+        )
+        assert successor_title["decision_actions"] == ["keep_current", "accept"]
+        assert successor_title["needs_attention"] is True
+        repository.close()
+
+        reopened = open_repository(path, create=False)
+        assert reopened.current_review_case_successor(first_case_id) == successor_id
+        assert [
+            row[2] for row in reopened.list_current_attention_documents(None, 10, 0)
+        ] == [
+            "series",
+            "title",
+        ]
+        reopened.close()
+
+
 def test_sqlite_attention_excludes_epub_inapplicable_destinations_from_membership() -> (
     None
 ):

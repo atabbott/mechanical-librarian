@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Make Library offer owner choices only when an eligible alternative exists, and
+  wait for the exact acknowledged result before advancing. #830 adopts only its
+  exact predecessor through the offline owner-actionability plan; other shapes
+  require a clean rebuild. (#830)
+
 - Keep authenticated preparation status available while local preparation writes
   hold SQLite's DELETE journal, without weakening recovery-sidecar rejection.
   (#828)

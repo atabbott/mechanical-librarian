@@ -7,6 +7,26 @@ import { fieldLabel, labelWords } from '../labels'
 import { detailRoute, useReviewContext } from '../router'
 
 function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
+  if ('previous_value' in item)
+    return (
+      <article>
+        <h3>{fieldLabel(item.destination)}</h3>
+        <p>
+          {item.outcome === 'reject'
+            ? 'No action was chosen.'
+            : item.outcome === 'keep_current'
+              ? 'Current value retained.'
+              : 'Proposed value selected.'}
+        </p>
+        <p>Previous: {item.previous_value ? displayValue(item.previous_value.value) : 'Not set'}</p>
+        {item.outcome !== 'reject' ? (
+          <p>
+            {item.outcome === 'keep_current' ? 'Retained' : 'Chosen'}:{' '}
+            {item.selected_value ? displayValue(item.selected_value.value) : 'Not set'}
+          </p>
+        ) : null}
+      </article>
+    )
   if (!('consideration' in item))
     return (
       <p>

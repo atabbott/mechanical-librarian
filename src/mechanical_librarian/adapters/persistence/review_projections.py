@@ -438,19 +438,19 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         self,
         review_case_id: str,
     ) -> tuple[str, ...]:
-        # An owner's own recorded decision is superseded by the next one, so it
-        # is blocked by exactly what blocks an automatic one: an effect that has
-        # left the reversible states.  `record_human_decision` enforces that
-        # boundary on the write; reporting a narrower one here would hide a
-        # change the store would have accepted.
+        # An owner's own recorded decision is superseded by the next one. Only
+        # an in-flight effect blocks scalar replacement; verified cover effects
+        # remain closed because their incumbent artifact is not a new selectable
+        # target. `record_human_decision` enforces this exact boundary on write.
         rows = self._connection.execute(
             "SELECT DISTINCT recorded.destination FROM ("
             "SELECT destination,decision_id FROM automatic_decisions WHERE review_case_id=? "
             "UNION ALL "
             "SELECT destination,decision_id FROM human_decisions WHERE review_case_id=?"
             ") recorded JOIN field_effects effect ON effect.decision_id=recorded.decision_id "
-            "WHERE effect.state IN "
-            "('claimed','applying','reconciling','verified') ORDER BY recorded.destination",
+            "WHERE effect.state IN ('claimed','applying','reconciling') OR "
+            "(effect.state='verified' AND recorded.destination='cover') "
+            "ORDER BY recorded.destination",
             (review_case_id, review_case_id),
         ).fetchall()
         if any(type(row[0]) is not str for row in rows):

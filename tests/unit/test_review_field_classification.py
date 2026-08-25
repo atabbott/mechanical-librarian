@@ -198,7 +198,9 @@ def test_advanced_automatic_effect_is_inspect_only() -> None:
     )
     assert "automatic_recorded" == value.state
     assert not value.editable
-    assert "can no longer be overridden" in value.reason
+    # A verified automatic effect is inspect-only while its authority is still
+    # being resolved; it may become replaceable again once that state settles.
+    assert "cannot be overridden yet" in value.reason
 
 
 def test_attention_continues_after_two_contradictory_batches() -> None:

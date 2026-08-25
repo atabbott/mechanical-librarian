@@ -1771,7 +1771,9 @@ def test_a_recorded_decision_stays_revisable_until_its_effect_leaves_reversible_
     )
     assert advanced["classification"] == "human_recorded"
     assert advanced["editable"] is False
-    assert "can no longer be changed" in advanced["classification_reason"]
+    # In-flight authority is temporary: a settled reversible scalar effect is
+    # voluntarily revisitable again.
+    assert "cannot be changed yet" in advanced["classification_reason"]
 
 
 def test_one_decision_and_its_exact_case_read_never_project_the_whole_library(

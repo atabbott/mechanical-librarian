@@ -63,8 +63,15 @@ from mechanical_librarian.domain.automatic_decision import (
     AutomaticSafetyState,
 )
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
-from mechanical_librarian.domain.field_effect import FieldEffectError
-from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.field_effect import (
+    EffectAuthority,
+    EffectConsent,
+    FieldEffectError,
+    FieldEffectOperation,
+    FieldEffectPlan,
+    field_value_version,
+)
+from mechanical_librarian.domain.human_decision import HumanDecision, decision_actions
 from mechanical_librarian.domain.metadata_policy import (
     DEFAULT_OPTIONS,
     OPTION_CATALOGUE,
@@ -2933,6 +2940,88 @@ def test_shadow_history_orders_human_and_preview_events_by_time() -> None:
         repository.close()
 
 
+def test_history_orders_same_timestamp_human_and_cross_kind_events_stably() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        repository = open_repository(Path(temporary) / "reports.sqlite")
+        report = _bibliographic_report(
+            current_title="Secret History",
+            providers=(
+                _source(
+                    "catalogue",
+                    "edition-1",
+                    titles=("Secret History: Mistborn",),
+                    subtitle="Mistborn novella",
+                    series="Mistborn",
+                ),
+            ),
+        )
+        repository.publish(report, lambda: True)
+        proposal_set = evaluate_report(report)
+        repository.publish_proposal(proposal_set)
+        case_id = json.loads(repository.admit_review_case(proposal_set))[
+            "review_case_id"
+        ]
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(case_id))["case"]
+        )
+        proposals = {
+            value["destination"]: value
+            for value in case.proposals
+            if decision_actions(value)
+        }
+        assert {"title", "subtitle"}.issubset(proposals)
+        decisions = []
+        for index, destination in enumerate(("title", "subtitle"), 1):
+            proposal = proposals[destination]
+            alternative = next(
+                value
+                for value in proposal["result"]["alternatives"]
+                if value["assessment"] != "preserves_target"
+            )
+            decision = HumanDecision.create(
+                case,
+                proposal_id=proposal["proposal_id"],
+                target_fingerprint=case.target_fingerprint,
+                destination=proposal["destination"],
+                actor="owner",
+                outcome="accept",
+                selected_value=alternative["value"],
+                idempotency_key=f"same-timestamp-history-{index:04d}",
+                occurred_at=10,
+            )
+            repository.record_human_decision(decision)
+            decisions.append(decision)
+        first = repository.get_review_case_history(case_id, 10)
+        second = repository.get_review_case_history(case_id, 10)
+        assert first == second
+        assert [event["decision_id"] for event in first[:2]] == [
+            decisions[1].decision_id,
+            decisions[0].decision_id,
+        ]
+        repository.close()
+
+    with tempfile.TemporaryDirectory() as temporary:
+        repository = open_repository(Path(temporary) / "reports.sqlite")
+        case_id = _case(repository)
+        repository.enter_shadow_preview(9)
+        repository.persist_shadow_outcome(case_id, 10)
+        repository._record_automatic_outcomes(
+            _synthetic_automatic_tuple(repository, case_id, "title_layout"), 10
+        )
+        first = repository.get_review_case_history(case_id, 10)
+        second = repository.get_review_case_history(case_id, 10)
+        assert first == second
+        assert {
+            "automatic_decision_recorded",
+            "shadow_preview_recorded",
+        }.issubset({event["kind"] for event in first})
+        assert [event["kind"] for event in first[:2]] == [
+            "shadow_preview_recorded",
+            "automatic_decision_recorded",
+        ]
+        repository.close()
+
+
 def test_sample_bounds_limit_fifty_at_maximum_reference_cardinality() -> None:
     with tempfile.TemporaryDirectory() as temporary:
         repository = open_repository(Path(temporary) / "reports.sqlite")
@@ -3244,6 +3333,80 @@ def test_human_authority_supersedes_automatic_without_global_suspension() -> Non
         repository.close()
 
 
+def test_history_uses_a_verified_automatic_predecessor_for_a_human_override() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        repository = open_repository(Path(temporary) / "reports.sqlite")
+        case_id = _case(repository)
+        repository._record_automatic_outcomes(
+            _synthetic_automatic_tuple(repository, case_id, "title_layout"), 2
+        )
+        automatic = next(
+            AutomaticDecision.from_json(document)
+            for document in repository.get_review_case_decisions(case_id)
+            if AutomaticDecision.from_json(document).destination == "title"
+        )
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(case_id))["case"]
+        )
+        current = next(
+            field["value"]
+            for field in case.target["fields"]
+            if field["destination"] == "title" and field["state"] == "value"
+        )
+        automatic_value = "Automatic title"
+        plan = FieldEffectPlan.create(
+            connection=case.target["connection"],
+            library=case.target["library"],
+            work_id=case.target["item"],
+            destination="title",
+            pre_value=current,
+            desired_value=automatic_value,
+            target_fingerprint=case.target_fingerprint,
+            target_version=field_value_version("title", current),
+            dependency_digests=(case.target_fingerprint,),
+            authority=EffectAuthority(
+                automatic.decision_id,
+                automatic.review_case_id,
+                automatic.target_fingerprint,
+                "persisted_review_case",
+                "automatic_policy",
+                "candidate",
+                automatic.resolved_policy_id,
+                automatic.qualification_manifest_sha256,
+            ),
+            consent=EffectConsent.create(
+                connection=case.target["connection"],
+                library=case.target["library"],
+                destination="title",
+                envelope_identity=repository.field_effect_consent_envelope_identity(
+                    case.target["library"]
+                ),
+                granted_at=3,
+            ),
+            capability_digest="d" * 64,
+            created_at=3,
+        )
+        repository.record_field_effect(FieldEffectOperation(plan, updated_at=3))
+        repository.claim_field_effect(plan.plan_id, "planned", "a" * 64, 4)
+        repository.transition_field_effect(plan.plan_id, "claimed", "applying", 5)
+        repository.transition_field_effect(plan.plan_id, "applying", "verified", 6)
+
+        human = _human_title_decision(repository, case_id, 7)
+        repository.record_human_decision(human)
+        history = repository.get_review_case_history(case_id, 10)
+        override = next(
+            event
+            for event in history
+            if event.get("kind") == "human_decision_recorded"
+            and event.get("decision_id") == human.decision_id
+        )
+        assert override["previous_value"] == {
+            "kind": "text",
+            "value": automatic_value,
+        }
+        repository.close()
+
+
 def test_automatic_tuple_replay_is_exact_and_date_and_title_bundles_are_atomic() -> (
     None
 ):
@@ -3541,9 +3704,7 @@ def test_incomplete_series_memberships_remain_in_attention_after_persistence() -
         repository.close()
 
 
-def test_paused_or_category_suspended_automatic_tuple_remains_in_every_attention_projection() -> (
-    None
-):
+def test_paused_or_category_suspended_actionless_tuple_stays_context_only() -> None:
     local_title = LocalClaim.create(
         kind=ClaimKind.TITLE,
         observed="Secret History",
@@ -3619,7 +3780,10 @@ def test_paused_or_category_suspended_automatic_tuple_remains_in_every_attention
             title = next(
                 field for field in detail["fields"] if field["destination"] == "title"
             )
-            assert title["needs_attention"]
+            # Automatic-safety context remains inspectable, but an equivalent
+            # title has no owner action and cannot enter Attention.
+            assert title["decision_actions"] == []
+            assert not title["needs_attention"]
             assert (
                 "Automatic handling is suspended pending a safety recovery."
                 == title["classification_reason"]
@@ -3628,26 +3792,30 @@ def test_paused_or_category_suspended_automatic_tuple_remains_in_every_attention
             assert 1 == library.total
             assert 1 == library.attention_total
             attention = repository.read_review_attention(None, 50, 0)
-            assert attention.total >= 1
-            assert "title" in tuple(row[2] for row in attention.rows)
-            assert "automatic_safety_suspended" == next(
-                row[5]
-                for row in cast(
-                    "tuple[tuple[str, str, str, int, str, str], ...]", attention.rows
-                )
-                if row[2] == "title"
+            # The subtitle has an exact eligible alternative, so a suspended
+            # automatic tuple remains in every Attention projection when an
+            # owner decision is actually available.
+            subtitle = next(
+                field
+                for field in detail["fields"]
+                if field["destination"] == "subtitle"
             )
+            assert subtitle["decision_actions"]
+            assert subtitle["needs_attention"]
+            assert 1 == attention.total
+            assert ("subtitle",) == tuple(row[2] for row in attention.rows)
+            assert "automatic_safety_suspended" == attention.rows[0][5]
             projected = BrowseReviewLibrary(repository).attention(
                 search=None,
                 limit=50,
                 cursor=None,
             )
             assert attention.total == projected["total"]
-            assert "title" in [item["destination"] for item in projected["items"]]
+            assert ["subtitle"] == [item["destination"] for item in projected["items"]]
             assert "Automatic handling is suspended pending a safety recovery." == next(
                 item["classification_reason"]
                 for item in projected["items"]
-                if item["destination"] == "title"
+                if item["destination"] == "subtitle"
             )
             repository.close()
 

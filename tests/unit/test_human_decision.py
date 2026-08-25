@@ -7,6 +7,7 @@ import pytest
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
+    decision_actions,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
@@ -99,6 +100,104 @@ def test_invalid_selection_nonactionable_field_and_tampering_fail_closed(
         HumanDecision.from_json(
             json.dumps(tampered, separators=(",", ":"), sort_keys=True)
         )
+
+
+def test_retained_preservation_accept_remains_readable_without_reopening_command_admission(
+    case: ReviewCase, proposal: dict[str, object]
+) -> None:
+    alternative = next(
+        value
+        for value in proposal["result"]["alternatives"]
+        if value["assessment"] != "preserves_target"
+    )
+    selected = alternative["value"]
+    decision = _create(case, proposal, "accept", selected)
+    preserved = json.loads(json.dumps(proposal))
+    for value in preserved["result"]["alternatives"]:
+        value["assessment"] = "preserves_target"
+    retained = type(
+        "RetainedCase",
+        (),
+        {
+            "review_case_id": case.review_case_id,
+            "target_fingerprint": case.target_fingerprint,
+            "proposals": (preserved,),
+        },
+    )()
+
+    decision.validate_for(retained)
+    with pytest.raises(HumanDecisionError) as rejected:
+        HumanDecision.create(
+            retained,
+            proposal_id=preserved["proposal_id"],
+            target_fingerprint=case.target_fingerprint,
+            destination=preserved["destination"],
+            actor="owner",
+            outcome="accept",
+            selected_value=selected,
+            idempotency_key="domain-preservation-new-0001",
+            occurred_at=1_000,
+        )
+    assert rejected.value.code == "unsupported"
+
+
+@pytest.mark.parametrize("outcome", ("keep_current", "reject"))
+def test_retained_nonaccept_keeps_the_command_validator_error_identity(
+    case: ReviewCase, proposal: dict[str, object], outcome: str
+) -> None:
+    decision = _create(case, proposal, outcome, None)
+    resolved = json.loads(json.dumps(proposal))
+    resolved["result"]["outcome"] = "keep"
+    retained = type(
+        "RetainedCase",
+        (),
+        {
+            "review_case_id": case.review_case_id,
+            "target_fingerprint": case.target_fingerprint,
+            "proposals": (resolved,),
+        },
+    )()
+
+    with pytest.raises(HumanDecisionError) as rejected:
+        decision.validate_for(retained)
+
+    assert rejected.value.code == "unsupported"
+
+
+@pytest.mark.parametrize(
+    ("outcome", "manual_required", "alternatives", "expected"),
+    (
+        (
+            "unresolved_choice",
+            False,
+            [{"value": {"kind": "text", "value": "new"}}],
+            ("keep_current", "accept"),
+        ),
+        (
+            "propose_change",
+            False,
+            [{"value": {"kind": "text", "value": "new"}}],
+            ("keep_current", "accept"),
+        ),
+        ("acceptable_choice", False, [], ()),
+        ("keep", True, [], ()),
+        ("keep", False, [], ()),
+        ("defer", False, [], ()),
+        ("unresolved_choice", False, None, ()),
+    ),
+)
+def test_decision_actions_fail_closed_to_the_exact_human_decision_contract(
+    outcome: str,
+    manual_required: bool,
+    alternatives: object,
+    expected: tuple[str, ...],
+) -> None:
+    proposal: dict[str, object] = {
+        "destination": "title",
+        "manual_required": manual_required,
+        "result": {"outcome": outcome, "alternatives": alternatives},
+    }
+    assert decision_actions(proposal) == expected
 
 
 def test_owner_can_replace_an_automatic_actionable_selection(

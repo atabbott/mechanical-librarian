@@ -53,7 +53,11 @@ def test_measured_indexes_bound_representative_library_reads() -> None:
             result, steps, elapsed = support._count_with_step_limit(
                 connection, 1_000_000
             )
-            assert result == (support._WORKS, support._WORKS // 2)
+            assert result == (
+                support._WORKS,
+                support._representative_owner_action_count(support._WORKS)
+                - support._representative_human_decision_count(support._WORKS),
+            )
             assert steps <= 1_000_000
             assert elapsed < 1.0
 

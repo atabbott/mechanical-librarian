@@ -63,3 +63,8 @@ repair, retention, downgrade, or destructive authority.
 
 The named ADR provisions remain historical context. This ADR governs every
 pre-release schema, rather than only the 0.5 metadata-report increment.
+Issue #830 retires the historical `review-field-facts-v1` plan and introduces
+`review-owner-decision-actions-v1`, a literal exact-predecessor adoption that
+rebuilds only the derived owner-actionability fact and trigger. Its literal
+target is checked against the installed build before any filesystem access;
+future schema changes therefore require a new reviewed plan or a clean rebuild.

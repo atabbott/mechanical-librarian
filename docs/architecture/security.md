@@ -46,18 +46,14 @@ deletion, repair, import, schema-migration, or backward-compatibility authority.
 An existing database must match the installed increment's exact current schema
 before any writable connection or mutation.
 
-The offline `schema-adopt` command is the sole pre-release exception to that
-last startup rule. It has one closed code-defined plan, binds an owner-only
-regular DELETE-journal database under exclusive filesystem and SQLite
-authority, rejects configured and stale private-binding recovery state and every
-schema except the exact current or frozen named predecessor, and creates a
-verified non-overwriting private backup whose content is rechecked before
-success after adding only the plan's reconstructible derived schema objects
-transactionally. A field-fact plan may read canonical rows solely to populate
-those derived objects and proves the canonical-table digest unchanged. It
-receives no configuration or credentials and has no network, provider,
-reviewer, media, target, decision, canonical-row-write, import, repair, or
-arbitrary-SQL authority.
+The offline `schema-adopt review-owner-decision-actions-v1` command is the one
+pre-release exception to exact-current startup. It rejects a live-build target
+that differs from its literal plan target before path access, then validates
+one literal predecessor and target schema contract against the bound database.
+It rebuilds only the derived review field facts under exclusive,
+owner-only backup-protected authority. It receives no configuration,
+credentials, network, provider, reviewer, media, target, decision, canonical
+row-write, import, repair, or arbitrary-SQL authority.
 
 Foreground batch manifests are private immutable operator artifacts. Preview and
 read bind bounded regular no-follow descriptors under a private parent, validate

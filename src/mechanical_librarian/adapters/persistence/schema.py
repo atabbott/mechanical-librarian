@@ -168,21 +168,45 @@ _REVIEW_CASE_FIELD_FACTS_SQL = (
     "CHECK(unresolved_choice IN (0,1)), "
     "manual_bibliographic_attention INTEGER NOT NULL "
     "CHECK(manual_bibliographic_attention IN (0,1)), "
+    "has_owner_decision_actions INTEGER NOT NULL "
+    "CHECK(has_owner_decision_actions IN (0,1)), "
     "PRIMARY KEY(review_case_id,destination)) WITHOUT ROWID"
 )
-_REVIEW_CASE_FIELD_FACT_VALUES_SQL = (
-    "json_extract(result.value,'$.destination'),"
-    "CASE WHEN json_extract(result.value,'$.outcome')='unresolved_choice' "
-    "THEN 1 ELSE 0 END,CASE WHEN "
-    "json_extract(result.value,'$.destination') IN ('title','subtitle','series') "
-    "AND json_array_length(json_extract(result.value,'$.reasons'))=1 "
-    "AND json_extract(result.value,'$.reasons[0]')="
-    "'no_safe_bibliographic_combination' THEN 1 ELSE 0 END"
-)
+
+
+def _review_case_field_fact_values_sql(case_document: str) -> str:
+    return (
+        "json_extract(result.value,'$.destination'),"
+        "CASE WHEN json_extract(result.value,'$.outcome')='unresolved_choice' "
+        "THEN 1 ELSE 0 END,CASE WHEN "
+        "json_extract(result.value,'$.destination') IN ('title','subtitle','series') "
+        "AND EXISTS (SELECT 1 FROM json_each("
+        + case_document
+        + ",'$.results') sibling "
+        "WHERE json_extract(sibling.value,'$.destination') IN ('title','subtitle','series') "
+        "AND json_array_length(json_extract(sibling.value,'$.reasons'))=1 "
+        "AND json_extract(sibling.value,'$.reasons[0]')="
+        "'no_safe_bibliographic_combination') THEN 1 ELSE 0 END,CASE WHEN ("
+        "json_extract(result.value,'$.outcome') IN "
+        "('propose_change','acceptable_choice','unresolved_choice') OR ("
+        "json_extract(result.value,'$.destination') IN ('title','subtitle','series') "
+        "AND EXISTS (SELECT 1 FROM json_each("
+        + case_document
+        + ",'$.results') sibling "
+        "WHERE json_extract(sibling.value,'$.destination') IN ('title','subtitle','series') "
+        "AND json_array_length(json_extract(sibling.value,'$.reasons'))=1 "
+        "AND json_extract(sibling.value,'$.reasons[0]')='no_safe_bibliographic_combination'))) "
+        "AND EXISTS (SELECT 1 FROM json_each(result.value,'$.alternatives') alternative "
+        "WHERE json_extract(alternative.value,'$.assessment')<>'preserves_target') "
+        "THEN 1 ELSE 0 END"
+    )
+
+
+_REVIEW_CASE_FIELD_FACT_VALUES_SQL = _review_case_field_fact_values_sql("NEW.document")
 _REVIEW_CASE_FIELD_FACTS_INSERT_SQL = (
     "CREATE TRIGGER review_cases_project_field_facts AFTER INSERT ON review_cases "
     "BEGIN INSERT INTO review_case_field_facts("
-    "review_case_id,destination,unresolved_choice,manual_bibliographic_attention) "
+    "review_case_id,destination,unresolved_choice,manual_bibliographic_attention,has_owner_decision_actions) "
     "SELECT NEW.review_case_id," + _REVIEW_CASE_FIELD_FACT_VALUES_SQL + " "
     "FROM json_each(NEW.document,'$.results') result; END"
 )
@@ -998,12 +1022,14 @@ def _validate_schema_contents_without_review_field_facts(
 def _validate_review_field_facts(connection: sqlite3.Connection) -> None:
     """Require every reconstructible review fact to equal its canonical JSON."""
     review_expected = (
-        "SELECT rc.review_case_id," + _REVIEW_CASE_FIELD_FACT_VALUES_SQL + " "
+        "SELECT rc.review_case_id,"
+        + _review_case_field_fact_values_sql("rc.document")
+        + " "
         "FROM review_cases rc,json_each(rc.document,'$.results') result"
     )
     review_actual = (
         "SELECT review_case_id,destination,unresolved_choice,"
-        "manual_bibliographic_attention FROM review_case_field_facts"
+        "manual_bibliographic_attention,has_owner_decision_actions FROM review_case_field_facts"
     )
     shadow_expected = (
         "SELECT shadow.outcome_set_id,shadow.review_case_id,"
@@ -1035,6 +1061,36 @@ _REVIEW_FIELD_FACTS_PREDECESSOR_OBJECTS_SHA256 = (
     "3394552b57feed912c96d40809acfd5447d743b8e51360f9b65701341619b2ab"
 )
 
+_REVIEW_OWNER_DECISION_ACTIONS_V1_SOURCE_OBJECTS_SHA256 = (
+    "1d54249b0c30c98903e231f73064b3a43836847ed9a37f748970c7f17e150b89"
+)
+_REVIEW_OWNER_DECISION_ACTIONS_V1_SOURCE_FACT_VALUES_SQL = (
+    "json_extract(result.value,'$.destination'),"
+    "CASE WHEN json_extract(result.value,'$.outcome')='unresolved_choice' "
+    "THEN 1 ELSE 0 END,CASE WHEN "
+    "json_extract(result.value,'$.destination') IN ('title','subtitle','series') "
+    "AND json_array_length(json_extract(result.value,'$.reasons'))=1 "
+    "AND json_extract(result.value,'$.reasons[0]')='no_safe_bibliographic_combination' "
+    "THEN 1 ELSE 0 END"
+)
+_REVIEW_OWNER_DECISION_ACTIONS_V1_SOURCE_FACTS_SQL = (
+    "CREATE TABLE review_case_field_facts ("
+    "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), "
+    "destination TEXT NOT NULL, unresolved_choice INTEGER NOT NULL "
+    "CHECK(unresolved_choice IN (0,1)), "
+    "manual_bibliographic_attention INTEGER NOT NULL "
+    "CHECK(manual_bibliographic_attention IN (0,1)), "
+    "PRIMARY KEY(review_case_id,destination)) WITHOUT ROWID"
+)
+_REVIEW_OWNER_DECISION_ACTIONS_V1_SOURCE_FACTS_INSERT_SQL = (
+    "CREATE TRIGGER review_cases_project_field_facts AFTER INSERT ON review_cases "
+    "BEGIN INSERT INTO review_case_field_facts("
+    "review_case_id,destination,unresolved_choice,manual_bibliographic_attention) "
+    "SELECT NEW.review_case_id,"
+    + _REVIEW_OWNER_DECISION_ACTIONS_V1_SOURCE_FACT_VALUES_SQL
+    + " FROM json_each(NEW.document,'$.results') result; END"
+)
+
 
 def _validate_review_field_facts_predecessor_schema(
     connection: sqlite3.Connection,
@@ -1048,6 +1104,36 @@ def _validate_review_field_facts_predecessor_schema(
     if digest != _REVIEW_FIELD_FACTS_PREDECESSOR_OBJECTS_SHA256:
         raise MetadataReportError("database is unavailable or incompatible")
     _validate_schema_contents_without_review_field_facts(connection)
+
+
+def _validate_review_owner_decision_actions_predecessor_schema(
+    connection: sqlite3.Connection,
+) -> None:
+    """Validate the frozen four-column immediate predecessor, not current facts."""
+    objects = connection.execute(
+        "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
+    ).fetchall()
+    digest = hashlib.sha256(
+        json.dumps(objects, ensure_ascii=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    if digest != _REVIEW_OWNER_DECISION_ACTIONS_V1_SOURCE_OBJECTS_SHA256:
+        raise MetadataReportError("database is unavailable or incompatible")
+    _validate_schema_contents_without_review_field_facts(connection)
+    expected = (
+        "SELECT rc.review_case_id,"
+        + _REVIEW_OWNER_DECISION_ACTIONS_V1_SOURCE_FACT_VALUES_SQL
+        + " FROM review_cases rc,json_each(rc.document,'$.results') result"
+    )
+    actual = (
+        "SELECT review_case_id,destination,unresolved_choice,"
+        "manual_bibliographic_attention FROM review_case_field_facts"
+    )
+    mismatch = connection.execute(
+        "SELECT 1 FROM (" + expected + " EXCEPT " + actual + ") "
+        "UNION ALL SELECT 1 FROM (" + actual + " EXCEPT " + expected + ") LIMIT 1"
+    ).fetchone()
+    if mismatch is not None:
+        raise MetadataReportError("database is unavailable or incompatible")
 
 
 def _validate_metadata_policy_documents(connection: sqlite3.Connection) -> None:

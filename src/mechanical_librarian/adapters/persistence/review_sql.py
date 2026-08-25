@@ -42,7 +42,7 @@ _AUTOMATIC_SAFETY_ATTENTION_SQL = (
     "WHERE json_extract(category.value,'$[0]')=outcome.policy_category)))"
 )
 _REVIEW_FIELD_ATTENTION_SQL = (
-    "(result.unresolved_choice=1 "
+    "result.has_owner_decision_actions=1 AND (result.unresolved_choice=1 "
     "OR "
     + _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL
     + " OR "

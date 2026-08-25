@@ -13,6 +13,9 @@ from unittest.mock import patch
 import pytest
 
 from mechanical_librarian.adapters.persistence import field_effect_activity
+from mechanical_librarian.adapters.persistence.decisions import (
+    _REPLACEMENT_BLOCKING_EFFECT_SQL,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
     SQLiteMetadataReportRepository,
@@ -25,7 +28,14 @@ from mechanical_librarian.application.metadata_policy import (
     PolicyNotebook,
 )
 from mechanical_librarian.bootstrap import composition
-from mechanical_librarian.domain.field_effect import FieldEffectError
+from mechanical_librarian.domain.field_effect import (
+    EffectAuthority,
+    EffectConsent,
+    FieldEffectError,
+    FieldEffectOperation,
+    FieldEffectPlan,
+    field_value_version,
+)
 from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
 from mechanical_librarian.domain.metadata_policy import (
     DEFAULT_OPTIONS,
@@ -38,6 +48,9 @@ from mechanical_librarian.domain.metadata_policy import (
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     TargetDestination,
+    TargetFacts,
+    TargetField,
+    TargetFieldState,
 )
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
@@ -70,6 +83,24 @@ class _CaseWithTargetFields:
         return _Case()
 
 
+def test_unrelated_verified_cover_effect_does_not_block_another_decision() -> None:
+    """The replacement predicate binds every state branch to its decision."""
+    connection = sqlite3.connect(":memory:")
+    connection.execute("CREATE TABLE field_effects(decision_id TEXT,state TEXT)")
+    connection.execute(
+        "INSERT INTO field_effects VALUES('cover-decision-on-other-case','verified')"
+    )
+    query = (
+        "SELECT 1 FROM field_effects WHERE decision_id=? AND "
+        + _REPLACEMENT_BLOCKING_EFFECT_SQL
+        + " LIMIT 1"
+    )
+    assert connection.execute(query, ("scalar-decision", True)).fetchone() is None
+    connection.execute("INSERT INTO field_effects VALUES('cover-decision','verified')")
+    assert connection.execute(query, ("cover-decision", True)).fetchone() == (1,)
+    connection.close()
+
+
 def _draft() -> MetadataPolicyProfile:
     options = dict(DEFAULT_OPTIONS)
     options["date_precision"] = "full_date"
@@ -98,9 +129,9 @@ def state_path(state_directory: Path) -> Path:
     return state_directory / "state.sqlite"
 
 
-def _current_case_with_completed_work(path: Path):
+def _current_case_with_completed_work(path: Path, report: MetadataReport | None = None):
     repository = open_repository(path)
-    report = _report()
+    report = _report() if report is None else report
     repository.publish(report, lambda: True)
     old = evaluate_report(report)
     repository.publish_proposal(old)
@@ -1206,6 +1237,158 @@ def test_field_effect_authority_requires_exact_published_checkpoint(
     assert not repository._review_case_accepts_authority(case_id)
     with pytest.raises(FieldEffectError, match="authority_binding"):
         repository.field_effect_authority_source(decision)
+    repository.close()
+
+
+def test_verified_human_choice_can_be_corrected_on_the_same_current_case(
+    state_path: Path,
+) -> None:
+    repository, report, _, case_id = _current_case_with_completed_work(state_path)
+    case = ReviewCase.create_from_data(
+        json.loads(repository.get_review_case(case_id))["case"]
+    )
+    proposal = next(
+        value
+        for value in case.proposals
+        if value["result"]["outcome"] == "unresolved_choice"
+    )
+    selected = proposal["result"]["alternatives"][0]["value"]
+    assert type(selected) is dict
+    accepted = HumanDecision.create(
+        case,
+        proposal_id=proposal["proposal_id"],
+        target_fingerprint=case.target_fingerprint,
+        destination=proposal["destination"],
+        actor="owner",
+        outcome="accept",
+        selected_value=selected,
+        idempotency_key="verified-replacement-accept-0001",
+        occurred_at=24,
+    )
+    repository.record_human_decision(accepted)
+    original = next(
+        field["value"]
+        for field in case.target["fields"]
+        if field["destination"] == accepted.destination and field["state"] == "value"
+    )
+    plan = FieldEffectPlan.create(
+        connection=report.target.connection,
+        library=report.target.library,
+        work_id=report.target.item,
+        destination=accepted.destination,
+        pre_value=original,
+        desired_value=selected["value"],
+        target_fingerprint=accepted.target_fingerprint,
+        target_version=field_value_version(accepted.destination, original),
+        dependency_digests=(accepted.target_fingerprint,),
+        authority=EffectAuthority(
+            accepted.decision_id,
+            accepted.review_case_id,
+            accepted.target_fingerprint,
+            "persisted_review_case",
+            "human",
+            "candidate",
+            None,
+            None,
+        ),
+        consent=EffectConsent.create(
+            connection=report.target.connection,
+            library=report.target.library,
+            destination=accepted.destination,
+            envelope_identity=repository.field_effect_consent_envelope_identity(
+                report.target.library
+            ),
+            granted_at=25,
+        ),
+        capability_digest="d" * 64,
+        created_at=25,
+    )
+    repository.record_field_effect(FieldEffectOperation(plan, updated_at=25))
+    repository.claim_field_effect(plan.plan_id, "planned", "a" * 64, 26)
+    repository.transition_field_effect(plan.plan_id, "claimed", "applying", 27)
+    repository.transition_field_effect(plan.plan_id, "applying", "verified", 28)
+
+    correction = HumanDecision.create(
+        case,
+        proposal_id=proposal["proposal_id"],
+        target_fingerprint=case.target_fingerprint,
+        destination=accepted.destination,
+        actor="owner",
+        outcome="keep_current",
+        selected_value=None,
+        idempotency_key="verified-replacement-keep-0001",
+        occurred_at=24,
+    )
+    repository.record_human_decision(correction)
+    source = repository.field_effect_authority_source(correction)
+    assert source["pre_value"] == selected["value"]
+    assert source["decision_value"] == {"kind": selected["kind"], "value": original}
+    assert repository.pending_field_effect_decision_documents(10) == (
+        correction.to_json(),
+    )
+    assert repository._connection.execute(
+        "SELECT count(*) FROM human_decisions WHERE review_case_id=? AND destination=?",
+        (case_id, accepted.destination),
+    ).fetchone() == (2,)
+    assert [
+        HumanDecision.from_json(document).decision_id
+        for document in repository.get_review_case_decisions(case_id)
+        if HumanDecision.from_json(document).destination == accepted.destination
+    ] == [accepted.decision_id, correction.decision_id]
+    history = [
+        event
+        for event in repository.get_review_case_history(case_id, 10)
+        if event.get("kind") == "human_decision_recorded"
+    ]
+    assert [event["decision_id"] for event in history] == [
+        correction.decision_id,
+        accepted.decision_id,
+    ]
+    assert history[0]["previous_value"] == {
+        "kind": selected["kind"],
+        "value": selected["value"],
+    }
+    assert history[0]["selected_value"] == {"kind": selected["kind"], "value": original}
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    "state",
+    (TargetFieldState.NULL, TargetFieldState.MISSING, TargetFieldState.EMPTY),
+    ids=("null", "missing", "empty"),
+)
+def test_no_incumbent_title_has_no_corrective_keep_current_authority(
+    state_path: Path, state: TargetFieldState
+) -> None:
+    source = _report()
+    report = MetadataReport.create(
+        target=TargetFacts(
+            source.target.connection,
+            source.target.library,
+            source.target.item,
+            (TargetField(TargetDestination.TITLE, state), *source.target.fields[1:]),
+        ),
+        file=source.file,
+        local_claims=source.local_claims,
+        local_reasons=source.local_reasons,
+        providers=source.providers,
+        cover_sources=source.cover_sources,
+    )
+    repository, _, _, case_id = _current_case_with_completed_work(state_path, report)
+    case = ReviewCase.create_from_data(
+        json.loads(repository.get_review_case(case_id))["case"]
+    )
+    assert repository.pending_field_effect_decision_documents(10) == ()
+    assert repository.pending_field_effect_decision_documents(10) == ()
+    assert not any(
+        item["destination"] == "title"
+        and item["result"]["outcome"] == "unresolved_choice"
+        for item in case.proposals
+    )
+    assert repository._connection.execute(
+        "SELECT count(*) FROM human_decisions WHERE review_case_id=? AND destination='title'",
+        (case_id,),
+    ).fetchone() == (0,)
     repository.close()
 
 

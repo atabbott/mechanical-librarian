@@ -43,6 +43,7 @@ from mechanical_librarian.domain.automatic_decision import (
     AutomaticSafetyState,
     qualification_manifest_sha256,
 )
+from mechanical_librarian.domain.field_effect import FieldEffectOperation
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
@@ -54,6 +55,10 @@ from mechanical_librarian.domain.review_case import (
 from mechanical_librarian.domain.shadow_outcome import (
     ShadowOutcomeError,
     ShadowOutcomeSet,
+)
+
+_REPLACEMENT_BLOCKING_EFFECT_SQL = (
+    "(state IN ('claimed','applying','reconciling') OR (state='verified' AND ?))"
 )
 
 
@@ -374,7 +379,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
             ):
                 raise HumanDecisionError("stale")
             case = ReviewCase.create_from_data(case_envelope["case"])
-            decision.validate_for(case)
+            decision.validate_new_for(case)
             previous = self._connection.execute(
                 "SELECT decision_id,'human' FROM human_decisions "
                 "WHERE review_case_id=? AND destination=? ORDER BY ordinal DESC LIMIT 1",
@@ -393,9 +398,11 @@ class SQLiteDecisionRepository(ConnectionScoped):
             ).fetchone()
             if previous is not None:
                 effect = self._connection.execute(
-                    "SELECT 1 FROM field_effects WHERE decision_id=? AND state NOT IN "
-                    "('planned','retryable','stale','superseded','abandoned') LIMIT 1",
-                    (previous[0],),
+                    "SELECT 1 FROM field_effects WHERE decision_id=? AND "
+                    + _REPLACEMENT_BLOCKING_EFFECT_SQL
+                    + " "
+                    "LIMIT 1",
+                    (previous[0], decision.destination == "cover"),
                 ).fetchone()
                 if effect is not None:
                     raise HumanDecisionError("already_decided")
@@ -744,7 +751,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 }
                 for row in transition_rows
             ]
-            events: list[tuple[int, str, dict[str, object]]] = []
+            events: list[tuple[int, int, str, dict[str, object]]] = []
             for row in event_rows:
                 value = json.loads(row[7])
                 if (
@@ -774,7 +781,78 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     != row[:7]
                 ):
                     raise MetadataReportError("review history is invalid")
-                events.append((row[6], row[0], value))
+                decision_row = self._connection.execute(
+                    "SELECT ordinal,document FROM human_decisions WHERE decision_id=?",
+                    (row[1],),
+                ).fetchone()
+                if decision_row is None:
+                    raise MetadataReportError("review history is invalid")
+                decision = HumanDecision.from_json(decision_row[1])
+                case_document = json.loads(self.get_review_case(review_case_id))
+                if (
+                    type(case_document) is not dict
+                    or type(case_document.get("case")) is not dict
+                ):
+                    raise MetadataReportError("review history is invalid")
+                case = ReviewCase.create_from_data(case_document["case"])
+                fields = case.target.get("fields")
+                if type(fields) is not list:
+                    raise MetadataReportError("review history is invalid")
+                target = next(
+                    (
+                        field
+                        for field in fields
+                        if type(field) is dict
+                        and field.get("destination") == decision.destination
+                    ),
+                    None,
+                )
+                if type(target) is not dict:
+                    raise MetadataReportError("review history is invalid")
+                previous = (
+                    target.get("value") if target.get("state") == "value" else None
+                )
+                prior = self._connection.execute(
+                    "SELECT effect.document FROM field_effects effect JOIN ("
+                    "SELECT earlier.decision_id,earlier.ordinal FROM human_decisions earlier "
+                    "WHERE earlier.review_case_id=? AND earlier.destination=? AND earlier.ordinal<? "
+                    "UNION ALL SELECT earlier.decision_id,-1 FROM automatic_decisions earlier "
+                    "WHERE earlier.review_case_id=? AND earlier.destination=?"
+                    ") recorded ON recorded.decision_id=effect.decision_id "
+                    "WHERE effect.state='verified' ORDER BY recorded.ordinal DESC LIMIT 1",
+                    (
+                        review_case_id,
+                        decision.destination,
+                        decision_row[0],
+                        review_case_id,
+                        decision.destination,
+                    ),
+                ).fetchone()
+                if prior is not None:
+                    previous = FieldEffectOperation.from_json(
+                        prior[0]
+                    ).plan.desired_value
+                kind = (
+                    "list"
+                    if decision.destination in {"authors", "genres", "tags"}
+                    else "series"
+                    if decision.destination == "series"
+                    else "cover"
+                    if decision.destination == "cover"
+                    else "text"
+                )
+                value["previous_value"] = (
+                    {"kind": kind, "value": previous} if previous is not None else None
+                )
+                value["selected_value"] = (
+                    decision.selected_value
+                    if decision.outcome == "accept"
+                    else {"kind": kind, "value": target.get("value")}
+                    if decision.outcome == "keep_current"
+                    and target.get("state") == "value"
+                    else None
+                )
+                events.append((row[6], int(decision_row[0]), row[0], value))
             for row in shadow_rows:
                 document, evaluated_at = self._validate_shadow_outcome_row(row)
                 outcome = ShadowOutcomeSet.from_json(document)
@@ -791,7 +869,8 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 events.append(
                     (
                         evaluated_at,
-                        row[0],
+                        0,
+                        "shadow:" + row[0],
                         {
                             "authority": "none",
                             "dispositions": dispositions,
@@ -819,7 +898,8 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 events.append(
                     (
                         occurred_at,
-                        decision_id,
+                        0,
+                        "automatic:" + decision_id,
                         {
                             "decision_id": decision_id,
                             "destination": destination,
@@ -832,7 +912,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                         },
                     )
                 )
-            ordered_events = [value for _, _, value in sorted(events, reverse=True)]
+            ordered_events = [value for _, _, _, value in sorted(events, reverse=True)]
             return tuple((ordered_events + transitions)[:limit])
         except (
             sqlite3.Error,

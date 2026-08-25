@@ -2414,6 +2414,16 @@
             "title": "Outcome",
             "type": "string"
           },
+          "previous_value": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_ProposedValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "review_case_id": {
             "title": "Review Case Id",
             "type": "string"
@@ -2422,6 +2432,16 @@
             "const": "human-decision-event-v1",
             "title": "Schema Version",
             "type": "string"
+          },
+          "selected_value": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_ProposedValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -2432,8 +2452,10 @@
           "kind",
           "occurred_at",
           "outcome",
+          "previous_value",
           "review_case_id",
-          "schema_version"
+          "schema_version",
+          "selected_value"
         ],
         "title": "_HistoryDecisionItem",
         "type": "object"
@@ -3901,6 +3923,17 @@
           "current": {
             "$ref": "#/components/schemas/_TargetField"
           },
+          "decision_actions": {
+            "items": {
+              "enum": [
+                "accept",
+                "keep_current"
+              ],
+              "type": "string"
+            },
+            "title": "Decision Actions",
+            "type": "array"
+          },
           "destination": {
             "title": "Destination",
             "type": "string"
@@ -4002,6 +4035,7 @@
           "current",
           "deterministic_disposition",
           "destination",
+          "decision_actions",
           "editable",
           "effect_capability",
           "human_decision",
