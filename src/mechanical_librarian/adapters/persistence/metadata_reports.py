@@ -70,6 +70,7 @@ from mechanical_librarian.adapters.persistence.schema import (
     _validate_report_row,
     _validate_schema,
 )
+from mechanical_librarian.adapters.persistence.setup_state import SetupStateStore
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     TransactionScope,
@@ -1856,6 +1857,10 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
 
     def owner_settings_store(self) -> OwnerSettingsStore:
         return self._owner_settings
+
+    def setup_state_store(self) -> SetupStateStore:
+        """The setup-only composition is the sole caller of this incomplete-state port."""
+        return SetupStateStore(self._connection)
 
 
 class SQLiteShadowPreviewRepository:

@@ -265,6 +265,16 @@ and returns to the ordinary owner-session boundary. An unauthenticated client
 therefore cannot claim ownership, stage settings, complete setup, or reach a
 generic write route.
 
+Connection setup performs one supported, bounded `GET /api/libraries` with TLS
+verification on, ambient environment and redirects off, one connection, and
+the submitted API key attached only to the admitted Audiobookshelf origin.
+Endpoint and key enter the incomplete store in one SQLite transaction only
+after that read succeeds. Later library discovery passes the stored key
+directly from persistence to the same setup-only infrastructure consumer; no
+application or HTTP read returns it. Provider keys follow the same write-only
+delta boundary, while the optional Open Library contact email remains a local
+non-secret setting used only for Open Library requests.
+
 The server receives a composed application boundary rather than a database or
 broad repository. Authentication, currentness, decisions, policy, preparation,
 Activity, guarded effects, recovery, and support execute as named application

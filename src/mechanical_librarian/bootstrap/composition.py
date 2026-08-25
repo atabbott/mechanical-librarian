@@ -43,6 +43,9 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_field_effect 
 from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
     AudiobookshelfItemReader,
 )
+from mechanical_librarian.adapters.library_services.audiobookshelf_setup import (
+    AudiobookshelfSetupProbe,
+)
 from mechanical_librarian.adapters.persistence.batch_manifest import (
     create as create_batch_manifest,
 )
@@ -186,6 +189,12 @@ from mechanical_librarian.application.review_pipeline import (
 from mechanical_librarian.application.review_pipeline_stages import (
     ReviewPipelineStages,
 )
+from mechanical_librarian.application.review_web import OwnerSessionService
+from mechanical_librarian.application.setup_connection import (
+    SetupConnectionOperation,
+    SetupConnectionVerification,
+)
+from mechanical_librarian.application.setup_journey import SetupJourneyOperation
 from mechanical_librarian.bootstrap.contained_reviewer import run_cover_packet_reviewer
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
@@ -217,6 +226,10 @@ from mechanical_librarian.domain.metadata_report import (
     claim_scope,
 )
 from mechanical_librarian.domain.proposal_set import ProposalSet
+from mechanical_librarian.domain.setup_state import (
+    SetupLibraryCandidate,
+    SetupStateDocument,
+)
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 from mechanical_librarian.infrastructure.local_media import (
     LocalMediaError,
@@ -243,6 +256,7 @@ from mechanical_librarian.infrastructure.security.review_tls import (
     open_review_tls_identity,
 )
 from mechanical_librarian.infrastructure.settings_authority import (
+    ReviewBootstrap,
     load_review_bootstrap,
     store_runtime_configuration,
 )
@@ -251,6 +265,7 @@ from mechanical_librarian.interfaces.web import (
     load_owner_password_verifier,
     owner_password_verifier,
 )
+from mechanical_librarian.interfaces.web.setup import create_setup_app
 
 if TYPE_CHECKING:
     from mechanical_librarian.adapters.persistence.catalogue import (
@@ -2088,6 +2103,100 @@ def _load_batch_credentials(
     return values
 
 
+def run_setup_server(
+    bootstrap: ReviewBootstrap,
+    database_path: Path,
+    host: str,
+    port: int,
+    *,
+    initialize: bool,
+) -> None:
+    """Run only the bootstrap-authenticated setup surface before normal startup."""
+    verifier = bootstrap.setup_owner_verifier
+    if verifier is None:
+        raise ConfigurationError("review bootstrap is unavailable")
+    with open_review_tls_identity(
+        bootstrap.tls_certificate_file, bootstrap.tls_private_key_file
+    ) as tls:
+        repository = open_repository(
+            database_path, create=initialize, cross_thread=True
+        )
+        try:
+            state = repository.setup_state_store()
+            if initialize:
+                state.initialize(verifier)
+            sessions = OwnerSessionService(
+                repository,
+                owner_password_verifier(verifier),
+                lambda: int(time.time()),
+                3600,
+            )
+            setup_probe = AudiobookshelfSetupProbe(
+                lambda endpoint, key: target_client_token(endpoint, key, 30)
+            )
+            connection = SetupConnectionOperation(
+                SetupConnectionVerification(setup_probe),
+                state,
+                verifier,
+            )
+            mount_names: dict[str, list[str]] = {}
+            for mount in bootstrap.mounts:
+                mount_names.setdefault(mount.service_path, []).append(mount.name)
+
+            def discover_setup_libraries(
+                document: SetupStateDocument,
+            ) -> tuple[SetupLibraryCandidate, ...]:
+                if document.connection is None:
+                    raise ConfigurationError("setup connection is unavailable")
+                endpoint = document.connection.endpoint
+                return state.use_secret(
+                    f"connection.{document.connection.name}.key",
+                    verifier,
+                    lambda key: setup_probe.discover(endpoint, key),
+                )
+
+            journey = SetupJourneyOperation(
+                state,
+                verifier,
+                discover_setup_libraries,
+                {path: tuple(sorted(names)) for path, names in mount_names.items()},
+            )
+            server: uvicorn.Server
+
+            def begin_setup_drain() -> None:
+                server.should_exit = True
+
+            setup_app = create_setup_app(
+                sessions,
+                state,
+                verifier,
+                connection=connection,
+                journey=journey,
+                canonical_origin=bootstrap.canonical_origin,
+                on_complete=begin_setup_drain,
+            )
+            server = uvicorn.Server(
+                uvicorn.Config(
+                    setup_app,
+                    host=host,
+                    port=port,
+                    proxy_headers=False,
+                    server_header=False,
+                    date_header=False,
+                    access_log=False,
+                    http=BoundedReviewH11Protocol,
+                    ssl_certfile=tls.certificate_file,
+                    ssl_keyfile=tls.private_key_file,
+                    ssl_keyfile_password=REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD,
+                    ssl_ciphers=REVIEW_TLS_CIPHERS,
+                )
+            )
+            server.run()
+        except Exception:
+            repository.close()
+            raise
+
+
 def run_review_server(
     config_path: Path,
     database_path: Path,
@@ -2239,6 +2348,10 @@ def run_review_server(
                 field_application=field_application,
                 cover_considerations=cover_considerations,
                 settings=settings,
+                first_boot=(
+                    authority == "store"
+                    and "setup_complete" in settings_view.pending_restart
+                ),
             )
             app = create_review_app(review_application, review)
             if authority == "store":

@@ -7,7 +7,14 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictStr,
+    ValidationError,
+    field_validator,
+)
 
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
@@ -54,6 +61,16 @@ class ReviewBootstrap(_Closed):
     cover_reviewer_profile_file: (
         Annotated[StrictStr, Field(min_length=1, max_length=1024)] | None
     ) = None
+    setup_owner_verifier: (
+        Annotated[StrictStr, Field(min_length=16, max_length=1024)] | None
+    ) = None
+
+    @field_validator("setup_owner_verifier")
+    @classmethod
+    def _validate_setup_owner_verifier(cls, value: str | None) -> str | None:
+        if value is not None and not value.startswith("$argon2id$"):
+            raise ValueError("bootstrap verifier is unavailable")
+        return value
 
 
 def load_review_bootstrap(path: Path) -> ReviewBootstrap:

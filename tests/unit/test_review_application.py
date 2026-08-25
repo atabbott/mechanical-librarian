@@ -28,6 +28,7 @@ from mechanical_librarian.application.review_application import (
     compose_review_application,
 )
 from mechanical_librarian.application.review_pipeline import (
+    PipelineProgress,
     ReviewPreparationSupervisor,
 )
 from mechanical_librarian.application.review_web import ReviewWebError
@@ -370,6 +371,57 @@ def test_published_preparation_work_wakes_the_guarded_scheduler(
     assert field_application.wakes == 0
     preparation.announce("library", "review_case")
     assert field_application.wakes == 1
+
+
+def test_first_boot_measurement_waits_for_terminal_work_and_counts_failures(
+    repository: FakeReviewRepository,
+) -> None:
+    class Preparation:
+        libraries = (("primary", "Books", "books"),)
+
+        def attach_updates(self, announce: object) -> None:
+            return None
+
+        def status(self):
+            return (
+                (
+                    PipelineProgress(
+                        "scan-1",
+                        "primary",
+                        "Books",
+                        "completed_with_failures",
+                        7,
+                        7,
+                        5,
+                        2,
+                        False,
+                    ),
+                ),
+                False,
+            )
+
+        def connection_conditions(self):
+            return ()
+
+    application = compose_review_application(
+        state_owner=repository,
+        session_store=repository,
+        case_store=repository,
+        decision_store=repository,
+        library_store=repository,
+        policy_store=repository,
+        verify_password=lambda value: value == "correct horse",
+        clock=lambda: _NOW,
+        session_lifetime_seconds=600,
+        graceful_shutdown_seconds=30,
+        preparation=cast("ReviewPreparationSupervisor", Preparation()),
+        first_boot=True,
+    )
+
+    view = application.preparation()
+    assert view.first_boot is True
+    assert view.first_boot_complete is True
+    assert view.first_boot_works == 7
 
 
 def test_policy_candidate_workflows_are_application_operations(

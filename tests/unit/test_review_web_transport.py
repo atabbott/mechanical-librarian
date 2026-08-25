@@ -1082,6 +1082,9 @@ def test_review_page_rotates_one_memory_only_csrf_token(
         "active": False,
         "actionable": False,
         "connections": [],
+        "first_boot": False,
+        "first_boot_complete": False,
+        "first_boot_works": None,
     }
     page = web.client.get(f"/review/{web.case.review_case_id}")
     assert page.status_code == 200, page.text

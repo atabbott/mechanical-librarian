@@ -16,7 +16,13 @@ import { useCoverChoiceData } from '../coverChoices'
 import { useRouteReadyFocus } from '../focus'
 import { fieldLabel, labelWords, opaqueSource } from '../labels'
 import { coalesceMilliseconds } from '../liveInvalidation'
-import { detailQuery, libraryRoute, PreparationNotice, useReviewContext } from '../router'
+import {
+  detailQuery,
+  FirstBootHandover,
+  libraryRoute,
+  PreparationNotice,
+  useReviewContext,
+} from '../router'
 import { WriteReadyNotice } from '../components/WriteReadyNotice'
 import { actionable, requestKey, useReviewDecisionController } from '../reviewDecisionController'
 import { automaticChoiceSelected, humanChoiceSelected } from '../reviewAutomaticSelection'
@@ -1745,6 +1751,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         </div>
       ) : null}
       <PreparationNotice routeIdentity={routeIdentity} />
+      <FirstBootHandover />
       <WriteReadyNotice />
       <div
         className={`library-workspace${hasSelection ? ' has-selection' : ''}${search.attention === 'open' ? ' attention-open' : ''}`}

@@ -1,0 +1,429 @@
+"""The deliberately small HTTP surface available before first-run completion."""
+
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable
+from typing import Literal, Protocol
+
+from fastapi import Cookie, FastAPI, Header, HTTPException, Request, Response
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, TypeAdapter
+from starlette.responses import HTMLResponse, PlainTextResponse
+
+from mechanical_librarian.application.review_web import (
+    OwnerSessionService,
+    ReviewWebError,
+)
+from mechanical_librarian.application.setup_connection import SetupConnectionError
+from mechanical_librarian.application.setup_journey import (
+    SetupJourneyError,
+    SetupJourneyOperation,
+)
+from mechanical_librarian.domain.owner_settings import LibrarySettings, ProviderSettings
+from mechanical_librarian.domain.setup_state import SetupStateDocument
+from mechanical_librarian.interfaces.web.setup_frontend import (
+    SETUP_CSS,
+    SETUP_HTML,
+    SETUP_JS,
+)
+
+_PROVIDER_ADAPTER: TypeAdapter[ProviderSettings] = TypeAdapter(ProviderSettings)
+
+
+class SetupStateStore(Protocol):
+    def read(self, bootstrap_verifier: str) -> SetupStateDocument: ...
+
+    def write(
+        self,
+        document: SetupStateDocument,
+        expected_revision: int,
+        bootstrap_verifier: str,
+        secret_values: dict[str, str | None] | None = None,
+    ) -> SetupStateDocument: ...
+
+
+class SetupConnectionWriter(Protocol):
+    def connect(
+        self, expected_revision: int, name: str, endpoint: str, key: str
+    ) -> SetupStateDocument: ...
+
+
+class _LoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    password: StrictStr = Field(min_length=1, max_length=1024)
+
+
+class _ConnectRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    expected_revision: StrictInt = Field(ge=1)
+    name: StrictStr = Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")
+    endpoint: StrictStr = Field(min_length=8, max_length=2048)
+    key: StrictStr = Field(
+        min_length=1, max_length=2048, json_schema_extra={"writeOnly": True}
+    )
+
+
+class _ProviderRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    name: StrictStr = Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")
+    adapter: Literal["hardcover", "google_books", "open_library"]
+    enabled: bool
+    cover_enabled: bool = False
+    contact_email: StrictStr | None = Field(default=None, min_length=3, max_length=254)
+    key: StrictStr | None = Field(
+        default=None,
+        min_length=1,
+        max_length=2048,
+        json_schema_extra={"writeOnly": True},
+    )
+
+
+class _ProvidersRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    expected_revision: StrictInt = Field(ge=1)
+    providers: list[_ProviderRequest] = Field(max_length=32)
+
+
+class _LibraryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    name: StrictStr = Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")
+    library_id: StrictStr = Field(min_length=1, max_length=128)
+    media_kind: Literal["ebook", "audiobook"]
+    provider_connections: list[StrictStr] = Field(default_factory=list, max_length=32)
+
+
+class _LibrariesRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    expected_revision: StrictInt = Field(ge=1)
+    libraries: list[_LibraryRequest] = Field(min_length=1, max_length=128)
+
+
+class _MountsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    expected_revision: StrictInt = Field(ge=1)
+    service_paths: dict[StrictStr, StrictStr | None] = Field(max_length=128)
+
+
+class _ChangeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    expected_revision: StrictInt = Field(ge=1)
+    step: Literal["connect", "providers", "libraries", "mounts"]
+
+
+class _KickOffRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    expected_revision: StrictInt = Field(ge=1)
+
+
+def create_setup_app(
+    sessions: OwnerSessionService,
+    state: SetupStateStore,
+    bootstrap_verifier: str,
+    connection: SetupConnectionWriter | None = None,
+    canonical_origin: str = "https://testserver",
+    journey: SetupJourneyOperation | None = None,
+    session_lifetime_seconds: int = 3600,
+    on_complete: Callable[[], None] = lambda: None,
+) -> FastAPI:
+    """Compose no normal route, worker, target client, or write authority."""
+
+    app = FastAPI(docs_url=None, openapi_url=None, redoc_url=None)
+    app.state.setup_complete = False
+
+    @app.middleware("http")
+    async def close_completed_setup(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        path = request.url.path
+        if app.state.setup_complete and path != "/health/ready":
+            return PlainTextResponse("not found\n", status_code=404)
+        response = await call_next(request)
+        response.headers["cache-control"] = "private, no-store"
+        response.headers["content-security-policy"] = (
+            "default-src 'none'; script-src 'self'; style-src 'self'; "
+            "img-src 'self'; connect-src 'self'; form-action 'self'; "
+            "base-uri 'none'; frame-ancestors 'none'"
+        )
+        response.headers["referrer-policy"] = "no-referrer"
+        response.headers["x-content-type-options"] = "nosniff"
+        response.headers["x-frame-options"] = "DENY"
+        return response
+
+    @app.get("/health/ready", response_class=PlainTextResponse)
+    def ready() -> str:
+        return "ready\n"
+
+    @app.get("/", response_class=HTMLResponse)
+    def shell() -> str:
+        return SETUP_HTML
+
+    @app.get("/assets/setup.css")
+    def setup_css() -> Response:
+        return Response(SETUP_CSS, media_type="text/css; charset=utf-8")
+
+    @app.get("/assets/setup.js")
+    def setup_js() -> Response:
+        return Response(SETUP_JS, media_type="text/javascript; charset=utf-8")
+
+    @app.post("/api/setup/session")
+    def login(request: _LoginRequest, response: Response) -> dict[str, object]:
+        try:
+            tokens = sessions.login(request.password)
+        except ReviewWebError as error:
+            status = 429 if error.code == "throttled" else 401
+            raise HTTPException(status, {"error": error.code}) from error
+        try:
+            document = state.read(bootstrap_verifier)
+            if document.next_step() == "claim":
+                state.write(
+                    SetupStateDocument.model_validate(
+                        {
+                            **document.model_dump(),
+                            "revision": document.revision + 1,
+                            "completed_steps": ["claim"],
+                            "claimed": True,
+                        }
+                    ),
+                    document.revision,
+                    bootstrap_verifier,
+                )
+        except Exception as error:
+            raise HTTPException(503, {"error": "unavailable"}) from error
+        response.set_cookie(
+            "ml_session",
+            tokens.session_token,
+            httponly=True,
+            secure=True,
+            samesite="strict",
+            path="/",
+            max_age=session_lifetime_seconds,
+        )
+        return {"csrf_token": tokens.csrf_token, "expires_at": tokens.expires_at}
+
+    @app.get("/api/setup/state")
+    def setup_state(ml_session: str | None = Cookie(default=None)) -> dict[str, object]:
+        if ml_session is None:
+            raise HTTPException(401, {"error": "unauthorized"})
+        try:
+            sessions.authenticate(ml_session)
+            document = state.read(bootstrap_verifier)
+        except ReviewWebError as error:
+            raise HTTPException(401, {"error": error.code}) from error
+        return {
+            "completed_steps": document.completed_steps,
+            "next_step": document.next_step(),
+            "revision": document.revision,
+            "connection": None
+            if document.connection is None
+            else document.connection.model_dump(),
+            "providers": [value.model_dump() for value in document.providers],
+            "libraries": [value.model_dump() for value in document.libraries],
+            "mounts": [value.model_dump() for value in document.mounts],
+        }
+
+    if connection is not None:
+
+        @app.post("/api/setup/connect")
+        def connect(
+            request: _ConnectRequest,
+            ml_session: str | None = Cookie(default=None),
+            x_csrf_token: str | None = Header(default=None),
+            origin: str | None = Header(default=None),
+        ) -> dict[str, object]:
+            if ml_session is None:
+                raise HTTPException(401, {"error": "unauthorized"})
+            if origin != canonical_origin or x_csrf_token is None:
+                raise HTTPException(403, {"error": "csrf"})
+            try:
+                sessions.authenticate(ml_session, x_csrf_token)
+            except ReviewWebError as error:
+                status = 403 if error.code == "csrf" else 401
+                raise HTTPException(status, {"error": error.code}) from error
+            try:
+                document = connection.connect(
+                    request.expected_revision,
+                    request.name,
+                    request.endpoint,
+                    request.key,
+                )
+            except SetupConnectionError as error:
+                status = (
+                    409
+                    if error.code == "stale"
+                    else 422
+                    if error.code == "invalid_endpoint"
+                    else 502
+                )
+                raise HTTPException(status, {"error": error.code}) from error
+            return {
+                "completed_steps": document.completed_steps,
+                "next_step": document.next_step(),
+                "revision": document.revision,
+            }
+
+    if journey is not None:
+
+        def authorize_read(ml_session: str | None) -> None:
+            if ml_session is None:
+                raise HTTPException(401, {"error": "unauthorized"})
+            try:
+                sessions.authenticate(ml_session)
+            except ReviewWebError as error:
+                raise HTTPException(401, {"error": error.code}) from error
+
+        def authorize_mutation(
+            ml_session: str | None, csrf: str | None, origin: str | None
+        ) -> None:
+            if ml_session is None:
+                raise HTTPException(401, {"error": "unauthorized"})
+            if csrf is None or origin != canonical_origin:
+                raise HTTPException(403, {"error": "csrf"})
+            try:
+                sessions.authenticate(ml_session, csrf)
+            except ReviewWebError as error:
+                status = 403 if error.code == "csrf" else 401
+                raise HTTPException(status, {"error": error.code}) from error
+
+        def journey_failure(error: SetupJourneyError) -> HTTPException:
+            status = (
+                409
+                if error.code == "stale"
+                else 422
+                if error.code.startswith("invalid_") or error.code == "mounts_unready"
+                else 502
+            )
+            return HTTPException(status, {"error": error.code})
+
+        def state_response(document: SetupStateDocument) -> dict[str, object]:
+            return {
+                "completed_steps": document.completed_steps,
+                "next_step": document.next_step(),
+                "revision": document.revision,
+            }
+
+        @app.post("/api/setup/providers")
+        def providers(
+            request: _ProvidersRequest,
+            ml_session: str | None = Cookie(default=None),
+            x_csrf_token: str | None = Header(default=None),
+            origin: str | None = Header(default=None),
+        ) -> dict[str, object]:
+            authorize_mutation(ml_session, x_csrf_token, origin)
+            values: list[ProviderSettings] = []
+            secrets: dict[str, str] = {}
+            try:
+                for item in request.providers:
+                    payload = item.model_dump(exclude={"key", "contact_email"})
+                    if item.adapter == "open_library":
+                        payload["contact_email"] = item.contact_email
+                    values.append(_PROVIDER_ADAPTER.validate_python(payload))
+                    if item.key is not None:
+                        secrets[f"provider.{item.name}.key"] = item.key
+                return state_response(
+                    journey.providers(request.expected_revision, values, secrets)
+                )
+            except (ValueError, SetupJourneyError) as error:
+                failure = (
+                    error
+                    if isinstance(error, SetupJourneyError)
+                    else SetupJourneyError("invalid_providers")
+                )
+                raise journey_failure(failure) from error
+
+        @app.get("/api/setup/libraries")
+        def discover_libraries(
+            expected_revision: int,
+            ml_session: str | None = Cookie(default=None),
+        ) -> dict[str, object]:
+            authorize_read(ml_session)
+            try:
+                values = journey.discover(expected_revision)
+            except SetupJourneyError as error:
+                raise journey_failure(error) from error
+            return {"libraries": [value.model_dump() for value in values]}
+
+        @app.post("/api/setup/libraries")
+        def select_libraries(
+            request: _LibrariesRequest,
+            ml_session: str | None = Cookie(default=None),
+            x_csrf_token: str | None = Header(default=None),
+            origin: str | None = Header(default=None),
+        ) -> dict[str, object]:
+            authorize_mutation(ml_session, x_csrf_token, origin)
+            document = state.read(bootstrap_verifier)
+            if document.connection is None:
+                raise journey_failure(SetupJourneyError("stale"))
+            try:
+                values = [
+                    LibrarySettings(
+                        name=value.name,
+                        connection=document.connection.name,
+                        library_id=value.library_id,
+                        media_kind=value.media_kind,
+                        provider_connections=value.provider_connections,
+                    )
+                    for value in request.libraries
+                ]
+                return state_response(
+                    journey.libraries(request.expected_revision, values)
+                )
+            except (ValueError, SetupJourneyError) as error:
+                failure = (
+                    error
+                    if isinstance(error, SetupJourneyError)
+                    else SetupJourneyError("invalid_libraries")
+                )
+                raise journey_failure(failure) from error
+
+        @app.post("/api/setup/mounts")
+        def mounts(
+            request: _MountsRequest,
+            ml_session: str | None = Cookie(default=None),
+            x_csrf_token: str | None = Header(default=None),
+            origin: str | None = Header(default=None),
+        ) -> dict[str, object]:
+            authorize_mutation(ml_session, x_csrf_token, origin)
+            try:
+                return state_response(
+                    journey.mounts(request.expected_revision, request.service_paths)
+                )
+            except SetupJourneyError as error:
+                raise journey_failure(error) from error
+
+        @app.post("/api/setup/change")
+        def change(
+            request: _ChangeRequest,
+            ml_session: str | None = Cookie(default=None),
+            x_csrf_token: str | None = Header(default=None),
+            origin: str | None = Header(default=None),
+        ) -> dict[str, object]:
+            authorize_mutation(ml_session, x_csrf_token, origin)
+            try:
+                return state_response(
+                    journey.change(request.expected_revision, request.step)
+                )
+            except SetupJourneyError as error:
+                raise journey_failure(error) from error
+
+        @app.post("/api/setup/kick-off", status_code=202)
+        def kick_off(
+            request: _KickOffRequest,
+            ml_session: str | None = Cookie(default=None),
+            x_csrf_token: str | None = Header(default=None),
+            origin: str | None = Header(default=None),
+        ) -> dict[str, object]:
+            authorize_mutation(ml_session, x_csrf_token, origin)
+            try:
+                journey.kick_off(request.expected_revision)
+            except SetupJourneyError as error:
+                raise journey_failure(error) from error
+            app.state.setup_complete = True
+            on_complete()
+            return {
+                "status": "restart_required",
+                "message": "Nothing in your library changes. Writes stay off until you turn them on in Activity.",
+            }
+
+    return app
+
+
+__all__ = ["SetupConnectionWriter", "SetupStateStore", "create_setup_app"]

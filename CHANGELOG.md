@@ -60,6 +60,10 @@
   remain unchanged, store-mode secrets are write-only and backup-protected, and
   only an empty `/data` volume may enter setup. (#762)
 
+- Guide an empty-volume owner through claim, verified Audiobookshelf connection,
+  optional providers, library selection, read-only mount checks, and safe
+  preparation kickoff without granting library-write authority. (#745)
+
 - Recover explicit EPUB package, front, and rear series memberships with their
   stated sequence while keeping advertisements, reading lists, prose, and
   trailing ambiguity out of local evidence. (#375)

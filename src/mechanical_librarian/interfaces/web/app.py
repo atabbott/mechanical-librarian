@@ -767,6 +767,9 @@ class _PreparationResponse(_ClosedModel):
     paused: bool = False
     active: bool = False
     actionable: bool = False
+    first_boot: bool = False
+    first_boot_complete: bool = False
+    first_boot_works: int | None = Field(default=None, ge=0)
     schema_version: Literal["review-preparation-v1"] = "review-preparation-v1"
 
 

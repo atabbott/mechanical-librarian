@@ -270,7 +270,12 @@ export interface HistoryView {
   items: readonly HistoryItemView[]
   nextCursor?: string
 }
-export type PreparationView = Schema<'_PreparationResponse'>
+type PreparationSchema = Schema<'_PreparationResponse'>
+export type PreparationView = Omit<
+  PreparationSchema,
+  'first_boot' | 'first_boot_complete' | 'first_boot_works'
+> &
+  Partial<Pick<PreparationSchema, 'first_boot' | 'first_boot_complete' | 'first_boot_works'>>
 export type PreparationProgress = Schema<'_PreparationProgress'>
 export type PolicyStateView = Schema<'_PolicyProfileResponse'>
 export type ShadowPostureView = Schema<'_ShadowPostureResponse'>
@@ -1075,7 +1080,14 @@ export const mapPreparation = (value: unknown): PreparationView => {
     !Array.isArray(value.connections) ||
     typeof value.paused !== 'boolean' ||
     typeof value.active !== 'boolean' ||
-    typeof value.actionable !== 'boolean'
+    typeof value.actionable !== 'boolean' ||
+    (value.first_boot !== undefined && typeof value.first_boot !== 'boolean') ||
+    (value.first_boot_complete !== undefined && typeof value.first_boot_complete !== 'boolean') ||
+    (value.first_boot_works !== undefined &&
+      value.first_boot_works !== null &&
+      (typeof value.first_boot_works !== 'number' ||
+        !Number.isInteger(value.first_boot_works) ||
+        value.first_boot_works < 0))
   )
     throw new ApiError(502, 'invalid_preparation_response')
   value.libraries.forEach((item, index) => {
@@ -1099,7 +1111,12 @@ export const mapPreparation = (value: unknown): PreparationView => {
   })
   // Validated: the envelope, both collections, and every field inside them are
   // checked above, so the cast only re-attaches the generated type.
-  return value as unknown as PreparationView
+  return {
+    ...value,
+    first_boot: value.first_boot ?? false,
+    first_boot_complete: value.first_boot_complete ?? false,
+    first_boot_works: value.first_boot_works ?? null,
+  } as unknown as PreparationView
 }
 const activityPrepared = (value: unknown, field: string): ActivityPreparedView => {
   if (!record(value)) throw new ApiError(502, `invalid_${field}`)

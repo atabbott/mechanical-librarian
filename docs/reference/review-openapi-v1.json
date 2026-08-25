@@ -4339,6 +4339,28 @@
             "title": "Connections",
             "type": "array"
           },
+          "first_boot": {
+            "default": false,
+            "title": "First Boot",
+            "type": "boolean"
+          },
+          "first_boot_complete": {
+            "default": false,
+            "title": "First Boot Complete",
+            "type": "boolean"
+          },
+          "first_boot_works": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Boot Works"
+          },
           "libraries": {
             "items": {
               "$ref": "#/components/schemas/_PreparationProgress"

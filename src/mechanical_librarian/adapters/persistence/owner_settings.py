@@ -15,6 +15,7 @@ from mechanical_librarian.domain.owner_settings import (
     secret_presence,
     store_field_metadata,
 )
+from mechanical_librarian.domain.setup_state import SetupStateDocument, SetupStateError
 from mechanical_librarian.domain.validation import credential
 
 
@@ -296,6 +297,24 @@ def _validate_owner_settings_content(connection: sqlite3.Connection) -> None:
         _load_owner_settings_authority(connection, allow_empty=True)
     except LookupError:
         return
+    except OwnerSettingsError:
+        rows = connection.execute(
+            "SELECT revision,document FROM owner_settings"
+        ).fetchall()
+        secrets = connection.execute(
+            "SELECT field_id FROM owner_setting_secrets"
+        ).fetchall()
+        if len(rows) != 1:
+            raise
+        revision, encoded = rows[0]
+        try:
+            state = SetupStateDocument.model_validate_json(encoded)
+        except (SetupStateError, ValueError) as error:
+            raise OwnerSettingsError("owner settings are unavailable") from error
+        if state.revision != revision or _canonical_json(state.model_dump()) != encoded:
+            raise OwnerSettingsError("owner settings are unavailable") from None
+        if {name for (name,) in secrets} != state.secret_fields():
+            raise OwnerSettingsError("owner settings are unavailable") from None
 
 
 def _settings_view(
