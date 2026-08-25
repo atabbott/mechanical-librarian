@@ -1046,6 +1046,8 @@ class _InstalledPreparationRun:
                 json={"password": "synthetic password"},
             )
             assert login.status_code == 200, login.text
+            appearance_response = client.get(self._origin + "/api/v1/appearance")
+            settings_response = client.get(self._origin + "/api/v1/settings")
             detail_response = client.get(
                 self._origin + f"/api/v1/review-cases/{decision.review_case_id}"
             )
@@ -1059,6 +1061,25 @@ class _InstalledPreparationRun:
                 self._origin
                 + "/api/v1/activity?event_type=review&range_days=30&page=1&page_size=25"
             )
+        assert appearance_response.status_code == 200, appearance_response.text
+        assert settings_response.status_code == 200, settings_response.text
+        settings_payload = settings_response.json()
+        assert "synthetic-token" not in json.dumps(settings_payload)
+        assert isinstance(settings_payload, dict)
+        secrets = settings_payload.get("secrets")
+        assert isinstance(secrets, list)
+        assert [
+            secret
+            for secret in secrets
+            if isinstance(secret, dict)
+            and secret.get("field_id") == "connection.primary.key"
+        ] == [
+            {
+                "field_id": "connection.primary.key",
+                "configured": True,
+                "indicator": "Configured · ····oken",
+            }
+        ]
         assert detail_response.status_code == 200, detail_response.text
         assert history_response.status_code == 200, history_response.text
         assert activity_response.status_code == 200, activity_response.text
@@ -1157,23 +1178,6 @@ class _InstalledPreparationRun:
                 page.get_by_role("link", name="Settings", exact=True).click()
             settings_response = settings_info.value
             assert settings_response.status == 200
-            settings_payload = settings_response.json()
-            assert "synthetic-token" not in json.dumps(settings_payload)
-            assert isinstance(settings_payload, dict)
-            secrets = settings_payload.get("secrets")
-            assert isinstance(secrets, list)
-            assert [
-                secret
-                for secret in secrets
-                if isinstance(secret, dict)
-                and secret.get("field_id") == "connection.primary.key"
-            ] == [
-                {
-                    "field_id": "connection.primary.key",
-                    "configured": True,
-                    "indicator": "Configured · ····oken",
-                }
-            ]
             expect(
                 page.get_by_text("Configured · ····oken", exact=True)
             ).to_be_visible()

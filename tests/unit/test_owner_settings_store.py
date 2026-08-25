@@ -8,6 +8,7 @@ from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.owner_settings import OwnerSettingsStore
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
+    CoverConsiderationStore,
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.owner_settings import FileOwnerSettingsRepository
@@ -204,7 +205,7 @@ def test_store_and_live_cover_authority_advance_or_roll_back_together() -> None:
         bound.update(policy=policy_reference, replay=replay_reference)
 
     service = CoverConsiderationService(
-        cast("object", object()),
+        cast("CoverConsiderationStore", object()),
         read_preview=lambda _artifact, _variant: b"",
         read_preview_digest=lambda _digest: b"",
         clock=lambda: 0,
