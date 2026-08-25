@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Restore readable per-work Evidence and History links from Library. Diagnostics
+  retain exact Back state, show bounded semantic lineage and owner-language
+  outcomes, and expose no choices, retries, raw facts, or internal identifiers.
+  (#829)
+
 - Make Library offer owner choices only when an eligible alternative exists, and
   wait for the exact acknowledged result before advancing. #830 adopts only its
   exact predecessor through the offline owner-actionability plan; other shapes

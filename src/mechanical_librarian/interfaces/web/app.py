@@ -8,7 +8,7 @@ import stat
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal, TypeAlias, TypedDict, TypeVar, cast
+from typing import Annotated, Literal, TypeAlias, TypedDict, TypeVar, cast
 from urllib.parse import urlsplit
 
 from argon2 import PasswordHasher
@@ -275,7 +275,7 @@ class _CoverPolicyReport(_ClosedModel):
 
 
 class _CoverConsiderationResponse(_ClosedModel):
-    candidates: list[_CoverCandidate]
+    candidates: list[_CoverCandidate] = Field(max_length=12)
     choice_contexts: list["_ChoiceContext"]
     consideration_id: str
     current: bool
@@ -341,11 +341,12 @@ class _ChoiceContext(_ClosedModel):
 
 
 class _TargetIdentity(_ClosedModel):
-    authors: list[str]
-    connection: str
-    item: str
-    library: str
-    media_kind: str
+    authors: list[Annotated[str, Field(max_length=512)]] = Field(max_length=128)
+    connection: str = Field(max_length=512)
+    item: str = Field(max_length=512)
+    library: str = Field(max_length=512)
+    media_kind: str = Field(max_length=64)
+    title: str = Field(max_length=512)
 
 
 class _CaseDetailResponse(_ClosedModel):
@@ -353,7 +354,7 @@ class _CaseDetailResponse(_ClosedModel):
     current: bool
     fields: list[_ReviewField]
     review_case_id: str
-    schema_version: str
+    schema_version: Literal["review-case-detail-v2"]
     target: _TargetIdentity
     writes_consented: bool
 
@@ -363,26 +364,25 @@ class _CaseSuccessorResponse(_ClosedModel):
 
 
 class _EvidenceItem(_ClosedModel):
-    candidate: str | None
-    fact: str
-    kind: str
-    provider: str | None
-    reference: str
-    source: str
+    observation: str = Field(max_length=1024)
+    role: Literal["external_corroboration", "local_presence"]
+    source: str = Field(max_length=128)
 
 
 class _EvidenceResponse(_ClosedModel):
-    items: list[_EvidenceItem]
+    items: list[_EvidenceItem] = Field(max_length=50)
+    missing_lineage_count: int = Field(ge=0, le=10_000)
     next_cursor: str | None
     review_case_id: str
-    schema_version: str
+    schema_version: Literal["review-case-evidence-v3"]
+    source_ledger: list["_ProviderOutcome"] = Field(max_length=100)
 
 
 class _HistoryTransitionItem(_ClosedModel):
-    checkpoint: int
-    kind: str
-    reason: str
-    transition_id: str
+    checkpoint: int = Field(ge=0)
+    kind: str = Field(max_length=64)
+    reason: str = Field(max_length=512)
+    transition_id: str = Field(max_length=128)
 
 
 class _HistoryDecisionItem(_ClosedModel):
@@ -401,7 +401,7 @@ class _HistoryDecisionItem(_ClosedModel):
 
 class _HistoryShadowItem(_ClosedModel):
     authority: Literal["none"]
-    dispositions: dict[str, int]
+    dispositions: dict[str, int] = Field(max_length=32)
     kind: Literal["shadow_preview_recorded"]
     occurred_at: int
     origin: Literal["policy_preview"]
@@ -417,8 +417,10 @@ class _HistoryAutomaticItem(_ClosedModel):
     occurred_at: int
     origin: Literal["automatic_policy"]
     outcome: Literal["candidate", "keep_current", "ignore"]
+    previous_value: _ProposedValue | None
     review_case_id: str
     schema_version: Literal["automatic-decision-history-event-v1"]
+    selected_value: _ProposedValue | None
 
 
 class _HistoryCoverItem(_ClosedModel):
@@ -447,10 +449,10 @@ class _HistoryResponse(_ClosedModel):
         | _HistoryShadowItem
         | _HistoryAutomaticItem
         | _HistoryCoverItem
-    ]
+    ] = Field(max_length=150)
     next_cursor: str | None
     review_case_id: str
-    schema_version: str
+    schema_version: Literal["review-case-history-v2"]
 
 
 class _SessionResponse(_ClosedModel):
@@ -487,11 +489,11 @@ class _PreparationFailure(_ClosedModel):
 
 
 class _ProviderOutcome(_ClosedModel):
-    provider_requests: int
-    lane_kind: str
-    provider: str
-    reason: str
-    status: str
+    provider_requests: int = Field(ge=0)
+    lane_kind: str = Field(max_length=64)
+    provider: str = Field(max_length=128)
+    reason: str = Field(max_length=512)
+    status: str = Field(max_length=64)
 
 
 class _LibraryWorkSummary(_ClosedModel):

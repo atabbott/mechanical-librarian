@@ -139,7 +139,8 @@ def test_real_app_gates_aliases_and_synthetic_cursors() -> None:
                 assert response.status_code == 200
                 payload = response.json()
                 assert payload["review_case_id"] == case_id
-                assert payload["target"]["item"] == work["title"]
+                assert payload["target"]["title"] == work["title"]
+                assert payload["target"]["item"] != payload["target"]["title"]
 
             evidence = client.get("/api/v1/review-cases/case-2/evidence")
             assert evidence.status_code == 200
@@ -153,15 +154,26 @@ def test_real_app_gates_aliases_and_synthetic_cursors() -> None:
             assert page_2_payload["review_case_id"] == "case-2"
             assert len(page_2_payload["items"]) == 3
             assert all(
-                str(item["reference"]).startswith("evidence-2-")
+                set(item) == {"observation", "role", "source"}
                 for item in page_2_payload["items"]
             )
+            assert {item["source"] for item in page_2_payload["items"]} == {
+                "Open catalogue",
+                "Second catalogue",
+                "This library",
+            }
             assert page_2_payload["next_cursor"] is None
 
             history = client.get("/api/v1/review-cases/case-2/history")
             assert history.status_code == 200
             assert history.json()["review_case_id"] == "case-2"
-            assert len(history.json()["items"]) == 4
+            assert {item["kind"] for item in history.json()["items"]} == {
+                "admitted",
+                "automatic_decision_recorded",
+                "automatic_prepared",
+                "human_decision_recorded",
+                "shadow_preview_recorded",
+            }
 
             library_page_2 = client.get("/api/v1/library?lens=all&cursor=page-2")
             assert library_page_2.status_code == 200

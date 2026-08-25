@@ -21,6 +21,7 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPipelineError,
 )
 from mechanical_librarian.application.review_web import (
+    CurrentReviewCaseSnapshot,
     InspectCurrentReviewCase,
     ReviewWebError,
     _attention_item,
@@ -1214,7 +1215,7 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
     detail = {
         "fields": [{"provenance": sorted(references)}],
     }
-    report = SimpleNamespace(to_data=lambda: data)
+    report = SimpleNamespace(providers=(), to_data=lambda: data)
     cases = InspectCurrentReviewCase(Mock())
     with patch.object(cases, "_read", return_value=(detail, report, ())):
         first = cases.evidence("review_case_" + "c" * 64, limit=50)
@@ -1239,6 +1240,11 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
                     "review_case_" + "c" * 64,
                     cursor=first["next_cursor"],
                 )
+        missing_detail: dict[str, Any] = {
+            "fields": [{"provenance": sorted(references | {"missing-lineage"})}]
+        }
+        with patch.object(cases, "_read", return_value=(missing_detail, report, ())):
+            partial = cases.evidence("review_case_" + "c" * 64, limit=50)
     reopened_cases = InspectCurrentReviewCase(Mock())
     with patch.object(
         reopened_cases,
@@ -1251,25 +1257,93 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
         )
 
     assert first["next_cursor"] == reopened["next_cursor"]
+    assert first["schema_version"] == "review-case-evidence-v3"
+    assert first["missing_lineage_count"] == 0
+    assert first["source_ledger"] == []
+    assert partial["missing_lineage_count"] == 1
+    assert len(partial["items"]) == 50
     assert len(first["items"]) == 50
     assert len(second["items"]) == 10
     assert second["next_cursor"] is None
     items = cast(list[Any], first["items"]) + cast(list[Any], second["items"])
-    assert {item["reference"] for item in items} == references
-    rich = next(item for item in items if item["reference"] == rich_reference)
-    assert rich["provider"] == "hardcover"
-    assert rich["candidate"] == "candidate-1"
-    cover = next(item for item in items if item["reference"] == cover_reference)
-    assert cover["source"] == "cover"
-    assert cover["provider"] == "hardcover"
-    identifier = next(
-        item for item in items if item["reference"] == identifier_reference
+    assert all(set(item) == {"observation", "role", "source"} for item in items)
+    assert {item["source"] for item in items} >= {
+        "Hardcover",
+        "Local library record",
+        "Open Library",
+    }
+    assert all(len(item["observation"]) <= 188 for item in items)
+    hostile = next(
+        item for item in items if "hostile </pre><script>" in item["observation"]
     )
-    assert identifier["source"] == "identifier"
-    assert identifier["provider"] == "open_library"
-    assert identifier["candidate"] == "candidate-2"
-    hostile = next(item for item in items if item["source"] == "local")
-    assert "</pre><script>" in hostile["fact"]
+    assert hostile["role"] == "local_presence"
+    assert not any(
+        reference in json.dumps(items, ensure_ascii=False) for reference in references
+    )
+
+
+def test_automatic_history_values_require_an_exact_decision_identity() -> None:
+    exact = "automatic_decision_" + "a" * 64
+    other = "automatic_decision_" + "b" * 64
+    detail = {
+        "fields": [
+            {
+                "automatic_decision": {
+                    "decision_id": exact,
+                    "outcome": "candidate",
+                    "selected_value": {"kind": "text", "value": "New title"},
+                },
+                "current": {
+                    "destination": "title",
+                    "state": "value",
+                    "value": "Old title",
+                },
+                "destination": "title",
+            }
+        ]
+    }
+    snapshot = CurrentReviewCaseSnapshot(
+        case_document="{}",
+        report_document="{}",
+        decision_documents=(),
+        history=(
+            {
+                "decision_id": exact,
+                "destination": "title",
+                "kind": "automatic_decision_recorded",
+                "occurred_at": 2,
+                "origin": "automatic_policy",
+                "outcome": "candidate",
+                "review_case_id": "review_case_" + "c" * 64,
+                "schema_version": "automatic-decision-history-event-v1",
+            },
+            {
+                "decision_id": other,
+                "destination": "title",
+                "kind": "automatic_decision_recorded",
+                "occurred_at": 1,
+                "origin": "automatic_policy",
+                "outcome": "candidate",
+                "review_case_id": "review_case_" + "c" * 64,
+                "schema_version": "automatic-decision-history-event-v1",
+            },
+        ),
+    )
+    cases = InspectCurrentReviewCase(Mock())
+    with patch.object(cases, "_read", return_value=(detail, Mock(), snapshot)):
+        history = cases.history("review_case_" + "c" * 64)
+
+    assert history["schema_version"] == "review-case-history-v2"
+    assert history["items"][0]["previous_value"] == {
+        "kind": "text",
+        "value": "Old title",
+    }
+    assert history["items"][0]["selected_value"] == {
+        "kind": "text",
+        "value": "New title",
+    }
+    assert history["items"][1]["previous_value"] is None
+    assert history["items"][1]["selected_value"] is None
 
 
 def test_choice_projection_is_bounded_and_never_leaks_unknown_provider_names() -> None:

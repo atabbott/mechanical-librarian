@@ -11,7 +11,7 @@ import {
 import { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import type { createMemoryHistory } from '@tanstack/react-router'
-import { BuildMismatchError } from './api/http'
+import { ApiError, BuildMismatchError } from './api/http'
 import type {
   ActivitySearch,
   AttentionSearch,
@@ -79,8 +79,10 @@ export const normalizeAttentionSearch = (search: Record<string, unknown>): Atten
 }
 export const normalizeDetailSearch = (search: Record<string, unknown>): DetailSearch => {
   const field = bounded(search.field)
+  const lens =
+    search.lens === 'needs_attention' || search.lens === 'no_attention_needed' ? search.lens : 'all'
   const subview = search.subview === 'history' ? 'history' : 'evidence'
-  return { ...(field ? { field } : {}), subview }
+  return { ...(field ? { field } : {}), lens, subview }
 }
 export const normalizePolicySearch = (search: Record<string, unknown>): PolicySearch => ({
   section:
@@ -774,11 +776,48 @@ const AttentionRouteComponent = () => {
 const DiagnosticRouteComponent = () => {
   const { reviewCaseId } = detailRoute.useParams()
   const { http } = rootRoute.useRouteContext()
+  const search = detailRoute.useSearch()
   const detail = useQuery(detailQuery(http, reviewCaseId))
-  if (detail.isPending) return <RoutePending />
-  if (detail.isError)
-    return <RouteFailure error={detail.error} reset={() => void detail.refetch()} />
-  return <DetailPage data={detail.data} />
+  const backSearch = {
+    lens: search.lens,
+    preview: reviewCaseId,
+    ...(search.field ? { field: search.field } : {}),
+  }
+  const problem =
+    detail.error instanceof ApiError && detail.error.code === 'not_found'
+      ? 'No retained diagnostic was found for this work.'
+      : detail.error instanceof ApiError && detail.error.code === 'stale'
+        ? 'This diagnostic is no longer current.'
+        : 'The retained diagnostic could not be read safely.'
+  return (
+    <div className="diagnostic-route">
+      <Link className="diagnostic-back-to-work" to="/library" search={backSearch}>
+        <span aria-hidden="true">←</span> Back to work
+      </Link>
+      {detail.isPending ? (
+        <section aria-busy="true" className="diagnostic-state" data-route-focus tabIndex={-1}>
+          <h1>Loading work diagnostics…</h1>
+          <p>The retained review record is being opened.</p>
+        </section>
+      ) : detail.isError ? (
+        <section className="diagnostic-state diagnostic-failure" data-route-focus tabIndex={-1}>
+          <h1>Work diagnostics are unavailable.</h1>
+          <p role="alert">{problem}</p>
+        </section>
+      ) : (
+        <Suspense
+          fallback={
+            <section aria-busy="true" className="diagnostic-state" data-route-focus tabIndex={-1}>
+              <h1>Loading work diagnostics…</h1>
+              <p>The retained review record is being opened.</p>
+            </section>
+          }
+        >
+          <DetailPage data={detail.data} />
+        </Suspense>
+      )}
+    </div>
+  )
 }
 export const libraryRoute = createRoute({
   getParentRoute: () => rootRoute,

@@ -521,7 +521,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             ("/attention", "Needs your attention"),
             (
                 "/review/case-1?field=title&subview=evidence",
-                "Evidence and source ledger",
+                "Evidence",
             ),
             ("/policy?section=identity", "Library policy"),
             ("/policy?section=publication", "Library policy"),
@@ -1708,25 +1708,160 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         expect(page.locator(".library-works")).to_be_visible()
         expect(page.locator(".workspace-detail")).to_be_hidden()
         # Evidence and History are read-only per-work diagnostics. Library
-        # remains the only decision surface, and diagnostics never redirect it.
+        # remains the only decision surface, and owns the exact route back.
         stage[0] = "diagnostic:evidence-history"
         page.set_viewport_size({"width": 1440, "height": 900})
         page.goto(
-            "https://react-platform.invalid/review/case-1?field=title&subview=evidence"
+            "https://react-platform.invalid/library?lens=needs_attention&preview=case-1&field=title"
         )
+        diagnostic_links = page.get_by_role(
+            "navigation", name="Read-only work diagnostics"
+        )
+        expect(diagnostic_links.get_by_role("link", name="Evidence")).to_be_visible()
+        expect(diagnostic_links.get_by_role("link", name="History")).to_be_visible()
+        diagnostic_links.get_by_role("link", name="Evidence").click()
         expect(page).to_have_url(
-            "https://react-platform.invalid/review/case-1?field=title&subview=evidence"
+            "https://react-platform.invalid/review/case-1?lens=needs_attention&subview=evidence&field=title"
         )
-        page.get_by_role("heading", name="Evidence and source ledger").wait_for()
+        page.get_by_role("heading", name="Evidence").wait_for()
+        route = page.locator(".diagnostic-route")
+        back = page.get_by_role("link", name="Back to work", exact=True)
+        assert route.locator(":scope > *").first.evaluate(
+            "node => node === document.querySelector('.diagnostic-back-to-work')"
+        )
+        assert back.get_attribute("href") == (
+            "/library?lens=needs_attention&preview=case-1&field=title"
+        )
+        assert page.get_by_role("heading", name=_HOSTILE).count() == 1
+        diagnostic_text = route.inner_text()
+        assert "Household ebooks · epub" in diagnostic_text
+        assert "internal-case-1" not in diagnostic_text
+        assert "evidence-" not in diagnostic_text
+        assert "candidate-" not in diagnostic_text
+        assert page.locator("pre").count() == 0
+        assert "referenced observations are no longer available" in diagnostic_text
+        expect(page.get_by_role("heading", name="Source ledger")).to_be_visible()
+        expect(page.get_by_text("Open Library", exact=True)).to_be_visible()
+        expect(page.get_by_text("Hardcover", exact=True)).to_be_visible()
         assert page.locator(".direct-choice-grid").count() == 0
+        assert (
+            page.get_by_role(
+                "button", name=re.compile("choose|retry|return|resume", re.IGNORECASE)
+            ).count()
+            == 0
+        )
+        load_more = page.get_by_role("button", name="Load more evidence")
+        assert load_more.bounding_box()["height"] >= 44
+        load_more.click()
+        expect(load_more).to_have_count(0)
+        assert page.locator(".diagnostic-entry").count() == 6
+        nav = page.get_by_role("navigation", name="Case diagnostics")
+        nav.get_by_role("link", name="Evidence").focus()
+        page.keyboard.press("Tab")
+        expect(nav.get_by_role("link", name="History")).to_be_focused()
+        assert nav.get_by_role("link", name="History").evaluate(
+            "node => getComputedStyle(node).outlineStyle === 'solid'"
+        )
+        for scheme in ("light", "dark"):
+            if scheme == "dark":
+                page.get_by_role("button", name="Use dark mode").click()
+            for width, height in (
+                (1440, 900),
+                (900, 900),
+                (390, 844),
+                (320, 844),
+            ):
+                page.set_viewport_size({"width": width, "height": height})
+                assert page.evaluate(
+                    "() => document.documentElement.scrollWidth <= window.innerWidth"
+                ), (scheme, width)
+                assert back.bounding_box()["height"] >= 44
+                for link in nav.get_by_role("link").all():
+                    assert link.bounding_box()["height"] >= 44
+            page.set_viewport_size({"width": 1440, "height": 900})
+            page.locator("html").evaluate("node => { node.style.fontSize = '200%' }")
+            assert page.evaluate(
+                "() => document.documentElement.scrollWidth <= window.innerWidth"
+            ), (scheme, "200%")
+            page.locator("html").evaluate("node => { node.style.fontSize = '' }")
+            if scheme == "dark":
+                page.get_by_role("button", name="Use light mode").click()
         capture_visual_proof("case-diagnostics-evidence")
-        page.get_by_role("button", name="History", exact=True).click()
-        page.get_by_role("heading", name="Current-case history").wait_for()
+        nav.get_by_role("link", name="History", exact=True).click()
+        page.get_by_role("heading", name="History").wait_for()
+        page.get_by_text("Owner selected a proposed value.", exact=True).wait_for()
+        history_text = route.inner_text()
+        assert "Owner selected a proposed value." in history_text
+        assert "Automatic policy kept the current value." in history_text
+        assert "This read-only preview recorded no decision authority." in history_text
+        assert "Cover automatic prepared" in history_text
+        for identifier in (
+            "decision-owner-internal",
+            "event-owner-internal",
+            "outcome-set-internal",
+            "cover-consideration-internal",
+            "review-transition-internal",
+        ):
+            assert identifier not in history_text
         assert page.locator(".direct-choice-grid").count() == 0
+        assert (
+            page.get_by_role(
+                "button", name=re.compile("choose|retry|return|resume", re.IGNORECASE)
+            ).count()
+            == 0
+        )
         capture_visual_proof("case-diagnostics-history")
-        page.get_by_role("button", name="Evidence", exact=True).click()
+        page.go_back()
+        page.get_by_role("heading", name="Evidence").wait_for()
+        page.go_forward()
+        page.get_by_role("heading", name="History").wait_for()
+        nav.get_by_role("link", name="Evidence", exact=True).click()
         page.get_by_role("link", name="Back to work", exact=True).click()
         page.locator(".workspace-detail .decision-canvas").wait_for()
+        expect(page).to_have_url(
+            "https://react-platform.invalid/library?lens=needs_attention&preview=case-1&field=title"
+        )
+
+        page.set_viewport_size({"width": 320, "height": 844})
+        page.goto(
+            "https://react-platform.invalid/review/case-stale?lens=no_attention_needed&subview=history&field=cover"
+        )
+        page.get_by_role(
+            "heading", name="This diagnostic case is no longer current."
+        ).wait_for()
+        stale_route = page.locator(".diagnostic-route")
+        stale_back = page.get_by_role("link", name="Back to work", exact=True)
+        assert stale_route.locator(":scope > *").first.evaluate(
+            "node => node === document.querySelector('.diagnostic-back-to-work')"
+        )
+        assert stale_back.get_attribute("href") == (
+            "/library?lens=no_attention_needed&preview=case-stale&field=cover"
+        )
+        assert page.evaluate("() => document.documentElement.scrollWidth") <= 320
+
+        diagnostic_error_start = len(errors)
+        page.goto(
+            "https://react-platform.invalid/review/missing-case?lens=needs_attention&subview=evidence&field=authors"
+        )
+        page.get_by_role("heading", name="Work diagnostics are unavailable.").wait_for()
+        failed_route = page.locator(".diagnostic-route")
+        failed_back = page.get_by_role("link", name="Back to work", exact=True)
+        assert failed_route.locator(":scope > *").first.evaluate(
+            "node => node === document.querySelector('.diagnostic-back-to-work')"
+        )
+        assert failed_back.get_attribute("href") == (
+            "/library?lens=needs_attention&preview=missing-case&field=authors"
+        )
+        assert (
+            page.get_by_role("button", name=re.compile("retry", re.IGNORECASE)).count()
+            == 0
+        )
+        assert page.evaluate("() => document.documentElement.scrollWidth") <= 320
+        diagnostic_errors = errors[diagnostic_error_start:]
+        assert len(diagnostic_errors) == 1
+        assert "404 (Not Found)" in diagnostic_errors[0]
+        del errors[diagnostic_error_start:]
+        page.set_viewport_size({"width": 1440, "height": 900})
 
         stage[0] = "library:return-to-automatic"
         page.goto(
@@ -1762,9 +1897,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         ).to_have_attribute("aria-disabled", "true")
         assert return_automatic_requests == 1
         page.set_viewport_size({"width": 390, "height": 844})
-        assert (
-            page.get_by_role("heading", name="Evidence and source ledger").count() == 0
-        )
+        assert page.get_by_role("heading", name="Evidence").count() == 0
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 390
         for control in page.locator(".masthead nav a, .shell-actions button").all():
             assert control.bounding_box()["height"] >= 44

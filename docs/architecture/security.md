@@ -744,6 +744,20 @@ closed qualified category and option matrix may reach decision-only Automatic;
 all other automatic intent is rejected, and no automatic outcome grants effect
 or target-write authority.
 
+### Authenticated per-work diagnostics
+
+The Evidence and History endpoints are private, authenticated, `no-store`
+projections with no mutation, retry, recovery, provider-call, or target-write
+authority. Evidence keeps the raw reference index inside the application for
+Library choice contexts, but its diagnostic response projects only bounded
+semantic observations, aggregate missing-lineage truth, and the existing closed
+provider outcomes. Missing references produce a partial-lineage limitation;
+malformed report or persisted content still fails closed. The browser maps
+History to owner language and joins automatic values only by exact durable
+decision identity, never by destination or display order. Default diagnostic
+reading contains no raw retained fact document or internal case, report, target,
+event, decision, consideration, candidate, or reference identifiers.
+
 ### Authenticated Activity history
 
 The authenticated Activity endpoint is a private, `no-store`, read-only history

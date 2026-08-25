@@ -27,6 +27,7 @@ export interface AttentionSearch {
 }
 export interface DetailSearch {
   field?: string
+  lens: LibraryLens
   subview: DetailSubview
 }
 export interface PolicySearch {
@@ -180,7 +181,7 @@ export interface CoverConsiderationView {
 export interface CaseDetailView {
   id: string
   current: boolean
-  target: { connection: string; library: string; item: string; mediaKind: string }
+  target: { connection: string; library: string; item: string; mediaKind: string; title: string }
   title: string
   authors: readonly string[]
   subtitle: string
@@ -188,8 +189,54 @@ export interface CaseDetailView {
   writesConsented: boolean
   fields: readonly ReviewFieldView[]
 }
-export type EvidenceView = Schema<'_EvidenceResponse'>
-export type HistoryView = Schema<'_HistoryResponse'>
+export interface EvidenceObservationView {
+  observation: string
+  role: 'external_corroboration' | 'local_presence'
+  source: string
+}
+export interface EvidenceView {
+  items: readonly EvidenceObservationView[]
+  missingLineageCount: number
+  nextCursor?: string
+  sourceLedger: readonly ProviderOutcomeView[]
+}
+export interface HistoryValueView {
+  kind: string
+  value: string | boolean | readonly string[] | readonly { name: string; sequence: string | null }[]
+}
+export type HistoryItemView =
+  | {
+      category: 'owner'
+      destination: string
+      outcome: string
+      previousValue: HistoryValueView | null
+      selectedValue: HistoryValueView | null
+    }
+  | {
+      category: 'automatic'
+      destination: string
+      outcome: string
+      previousValue: HistoryValueView | null
+      selectedValue: HistoryValueView | null
+    }
+  | {
+      category: 'preview'
+      dispositions: readonly { count: number; outcome: string }[]
+    }
+  | {
+      category: 'cover'
+      candidateCount: number
+      outcome: string
+      ownerOutcome?: string
+      policyReasons: readonly string[]
+      policyStatus?: string
+      reviewerStatus: string
+    }
+  | { category: 'transition'; outcome: string; reason: string }
+export interface HistoryView {
+  items: readonly HistoryItemView[]
+  nextCursor?: string
+}
 export type PreparationView = Schema<'_PreparationResponse'>
 export type PreparationProgress = Schema<'_PreparationProgress'>
 export type PolicyStateView = Schema<'_PolicyProfileResponse'>
@@ -574,15 +621,13 @@ export class ReviewApiClient implements ReviewHttp {
   async getEvidence(id: string, cursor?: string, signal?: AbortSignal) {
     const p = new URLSearchParams({ limit: '50' })
     if (cursor) p.set('cursor', cursor)
-    return schemaVersionOnly<EvidenceView>(
+    return mapEvidence(
       await this.read(`/api/v1/review-cases/${encodeURIComponent(id)}/evidence?${p}`, signal),
-      'evidence',
     )
   }
   async getHistory(id: string, signal?: AbortSignal) {
-    return schemaVersionOnly<HistoryView>(
+    return mapHistory(
       await this.read(`/api/v1/review-cases/${encodeURIComponent(id)}/history`, signal),
-      'history',
     )
   }
   async retryCoverConsideration(id: string, signal?: AbortSignal) {
@@ -812,6 +857,12 @@ const stringValue = (value: unknown, field: string) => {
   if (typeof value !== 'string') throw new ApiError(502, `invalid_${field}`)
   return value
 }
+const codePointLength = (value: string) => Array.from(value).length
+const boundedStringValue = (value: unknown, field: string, maximum: number) => {
+  const result = stringValue(value, field)
+  if (codePointLength(result) > maximum) throw new ApiError(502, `invalid_${field}`)
+  return result
+}
 const integerValue = (value: unknown, field: string) => {
   if (!Number.isSafeInteger(value) || (value as number) < 0)
     throw new ApiError(502, `invalid_${field}`)
@@ -827,6 +878,19 @@ const stringArray = (value: unknown, field: string) => {
 const booleanValue = (value: unknown, field: string) => {
   if (typeof value !== 'boolean') throw new ApiError(502, `invalid_${field}`)
   return value
+}
+const mapProviderOutcome = (value: unknown, index: number): ProviderOutcomeView => {
+  if (!record(value)) throw new ApiError(502, `invalid_provider_outcome_${String(index)}`)
+  return {
+    providerRequests: integerValue(
+      value.provider_requests,
+      `provider_outcome_${String(index)}_requests`,
+    ),
+    laneKind: boundedStringValue(value.lane_kind, `provider_outcome_${String(index)}_lane`, 64),
+    provider: boundedStringValue(value.provider, `provider_outcome_${String(index)}_provider`, 128),
+    reason: boundedStringValue(value.reason, `provider_outcome_${String(index)}_reason`, 512),
+    status: boundedStringValue(value.status, `provider_outcome_${String(index)}_status`, 64),
+  }
 }
 const decisionAction = (value: unknown): DecisionAction => {
   if (value !== 'accept' && value !== 'keep_current')
@@ -1264,19 +1328,7 @@ export const mapLibrary = (value: unknown): LibraryView => {
             }
       if (!Array.isArray(item.preparation_outcomes))
         throw new ApiError(502, 'invalid_preparation_outcomes')
-      const preparationOutcomes = (item.preparation_outcomes as unknown[]).map((outcome, index) => {
-        if (!record(outcome)) throw new ApiError(502, `invalid_provider_outcome_${String(index)}`)
-        return {
-          providerRequests: integerValue(
-            outcome.provider_requests,
-            `provider_outcome_${String(index)}_requests`,
-          ),
-          laneKind: stringValue(outcome.lane_kind, `provider_outcome_${String(index)}_lane`),
-          provider: stringValue(outcome.provider, `provider_outcome_${String(index)}_provider`),
-          reason: stringValue(outcome.reason, `provider_outcome_${String(index)}_reason`),
-          status: stringValue(outcome.status, `provider_outcome_${String(index)}_status`),
-        }
-      })
+      const preparationOutcomes = (item.preparation_outcomes as unknown[]).map(mapProviderOutcome)
       const workId = stringValue(item.work_id, 'work_id')
       const summary =
         item.summary == null
@@ -1348,25 +1400,35 @@ export const mapAttention = (value: unknown): AttentionView => {
 }
 
 export const mapCaseDetail = (value: unknown): CaseDetailView => {
-  if (!record(value) || !record(value.target) || !Array.isArray(value.fields))
+  if (
+    !record(value) ||
+    value.schema_version !== 'review-case-detail-v2' ||
+    !record(value.target) ||
+    !Array.isArray(value.fields)
+  )
     throw new ApiError(502, 'invalid_case_detail_response')
   // Validated at each read: this cast names the DTO's fields, and every one the
   // view model consumes passes through the validators below before it is used.
   const dto = value as unknown as CaseDetailDto
-  stringValue(dto.schema_version, 'schema_version')
   if (typeof dto.current !== 'boolean') throw new ApiError(502, 'invalid_case_currentness')
+  const authors = stringArray(dto.target.authors, 'target_authors')
+  if (authors.length > 128 || authors.some((author) => codePointLength(author) > 512))
+    throw new ApiError(502, 'invalid_target_authors')
+  const library = boundedStringValue(dto.target.library, 'target_library', 512)
+  const mediaKind = boundedStringValue(dto.target.media_kind, 'target_media_kind', 64)
   return {
     id: stringValue(dto.review_case_id, 'review_case_id'),
     current: dto.current,
     target: {
-      connection: stringValue(dto.target.connection, 'target_connection'),
-      library: stringValue(dto.target.library, 'target_library'),
-      item: stringValue(dto.target.item, 'target_item'),
-      mediaKind: stringValue(dto.target.media_kind, 'target_media_kind'),
+      connection: boundedStringValue(dto.target.connection, 'target_connection', 512),
+      library,
+      item: boundedStringValue(dto.target.item, 'target_item', 512),
+      mediaKind,
+      title: boundedStringValue(dto.target.title, 'target_title', 512),
     },
-    title: stringValue(dto.target.item, 'target_item'),
-    authors: stringArray(dto.target.authors, 'target_authors'),
-    subtitle: `${stringValue(dto.target.library, 'target_library')} · ${stringValue(dto.target.media_kind, 'target_media_kind')} · ${stringValue(dto.target.connection, 'target_connection')}`,
+    title: boundedStringValue(dto.target.title, 'target_title', 512),
+    authors,
+    subtitle: `${library} · ${mediaKind}`,
     comparisonNotices: stringArray(dto.comparison_notices, 'comparison_notices'),
     writesConsented: booleanValue(dto.writes_consented, 'writes_consented'),
     fields: dto.fields.map((field) => {
@@ -1419,6 +1481,207 @@ export const mapCaseDetail = (value: unknown): CaseDetailView => {
         coverConsideration: mapCoverConsideration(field.cover_consideration),
       }
     }),
+  }
+}
+
+export const mapEvidence = (value: unknown): EvidenceView => {
+  if (
+    !record(value) ||
+    value.schema_version !== 'review-case-evidence-v3' ||
+    !Array.isArray(value.items) ||
+    value.items.length > 50 ||
+    !Array.isArray(value.source_ledger) ||
+    value.source_ledger.length > 100
+  )
+    throw new ApiError(502, 'invalid_evidence_response')
+  stringValue(value.review_case_id, 'evidence_review_case_id')
+  const nextCursor = optionalString(value.next_cursor, 'evidence_next_cursor')
+  return {
+    items: value.items.map((item, index) => {
+      if (!record(item)) throw new ApiError(502, `invalid_evidence_item_${String(index)}`)
+      const role = item.role
+      if (role !== 'external_corroboration' && role !== 'local_presence')
+        throw new ApiError(502, `invalid_evidence_item_${String(index)}_role`)
+      return {
+        observation: boundedStringValue(
+          item.observation,
+          `evidence_item_${String(index)}_observation`,
+          1024,
+        ),
+        role,
+        source: boundedStringValue(item.source, `evidence_item_${String(index)}_source`, 128),
+      }
+    }),
+    missingLineageCount: (() => {
+      const count = integerValue(value.missing_lineage_count, 'evidence_missing_lineage_count')
+      if (count > 10_000) throw new ApiError(502, 'invalid_evidence_missing_lineage_count')
+      return count
+    })(),
+    ...(nextCursor ? { nextCursor } : {}),
+    sourceLedger: value.source_ledger.map(mapProviderOutcome),
+  }
+}
+
+const mapHistoryValue = (value: unknown, field: string): HistoryValueView | null => {
+  if (value === null) return null
+  if (!record(value)) throw new ApiError(502, `invalid_${field}`)
+  const kind = boundedStringValue(value.kind, `${field}_kind`, 64)
+  const retained = value.value
+  if (typeof retained === 'string') {
+    if (codePointLength(retained) > 16_384) throw new ApiError(502, `invalid_${field}_value`)
+    return { kind, value: retained }
+  }
+  if (typeof retained === 'boolean') return { kind, value: retained }
+  if (!Array.isArray(retained) || retained.length > 128)
+    throw new ApiError(502, `invalid_${field}_value`)
+  if (retained.every((item) => typeof item === 'string' && codePointLength(item) <= 512))
+    return { kind, value: retained }
+  if (
+    retained.every(
+      (item) =>
+        record(item) &&
+        typeof item.name === 'string' &&
+        codePointLength(item.name) <= 512 &&
+        Object.hasOwn(item, 'sequence') &&
+        (item.sequence === null ||
+          (typeof item.sequence === 'string' && codePointLength(item.sequence) <= 512)),
+    )
+  )
+    return { kind, value: retained as { name: string; sequence: string | null }[] }
+  throw new ApiError(502, `invalid_${field}_value`)
+}
+
+export const mapHistory = (value: unknown): HistoryView => {
+  if (
+    !record(value) ||
+    value.schema_version !== 'review-case-history-v2' ||
+    !Array.isArray(value.items) ||
+    value.items.length > 150
+  )
+    throw new ApiError(502, 'invalid_history_response')
+  stringValue(value.review_case_id, 'history_review_case_id')
+  const nextCursor = optionalString(value.next_cursor, 'history_next_cursor')
+  return {
+    items: value.items.map((item, index): HistoryItemView => {
+      if (!record(item)) throw new ApiError(502, `invalid_history_item_${String(index)}`)
+      const kind = stringValue(item.kind, `history_item_${String(index)}_kind`)
+      if (kind === 'human_decision_recorded' || kind === 'automatic_decision_recorded') {
+        integerValue(item.occurred_at, `history_item_${String(index)}_occurred_at`)
+        const outcome = stringValue(item.outcome, `history_item_${String(index)}_outcome`)
+        const allowed =
+          kind === 'human_decision_recorded'
+            ? ['accept', 'keep_current', 'reject']
+            : ['candidate', 'keep_current', 'ignore']
+        if (!allowed.includes(outcome))
+          throw new ApiError(502, `invalid_history_item_${String(index)}_outcome`)
+        return {
+          category: kind === 'human_decision_recorded' ? 'owner' : 'automatic',
+          destination: boundedStringValue(
+            item.destination,
+            `history_item_${String(index)}_destination`,
+            64,
+          ),
+          outcome,
+          previousValue: mapHistoryValue(
+            item.previous_value,
+            `history_item_${String(index)}_previous_value`,
+          ),
+          selectedValue: mapHistoryValue(
+            item.selected_value,
+            `history_item_${String(index)}_selected_value`,
+          ),
+        }
+      }
+      if (kind === 'shadow_preview_recorded') {
+        integerValue(item.occurred_at, `history_item_${String(index)}_occurred_at`)
+        if (!record(item.dispositions) || Object.keys(item.dispositions).length > 32)
+          throw new ApiError(502, `invalid_history_item_${String(index)}_dispositions`)
+        return {
+          category: 'preview',
+          dispositions: Object.entries(item.dispositions).map(([outcome, count]) => ({
+            count: integerValue(count, `history_item_${String(index)}_disposition`),
+            outcome: boundedStringValue(
+              outcome,
+              `history_item_${String(index)}_disposition_name`,
+              64,
+            ),
+          })),
+        }
+      }
+      if (
+        kind === 'automatic_prepared' ||
+        kind === 'owner_retry_prepared' ||
+        (kind === 'superseded' && Object.hasOwn(item, 'consideration')) ||
+        kind === 'selected' ||
+        kind === 'kept_incumbent' ||
+        kind === 'no_action' ||
+        kind === 'stale'
+      ) {
+        integerValue(item.occurred_at, `history_item_${String(index)}_occurred_at`)
+        if (
+          !record(item.consideration) ||
+          !Array.isArray(item.consideration.candidates) ||
+          item.consideration.candidates.length > 12
+        )
+          throw new ApiError(502, `invalid_history_item_${String(index)}_consideration`)
+        const policy = item.consideration.policy
+        if (policy !== null && !record(policy))
+          throw new ApiError(502, `invalid_history_item_${String(index)}_policy`)
+        const decision = item.decision
+        if (decision !== null && !record(decision))
+          throw new ApiError(502, `invalid_history_item_${String(index)}_decision`)
+        const ownerOutcome = decision
+          ? boundedStringValue(
+              decision.outcome,
+              `history_item_${String(index)}_decision_outcome`,
+              64,
+            )
+          : undefined
+        if (ownerOutcome && !['accept', 'keep_current', 'reject'].includes(ownerOutcome))
+          throw new ApiError(502, `invalid_history_item_${String(index)}_decision_outcome`)
+        const policyReasons = policy
+          ? stringArray(policy.reasons, `history_item_${String(index)}_policy_reasons`)
+          : []
+        if (
+          policyReasons.length > 32 ||
+          policyReasons.some((reason) => codePointLength(reason) > 128)
+        )
+          throw new ApiError(502, `invalid_history_item_${String(index)}_policy_reasons`)
+        const reviewerStatus = boundedStringValue(
+          item.consideration.reviewer_status,
+          `history_item_${String(index)}_reviewer_status`,
+          64,
+        )
+        if (!['completed', 'failed', 'unavailable'].includes(reviewerStatus))
+          throw new ApiError(502, `invalid_history_item_${String(index)}_reviewer_status`)
+        return {
+          category: 'cover',
+          candidateCount: item.consideration.candidates.length,
+          outcome: kind,
+          ...(ownerOutcome ? { ownerOutcome } : {}),
+          policyReasons,
+          ...(policy
+            ? {
+                policyStatus: boundedStringValue(
+                  policy.status,
+                  `history_item_${String(index)}_policy_status`,
+                  64,
+                ),
+              }
+            : {}),
+          reviewerStatus,
+        }
+      }
+      integerValue(item.checkpoint, `history_item_${String(index)}_checkpoint`)
+      if (!['admitted', 'superseded', 'no_case', 'retired', 'tombstoned'].includes(kind))
+        throw new ApiError(502, `invalid_history_item_${String(index)}_kind`)
+      return {
+        category: 'transition',
+        outcome: boundedStringValue(kind, `history_item_${String(index)}_kind`, 64),
+        reason: boundedStringValue(item.reason, `history_item_${String(index)}_reason`, 512),
+      }
+    }),
+    ...(nextCursor ? { nextCursor } : {}),
   }
 }
 

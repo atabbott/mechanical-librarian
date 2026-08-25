@@ -116,6 +116,8 @@ describe('Library route', () => {
     expect(screen.queryByText('item-1')).toBeNull()
     expect(screen.getByText('Author details unavailable · Books · ebook')).toBeVisible()
     expect(http.getCaseDetail).toHaveBeenCalledWith('case-1', expect.any(AbortSignal))
+    expect(screen.getByRole('link', { name: 'Evidence' })).toHaveAttribute('href', '/review/case-1?lens=all&subview=evidence&field=title')
+    expect(screen.getByRole('link', { name: 'History' })).toHaveAttribute('href', '/review/case-1?lens=all&subview=history&field=title')
   })
 
   it('opens a current summary and its source ledger for a work with no review case', async () => {
@@ -249,6 +251,8 @@ describe('Library route', () => {
     expect(
       await screen.findByRole('heading', { level: 2, name: 'Unfiled observation' }),
     ).toBeVisible()
+    expect(screen.queryByRole('link', { name: 'Evidence' })).toBeNull()
+    expect(screen.queryByRole('link', { name: 'History' })).toBeNull()
     await user.type(
       screen.getByLabelText('Search title, author, identifier, library, or format'),
       'nothing matches',
@@ -4151,7 +4155,7 @@ describe('Library route', () => {
 
     expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
     expect(router.state.location.pathname).toBe('/review/case-1')
-    expect(screen.getByRole('heading', { name: /Evidence and source ledger/u })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Evidence' })).toBeVisible()
     expect(screen.queryByRole('button', { name: /Choose current value/u })).toBeNull()
   })
 

@@ -17,7 +17,8 @@ The current installed contract is intentionally narrow:
   `shadow-decision-set-v1` under
   `deterministic-shadow-decision-policy-v8`,
   and the exact-current deterministic shadow decision/outcome schema;
-- `review-session-v1`, `review-case-detail-v1`, `human-decision-v1`,
+- `review-session-v1`, `review-case-detail-v2`, `review-case-evidence-v3`,
+  `review-case-history-v2`, `human-decision-v1`,
   `human-decision-event-v1`, `human-decision-ack-v1`, bounded
   evidence/current-case history projections, and the exact-current
   opaque-session, login-throttle, immutable human-decision and decision-event

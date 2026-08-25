@@ -491,7 +491,7 @@ def _field(
 def _case(case_id: str) -> dict[str, object]:
     if case_id == "case-stale":
         return {
-            "schema_version": "review-case-v1",
+            "schema_version": "review-case-detail-v2",
             "writes_consented": False,
             "review_case_id": case_id,
             "current": False,
@@ -501,7 +501,8 @@ def _case(case_id: str) -> dict[str, object]:
                 "library": "Spoken stories",
                 "media_kind": "audiobook",
                 "authors": ["Cedar Moss"],
-                "item": "Retired exact-current case",
+                "item": "internal-retired-case",
+                "title": "Retired exact-current case",
             },
             "fields": [],
         }
@@ -825,7 +826,7 @@ def _case(case_id: str) -> dict[str, object]:
         LIBRARY_WORKS[0],
     )
     return {
-        "schema_version": "review-case-v1",
+        "schema_version": "review-case-detail-v2",
         "writes_consented": False,
         "review_case_id": case_id,
         "current": True,
@@ -835,7 +836,8 @@ def _case(case_id: str) -> dict[str, object]:
             "library": work["library"],
             "media_kind": work["media_kind"],
             "authors": work["authors"],
-            "item": work["title"],
+            "item": f"internal-{case_id}",
+            "title": work["title"],
         },
         "fields": fields,
     }
@@ -1387,55 +1389,123 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
             cursor = query.get("cursor", [""])[0]
             page = 2 if cursor == "evidence-page-2" else 1
             return {
-                "schema_version": "review-case-evidence-v2",
+                "schema_version": "review-case-evidence-v3",
                 "review_case_id": case_id,
                 "next_cursor": "evidence-page-2" if page == 1 else None,
+                "missing_lineage_count": 2,
                 "items": [
                     {
-                        "reference": f"evidence-{page}-{index}",
-                        "kind": kind,
-                        "source": "provider_claim",
-                        "provider": provider,
-                        "candidate": f"candidate-{page}-{index}",
-                        "fact": fact,
+                        "observation": f"{kind.title()}: {fact}",
+                        "role": (
+                            "local_presence"
+                            if provider == "This library"
+                            else "external_corroboration"
+                        ),
+                        "source": provider,
                     }
                     for index, (kind, provider, fact) in enumerate(
                         [
                             ("title", "Open catalogue", HOSTILE_TEXT),
-                            ("authors", "Local manifest", "Mara Venn · Ivo North"),
+                            ("authors", "This library", "Mara Venn · Ivo North"),
                             ("series", "Second catalogue", LONG_TITLE),
                         ],
                         start=1,
                     )
                 ],
-            }
-        if subview == "history":
-            return {
-                "schema_version": "review-case-history-v1",
-                "review_case_id": case_id,
-                "next_cursor": None,
-                "items": [
+                "source_ledger": [
                     {
-                        "kind": "case_admitted",
-                        "destination": "title",
-                        "at": "2026-08-10T20:00:00Z",
+                        "provider_requests": 1,
+                        "lane_kind": "identity",
+                        "provider": "Open Library",
+                        "reason": "Returned matching metadata for this work.",
+                        "status": "candidates",
                     },
                     {
-                        "kind": "evidence_refreshed",
-                        "destination": "authors",
-                        "at": "2026-08-10T20:05:00Z",
-                    },
-                    {
-                        "kind": "automatic_decision",
-                        "destination": "series",
-                        "at": "2026-08-10T20:10:00Z",
-                    },
-                    {
-                        "kind": "human_decision",
-                        "destination": "title",
-                        "at": "2026-08-10T20:15:00Z",
+                        "provider_requests": 2,
+                        "lane_kind": "cover",
+                        "provider": "Hardcover",
+                        "reason": "Returned no matching metadata, so nothing was retained.",
+                        "status": "no_match",
                     },
                 ],
+            }
+        if subview == "history":
+            case_payload = _case(cohort_case_id)
+            cover = next(
+                (
+                    field.get("cover_consideration")
+                    for field in case_payload["fields"]
+                    if field["destination"] == "cover"
+                ),
+                None,
+            )
+            items = [
+                {
+                    "checkpoint": 1,
+                    "kind": "admitted",
+                    "reason": "actionable",
+                    "transition_id": "review-transition-internal",
+                },
+                {
+                    "actor": "owner",
+                    "decision_id": "decision-owner-internal",
+                    "destination": "title",
+                    "event_id": "event-owner-internal",
+                    "kind": "human_decision_recorded",
+                    "occurred_at": 1_754_858_100,
+                    "outcome": "accept",
+                    "previous_value": {"kind": "text", "value": "Current title"},
+                    "review_case_id": case_id,
+                    "schema_version": "human-decision-event-v1",
+                    "selected_value": {"kind": "text", "value": HOSTILE_TEXT},
+                },
+                {
+                    "decision_id": "decision-automatic-internal",
+                    "destination": "authors",
+                    "kind": "automatic_decision_recorded",
+                    "occurred_at": 1_754_858_200,
+                    "origin": "automatic_policy",
+                    "outcome": "keep_current",
+                    "previous_value": {
+                        "kind": "list",
+                        "value": ["Mara Venn", "Ivo North"],
+                    },
+                    "review_case_id": case_id,
+                    "schema_version": "automatic-decision-history-event-v1",
+                    "selected_value": {
+                        "kind": "list",
+                        "value": ["Mara Venn", "Ivo North"],
+                    },
+                },
+                {
+                    "authority": "none",
+                    "dispositions": {"would_accept": 2, "would_ignore": 1},
+                    "kind": "shadow_preview_recorded",
+                    "occurred_at": 1_754_858_300,
+                    "origin": "policy_preview",
+                    "outcome_set_id": "outcome-set-internal",
+                    "review_case_id": case_id,
+                    "schema_version": "shadow-preview-history-event-v1",
+                },
+            ]
+            if cover is not None:
+                items.append(
+                    {
+                        "consideration_id": "cover-consideration-internal",
+                        "consideration": cover,
+                        "decision": None,
+                        "decision_id": None,
+                        "kind": "automatic_prepared",
+                        "occurred_at": 1_754_858_400,
+                        "review_case_id": case_id,
+                        "schema_version": "cover-consideration-event-v1",
+                    }
+                )
+            return {
+                "schema_version": "review-case-history-v2",
+                "review_case_id": case_id,
+                "next_cursor": None,
+                "items": items,
             }
         payload = _case(cohort_case_id)
         payload["review_case_id"] = case_id

@@ -502,7 +502,7 @@ class InspectCurrentReviewCase:
                 "current": True,
                 "fields": fields,
                 "review_case_id": case.review_case_id,
-                "schema_version": "review-case-detail-v1",
+                "schema_version": "review-case-detail-v2",
                 # Read models never learn write authority. The composition root
                 # stamps the truth before the view leaves the application, and
                 # the default keeps a surface that never asks honest.
@@ -513,6 +513,7 @@ class InspectCurrentReviewCase:
                     "item": report.target.item,
                     "library": report.target.library,
                     "media_kind": report.file.format,
+                    "title": report.target.current_title or "Untitled",
                 },
             },
             report,
@@ -541,8 +542,7 @@ class InspectCurrentReviewCase:
         assert type(fields) is list
         wanted = {reference for field in fields for reference in field["provenance"]}
         evidence = _evidence_by_reference(report)
-        if wanted.difference(evidence):
-            raise ReviewWebError("not_found")
+        missing_lineage_count = len(wanted.difference(evidence))
         reference_set_digest = hashlib.sha256(
             json.dumps(
                 sorted(wanted),
@@ -550,9 +550,7 @@ class InspectCurrentReviewCase:
                 separators=(",", ":"),
             ).encode("utf-8")
         ).hexdigest()
-        ordered = [
-            evidence[reference] for reference in sorted(wanted) if reference in evidence
-        ]
+        ordered = [reference for reference in sorted(wanted) if reference in evidence]
         bounded_limit = min(max(limit, 1), 50)
         offset = _decode_cursor(
             cursor,
@@ -562,7 +560,8 @@ class InspectCurrentReviewCase:
         )
         bounded = ordered[offset : offset + bounded_limit]
         return {
-            "items": bounded,
+            "items": [_choice_evidence(evidence[reference]) for reference in bounded],
+            "missing_lineage_count": missing_lineage_count,
             "next_cursor": (
                 _encode_cursor(
                     offset + bounded_limit,
@@ -574,11 +573,12 @@ class InspectCurrentReviewCase:
                 else None
             ),
             "review_case_id": review_case_id,
-            "schema_version": "review-case-evidence-v2",
+            "schema_version": "review-case-evidence-v3",
+            "source_ledger": _provider_outcomes(report),
         }
 
     def history(self, review_case_id: str, limit: int = 50) -> dict[str, object]:
-        _, _, snapshot = self._read(review_case_id, limit)
+        detail, _, snapshot = self._read(review_case_id, limit)
         decisions: dict[str, dict[str, object]] = {}
         for document in snapshot.decision_documents:
             try:
@@ -586,6 +586,60 @@ class InspectCurrentReviewCase:
             except HumanDecisionError:
                 continue
             decisions[decision.decision_id] = _decision_projection(decision)
+        automatic_values: dict[
+            str, tuple[dict[str, object] | None, dict[str, object] | None]
+        ] = {}
+        fields = detail["fields"]
+        assert type(fields) is list
+        for field in fields:
+            assert type(field) is dict
+            automatic = field["automatic_decision"]
+            current = field["current"]
+            destination = field["destination"]
+            if (
+                type(automatic) is not dict
+                or type(automatic.get("decision_id")) is not str
+                or type(current) is not dict
+                or type(destination) is not str
+            ):
+                continue
+            value_kind = (
+                "list"
+                if destination in {"authors", "genres", "tags"}
+                else "series"
+                if destination == "series"
+                else "cover"
+                if destination == "cover"
+                else "text"
+            )
+            previous = (
+                {"kind": value_kind, "value": current["value"]}
+                if current.get("state") == "value"
+                else None
+            )
+            selected = (
+                cast(dict[str, object], automatic.get("selected_value"))
+                if automatic.get("outcome") == "candidate"
+                else previous
+                if automatic.get("outcome") == "keep_current"
+                else None
+            )
+            automatic_values[automatic["decision_id"]] = (previous, selected)
+        history_items = []
+        for raw in snapshot.history:
+            item = dict(raw)
+            if item.get("kind") == "automatic_decision_recorded":
+                decision_id = item.get("decision_id")
+                joined = (
+                    automatic_values.get(decision_id)
+                    if type(decision_id) is str
+                    else None
+                )
+                item["previous_value"], item["selected_value"] = joined or (
+                    None,
+                    None,
+                )
+            history_items.append(item)
         cover_history = []
         for raw in snapshot.cover_history:
             item = dict(raw)
@@ -604,7 +658,7 @@ class InspectCurrentReviewCase:
             )
             cover_history.append(item)
         items = sorted(
-            (*snapshot.history, *cover_history),
+            (*history_items, *cover_history),
             key=lambda item: int(cast(int, item.get("occurred_at", 0))),
             reverse=True,
         )[:limit]
@@ -612,7 +666,7 @@ class InspectCurrentReviewCase:
             "items": list(items),
             "next_cursor": None,
             "review_case_id": review_case_id,
-            "schema_version": "review-case-history-v1",
+            "schema_version": "review-case-history-v2",
         }
 
 
