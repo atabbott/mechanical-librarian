@@ -2130,9 +2130,7 @@ def run_review_server(
                     .removesuffix(".key"): value
                     for name, value in stored_credentials.items()
                 }
-                configuration = store_runtime_configuration(
-                    settings_view, stored_credentials, bootstrap
-                )
+                configuration = store_runtime_configuration(settings_view, bootstrap)
                 review = configuration.review
                 verify_password = owner_password_verifier(encoded_verifier)
                 settings = OwnerSettingsOperations(settings_store)

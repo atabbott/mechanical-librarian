@@ -106,15 +106,7 @@ def test_store_projection_combines_only_deploy_bootstrap_and_store_authority() -
         }
     )
 
-    configuration = store_runtime_configuration(
-        settings,
-        {
-            "connection.primary.key": "target-secret",
-            "provider.google.key": "google-secret",
-            "provider.hardcover.key": "hardcover-secret",
-        },
-        bootstrap,
-    )
+    configuration = store_runtime_configuration(settings, bootstrap)
 
     assert configuration.connections[0].endpoint == "https://library.example.invalid"
     assert configuration.connections[0].secret_file is None

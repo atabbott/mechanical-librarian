@@ -70,7 +70,6 @@ def load_review_bootstrap(path: Path) -> ReviewBootstrap:
 
 def store_runtime_configuration(
     settings: SettingsView,
-    credentials: dict[str, str],
     bootstrap: ReviewBootstrap,
 ) -> ApplicationConfiguration:
     """Project one already validated store snapshot into the runtime graph."""
