@@ -2192,9 +2192,8 @@ def run_setup_server(
                 )
             )
             server.run()
-        except Exception:
+        finally:
             repository.close()
-            raise
 
 
 def run_review_server(

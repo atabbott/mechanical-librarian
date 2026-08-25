@@ -13,13 +13,21 @@ loaded.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from argon2 import PasswordHasher
 
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.bootstrap import composition
+from mechanical_librarian.infrastructure.first_boot import (
+    FirstBootMode,
+    select_first_boot_mode,
+)
+from mechanical_librarian.infrastructure.settings_authority import ReviewBootstrap
 
 
 @pytest.mark.parametrize(
@@ -107,3 +115,85 @@ def test_a_configuration_loading_seam_delegates_what_it_loaded(
     assert loaded.call_args.args[0] is configuration
     assert paths == loaded.call_args.args[1:3]
     assert arguments == loaded.call_args.args[3:]
+
+
+def test_setup_server_releases_claimed_state_for_restart_and_resume(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "application.sqlite3"
+    repository = composition.open_repository(database)
+    bootstrap_verifier = PasswordHasher().hash("owner password")
+    bootstrap = ReviewBootstrap(
+        schema_version="review-bootstrap-v1",
+        setup_owner_verifier=bootstrap_verifier,
+        tls_certificate_file="certificate",
+        tls_private_key_file="private-key",
+        canonical_origin="https://setup.invalid",
+    )
+
+    def claim_before_shutdown(_server: object) -> None:
+        state = repository.setup_state_store()
+        document = state.read(bootstrap_verifier)
+        state.write(
+            document.model_copy(
+                update={
+                    "revision": document.revision + 1,
+                    "completed_steps": ["claim"],
+                    "claimed": True,
+                }
+            ),
+            document.revision,
+            bootstrap_verifier,
+        )
+
+    with (
+        patch.object(
+            composition,
+            "open_review_tls_identity",
+            return_value=nullcontext(
+                SimpleNamespace(
+                    certificate_file="certificate", private_key_file="private-key"
+                )
+            ),
+        ),
+        patch.object(composition, "open_repository", return_value=repository),
+        patch.object(repository, "close", wraps=repository.close) as close,
+        patch.object(
+            composition.uvicorn.Server,
+            "run",
+            autospec=True,
+            side_effect=claim_before_shutdown,
+        ) as run,
+    ):
+        try:
+            composition.run_setup_server(
+                bootstrap,
+                database,
+                "127.0.0.1",
+                18444,
+                initialize=True,
+            )
+            close.assert_called_once_with()
+        finally:
+            if not close.called:
+                repository.close()
+
+    run.assert_called_once()
+    assert not tuple(tmp_path.glob(".metadata-report-binding-*.sqlite"))
+
+    def resumable_setup() -> bool:
+        reopened = composition.open_repository(database, create=False)
+        try:
+            reopened.setup_state_store().read(bootstrap_verifier)
+            return True
+        finally:
+            reopened.close()
+
+    assert (
+        select_first_boot_mode(
+            tmp_path,
+            complete_store=lambda: False,
+            resumable_setup=resumable_setup,
+        )
+        is FirstBootMode.RESUME_SETUP
+    )
