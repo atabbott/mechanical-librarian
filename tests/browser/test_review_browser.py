@@ -441,6 +441,21 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                     page.evaluate("() => document.documentElement.scrollWidth") <= 1440
                 )
                 page.set_viewport_size({"width": 390, "height": 844})
+                brand_box = page.locator(".brand").bounding_box()
+                actions_box = page.locator(".shell-actions").bounding_box()
+                settings_box = page.get_by_role(
+                    "link", name="Settings", exact=True
+                ).bounding_box()
+                assert (
+                    brand_box is not None
+                    and actions_box is not None
+                    and settings_box is not None
+                )
+                assert settings_box["width"] >= 44
+                assert settings_box["height"] >= 44
+                assert abs(settings_box["y"] - brand_box["y"]) <= 0.5
+                assert brand_box["x"] + brand_box["width"] <= settings_box["x"]
+                assert settings_box["x"] + settings_box["width"] <= actions_box["x"]
                 documents = 0
 
                 def count_document(request) -> None:

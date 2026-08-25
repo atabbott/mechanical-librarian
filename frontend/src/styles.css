@@ -37,6 +37,9 @@ h2 { margin-bottom:.35rem; }
 .masthead nav a[aria-current='page'] { color:var(--accent-strong); background:var(--accent-soft); }
 .shell-actions { margin-left:auto; }
 .shell-actions button { min-height:44px; padding:.45rem .7rem; background:transparent; white-space:nowrap; }
+.settings-link { display:inline-flex; min-width:44px; min-height:44px; align-items:center; justify-content:center; padding:.45rem .7rem; border-radius:999px; color:var(--soft); font-size:.72rem; font-weight:700; text-decoration:none; white-space:nowrap; }
+.settings-link[aria-current='page'] { color:var(--accent-strong); background:var(--accent-soft); }
+.settings-glyph { display:none; width:20px; height:20px; }
 .theme-toggle { display:inline-flex; min-width:44px; align-items:center; justify-content:center; gap:.4rem; }
 .private-session { display:inline-flex; align-items:center; gap:.35rem; color:var(--accent-strong); font-size:.72rem; font-weight:650; white-space:nowrap; }
 .private-session > span { font-size:.5rem; }
@@ -435,7 +438,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 }
 @media (max-width:760px) {
   .masthead { align-items:center; flex-wrap:wrap; gap:.35rem .65rem; padding:.5rem .75rem; }
-  .brand { flex:1 1 auto; }
+  .brand { flex:0 0 44px; margin-right:auto; }
   .brand > span:last-child { display:none; }
   .masthead nav { order:3; width:100%; flex-wrap:wrap; overflow:visible; }
   .masthead nav a { min-width:44px; flex:1 1 6.5rem; text-align:center; }
@@ -443,6 +446,9 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
   .shell-actions button { max-width:100%; overflow-wrap:anywhere; white-space:normal; }
   .private-session { display:none; }
   .shell-actions button { padding:.4rem .55rem; font-size:.68rem; }
+  .settings-link { position:absolute; top:.5rem; left:calc(.75rem + 44px + .65rem); z-index:1; width:44px; padding:0; }
+  .settings-link-label { display:none; }
+  .settings-glyph { display:block; }
   .theme-toggle > span:last-child { display:none; }
   main { padding:1rem .75rem 4rem; }
   .library-header, .attention-header, .page-heading, .detail-layout, .activity-layout, .activity-ledger-layout, .comparison { grid-template-columns:1fr; }
