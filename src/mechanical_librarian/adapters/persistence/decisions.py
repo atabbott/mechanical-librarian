@@ -379,7 +379,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
             ):
                 raise HumanDecisionError("stale")
             case = ReviewCase.create_from_data(case_envelope["case"])
-            decision.validate_for(case)
+            decision.validate_new_for(case)
             previous = self._connection.execute(
                 "SELECT decision_id,'human' FROM human_decisions "
                 "WHERE review_case_id=? AND destination=? ORDER BY ordinal DESC LIMIT 1",
@@ -751,7 +751,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 }
                 for row in transition_rows
             ]
-            events: list[tuple[int, int, dict[str, object]]] = []
+            events: list[tuple[int, int, str, dict[str, object]]] = []
             for row in event_rows:
                 value = json.loads(row[7])
                 if (
@@ -852,7 +852,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     and target.get("state") == "value"
                     else None
                 )
-                events.append((row[6], int(decision_row[0]), value))
+                events.append((row[6], int(decision_row[0]), row[0], value))
             for row in shadow_rows:
                 document, evaluated_at = self._validate_shadow_outcome_row(row)
                 outcome = ShadowOutcomeSet.from_json(document)
@@ -870,6 +870,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     (
                         evaluated_at,
                         0,
+                        "shadow:" + row[0],
                         {
                             "authority": "none",
                             "dispositions": dispositions,
@@ -898,6 +899,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     (
                         occurred_at,
                         0,
+                        "automatic:" + decision_id,
                         {
                             "decision_id": decision_id,
                             "destination": destination,
@@ -910,7 +912,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                         },
                     )
                 )
-            ordered_events = [value for _, _, value in sorted(events, reverse=True)]
+            ordered_events = [value for _, _, _, value in sorted(events, reverse=True)]
             return tuple((ordered_events + transitions)[:limit])
         except (
             sqlite3.Error,

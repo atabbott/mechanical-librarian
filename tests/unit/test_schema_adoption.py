@@ -32,6 +32,7 @@ from mechanical_librarian.adapters.persistence.schema_adoption import (
     adopt_schema,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.application.schema_adoption import (
     REVIEW_OWNER_DECISION_ACTIONS_V1,
     SchemaAdoptionRecoveryRequired,
@@ -39,6 +40,7 @@ from mechanical_librarian.application.schema_adoption import (
 from mechanical_librarian.domain.human_decision import HumanDecision, decision_actions
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
+from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.review_cases import _report
 
 _INDEXES = (
@@ -148,6 +150,90 @@ def _predecessor_with_decision(root: Path) -> Path:
     return database
 
 
+def _predecessor_with_retained_preservation_decision(
+    root: Path,
+) -> tuple[Path, str, str]:
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    root.chmod(0o700)
+    database = root / "application.sqlite3"
+    repository = open_repository(database)
+    report, _category, _option, _destination = _automatic_no_change_inputs(
+        "exact_title"
+    )
+    repository.publish(report, lambda: True)
+    proposal_set = evaluate_report(report)
+    repository.publish_proposal(proposal_set)
+    case_id = json.loads(repository.admit_review_case(proposal_set))["review_case_id"]
+    repository.close()
+    connection = sqlite3.connect(database)
+    try:
+        document = connection.execute(
+            "SELECT document FROM review_cases WHERE review_case_id=?", (case_id,)
+        ).fetchone()[0]
+        case = ReviewCase.from_json(document)
+        proposal = next(
+            value for value in case.proposals if value["destination"] == "title"
+        )
+        selected = next(
+            value["value"]
+            for value in proposal["result"]["alternatives"]
+            if value["assessment"] == "preserves_target"
+        )
+        legacy_proposal = json.loads(json.dumps(proposal))
+        next(
+            value
+            for value in legacy_proposal["result"]["alternatives"]
+            if value["value"] == selected
+        )["assessment"] = "replaces_target"
+        legacy_proposal["result"]["outcome"] = "unresolved_choice"
+        legacy_case = type(
+            "LegacyCase",
+            (),
+            {
+                "review_case_id": case.review_case_id,
+                "target_fingerprint": case.target_fingerprint,
+                "proposals": (legacy_proposal,),
+            },
+        )()
+        decision = HumanDecision.create(
+            legacy_case,
+            proposal_id=legacy_proposal["proposal_id"],
+            target_fingerprint=case.target_fingerprint,
+            destination=legacy_proposal["destination"],
+            actor="owner",
+            outcome="accept",
+            selected_value=selected,
+            idempotency_key="schema-adoption-preserved-choice-0001",
+            occurred_at=1_000,
+        )
+        connection.execute(
+            "INSERT INTO human_decisions(decision_id,review_case_id,proposal_id,"
+            "target_fingerprint,destination,actor,outcome,selected_value_document,"
+            "idempotency_digest,request_digest,occurred_at,document) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                decision.decision_id,
+                decision.review_case_id,
+                decision.proposal_id,
+                decision.target_fingerprint,
+                decision.destination,
+                decision.actor,
+                decision.outcome,
+                json.dumps(
+                    selected, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+                ),
+                decision.idempotency_digest,
+                decision.request_digest,
+                decision.occurred_at,
+                decision.to_json(),
+            ),
+        )
+        _freeze_review_field_facts_predecessor(connection)
+        connection.commit()
+        return database, case_id, decision.decision_id
+    finally:
+        connection.close()
+
+
 def test_exact_predecessor_adopts_field_facts_without_changing_canonical_tables(
     tmp_path: Path,
 ) -> None:
@@ -217,6 +303,30 @@ def test_exact_current_is_a_verified_noop_without_creating_a_backup(
     } == adopt_schema(database, backup, REVIEW_OWNER_DECISION_ACTIONS_V1)
     assert database.read_bytes() == before
     assert not backup.exists()
+
+
+def test_adoption_and_current_case_read_retain_a_historical_preservation_accept(
+    tmp_path: Path,
+) -> None:
+    database, case_id, decision_id = _predecessor_with_retained_preservation_decision(
+        tmp_path
+    )
+    assert (
+        adopt_schema(
+            database, tmp_path / "backup.sqlite3", REVIEW_OWNER_DECISION_ACTIONS_V1
+        )["status"]
+        == "adopted"
+    )
+
+    repository = open_repository(database, create=False)
+    try:
+        decisions = repository.get_review_case_decisions(case_id)
+        assert HumanDecision.from_json(decisions[0]).decision_id == decision_id
+        fields = InspectCurrentReviewCase(repository).run(case_id)["fields"]
+        title = next(value for value in fields if value["destination"] == "title")
+        assert title["human_decision"]["decision_id"] == decision_id
+    finally:
+        repository.close()
 
 
 def test_adoption_backfill_matches_the_domain_action_contract(tmp_path: Path) -> None:

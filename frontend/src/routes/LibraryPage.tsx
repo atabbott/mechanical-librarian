@@ -490,16 +490,17 @@ function RecordedOutcome({
   const proposed = field.proposedValues.findIndex((value) =>
     sameSelectedValue(value, decision.selected_value),
   )
-  const context =
-    decision.outcome === 'accept' && proposed >= 0
-      ? choiceContext(
-          field,
-          field.choiceContexts.filter((item) => item.selection === 'proposed')[proposed]
-            ?.alternativeId ?? null,
-        )
-      : choiceContext(field, null)
+  const selectedProposed =
+    (decision.outcome === 'accept' || decision.outcome === 'candidate') && proposed >= 0
+  const context = selectedProposed
+    ? choiceContext(
+        field,
+        field.choiceContexts.filter((item) => item.selection === 'proposed')[proposed]
+          ?.alternativeId ?? null,
+      )
+    : choiceContext(field, null)
   const evidenceId = `recorded-evidence-${field.destination}`
-  const accepted = decision.outcome === 'accept'
+  const accepted = decision.outcome === 'accept' || decision.outcome === 'candidate'
   return (
     <section
       className="recorded-outcome"

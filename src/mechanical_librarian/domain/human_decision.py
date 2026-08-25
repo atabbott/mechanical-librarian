@@ -78,6 +78,33 @@ def validate_decision_action(
         raise HumanDecisionError("invalid_selection")
 
 
+def _validate_retained_decision_action(
+    proposal: Mapping[str, object],
+    outcome: str,
+    selected_value: dict[str, object] | None,
+) -> None:
+    """Validate an immutable historical decision without reopening its command envelope."""
+    if outcome == "accept":
+        result = proposal.get("result")
+        alternatives = result.get("alternatives") if type(result) is dict else None
+        if (
+            type(selected_value) is not dict
+            or type(alternatives) is not list
+            or selected_value
+            not in [
+                alternative.get("value")
+                for alternative in alternatives
+                if type(alternative) is dict
+            ]
+        ):
+            raise HumanDecisionError("invalid_selection")
+    elif outcome in {"keep_current", "reject"}:
+        if not _actionable(proposal) or selected_value is not None:
+            raise HumanDecisionError("invalid_selection")
+    else:
+        raise HumanDecisionError("unsupported")
+
+
 def _actionable(proposal: Mapping[str, object]) -> bool:
     result = proposal.get("result")
     return type(result) is dict and (
@@ -200,8 +227,18 @@ class HumanDecision:
         return value
 
     def validate_for(self, case: ReviewCase) -> None:
+        """Validate a retained immutable fact against its canonical case."""
         self._validate_for(
             case.review_case_id, case.target_fingerprint, list(case.proposals)
+        )
+
+    def validate_new_for(self, case: ReviewCase) -> None:
+        """Validate a newly submitted command against the current owner envelope."""
+        self._validate_for(
+            case.review_case_id,
+            case.target_fingerprint,
+            list(case.proposals),
+            new_command=True,
         )
 
     def validate_for_browse_case(
@@ -232,6 +269,8 @@ class HumanDecision:
         review_case_id: str,
         target_fingerprint: str,
         proposals: list[object] | tuple[dict[str, object], ...],
+        *,
+        new_command: bool = False,
     ) -> None:
         proposal = next(
             (
@@ -249,7 +288,12 @@ class HumanDecision:
             or proposal is None
         ):
             raise HumanDecisionError("stale")
-        validate_decision_action(proposal, self.outcome, self.selected_value)
+        validator = (
+            validate_decision_action
+            if new_command
+            else _validate_retained_decision_action
+        )
+        validator(proposal, self.outcome, self.selected_value)
         request = {
             "actor": self.actor,
             "destination": self.destination,

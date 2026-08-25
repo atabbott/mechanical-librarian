@@ -591,6 +591,69 @@ describe('Library route', () => {
     ).toBeVisible()
   })
 
+  it('renders an automatic candidate as its selected proposed outcome', async () => {
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const candidate = { kind: 'text' as const, value: 'New series' }
+    const series = {
+      ...titleField,
+      automaticDecision: {
+        candidate_id: 'alternative-series-1',
+        decision_id: 'automatic-series',
+        destination: 'series',
+        occurred_at: 1,
+        outcome: 'candidate' as const,
+        proposal_id: 'proposal-series',
+        review_case_id: 'case-1',
+        selected_value: candidate,
+        target_fingerprint: 'fingerprint-series',
+      },
+      choiceContexts: [
+        {
+          alternativeId: null,
+          selection: 'current' as const,
+          rationale: 'Current series evidence.',
+          recommendation: 'no_recommendation' as const,
+          recommendationReason: 'Current series evidence.',
+          limitations: [],
+          evidence: [{ source: 'Current source', observation: 'Old series', role: 'local_presence' }],
+        },
+        {
+          alternativeId: 'alternative-series-1',
+          selection: 'proposed' as const,
+          rationale: 'Selected automatic series evidence.',
+          recommendation: 'recommended' as const,
+          recommendationReason: 'Selected automatic series evidence.',
+          limitations: [],
+          evidence: [{ source: 'Candidate source', observation: 'New series', role: 'external_corroboration' }],
+        },
+      ] as const,
+      currentValue: 'Old series',
+      currentRaw: 'Old series',
+      decisionActions: [],
+      editable: false,
+      destination: 'series',
+      needsAttention: false,
+      navigationRole: 'resolved' as const,
+      proposedValues: [candidate],
+      proposalId: 'proposal-series',
+      targetFingerprint: 'fingerprint-series',
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=series', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [series] })),
+    })
+
+    expect((await screen.findAllByText('Resolved automatically')).at(-1)).toBeVisible()
+    expect(screen.getByText('Chosen value')).toBeVisible()
+    expect(screen.getByText('New series')).toBeVisible()
+    expect(screen.queryByText('Current value')).toBeNull()
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Evidence' }))
+    expect(await screen.findByText('Candidate source')).toBeVisible()
+    expect(screen.queryByText('Current source')).toBeNull()
+    expect(screen.queryByRole('button', { name: /Choose /u })).toBeNull()
+  })
+
   it('opens a long description without recording a choice', async () => {
     const user = userEvent.setup()
     const description = 'A complete retained paragraph. '.repeat(20)

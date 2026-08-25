@@ -102,6 +102,45 @@ def test_invalid_selection_nonactionable_field_and_tampering_fail_closed(
         )
 
 
+def test_retained_preservation_accept_remains_readable_without_reopening_command_admission(
+    case: ReviewCase, proposal: dict[str, object]
+) -> None:
+    alternative = next(
+        value
+        for value in proposal["result"]["alternatives"]
+        if value["assessment"] != "preserves_target"
+    )
+    selected = alternative["value"]
+    decision = _create(case, proposal, "accept", selected)
+    preserved = json.loads(json.dumps(proposal))
+    for value in preserved["result"]["alternatives"]:
+        value["assessment"] = "preserves_target"
+    retained = type(
+        "RetainedCase",
+        (),
+        {
+            "review_case_id": case.review_case_id,
+            "target_fingerprint": case.target_fingerprint,
+            "proposals": (preserved,),
+        },
+    )()
+
+    decision.validate_for(retained)
+    with pytest.raises(HumanDecisionError) as rejected:
+        HumanDecision.create(
+            retained,
+            proposal_id=preserved["proposal_id"],
+            target_fingerprint=case.target_fingerprint,
+            destination=preserved["destination"],
+            actor="owner",
+            outcome="accept",
+            selected_value=selected,
+            idempotency_key="domain-preservation-new-0001",
+            occurred_at=1_000,
+        )
+    assert rejected.value.code == "unsupported"
+
+
 @pytest.mark.parametrize(
     ("outcome", "manual_required", "alternatives", "expected"),
     (

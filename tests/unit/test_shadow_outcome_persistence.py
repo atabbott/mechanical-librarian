@@ -71,7 +71,7 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectPlan,
     field_value_version,
 )
-from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.human_decision import HumanDecision, decision_actions
 from mechanical_librarian.domain.metadata_policy import (
     DEFAULT_OPTIONS,
     OPTION_CATALOGUE,
@@ -2937,6 +2937,63 @@ def test_shadow_history_orders_human_and_preview_events_by_time() -> None:
             value for value in events if value["kind"] == "shadow_preview_recorded"
         ]
         assert [5] == [value["occurred_at"] for value in shadow]
+        repository.close()
+
+
+def test_history_orders_same_timestamp_human_and_cross_kind_events_stably() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        repository = open_repository(Path(temporary) / "reports.sqlite")
+        case_id = _case(repository)
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(case_id))["case"]
+        )
+        proposals = [value for value in case.proposals if decision_actions(value)]
+        assert len(proposals) == 1
+        decisions = []
+        for index in range(1, 3):
+            proposal = proposals[0]
+            alternative = next(
+                value
+                for value in proposal["result"]["alternatives"]
+                if value["assessment"] != "preserves_target"
+            )
+            decision = HumanDecision.create(
+                case,
+                proposal_id=proposal["proposal_id"],
+                target_fingerprint=case.target_fingerprint,
+                destination=proposal["destination"],
+                actor="owner",
+                outcome="accept",
+                selected_value=alternative["value"],
+                idempotency_key=f"same-timestamp-history-{index:04d}",
+                occurred_at=10,
+            )
+            repository.record_human_decision(decision)
+            decisions.append(decision)
+        first = repository.get_review_case_history(case_id, 10)
+        second = repository.get_review_case_history(case_id, 10)
+        assert first == second
+        assert [event["decision_id"] for event in first[:2]] == [
+            decisions[1].decision_id,
+            decisions[0].decision_id,
+        ]
+        repository.close()
+
+    with tempfile.TemporaryDirectory() as temporary:
+        repository = open_repository(Path(temporary) / "reports.sqlite")
+        case_id = _case(repository)
+        repository.enter_shadow_preview(9)
+        repository.persist_shadow_outcome(case_id, 10)
+        repository._record_automatic_outcomes(
+            _synthetic_automatic_tuple(repository, case_id, "title_layout"), 10
+        )
+        first = repository.get_review_case_history(case_id, 10)
+        second = repository.get_review_case_history(case_id, 10)
+        assert first == second
+        assert {
+            "automatic_decision_recorded",
+            "shadow_preview_recorded",
+        }.issubset({event["kind"] for event in first})
         repository.close()
 
 
