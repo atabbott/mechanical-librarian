@@ -54,6 +54,11 @@ from mechanical_librarian.application.operations import (
     StageTimer,
     support_preparation_incidents,
 )
+from mechanical_librarian.application.owner_settings import (
+    FileOwnerSettingsRepository,
+    OwnerSettingsOperations,
+    file_settings_projection,
+)
 from mechanical_librarian.application.review_application import (
     compose_review_application,
 )
@@ -66,6 +71,7 @@ from mechanical_librarian.application.review_pipeline import (
 )
 from mechanical_librarian.bootstrap.composition import (
     _compose_cover_considerations,
+    _load_batch_credentials,
     compose_continuous_guarded_application,
 )
 from mechanical_librarian.domain.metadata_report import (
@@ -619,6 +625,12 @@ def _start_deterministic_installed_server(
             ),
         )
     )
+    credentials = _load_batch_credentials(
+        configuration,
+        {item.name for item in configuration.connections},
+        {item.name for item in configuration.providers},
+    )
+    settings_projection = file_settings_projection(configuration, credentials)
     application = compose_review_application(
         state_owner=web_state_owner,
         session_store=web_state_owner,
@@ -650,6 +662,11 @@ def _start_deterministic_installed_server(
         ),
         cover_considerations=_compose_cover_considerations(
             web_state_owner, artifacts, review
+        ),
+        settings=OwnerSettingsOperations(
+            FileOwnerSettingsRepository(
+                settings_projection.document, settings_projection.secrets
+            )
         ),
     )
     server = uvicorn.Server(
@@ -1029,6 +1046,8 @@ class _InstalledPreparationRun:
                 json={"password": "synthetic password"},
             )
             assert login.status_code == 200, login.text
+            appearance_response = client.get(self._origin + "/api/v1/appearance")
+            settings_response = client.get(self._origin + "/api/v1/settings")
             detail_response = client.get(
                 self._origin + f"/api/v1/review-cases/{decision.review_case_id}"
             )
@@ -1042,6 +1061,25 @@ class _InstalledPreparationRun:
                 self._origin
                 + "/api/v1/activity?event_type=review&range_days=30&page=1&page_size=25"
             )
+        assert appearance_response.status_code == 200, appearance_response.text
+        assert settings_response.status_code == 200, settings_response.text
+        settings_payload = settings_response.json()
+        assert "synthetic-token" not in json.dumps(settings_payload)
+        assert isinstance(settings_payload, dict)
+        secrets = settings_payload.get("secrets")
+        assert isinstance(secrets, list)
+        assert [
+            secret
+            for secret in secrets
+            if isinstance(secret, dict)
+            and secret.get("field_id") == "connection.primary.key"
+        ] == [
+            {
+                "field_id": "connection.primary.key",
+                "configured": True,
+                "indicator": "Configured · ····oken",
+            }
+        ]
         assert detail_response.status_code == 200, detail_response.text
         assert history_response.status_code == 200, history_response.text
         assert activity_response.status_code == 200, activity_response.text
@@ -1127,8 +1165,23 @@ class _InstalledPreparationRun:
         try:
             page.goto(self._origin + "/login")
             page.get_by_label("Password").fill("synthetic password")
-            page.get_by_role("button", name="Sign in").click()
-            page.wait_for_url(self._origin + "/library")
+            with page.expect_response("**/api/v1/appearance") as appearance_info:
+                page.get_by_role("button", name="Sign in").click()
+            appearance = appearance_info.value
+            assert appearance.status == 200, (
+                f"global appearance request returned {appearance.status}"
+            )
+            page.wait_for_url(
+                re.compile(rf"{re.escape(self._origin)}/library(?:\?.*)?$")
+            )
+            with page.expect_response("**/api/v1/settings") as settings_info:
+                page.get_by_role("link", name="Settings", exact=True).click()
+            settings_response = settings_info.value
+            assert settings_response.status == 200
+            expect(
+                page.get_by_text("Configured · ····oken", exact=True)
+            ).to_be_visible()
+            assert "synthetic-token" not in page.content()
             page.get_by_role("link", name="Activity", exact=True).click()
             page.get_by_role(
                 "heading", name="Activity and recovery", exact=True

@@ -37,6 +37,7 @@ from mechanical_librarian.adapters.persistence.field_effects import (
 from mechanical_librarian.adapters.persistence.metadata_policy import (
     SQLiteMetadataPolicyRepository,
 )
+from mechanical_librarian.adapters.persistence.owner_settings import OwnerSettingsStore
 from mechanical_librarian.adapters.persistence.proposal_sets import (
     SQLiteProposalSetRepository,
     _validate_proposal_row,
@@ -190,6 +191,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             ),
         )
         self._review_sessions = SQLiteReviewSessionRepository(connection)
+        self._owner_settings = OwnerSettingsStore(connection)
         self._review_scans = SQLiteReviewScanRepository(connection)
         self._field_effects = SQLiteFieldEffectRepository(
             connection,
@@ -413,6 +415,17 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         if re.fullmatch(r"cover_replay_[0-9a-f]{64}", reference) is None:
             raise ValueError("cover replay reference is invalid")
         self._current_cover_replay_reference = reference
+
+    def bind_current_cover_authority(
+        self, policy_reference: str, replay_reference: str
+    ) -> None:
+        """Validate then replace both live cover authority references together."""
+        if re.fullmatch(r"cover_policy_[0-9a-f]{64}", policy_reference) is None:
+            raise ValueError("cover policy reference is invalid")
+        if re.fullmatch(r"cover_replay_[0-9a-f]{64}", replay_reference) is None:
+            raise ValueError("cover replay reference is invalid")
+        self._current_cover_policy_reference = policy_reference
+        self._current_cover_replay_reference = replay_reference
 
     def field_effect_authority_source(
         self, decision: HumanDecision | AutomaticDecision
@@ -1840,6 +1853,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         finally:
             if self._binding is not None:
                 self._binding.close()
+
+    def owner_settings_store(self) -> OwnerSettingsStore:
+        return self._owner_settings
 
 
 class SQLiteShadowPreviewRepository:

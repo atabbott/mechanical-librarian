@@ -36,12 +36,14 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
+from mechanical_librarian.infrastructure.settings_authority import load_review_bootstrap
 
 # Kept equal to the paths and port `container.py` fixes, without importing it:
 # that module reaches the composition root and so loads uvicorn and every
 # adapter, 2.2s of import the probe would pay on every interval to read two
 # constants. `tests/unit/test_container_health.py` fails if the two drift.
 CONFIG = Path("/data/config.json")
+BOOTSTRAP = Path("/run/secrets/review-bootstrap.json")
 HOST = "127.0.0.1"
 PORT = 8443
 ROUTE = "/health/ready"
@@ -69,6 +71,7 @@ def _status(payload: bytes) -> int | None:
 def check(
     config_path: Path = CONFIG,
     *,
+    bootstrap_path: Path = BOOTSTRAP,
     host: str = HOST,
     port: int = PORT,
     timeout: float = TIMEOUT_SECONDS,
@@ -77,18 +80,27 @@ def check(
 
     try:
         configuration = load_configuration_file(config_path)
+        review = configuration.review
+        if review is None or review.tls_certificate_file is None:
+            return "review_surface_unconfigured"
+        canonical_origin = review.canonical_origin
+        tls_certificate_file = review.tls_certificate_file
+    except FileNotFoundError:
+        try:
+            bootstrap = load_review_bootstrap(bootstrap_path)
+        except ValueError:
+            return "configuration_unavailable"
+        canonical_origin = bootstrap.canonical_origin
+        tls_certificate_file = bootstrap.tls_certificate_file
     except ValueError:
         # `ConfigurationError` is a `ValueError`; an unreadable or invalid
         # document is reported as one either way.
         return "configuration_unavailable"
-    review = configuration.review
-    if review is None or review.tls_certificate_file is None:
-        return "review_surface_unconfigured"
-    origin = urlsplit(review.canonical_origin)
+    origin = urlsplit(canonical_origin)
     if origin.hostname is None:
         return "canonical_origin_unusable"
     try:
-        context = ssl.create_default_context(cafile=review.tls_certificate_file)
+        context = ssl.create_default_context(cafile=tls_certificate_file)
     except (OSError, ValueError):
         return "tls_identity_unavailable"
     request = (

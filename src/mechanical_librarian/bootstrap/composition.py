@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
@@ -137,6 +138,11 @@ from mechanical_librarian.application.metadata_report import (
     UnsupportedMediaError,
     require_report_current,
 )
+from mechanical_librarian.application.owner_settings import (
+    FileOwnerSettingsRepository,
+    OwnerSettingsOperations,
+    file_settings_projection,
+)
 from mechanical_librarian.application.proposal_sets import (
     CreateProposalSet,
     GetProposalSet,
@@ -236,9 +242,14 @@ from mechanical_librarian.infrastructure.security.review_tls import (
     REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD,
     open_review_tls_identity,
 )
+from mechanical_librarian.infrastructure.settings_authority import (
+    load_review_bootstrap,
+    store_runtime_configuration,
+)
 from mechanical_librarian.interfaces.web import (
     create_review_app,
     load_owner_password_verifier,
+    owner_password_verifier,
 )
 
 if TYPE_CHECKING:
@@ -330,6 +341,13 @@ class _RearProvenanceFields(TypedDict):
     tail_slot: int
 
 
+def _required_secret_file(value: str | None) -> str:
+    """Keep file-backed credential reads explicit at the composition boundary."""
+    if value is None:
+        raise ConfigurationError("credential path is unavailable")
+    return value
+
+
 def compose_audiobookshelf_field_effect_target(
     configuration: ApplicationConfiguration,
     artifact_store_path: Path,
@@ -355,7 +373,7 @@ def compose_audiobookshelf_field_effect_target(
         client_factory=lambda: (
             target_client(
                 connection.endpoint,
-                connection.secret_file,
+                _required_secret_file(connection.secret_file),
                 configuration.limits.timeout_seconds,
             )
             if credentials is None
@@ -386,7 +404,7 @@ def compose_audiobookshelf_field_effect_capabilities(
         client_factory=lambda: (
             target_client(
                 connection.endpoint,
-                connection.secret_file,
+                _required_secret_file(connection.secret_file),
                 configuration.limits.timeout_seconds,
             )
             if credentials is None
@@ -410,6 +428,7 @@ def compose_continuous_guarded_application(
     preparation: ReviewPreparationSupervisor,
     private_root: Path | None = None,
     provider_recovery: SQLiteProviderRecoveryStore | None = None,
+    credentials: dict[str, str] | None = None,
 ) -> ContinuousGuardedApplication:
     """Activate one configured Audiobookshelf instance across its libraries."""
     configured = tuple(
@@ -423,12 +442,15 @@ def compose_continuous_guarded_application(
             configuration,
             artifact_store_path,
             *key,
+            credentials=credentials,
             artifact_identity=artifact_identity,
         )
         for key in configured
     }
     capabilities: dict[tuple[str, str], CapabilityObserver] = {
-        key: compose_audiobookshelf_field_effect_capabilities(configuration, *key)
+        key: compose_audiobookshelf_field_effect_capabilities(
+            configuration, *key, credentials=credentials
+        )
         for key in configured
     }
     private_root = (
@@ -1059,7 +1081,7 @@ def run_metadata_report_loaded(
         client_factory=lambda: (
             target_client(
                 connection.endpoint,
-                connection.secret_file,
+                _required_secret_file(connection.secret_file),
                 configuration.limits.timeout_seconds,
             )
             if credentials is None
@@ -1094,12 +1116,12 @@ def run_metadata_report_loaded(
             instance: MetadataProvider
             if value.adapter == "google_books":
                 api_key = (
-                    None
-                    if value.secret_file is None
+                    credentials.get("provider:" + value.name)
+                    if credentials is not None
                     else (
-                        read_secret(value.secret_file)
-                        if credentials is None
-                        else credentials["provider:" + value.name]
+                        None
+                        if value.secret_file is None
+                        else read_secret(value.secret_file)
                     )
                 )
                 instance = GoogleBooksMetadataProvider(
@@ -1110,12 +1132,13 @@ def run_metadata_report_loaded(
                     api_key=api_key,
                 )
             elif value.adapter == "hardcover":
-                if value.secret_file is None:
+                if value.secret_file is None and credentials is None:
                     raise MetadataReportError("provider credential unavailable")
                 instance = HardcoverMetadataProvider(
                     value.name,
                     hardcover_client(
-                        value.secret_file, configuration.limits.timeout_seconds
+                        _required_secret_file(value.secret_file),
+                        configuration.limits.timeout_seconds,
                     )
                     if credentials is None
                     else hardcover_client_token(
@@ -1209,7 +1232,7 @@ def _require_report_current_loaded(
     target = AudiobookshelfItemReader(
         client_factory=lambda: target_client(
             connection.endpoint,
-            connection.secret_file,
+            _required_secret_file(connection.secret_file),
             configuration.limits.timeout_seconds,
         ),
         endpoint=connection.endpoint,
@@ -1316,6 +1339,7 @@ def create_review_pipeline(
     timing: StageTimer | None = None,
     private_root: Path | None = None,
     provider_recovery: SQLiteProviderRecoveryStore | None = None,
+    credentials: dict[str, str] | None = None,
 ) -> ReviewPreparationSupervisor:
     artifact_recovery_lock = threading.Lock()
     artifacts_recovered = False
@@ -1342,10 +1366,18 @@ def create_review_pipeline(
     mounts = {item.name: item for item in configuration.mounts}
     clients = {item.name: item for item in configuration.connections}
     reader = AudiobookshelfCatalogueReader(
-        client_factory=lambda name: target_client(
-            clients[name].endpoint,
-            clients[name].secret_file,
-            configuration.limits.timeout_seconds,
+        client_factory=lambda name: (
+            target_client(
+                clients[name].endpoint,
+                _required_secret_file(clients[name].secret_file),
+                configuration.limits.timeout_seconds,
+            )
+            if credentials is None
+            else target_client_token(
+                clients[name].endpoint,
+                credentials["target:" + name],
+                configuration.limits.timeout_seconds,
+            )
         ),
         mounts=mounts,
         maximum_bytes=configuration.limits.target_response_bytes,
@@ -1415,9 +1447,13 @@ def create_review_pipeline(
         ) -> MetadataProvider:
             if value.adapter == "google_books":
                 api_key = (
-                    None
-                    if value.secret_file is None
-                    else read_secret(value.secret_file)
+                    credentials.get("provider:" + value.name)
+                    if credentials is not None
+                    else (
+                        None
+                        if value.secret_file is None
+                        else read_secret(value.secret_file)
+                    )
                 )
                 return GoogleBooksMetadataProvider(
                     value.name,
@@ -1426,11 +1462,21 @@ def create_review_pipeline(
                     configuration.limits.timeout_seconds,
                     api_key=api_key,
                 )
-            if value.adapter == "hardcover" and value.secret_file is not None:
+            if value.adapter == "hardcover" and (
+                value.secret_file is not None or credentials is not None
+            ):
                 return HardcoverMetadataProvider(
                     value.name,
-                    hardcover_client(
-                        value.secret_file, configuration.limits.timeout_seconds
+                    (
+                        hardcover_client(
+                            _required_secret_file(value.secret_file),
+                            configuration.limits.timeout_seconds,
+                        )
+                        if credentials is None
+                        else hardcover_client_token(
+                            credentials["provider:" + value.name],
+                            configuration.limits.timeout_seconds,
+                        )
                     ),
                     configuration.limits.provider_response_bytes,
                     configuration.limits.timeout_seconds,
@@ -1462,10 +1508,18 @@ def create_review_pipeline(
         """Build one successor observation's adapters from validated selections."""
         artifacts = CoverArtifactStore(artifact_store_path, create=False)
         target = AudiobookshelfItemReader(
-            client_factory=lambda: target_client(
-                connection.endpoint,
-                connection.secret_file,
-                configuration.limits.timeout_seconds,
+            client_factory=lambda: (
+                target_client(
+                    connection.endpoint,
+                    _required_secret_file(connection.secret_file),
+                    configuration.limits.timeout_seconds,
+                )
+                if credentials is None
+                else target_client_token(
+                    connection.endpoint,
+                    credentials["target:" + connection.name],
+                    configuration.limits.timeout_seconds,
+                )
             ),
             endpoint=connection.endpoint,
             library_id=library.library_id,
@@ -1551,6 +1605,7 @@ def create_review_pipeline(
             ),
             review_claim_next=claim_next,
             timing=timing,
+            credentials=credentials,
         )
 
     def drain_outbox(repository: ReviewPipelineRepository) -> None:
@@ -1750,7 +1805,7 @@ def run_catalogue(
     reader = AudiobookshelfCatalogueReader(
         client_factory=lambda name: target_client(
             clients[name].endpoint,
-            clients[name].secret_file,
+            _required_secret_file(clients[name].secret_file),
             configuration.limits.timeout_seconds,
         ),
         mounts=mounts,
@@ -2019,7 +2074,7 @@ def _load_batch_credentials(
     selected_provider_names: set[str],
 ) -> dict[str, str]:
     values = {
-        "target:" + item.name: read_secret(item.secret_file)
+        "target:" + item.name: read_secret(_required_secret_file(item.secret_file))
         for item in configuration.connections
         if item.name in selected_connections
     }
@@ -2041,18 +2096,62 @@ def run_review_server(
     host: str,
     port: int,
 ) -> None:
-    configuration = load_configuration_file(config_path)
-    if configuration.review is None:
-        raise ReviewCaseError("configuration")
-    review = configuration.review
-    if review.tls_certificate_file is None or review.tls_private_key_file is None:
+    bootstrap = None
+    try:
+        configuration = load_configuration_file(config_path)
+        authority = "file"
+        if configuration.review is None:
+            raise ReviewCaseError("configuration")
+        review = configuration.review
+        tls_certificate_file = review.tls_certificate_file
+        tls_private_key_file = review.tls_private_key_file
+    except FileNotFoundError:
+        configuration = None
+        authority = "store"
+        bootstrap = load_review_bootstrap(Path("/run/secrets/review-bootstrap.json"))
+        review = None
+        tls_certificate_file = bootstrap.tls_certificate_file
+        tls_private_key_file = bootstrap.tls_private_key_file
+    if tls_certificate_file is None or tls_private_key_file is None:
         raise ConfigurationError("review TLS configuration is unavailable")
-    with open_review_tls_identity(
-        review.tls_certificate_file, review.tls_private_key_file
-    ) as tls:
+    with open_review_tls_identity(tls_certificate_file, tls_private_key_file) as tls:
         private_root = _private_root(database_path)
         repository = open_repository(database_path, create=True, cross_thread=True)
         try:
+            if authority == "store":
+                assert bootstrap is not None
+                settings_store = repository.owner_settings_store()
+                settings_view, stored_credentials, encoded_verifier = (
+                    settings_store.activate_runtime()
+                )
+                credentials = {
+                    name.replace("connection.", "target:")
+                    .replace("provider.", "provider:")
+                    .removesuffix(".key"): value
+                    for name, value in stored_credentials.items()
+                }
+                configuration = store_runtime_configuration(settings_view, bootstrap)
+                review = configuration.review
+                verify_password = owner_password_verifier(encoded_verifier)
+                settings = OwnerSettingsOperations(settings_store)
+            else:
+                assert configuration is not None and review is not None
+                credentials = _load_batch_credentials(
+                    configuration,
+                    {item.name for item in configuration.connections},
+                    {item.name for item in configuration.providers},
+                )
+                projection = file_settings_projection(configuration, credentials)
+                settings = OwnerSettingsOperations(
+                    FileOwnerSettingsRepository(projection.document, projection.secrets)
+                )
+                verify_password = load_owner_password_verifier(
+                    Path(review.owner_password_hash_file)
+                )
+            assert configuration is not None and review is not None
+            logging.getLogger(__name__).info(
+                "owner settings authority selected", extra={"authority": authority}
+            )
             from mechanical_librarian.adapters.operational_evidence import (
                 LocalTimingStore,
                 SupportBundle,
@@ -2080,6 +2179,7 @@ def run_review_server(
                 timing,
                 private_root,
                 provider_recovery,
+                credentials=credentials,
             )
             field_application = (
                 compose_continuous_guarded_application(
@@ -2090,6 +2190,7 @@ def run_review_server(
                     preparation,
                     private_root,
                     provider_recovery,
+                    credentials=credentials,
                 )
                 if getattr(configuration, "libraries", ())
                 else None
@@ -2122,9 +2223,7 @@ def run_review_server(
                 decision_store=repository,
                 library_store=repository,
                 policy_store=repository,
-                verify_password=load_owner_password_verifier(
-                    Path(review.owner_password_hash_file)
-                ),
+                verify_password=verify_password,
                 clock=lambda: int(time.time()),
                 session_lifetime_seconds=review.session_lifetime_seconds,
                 graceful_shutdown_seconds=review.graceful_shutdown_seconds,
@@ -2139,8 +2238,11 @@ def run_review_server(
                 operational_timer=timing,
                 field_application=field_application,
                 cover_considerations=cover_considerations,
+                settings=settings,
             )
             app = create_review_app(review_application, review)
+            if authority == "store":
+                settings_store.acknowledge_runtime(settings_view.document.revision)
             uvicorn.run(
                 app,
                 host=host,
@@ -2201,7 +2303,10 @@ def _compose_cover_considerations(
         avoid_tie_in_branding=review.cover_avoid_tie_in_branding,
         prefer_minimal_composition=review.cover_prefer_minimal_composition,
     )
-    repository.bind_current_cover_policy(policy.reference)
+
+    def bind_policy(policy_reference: str, replay_reference: str) -> None:
+        repository.bind_current_cover_authority(policy_reference, replay_reference)
+
     service = CoverConsiderationService(
         repository,
         read_preview=lambda artifact_id, variant: artifact_store().read_preview_digest(
@@ -2212,8 +2317,9 @@ def _compose_cover_considerations(
         policy=policy,
         reviewer_profile=reviewer_profile,
         reviewer=None if reviewer_profile is None else run_cover_packet_reviewer,
+        bind_policy=bind_policy,
     )
-    repository.bind_current_cover_replay(service.replay_reference)
+    service.update_policy(policy)
     return service
 
 

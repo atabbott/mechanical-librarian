@@ -15,6 +15,7 @@ from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationError,
     CoverConsiderationService,
 )
+from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.application.live_updates import LiveUpdateChannel
 from mechanical_librarian.application.metadata_policy import (
@@ -32,6 +33,7 @@ from mechanical_librarian.application.operations import (
     SupportExporter,
     TimingRepository,
 )
+from mechanical_librarian.application.owner_settings import OwnerSettingsOperations
 from mechanical_librarian.application.review_pipeline import ReviewPreparationSupervisor
 from mechanical_librarian.application.review_web import (
     BrowseReviewLibrary,
@@ -47,6 +49,11 @@ from mechanical_librarian.application.review_web import (
 from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
 from mechanical_librarian.domain.field_effect import SUPPORTED_DESTINATIONS
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
+from mechanical_librarian.domain.owner_settings import (
+    OwnerSettingsDocument,
+    OwnerSettingsError,
+    SecretWrite,
+)
 
 if TYPE_CHECKING:
     from mechanical_librarian.application.cover_consideration import (
@@ -347,6 +354,7 @@ class ReviewApplication:
         gate: RLock,
         updates: LiveUpdateChannel,
         cover_considerations: CoverConsiderationService | None = None,
+        settings: OwnerSettingsOperations | None = None,
     ) -> None:
         self._updates = updates
         self._state_owner = state_owner
@@ -366,6 +374,7 @@ class ReviewApplication:
         self._field_application = field_application
         self._operations = operations
         self._cover_considerations = cover_considerations
+        self._settings = settings
 
     @property
     def updates(self) -> LiveUpdateChannel:
@@ -386,6 +395,68 @@ class ReviewApplication:
     def serialized(self, call: Callable[[], _Result]) -> _Result:
         with self._gate:
             return call()
+
+    @property
+    def settings_available(self) -> bool:
+        return self._settings is not None
+
+    def owner_settings(self) -> object:
+        if self._settings is None:
+            raise ReviewApplicationError("settings_unavailable")
+        try:
+            return self.serialized(self._settings.read)
+        except OwnerSettingsError as error:
+            raise ReviewApplicationError("settings_unavailable") from error
+
+    def write_owner_settings(
+        self, document: object, revision: int, secrets: object
+    ) -> object:
+        if self._settings is None:
+            raise ReviewApplicationError("settings_unavailable")
+        settings = self._settings
+        try:
+
+            def write() -> object:
+                validated = cast("OwnerSettingsDocument", document)
+                preferences = validated.cover_preferences
+                live_update = (
+                    self._cover_considerations.policy_update(
+                        CoverPolicy(
+                            avoid_promotional_text=preferences.avoid_promotional_text,
+                            avoid_tie_in_branding=preferences.avoid_tie_in_branding,
+                            prefer_minimal_composition=preferences.prefer_minimal_composition,
+                        )
+                    )
+                    if self._cover_considerations is not None
+                    else None
+                )
+                return settings.write(
+                    validated,
+                    revision,
+                    cast("tuple[SecretWrite, ...]", secrets),
+                    live_update,
+                )
+
+            return self.serialized(write)
+        except OwnerSettingsError as error:
+            code = (
+                "settings_stale"
+                if "stale" in str(error)
+                else (
+                    "settings_locked"
+                    if "locked" in str(error)
+                    else (
+                        "settings_invalid"
+                        if "invalid" in str(error)
+                        or "required" in str(error)
+                        or "operation" in str(error)
+                        else "settings_unavailable"
+                    )
+                )
+            )
+            raise ReviewApplicationError(code) from error
+        except Exception as error:
+            raise ReviewApplicationError("settings_unavailable") from error
 
     def start(self) -> None:
         if self._operations is not None:
@@ -1028,6 +1099,7 @@ def compose_review_application(
     operational_support: SupportExporter | None = None,
     operational_timer: StageTimer | None = None,
     cover_considerations: CoverConsiderationService | None = None,
+    settings: OwnerSettingsOperations | None = None,
 ) -> ReviewApplication:
     """Compose every operation before the HTTP adapter is created."""
     gate = RLock()
@@ -1086,6 +1158,7 @@ def compose_review_application(
         gate=gate,
         updates=updates,
         cover_considerations=cover_considerations,
+        settings=settings,
     )
     return application
 

@@ -24,6 +24,8 @@ from mechanical_librarian.adapters.persistence.proposal_sets import (
     _validate_proposal_row,
 )
 from mechanical_librarian.adapters.persistence.schema import (
+    _OWNER_SETTING_SECRETS_SQL,
+    _OWNER_SETTINGS_SQL,
     _REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
     _REVIEW_CASE_FIELD_FACTS_SQL,
     _expected_schema_objects,
@@ -31,9 +33,11 @@ from mechanical_librarian.adapters.persistence.schema import (
     _validate_report_row,
     _validate_review_owner_decision_actions_predecessor_schema,
     _validate_schema,
+    _validate_schema_contents,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.schema_adoption import (
+    OWNER_SETTINGS_V1,
     REVIEW_OWNER_DECISION_ACTIONS_V1,
     SchemaAdoptionRecoveryRequired,
 )
@@ -42,10 +46,35 @@ from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.review_case import ReviewCase
 
 _CHUNK_BYTES = 1024 * 1024
-_DERIVED_TABLES = {"review_case_field_facts"}
+_DERIVED_TABLES = {
+    "owner_setting_secrets",
+    "owner_settings",
+    "review_case_field_facts",
+}
 _TARGET_SCHEMA_OBJECTS_SHA256 = (
-    "e6323cdec1412ab7158ffcde612a927d2ca5e859e7de412041a19af0d6ab1fd1"
+    "68ff762e845010e297c3656d8959d612cec09afc5976f22500b07aaa9c574eed"
 )
+
+
+def _validate_owner_settings_predecessor_schema(connection: sqlite3.Connection) -> None:
+    expected = [
+        value
+        for value in _expected_schema_objects()
+        if value[1]
+        not in {
+            "owner_settings",
+            "owner_setting_secrets",
+            "sqlite_autoindex_owner_setting_secrets_1",
+        }
+    ]
+    if (
+        connection.execute(
+            "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
+        ).fetchall()
+        != expected
+    ):
+        raise MetadataReportError("database is unavailable or incompatible")
+    _validate_schema_contents(connection)
 
 
 def _expected_schema_objects_digest() -> str:
@@ -360,7 +389,7 @@ def _close_adoption_resources(
 
 def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str, str]:
     """Apply one named exact-predecessor plan without changing application rows."""
-    if plan != REVIEW_OWNER_DECISION_ACTIONS_V1:
+    if plan not in {REVIEW_OWNER_DECISION_ACTIONS_V1, OWNER_SETTINGS_V1}:
         raise MetadataReportError("schema adoption plan is unsupported")
     # This check precedes pathname resolution and all filesystem access. The
     # literal is the reviewed plan result, never a dynamically stored target.
@@ -421,7 +450,10 @@ def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str,
         try:
             _validate_schema(connection)
         except MetadataReportError:
-            _validate_review_owner_decision_actions_predecessor_schema(connection)
+            if plan == OWNER_SETTINGS_V1:
+                _validate_owner_settings_predecessor_schema(connection)
+            else:
+                _validate_review_owner_decision_actions_predecessor_schema(connection)
         else:
             _validate_canonical_documents(connection)
             connection.rollback()
@@ -437,18 +469,27 @@ def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str,
         )
         if binding is not None:
             binding.require_current()
-        connection.execute("DROP TRIGGER review_cases_project_field_facts")
-        connection.execute("DROP TABLE review_case_field_facts")
-        connection.execute(_REVIEW_CASE_FIELD_FACTS_SQL)
-        connection.execute(
-            "INSERT INTO review_case_field_facts("
-            "review_case_id,destination,unresolved_choice,manual_bibliographic_attention,has_owner_decision_actions) "
-            "SELECT rc.review_case_id,"
-            + _review_case_field_fact_values_sql("rc.document")
-            + " "
-            "FROM review_cases rc,json_each(rc.document,'$.results') result"
-        )
-        connection.execute(_REVIEW_CASE_FIELD_FACTS_INSERT_SQL)
+        if plan == OWNER_SETTINGS_V1:
+            connection.execute(_OWNER_SETTINGS_SQL)
+            connection.execute(_OWNER_SETTING_SECRETS_SQL)
+        else:
+            connection.execute(_OWNER_SETTINGS_SQL)
+            connection.execute(_OWNER_SETTING_SECRETS_SQL)
+            connection.execute("DROP TRIGGER review_cases_project_field_facts")
+        if plan != OWNER_SETTINGS_V1:
+            connection.execute("DROP TABLE review_case_field_facts")
+        if plan != OWNER_SETTINGS_V1:
+            connection.execute(_REVIEW_CASE_FIELD_FACTS_SQL)
+        if plan != OWNER_SETTINGS_V1:
+            connection.execute(
+                "INSERT INTO review_case_field_facts("
+                "review_case_id,destination,unresolved_choice,manual_bibliographic_attention,has_owner_decision_actions) "
+                "SELECT rc.review_case_id,"
+                + _review_case_field_fact_values_sql("rc.document")
+                + " "
+                "FROM review_cases rc,json_each(rc.document,'$.results') result"
+            )
+            connection.execute(_REVIEW_CASE_FIELD_FACTS_INSERT_SQL)
         recovery_required = True
         connection.commit()
         if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:

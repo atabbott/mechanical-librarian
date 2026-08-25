@@ -419,6 +419,8 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("metadata_policy_transitions",),
             ("metadata_report_cover_references",),
             ("metadata_reports",),
+            ("owner_setting_secrets",),
+            ("owner_settings",),
             ("proposal_sets",),
             ("provider_recovery_outbox",),
             ("review_case_field_facts",),

@@ -219,6 +219,9 @@ def test_installed_command_serves_only_the_canonical_https_boundary() -> None:
             PasswordHasher().hash("synthetic password"), encoding="utf-8"
         )
         os.chmod(owner_hash, 0o600)
+        target_secret = root / "target.secret"
+        target_secret.write_text("synthetic-target-secret", encoding="ascii")
+        os.chmod(target_secret, 0o600)
         database = root / "application.sqlite3"
         open_repository(database).close()
         port = reservation.number
@@ -234,7 +237,7 @@ def test_installed_command_serves_only_the_canonical_https_boundary() -> None:
                             "name": "target",
                             "adapter": "audiobookshelf",
                             "endpoint": "https://target.invalid",
-                            "secret_file": str(root / "unused.secret"),
+                            "secret_file": str(target_secret),
                         }
                     ],
                     "libraries": [
@@ -378,7 +381,9 @@ def test_server_uses_validated_tls_before_opening_the_database() -> None:
         with (
             patch(
                 "mechanical_librarian.bootstrap.composition.load_configuration_file",
-                return_value=SimpleNamespace(review=review),
+                return_value=SimpleNamespace(
+                    review=review, connections=(), providers=(), libraries=()
+                ),
             ),
             patch(
                 "mechanical_librarian.bootstrap.composition.open_repository",
@@ -387,6 +392,10 @@ def test_server_uses_validated_tls_before_opening_the_database() -> None:
             patch(
                 "mechanical_librarian.bootstrap.composition.create_review_app",
                 return_value=object(),
+            ),
+            patch(
+                "mechanical_librarian.bootstrap.composition.file_settings_projection",
+                return_value=SimpleNamespace(document=Mock(), secrets=()),
             ),
             patch(
                 "mechanical_librarian.bootstrap.composition.compose_review_application",

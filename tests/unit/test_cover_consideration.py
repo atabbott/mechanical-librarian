@@ -226,6 +226,37 @@ def test_exact_policy_preferences_are_persisted_and_projected(case: _Case) -> No
     assert persisted["policy_reference"] == value["policy_reference"]
 
 
+def test_live_policy_update_changes_the_next_evaluation_and_rolls_back_on_binding_fault(
+    case: _Case,
+) -> None:
+    bindings: list[tuple[str, str]] = []
+    service = CoverConsiderationService(
+        case.store,
+        read_preview=lambda artifact, _variant: case.payload_by_artifact[artifact],
+        read_preview_digest=lambda digest: case.payload_by_preview[digest],
+        clock=lambda: case.now,
+        bind_policy=lambda policy, replay: bindings.append((policy, replay)),
+    )
+    changed = CoverPolicy(True, True, True)
+
+    with service.policy_update(changed):
+        pass
+    value = service.ensure(
+        "review_case_" + "9" * 64, case.report.to_json(), case.proposal
+    )
+
+    assert value["policy_preferences"] == json.loads(changed.document)
+    assert bindings == [(changed.reference, service.replay_reference)]
+
+    previous_replay = service.replay_reference
+    service._bind_policy = lambda _policy, _replay: (_ for _ in ()).throw(
+        RuntimeError("synthetic binding fault")
+    )
+    with pytest.raises(RuntimeError, match="binding fault"):
+        service.update_policy(CoverPolicy())
+    assert service.replay_reference == previous_replay
+
+
 def test_changed_reviewer_contract_makes_the_prior_consideration_noncurrent(
     case: _Case,
 ) -> None:

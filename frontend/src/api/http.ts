@@ -4,6 +4,39 @@ type Schema<Name extends keyof components['schemas']> = components['schemas'][Na
 type LibraryDto = Schema<'_LibraryResponse'>
 type AttentionDto = Schema<'_AttentionResponse'>
 type CaseDetailDto = Schema<'_CaseDetailResponse'>
+export type SettingsView = Schema<'SettingsView'>
+export type SettingsWrite = Schema<'_SettingsWriteRequest'>
+export type AppearanceView = Schema<'_AppearanceResponse'>
+
+// These validators live at the DTO mapping boundary so the editor cannot
+// silently become stricter than the generated API contract. Their names make
+// the contract directly testable and let TypeScript keep every caller on the
+// same exact input shape.
+export const settingsSecretValid = (value: string) =>
+  value.length >= 1 &&
+  value.length <= 2048 &&
+  /^[\x21-\x7e]+$/u.test(value) &&
+  !value.toLowerCase().startsWith('bearer')
+
+export const settingsIntegerValid = (value: number, minimum: number, maximum?: number) =>
+  Number.isInteger(value) && value >= minimum && (maximum === undefined || value <= maximum)
+
+export const settingsTextValid = (value: string, minimum: number, maximum: number) => {
+  const codePoints = Array.from(value).length
+  return codePoints >= minimum && codePoints <= maximum
+}
+
+export const settingsEndpointValid = (value: string) => settingsTextValid(value, 1, 2048)
+
+const openLibraryEmail = new RegExp(
+  "^(?=.{1,64}@)[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+" +
+    "(?:\\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*@[A-Za-z0-9]" +
+    '(?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?' +
+    '(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$',
+)
+
+export const settingsOpenLibraryEmailValid = (value: string) =>
+  settingsTextValid(value, 3, 254) && openLibraryEmail.test(value)
 
 export type LibraryLens = 'needs_attention' | 'all' | 'no_attention_needed'
 export type DetailSubview = 'evidence' | 'history'
@@ -462,6 +495,9 @@ export interface DecisionCommand {
 }
 
 export interface ReviewHttp {
+  getAppearance(signal?: AbortSignal): Promise<AppearanceView>
+  getSettings(signal?: AbortSignal): Promise<SettingsView>
+  writeSettings(value: SettingsWrite, signal?: AbortSignal): Promise<SettingsView>
   getLibrary(search: LibrarySearch, signal?: AbortSignal): Promise<LibraryView>
   getAttention(search: AttentionSearch, signal?: AbortSignal): Promise<AttentionView>
   getCaseDetail(reviewCaseId: string, signal?: AbortSignal): Promise<CaseDetailView>
@@ -595,6 +631,21 @@ export class ReviewApiClient implements ReviewHttp {
     if (search.q) p.set('q', search.q)
     if (search.cursor) p.set('cursor', search.cursor)
     return mapLibrary(await this.read(`/api/v1/library?${p}`, signal))
+  }
+  async getSettings(signal?: AbortSignal) {
+    return mapSettings(await this.read('/api/v1/settings', signal))
+  }
+  async getAppearance(signal?: AbortSignal) {
+    const value: unknown = await this.read('/api/v1/appearance', signal)
+    if (
+      !record(value) ||
+      (value.reduced_motion !== 'follow_system' && value.reduced_motion !== 'always_reduced')
+    )
+      throw new ApiError(502, 'invalid_appearance_response')
+    return value as AppearanceView
+  }
+  async writeSettings(value: SettingsWrite, signal?: AbortSignal) {
+    return mapSettings(await this.mutate('/api/v1/settings', value, signal, undefined, 'PATCH'))
   }
   async getAttention(search: AttentionSearch, signal?: AbortSignal) {
     const p = new URLSearchParams()
@@ -781,6 +832,7 @@ export class ReviewApiClient implements ReviewHttp {
     body?: unknown,
     signal?: AbortSignal,
     extraHeaders?: HeadersInit,
+    method = 'POST',
   ) {
     if (!this.buildIdentity) {
       this.onBuildMismatch()
@@ -793,7 +845,7 @@ export class ReviewApiClient implements ReviewHttp {
       return await this.request(
         path,
         {
-          method: 'POST',
+          method,
           headers,
           ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
           ...(signal ? { signal } : {}),
@@ -878,6 +930,57 @@ const stringArray = (value: unknown, field: string) => {
 const booleanValue = (value: unknown, field: string) => {
   if (typeof value !== 'boolean') throw new ApiError(502, `invalid_${field}`)
   return value
+}
+export const mapSettings = (value: unknown): SettingsView => {
+  if (
+    !record(value) ||
+    (value.authority !== 'file' && value.authority !== 'store') ||
+    !record(value.document) ||
+    value.document.schema_version !== 'owner-settings-v1' ||
+    !Array.isArray(value.document.connections) ||
+    !Array.isArray(value.document.providers) ||
+    !Array.isArray(value.document.libraries) ||
+    !Array.isArray(value.fields) ||
+    !Array.isArray(value.secrets) ||
+    !Array.isArray(value.pending_restart)
+  )
+    throw new ApiError(502, 'invalid_settings_response')
+  if (
+    !value.document.connections.every(
+      (item) =>
+        record(item) &&
+        typeof item.name === 'string' &&
+        typeof item.endpoint === 'string' &&
+        item.adapter === 'audiobookshelf',
+    ) ||
+    !value.document.libraries.every(
+      (item) =>
+        record(item) &&
+        typeof item.name === 'string' &&
+        typeof item.connection === 'string' &&
+        typeof item.library_id === 'string' &&
+        Array.isArray(item.provider_connections),
+    ) ||
+    !value.fields.every(
+      (item) =>
+        record(item) &&
+        typeof item.field_id === 'string' &&
+        typeof item.group === 'string' &&
+        typeof item.managed_by_file === 'boolean' &&
+        ['applied_live', 'restart_required', 'deploy_managed'].includes(String(item.apply_effect)),
+    ) ||
+    !value.secrets.every(
+      (item) =>
+        record(item) &&
+        typeof item.field_id === 'string' &&
+        typeof item.configured === 'boolean' &&
+        (item.indicator === undefined ||
+          item.indicator === null ||
+          typeof item.indicator === 'string'),
+    )
+  )
+    throw new ApiError(502, 'invalid_settings_response')
+  return value as unknown as SettingsView
 }
 const mapProviderOutcome = (value: unknown, index: number): ProviderOutcomeView => {
   if (!record(value)) throw new ApiError(502, `invalid_provider_outcome_${String(index)}`)

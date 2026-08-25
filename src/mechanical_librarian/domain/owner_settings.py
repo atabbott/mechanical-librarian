@@ -1,0 +1,342 @@
+"""Closed, redacted owner-settings contract."""
+
+from __future__ import annotations
+
+import re
+from typing import Annotated, Literal
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
+
+from mechanical_librarian.domain.metadata_policy import (
+    MetadataPolicyError,
+    MetadataPolicyProfile,
+    resolve_policy,
+)
+from mechanical_librarian.domain.validation import credential
+
+Name = Annotated[StrictStr, Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")]
+Email = Annotated[StrictStr, Field(min_length=3, max_length=254)]
+_CONTACT_EMAIL = re.compile(
+    r"^(?=.{1,64}@)[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+"
+    r"(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*@[A-Za-z0-9]"
+    r"(?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$"
+)
+
+
+class OwnerSettingsError(ValueError):
+    """Fixed value-free owner-settings failure."""
+
+
+class _Closed(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class TargetSettings(_Closed):
+    name: Name
+    endpoint: Annotated[StrictStr, Field(min_length=1, max_length=2048)]
+    adapter: Literal["audiobookshelf"] = "audiobookshelf"
+
+
+class HardcoverProviderSettings(_Closed):
+    name: Name
+    adapter: Literal["hardcover"]
+    enabled: StrictBool
+    cover_enabled: StrictBool = False
+
+
+class GoogleBooksProviderSettings(_Closed):
+    name: Name
+    adapter: Literal["google_books"]
+    enabled: StrictBool
+    cover_enabled: Literal[False] = False
+
+
+class OpenLibraryProviderSettings(_Closed):
+    name: Name
+    adapter: Literal["open_library"]
+    enabled: StrictBool
+    cover_enabled: StrictBool = False
+    contact_email: Email | None = None
+
+
+ProviderSettings = Annotated[
+    HardcoverProviderSettings
+    | GoogleBooksProviderSettings
+    | OpenLibraryProviderSettings,
+    Field(discriminator="adapter"),
+]
+
+
+class LibrarySettings(_Closed):
+    name: Name
+    connection: Name
+    library_id: Annotated[StrictStr, Field(min_length=1, max_length=128)]
+    media_kind: Literal["book", "ebook", "audiobook"]
+    provider_connections: Annotated[list[Name], Field(max_length=32)] = []
+    # Deploy-authoritative display-only association.
+    mount: Name | None = None
+    policy_override: dict[str, dict[str, str]] | None = None
+
+
+class ReportLimitSettings(_Closed):
+    target_response_bytes: Annotated[StrictInt, Field(ge=1_024, le=4_194_304)] = (
+        1_048_576
+    )
+    provider_response_bytes: Annotated[StrictInt, Field(ge=1_024, le=262_144)] = 65_536
+    source_archive_bytes: Annotated[StrictInt, Field(ge=1_024, le=268_435_456)] = (
+        268_435_456
+    )
+    timeout_seconds: Annotated[StrictInt, Field(ge=1, le=60)] = 30
+
+
+class ServerSettings(_Closed):
+    session_lifetime_seconds: Annotated[StrictInt, Field(ge=300, le=86_400)] = 3600
+    library_polling_interval_seconds: Annotated[StrictInt, Field(ge=60, le=86_400)] = (
+        900
+    )
+    graceful_shutdown_seconds: Annotated[StrictInt, Field(ge=1, le=300)] = 30
+    diagnostic_timings_enabled: StrictBool = False
+    reviewer_enabled: StrictBool = False
+
+
+class CoverPreferenceSettings(_Closed):
+    avoid_promotional_text: StrictBool = False
+    avoid_tie_in_branding: StrictBool = False
+    prefer_minimal_composition: StrictBool = False
+
+
+class OwnerSettingsDocument(_Closed):
+    schema_version: Literal["owner-settings-v1"]
+    revision: Annotated[StrictInt, Field(ge=1)]
+    connections: Annotated[list[TargetSettings], Field(min_length=1, max_length=32)]
+    providers: Annotated[list[ProviderSettings], Field(max_length=32)] = []
+    libraries: Annotated[list[LibrarySettings], Field(min_length=1, max_length=128)]
+    limits: ReportLimitSettings = ReportLimitSettings()
+    provider_recovery_generation: Annotated[StrictInt, Field(ge=1)] = 1
+    server: ServerSettings = ServerSettings()
+    cover_preferences: CoverPreferenceSettings = CoverPreferenceSettings()
+    reduced_motion: Literal["follow_system", "always_reduced"] = "follow_system"
+    pending_restart: Annotated[list[StrictStr], Field(max_length=32)] = []
+
+    @model_validator(mode="after")
+    def _validate_contract(self) -> "OwnerSettingsDocument":
+        connection_names = tuple(value.name for value in self.connections)
+        provider_names = tuple(value.name for value in self.providers)
+        library_names = tuple(value.name for value in self.libraries)
+        if any(
+            values != tuple(sorted(set(values)))
+            for values in (connection_names, provider_names, library_names)
+        ):
+            raise OwnerSettingsError("settings names are not in canonical unique order")
+        if any(
+            item.provider_connections != sorted(set(item.provider_connections))
+            for item in self.libraries
+        ):
+            raise OwnerSettingsError(
+                "settings provider references are duplicated or invalid"
+            )
+        if any(
+            item.connection not in connection_names for item in self.libraries
+        ) or any(
+            not set(item.provider_connections).issubset(provider_names)
+            for item in self.libraries
+        ):
+            raise OwnerSettingsError("settings library references are invalid")
+        if self.pending_restart != sorted(set(self.pending_restart)):
+            raise OwnerSettingsError("settings pending restart is invalid")
+        for provider in self.providers:
+            if provider.cover_enabled and not provider.enabled:
+                raise OwnerSettingsError("settings document is invalid")
+            if isinstance(provider, OpenLibraryProviderSettings) and (
+                provider.enabled != (provider.contact_email is not None)
+                or (
+                    provider.contact_email is not None
+                    and _CONTACT_EMAIL.fullmatch(provider.contact_email) is None
+                )
+            ):
+                raise OwnerSettingsError("settings document is invalid")
+        for library in self.libraries:
+            if library.policy_override is None:
+                continue
+            try:
+                resolve_policy(
+                    MetadataPolicyProfile.builtin(),
+                    library.name,
+                    library.policy_override,
+                )
+            except MetadataPolicyError as error:
+                raise OwnerSettingsError("settings document is invalid") from error
+        return self
+
+    def secret_fields(self) -> frozenset[str]:
+        return frozenset(
+            {f"connection.{item.name}.key" for item in self.connections}
+            | {
+                f"provider.{item.name}.key"
+                for item in self.providers
+                if item.enabled and item.adapter in {"hardcover", "google_books"}
+            }
+        )
+
+    def required_secret_fields(self) -> frozenset[str]:
+        return frozenset(
+            {f"connection.{item.name}.key" for item in self.connections}
+            | {
+                f"provider.{item.name}.key"
+                for item in self.providers
+                if item.adapter == "hardcover" and item.enabled
+            }
+        )
+
+
+class SecretWrite(_Closed):
+    field_id: Annotated[StrictStr, Field(pattern=r"^[a-z][a-z0-9_.-]{0,127}$")]
+    operation: Literal["set", "replace", "clear"]
+    value: Annotated[
+        StrictStr | None,
+        Field(
+            min_length=1,
+            max_length=2048,
+            repr=False,
+            json_schema_extra={"writeOnly": True},
+        ),
+    ] = None
+
+    @field_validator("value")
+    @classmethod
+    def _validate_value(cls, value: str | None) -> str | None:
+        if value is not None and not credential(value):
+            raise OwnerSettingsError("settings secret operation is invalid")
+        return value
+
+    def model_post_init(self, __context: object) -> None:
+        if (self.operation == "clear") != (self.value is None):
+            raise OwnerSettingsError("settings secret operation is invalid")
+
+
+class SettingField(_Closed):
+    field_id: StrictStr
+    group: StrictStr
+    managed_by_file: StrictBool
+    managed_path: StrictStr | None = None
+    apply_effect: Literal["applied_live", "restart_required", "deploy_managed"]
+    pending_restart: StrictBool = False
+
+
+class SecretPresence(_Closed):
+    field_id: StrictStr
+    configured: StrictBool
+    indicator: StrictStr | None = None
+
+
+def secret_presence(field_id: str, value: str | None) -> SecretPresence:
+    return SecretPresence(
+        field_id=field_id,
+        configured=value is not None,
+        indicator=(
+            None
+            if value is None
+            else "Configured · " + ("····" + value[-4:] if len(value) >= 8 else "····")
+        ),
+    )
+
+
+class SettingsView(_Closed):
+    document: OwnerSettingsDocument
+    fields: tuple[SettingField, ...]
+    secrets: tuple[SecretPresence, ...]
+    pending_restart: tuple[StrictStr, ...]
+    authority: Literal["file", "store"]
+    managed_path: StrictStr | None = None
+
+
+def store_field_metadata(
+    document: OwnerSettingsDocument, pending_restart: frozenset[str] = frozenset()
+) -> tuple[SettingField, ...]:
+    restart = {
+        "connections",
+        "providers",
+        "libraries",
+        "limits",
+        "provider_recovery_generation",
+        "server.session_lifetime_seconds",
+        "server.library_polling_interval_seconds",
+        "server.graceful_shutdown_seconds",
+        "server.diagnostic_timings_enabled",
+        "server.reviewer_enabled",
+    }
+    fields = [
+        SettingField(
+            field_id=value,
+            group=value.split(".", 1)[0],
+            managed_by_file=False,
+            apply_effect="restart_required" if value in restart else "applied_live",
+            pending_restart=value in pending_restart,
+        )
+        for value in sorted(
+            restart
+            | {
+                "reduced_motion",
+                "cover_preferences.avoid_promotional_text",
+                "cover_preferences.avoid_tie_in_branding",
+                "cover_preferences.prefer_minimal_composition",
+            }
+        )
+    ]
+    fields.append(
+        SettingField(
+            field_id="mounts",
+            group="libraries",
+            managed_by_file=True,
+            managed_path="deployment configuration",
+            apply_effect="deploy_managed",
+        )
+    )
+    return tuple(fields)
+
+
+def file_field_metadata(
+    document: OwnerSettingsDocument, path: str = "/data/config.json"
+) -> tuple[SettingField, ...]:
+    """The file-authority projection deliberately locks every covered setting."""
+    return tuple(
+        SettingField(
+            field_id=item.field_id,
+            group=item.group,
+            managed_by_file=True,
+            managed_path=path,
+            apply_effect=item.apply_effect,
+        )
+        for item in store_field_metadata(document)
+    )
+
+
+__all__ = [
+    "GoogleBooksProviderSettings",
+    "CoverPreferenceSettings",
+    "HardcoverProviderSettings",
+    "LibrarySettings",
+    "OpenLibraryProviderSettings",
+    "OwnerSettingsDocument",
+    "OwnerSettingsError",
+    "ReportLimitSettings",
+    "SecretPresence",
+    "SecretWrite",
+    "ServerSettings",
+    "SettingField",
+    "SettingsView",
+    "TargetSettings",
+    "file_field_metadata",
+    "store_field_metadata",
+    "secret_presence",
+]

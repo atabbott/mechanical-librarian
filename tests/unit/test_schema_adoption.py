@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 from pytest import MonkeyPatch
 
+from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.review_sql import (
     _LATEST_PREPARATION_WORK_SQL,
@@ -34,10 +35,12 @@ from mechanical_librarian.adapters.persistence.schema_adoption import (
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.application.schema_adoption import (
+    OWNER_SETTINGS_V1,
     REVIEW_OWNER_DECISION_ACTIONS_V1,
     SchemaAdoptionRecoveryRequired,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision, decision_actions
+from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from tests.support.automatic_no_change import _automatic_no_change_inputs
@@ -58,6 +61,8 @@ def _drop_field_facts_projection(connection: sqlite3.Connection) -> None:
 
 
 def _freeze_review_field_facts_predecessor(connection: sqlite3.Connection) -> None:
+    connection.execute("DROP TABLE owner_setting_secrets")
+    connection.execute("DROP TABLE owner_settings")
     connection.execute("DROP TRIGGER review_cases_project_field_facts")
     connection.execute("DROP TABLE review_case_field_facts")
     connection.execute(_REVIEW_OWNER_DECISION_ACTIONS_V1_SOURCE_FACTS_SQL)
@@ -79,6 +84,20 @@ def _predecessor(root: Path) -> Path:
     repository.close()
     connection = sqlite3.connect(database)
     _freeze_review_field_facts_predecessor(connection)
+    connection.commit()
+    connection.close()
+    return database
+
+
+def _owner_settings_predecessor(root: Path) -> Path:
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    root.chmod(0o700)
+    database = root / "application.sqlite3"
+    repository = open_repository(database)
+    repository.close()
+    connection = sqlite3.connect(database)
+    connection.execute("DROP TABLE owner_setting_secrets")
+    connection.execute("DROP TABLE owner_settings")
     connection.commit()
     connection.close()
     return database
@@ -285,6 +304,104 @@ def test_exact_predecessor_adopts_field_facts_without_changing_canonical_tables(
 
     repository = open_repository(database, create=False)
     repository.close()
+
+
+def test_owner_settings_exact_predecessor_adopts_without_changing_canonical_tables(
+    tmp_path: Path,
+) -> None:
+    database = _owner_settings_predecessor(tmp_path)
+    backup = tmp_path / "application.before-owner-settings.sqlite3"
+    before = _table_digest(database)
+
+    with pytest.raises(MetadataReportError):
+        open_repository(database, create=False)
+    assert {"plan": OWNER_SETTINGS_V1, "status": "adopted"} == adopt_schema(
+        database, backup, OWNER_SETTINGS_V1
+    )
+    assert before == _table_digest(database)
+    assert backup.is_file()
+    repository = open_repository(database, create=False)
+    repository.close()
+
+
+def test_owner_settings_adoption_refuses_wrong_predecessor_and_tampering(
+    tmp_path: Path,
+) -> None:
+    legacy = _predecessor(tmp_path / "legacy")
+    legacy_before = legacy.read_bytes()
+    with pytest.raises(MetadataReportError, match="incompatible"):
+        adopt_schema(
+            legacy,
+            legacy.parent / "owner-settings-backup.sqlite3",
+            OWNER_SETTINGS_V1,
+        )
+    assert legacy.read_bytes() == legacy_before
+
+    tampered = _owner_settings_predecessor(tmp_path / "tampered")
+    connection = sqlite3.connect(tampered)
+    connection.execute("CREATE INDEX unexpected_owner_index ON review_cases(report_id)")
+    connection.commit()
+    connection.close()
+    tampered_before = tampered.read_bytes()
+    with pytest.raises(MetadataReportError, match="incompatible"):
+        adopt_schema(
+            tampered,
+            tampered.parent / "backup.sqlite3",
+            OWNER_SETTINGS_V1,
+        )
+    assert tampered.read_bytes() == tampered_before
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    (
+        "UPDATE owner_settings SET document=' '||document",
+        "UPDATE owner_settings SET revision=revision+1",
+        "INSERT INTO owner_setting_secrets VALUES('provider.unknown.key','secret-1234')",
+    ),
+)
+def test_exact_schema_open_and_adoption_refuse_corrupt_owner_settings(
+    tmp_path: Path, tamper: str
+) -> None:
+    database = tmp_path / "application.sqlite3"
+    repository = open_repository(database)
+    repository.close()
+    document = OwnerSettingsDocument.model_validate(
+        {
+            "schema_version": "owner-settings-v1",
+            "revision": 1,
+            "connections": [{"name": "primary", "endpoint": "https://example.invalid"}],
+            "libraries": [
+                {
+                    "name": "books",
+                    "connection": "primary",
+                    "library_id": "library",
+                    "media_kind": "ebook",
+                }
+            ],
+        }
+    )
+    connection = sqlite3.connect(database)
+    connection.execute(
+        "INSERT INTO owner_settings VALUES(1,1,?)",
+        (_canonical_json(document.model_dump()),),
+    )
+    connection.execute(
+        "INSERT INTO owner_setting_secrets VALUES(?,?)",
+        ("connection.primary.key", "synthetic-secret"),
+    )
+    connection.execute(tamper)
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(MetadataReportError, match="incompatible"):
+        open_repository(database, create=False)
+    with pytest.raises(MetadataReportError, match="incompatible"):
+        adopt_schema(
+            database,
+            tmp_path / "noncanonical.before.sqlite3",
+            OWNER_SETTINGS_V1,
+        )
 
 
 def test_exact_current_is_a_verified_noop_without_creating_a_backup(

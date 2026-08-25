@@ -126,14 +126,15 @@ class ReviewWebConfiguration:
 class TargetConnectionConfiguration:
     name: str
     endpoint: str
-    secret_file: str
+    secret_file: str | None
     adapter: str = "audiobookshelf"
 
     def __post_init__(self) -> None:
         _name(self.name, "target connection name")
         if self.adapter != "audiobookshelf" or type(self.endpoint) is not str:
             raise ConfigurationError("target connection is invalid")
-        _absolute_path(self.secret_file, "target secret file")
+        if self.secret_file is not None:
+            _absolute_path(self.secret_file, "target secret file")
 
     def __repr__(self) -> str:
         return "TargetConnectionConfiguration(<redacted>)"
@@ -159,8 +160,8 @@ class ProviderConnectionConfiguration:
         if self.cover_enabled and not self.enabled:
             raise ConfigurationError("cover enablement requires provider enablement")
         if self.adapter == "hardcover":
-            if self.contact_email is not None or self.enabled != (
-                self.secret_file is not None
+            if self.contact_email is not None or (
+                not self.enabled and self.secret_file is not None
             ):
                 raise ConfigurationError("provider connection is invalid")
         elif self.adapter == "google_books":

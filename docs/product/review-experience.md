@@ -398,6 +398,25 @@ Reversing unapplied decisions creates compensating decision events. Once apply
 begins, recovery uses the apply and rollback contracts instead of a user-
 interface undo action.
 
+## Settings utility route
+
+`/settings` is a lazy authenticated utility route; Library, Policy, and Activity
+remain the three primary destinations. It groups Connection, Providers,
+Libraries, Automation & limits, Reviewer, Server, and Appearance without
+moving cover-policy ownership out of Policy. The selected group is the closed
+`?group=` URL state, so Back and Forward restore it. At 884 pixels and above a
+settings index remains beside the active paper-like page; at 390 and 320 pixels
+a labelled native selector replaces that index.
+
+Every editable field states whether it is live or restart-applied, while one
+pending-restart ledger reports server-derived debt. Loading, retry, optional
+empty, validation, save pending/saved/failed/stale, secret add/replace/confirmed
+clear, and pending-restart states are explicit. In file mode the page names
+`/data/config.json` and renders no covered edit affordance. Secret values never
+render; only `Configured · ····xxxx` or `Not configured` appears. Controls
+retain 44-pixel targets, visible focus and semantic status announcements; long
+owner values wrap without document overflow at 320 pixels and 200% text.
+
 ## Responsive and accessible behavior
 
 F16a qualifies the individual queue, case-detail, evidence, and decision round

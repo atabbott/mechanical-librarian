@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Protocol, cast
 
@@ -153,6 +154,7 @@ class CoverConsiderationService:
         policy: CoverPolicy = CoverPolicy(),
         reviewer_profile: bytes | None = None,
         reviewer: ReviewRunner | None = None,
+        bind_policy: Callable[[str, str], None] | None = None,
     ) -> None:
         self._store = store
         self._read_preview = read_preview
@@ -161,6 +163,30 @@ class CoverConsiderationService:
         self._policy = policy
         self._reviewer_profile = reviewer_profile
         self._reviewer = reviewer
+        self._bind_policy = bind_policy or (lambda _policy, _replay: None)
+
+    def update_policy(self, policy: CoverPolicy) -> None:
+        """Replace the live preference snapshot and its authority references."""
+        if type(policy) is not CoverPolicy:
+            raise CoverConsiderationError("policy")
+        previous = self._policy
+        self._policy = policy
+        try:
+            self._bind_policy(policy.reference, self.replay_reference)
+        except Exception:
+            self._policy = previous
+            raise
+
+    @contextmanager
+    def policy_update(self, policy: CoverPolicy) -> Iterator[None]:
+        """Keep one live policy change only when its enclosing store commit succeeds."""
+        previous = self._policy
+        self.update_policy(policy)
+        try:
+            yield
+        except BaseException:
+            self.update_policy(previous)
+            raise
 
     @property
     def replay_reference(self) -> str:

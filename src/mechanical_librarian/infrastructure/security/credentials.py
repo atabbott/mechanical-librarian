@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from mechanical_librarian.application.metadata_report import CredentialError
+from mechanical_librarian.domain.validation import credential
 
 
 def read_secret(path_value: str) -> str:
@@ -60,12 +61,7 @@ def read_secret(path_value: str) -> str:
         finally:
             os.close(parent)
         text = payload.decode("ascii", "strict")
-        if (
-            text.strip() != text
-            or not text
-            or text.lower().startswith("bearer")
-            or any(not 0x21 <= ord(value) <= 0x7E for value in text)
-        ):
+        if not credential(text):
             raise CredentialError("credential unavailable")
         return text
     except CredentialError:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -29,11 +30,13 @@ from playwright.sync_api import (
 from scripts.verify_playwright_browser import verify_playwright_browser
 
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
+from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
 )
+from mechanical_librarian.application.owner_settings import OwnerSettingsOperations
 from mechanical_librarian.domain.metadata_report import (
     FileFacts,
     MetadataReport,
@@ -42,6 +45,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetField,
     TargetFieldState,
 )
+from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.interfaces.web.react_assets import ReactAssetLoader
 from tests.support.ports import ReservedPort
@@ -114,6 +118,23 @@ def _report():
     )
 
 
+_DEFAULT_SETTINGS_DOCUMENT = OwnerSettingsDocument.model_validate(
+    {
+        "schema_version": "owner-settings-v1",
+        "revision": 1,
+        "connections": [{"name": "primary", "endpoint": "https://library.invalid"}],
+        "libraries": [
+            {
+                "name": "ebooks",
+                "connection": "primary",
+                "library_id": "library",
+                "media_kind": "ebook",
+            }
+        ],
+    }
+)
+
+
 @contextmanager
 def _server(
     *,
@@ -126,9 +147,30 @@ def _server(
     automatic_fixture: bool = False,
     cover_shapes: tuple[tuple[int, int], ...] = ((1, 1), (1, 1)),
     cohort: int = 0,
+    settings_document: OwnerSettingsDocument | None = _DEFAULT_SETTINGS_DOCUMENT,
     on_app: Callable[[Any], None] | None = None,
 ):
     repository = open_repository(database, create=True, cross_thread=True)
+    settings = None
+    if settings_document is not None:
+        connection = sqlite3.connect(database)
+        connection.execute(
+            "INSERT INTO owner_settings VALUES(1,?,?)",
+            (
+                settings_document.revision,
+                _canonical_json(settings_document.model_dump()),
+            ),
+        )
+        connection.executemany(
+            "INSERT INTO owner_setting_secrets(field_id,value) VALUES(?,?)",
+            [
+                (f"connection.{item.name}.key", f"synthetic-{item.name}-secret")
+                for item in settings_document.connections
+            ],
+        )
+        connection.commit()
+        connection.close()
+        settings = OwnerSettingsOperations(repository.owner_settings_store())
     cover_considerations = None
     if cover:
         # Real pixel dimensions, because containment is a property of the
@@ -249,6 +291,7 @@ def _server(
         field_application=_BrowserActivityApplication(),
         react_asset_loader=ReactAssetLoader(Path(os.environ["ML_REACT_ASSET_DIR"])),
         cover_considerations=cover_considerations,
+        settings=settings,
     )
     # The composed application, for a cohort that has to announce something the
     # server would announce rather than assert on what it answered.
@@ -398,6 +441,21 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                     page.evaluate("() => document.documentElement.scrollWidth") <= 1440
                 )
                 page.set_viewport_size({"width": 390, "height": 844})
+                brand_box = page.locator(".brand").bounding_box()
+                actions_box = page.locator(".shell-actions").bounding_box()
+                settings_box = page.get_by_role(
+                    "link", name="Settings", exact=True
+                ).bounding_box()
+                assert (
+                    brand_box is not None
+                    and actions_box is not None
+                    and settings_box is not None
+                )
+                assert settings_box["width"] >= 44
+                assert settings_box["height"] >= 44
+                assert abs(settings_box["y"] - brand_box["y"]) <= 0.5
+                assert brand_box["x"] + brand_box["width"] <= settings_box["x"]
+                assert settings_box["x"] + settings_box["width"] <= actions_box["x"]
                 documents = 0
 
                 def count_document(request) -> None:
@@ -1846,4 +1904,331 @@ def test_z_compact_uncached_library_detail_keeps_visible_focus() -> None:
                 ).wait_for()
                 expect(page.locator(".selected-work-header")).to_be_focused()
                 page.unroute("**/api/v1/review-cases/**", hold_selected_detail)
+            browser.close()
+
+
+def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        settings = OwnerSettingsDocument.model_validate(
+            {
+                "schema_version": "owner-settings-v1",
+                "revision": 1,
+                "connections": [
+                    {
+                        "name": "primary",
+                        "endpoint": "https://library.invalid/" + "unbroken" * 120,
+                    }
+                ],
+                "providers": [],
+                "libraries": [
+                    {
+                        "name": f"library-{index:03d}",
+                        "connection": "primary",
+                        "library_id": f"synthetic-{index:03d}",
+                        "media_kind": "ebook",
+                    }
+                    for index in range(128)
+                ],
+                "pending_restart": ["libraries"],
+            }
+        )
+        errors: list[str] = []
+        unavailable_responses: list[tuple[str, int]] = []
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(ignore_https_errors=True)
+            page = context.new_page()
+            page.add_init_script(
+                """
+                window.__settingsLongTasks = [];
+                new PerformanceObserver((list) => {
+                  window.__settingsLongTasks.push(...list.getEntries().map((entry) => entry.duration));
+                }).observe({entryTypes: ['longtask']});
+                """
+            )
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.on(
+                "console",
+                lambda message: (
+                    errors.append(message.text) if message.type == "error" else None
+                ),
+            )
+            page.on(
+                "response",
+                lambda response: (
+                    unavailable_responses.append((response.url, response.status))
+                    if response.url.endswith("/api/v1/settings")
+                    and response.status == 503
+                    else None
+                ),
+            )
+            with (
+                closing(ReservedPort()) as reserved_port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=reserved_port,
+                    settings_document=settings,
+                ) as (origin, _case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                initial_settings = page.request.get(origin + "/api/v1/settings").json()
+                held_initial_settings: list[Any] = []
+
+                def hold_initial_settings(route) -> None:
+                    if route.request.method == "GET":
+                        held_initial_settings.append(route)
+                    else:
+                        route.continue_()
+
+                page.route("**/api/v1/settings", hold_initial_settings)
+                page.goto(origin + "/settings?group=libraries")
+                expect(
+                    page.get_by_role("heading", name="Loading settings…")
+                ).to_be_visible()
+                assert len(held_initial_settings) == 1
+                held_initial_settings[0].fulfill(status=200, json=initial_settings)
+                expect(
+                    page.get_by_role("heading", name="Libraries", exact=True)
+                ).to_be_visible()
+                page.unroute("**/api/v1/settings", hold_initial_settings)
+                expect(
+                    page.get_by_text("Restart required for saved changes")
+                ).to_be_visible()
+                assert page.locator("*").count() < 2_000
+
+                for theme in ("light", "dark"):
+                    requested = "Use dark mode" if theme == "dark" else "Use light mode"
+                    toggle = page.get_by_role("button", name=requested)
+                    if toggle.count():
+                        toggle.click()
+                    for width, height in (
+                        (1440, 900),
+                        (884, 900),
+                        (390, 844),
+                        (320, 800),
+                    ):
+                        page.set_viewport_size({"width": width, "height": height})
+                        expect(
+                            page.get_by_role("heading", name="Libraries", exact=True)
+                        ).to_be_visible()
+                        assert page.evaluate(
+                            "document.documentElement.scrollWidth <= window.innerWidth"
+                        )
+                        if width <= 390:
+                            expect(
+                                page.locator("label.settings-mobile-group select")
+                            ).to_be_visible()
+                        else:
+                            expect(page.get_by_label("Settings groups")).to_be_visible()
+
+                page.set_viewport_size({"width": 320, "height": 800})
+                page.evaluate("document.documentElement.style.fontSize = '200%'")
+                expect(
+                    page.get_by_role("heading", name="Libraries", exact=True)
+                ).to_be_visible()
+                assert page.evaluate(
+                    "document.documentElement.scrollWidth <= window.innerWidth"
+                )
+                expect(
+                    page.locator("label.settings-mobile-group select")
+                ).to_be_visible()
+                page.evaluate("document.documentElement.style.fontSize = ''")
+                compact_group = page.locator("label.settings-mobile-group select")
+                compact_group.select_option("providers")
+                expect(
+                    page.get_by_text("No metadata providers configured")
+                ).to_be_visible()
+                compact_group.select_option("connection")
+                expect(page.get_by_text("Configured · ····cret")).to_be_visible()
+                page.get_by_role("button", name="Clear primary access key").click()
+                expect(
+                    page.get_by_role("button", name="Confirm clear primary access key")
+                ).to_be_visible()
+                page.get_by_role("button", name="Keep primary access key").click()
+                page.get_by_role("button", name="Replace primary access key").click()
+                expect(
+                    page.get_by_label("Replacement primary access key")
+                ).to_be_visible()
+
+                compact_group.select_option("automation")
+                timeout_input = page.get_by_role("spinbutton", name="Request timeout")
+                timeout_input.fill("0")
+                expect(page.get_by_role("alert")).to_contain_text(
+                    "Request timeout must be"
+                )
+                expect(timeout_input).to_have_attribute("aria-invalid", "true")
+                described_by = timeout_input.get_attribute("aria-describedby")
+                assert described_by is not None
+                assert "settings-limits-timeout_seconds-error" in described_by
+                expect(
+                    page.locator("#settings-limits-timeout_seconds-error")
+                ).to_contain_text("Request timeout must be from 1 to 60")
+                expect(timeout_input).to_be_focused()
+                expect(
+                    page.get_by_role("button", name="Save settings")
+                ).to_be_disabled()
+                timeout_input.fill("30")
+
+                compact_group.select_option("connection")
+                page.evaluate("window.__settingsLongTasks = []")
+                feedback = page.evaluate(
+                    """async () => {
+                      const input = document.querySelector('#settings-connection-primary-endpoint');
+                      const start = performance.now();
+                      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                      setter.call(input, 'https://changed.invalid');
+                      input.dispatchEvent(new Event('input', {bubbles: true}));
+                      await new Promise(requestAnimationFrame);
+                      return performance.now() - start;
+                    }"""
+                )
+                assert feedback <= 100
+                expect(page.get_by_text("Unsaved settings changes.")).to_be_visible()
+                held_save: list[Any] = []
+
+                def hold_save(route) -> None:
+                    if route.request.method == "PATCH":
+                        held_save.append(route)
+                    else:
+                        route.continue_()
+
+                page.route("**/api/v1/settings", hold_save)
+                pending_feedback = page.evaluate(
+                    """async () => {
+                      const button = [...document.querySelectorAll('button')]
+                        .find((item) => item.textContent === 'Save settings');
+                      const start = performance.now();
+                      button.click();
+                      await new Promise(requestAnimationFrame);
+                      return performance.now() - start;
+                    }"""
+                )
+                assert pending_feedback <= 100
+                expect(page.get_by_text("Saving settings…")).to_be_visible()
+                assert len(held_save) == 1
+                held_save[0].continue_()
+                expect(
+                    page.get_by_text(
+                        "Saved. Server-authoritative settings are current."
+                    )
+                ).to_be_visible()
+                page.unroute("**/api/v1/settings", hold_save)
+                assert max(page.evaluate("window.__settingsLongTasks"), default=0) <= 50
+
+                endpoint = page.get_by_role("textbox", name="Audiobookshelf endpoint")
+                endpoint.fill("https://failed.invalid")
+                assert not errors
+                page.route(
+                    "**/api/v1/settings",
+                    lambda route: (
+                        route.fulfill(
+                            status=503,
+                            json={
+                                "schema_version": "review-error-v1",
+                                "error": {"code": "settings_unavailable"},
+                            },
+                        )
+                        if route.request.method == "PATCH"
+                        else route.continue_()
+                    ),
+                )
+                page.get_by_role("button", name="Save settings").click()
+                recovered_status = page.locator(".settings-stale-recovery").filter(
+                    has_text="Authoritative Settings reloaded"
+                )
+                expect(recovered_status).to_be_visible()
+                expect(recovered_status).to_be_focused()
+                expect(
+                    page.get_by_role("button", name="Save settings")
+                ).to_be_disabled()
+                assert errors == [
+                    "Failed to load resource: the server responded with a status of 503 "
+                    "(Service Unavailable)"
+                ]
+                assert unavailable_responses == [(origin + "/api/v1/settings", 503)]
+                errors.clear()
+                unavailable_responses.clear()
+                page.unroute("**/api/v1/settings")
+
+                endpoint.fill("https://stale.invalid")
+                page.route(
+                    "**/api/v1/settings",
+                    lambda route: (
+                        route.fulfill(
+                            status=409,
+                            json={
+                                "schema_version": "review-error-v1",
+                                "error": {"code": "settings_revision_stale"},
+                            },
+                        )
+                        if route.request.method == "PATCH"
+                        else route.continue_()
+                    ),
+                )
+                page.get_by_role("button", name="Save settings").click()
+                stale_alert = page.get_by_text("Settings changed elsewhere.")
+                expect(stale_alert).to_be_visible()
+                expect(stale_alert).to_be_focused()
+                assert errors == [
+                    "Failed to load resource: the server responded with a status of 409 "
+                    "(Conflict)"
+                ]
+                errors.clear()
+                page.unroute("**/api/v1/settings")
+
+                current = page.request.get(origin + "/api/v1/settings").json()
+                current["authority"] = "file"
+                current["managed_path"] = "/data/config.json"
+                for field in current["fields"]:
+                    field["managed_by_file"] = True
+                    field["managed_path"] = "/data/config.json"
+                page.route(
+                    "**/api/v1/settings",
+                    lambda route: route.fulfill(status=200, json=current),
+                )
+                page.reload()
+                expect(page.get_by_text("Managed by /data/config.json")).to_be_visible()
+                assert page.locator(".settings-sheet input").count() == 0
+                assert page.get_by_role("button", name="Save settings").count() == 0
+                page.unroute("**/api/v1/settings")
+                assert not errors
+
+                page.route(
+                    "**/api/v1/settings",
+                    lambda route: route.fulfill(
+                        status=503,
+                        json={
+                            "schema_version": "review-error-v1",
+                            "error": {"code": "settings_unavailable"},
+                        },
+                    ),
+                )
+                page.reload()
+                expect(
+                    page.get_by_role("heading", name="Settings are unavailable.")
+                ).to_be_visible()
+                expect(page.get_by_role("button", name="Try again")).to_be_visible()
+                assert unavailable_responses == [(origin + "/api/v1/settings", 503)]
+                assert len(errors) == 1
+                assert errors[0] == (
+                    "Failed to load resource: the server responded with a status of 503 "
+                    "(Service Unavailable)"
+                )
+                errors.clear()
+                page.unroute("**/api/v1/settings")
+                page.get_by_role("button", name="Try again").click()
+                expect(
+                    page.get_by_role("heading", name="Settings", exact=True)
+                ).to_be_visible()
+                assert not errors
             browser.close()

@@ -34,6 +34,7 @@ const AttentionPage = recoverableLazy(() => import('./routes/AttentionPage'))
 const DetailPage = recoverableLazy(() => import('./routes/DetailPage'))
 const PolicyPage = recoverableLazy(() => import('./routes/PolicyPage'))
 const ActivityPage = recoverableLazy(() => import('./routes/ActivityPage'))
+const SettingsPage = recoverableLazy(() => import('./routes/SettingsPage'))
 
 export interface RouterContext {
   http: ReviewHttp
@@ -112,6 +113,23 @@ export const normalizeActivitySearch = (search: Record<string, unknown>): Activi
   const q = bounded(search.q)
   return { eventType, rangeDays, pageSize, page, ...(q ? { q } : {}) }
 }
+
+export type SettingsGroup =
+  'connection' | 'providers' | 'libraries' | 'automation' | 'reviewer' | 'server' | 'appearance'
+export interface SettingsSearch {
+  group: SettingsGroup
+}
+export const normalizeSettingsSearch = (search: Record<string, unknown>): SettingsSearch => ({
+  group:
+    search.group === 'providers' ||
+    search.group === 'libraries' ||
+    search.group === 'automation' ||
+    search.group === 'reviewer' ||
+    search.group === 'server' ||
+    search.group === 'appearance'
+      ? search.group
+      : 'connection',
+})
 
 export const libraryQuery = (http: ReviewHttp, search: LibrarySearch) =>
   queryOptions({
@@ -196,7 +214,9 @@ const routeTitle = (path: string) =>
           ? 'Policy'
           : path === '/activity'
             ? 'Activity'
-            : 'Page unavailable'
+            : path === '/settings'
+              ? 'Settings'
+              : 'Page unavailable'
 
 export const useLiveStream = () => {
   const { updates } = rootRoute.useRouteContext()
@@ -577,6 +597,12 @@ const Shell = () => {
   const { http, queryClient, updates } = rootRoute.useRouteContext()
   useLiveInvalidation(updates, queryClient)
   const streamState = useLiveStreamState(updates)
+  const appearance = useQuery({
+    queryKey: ['appearance'] as const,
+    queryFn: ({ signal }) => http.getAppearance(signal),
+    staleTime: 15_000,
+    retry: false,
+  })
   const path = new URL(navigation.href, window.location.origin).pathname
   const title = routeTitle(path)
   const [mismatch, setMismatch] = useState(false)
@@ -586,6 +612,12 @@ const Shell = () => {
     addEventListener('ml:build-mismatch', listener)
     return () => removeEventListener('ml:build-mismatch', listener)
   }, [])
+  useEffect(() => {
+    const preference = appearance.data?.reduced_motion
+    if (preference === 'always_reduced')
+      document.documentElement.dataset.reducedMotion = 'always-reduced'
+    else delete document.documentElement.dataset.reducedMotion
+  }, [appearance.data?.reduced_motion])
   useLayoutEffect(() => {
     const shellElement = shell.current
     const mastheadElement = masthead.current
@@ -684,6 +716,27 @@ const Shell = () => {
           <LiveStreamNotice state={streamState} />
           <PreparationActivity />
           <ThemeControl />
+          <Link
+            className="settings-link"
+            to="/settings"
+            search={{ group: 'connection' }}
+            aria-label="Settings"
+            activeOptions={{ includeSearch: false }}
+            activeProps={{ 'aria-current': 'page' }}
+          >
+            <svg
+              className="settings-glyph"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              aria-hidden="true"
+            >
+              <path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4.5v5M6 14.5v5" />
+            </svg>
+            <span className="settings-link-label">Settings</span>
+          </Link>
           <span className="private-session">
             <span aria-hidden="true">●</span> Private
           </span>
@@ -898,6 +951,12 @@ export const activityRoute = createRoute({
   pendingMs: Infinity,
   component: () => <ActivityPage initial={activityRoute.useLoaderData()} />,
 })
+export const settingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings',
+  validateSearch: normalizeSettingsSearch,
+  component: () => <SettingsPage />,
+})
 const routeTree = rootRoute.addChildren([
   indexRoute,
   libraryRoute,
@@ -905,6 +964,7 @@ const routeTree = rootRoute.addChildren([
   detailRoute,
   policyRoute,
   activityRoute,
+  settingsRoute,
 ])
 
 export const useReviewContext = () => rootRoute.useRouteContext()

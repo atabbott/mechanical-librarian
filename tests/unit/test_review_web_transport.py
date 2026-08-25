@@ -8,9 +8,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
 import tempfile
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -24,15 +26,21 @@ from mechanical_librarian.adapters.operational_evidence import (
     LocalTimingStore,
     SupportBundle,
 )
+from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_repository,
 )
+from mechanical_librarian.adapters.persistence.owner_settings import OwnerSettingsStore
 from mechanical_librarian.adapters.persistence.review_preparation import _FAILURE_CODES
 from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.operations import (
     OperationalStatus,
     support_preparation_incidents,
+)
+from mechanical_librarian.application.owner_settings import (
+    FileOwnerSettingsRepository,
+    OwnerSettingsOperations,
 )
 from mechanical_librarian.application.review_web import (
     BrowseReviewLibrary,
@@ -41,6 +49,7 @@ from mechanical_librarian.application.review_web import (
 )
 from mechanical_librarian.bootstrap.composition import run_review_server
 from mechanical_librarian.domain.field_effect import FieldEffectError
+from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
 from mechanical_librarian.domain.proposal_set import (
     ProposalAlternative,
     ProposalAssessment,
@@ -81,6 +90,278 @@ def test_only_liveness_and_login_are_anonymous(
     assert denied.status_code == 401
     assert denied.json()["error"]["code"] == "unauthorized"
     assert denied.headers["cache-control"] == "no-store, private"
+
+
+def test_settings_file_authority_transport_is_private_and_locked(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    document = OwnerSettingsDocument.model_validate(
+        {
+            "schema_version": "owner-settings-v1",
+            "revision": 1,
+            "connections": [
+                {"name": "primary", "endpoint": "https://library.example.invalid"}
+            ],
+            "libraries": [
+                {
+                    "name": "books",
+                    "connection": "primary",
+                    "library_id": "library-1",
+                    "media_kind": "ebook",
+                }
+            ],
+        }
+    )
+    web.client.close()
+    web.client = TestClient(
+        create_transport_test_app(
+            web.repository,
+            ReviewWebConfiguration(
+                canonical_origin="https://review.test",
+                owner_password_hash_file=str(web.hash_path),
+            ),
+            clock=lambda: web.now,
+            settings=OwnerSettingsOperations(FileOwnerSettingsRepository(document)),
+        ),
+        base_url="https://review.test",
+    )
+    web.cleanup.enter_context(web.client)
+    assert web.client.get("/api/v1/settings").status_code == 401
+    session = web.login()
+    appearance = web.client.get("/api/v1/appearance")
+    assert appearance.json() == {"reduced_motion": "follow_system"}
+    assert appearance.headers["cache-control"] == "no-store, private"
+    assert "old-secret" not in appearance.text
+    response = web.client.get("/api/v1/settings")
+    assert len(response.content) <= 65_536
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.json()["authority"] == "file"
+    assert all(item["managed_by_file"] for item in response.json()["fields"])
+    locked = web.client.patch(
+        "/api/v1/settings",
+        json={
+            "expected_revision": 1,
+            "document": document.model_dump() | {"revision": 2},
+            "secrets": [],
+        },
+        headers={
+            **web.origin,
+            "x-csrf-token": session["csrf_token"],
+            "x-ml-build-identity": TEST_REACT_BUILD_IDENTITY,
+        },
+    )
+    assert locked.status_code == 409
+    assert locked.json() == {
+        "error": {
+            "code": "settings_managed_by_file",
+            "managed_by_file": "/data/config.json",
+        },
+        "schema_version": "review-error-v1",
+    }
+
+
+def test_settings_store_transport_redacts_secret_and_derives_effects(
+    web: ReviewWebContext[FakeReviewRepository],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    document = OwnerSettingsDocument.model_validate(
+        {
+            "schema_version": "owner-settings-v1",
+            "revision": 1,
+            "connections": [
+                {"name": "primary", "endpoint": "https://library.example.invalid"}
+            ],
+            "libraries": [
+                {
+                    "name": "books",
+                    "connection": "primary",
+                    "library_id": "library-1",
+                    "media_kind": "ebook",
+                }
+            ],
+        }
+    )
+    connection = sqlite3.connect(":memory:", check_same_thread=False)
+    connection.execute(
+        "CREATE TABLE owner_settings (singleton INTEGER PRIMARY KEY,revision INTEGER NOT NULL,document TEXT NOT NULL)"
+    )
+    connection.execute(
+        "CREATE TABLE owner_setting_secrets (field_id TEXT PRIMARY KEY,value TEXT NOT NULL)"
+    )
+    connection.execute(
+        "INSERT INTO owner_settings VALUES(1,1,?)",
+        (_canonical_json(document.model_dump()),),
+    )
+    connection.execute(
+        "INSERT INTO owner_setting_secrets VALUES('connection.primary.key','old-secret-1234')"
+    )
+    connection.commit()
+    web.client.close()
+    web.client = TestClient(
+        create_transport_test_app(
+            web.repository,
+            ReviewWebConfiguration(
+                canonical_origin="https://review.test",
+                owner_password_hash_file=str(web.hash_path),
+            ),
+            clock=lambda: web.now,
+            settings=OwnerSettingsOperations(OwnerSettingsStore(connection)),
+        ),
+        base_url="https://review.test",
+    )
+    web.cleanup.enter_context(web.client)
+    valid = {
+        "expected_revision": 1,
+        "document": document.model_dump() | {"revision": 2},
+        "secrets": [],
+    }
+    unauthenticated = web.client.patch(
+        "/api/v1/settings",
+        json=valid,
+        headers={**web.origin, "x-ml-build-identity": TEST_REACT_BUILD_IDENTITY},
+    )
+    assert unauthenticated.status_code == 401
+    assert unauthenticated.headers["cache-control"] == "no-store, private"
+    session = web.login()
+    missing_csrf = web.client.patch(
+        "/api/v1/settings",
+        json=valid,
+        headers={**web.origin, "x-ml-build-identity": TEST_REACT_BUILD_IDENTITY},
+    )
+    assert missing_csrf.status_code == 422
+    bad_csrf = web.client.patch(
+        "/api/v1/settings",
+        json=valid,
+        headers={
+            **web.origin,
+            "x-csrf-token": "bad",
+            "x-ml-build-identity": TEST_REACT_BUILD_IDENTITY,
+        },
+    )
+    assert bad_csrf.status_code == 403
+    assert bad_csrf.headers["cache-control"] == "no-store, private"
+    del web.client.headers["x-ml-build-identity"]
+    missing_build = web.client.patch(
+        "/api/v1/settings",
+        json=valid,
+        headers={**web.origin, "x-csrf-token": session["csrf_token"]},
+    )
+    assert missing_build.status_code == 409
+    assert missing_build.headers["cache-control"] == "no-store, private"
+    assert missing_csrf.headers["cache-control"] == "no-store, private"
+    assert "old-secret" not in web.client.get("/api/v1/settings").text
+    web.client.headers["x-ml-build-identity"] = TEST_REACT_BUILD_IDENTITY
+    malformed = web.client.patch(
+        "/api/v1/settings",
+        json=valid | {"unexpected": True},
+        headers={**web.origin, "x-csrf-token": session["csrf_token"]},
+    )
+    assert malformed.status_code == 422
+    wrong_type = web.client.patch(
+        "/api/v1/settings",
+        json=valid | {"expected_revision": "1"},
+        headers={**web.origin, "x-csrf-token": session["csrf_token"]},
+    )
+    assert wrong_type.status_code == 422
+    canary = "Bearer settings-secret-canary"
+    invalid_secret = web.client.patch(
+        "/api/v1/settings",
+        json=valid
+        | {
+            "secrets": [
+                {
+                    "field_id": "connection.primary.key",
+                    "operation": "replace",
+                    "value": canary,
+                }
+            ]
+        },
+        headers={**web.origin, "x-csrf-token": session["csrf_token"]},
+    )
+    assert invalid_secret.status_code == 422
+    assert canary not in invalid_secret.text
+    assert canary not in caplog.text
+    oversized = web.client.patch(
+        "/api/v1/settings",
+        content=b"{" + b"x" * 262_144,
+        headers={
+            **web.origin,
+            "x-csrf-token": session["csrf_token"],
+            "content-type": "application/json",
+        },
+    )
+    assert oversized.status_code == 413
+    for field, changed in (
+        ("mount", "invented"),
+        (
+            "policy_override",
+            {"options": {"date_precision": "full_date"}, "destinations": {}},
+        ),
+    ):
+        forbidden_document = document.model_dump() | {"revision": 2}
+        forbidden_document["libraries"][0][field] = changed
+        forbidden = web.client.patch(
+            "/api/v1/settings",
+            json={
+                "expected_revision": 1,
+                "document": forbidden_document,
+                "secrets": [],
+            },
+            headers={**web.origin, "x-csrf-token": session["csrf_token"]},
+        )
+        assert forbidden.status_code == 422
+        assert forbidden.json()["error"]["code"] == "settings_invalid"
+        assert OwnerSettingsStore(connection).read().document.revision == 1
+    response = web.client.patch(
+        "/api/v1/settings",
+        json={
+            "expected_revision": 1,
+            "document": document.model_dump()
+            | {
+                "revision": 2,
+                "provider_recovery_generation": 2,
+                "reduced_motion": "always_reduced",
+            },
+            "secrets": [
+                {
+                    "field_id": "connection.primary.key",
+                    "operation": "replace",
+                    "value": "new-secret-5678",
+                }
+            ],
+        },
+        headers={
+            **web.origin,
+            "x-csrf-token": session["csrf_token"],
+            "x-ml-build-identity": TEST_REACT_BUILD_IDENTITY,
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.json()["pending_restart"] == [
+        "connection.primary.key",
+        "provider_recovery_generation",
+    ]
+    assert response.json()["secrets"][0]["indicator"] == "Configured · ····5678"
+    assert "new-secret" not in response.text
+    OwnerSettingsStore(connection).acknowledge_runtime(2)
+    assert OwnerSettingsStore(connection).read().document.revision == 3
+    stale_after_ack = web.client.patch(
+        "/api/v1/settings",
+        json={
+            "expected_revision": 2,
+            "document": response.json()["document"] | {"revision": 3},
+            "secrets": [],
+        },
+        headers={**web.origin, "x-csrf-token": session["csrf_token"]},
+    )
+    assert stale_after_ack.status_code == 409
+    assert stale_after_ack.json()["error"]["code"] == "settings_stale"
+    connection.close()
+    unavailable = web.client.get("/api/v1/settings")
+    assert unavailable.status_code == 503
+    assert unavailable.json()["error"]["code"] == "settings_unavailable"
 
 
 def test_operational_status_and_support_are_authenticated_bounded_surfaces(
@@ -1051,6 +1332,12 @@ def test_openapi_is_deterministic_and_secret_free(
     )
     assert first.json() == expected
     assert (
+        expected["components"]["schemas"]["SecretWrite"]["properties"]["value"][
+            "writeOnly"
+        ]
+        is True
+    )
+    assert (
         set(
             first.json()["components"]["schemas"]["_OperationalIncident"]["properties"][
                 "code"
@@ -1141,6 +1428,9 @@ def test_openapi_is_deterministic_and_secret_free(
         if operation.get("security") == [{"OwnerSession": []}]
     }
     assert protected_operations == {
+        ("get", "/api/v1/appearance"),
+        ("get", "/api/v1/settings"),
+        ("patch", "/api/v1/settings"),
         ("get", "/api/v1/activity"),
         ("get", "/api/v1/activity/{event_id}/transitions"),
         ("post", "/api/v1/activity/consent"),
@@ -1413,12 +1703,18 @@ def test_composition_opens_the_single_database_for_worker_threads(
     with (
         patch(
             "mechanical_librarian.bootstrap.composition.load_configuration_file",
-            return_value=SimpleNamespace(review=configuration),
+            return_value=SimpleNamespace(
+                review=configuration, connections=(), providers=(), libraries=()
+            ),
         ),
         patch(
             "mechanical_librarian.bootstrap.composition.open_repository",
             return_value=repository,
         ) as opened,
+        patch(
+            "mechanical_librarian.bootstrap.composition.file_settings_projection",
+            return_value=SimpleNamespace(document=Mock(), secrets=()),
+        ),
         patch(
             "mechanical_librarian.bootstrap.composition.create_review_app",
             return_value=object(),
@@ -1446,6 +1742,72 @@ def test_composition_opens_the_single_database_for_worker_threads(
         create=True,
         cross_thread=True,
     )
+
+
+def test_store_composition_fault_preserves_pending_restart_acknowledgement(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    repository = Mock()
+    store = repository.owner_settings_store.return_value
+    document = Mock(revision=7)
+    store.activate_runtime.return_value = (
+        SimpleNamespace(document=document),
+        {"connection.primary.key": "synthetic-secret"},
+        web.hash_path.read_text(encoding="utf-8").strip(),
+    )
+    review = ReviewWebConfiguration(
+        canonical_origin="https://review.test",
+        owner_password_hash_file=str(web.hash_path),
+        tls_certificate_file="/synthetic/certificate.pem",
+        tls_private_key_file="/synthetic/private-key.pem",
+    )
+    configuration = SimpleNamespace(
+        review=review, connections=(), providers=(), libraries=()
+    )
+    tls = SimpleNamespace(
+        certificate_file="/synthetic/certificate.pem",
+        private_key_file="/synthetic/private-key.pem",
+    )
+    with (
+        patch(
+            "mechanical_librarian.bootstrap.composition.load_configuration_file",
+            side_effect=FileNotFoundError,
+        ),
+        patch(
+            "mechanical_librarian.bootstrap.composition.load_review_bootstrap",
+            return_value=SimpleNamespace(
+                tls_certificate_file=Path(tls.certificate_file),
+                tls_private_key_file=Path(tls.private_key_file),
+            ),
+        ),
+        patch(
+            "mechanical_librarian.bootstrap.composition.open_review_tls_identity",
+            return_value=nullcontext(tls),
+        ),
+        patch(
+            "mechanical_librarian.bootstrap.composition.open_repository",
+            return_value=repository,
+        ),
+        patch(
+            "mechanical_librarian.bootstrap.composition.store_runtime_configuration",
+            return_value=configuration,
+        ),
+        patch(
+            "mechanical_librarian.bootstrap.composition.create_review_pipeline",
+            side_effect=RuntimeError("synthetic later composition fault"),
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="later composition fault"):
+            run_review_server(
+                Path("/data/config.json"),
+                Path(web.temporary.name) / "application.sqlite3",
+                Path("/synthetic/catalogue.sqlite3"),
+                Path("/synthetic/artifacts"),
+                "127.0.0.1",
+                18444,
+            )
+
+    store.acknowledge_runtime.assert_not_called()
 
 
 def test_served_composition_keeps_automatic_safety_reachable(
@@ -1477,11 +1839,17 @@ def test_served_composition_keeps_automatic_safety_reachable(
         with (
             patch(
                 "mechanical_librarian.bootstrap.composition.load_configuration_file",
-                return_value=SimpleNamespace(review=configuration),
+                return_value=SimpleNamespace(
+                    review=configuration, connections=(), providers=(), libraries=()
+                ),
             ),
             patch(
                 "mechanical_librarian.bootstrap.composition.open_repository",
                 return_value=repository,
+            ),
+            patch(
+                "mechanical_librarian.bootstrap.composition.file_settings_projection",
+                return_value=SimpleNamespace(document=Mock(), secrets=()),
             ),
             patch(
                 "mechanical_librarian.bootstrap.composition.create_review_app",
