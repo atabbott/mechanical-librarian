@@ -21,6 +21,7 @@ import { WriteReadyNotice } from '../components/WriteReadyNotice'
 import { actionable, requestKey, useReviewDecisionController } from '../reviewDecisionController'
 import { automaticChoiceSelected, humanChoiceSelected } from '../reviewAutomaticSelection'
 import { ownerChoiceCount } from '../reviewChoiceCounts'
+import { advancePresentationSettled } from '../reviewAdvancePresentation'
 
 type ReviewField = CaseDetailView['fields'][number]
 const searchNavigationDelay = 150
@@ -1380,9 +1381,12 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     const presentation = advancePresentation.current
     if (!presentation) return
     if (
-      (searchIdentity === presentation.target &&
-        presentation.destination === selected?.destination) ||
-      locationRevision !== presentation.sourceRevision
+      advancePresentationSettled(
+        presentation,
+        searchIdentity,
+        locationRevision,
+        selected?.destination,
+      )
     )
       releaseAdvancePresentation()
   }, [locationRevision, releaseAdvancePresentation, searchIdentity, selected?.destination])

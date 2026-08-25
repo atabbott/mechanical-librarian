@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../src/api/http'
 import { coalesceMilliseconds } from '../src/liveInvalidation'
 import { sourceStatusLabel } from '../src/routes/LibraryPage'
+import { advancePresentationSettled } from '../src/reviewAdvancePresentation'
 import type {
   AttentionSearch,
   CaseDetailView,
@@ -19,6 +20,24 @@ import { createApplicationRouter, normalizeLibrarySearch } from '../src/router'
 import { activity, createHttp, createLiveStream, detail, library, renderRoute } from './fixtures'
 
 describe('Library route', () => {
+  it('keeps a target route pending until its selected field commits', () => {
+    const presentation = {
+      destination: 'authors',
+      sourceRevision: 'source-revision',
+      target: 'target-search',
+    }
+
+    expect(
+      advancePresentationSettled(presentation, 'target-search', 'target-revision', 'title'),
+    ).toBe(false)
+    expect(
+      advancePresentationSettled(presentation, 'target-search', 'target-revision', 'authors'),
+    ).toBe(true)
+    expect(
+      advancePresentationSettled(presentation, 'source-search', 'source-replacement', 'title'),
+    ).toBe(true)
+  })
+
   it('bounds and normalizes URL-owned library search state', () => {
     expect(
       normalizeLibrarySearch({ lens: 'all', q: 'title', cursor: 'next', preview: 'case-1' }),
