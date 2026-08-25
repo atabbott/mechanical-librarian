@@ -34,10 +34,10 @@ export const library: LibraryView = {
 export const detail: CaseDetailView = {
   id: 'case-1',
   current: true,
-  target: { connection: 'local', library: 'Books', item: 'A Book', mediaKind: 'ebook' },
+  target: { connection: 'local', library: 'Books', item: 'internal-item-1', mediaKind: 'ebook', title: 'A Book' },
   title: 'A Book',
   authors: [],
-  subtitle: 'Books · local',
+  subtitle: 'Books · ebook',
   comparisonNotices: [],
   writesConsented: false,
   fields: [{
@@ -92,8 +92,8 @@ export const createHttp = (): ReviewHttp => ({
   getAttention: vi.fn(async () => ({ total: 0, items: [] })),
   getCaseDetail: vi.fn(async () => detail),
   getCaseSuccessor: vi.fn(async () => null),
-  getEvidence: vi.fn(async () => ({ schema_version: 'review-case-evidence-v2', review_case_id: 'case-1', items: [], next_cursor: null })),
-  getHistory: vi.fn(async () => ({ schema_version: 'review-case-history-v1', review_case_id: 'case-1', items: [], next_cursor: null })),
+  getEvidence: vi.fn(async () => ({ items: [], missingLineageCount: 0, sourceLedger: [] })),
+  getHistory: vi.fn(async () => ({ items: [] })),
   retryCoverConsideration: vi.fn(async () => { throw new Error('not configured') }),
   getPreparation: vi.fn(async (): Promise<PreparationView> => ({ schema_version: 'review-preparation-v1', active: false, actionable: false, paused: false, libraries: [] })),
   preparationAction: vi.fn(async (): Promise<PreparationView> => ({ schema_version: 'review-preparation-v1', active: false, actionable: false, paused: false, libraries: [] })),

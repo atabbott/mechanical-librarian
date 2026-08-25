@@ -1977,6 +1977,30 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                     </dd>
                   </div>
                 </dl>
+                <nav className="selected-work-diagnostics" aria-label="Read-only work diagnostics">
+                  <Link
+                    params={{ reviewCaseId: detail.data.id }}
+                    search={{
+                      lens: search.lens,
+                      subview: 'evidence',
+                      ...(selected ? { field: selected.destination } : {}),
+                    }}
+                    to="/review/$reviewCaseId"
+                  >
+                    Evidence
+                  </Link>
+                  <Link
+                    params={{ reviewCaseId: detail.data.id }}
+                    search={{
+                      lens: search.lens,
+                      subview: 'history',
+                      ...(selected ? { field: selected.destination } : {}),
+                    }}
+                    to="/review/$reviewCaseId"
+                  >
+                    History
+                  </Link>
+                </nav>
               </header>
               {detail.data.comparisonNotices.length ? (
                 <aside className="comparison-notice" aria-label="Provider comparison condition">

@@ -1093,21 +1093,24 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 assert 200 == response.status, f"decision response: {response.text()}"
                 page.get_by_role("heading", name="Review complete").wait_for()
                 page.goto(f"{origin}/review/{case_id}?field=cover&subview=history")
-                page.get_by_role("heading", name="Current-case history").wait_for()
+                page.get_by_role("heading", name="History").wait_for()
                 selected_history = page.get_by_role(
                     "heading", name="Cover selected"
                 ).locator("..")
-                selected_history.get_by_text(
-                    "Historical; it grants no current authority.", exact=False
-                ).wait_for()
+                selected_history.get_by_text("Visual review", exact=False).wait_for()
                 selected_history.get_by_text(
                     "Owner outcome: accept", exact=False
                 ).wait_for()
-                expect(
-                    selected_history.get_by_role(
-                        "list", name="Historical cover candidates"
+                assert "candidate" in selected_history.inner_text().lower()
+                for identifier in (
+                    "cover_consideration_",
+                    "cover_ref_",
+                    "human_decision_",
+                    "review_transition_",
+                ):
+                    assert (
+                        identifier not in page.locator(".diagnostic-route").inner_text()
                     )
-                ).to_be_visible()
                 assert (
                     page.evaluate("() => document.documentElement.scrollWidth") <= 390
                 )

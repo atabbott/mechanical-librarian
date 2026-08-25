@@ -1170,6 +1170,7 @@
             "type": "string"
           },
           "schema_version": {
+            "const": "review-case-detail-v2",
             "title": "Schema Version",
             "type": "string"
           },
@@ -1401,6 +1402,7 @@
             "items": {
               "$ref": "#/components/schemas/_CoverCandidate"
             },
+            "maxItems": 12,
             "title": "Candidates",
             "type": "array"
           },
@@ -2038,51 +2040,28 @@
       "_EvidenceItem": {
         "additionalProperties": false,
         "properties": {
-          "candidate": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Candidate"
-          },
-          "fact": {
-            "title": "Fact",
+          "observation": {
+            "maxLength": 1024,
+            "title": "Observation",
             "type": "string"
           },
-          "kind": {
-            "title": "Kind",
-            "type": "string"
-          },
-          "provider": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+          "role": {
+            "enum": [
+              "external_corroboration",
+              "local_presence"
             ],
-            "title": "Provider"
-          },
-          "reference": {
-            "title": "Reference",
+            "title": "Role",
             "type": "string"
           },
           "source": {
+            "maxLength": 128,
             "title": "Source",
             "type": "string"
           }
         },
         "required": [
-          "candidate",
-          "fact",
-          "kind",
-          "provider",
-          "reference",
+          "observation",
+          "role",
           "source"
         ],
         "title": "_EvidenceItem",
@@ -2095,8 +2074,15 @@
             "items": {
               "$ref": "#/components/schemas/_EvidenceItem"
             },
+            "maxItems": 50,
             "title": "Items",
             "type": "array"
+          },
+          "missing_lineage_count": {
+            "maximum": 10000.0,
+            "minimum": 0.0,
+            "title": "Missing Lineage Count",
+            "type": "integer"
           },
           "next_cursor": {
             "anyOf": [
@@ -2114,15 +2100,26 @@
             "type": "string"
           },
           "schema_version": {
+            "const": "review-case-evidence-v3",
             "title": "Schema Version",
             "type": "string"
+          },
+          "source_ledger": {
+            "items": {
+              "$ref": "#/components/schemas/_ProviderOutcome"
+            },
+            "maxItems": 100,
+            "title": "Source Ledger",
+            "type": "array"
           }
         },
         "required": [
           "items",
+          "missing_lineage_count",
           "next_cursor",
           "review_case_id",
-          "schema_version"
+          "schema_version",
+          "source_ledger"
         ],
         "title": "_EvidenceResponse",
         "type": "object"
@@ -2282,6 +2279,16 @@
             "title": "Outcome",
             "type": "string"
           },
+          "previous_value": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_ProposedValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "review_case_id": {
             "title": "Review Case Id",
             "type": "string"
@@ -2290,6 +2297,16 @@
             "const": "automatic-decision-history-event-v1",
             "title": "Schema Version",
             "type": "string"
+          },
+          "selected_value": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_ProposedValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -2299,8 +2316,10 @@
           "occurred_at",
           "origin",
           "outcome",
+          "previous_value",
           "review_case_id",
-          "schema_version"
+          "schema_version",
+          "selected_value"
         ],
         "title": "_HistoryAutomaticItem",
         "type": "object"
@@ -2483,6 +2502,7 @@
                 }
               ]
             },
+            "maxItems": 150,
             "title": "Items",
             "type": "array"
           },
@@ -2502,6 +2522,7 @@
             "type": "string"
           },
           "schema_version": {
+            "const": "review-case-history-v2",
             "title": "Schema Version",
             "type": "string"
           }
@@ -2527,6 +2548,7 @@
             "additionalProperties": {
               "type": "integer"
             },
+            "maxProperties": 32,
             "title": "Dispositions",
             "type": "object"
           },
@@ -2575,18 +2597,22 @@
         "additionalProperties": false,
         "properties": {
           "checkpoint": {
+            "minimum": 0.0,
             "title": "Checkpoint",
             "type": "integer"
           },
           "kind": {
+            "maxLength": 64,
             "title": "Kind",
             "type": "string"
           },
           "reason": {
+            "maxLength": 512,
             "title": "Reason",
             "type": "string"
           },
           "transition_id": {
+            "maxLength": 128,
             "title": "Transition Id",
             "type": "string"
           }
@@ -3772,22 +3798,27 @@
         "additionalProperties": false,
         "properties": {
           "lane_kind": {
+            "maxLength": 64,
             "title": "Lane Kind",
             "type": "string"
           },
           "provider": {
+            "maxLength": 128,
             "title": "Provider",
             "type": "string"
           },
           "provider_requests": {
+            "minimum": 0.0,
             "title": "Provider Requests",
             "type": "integer"
           },
           "reason": {
+            "maxLength": 512,
             "title": "Reason",
             "type": "string"
           },
           "status": {
+            "maxLength": 64,
             "title": "Status",
             "type": "string"
           }
@@ -4850,25 +4881,36 @@
         "properties": {
           "authors": {
             "items": {
+              "maxLength": 512,
               "type": "string"
             },
+            "maxItems": 128,
             "title": "Authors",
             "type": "array"
           },
           "connection": {
+            "maxLength": 512,
             "title": "Connection",
             "type": "string"
           },
           "item": {
+            "maxLength": 512,
             "title": "Item",
             "type": "string"
           },
           "library": {
+            "maxLength": 512,
             "title": "Library",
             "type": "string"
           },
           "media_kind": {
+            "maxLength": 64,
             "title": "Media Kind",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 512,
+            "title": "Title",
             "type": "string"
           }
         },
@@ -4877,7 +4919,8 @@
           "connection",
           "item",
           "library",
-          "media_kind"
+          "media_kind",
+          "title"
         ],
         "title": "_TargetIdentity",
         "type": "object"

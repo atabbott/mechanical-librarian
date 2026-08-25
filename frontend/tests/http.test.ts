@@ -10,6 +10,8 @@ import {
   derivePolicyDraftDisplay,
   SessionExpiredError,
   mapLibrary,
+  mapEvidence,
+  mapHistory,
   mapPreparation,
   mapCoverConsideration,
 } from '../src/api/http'
@@ -62,8 +64,8 @@ describe('ReviewApiClient', () => {
   })
   it('preserves present and absent series sequences in the mapped review value', () => {
     const detail = (series: readonly Record<string, unknown>[], choiceContexts: unknown = [{ alternative_id: null, evidence: [], limitations: [], rationale: 'The local library has no retained value for this field.', recommendation: 'no_recommendation', recommendation_reason: 'No deterministic recommendation is retained for the current value.', selection: 'current' }]) => mapCaseDetail({
-      schema_version: 'review-case-detail-v1', review_case_id: 'case-1', current: true, comparison_notices: [], writes_consented: false,
-      target: { item: 'A Book', library: 'Books', connection: 'primary', media_kind: 'ebook', authors: ['Ada Example'] },
+      schema_version: 'review-case-detail-v2', review_case_id: 'case-1', current: true, comparison_notices: [], writes_consented: false,
+      target: { item: 'internal-item-1', title: 'A Book', library: 'Books', connection: 'primary', media_kind: 'ebook', authors: ['Ada Example'] },
       fields: [{
         classification: 'needs_attention', classification_reason: 'This field needs your review.', editable: true, inventory_role: 'primary', navigation_role: 'attention', preservation_only: false,
         decision_actions: [],
@@ -82,8 +84,8 @@ describe('ReviewApiClient', () => {
 
   it('requires exact creator corroboration source lists in case-detail responses', () => {
     const response = (corroboration_sources: unknown) => ({
-      schema_version: 'review-case-detail-v1', review_case_id: 'case-1', current: true, comparison_notices: [], writes_consented: false,
-      target: { item: 'A Book', library: 'Books', connection: 'primary', media_kind: 'ebook', authors: ['Ada Example'] },
+      schema_version: 'review-case-detail-v2', review_case_id: 'case-1', current: true, comparison_notices: [], writes_consented: false,
+      target: { item: 'internal-item-1', title: 'A Book', library: 'Books', connection: 'primary', media_kind: 'ebook', authors: ['Ada Example'] },
       fields: [{
         classification: 'needs_attention', classification_reason: 'This field needs your review.', editable: true, inventory_role: 'primary', navigation_role: 'attention', preservation_only: false,
         decision_actions: [],
@@ -112,8 +114,8 @@ describe('ReviewApiClient', () => {
       corroboration_sources: [], ...overrides,
     })
     const response = (fields: readonly unknown[]) => ({
-      schema_version: 'review-case-detail-v1', review_case_id: 'case-1', current: true, comparison_notices: [], writes_consented: false,
-      target: { item: 'A Book', library: 'Books', connection: 'primary', media_kind: 'ebook', authors: ['Ada Example'] },
+      schema_version: 'review-case-detail-v2', review_case_id: 'case-1', current: true, comparison_notices: [], writes_consented: false,
+      target: { item: 'internal-item-1', title: 'A Book', library: 'Books', connection: 'primary', media_kind: 'ebook', authors: ['Ada Example'] },
       fields,
     })
 
@@ -144,6 +146,53 @@ describe('ReviewApiClient', () => {
     ])
       expect(() => mapCaseDetail(response([field({ decision_actions: actions })]))).toThrow(ApiError)
     expect(mapCaseDetail(response([field({ decision_actions: ['keep_current', 'accept'] })])).fields[0]?.decisionActions).toEqual(['keep_current', 'accept'])
+  })
+
+  it('maps only bounded readable diagnostic evidence', () => {
+    const payload = {
+      schema_version: 'review-case-evidence-v3', review_case_id: 'case-1', missing_lineage_count: 1, next_cursor: 'next',
+      items: [{ observation: 'Title: A Book', role: 'external_corroboration', source: 'Hardcover' }],
+      source_ledger: [{ provider_requests: 1, lane_kind: 'identity', provider: 'Hardcover', reason: 'Returned matching metadata for this work.', status: 'candidates' }],
+    }
+    expect(mapEvidence(payload)).toEqual({
+      items: [{ observation: 'Title: A Book', role: 'external_corroboration', source: 'Hardcover' }],
+      missingLineageCount: 1, nextCursor: 'next',
+      sourceLedger: [{ providerRequests: 1, laneKind: 'identity', provider: 'Hardcover', reason: 'Returned matching metadata for this work.', status: 'candidates' }],
+    })
+    for (const invalid of [
+      { ...payload, schema_version: 'review-case-evidence-v2' },
+      { ...payload, items: [{ fact: '{}', kind: 'raw', reference: 'evidence-1' }] },
+      { ...payload, items: [{ ...payload.items[0], role: 'unknown' }] },
+      { ...payload, items: [{ ...payload.items[0], observation: 'x'.repeat(1025) }] },
+      { ...payload, source_ledger: [{ provider: 'Hardcover' }] },
+    ]) expect(() => mapEvidence(invalid)).toThrow(ApiError)
+  })
+
+  it('maps history without exposing retained identities and rejects malformed values', () => {
+    const payload = {
+      schema_version: 'review-case-history-v2', review_case_id: 'case-1', next_cursor: null,
+      items: [
+        { actor: 'owner', decision_id: 'decision-secret', destination: 'title', event_id: 'event-secret', kind: 'human_decision_recorded', occurred_at: 2, outcome: 'accept', previous_value: { kind: 'text', value: 'Old' }, review_case_id: 'case-1', schema_version: 'human-decision-event-v1', selected_value: { kind: 'text', value: 'New' } },
+        { decision_id: 'automatic-secret', destination: 'authors', kind: 'automatic_decision_recorded', occurred_at: 1, origin: 'automatic_policy', outcome: 'ignore', previous_value: null, review_case_id: 'case-1', schema_version: 'automatic-decision-history-event-v1', selected_value: null },
+        { checkpoint: 1, kind: 'admitted', reason: '<script>actionable</script>', transition_id: 'transition-secret' },
+      ],
+    }
+    expect(mapHistory(payload)).toEqual({ items: [
+      { category: 'owner', destination: 'title', outcome: 'accept', previousValue: { kind: 'text', value: 'Old' }, selectedValue: { kind: 'text', value: 'New' } },
+      { category: 'automatic', destination: 'authors', outcome: 'ignore', previousValue: null, selectedValue: null },
+      { category: 'transition', outcome: 'admitted', reason: '<script>actionable</script>' },
+    ] })
+    const cover = { consideration_id: 'cover-secret', consideration: { candidates: [{ reference: 'candidate-secret' }], policy: { reasons: ['policy_satisfied'], status: 'recommended' }, reviewer_status: 'completed' }, decision: { outcome: 'accept' }, decision_id: 'decision-secret', kind: 'selected', occurred_at: 3, review_case_id: 'case-1', schema_version: 'cover-consideration-event-v1' }
+    expect(mapHistory({ ...payload, items: [cover] })).toEqual({ items: [{ category: 'cover', candidateCount: 1, outcome: 'selected', ownerOutcome: 'accept', policyReasons: ['policy_satisfied'], policyStatus: 'recommended', reviewerStatus: 'completed' }] })
+    for (const invalid of [
+      { ...payload, schema_version: 'review-case-history-v1' },
+      { ...payload, items: [{ ...payload.items[0], outcome: 'unknown' }] },
+      { ...payload, items: [{ ...payload.items[0], selected_value: { kind: 'text', value: {} } }] },
+      { ...payload, items: [{ ...payload.items[0], selected_value: { kind: 'text', value: 'x'.repeat(4097) } }] },
+      { ...payload, items: [{ checkpoint: 1, kind: 'invented', reason: 'actionable', transition_id: 'transition-secret' }] },
+      { ...payload, items: [{ ...cover, consideration: { ...cover.consideration, candidates: Array.from({ length: 13 }, () => ({})) } }] },
+      { ...payload, items: [{ ...cover, consideration: { ...cover.consideration, reviewer_status: 'invented' } }] },
+    ]) expect(() => mapHistory(invalid)).toThrow(ApiError)
   })
 
   it('maps exact library DTOs into presentation-safe view models', async () => {

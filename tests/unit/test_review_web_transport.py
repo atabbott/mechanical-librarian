@@ -446,6 +446,7 @@ def test_login_case_evidence_history_and_logout_round_trip(
     assert detail.status_code == 200, detail.text
     assert detail.json()["current"]
     assert detail.json()["review_case_id"] == web.case.review_case_id
+    assert detail.json()["target"]["title"] == "Title"
     title = detail.json()["fields"][0]
     assert title["current"]["value"] == "Title"
     assert title["proposed_values"][0]["value"] == "Exact evaluator candidate"
@@ -475,14 +476,19 @@ def test_login_case_evidence_history_and_logout_round_trip(
     )
     history = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}/history")
     assert evidence.status_code == 200
-    assert evidence.json()["items"][0]["source"] == "local"
-    assert "Exact evaluator candidate" in evidence.json()["items"][0]["fact"]
+    assert evidence.json()["schema_version"] == "review-case-evidence-v3"
+    assert evidence.json()["items"][0]["source"] == "Local library record"
+    assert "Exact evaluator candidate" in evidence.json()["items"][0]["observation"]
+    assert "reference" not in evidence.json()["items"][0]
+    assert evidence.headers["cache-control"] == "no-store, private"
     invalid_cursor = web.client.get(
         f"/api/v1/review-cases/{web.case.review_case_id}/evidence?cursor=bad"
     )
     assert invalid_cursor.status_code == 400
     assert invalid_cursor.json()["error"]["code"] == "request"
     assert history.json()["items"][0]["kind"] == "admitted"
+    assert history.json()["schema_version"] == "review-case-history-v2"
+    assert history.headers["cache-control"] == "no-store, private"
     assert "default-src 'none'" in detail.headers["content-security-policy"]
     missing = web.client.post(
         "/api/v1/session/logout",

@@ -136,7 +136,7 @@ describe('Application shell', () => {
       await router.navigate({
         to: '/review/$reviewCaseId',
         params: { reviewCaseId: 'case-1' },
-        search: { field: 'title', subview: 'evidence' },
+        search: { field: 'title', lens: 'all', subview: 'evidence' },
       })
       expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
       expect(router.state.location.pathname).toBe('/review/case-1')
@@ -297,7 +297,7 @@ describe('Application shell', () => {
     await router.navigate({
       to: '/review/$reviewCaseId',
       params: { reviewCaseId: 'case-1' },
-      search: { field: 'title', subview: 'evidence' },
+      search: { field: 'title', lens: 'all', subview: 'evidence' },
     })
     expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
     expect(router.state.location.pathname).toBe('/review/case-1')

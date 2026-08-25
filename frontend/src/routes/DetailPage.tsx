@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
-import { Link, useNavigate } from '@tanstack/react-router'
+import { Link } from '@tanstack/react-router'
 
 import type { CaseDetailView, EvidenceView, HistoryView } from '../api/http'
 import { displayValue } from '../api/http'
@@ -7,70 +7,87 @@ import { fieldLabel, labelWords } from '../labels'
 import { detailRoute, useReviewContext } from '../router'
 
 function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
-  if ('previous_value' in item)
+  if (item.category === 'owner' || item.category === 'automatic') {
+    const action =
+      item.category === 'owner'
+        ? item.outcome === 'accept'
+          ? 'Owner selected a proposed value.'
+          : item.outcome === 'keep_current'
+            ? 'Owner kept the current value.'
+            : 'Owner declined the proposed change.'
+        : item.outcome === 'candidate'
+          ? 'Automatic policy selected a candidate.'
+          : item.outcome === 'keep_current'
+            ? 'Automatic policy kept the current value.'
+            : 'Automatic policy left this field unchanged.'
     return (
-      <article>
+      <article className="diagnostic-entry">
         <h3>{fieldLabel(item.destination)}</h3>
-        <p>
-          {item.outcome === 'reject'
-            ? 'No action was chosen.'
-            : item.outcome === 'keep_current'
-              ? 'Current value retained.'
-              : 'Proposed value selected.'}
-        </p>
-        <p>Previous: {item.previous_value ? displayValue(item.previous_value.value) : 'Not set'}</p>
-        {item.outcome !== 'reject' ? (
-          <p>
-            {item.outcome === 'keep_current' ? 'Retained' : 'Chosen'}:{' '}
-            {item.selected_value ? displayValue(item.selected_value.value) : 'Not set'}
+        <p>{action}</p>
+        {item.previousValue ? (
+          <p className="diagnostic-value">
+            <span>Previous</span> {displayValue(item.previousValue.value)}
+          </p>
+        ) : null}
+        {item.selectedValue ? (
+          <p className="diagnostic-value">
+            <span>{item.outcome === 'keep_current' ? 'Retained' : 'New'}</span>{' '}
+            {displayValue(item.selectedValue.value)}
           </p>
         ) : null}
       </article>
     )
-  if (!('consideration' in item))
+  }
+  if (item.category === 'preview')
     return (
-      <p>
-        {fieldLabel(item.kind)} · {'destination' in item ? item.destination : ''}
-      </p>
+      <article className="diagnostic-entry">
+        <h3>Policy preview</h3>
+        <p>This read-only preview recorded no decision authority.</p>
+        {item.dispositions.length ? (
+          <ul className="diagnostic-facts" aria-label="Preview outcomes">
+            {item.dispositions.map((disposition) => (
+              <li key={disposition.outcome}>
+                <strong>{labelWords(disposition.outcome)}</strong>
+                <span>{String(disposition.count)}</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </article>
     )
-  const policy = item.consideration.policy
-  const recommendation = policy?.recommended_candidate_reference ?? null
+  if (item.category === 'transition')
+    return (
+      <article className="diagnostic-entry">
+        <h3>{fieldLabel(item.outcome)}</h3>
+        <p>
+          {item.outcome === 'admitted'
+            ? 'This work entered the review queue.'
+            : item.outcome === 'superseded'
+              ? 'A newer review case replaced the previous one.'
+              : item.outcome === 'no_case'
+                ? 'No review case was needed for this work.'
+                : item.outcome === 'retired'
+                  ? 'This review case was retired.'
+                  : 'This work is no longer present in the retained library scan.'}
+        </p>
+      </article>
+    )
   return (
-    <article className="history-cover">
-      <h3>Cover {labelWords(item.kind)}</h3>
+    <article className="diagnostic-entry">
+      <h3>Cover {labelWords(item.outcome)}</h3>
       <p>
-        Consideration {item.consideration_id}. Observer status:{' '}
-        {labelWords(item.consideration.reviewer_status)}.{' '}
-        {item.consideration.current ? 'Current.' : 'Historical; it grants no current authority.'}
+        Visual review {labelWords(item.reviewerStatus)} across {String(item.candidateCount)}{' '}
+        {item.candidateCount === 1 ? 'candidate' : 'candidates'}.
       </p>
-      <p>
-        Owner outcome:{' '}
-        {item.decision ? labelWords(item.decision.outcome) : 'No owner outcome on this event'}
-        {item.decision?.selected_value
-          ? ` · ${displayValue(item.decision.selected_value.value)}`
-          : ''}
-        .
-      </p>
-      <p>
-        Policy {item.consideration.policy_reference}:{' '}
-        {policy ? labelWords(policy.status) : 'observation unavailable'}; recommendation:{' '}
-        {recommendation ?? 'none'}.
-      </p>
-      {policy?.reasons.length ? (
-        <p>Policy reasons: {policy.reasons.map(fieldLabel).join(' · ')}</p>
+      {item.ownerOutcome ? <p>Owner outcome: {labelWords(item.ownerOutcome)}.</p> : null}
+      {item.policyStatus ? <p>Policy outcome: {labelWords(item.policyStatus)}.</p> : null}
+      {item.policyReasons.length ? (
+        <ul className="diagnostic-limitations" aria-label="Cover policy limitations">
+          {item.policyReasons.map((reason) => (
+            <li key={reason}>{fieldLabel(reason)}</li>
+          ))}
+        </ul>
       ) : null}
-      <ul aria-label="Historical cover candidates">
-        {item.consideration.candidates.map((candidate) => (
-          <li key={candidate.reference}>
-            <strong>{candidate.reference}</strong> ·{' '}
-            {candidate.incumbent ? 'incumbent' : 'alternative'} · identity{' '}
-            {labelWords(candidate.identity.outcome)} ·{' '}
-            {candidate.observation
-              ? `composition ${labelWords(candidate.observation.composition)}, medium ${labelWords(candidate.observation.medium)}, promotional text ${labelWords(candidate.observation.promotional_text)}, tie-in branding ${labelWords(candidate.observation.tie_in_branding)}`
-              : 'visual observation unavailable'}
-          </li>
-        ))}
-      </ul>
     </article>
   )
 }
@@ -79,12 +96,11 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
   const { http } = useReviewContext()
   const search = detailRoute.useSearch()
   const { reviewCaseId } = detailRoute.useParams()
-  const navigate = useNavigate({ from: '/review/$reviewCaseId' })
   const evidence = useInfiniteQuery({
     queryKey: ['review-case', reviewCaseId, 'evidence'],
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam, signal }) => http.getEvidence(reviewCaseId, pageParam, signal),
-    getNextPageParam: (page: EvidenceView) => page.next_cursor ?? undefined,
+    getNextPageParam: (page: EvidenceView) => page.nextCursor,
     staleTime: 30_000,
     retry: false,
     enabled: data.current && search.subview === 'evidence',
@@ -96,95 +112,138 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
     retry: false,
     enabled: data.current && search.subview === 'history',
   })
-  const backSearch = {
-    lens: 'all' as const,
-    ...(data.current
-      ? { preview: reviewCaseId, ...(search.field ? { field: search.field } : {}) }
-      : {}),
-  }
-  const pages = evidence.data?.pages.flatMap((page) => page.items) ?? []
+  const observations = evidence.data?.pages.flatMap((page) => page.items) ?? []
+  const sourceLedger = evidence.data?.pages[0]?.sourceLedger ?? []
+  const missingLineageCount = evidence.data?.pages[0]?.missingLineageCount ?? 0
   if (!data.current)
     return (
-      <header className="page-heading" data-route-focus tabIndex={-1}>
-        <div>
-          <p className="eyebrow">Case superseded</p>
-          <h1>This diagnostic case is no longer current.</h1>
-          <p>Return to Library to open the current work and its available diagnostics.</p>
-        </div>
-        <Link className="diagnostic-back-to-work" to="/library" search={backSearch}>
-          Back to work
-        </Link>
-      </header>
+      <section className="diagnostic-state diagnostic-limitation" data-route-focus tabIndex={-1}>
+        <h1>This diagnostic case is no longer current.</h1>
+        <p>Library remains the authority for the current work and its available diagnostics.</p>
+      </section>
     )
   return (
     <>
-      <header className="page-heading" data-route-focus tabIndex={-1}>
-        <div>
-          <p className="eyebrow">Read-only case diagnostics</p>
-          <h1>{data.title}</h1>
-          <p>{data.authors.length ? data.authors.join(', ') : 'Author details unavailable'}</p>
-        </div>
-        <Link className="diagnostic-back-to-work" to="/library" search={backSearch}>
-          Back to work
-        </Link>
+      <header className="diagnostic-heading" data-route-focus tabIndex={-1}>
+        <h1>{data.title}</h1>
+        <p className="diagnostic-authors">
+          {data.authors.length ? data.authors.join(', ') : 'Author details unavailable'}
+        </p>
+        <p className="diagnostic-origin">{data.subtitle}</p>
+        <p className="diagnostic-posture">Read-only diagnostics · decisions stay in Library</p>
       </header>
       <nav className="subviews" aria-label="Case diagnostics">
-        <button
-          aria-current={search.subview === 'evidence'}
-          onClick={() => void navigate({ search: { ...search, subview: 'evidence' } })}
+        <Link
+          aria-current={search.subview === 'evidence' ? 'page' : undefined}
+          params={{ reviewCaseId }}
+          search={{ ...search, subview: 'evidence' }}
+          to="/review/$reviewCaseId"
         >
           Evidence
-        </button>
-        <button
-          aria-current={search.subview === 'history'}
-          onClick={() => void navigate({ search: { ...search, subview: 'history' } })}
+        </Link>
+        <Link
+          aria-current={search.subview === 'history' ? 'page' : undefined}
+          params={{ reviewCaseId }}
+          search={{ ...search, subview: 'history' }}
+          to="/review/$reviewCaseId"
         >
           History
-        </button>
+        </Link>
       </nav>
       {search.subview === 'evidence' ? (
-        <section className="progressive-panel" aria-label="Evidence and source ledger">
-          <h2>Evidence and source ledger</h2>
+        <section className="diagnostic-sheet" aria-label="Evidence and source ledger">
+          <header>
+            <h2>Evidence</h2>
+            <p>Retained observations that informed this work’s review.</p>
+          </header>
           {evidence.isPending ? (
             <p role="status">Loading evidence…</p>
           ) : evidence.isError ? (
-            <>
-              <p role="alert">Evidence could not be loaded.</p>
-              <button onClick={() => void evidence.refetch()}>Try again</button>
-            </>
+            <p className="diagnostic-read-failure" role="alert">
+              Evidence could not be read safely.
+            </p>
           ) : (
             <>
-              {pages.map((item) => (
-                <article className="evidence-item" key={item.reference}>
-                  <h3>{fieldLabel(item.kind)}</h3>
-                  <pre>{item.fact}</pre>
-                </article>
-              ))}
+              {missingLineageCount ? (
+                <p className="diagnostic-limitation" role="status">
+                  {String(missingLineageCount)} referenced{' '}
+                  {missingLineageCount === 1 ? 'observation is' : 'observations are'} no longer
+                  available. The evidence below is the retained portion only.
+                </p>
+              ) : null}
+              {observations.length ? (
+                <div className="diagnostic-list">
+                  {observations.map((item, index) => (
+                    <article className="diagnostic-entry" key={`${String(index)}-${item.source}`}>
+                      <h3>{item.source}</h3>
+                      <p>{item.observation}</p>
+                      <small>
+                        {item.role === 'local_presence'
+                          ? 'Present in this library'
+                          : 'External corroboration'}
+                      </small>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p>No attributable observations were retained for this work.</p>
+              )}
               {evidence.hasNextPage ? (
                 <button
+                  className="diagnostic-load-more"
                   disabled={evidence.isFetchingNextPage}
                   onClick={() => void evidence.fetchNextPage()}
                 >
                   Load more evidence
                 </button>
               ) : (
-                <p>All referenced evidence is shown.</p>
+                <p className="diagnostic-complete">All retained evidence is shown.</p>
               )}
+              <section className="source-ledger" aria-labelledby="source-ledger-heading">
+                <h3 id="source-ledger-heading">Source ledger</h3>
+                <p>The bounded outcome recorded for each source asked about this work.</p>
+                {sourceLedger.length ? (
+                  <ul>
+                    {sourceLedger.map((source, index) => (
+                      <li key={`${source.provider}-${source.laneKind}-${String(index)}`}>
+                        <strong>{source.provider}</strong>
+                        <span>{fieldLabel(source.laneKind)}</span>
+                        <b>{labelWords(source.status)}</b>
+                        <p>{source.reason}</p>
+                        <small>
+                          {String(source.providerRequests)} bounded{' '}
+                          {source.providerRequests === 1 ? 'request' : 'requests'}
+                        </small>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p>No provider outcomes were retained for this work.</p>
+                )}
+              </section>
             </>
           )}
         </section>
       ) : (
-        <section className="progressive-panel" aria-label="Current-case history">
-          <h2>Current-case history</h2>
+        <section className="diagnostic-sheet" aria-label="Current-case history">
+          <header>
+            <h2>History</h2>
+            <p>Durable owner and automatic outcomes retained for this work.</p>
+          </header>
           {history.isPending ? (
             <p role="status">Loading history…</p>
           ) : history.isError ? (
-            <>
-              <p role="alert">History could not be loaded.</p>
-              <button onClick={() => void history.refetch()}>Try again</button>
-            </>
+            <p className="diagnostic-read-failure" role="alert">
+              History could not be read safely.
+            </p>
+          ) : history.data.items.length ? (
+            <div className="diagnostic-list">
+              {history.data.items.map((item, index) => (
+                <HistoryItem item={item} key={index} />
+              ))}
+            </div>
           ) : (
-            history.data.items.map((item, index) => <HistoryItem item={item} key={index} />)
+            <p>No durable history has been retained for this work.</p>
           )}
         </section>
       )}
