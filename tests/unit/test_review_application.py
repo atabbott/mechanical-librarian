@@ -452,6 +452,40 @@ def test_first_boot_presentation_survives_first_ready_until_terminal_measurement
     assert application.preparation().first_boot is False
 
 
+def test_first_boot_status_length_mismatch_keeps_typed_persistence_error(
+    repository: FakeReviewRepository,
+) -> None:
+    class Preparation:
+        libraries = (("primary", "Books", "books"),)
+
+        def attach_updates(self, announce: object) -> None:
+            return None
+
+        def status(self):
+            return ((), False)
+
+        def connection_conditions(self):
+            raise AssertionError("length mismatch must fail first")
+
+    application = compose_review_application(
+        state_owner=repository,
+        session_store=repository,
+        case_store=repository,
+        decision_store=repository,
+        library_store=repository,
+        policy_store=repository,
+        verify_password=lambda value: value == "correct horse",
+        clock=lambda: _NOW,
+        session_lifetime_seconds=600,
+        graceful_shutdown_seconds=30,
+        preparation=cast("ReviewPreparationSupervisor", Preparation()),
+        first_boot=True,
+    )
+
+    with pytest.raises(ReviewApplicationError, match="^persistence$"):
+        application.preparation()
+
+
 def test_policy_candidate_workflows_are_application_operations(
     application: ReviewApplication,
 ) -> None:

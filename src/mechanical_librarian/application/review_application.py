@@ -852,6 +852,8 @@ class ReviewApplication:
         if self._preparation is None:
             return PreparationView((), False, False, False)
         progress_values, paused = self.serialized(self._preparation.status)
+        if len(progress_values) != len(self._preparation.libraries):
+            raise ReviewApplicationError("persistence")
         first_boot = self._first_boot and all(
             progress is None
             or is_first_boot_scan_id(progress.scan_id, connection, library)
@@ -860,8 +862,6 @@ class ReviewApplication:
             )
         )
         conditions = self.serialized(self._preparation.connection_conditions)
-        if len(progress_values) != len(self._preparation.libraries):
-            raise ReviewApplicationError("persistence")
         libraries: tuple[dict[str, object], ...] = tuple(
             {
                 "scan_id": None if progress is None else progress.scan_id,
