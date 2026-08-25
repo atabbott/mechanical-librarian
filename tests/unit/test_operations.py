@@ -125,6 +125,7 @@ def test_container_definition_keeps_one_non_root_process_volume_and_port() -> No
     assert "cap_drop:" in compose
     assert compose.count("8443:8443") == 1
     assert compose.count("mechanical-librarian-data:/data") == 1
+    assert "stop_grace_period: 610s" in compose
 
 
 def test_status_is_not_ready_until_exact_current_snapshot_opens_and_drains() -> None:

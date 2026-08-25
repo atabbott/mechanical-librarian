@@ -87,6 +87,13 @@ failure before the shared repository closes, and resumes from its durable
 checkpoint on restart. No fake target, direct database write or writable media
 path is composed.
 
+The supported Compose stop budget is 610 seconds. Uvicorn can first use the
+configured maximum 300 seconds to drain HTTP requests, then lifespan shutdown
+can use the application's separate 300-second worker deadline before repository
+and binding cleanup. The remaining ten seconds cover signal delivery and
+process-exit overhead; deployments that override Compose must retain at least
+that full bound.
+
 Each open browser tab holds one long-lived `text/event-stream` response on that
 same listener, which is worth knowing when sizing the direct edge's 100-
 connection admission or placing a reverse proxy in front of it: the response

@@ -62,7 +62,9 @@
 
 - Guide an empty-volume owner through claim, verified Audiobookshelf connection,
   optional providers, library selection, read-only mount checks, and safe
-  preparation kickoff without granting library-write authority. (#745)
+  preparation kickoff without granting library-write authority. The supported
+  Compose stop budget now preserves cleanup across the full shutdown range.
+  (#745)
 
 - Recover explicit EPUB package, front, and rear series memberships with their
   stated sequence while keeping advertisements, reading lists, prose, and
