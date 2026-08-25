@@ -686,11 +686,7 @@ def test_store_credentials_reach_proposal_and_admission_currentness(
 ) -> None:
     """A provider-empty first run retains its private ABS credential authority."""
     configuration = ApplicationConfiguration(
-        (
-            TargetConnectionConfiguration(
-                "primary", "https://example.invalid", None
-            ),
-        ),
+        (TargetConnectionConfiguration("primary", "https://example.invalid", None),),
         (
             LibraryConfiguration(
                 "ebooks", "primary", "library-id", "ebook", "media", ()
