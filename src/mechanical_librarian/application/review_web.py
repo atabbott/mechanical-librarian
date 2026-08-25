@@ -629,9 +629,10 @@ class InspectCurrentReviewCase:
         for raw in snapshot.history:
             item = dict(raw)
             if item.get("kind") == "automatic_decision_recorded":
+                decision_id = item.get("decision_id")
                 joined = (
-                    automatic_values.get(item["decision_id"])
-                    if type(item.get("decision_id")) is str
+                    automatic_values.get(decision_id)
+                    if type(decision_id) is str
                     else None
                 )
                 item["previous_value"], item["selected_value"] = joined or (
