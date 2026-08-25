@@ -11,11 +11,21 @@ from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.owner_settings import (
     _load_owner_settings_authority,
 )
+from mechanical_librarian.adapters.persistence.schema import (
+    _SETUP_AUTOMATIC_SAFETY_ROW,
+    _SETUP_FIELD_EFFECT_CONTROL_ROW,
+    _SETUP_POLICY_DRAFT_ROW,
+    _SETUP_POLICY_STATE_ROW,
+    _SETUP_POLICY_TRANSITION_ROW,
+    _SETUP_REVIEW_CONTROL_ROW,
+)
 from mechanical_librarian.domain.owner_settings import OwnerSettingsError
 from mechanical_librarian.domain.setup_state import SetupStateDocument, SetupStateError
 from mechanical_librarian.domain.validation import credential
 
 _T = TypeVar("_T")
+_MAX_SETUP_SESSIONS = 100
+_MAX_SETUP_LOGIN_FAILURES = 5
 _SETUP_ROW_TABLES = frozenset(
     {
         "metadata_policy_drafts",
@@ -268,6 +278,52 @@ class SetupStateStore:
         }
         for table in tables - _SETUP_ROW_TABLES:
             if self._connection.execute(f'SELECT 1 FROM "{table}" LIMIT 1').fetchone():
+                return False
+        if "metadata_policy_drafts" in tables and self._connection.execute(
+            "SELECT policy_id,document FROM metadata_policy_drafts"
+        ).fetchall() != [_SETUP_POLICY_DRAFT_ROW]:
+            return False
+        if "metadata_policy_state" in tables and self._connection.execute(
+            "SELECT singleton,active_policy_id,generation,activated_at,posture "
+            "FROM metadata_policy_state"
+        ).fetchall() != [_SETUP_POLICY_STATE_ROW]:
+            return False
+        if "metadata_policy_transitions" in tables and self._connection.execute(
+            "SELECT transition_id,from_policy_id,to_policy_id,generation,state,total,"
+            "acknowledged,created_at,updated_at FROM metadata_policy_transitions"
+        ).fetchall() != [_SETUP_POLICY_TRANSITION_ROW]:
+            return False
+        if "automatic_safety_state" in tables and self._connection.execute(
+            "SELECT singleton,paused,global_suspension,category_suspensions_document,"
+            "updated_at FROM automatic_safety_state"
+        ).fetchall() != [_SETUP_AUTOMATIC_SAFETY_ROW]:
+            return False
+        if "field_effect_control" in tables and self._connection.execute(
+            "SELECT singleton,paused,updated_at FROM field_effect_control"
+        ).fetchall() != [_SETUP_FIELD_EFFECT_CONTROL_ROW]:
+            return False
+        if "review_preparation_control" in tables and self._connection.execute(
+            "SELECT singleton,paused,claim_sequence,last_library,circuit_failures,"
+            "circuit_open_until,updated_at FROM review_preparation_control"
+        ).fetchall() != [_SETUP_REVIEW_CONTROL_ROW]:
+            return False
+        if "review_sessions" in tables:
+            session_count = self._connection.execute(
+                "SELECT count(*) FROM review_sessions"
+            ).fetchone()
+            if (
+                session_count is None
+                or not 0 <= session_count[0] <= _MAX_SETUP_SESSIONS
+            ):
+                return False
+        if "review_login_failures" in tables:
+            failure_count = self._connection.execute(
+                "SELECT count(*) FROM review_login_failures"
+            ).fetchone()
+            if (
+                failure_count is None
+                or not 0 <= failure_count[0] <= _MAX_SETUP_LOGIN_FAILURES
+            ):
                 return False
         return True
 

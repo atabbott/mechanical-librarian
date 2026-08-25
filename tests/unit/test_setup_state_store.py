@@ -7,7 +7,9 @@ import pytest
 from mechanical_librarian.adapters.persistence.owner_settings import (
     _validate_owner_settings_content,
 )
+from mechanical_librarian.adapters.persistence.schema import _create_schema
 from mechanical_librarian.adapters.persistence.setup_state import SetupStateStore
+from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 from mechanical_librarian.domain.owner_settings import OwnerSettingsError
 from mechanical_librarian.domain.setup_state import SetupStateDocument, SetupStateError
 
@@ -23,6 +25,12 @@ def _store() -> tuple[sqlite3.Connection, SetupStateStore]:
     connection.execute(
         "CREATE TABLE owner_setting_secrets (field_id TEXT PRIMARY KEY,value TEXT)"
     )
+    return connection, SetupStateStore(connection)
+
+
+def _real_store() -> tuple[sqlite3.Connection, SetupStateStore]:
+    connection = sqlite3.connect(":memory:", isolation_level=None)
+    _create_schema(connection)
     return connection, SetupStateStore(connection)
 
 
@@ -284,14 +292,56 @@ def test_resume_rejects_invalid_secret_value_and_runtime_rows() -> None:
 
 
 def test_resume_allows_setup_session_and_throttle_rows() -> None:
-    connection, store = _store()
+    connection, store = _real_store()
     state = _connected(store)
-    connection.execute("CREATE TABLE review_sessions(token TEXT)")
-    connection.execute("CREATE TABLE review_login_failures(observed_at INTEGER)")
-    connection.execute("INSERT INTO review_sessions VALUES('session')")
-    connection.execute("INSERT INTO review_login_failures VALUES(1)")
+    connection.execute(
+        "INSERT INTO review_sessions(session_digest,csrf_digest,actor,created_at,"
+        "expires_at) VALUES(?,?,'owner',1,3601)",
+        ("a" * 64, "b" * 64),
+    )
+    connection.execute(
+        "INSERT INTO review_login_failures(failure_id,occurred_at) VALUES(?,1)",
+        ("c" * 64,),
+    )
 
     assert store.read(_BOOTSTRAP) == state
+
+
+def test_resume_rejects_a_second_valid_seeded_policy_draft() -> None:
+    connection, store = _real_store()
+    _connected(store)
+    builtin = MetadataPolicyProfile.builtin()
+    second = MetadataPolicyProfile.create(
+        "Second valid policy", dict(builtin.options), dict(builtin.destinations)
+    )
+    connection.execute(
+        "INSERT INTO metadata_policy_drafts(policy_id,document) VALUES(?,?)",
+        (second.policy_id, second.canonical_json),
+    )
+
+    with pytest.raises(SetupStateError):
+        store.read(_BOOTSTRAP)
+
+
+def test_resume_rejects_changed_seeded_singleton_value() -> None:
+    connection, store = _real_store()
+    _connected(store)
+    connection.execute("UPDATE review_preparation_control SET paused=1")
+
+    with pytest.raises(SetupStateError):
+        store.read(_BOOTSTRAP)
+
+
+def test_resume_rejects_more_than_the_setup_login_throttle_bound() -> None:
+    connection, store = _real_store()
+    _connected(store)
+    connection.executemany(
+        "INSERT INTO review_login_failures(failure_id,occurred_at) VALUES(?,1)",
+        ((f"{index:064x}",) for index in range(6)),
+    )
+
+    with pytest.raises(SetupStateError):
+        store.read(_BOOTSTRAP)
 
 
 def test_provider_skip_preserves_connection_key_without_a_secret_delta() -> None:
