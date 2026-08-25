@@ -82,6 +82,17 @@ def _copy_workspace(source_root: Path, destination: Path) -> None:
         source_root / "docs" / "reference" / "review-openapi-v1.json",
         reference / "review-openapi-v1.json",
     )
+    vocabulary = destination / "src" / "mechanical_librarian" / "interfaces" / "web"
+    vocabulary.mkdir(parents=True)
+    shutil.copy2(
+        source_root
+        / "src"
+        / "mechanical_librarian"
+        / "interfaces"
+        / "web"
+        / "settings_vocabulary.json",
+        vocabulary / "settings_vocabulary.json",
+    )
 
 
 def build_frontend(source_root: Path, output: Path) -> None:

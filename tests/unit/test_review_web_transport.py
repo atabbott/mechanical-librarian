@@ -1754,7 +1754,7 @@ def test_store_composition_fault_preserves_pending_restart_acknowledgement(
     store = repository.owner_settings_store.return_value
     document = Mock(revision=7)
     store.activate_runtime.return_value = (
-        SimpleNamespace(document=document),
+        SimpleNamespace(document=document, pending_restart=("libraries",)),
         {"connection.primary.key": "synthetic-secret"},
         web.hash_path.read_text(encoding="utf-8").strip(),
     )
