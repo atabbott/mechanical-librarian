@@ -33,6 +33,9 @@ from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _validate_field_effect_state,
 )
+from mechanical_librarian.adapters.persistence.owner_settings import (
+    _validate_owner_settings_content,
+)
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyError,
@@ -44,6 +47,7 @@ from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ReportValueError,
 )
+from mechanical_librarian.domain.owner_settings import OwnerSettingsError
 from mechanical_librarian.domain.proposal_set import (
     POLICY_VERSION,
     ProposalSet,
@@ -1018,6 +1022,10 @@ def _validate_schema_contents_without_review_field_facts(
         raise MetadataReportError("database is unavailable or incompatible")
     _validate_metadata_policy_documents(connection)
     _validate_field_effect_state(connection)
+    try:
+        _validate_owner_settings_content(connection)
+    except OwnerSettingsError as error:
+        raise MetadataReportError("database is unavailable or incompatible") from error
     for row in connection.execute(
         "SELECT outbox_id,connection_name,library_name,item_id,proposal_set_id,"
         "report_id,review_case_id,checkpoint,outcome,created_at "

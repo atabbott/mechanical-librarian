@@ -167,6 +167,26 @@ def test_store_returns_redacted_secret_presence_and_metadata() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "statement",
+    (
+        "UPDATE owner_settings SET revision=revision+1",
+        "UPDATE owner_settings SET document=' '||document",
+        "INSERT INTO owner_setting_secrets VALUES('provider.unknown.key','secret-1234')",
+        "INSERT INTO owner_setting_secrets VALUES('INVALID','secret-1234')",
+        "INSERT INTO owner_setting_secrets VALUES('provider.books.key','bad secret')",
+        "DELETE FROM owner_settings",
+    ),
+)
+def test_store_read_refuses_corrupt_canonical_authority(statement: str) -> None:
+    store = _store()
+    store._connection.execute(statement)
+    store._connection.commit()
+
+    with pytest.raises(OwnerSettingsError, match="owner settings are unavailable"):
+        store.read()
+
+
 def test_store_is_atomic_and_enforces_cas_and_secret_operations() -> None:
     store = _store()
     updated = _document(2)
@@ -218,6 +238,23 @@ def test_store_rejects_client_authored_restart_state() -> None:
     assert store.read().document.revision == 1
 
 
+@pytest.mark.parametrize("field", ("mount", "policy_override"))
+def test_store_rejects_non_settings_owned_library_mutation(field: str) -> None:
+    store = _store()
+    value = _document(2).model_dump()
+    value["libraries"][0][field] = (
+        "other"
+        if field == "mount"
+        else {"options": {"date_precision": "full_date"}, "destinations": {}}
+    )
+
+    with pytest.raises(OwnerSettingsError, match="settings document is invalid"):
+        store.write(OwnerSettingsDocument.model_validate(value), 1, ())
+
+    assert store.read().document.libraries[0].mount == "books"
+    assert store.read().document.libraries[0].policy_override is None
+
+
 def test_restart_effects_are_durable_while_reduced_motion_is_live() -> None:
     store = _store()
     changed = _document(2).model_copy(update={"provider_recovery_generation": 2})
@@ -260,7 +297,59 @@ def test_runtime_activation_requires_complete_authority_and_ack_clears_applied_d
     assert credentials == {"connection.primary.key": "target-secret-1234"}
     assert verifier == "$argon2id$synthetic"
     store.acknowledge_runtime(view.document.revision)
-    assert store.read().pending_restart == ()
+    acknowledged = store.read()
+    assert acknowledged.pending_restart == ()
+    assert acknowledged.document.revision == 3
+    with pytest.raises(OwnerSettingsError, match="stale"):
+        store.write(_document(3), 2, ())
+
+
+def test_runtime_acknowledgement_noop_and_fault_preserve_revision_parity() -> None:
+    store = _store()
+    store.acknowledge_runtime(1)
+    assert store.read().document.revision == 1
+    staged = _document(2).model_copy(update={"pending_restart": ["providers"]})
+    store._connection.execute(
+        "UPDATE owner_settings SET revision=?,document=? WHERE singleton=1",
+        (2, _canonical_json(staged.model_dump())),
+    )
+    store._connection.execute(
+        "CREATE TRIGGER reject_owner_settings_ack BEFORE UPDATE ON owner_settings "
+        "BEGIN SELECT RAISE(ABORT,'synthetic'); END"
+    )
+    store._connection.commit()
+
+    with pytest.raises(OwnerSettingsError, match="unavailable"):
+        store.acknowledge_runtime(2)
+
+    stored_revision, encoded = store._connection.execute(
+        "SELECT revision,document FROM owner_settings"
+    ).fetchone()
+    assert stored_revision == 2
+    assert OwnerSettingsDocument.model_validate_json(encoded).revision == 2
+    assert OwnerSettingsDocument.model_validate_json(encoded).pending_restart == [
+        "providers"
+    ]
+
+
+def test_write_returns_prevalidated_commit_without_post_commit_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _store()
+    monkeypatch.setattr(
+        store,
+        "read",
+        lambda: (_ for _ in ()).throw(OwnerSettingsError("synthetic read failure")),
+    )
+
+    committed = store.write(_document(2), 1, ())
+
+    assert committed.document.revision == 2
+    stored_revision, encoded = store._connection.execute(
+        "SELECT revision,document FROM owner_settings"
+    ).fetchone()
+    assert stored_revision == 2
+    assert OwnerSettingsDocument.model_validate_json(encoded).revision == 2
 
 
 def test_runtime_activation_refuses_missing_owner_verifier() -> None:

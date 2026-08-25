@@ -15,6 +15,7 @@ from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationError,
     CoverConsiderationService,
 )
+from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.application.live_updates import LiveUpdateChannel
 from mechanical_librarian.application.metadata_policy import (
@@ -414,13 +415,25 @@ class ReviewApplication:
             raise ReviewApplicationError("settings_unavailable")
         settings = self._settings
         try:
-            return self.serialized(
-                lambda: settings.write(
+
+            def write() -> object:
+                result = settings.write(
                     cast("OwnerSettingsDocument", document),
                     revision,
                     cast("tuple[SecretWrite, ...]", secrets),
                 )
-            )
+                if self._cover_considerations is not None:
+                    preferences = result.document.cover_preferences
+                    self._cover_considerations.update_policy(
+                        CoverPolicy(
+                            avoid_promotional_text=preferences.avoid_promotional_text,
+                            avoid_tie_in_branding=preferences.avoid_tie_in_branding,
+                            prefer_minimal_composition=preferences.prefer_minimal_composition,
+                        )
+                    )
+                return result
+
+            return self.serialized(write)
         except OwnerSettingsError as error:
             code = (
                 "settings_stale"
@@ -438,6 +451,8 @@ class ReviewApplication:
                 )
             )
             raise ReviewApplicationError(code) from error
+        except Exception as error:
+            raise ReviewApplicationError("settings_unavailable") from error
 
     def start(self) -> None:
         if self._operations is not None:

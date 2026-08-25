@@ -1,8 +1,9 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useMemo, useRef, useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ComponentPropsWithoutRef, ReactNode } from 'react'
 
 import {
+  AmbiguousMutationError,
   ApiError,
   settingsEndpointValid,
   settingsIntegerValid,
@@ -338,6 +339,26 @@ export default function SettingsPage() {
   })
   const [staleRecovery, setStaleRecovery] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [reconciliation, setReconciliation] = useState<'idle' | 'checking' | 'failed' | 'checked'>(
+    'idle',
+  )
+  const [recoveryGeneration, setRecoveryGeneration] = useState(0)
+  const staleRecoveryTarget = useRef<HTMLParagraphElement>(null)
+  const reconciliationTarget = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const target = staleRecovery ? staleRecoveryTarget.current : reconciliationTarget.current
+    target?.focus()
+  }, [reconciliation, staleRecovery])
+  const reconcileUncertainSave = async () => {
+    setSaved(false)
+    setStaleRecovery(false)
+    setReconciliation('checking')
+    const result = await query.refetch()
+    if (result.isSuccess) {
+      setRecoveryGeneration((value) => value + 1)
+      setReconciliation('checked')
+    } else setReconciliation('failed')
+  }
   if (query.isPending)
     return (
       <section className="settings-state" aria-busy="true" data-route-focus tabIndex={-1}>
@@ -345,7 +366,7 @@ export default function SettingsPage() {
         <p>Reading the owner-authoritative configuration.</p>
       </section>
     )
-  if (query.isError)
+  if (query.isError && query.data === undefined)
     return (
       <section className="settings-state" data-route-focus tabIndex={-1}>
         <h1>Settings are unavailable.</h1>
@@ -358,12 +379,7 @@ export default function SettingsPage() {
   return (
     <>
       {staleRecovery ? (
-        <p
-          className="settings-stale-recovery"
-          role="alert"
-          tabIndex={-1}
-          ref={(element) => element?.focus()}
-        >
+        <p className="settings-stale-recovery" role="alert" tabIndex={-1} ref={staleRecoveryTarget}>
           Settings changed elsewhere. The authoritative revision replaced this draft; review it
           before saving again.
         </p>
@@ -373,15 +389,41 @@ export default function SettingsPage() {
           Saved. Server-authoritative settings are current.
         </p>
       ) : null}
+      {reconciliation !== 'idle' ? (
+        <div
+          className="settings-stale-recovery"
+          role="alert"
+          tabIndex={-1}
+          ref={reconciliationTarget}
+        >
+          {reconciliation === 'checking' ? (
+            <p>Save outcome is uncertain. Reloading authoritative Settings before another save.</p>
+          ) : reconciliation === 'failed' ? (
+            <>
+              <p>
+                Save outcome is uncertain and Settings could not be reloaded. Do not repeat the save
+                until the authoritative state is available.
+              </p>
+              <button type="button" onClick={() => void reconcileUncertainSave()}>
+                Retry authoritative reload
+              </button>
+            </>
+          ) : (
+            <p>Authoritative Settings reloaded. Review the current values before saving again.</p>
+          )}
+        </div>
+      ) : null}
       <SettingsEditor
-        key={`${query.data.authority}:${query.data.document.revision.toString()}`}
+        key={`${query.data.authority}:${query.data.document.revision.toString()}:${recoveryGeneration.toString()}`}
         view={query.data}
+        saveBlocked={reconciliation === 'checking' || reconciliation === 'failed'}
         onSaved={(value) => {
           queryClient.setQueryData(['settings'], value)
           queryClient.setQueryData(['appearance'], {
             reduced_motion: value.document.reduced_motion,
           })
           setStaleRecovery(false)
+          setReconciliation('idle')
           setSaved(true)
         }}
         onStale={() => {
@@ -389,6 +431,7 @@ export default function SettingsPage() {
           setSaved(false)
           void query.refetch()
         }}
+        onUncertain={() => void reconcileUncertainSave()}
       />
     </>
   )
@@ -396,19 +439,23 @@ export default function SettingsPage() {
 
 const SettingsEditor = ({
   view,
+  saveBlocked,
   onSaved,
   onStale,
+  onUncertain,
 }: {
   view: SettingsView
+  saveBlocked: boolean
   onSaved: (value: SettingsView) => void
   onStale: () => void
+  onUncertain: () => void
 }) => {
   const { http } = useReviewContext()
   const { group: active } = settingsRoute.useSearch()
   const navigate = settingsRoute.useNavigate()
   const [draft, setDraft] = useState<Document>(() => clone(view.document))
   const [secrets, setSecrets] = useState<Record<string, SecretWrite>>({})
-  const [status, setStatus] = useState<'idle' | 'saved' | 'failed'>('idle')
+  const [status, setStatus] = useState<'idle' | 'saved' | 'failed' | 'uncertain'>('idle')
   const [libraryPage, setLibraryPage] = useState(0)
   const statusTarget = useRef<HTMLParagraphElement>(null)
   const mutation = useMutation({
@@ -420,7 +467,13 @@ const SettingsEditor = ({
     },
     onError: (error) => {
       if (error instanceof ApiError && error.status === 409) onStale()
-      else {
+      else if (
+        error instanceof AmbiguousMutationError ||
+        (error instanceof ApiError && (error.status === 0 || error.status >= 500))
+      ) {
+        setStatus('uncertain')
+        onUncertain()
+      } else {
         setStatus('failed')
         requestAnimationFrame(() => statusTarget.current?.focus())
       }
@@ -1073,21 +1126,25 @@ const SettingsEditor = ({
           <p
             ref={statusTarget}
             tabIndex={-1}
-            role={status === 'failed' || errors.length ? 'alert' : 'status'}
+            role={
+              status === 'failed' || status === 'uncertain' || errors.length ? 'alert' : 'status'
+            }
             aria-live="polite"
           >
             {mutation.isPending
               ? 'Saving settings…'
               : status === 'saved'
                 ? 'Saved. Server-authoritative settings are current.'
-                : status === 'failed'
-                  ? 'Nothing changed. Correct the values or try again.'
-                  : (errors[0]?.message ??
-                    (changed ? 'Unsaved settings changes.' : 'Settings match the server.'))}
+                : status === 'uncertain'
+                  ? 'Save outcome uncertain. Waiting for authoritative Settings.'
+                  : status === 'failed'
+                    ? 'The server rejected these values. Nothing was saved.'
+                    : (errors[0]?.message ??
+                      (changed ? 'Unsaved settings changes.' : 'Settings match the server.'))}
           </p>
           <button
             type="button"
-            disabled={!changed || mutation.isPending || errors.length > 0}
+            disabled={!changed || mutation.isPending || saveBlocked || errors.length > 0}
             onClick={() =>
               mutation.mutate({
                 expected_revision: view.document.revision,

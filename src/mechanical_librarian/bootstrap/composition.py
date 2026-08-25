@@ -2303,7 +2303,10 @@ def _compose_cover_considerations(
         avoid_tie_in_branding=review.cover_avoid_tie_in_branding,
         prefer_minimal_composition=review.cover_prefer_minimal_composition,
     )
-    repository.bind_current_cover_policy(policy.reference)
+
+    def bind_policy(policy_reference: str, replay_reference: str) -> None:
+        repository.bind_current_cover_authority(policy_reference, replay_reference)
+
     service = CoverConsiderationService(
         repository,
         read_preview=lambda artifact_id, variant: artifact_store().read_preview_digest(
@@ -2314,8 +2317,9 @@ def _compose_cover_considerations(
         policy=policy,
         reviewer_profile=reviewer_profile,
         reviewer=None if reviewer_profile is None else run_cover_packet_reviewer,
+        bind_policy=bind_policy,
     )
-    repository.bind_current_cover_replay(service.replay_reference)
+    service.update_policy(policy)
     return service
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import threading
 from collections.abc import Callable
+from types import SimpleNamespace
 from typing import cast, get_protocol_members, get_type_hints
 
 import pytest
@@ -10,11 +11,16 @@ import pytest
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
+from mechanical_librarian.application.cover_consideration import (
+    CoverConsiderationService,
+)
+from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.metadata_policy import (
     AutomaticSafetyControls,
     AutomaticSafetyRepository,
     PolicyImpactRepository,
 )
+from mechanical_librarian.application.owner_settings import OwnerSettingsOperations
 from mechanical_librarian.application.review_application import (
     ReviewApplication,
     ReviewApplicationError,
@@ -25,6 +31,7 @@ from mechanical_librarian.application.review_pipeline import (
 )
 from mechanical_librarian.application.review_web import ReviewWebError
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
+from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.interfaces.web import create_review_app
@@ -109,6 +116,119 @@ def test_named_browse_operations_return_bounded_views(
     assert library.counts["all"] == 1
     assert attention.schema_version == "review-attention-v1"
     assert attention.total == 1
+
+
+def test_settings_commit_updates_live_cover_policy_inside_the_application_gate(
+    repository: FakeReviewRepository,
+) -> None:
+    document = OwnerSettingsDocument.model_validate(
+        {
+            "schema_version": "owner-settings-v1",
+            "revision": 2,
+            "connections": [{"name": "primary", "endpoint": "https://example.invalid"}],
+            "libraries": [
+                {
+                    "name": "books",
+                    "connection": "primary",
+                    "library_id": "library",
+                    "media_kind": "ebook",
+                }
+            ],
+            "cover_preferences": {
+                "avoid_promotional_text": True,
+                "avoid_tie_in_branding": True,
+                "prefer_minimal_composition": True,
+            },
+        }
+    )
+
+    class Settings:
+        def read(self):
+            return SimpleNamespace(document=document)
+
+        def write(self, _document, _revision, _secrets):
+            return SimpleNamespace(document=document)
+
+    class Covers:
+        def __init__(self) -> None:
+            self.policy: CoverPolicy | None = None
+
+        def update_policy(self, policy: CoverPolicy) -> None:
+            assert application._gate._is_owned()
+            self.policy = policy
+
+    covers = Covers()
+    application = compose_review_application(
+        state_owner=repository,
+        session_store=repository,
+        case_store=repository,
+        decision_store=repository,
+        library_store=repository,
+        policy_store=repository,
+        verify_password=lambda _: True,
+        clock=lambda: _NOW,
+        session_lifetime_seconds=600,
+        graceful_shutdown_seconds=30,
+        settings=OwnerSettingsOperations(cast("object", Settings())),
+        cover_considerations=cast("CoverConsiderationService", covers),
+    )
+
+    result = application.write_owner_settings(document, 1, ())
+
+    assert result.document == document
+    assert covers.policy == CoverPolicy(True, True, True)
+
+
+def test_live_cover_binding_fault_is_a_fixed_settings_failure(
+    repository: FakeReviewRepository,
+) -> None:
+    document = OwnerSettingsDocument.model_validate(
+        {
+            "schema_version": "owner-settings-v1",
+            "revision": 2,
+            "connections": [{"name": "primary", "endpoint": "https://example.invalid"}],
+            "libraries": [
+                {
+                    "name": "books",
+                    "connection": "primary",
+                    "library_id": "library",
+                    "media_kind": "ebook",
+                }
+            ],
+        }
+    )
+
+    class Settings:
+        def read(self):
+            return SimpleNamespace(document=document)
+
+        def write(self, _document, _revision, _secrets):
+            return SimpleNamespace(document=document)
+
+    class Covers:
+        def update_policy(self, _policy: CoverPolicy) -> None:
+            raise RuntimeError("synthetic binding fault")
+
+    application = compose_review_application(
+        state_owner=repository,
+        session_store=repository,
+        case_store=repository,
+        decision_store=repository,
+        library_store=repository,
+        policy_store=repository,
+        verify_password=lambda _: True,
+        clock=lambda: _NOW,
+        session_lifetime_seconds=600,
+        graceful_shutdown_seconds=30,
+        settings=OwnerSettingsOperations(cast("object", Settings())),
+        cover_considerations=cast("CoverConsiderationService", Covers()),
+    )
+
+    with pytest.raises(ReviewApplicationError) as raised:
+        application.write_owner_settings(document, 1, ())
+
+    assert raised.value.code == "settings_unavailable"
+    assert isinstance(raised.value.__cause__, RuntimeError)
 
 
 def test_session_operations_are_composed_before_transport(

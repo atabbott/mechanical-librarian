@@ -416,6 +416,17 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             raise ValueError("cover replay reference is invalid")
         self._current_cover_replay_reference = reference
 
+    def bind_current_cover_authority(
+        self, policy_reference: str, replay_reference: str
+    ) -> None:
+        """Validate then replace both live cover authority references together."""
+        if re.fullmatch(r"cover_policy_[0-9a-f]{64}", policy_reference) is None:
+            raise ValueError("cover policy reference is invalid")
+        if re.fullmatch(r"cover_replay_[0-9a-f]{64}", replay_reference) is None:
+            raise ValueError("cover replay reference is invalid")
+        self._current_cover_policy_reference = policy_reference
+        self._current_cover_replay_reference = replay_reference
+
     def field_effect_authority_source(
         self, decision: HumanDecision | AutomaticDecision
     ) -> dict[str, object]:

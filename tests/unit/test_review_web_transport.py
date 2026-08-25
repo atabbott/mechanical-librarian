@@ -292,6 +292,27 @@ def test_settings_store_transport_redacts_secret_and_derives_effects(
         },
     )
     assert oversized.status_code == 413
+    for field, changed in (
+        ("mount", "invented"),
+        (
+            "policy_override",
+            {"options": {"date_precision": "full_date"}, "destinations": {}},
+        ),
+    ):
+        forbidden_document = document.model_dump() | {"revision": 2}
+        forbidden_document["libraries"][0][field] = changed
+        forbidden = web.client.patch(
+            "/api/v1/settings",
+            json={
+                "expected_revision": 1,
+                "document": forbidden_document,
+                "secrets": [],
+            },
+            headers={**web.origin, "x-csrf-token": session["csrf_token"]},
+        )
+        assert forbidden.status_code == 422
+        assert forbidden.json()["error"]["code"] == "settings_invalid"
+        assert OwnerSettingsStore(connection).read().document.revision == 1
     response = web.client.patch(
         "/api/v1/settings",
         json={
@@ -324,6 +345,19 @@ def test_settings_store_transport_redacts_secret_and_derives_effects(
     ]
     assert response.json()["secrets"][0]["indicator"] == "Configured · ····5678"
     assert "new-secret" not in response.text
+    OwnerSettingsStore(connection).acknowledge_runtime(2)
+    assert OwnerSettingsStore(connection).read().document.revision == 3
+    stale_after_ack = web.client.patch(
+        "/api/v1/settings",
+        json={
+            "expected_revision": 2,
+            "document": response.json()["document"] | {"revision": 3},
+            "secrets": [],
+        },
+        headers={**web.origin, "x-csrf-token": session["csrf_token"]},
+    )
+    assert stale_after_ack.status_code == 409
+    assert stale_after_ack.json()["error"]["code"] == "settings_stale"
     connection.close()
     unavailable = web.client.get("/api/v1/settings")
     assert unavailable.status_code == 503

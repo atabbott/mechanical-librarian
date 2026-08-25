@@ -153,6 +153,7 @@ class CoverConsiderationService:
         policy: CoverPolicy = CoverPolicy(),
         reviewer_profile: bytes | None = None,
         reviewer: ReviewRunner | None = None,
+        bind_policy: Callable[[str, str], None] | None = None,
     ) -> None:
         self._store = store
         self._read_preview = read_preview
@@ -161,6 +162,19 @@ class CoverConsiderationService:
         self._policy = policy
         self._reviewer_profile = reviewer_profile
         self._reviewer = reviewer
+        self._bind_policy = bind_policy or (lambda _policy, _replay: None)
+
+    def update_policy(self, policy: CoverPolicy) -> None:
+        """Replace the live preference snapshot and its authority references."""
+        if type(policy) is not CoverPolicy:
+            raise CoverConsiderationError("policy")
+        previous = self._policy
+        self._policy = policy
+        try:
+            self._bind_policy(policy.reference, self.replay_reference)
+        except Exception:
+            self._policy = previous
+            raise
 
     @property
     def replay_reference(self) -> str:

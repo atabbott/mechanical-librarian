@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 from pytest import MonkeyPatch
 
+from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.review_sql import (
     _LATEST_PREPARATION_WORK_SQL,
@@ -39,6 +40,7 @@ from mechanical_librarian.application.schema_adoption import (
     SchemaAdoptionRecoveryRequired,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision, decision_actions
+from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from tests.support.automatic_no_change import _automatic_no_change_inputs
@@ -348,6 +350,58 @@ def test_owner_settings_adoption_refuses_wrong_predecessor_and_tampering(
             OWNER_SETTINGS_V1,
         )
     assert tampered.read_bytes() == tampered_before
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    (
+        "UPDATE owner_settings SET document=' '||document",
+        "UPDATE owner_settings SET revision=revision+1",
+        "INSERT INTO owner_setting_secrets VALUES('provider.unknown.key','secret-1234')",
+    ),
+)
+def test_exact_schema_open_and_adoption_refuse_corrupt_owner_settings(
+    tmp_path: Path, tamper: str
+) -> None:
+    database = tmp_path / "application.sqlite3"
+    repository = open_repository(database)
+    repository.close()
+    document = OwnerSettingsDocument.model_validate(
+        {
+            "schema_version": "owner-settings-v1",
+            "revision": 1,
+            "connections": [{"name": "primary", "endpoint": "https://example.invalid"}],
+            "libraries": [
+                {
+                    "name": "books",
+                    "connection": "primary",
+                    "library_id": "library",
+                    "media_kind": "ebook",
+                }
+            ],
+        }
+    )
+    connection = sqlite3.connect(database)
+    connection.execute(
+        "INSERT INTO owner_settings VALUES(1,1,?)",
+        (_canonical_json(document.model_dump()),),
+    )
+    connection.execute(
+        "INSERT INTO owner_setting_secrets VALUES(?,?)",
+        ("connection.primary.key", "synthetic-secret"),
+    )
+    connection.execute(tamper)
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(MetadataReportError, match="incompatible"):
+        open_repository(database, create=False)
+    with pytest.raises(MetadataReportError, match="incompatible"):
+        adopt_schema(
+            database,
+            tmp_path / "noncanonical.before.sqlite3",
+            OWNER_SETTINGS_V1,
+        )
 
 
 def test_exact_current_is_a_verified_noop_without_creating_a_backup(

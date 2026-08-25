@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  AmbiguousMutationError,
   ApiError,
   settingsEndpointValid,
   settingsIntegerValid,
@@ -216,8 +217,80 @@ describe('owner settings route', () => {
     await user.clear(screen.getByDisplayValue('https://library.invalid'))
     await user.type(screen.getByRole('textbox'), 'https://other.invalid')
     await user.click(screen.getByRole('button', { name: 'Save settings' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('Settings changed elsewhere')
+    const staleAlert = await screen.findByRole('alert')
+    expect(staleAlert).toHaveTextContent('Settings changed elsewhere')
+    await waitFor(() => expect(staleAlert).toHaveFocus())
     expect(screen.queryByText('https://other.invalid')).not.toBeInTheDocument()
+  })
+
+  it.each([new AmbiguousMutationError(), new ApiError(502, 'invalid_settings_response')])(
+    'reconciles an uncertain save before confirming authoritative state',
+    async (failure) => {
+      const user = userEvent.setup()
+      const http = createHttp()
+      const reconciled: SettingsView = {
+        ...view(),
+        document: {
+          ...document,
+          revision: 4,
+          connections: [
+            { adapter: 'audiobookshelf', endpoint: 'https://authoritative.invalid', name: 'home' },
+          ],
+        },
+      }
+      http.getSettings = vi.fn().mockResolvedValueOnce(view()).mockResolvedValueOnce(reconciled)
+      http.writeSettings = vi.fn(async () => {
+        throw failure
+      })
+      renderRoute('/settings?group=connection', http)
+      const endpoint = await screen.findByRole('textbox', { name: 'Audiobookshelf endpoint' })
+      await waitFor(() =>
+        expect(globalThis.document.getElementById('main-content')).toHaveAttribute(
+          'data-restored-path',
+          '/settings',
+        ),
+      )
+      await user.click(endpoint)
+      await user.clear(endpoint)
+      await user.type(endpoint, 'https://submitted.invalid')
+      await user.click(screen.getByRole('button', { name: 'Save settings' }))
+
+      const recovered = await screen.findByText(
+        'Authoritative Settings reloaded. Review the current values before saving again.',
+      )
+      expect(recovered.closest('[role="alert"]')).toHaveFocus()
+      expect(screen.getByRole('textbox', { name: 'Audiobookshelf endpoint' })).toHaveValue(
+        'https://authoritative.invalid',
+      )
+      expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled()
+      expect(screen.queryByText(/Nothing changed/)).not.toBeInTheDocument()
+      expect(http.getSettings).toHaveBeenCalledTimes(2)
+      expect(http.writeSettings).toHaveBeenCalledOnce()
+    },
+  )
+
+  it('blocks repeat mutation when uncertain reconciliation cannot reload', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi
+      .fn()
+      .mockResolvedValueOnce(view())
+      .mockRejectedValue(new ApiError(503, 'settings_unavailable'))
+    http.writeSettings = vi.fn(async () => {
+      throw new ApiError(503, 'settings_unavailable')
+    })
+    renderRoute('/settings?group=connection', http)
+    const endpoint = await screen.findByRole('textbox', { name: 'Audiobookshelf endpoint' })
+    await user.clear(endpoint)
+    await user.type(endpoint, 'https://submitted.invalid')
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+
+    const uncertain = await screen.findByText(/Save outcome is uncertain and Settings could not/)
+    expect(uncertain.closest('[role="alert"]')).toHaveFocus()
+    expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Retry authoritative reload' })).toBeVisible()
+    expect(screen.queryByText(/Nothing changed/)).not.toBeInTheDocument()
+    expect(http.writeSettings).toHaveBeenCalledOnce()
   })
 
   it('associates every editable validation family with its named field', async () => {

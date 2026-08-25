@@ -2111,11 +2111,14 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     ),
                 )
                 page.get_by_role("button", name="Save settings").click()
-                failed_status = page.get_by_text(
-                    "Nothing changed. Correct the values or try again."
+                recovered_status = page.locator(".settings-stale-recovery").filter(
+                    has_text="Authoritative Settings reloaded"
                 )
-                expect(failed_status).to_be_visible()
-                expect(failed_status).to_be_focused()
+                expect(recovered_status).to_be_visible()
+                expect(recovered_status).to_be_focused()
+                expect(
+                    page.get_by_role("button", name="Save settings")
+                ).to_be_disabled()
                 assert errors == [
                     "Failed to load resource: the server responded with a status of 503 "
                     "(Service Unavailable)"
