@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query'
-import { Link, useNavigate } from '@tanstack/react-router'
+import { Link, useNavigate, useRouterState } from '@tanstack/react-router'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent, SyntheticEvent } from 'react'
 
@@ -895,6 +895,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const advancePresentation = useRef<{
     destination: string
     source: string
+    sourceRevision: string
     target: string
     resolve: () => void
   } | null>(null)
@@ -961,6 +962,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const [searchPending, setSearchPending] = useState(false)
   const urlQuery = search.q ?? ''
   const searchIdentity = librarySearchIdentity(search)
+  const locationRevision = useRouterState({
+    select: (state) =>
+      state.location.state.__TSR_key ?? state.location.state.key ?? state.location.href,
+  })
   const queryText = searchPending || typedQuery.echo === urlQuery ? typedQuery.text : urlQuery
   const selectedReviewCaseId = search.preview ?? ''
   useEffect(() => {
@@ -1267,6 +1272,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
             advancePresentation.current = {
               destination: field,
               source: searchIdentity,
+              sourceRevision: locationRevision,
               target: librarySearchIdentity({ ...search, field }),
               resolve,
             }
@@ -1376,10 +1382,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     if (
       (searchIdentity === presentation.target &&
         presentation.destination === selected?.destination) ||
-      (searchIdentity !== presentation.source && searchIdentity !== presentation.target)
+      locationRevision !== presentation.sourceRevision
     )
       releaseAdvancePresentation()
-  }, [releaseAdvancePresentation, searchIdentity, selected?.destination])
+  }, [locationRevision, releaseAdvancePresentation, searchIdentity, selected?.destination])
   useEffect(() => releaseAdvancePresentation, [releaseAdvancePresentation])
   useEffect(() => {
     const rail = fieldRail.current

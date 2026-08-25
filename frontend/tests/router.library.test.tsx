@@ -1501,7 +1501,7 @@ describe('Library route', () => {
     )
   })
 
-  it('settles an owner advance when a same-case route supersedes its full search', async () => {
+  it('settles an owner advance when an exact-source route supersedes its held target', async () => {
     const user = userEvent.setup()
     const title = detail.fields[0]
     if (!title) throw new Error('workspace fixture requires a title field')
@@ -1558,20 +1558,30 @@ describe('Library route', () => {
       }),
     }
     const { router } = renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    const sourceRevision = router.state.location.state.__TSR_key
+    let releaseTarget: (() => void) | undefined
+    const targetNavigation = new Promise<void>((resolve) => {
+      releaseTarget = resolve
+    })
+    const target = vi.spyOn(router, 'navigate').mockImplementationOnce(async (options) => {
+      if (typeof options.search === 'function') options.search(router.state.location.search)
+      await targetNavigation
+    })
     await user.click(await screen.findByRole('button', { name: 'Choose proposed value: New title' }))
     await waitFor(() => expect(reads).toBe(2))
     await act(async () => {
-      await router.navigate({
-        to: '/library',
-        search: { lens: 'no_attention_needed', q: 'other', preview: 'case-1', field: 'title' },
-      })
       releaseRefresh?.(current)
     })
+    await waitFor(() => expect(target).toHaveBeenCalledOnce())
+    await act(async () => {
+      router.history.push('/library?lens=all&preview=case-1&field=title')
+      releaseTarget?.()
+    })
 
-    await waitFor(() => expect(http.getLibrary).toHaveBeenCalledTimes(3))
+    expect(router.state.location.state.__TSR_key).not.toBe(sourceRevision)
+    await waitFor(() => expect(http.getLibrary).toHaveBeenCalledTimes(2))
     expect(router.state.location.search).toMatchObject({
-      lens: 'no_attention_needed',
-      q: 'other',
+      lens: 'all',
       preview: 'case-1',
     })
     expect(screen.queryByText('The decision was not recorded. Your choice is unchanged.')).toBeNull()
