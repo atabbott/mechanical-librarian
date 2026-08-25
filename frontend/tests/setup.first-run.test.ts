@@ -263,9 +263,9 @@ describe('shipped first-run setup script', () => {
 
       const kickoff = await screen.findByRole('button', { name: 'Kick off preparation' })
       const ledger = document.querySelector('#setup-ledger')
-      if (!ledger) throw new Error('setup ledger missing')
+      if (!(ledger instanceof HTMLElement)) throw new Error('setup ledger missing')
       const kickoffRow = within(ledger).getByText('Kick off preparation').closest('li')
-      if (!kickoffRow) throw new Error('kickoff ledger row missing')
+      if (!(kickoffRow instanceof HTMLElement)) throw new Error('kickoff ledger row missing')
       expect(kickoffRow).toHaveAttribute('aria-current', 'step')
       expect(within(kickoffRow).getByText('→')).toBeVisible()
       expect(screen.getAllByRole('button', { name: 'Change' })).toHaveLength(4)
