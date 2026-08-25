@@ -54,6 +54,11 @@ from mechanical_librarian.application.operations import (
     StageTimer,
     support_preparation_incidents,
 )
+from mechanical_librarian.application.owner_settings import (
+    FileOwnerSettingsRepository,
+    OwnerSettingsOperations,
+    file_settings_projection,
+)
 from mechanical_librarian.application.review_application import (
     compose_review_application,
 )
@@ -619,6 +624,7 @@ def _start_deterministic_installed_server(
             ),
         )
     )
+    settings_projection = file_settings_projection(configuration)
     application = compose_review_application(
         state_owner=web_state_owner,
         session_store=web_state_owner,
@@ -650,6 +656,11 @@ def _start_deterministic_installed_server(
         ),
         cover_considerations=_compose_cover_considerations(
             web_state_owner, artifacts, review
+        ),
+        settings=OwnerSettingsOperations(
+            FileOwnerSettingsRepository(
+                settings_projection.document, settings_projection.secrets
+            )
         ),
     )
     server = uvicorn.Server(
@@ -1127,8 +1138,15 @@ class _InstalledPreparationRun:
         try:
             page.goto(self._origin + "/login")
             page.get_by_label("Password").fill("synthetic password")
-            page.get_by_role("button", name="Sign in").click()
-            page.wait_for_url(self._origin + "/library")
+            with page.expect_response("**/api/v1/appearance") as appearance_info:
+                page.get_by_role("button", name="Sign in").click()
+            appearance = appearance_info.value
+            assert appearance.status == 200, (
+                f"global appearance request returned {appearance.status}"
+            )
+            page.wait_for_url(
+                re.compile(rf"{re.escape(self._origin)}/library(?:\?.*)?$")
+            )
             page.get_by_role("link", name="Activity", exact=True).click()
             page.get_by_role(
                 "heading", name="Activity and recovery", exact=True
