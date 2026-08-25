@@ -898,6 +898,8 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 # values already supplied by the current case.  It protects
                 # restoration of recorded automatic choices, including cover
                 # values, without widening the qualified-policy envelope.
+                read_only_title_candidate = False
+
                 def automatic_projection(route) -> None:
                     response = route.fetch()
                     payload = response.json()
@@ -933,6 +935,24 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                                 if field["destination"] == "cover"
                                 else field["proposed_values"][0]
                             )
+                        read_only_candidate = (
+                            field["destination"] == "title"
+                            and read_only_title_candidate
+                        )
+                        if read_only_candidate:
+                            field["human_decision"] = None
+                            for context in field["choice_contexts"]:
+                                context["evidence"] = [
+                                    {
+                                        "source": (
+                                            "Automatic candidate source"
+                                            if context["selection"] == "proposed"
+                                            else "Automatic current source"
+                                        ),
+                                        "observation": "Synthetic automatic evidence.",
+                                        "role": "external_corroboration",
+                                    }
+                                ]
                         field.update(
                             automatic_decision={
                                 "candidate_id": (
@@ -954,7 +974,10 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                                 "Automatic handling recorded this field; "
                                 "you may inspect or override it."
                             ),
-                            editable=True,
+                            decision_actions=[]
+                            if read_only_candidate
+                            else field["decision_actions"],
+                            editable=not read_only_candidate,
                             needs_attention=False,
                             navigation_role="inspect",
                         )
@@ -1002,6 +1025,29 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 expect(series_current).to_have_attribute("aria-pressed", "true")
                 assert series_current.locator("xpath=..").evaluate(
                     "node => node.classList.contains('is-selected')"
+                )
+                read_only_title_candidate = True
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
+                page.get_by_role("heading", name="Title", exact=True).wait_for()
+                recorded = page.get_by_label("Title recorded outcome")
+                recorded.get_by_text("Resolved automatically", exact=True).wait_for()
+                expect(recorded.get_by_text("Chosen value", exact=True)).to_be_visible()
+                expect(
+                    recorded.get_by_text("Synthetic title revised", exact=True)
+                ).to_be_visible()
+                assert (
+                    page.get_by_role(
+                        "button", name="Choose proposed value", exact=False
+                    ).count()
+                    == 0
+                )
+                recorded.get_by_role("button", name="Evidence", exact=True).click()
+                recorded.get_by_text(
+                    "Automatic candidate source", exact=True
+                ).wait_for()
+                assert (
+                    recorded.get_by_text("Automatic current source", exact=True).count()
+                    == 0
                 )
                 page.goto(f"{origin}/library?lens=all&preview={case_id}&field=cover")
                 page.get_by_role("button", name="Prepare cover comparison").click()

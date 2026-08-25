@@ -2943,15 +2943,36 @@ def test_shadow_history_orders_human_and_preview_events_by_time() -> None:
 def test_history_orders_same_timestamp_human_and_cross_kind_events_stably() -> None:
     with tempfile.TemporaryDirectory() as temporary:
         repository = open_repository(Path(temporary) / "reports.sqlite")
-        case_id = _case(repository)
+        report = _bibliographic_report(
+            current_title="Secret History",
+            providers=(
+                _source(
+                    "catalogue",
+                    "edition-1",
+                    titles=("Secret History: Mistborn",),
+                    subtitle="Mistborn novella",
+                    series="Mistborn",
+                ),
+            ),
+        )
+        repository.publish(report, lambda: True)
+        proposal_set = evaluate_report(report)
+        repository.publish_proposal(proposal_set)
+        case_id = json.loads(repository.admit_review_case(proposal_set))[
+            "review_case_id"
+        ]
         case = ReviewCase.create_from_data(
             json.loads(repository.get_review_case(case_id))["case"]
         )
-        proposals = [value for value in case.proposals if decision_actions(value)]
-        assert len(proposals) == 1
+        proposals = {
+            value["destination"]: value
+            for value in case.proposals
+            if decision_actions(value)
+        }
+        assert {"title", "subtitle"}.issubset(proposals)
         decisions = []
-        for index in range(1, 3):
-            proposal = proposals[0]
+        for index, destination in enumerate(("title", "subtitle"), 1):
+            proposal = proposals[destination]
             alternative = next(
                 value
                 for value in proposal["result"]["alternatives"]
@@ -2994,6 +3015,10 @@ def test_history_orders_same_timestamp_human_and_cross_kind_events_stably() -> N
             "automatic_decision_recorded",
             "shadow_preview_recorded",
         }.issubset({event["kind"] for event in first})
+        assert [event["kind"] for event in first[:2]] == [
+            "shadow_preview_recorded",
+            "automatic_decision_recorded",
+        ]
         repository.close()
 
 

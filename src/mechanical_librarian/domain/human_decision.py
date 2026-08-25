@@ -84,6 +84,12 @@ def _validate_retained_decision_action(
     selected_value: dict[str, object] | None,
 ) -> None:
     """Validate an immutable historical decision without reopening its command envelope."""
+    if outcome != "accept":
+        # Retained non-accept facts retain the established command validator's
+        # exact rejection identity.  Only historical accepts need the broader
+        # all-alternative membership check below.
+        validate_decision_action(proposal, outcome, selected_value)
+        return
     if outcome == "accept":
         result = proposal.get("result")
         alternatives = result.get("alternatives") if type(result) is dict else None
@@ -98,11 +104,6 @@ def _validate_retained_decision_action(
             ]
         ):
             raise HumanDecisionError("invalid_selection")
-    elif outcome in {"keep_current", "reject"}:
-        if not _actionable(proposal) or selected_value is not None:
-            raise HumanDecisionError("invalid_selection")
-    else:
-        raise HumanDecisionError("unsupported")
 
 
 def _actionable(proposal: Mapping[str, object]) -> bool:

@@ -141,6 +141,29 @@ def test_retained_preservation_accept_remains_readable_without_reopening_command
     assert rejected.value.code == "unsupported"
 
 
+@pytest.mark.parametrize("outcome", ("keep_current", "reject"))
+def test_retained_nonaccept_keeps_the_command_validator_error_identity(
+    case: ReviewCase, proposal: dict[str, object], outcome: str
+) -> None:
+    decision = _create(case, proposal, outcome, None)
+    resolved = json.loads(json.dumps(proposal))
+    resolved["result"]["outcome"] = "keep"
+    retained = type(
+        "RetainedCase",
+        (),
+        {
+            "review_case_id": case.review_case_id,
+            "target_fingerprint": case.target_fingerprint,
+            "proposals": (resolved,),
+        },
+    )()
+
+    with pytest.raises(HumanDecisionError) as rejected:
+        decision.validate_for(retained)
+
+    assert rejected.value.code == "unsupported"
+
+
 @pytest.mark.parametrize(
     ("outcome", "manual_required", "alternatives", "expected"),
     (

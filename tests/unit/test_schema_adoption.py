@@ -321,10 +321,14 @@ def test_adoption_and_current_case_read_retain_a_historical_preservation_accept(
     repository = open_repository(database, create=False)
     try:
         decisions = repository.get_review_case_decisions(case_id)
-        assert HumanDecision.from_json(decisions[0]).decision_id == decision_id
+        decision = HumanDecision.from_json(decisions[0])
+        assert decision.decision_id == decision_id
         fields = InspectCurrentReviewCase(repository).run(case_id)["fields"]
         title = next(value for value in fields if value["destination"] == "title")
         assert title["human_decision"]["decision_id"] == decision_id
+        source = repository.field_effect_authority_source(decision)
+        assert source["destination"] == "title"
+        assert source["decision_value"] == decision.selected_value
     finally:
         repository.close()
 
