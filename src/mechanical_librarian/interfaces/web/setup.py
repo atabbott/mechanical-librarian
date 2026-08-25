@@ -7,7 +7,7 @@ from typing import Literal, Protocol
 
 from fastapi import Cookie, FastAPI, Header, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, TypeAdapter
-from starlette.responses import HTMLResponse, PlainTextResponse
+from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from mechanical_librarian.application.review_web import (
     OwnerSessionService,
@@ -124,6 +124,20 @@ class _KickOffRequest(BaseModel):
     expected_revision: StrictInt = Field(ge=1)
 
 
+def _secure_setup_response(response: Response) -> Response:
+    response.headers["cache-control"] = "private, no-store"
+    response.headers["content-security-policy"] = (
+        "default-src 'none'; script-src 'self'; style-src 'self'; "
+        "img-src 'self'; connect-src 'self'; form-action 'self'; "
+        "base-uri 'none'; frame-ancestors 'none'"
+    )
+    response.headers["referrer-policy"] = "no-referrer"
+    response.headers["x-content-type-options"] = "nosniff"
+    response.headers["x-frame-options"] = "DENY"
+    response.headers["strict-transport-security"] = "max-age=31536000"
+    return response
+
+
 def create_setup_app(
     sessions: OwnerSessionService,
     state: SetupStateStore,
@@ -151,21 +165,16 @@ def create_setup_app(
     ) -> Response:
         path = request.url.path
         response: Response
-        if app.state.setup_complete and path != "/health/ready":
-            response = PlainTextResponse("not found\n", status_code=404)
-        else:
-            response = await call_next(request)
-        response.headers["cache-control"] = "private, no-store"
-        response.headers["content-security-policy"] = (
-            "default-src 'none'; script-src 'self'; style-src 'self'; "
-            "img-src 'self'; connect-src 'self'; form-action 'self'; "
-            "base-uri 'none'; frame-ancestors 'none'"
-        )
-        response.headers["referrer-policy"] = "no-referrer"
-        response.headers["x-content-type-options"] = "nosniff"
-        response.headers["x-frame-options"] = "DENY"
-        response.headers["strict-transport-security"] = "max-age=31536000"
-        return response
+        try:
+            if app.state.setup_complete and path != "/health/ready":
+                response = PlainTextResponse("not found\n", status_code=404)
+            else:
+                response = await call_next(request)
+        except Exception:
+            response = JSONResponse(
+                {"detail": {"error": "unavailable"}}, status_code=500
+            )
+        return _secure_setup_response(response)
 
     @app.get("/health/ready", response_class=PlainTextResponse)
     def ready() -> str:

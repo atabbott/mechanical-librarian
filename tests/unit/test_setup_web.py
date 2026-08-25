@@ -88,6 +88,11 @@ class _State:
         self.promoted = True
 
 
+class _FailingState(_State):
+    def read(self, _bootstrap: str) -> SetupStateDocument:
+        raise RuntimeError("private failure detail")
+
+
 class _Connection:
     def __init__(self, state: _State) -> None:
         self.state = state
@@ -282,6 +287,39 @@ def test_every_setup_response_carries_the_normal_hsts_policy(
 
     response = client.request(method, path)
 
+    assert response.headers["strict-transport-security"] == "max-age=31536000"
+
+
+def test_unexpected_setup_failure_returns_fixed_secure_response() -> None:
+    verifier = PasswordHasher().hash("correct horse battery staple")
+    sessions = OwnerSessionService(
+        _Sessions(),
+        owner_password_verifier(verifier),
+        lambda: 1_000,
+        3,
+        lambda _n: "x" * 32,
+    )
+    client = TestClient(
+        create_setup_app(sessions, _FailingState(), verifier),
+        raise_server_exceptions=False,
+    )
+
+    response = client.get(
+        "/api/setup/state", headers={"cookie": "ml_session=surviving-session"}
+    )
+
+    assert response.status_code == 500
+    assert response.text == '{"detail":{"error":"unavailable"}}'
+    assert "private failure detail" not in response.text
+    assert response.headers["cache-control"] == "private, no-store"
+    assert response.headers["content-security-policy"] == (
+        "default-src 'none'; script-src 'self'; style-src 'self'; "
+        "img-src 'self'; connect-src 'self'; form-action 'self'; "
+        "base-uri 'none'; frame-ancestors 'none'"
+    )
+    assert response.headers["referrer-policy"] == "no-referrer"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
     assert response.headers["strict-transport-security"] == "max-age=31536000"
 
 
