@@ -97,6 +97,8 @@ describe('Application shell', () => {
         'Preparation complete · 7 unique works checked, including work that could not finish.',
       ),
     ).toBeVisible()
+    expect(screen.getByText('Preparation is complete. Review your ready work below.')).toBeVisible()
+    expect(screen.queryByText(/Preparation continues here/u)).toBeNull()
   })
 
   it('refreshes active projections when passive preparation progress changes', async () => {

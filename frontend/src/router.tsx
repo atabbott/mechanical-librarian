@@ -464,7 +464,9 @@ export const FirstBootHandover = () => {
         </h2>
         <p>
           {ready > 0
-            ? 'Preparation continues here as more work becomes ready.'
+            ? terminal
+              ? 'Preparation is complete. Review your ready work below.'
+              : 'Preparation continues here as more work becomes ready.'
             : 'No work became ready during this preparation. Review the recorded failures and recovery below.'}
         </p>
         {data.first_boot_complete && typeof data.first_boot_works === 'number' ? (

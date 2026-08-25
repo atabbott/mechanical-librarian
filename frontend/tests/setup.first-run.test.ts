@@ -194,11 +194,37 @@ describe('shipped first-run setup script', () => {
   })
 
   it.each([
-    ['Your first work is ready', 1, false],
-    ['First preparation is complete', 0, true],
+    [
+      'Your first work is ready',
+      1,
+      false,
+      false,
+      'Open the workspace while preparation continues.',
+    ],
+    [
+      'Preparation needs attention',
+      0,
+      false,
+      true,
+      'Open the workspace to review the paused connection and use Check connection again.',
+    ],
+    [
+      'Your first work is ready',
+      1,
+      true,
+      false,
+      'Preparation is complete. Open the workspace to review your ready work.',
+    ],
+    [
+      'First preparation is complete',
+      0,
+      true,
+      false,
+      'No work became ready. Open the workspace to review the recorded failures and recovery.',
+    ],
   ] as const)(
     'offers the setup bridge at %s without navigating',
-    async (title, ready, terminal) => {
+    async (title, ready, terminal, actionable, expectedCopy) => {
       const previousSetInterval = globalThis.setInterval
       const previousClearInterval = globalThis.clearInterval
       vi.stubGlobal(
@@ -215,7 +241,7 @@ describe('shipped first-run setup script', () => {
           return response({ message: 'Restarting into the normal workspace.' })
         if (url === '/api/v1/review-preparation')
           return response({
-            actionable: terminal,
+            actionable,
             first_boot_complete: terminal,
             libraries: [
               {
@@ -224,20 +250,29 @@ describe('shipped first-run setup script', () => {
                 total: 1,
               },
             ],
-            paused: false,
+            paused: actionable,
           })
-        return response(setupState('kick_off'))
+        return response(
+          setupState('kick_off', {
+            completed_steps: ['claim', 'connect', 'providers', 'libraries', 'mounts'],
+          }),
+        )
       })
       vi.stubGlobal('fetch', fetch)
       runSetup()
 
-      fireEvent.click(await screen.findByRole('button', { name: 'Kick off preparation' }))
+      const kickoff = await screen.findByRole('button', { name: 'Kick off preparation' })
+      expect(screen.getAllByRole('button', { name: 'Change' })).toHaveLength(4)
+      fireEvent.click(kickoff)
 
       expect(await screen.findByRole('heading', { name: title })).toBeVisible()
+      expect(screen.getByText(expectedCopy)).toBeVisible()
       expect(screen.getByRole('link', { name: 'Open workspace' })).toHaveAttribute(
         'href',
         '/library?lens=all',
       )
+      expect(screen.queryByRole('button', { name: 'Change' })).toBeNull()
+      expect(screen.queryAllByRole('button')).toHaveLength(0)
       vi.stubGlobal('setInterval', previousSetInterval)
       vi.stubGlobal('clearInterval', previousClearInterval)
     },
