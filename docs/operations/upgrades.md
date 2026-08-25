@@ -15,6 +15,18 @@ The `fixed-conservative-v9` proposal contract is not an exact predecessor of
 the installed v10 contract: its persisted decisions can disagree. It is rejected
 at bootstrap and requires a clean rebuild.
 
+The `fixed-conservative-v11` proposal contract is likewise not an exact
+predecessor of the installed v12 contract: v12 elects locally attested
+subtitles that v11 left unresolved, so persisted proposals can disagree. The
+shadow decision policy moved to `deterministic-shadow-decision-policy-v9` in
+the same increment: the subtitle destination's shadow outcome is now owned by
+the qualified subtitle category whenever it routes to Automatic and no
+title-combination candidate acts. A v11
+database is rejected at bootstrap and requires a clean rebuild. The
+`review-owner-decision-actions-v1` adoption plan below now validates only a
+predecessor already carrying the v12 proposals contract; a pre-#830 database
+still on v11 cannot adopt into this build and also requires a clean rebuild.
+
 The pre-release review-preparation claim index now orders each library's queued
 cohort by its persisted discovery ordinal. The #826 immediate predecessor
 already contains the field-fact objects and still carries the historical

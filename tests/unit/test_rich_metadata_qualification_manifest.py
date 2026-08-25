@@ -55,6 +55,7 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
         "series:primary_narrative",
         "series:source_order",
         "series:all_qualified",
+        "subtitle:fill_empty",
         "tags:fill_empty",
         "tags:add",
         "tags:replace",
@@ -64,19 +65,19 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     assert passing == set(manifest["passing_automatic_options"])
     assert ["explicit:unsupported"] == manifest["human_only_options"]
     assert ["narrators", "cover"] == manifest["excluded_destinations"]
-    assert 7 == manifest["candidate_execution_count"]
+    assert 10 == manifest["candidate_execution_count"]
     assert {
         "evaluated_reports": 49,
         "exposure_unit": "case_field_option",
         "genres_fill_empty_correct_predictions_by_state": {
-            "empty": 4,
-            "missing": 4,
-            "null": 4,
+            "empty": 5,
+            "missing": 5,
+            "null": 5,
         },
         "genres_fill_empty_predictions_by_state": {
-            "empty": 4,
-            "missing": 4,
-            "null": 4,
+            "empty": 5,
+            "missing": 5,
+            "null": 5,
         },
         "genres_fill_empty_target_states": ["missing", "null", "empty"],
         "network_access": False,
@@ -84,6 +85,17 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
         "replayed_provider_requests": 421,
         "subjective_field_truth_model": "exact_work_bound_source_projection",
         "series_truth_model": "valid_membership_with_preferred_value",
+        "subtitle_fill_empty_correct_predictions_by_state": {
+            "empty": 4,
+            "missing": 4,
+            "null": 4,
+        },
+        "subtitle_fill_empty_predictions_by_state": {
+            "empty": 4,
+            "missing": 4,
+            "null": 4,
+        },
+        "subtitle_fill_empty_target_states": ["missing", "null", "empty"],
         "subtitle_truth_model": "ebook_manifestation_bibliographic_subtitle",
         "unseen_holdout_required": False,
     } == manifest["evidence_method"]
@@ -102,7 +114,6 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
         if entry["disposition"] == "passing_human_only"
     }
     assert {
-        "subtitle:fill_empty",
         "subtitle:corroborated_split",
         "description_fill:google_visible_text",
     } == {
@@ -125,7 +136,6 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
         - passing
         - {"explicit:unsupported"}
         - {
-            "subtitle:fill_empty",
             "subtitle:corroborated_split",
             "description_fill:google_visible_text",
         }
@@ -184,7 +194,15 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     )
     genre_fill = subjective["genres:fill_empty"]
     assert 147 == genre_fill["eligible_opportunities"]
-    assert 12 == genre_fill["metrics"]["automatic_predictions"]
+    assert 15 == genre_fill["metrics"]["automatic_predictions"]
+    subtitle_fill = {
+        entry["identity"]: entry
+        for entry in manifest["options"]
+        if entry["identity"] == "subtitle:fill_empty"
+    }["subtitle:fill_empty"]
+    assert 147 == subtitle_fill["eligible_opportunities"]
+    assert 12 == subtitle_fill["metrics"]["automatic_predictions"]
+    assert 1.0 == subtitle_fill["metrics"]["automatic_precision"]
 
 
 def test_candidate_exposes_only_closed_aggregate_contract_data() -> None:
@@ -282,6 +300,7 @@ def test_f19a_authority_is_preserved_and_exact_f20_is_added() -> None:
         "series:primary_narrative",
         "series:source_order",
         "series:all_qualified",
+        "subtitle:fill_empty",
         "tags:fill_empty",
         "tags:add",
         "tags:replace",
@@ -294,6 +313,7 @@ def test_f19a_authority_is_preserved_and_exact_f20_is_added() -> None:
         "language_rendering",
         "contributor_names",
         "publisher_preference",
+        "subtitle",
         "series",
         "genres",
         "tags",
@@ -302,10 +322,12 @@ def test_f19a_authority_is_preserved_and_exact_f20_is_added() -> None:
     } == QUALIFIED_AUTOMATIC
     policy = resolve_policy(MetadataPolicyProfile.builtin(), "library")
     assert "unsupported" == policy.qualification("explicit")
+    assert "available" == policy.qualification("subtitle")
     assert "available" == policy.qualification("series")
     assert "available" == policy.qualification("description_fill")
     assert "available" == policy.qualification("isbn_form")
     for field in set(RICH_FIELDS[:-1]) - {
+        "subtitle",
         "series",
         "genres",
         "description_fill",
@@ -329,6 +351,7 @@ def test_runtime_envelope_pins_every_terminal_disposition_and_authority() -> Non
             "series:primary_narrative",
             "series:source_order",
             "series:all_qualified",
+            "subtitle:fill_empty",
             "tags:fill_empty",
             "tags:add",
             "tags:replace",

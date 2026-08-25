@@ -2145,6 +2145,13 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             "button", name="Identity"
         ).click()
         expect(page.locator("#policy-identity")).to_be_focused()
+        subtitle_policy = page.get_by_role("region", name="Subtitle", exact=True)
+        expect(subtitle_policy.get_by_role("button", name="Automatic")).to_be_enabled()
+        assert "Automatic mode not supported" not in subtitle_policy.inner_text()
+        expect(
+            subtitle_policy.get_by_role("combobox", name="Subtitle representation")
+        ).to_have_text("Fill only when empty")
+        capture_visual_proof("policy-subtitle-automatic")
         page.locator(".cm-policy-finish").get_by_text(
             "Draft matches the active policy", exact=True
         ).wait_for()

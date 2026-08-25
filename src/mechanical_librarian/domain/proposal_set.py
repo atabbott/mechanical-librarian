@@ -62,7 +62,7 @@ if TYPE_CHECKING:
     from mechanical_librarian.domain.cover_evidence import CoverArtifact
 
 PROPOSAL_SCHEMA = "proposal-set-v5"
-POLICY_VERSION = "fixed-conservative-v11"
+POLICY_VERSION = "fixed-conservative-v12"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -204,6 +204,7 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
             ("unique_safe_cover",),
             ("unique_typed_candidate",),
             ("explicit_author_corroborates_untyped_creator",),
+            ("local_attested_subtitle",),
         }
     ),
     ProposalOutcome.ACCEPTABLE_CHOICE: frozenset({("field_policy_acceptable_choice",)}),
@@ -1048,6 +1049,27 @@ def evaluate_report(
                 ("generic_provider_subtitle",),
                 _dependencies(destination),
             )
+        if (
+            destination is TargetDestination.SUBTITLE
+            and result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+            and result.reasons == ("competing_evidence",)
+            and targets[destination].state
+            in {
+                TargetFieldState.MISSING,
+                TargetFieldState.NULL,
+                TargetFieldState.EMPTY,
+            }
+            and (attested := _locally_attested_subtitle(report, result.alternatives))
+            is not None
+        ):
+            result = ProposalResult(
+                destination,
+                ProposalOutcome.PROPOSE_CHANGE,
+                (attested,),
+                attested.alternative_id,
+                ("local_attested_subtitle",),
+                _dependencies(destination),
+            )
         results[destination] = _apply_policy_destination(result, ignored)
     publication = _publication_results(report, targets)
     results.update(
@@ -1220,6 +1242,48 @@ def _generic_provider_subtitle(
         )
         and _comparison(destination, value) in _GENERIC_PROVIDER_SUBTITLES
     )
+
+
+def _locally_attested_subtitle(
+    report: MetadataReport, alternatives: tuple[ProposalAlternative, ...]
+) -> ProposalAlternative | None:
+    """Elect the one competing subtitle the book's own metadata attests.
+
+    Provider catalogues disagree on how a combined title splits; the packaged
+    subtitle claim records the printed form, so among competing candidates the
+    one it matches exactly is the safe election. Zero or multiple attested
+    values keep the choice with the owner.
+    """
+    attested = {
+        normalize_title(observed).casefold()
+        for claim in report.local_claims
+        if claim.kind is ClaimKind.SUBTITLE
+        and claim.state is FieldState.VALID
+        and type(observed := claim.canonical or claim.observed) is str
+        and observed
+    }
+    if not attested:
+        return None
+    matching = tuple(
+        alternative
+        for alternative in alternatives
+        if alternative.value.kind is ProposalValueKind.TEXT
+        and type(alternative.value.value) is str
+        and normalize_title(alternative.value.value).casefold() in attested
+    )
+    distinct = {
+        normalize_title(cast(str, alternative.value.value)).casefold()
+        for alternative in matching
+    }
+    if len(distinct) != 1:
+        return None
+    # Elect only a provider-backed candidate: subtitle observations built from
+    # the book's own packaged claims carry work scope, and the local claim is
+    # the corroboration, never the elected provider value itself.
+    for alternative in matching:
+        if alternative.scope is ProposalScope.EDITION:
+            return alternative
+    return None
 
 
 def _has_generic_provider_subtitle(report: MetadataReport) -> bool:

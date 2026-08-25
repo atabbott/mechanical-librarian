@@ -52,7 +52,7 @@ _DERIVED_TABLES = {
     "review_case_field_facts",
 }
 _TARGET_SCHEMA_OBJECTS_SHA256 = (
-    "d90adfee797f272e83d56f884fa68d42e0b223b7b7290249d943255a100c7f74"
+    "68ff762e845010e297c3656d8959d612cec09afc5976f22500b07aaa9c574eed"
 )
 
 
