@@ -87,6 +87,7 @@ from mechanical_librarian.application.review_pipeline import (
     PipelineAction,
     PipelineProgress,
     TargetConnectionCondition,
+    is_first_boot_scan_id,
 )
 from mechanical_librarian.application.review_web import (
     CurrentReviewCaseSnapshot,
@@ -890,9 +891,16 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         library_id: str,
         producer_fingerprint: str,
         requested_at: int,
+        *,
+        first_boot: bool = False,
     ) -> PipelineProgress:
         return self._review_scans.request_review_scan(
-            connection, library, library_id, producer_fingerprint, requested_at
+            connection,
+            library,
+            library_id,
+            producer_fingerprint,
+            requested_at,
+            first_boot=first_boot,
         )
 
     def review_pipeline_progress(
@@ -1862,13 +1870,18 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         """The setup-only composition is the sole caller of this incomplete-state port."""
         return SetupStateStore(self._connection)
 
-    def has_review_preparation_history(self) -> bool:
-        """Identify the durable preparation started by store-authority kickoff."""
-        return (
-            self._connection.execute(
-                "SELECT 1 FROM review_preparation_scans LIMIT 1"
-            ).fetchone()
-            is not None
+    def has_first_boot_preparation(self) -> bool:
+        """Read explicit setup-origin scan identities without inferring store history."""
+        rows = self._connection.execute(
+            "SELECT scan_id,connection_name,library_name FROM review_preparation_scans s "
+            "WHERE s.scan_id=(SELECT selected.scan_id FROM review_preparation_scans selected "
+            "WHERE selected.connection_name=s.connection_name "
+            "AND selected.library_name=s.library_name "
+            "ORDER BY selected.requested_at DESC,selected.scan_id DESC LIMIT 1)"
+        ).fetchall()
+        return bool(rows) and all(
+            is_first_boot_scan_id(scan_id, connection, library)
+            for scan_id, connection, library in rows
         )
 
 

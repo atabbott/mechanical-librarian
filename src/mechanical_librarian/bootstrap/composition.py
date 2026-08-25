@@ -1370,6 +1370,7 @@ def create_review_pipeline(
     private_root: Path | None = None,
     provider_recovery: SQLiteProviderRecoveryStore | None = None,
     credentials: dict[str, str] | None = None,
+    first_boot: bool = False,
 ) -> ReviewPreparationSupervisor:
     artifact_recovery_lock = threading.Lock()
     artifacts_recovered = False
@@ -1699,7 +1700,7 @@ def create_review_pipeline(
         discovery_lock=discovery_lock,
         clock=lambda: int(time.time()),
     )
-    pipeline = stages.pipeline(timing)
+    pipeline = stages.pipeline(timing, first_boot=first_boot)
     pipeline_holder["pipeline"] = pipeline
     provider_recovery.require_generation_compatible(
         generation=configuration.provider_recovery_generation
@@ -2243,6 +2244,7 @@ def run_review_server(
         private_root = _private_root(database_path)
         repository = open_repository(database_path, create=True, cross_thread=True)
         try:
+            pending_restart: tuple[str, ...] = ()
             if authority == "store":
                 assert bootstrap is not None
                 settings_store = repository.owner_settings_store()
@@ -2259,6 +2261,7 @@ def run_review_server(
                 review = configuration.review
                 verify_password = owner_password_verifier(encoded_verifier)
                 settings = OwnerSettingsOperations(settings_store)
+                pending_restart = settings_view.pending_restart
             else:
                 assert configuration is not None and review is not None
                 credentials = _load_batch_credentials(
@@ -2295,6 +2298,11 @@ def run_review_server(
             provider_recovery = SQLiteProviderRecoveryStore.open(
                 private_root / "provider-recovery.sqlite"
             )
+            first_boot = _store_first_preparation(
+                authority,
+                pending_restart,
+                repository.has_first_boot_preparation(),
+            )
             preparation = create_review_pipeline(
                 configuration,
                 database_path,
@@ -2305,6 +2313,7 @@ def run_review_server(
                 private_root,
                 provider_recovery,
                 credentials=credentials,
+                first_boot=first_boot,
             )
             field_application = (
                 compose_continuous_guarded_application(
@@ -2364,12 +2373,7 @@ def run_review_server(
                 field_application=field_application,
                 cover_considerations=cover_considerations,
                 settings=settings,
-                first_boot=_store_first_preparation(
-                    authority,
-                    settings_view.document.revision,
-                    settings_view.pending_restart,
-                    repository.has_review_preparation_history(),
-                ),
+                first_boot=first_boot,
             )
             app = create_review_app(review_application, review)
             if authority == "store":
@@ -2406,14 +2410,12 @@ def run_review_server(
 
 def _store_first_preparation(
     authority: str,
-    settings_revision: int,
     pending_restart: tuple[str, ...],
-    preparation_history: bool,
+    marked_preparation: bool,
 ) -> bool:
     """Keep the setup-started presentation across normal-process restarts."""
     return authority == "store" and (
-        "setup_complete" in pending_restart
-        or (settings_revision == 2 and preparation_history)
+        "setup_complete" in pending_restart or marked_preparation
     )
 
 

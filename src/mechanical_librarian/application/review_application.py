@@ -34,7 +34,10 @@ from mechanical_librarian.application.operations import (
     TimingRepository,
 )
 from mechanical_librarian.application.owner_settings import OwnerSettingsOperations
-from mechanical_librarian.application.review_pipeline import ReviewPreparationSupervisor
+from mechanical_librarian.application.review_pipeline import (
+    ReviewPreparationSupervisor,
+    is_first_boot_scan_id,
+)
 from mechanical_librarian.application.review_web import (
     BrowseReviewLibrary,
     CurrentReviewCaseStore,
@@ -849,6 +852,13 @@ class ReviewApplication:
         if self._preparation is None:
             return PreparationView((), False, False, False)
         progress_values, paused = self.serialized(self._preparation.status)
+        first_boot = self._first_boot and all(
+            progress is None
+            or is_first_boot_scan_id(progress.scan_id, connection, library)
+            for (connection, library, _library_id), progress in zip(
+                self._preparation.libraries, progress_values, strict=True
+            )
+        )
         conditions = self.serialized(self._preparation.connection_conditions)
         if len(progress_values) != len(self._preparation.libraries):
             raise ReviewApplicationError("persistence")
@@ -887,7 +897,7 @@ class ReviewApplication:
             for condition in conditions
         )
         first_boot_complete = (
-            self._first_boot
+            first_boot
             and bool(libraries)
             and all(
                 item["state"] in {"completed", "completed_with_failures"}
@@ -903,7 +913,7 @@ class ReviewApplication:
             ),
             any(item["state"] == "completed_with_failures" for item in libraries),
             connections,
-            self._first_boot,
+            first_boot,
             first_boot_complete,
             sum(cast("int", item["total"]) for item in libraries)
             if first_boot_complete

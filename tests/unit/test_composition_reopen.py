@@ -21,8 +21,11 @@ from unittest.mock import patch
 import pytest
 from argon2 import PasswordHasher
 
+from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.review_pipeline import pipeline_scan_id
 from mechanical_librarian.bootstrap import composition
+from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
 from mechanical_librarian.infrastructure.first_boot import (
     FirstBootMode,
     select_first_boot_mode,
@@ -200,29 +203,124 @@ def test_setup_server_releases_claimed_state_for_restart_and_resume(
 
 
 def test_first_preparation_presentation_survives_restart_debt_acknowledgement() -> None:
-    assert composition._store_first_preparation("store", 1, ("setup_complete",), False)
-    assert composition._store_first_preparation("store", 2, (), True)
-    assert not composition._store_first_preparation("store", 2, (), False)
-    assert not composition._store_first_preparation("store", 3, (), True)
-    assert not composition._store_first_preparation(
-        "file", 1, ("setup_complete",), True
-    )
+    assert composition._store_first_preparation("store", ("setup_complete",), False)
+    assert composition._store_first_preparation("store", (), True)
+    assert not composition._store_first_preparation("store", (), False)
+    assert not composition._store_first_preparation("file", ("setup_complete",), True)
 
 
-def test_preparation_history_marker_survives_repository_reopen(tmp_path: Path) -> None:
+def test_first_preparation_marker_survives_settings_edit_and_repository_reopen(
+    tmp_path: Path,
+) -> None:
     database = tmp_path / "application.sqlite3"
     repository = composition.open_repository(database)
-    assert not repository.has_review_preparation_history()
-    repository._connection.execute(  # noqa: SLF001 - persistence seam proof
-        "INSERT INTO review_preparation_scans("
-        "scan_id,connection_name,library_name,library_id,producer_fingerprint,"
-        "state,requested_at,updated_at) VALUES(?,?,?,?,?,'queued',1,1)",
-        ("review_scan_" + "a" * 64, "primary", "books", "books", "b" * 64),
+    assert not repository.has_first_boot_preparation()
+    settings = OwnerSettingsDocument.model_validate(
+        {
+            "schema_version": "owner-settings-v1",
+            "revision": 1,
+            "connections": [{"name": "primary", "endpoint": "https://library.invalid"}],
+            "providers": [],
+            "libraries": [
+                {
+                    "name": "books",
+                    "connection": "primary",
+                    "library_id": "books",
+                    "media_kind": "ebook",
+                    "provider_connections": [],
+                    "mount": "books",
+                }
+            ],
+        }
+    )
+    repository._connection.execute(  # noqa: SLF001 - composition persistence proof
+        "INSERT INTO owner_settings VALUES(1,1,?)",
+        (_canonical_json(settings.model_dump()),),
+    )
+    repository._connection.executemany(  # noqa: SLF001 - composition persistence proof
+        "INSERT INTO owner_setting_secrets VALUES(?,?)",
+        (
+            ("connection.primary.key", "target-secret-1234"),
+            ("owner.password.verifier", "$argon2id$synthetic"),
+        ),
+    )
+    requested = repository.request_review_scan(
+        "primary", "books", "books", "b" * 64, 1, first_boot=True
+    )
+    assert requested.scan_id == pipeline_scan_id("primary", "books", first_boot=True)
+    repository.owner_settings_store().write(
+        settings.model_copy(update={"revision": 2, "reduced_motion": "always_reduced"}),
+        1,
+        (),
     )
     repository.close()
 
     reopened = composition.open_repository(database, create=False)
     try:
-        assert reopened.has_review_preparation_history()
+        assert reopened.has_first_boot_preparation()
+        assert reopened.owner_settings_store().read().document.revision == 2
+        reopened._connection.execute(  # noqa: SLF001 - lifecycle persistence proof
+            "UPDATE review_preparation_scans SET state='completed',total=1,"
+            "updated_at=2 WHERE scan_id=?",
+            (requested.scan_id,),
+        )
+        assert reopened.has_first_boot_preparation()
+        rescan = reopened.request_review_scan(
+            "primary", "books", "books", "b" * 64, 3, first_boot=True
+        )
+        assert rescan.scan_id == pipeline_scan_id("primary", "books")
+        assert not reopened.has_first_boot_preparation()
     finally:
         reopened.close()
+
+
+def test_normal_store_scan_history_never_becomes_first_preparation(
+    tmp_path: Path,
+) -> None:
+    repository = composition.open_repository(tmp_path / "application.sqlite3")
+    try:
+        requested = repository.request_review_scan(
+            "primary", "books", "books", "b" * 64, 1
+        )
+        assert requested.scan_id == pipeline_scan_id("primary", "books")
+        assert not repository.has_first_boot_preparation()
+    finally:
+        repository.close()
+
+
+def test_completed_first_library_keeps_marker_until_initial_cohort_is_terminal(
+    tmp_path: Path,
+) -> None:
+    repository = composition.open_repository(tmp_path / "application.sqlite3")
+    try:
+        first = repository.request_review_scan(
+            "primary", "books", "books", "b" * 64, 1, first_boot=True
+        )
+        second = repository.request_review_scan(
+            "primary", "history", "history", "b" * 64, 1, first_boot=True
+        )
+        repository._connection.execute(  # noqa: SLF001 - lifecycle persistence proof
+            "UPDATE review_preparation_scans SET state='completed',total=1,"
+            "updated_at=2 WHERE scan_id=?",
+            (first.scan_id,),
+        )
+
+        held = repository.request_review_scan(
+            "primary", "books", "books", "b" * 64, 3, first_boot=True
+        )
+        assert held.scan_id == first.scan_id
+        assert held.state == "completed"
+        assert repository.has_first_boot_preparation()
+
+        repository._connection.execute(  # noqa: SLF001 - lifecycle persistence proof
+            "UPDATE review_preparation_scans SET state='completed',total=1,"
+            "updated_at=4 WHERE scan_id=?",
+            (second.scan_id,),
+        )
+        ordinary = repository.request_review_scan(
+            "primary", "books", "books", "b" * 64, 5, first_boot=True
+        )
+        assert ordinary.scan_id == pipeline_scan_id("primary", "books")
+        assert not repository.has_first_boot_preparation()
+    finally:
+        repository.close()

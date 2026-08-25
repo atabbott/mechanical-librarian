@@ -226,6 +226,8 @@ class ReviewPipelineRepository(Protocol):
         library_id: str,
         producer_fingerprint: str,
         requested_at: int,
+        *,
+        first_boot: bool = False,
     ) -> PipelineProgress: ...
 
     def review_pipeline_progress(
@@ -374,6 +376,7 @@ class ReviewPreparationPipeline:
         clock: Callable[[], int] = lambda: int(time.time()),
         timing: StageTimer | None = None,
         announce: Callable[[str, str | None], object] = lambda *_args: None,
+        first_boot: bool = False,
     ) -> None:
         if not libraries or len(libraries) != len(set(libraries)):
             raise ReviewPipelineError("configuration")
@@ -399,6 +402,7 @@ class ReviewPreparationPipeline:
         self._clock = clock
         self._announce = announce
         self._timing = timing or StageTimer(None)
+        self._first_boot = first_boot
         self._cooperative_wait: Callable[[], None] = lambda: time.sleep(
             _COOPERATIVE_ACTION_DWELL_SECONDS
         )
@@ -456,15 +460,20 @@ class ReviewPreparationPipeline:
         if selected is None:
             raise ReviewPipelineError("library")
         library_id, producer_fingerprint = selected
-        progress = self._with_foreground_repository(
-            lambda repository: repository.request_review_scan(
+
+        def request(repository: ReviewPipelineRepository) -> PipelineProgress:
+            arguments = (
                 connection,
                 library,
                 library_id,
                 producer_fingerprint,
                 self._clock(),
             )
-        )
+            if self._first_boot:
+                return repository.request_review_scan(*arguments, first_boot=True)
+            return repository.request_review_scan(*arguments)
+
+        progress = self._with_foreground_repository(request)
         self._announce("preparation", None)
         return progress
 
@@ -1206,6 +1215,11 @@ class ReviewPreparationSupervisor:
                 continue
 
 
-def pipeline_scan_id(connection: str, library: str) -> str:
-    material = f"review-preparation-v1\0{connection}\0{library}"
+def pipeline_scan_id(connection: str, library: str, *, first_boot: bool = False) -> str:
+    namespace = "first-preparation-v1" if first_boot else "review-preparation-v1"
+    material = f"{namespace}\0{connection}\0{library}"
     return "review_scan_" + hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def is_first_boot_scan_id(scan_id: str, connection: str, library: str) -> bool:
+    return scan_id == pipeline_scan_id(connection, library, first_boot=True)
