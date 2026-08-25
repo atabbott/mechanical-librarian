@@ -71,6 +71,7 @@ from mechanical_librarian.application.review_pipeline import (
 )
 from mechanical_librarian.bootstrap.composition import (
     _compose_cover_considerations,
+    _load_batch_credentials,
     compose_continuous_guarded_application,
 )
 from mechanical_librarian.domain.metadata_report import (
@@ -624,7 +625,12 @@ def _start_deterministic_installed_server(
             ),
         )
     )
-    settings_projection = file_settings_projection(configuration)
+    credentials = _load_batch_credentials(
+        configuration,
+        {item.name for item in configuration.connections},
+        {item.name for item in configuration.providers},
+    )
+    settings_projection = file_settings_projection(configuration, credentials)
     application = compose_review_application(
         state_owner=web_state_owner,
         session_store=web_state_owner,
@@ -1147,6 +1153,31 @@ class _InstalledPreparationRun:
             page.wait_for_url(
                 re.compile(rf"{re.escape(self._origin)}/library(?:\?.*)?$")
             )
+            with page.expect_response("**/api/v1/settings") as settings_info:
+                page.get_by_role("link", name="Settings", exact=True).click()
+            settings_response = settings_info.value
+            assert settings_response.status == 200
+            settings_payload = settings_response.json()
+            assert "synthetic-token" not in json.dumps(settings_payload)
+            assert isinstance(settings_payload, dict)
+            secrets = settings_payload.get("secrets")
+            assert isinstance(secrets, list)
+            assert [
+                secret
+                for secret in secrets
+                if isinstance(secret, dict)
+                and secret.get("field_id") == "connection.primary.key"
+            ] == [
+                {
+                    "field_id": "connection.primary.key",
+                    "configured": True,
+                    "indicator": "Configured · ····oken",
+                }
+            ]
+            expect(
+                page.get_by_text("Configured · ····oken", exact=True)
+            ).to_be_visible()
+            assert "synthetic-token" not in page.content()
             page.get_by_role("link", name="Activity", exact=True).click()
             page.get_by_role(
                 "heading", name="Activity and recovery", exact=True
