@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
 
@@ -216,6 +217,74 @@ def test_wrong_setup_password_is_rate_limited() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "path",
+    (
+        "/api/setup/session",
+        "/api/setup/connect",
+        "/api/setup/providers",
+        "/api/setup/libraries",
+        "/api/setup/mounts",
+        "/api/setup/change",
+        "/api/setup/kick-off",
+    ),
+)
+def test_setup_json_bodies_are_bounded_before_parsing_or_authentication(
+    path: str,
+) -> None:
+    client, _state, _connection = _client()
+
+    response = client.post(
+        path,
+        content=b'{"private":"' + b"x" * 262_145 + b'"}',
+        headers={"content-type": "application/json"},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "body_too_large"
+
+
+def test_oversized_setup_login_does_not_consume_the_login_throttle() -> None:
+    client, _state, _connection = _client()
+    oversized = client.post(
+        "/api/setup/session",
+        content=b'{"password":"' + b"x" * 2_049 + b'"}',
+        headers={"content-type": "application/json"},
+    )
+    assert oversized.status_code == 413
+
+    for _ in range(5):
+        assert (
+            client.post("/api/setup/session", json={"password": "wrong"}).status_code
+            == 401
+        )
+    assert (
+        client.post("/api/setup/session", json={"password": "wrong"}).status_code == 429
+    )
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    (
+        ("GET", "/health/ready"),
+        ("GET", "/"),
+        ("GET", "/assets/setup.css"),
+        ("GET", "/assets/setup.js"),
+        ("GET", "/missing"),
+        ("GET", "/api/setup/state"),
+        ("POST", "/api/setup/session"),
+    ),
+)
+def test_every_setup_response_carries_the_normal_hsts_policy(
+    method: str, path: str
+) -> None:
+    client, _state, _connection = _client()
+
+    response = client.request(method, path)
+
+    assert response.headers["strict-transport-security"] == "max-age=31536000"
+
+
 def test_connect_requires_session_csrf_and_origin_and_never_returns_key() -> None:
     client, _state, connection = _client()
     login = client.post(
@@ -372,6 +441,58 @@ def test_connect_failure_returns_closed_code_and_does_not_advance_state() -> Non
     assert "secret-value" not in response.text
 
 
+def test_duplicate_local_library_names_return_closed_validation_without_mutation() -> (
+    None
+):
+    client, state, _connection = _client()
+    login = client.post(
+        "/api/setup/session", json={"password": "correct horse battery staple"}
+    )
+    headers = {
+        "cookie": login.headers["set-cookie"].split(";", 1)[0],
+        "origin": "https://setup.invalid",
+        "x-csrf-token": login.json()["csrf_token"],
+    }
+    assert (
+        client.post(
+            "/api/setup/connect",
+            json={
+                "expected_revision": 2,
+                "name": "primary",
+                "endpoint": "https://abs.invalid",
+                "key": "secret-value",
+            },
+            headers=headers,
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            "/api/setup/providers",
+            json={"expected_revision": 3, "providers": []},
+            headers=headers,
+        ).status_code
+        == 200
+    )
+    duplicate = {
+        "name": "books",
+        "library_id": "books",
+        "media_kind": "ebook",
+        "provider_connections": [],
+    }
+
+    response = client.post(
+        "/api/setup/libraries",
+        json={"expected_revision": 4, "libraries": [duplicate, duplicate]},
+        headers=headers,
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": {"error": "invalid_libraries"}}
+    assert state.document.revision == 4
+    assert state.document.next_step() == "libraries"
+
+
 def test_six_step_journey_closes_setup_routes_after_exact_kickoff_copy() -> None:
     client, state, _connection = _client()
     login = client.post(
@@ -448,5 +569,7 @@ def test_six_step_journey_closes_setup_routes_after_exact_kickoff_copy() -> None
         "message": "Nothing in your library changes. Writes stay off until you turn them on in Activity.",
     }
     assert state.promoted is True
-    assert client.get("/").status_code == 404
+    closed = client.get("/")
+    assert closed.status_code == 404
+    assert closed.headers["strict-transport-security"] == "max-age=31536000"
     assert client.get("/health/ready").status_code == 200

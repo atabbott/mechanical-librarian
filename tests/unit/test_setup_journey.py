@@ -134,6 +134,36 @@ def test_library_selection_rechecks_discovery_and_rejects_none_or_unsupported() 
     assert store.read(_BOOTSTRAP).next_step() == "libraries"
 
 
+def test_library_selection_rejects_duplicate_canonical_local_names() -> None:
+    _connection, store = _store()
+    state = _connected(store)
+    journey = _journey(
+        store,
+        (
+            SetupLibraryCandidate(library_id="one", name="One", media_kind="book"),
+            SetupLibraryCandidate(library_id="two", name="Two", media_kind="book"),
+        ),
+    )
+    state = journey.providers(state.revision, [], {})
+
+    with pytest.raises(SetupJourneyError) as error:
+        journey.libraries(
+            state.revision,
+            [
+                LibrarySettings(
+                    name="books",
+                    connection="primary",
+                    library_id=library_id,
+                    media_kind="ebook",
+                )
+                for library_id in ("one", "two")
+            ],
+        )
+
+    assert error.value.code == "invalid_libraries"
+    assert store.read(_BOOTSTRAP) == state
+
+
 def test_library_discovery_failure_is_retryable_and_records_nothing() -> None:
     _connection, store = _store()
     state = _connected(store)

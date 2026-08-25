@@ -63,8 +63,18 @@ def main() -> None:
         finally:
             repository.close()
 
+    def uninitialized_setup() -> bool:
+        repository = open_repository(DATABASE, create=False)
+        try:
+            return repository.setup_state_store().is_exact_schema_only()
+        finally:
+            repository.close()
+
     mode = select_first_boot_mode(
-        DATA, complete_store=complete_store, resumable_setup=resumable_setup
+        DATA,
+        complete_store=complete_store,
+        resumable_setup=resumable_setup,
+        uninitialized_setup=uninitialized_setup,
     )
     if mode in {FirstBootMode.INITIALIZE_SETUP, FirstBootMode.RESUME_SETUP}:
         if bootstrap is None:

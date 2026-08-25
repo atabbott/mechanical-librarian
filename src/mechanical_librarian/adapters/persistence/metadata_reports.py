@@ -8,6 +8,7 @@ import re
 import sqlite3
 import stat
 import sys
+from _thread import RLock
 from collections.abc import Callable
 from pathlib import Path
 from typing import cast
@@ -150,6 +151,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         identity: tuple[int, int] | None = None,
     ) -> None:
         super().__init__(connection)
+        self._setup_serialization_lock = RLock()
         self._binding = binding
         self.identity = identity
         self._recovery_outbox = SQLiteRecoveryOutboxRepository(connection)
@@ -192,7 +194,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 )
             ),
         )
-        self._review_sessions = SQLiteReviewSessionRepository(connection)
+        self._review_sessions = SQLiteReviewSessionRepository(
+            connection, serialization_lock=self._setup_serialization_lock
+        )
         self._owner_settings = OwnerSettingsStore(connection)
         self._review_scans = SQLiteReviewScanRepository(connection)
         self._field_effects = SQLiteFieldEffectRepository(
@@ -1868,7 +1872,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
 
     def setup_state_store(self) -> SetupStateStore:
         """The setup-only composition is the sole caller of this incomplete-state port."""
-        return SetupStateStore(self._connection)
+        return SetupStateStore(self._connection, self._setup_serialization_lock)
 
     def has_first_boot_preparation(self) -> bool:
         """Read explicit setup-origin scan identities without inferring store history."""

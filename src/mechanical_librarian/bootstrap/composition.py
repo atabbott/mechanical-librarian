@@ -2137,7 +2137,9 @@ def run_setup_server(
         bootstrap.tls_certificate_file, bootstrap.tls_private_key_file
     ) as tls:
         repository = open_repository(
-            database_path, create=initialize, cross_thread=True
+            database_path,
+            create=initialize,
+            cross_thread=True,
         )
         try:
             state = repository.setup_state_store()

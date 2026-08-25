@@ -110,15 +110,23 @@ class SetupJourneyOperation:
         available = {
             value.library_id: value for value in self.discover(expected_revision)
         }
-        if not libraries or any(
-            value.connection != connection.name
-            or value.library_id not in available
-            or available[value.library_id].media_kind != "book"
-            or value.provider_connections != sorted(set(value.provider_connections))
-            or not set(value.provider_connections).issubset(
-                {provider.name for provider in current.providers if provider.enabled}
+        if (
+            not libraries
+            or len({value.name for value in libraries}) != len(libraries)
+            or any(
+                value.connection != connection.name
+                or value.library_id not in available
+                or available[value.library_id].media_kind != "book"
+                or value.provider_connections != sorted(set(value.provider_connections))
+                or not set(value.provider_connections).issubset(
+                    {
+                        provider.name
+                        for provider in current.providers
+                        if provider.enabled
+                    }
+                )
+                for value in libraries
             )
-            for value in libraries
         ):
             raise SetupJourneyError("invalid_libraries")
         canonical = sorted(libraries, key=lambda value: value.name)

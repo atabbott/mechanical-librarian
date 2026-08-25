@@ -257,9 +257,13 @@ path. Its setup login assets and fixed failure envelope occupy the existing
 login boundary; every wizard read or mutation requires a session minted only
 after verification against the owner-only bootstrap verifier, plus the ordinary
 CSRF and Origin checks for a mutation. That verifier is admitted only while
-no durable setup-completion record exists and `/data` is either empty or holds
-the exact valid incomplete-setup state created under bootstrap authority.
-Arbitrary nonempty, malformed, or store-mode state fails closed. The atomic
+no durable setup-completion record exists and `/data` is empty, holds the exact
+valid incomplete-setup state created under bootstrap authority, or holds only
+the exact seeded schema left by interruption before the initial setup document
+committed. That last predecessor has no settings, secrets, sessions, login
+failures, or operational rows and may only complete bootstrap-bound setup
+initialization. Arbitrary nonempty, malformed, or store-mode state fails closed.
+The atomic
 completion handoff stops reading the verifier, permanently closes setup routes,
 and returns to the ordinary owner-session boundary. An unauthenticated client
 therefore cannot claim ownership, stage settings, complete setup, or reach a

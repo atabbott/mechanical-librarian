@@ -20,6 +20,7 @@ from mechanical_librarian.application.setup_journey import (
 )
 from mechanical_librarian.domain.owner_settings import LibrarySettings, ProviderSettings
 from mechanical_librarian.domain.setup_state import SetupStateDocument
+from mechanical_librarian.interfaces.web.app import BodyLimitMiddleware
 from mechanical_librarian.interfaces.web.setup_frontend import (
     SETUP_CSS,
     SETUP_HTML,
@@ -27,6 +28,15 @@ from mechanical_librarian.interfaces.web.setup_frontend import (
 )
 
 _PROVIDER_ADAPTER: TypeAdapter[ProviderSettings] = TypeAdapter(ProviderSettings)
+_SETUP_BODY_LIMITS = {
+    "/api/setup/session": 2_048,
+    "/api/setup/connect": 16_384,
+    "/api/setup/providers": 262_144,
+    "/api/setup/libraries": 262_144,
+    "/api/setup/mounts": 262_144,
+    "/api/setup/change": 16_384,
+    "/api/setup/kick-off": 16_384,
+}
 
 
 class SetupStateStore(Protocol):
@@ -127,6 +137,12 @@ def create_setup_app(
     """Compose no normal route, worker, target client, or write authority."""
 
     app = FastAPI(docs_url=None, openapi_url=None, redoc_url=None)
+    app.add_middleware(
+        BodyLimitMiddleware,
+        maximum_bytes=2_048,
+        decision_maximum_bytes=16_384,
+        path_limits=_SETUP_BODY_LIMITS,
+    )
     app.state.setup_complete = False
 
     @app.middleware("http")
@@ -134,9 +150,11 @@ def create_setup_app(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         path = request.url.path
+        response: Response
         if app.state.setup_complete and path != "/health/ready":
-            return PlainTextResponse("not found\n", status_code=404)
-        response = await call_next(request)
+            response = PlainTextResponse("not found\n", status_code=404)
+        else:
+            response = await call_next(request)
         response.headers["cache-control"] = "private, no-store"
         response.headers["content-security-policy"] = (
             "default-src 'none'; script-src 'self'; style-src 'self'; "
@@ -146,6 +164,7 @@ def create_setup_app(
         response.headers["referrer-policy"] = "no-referrer"
         response.headers["x-content-type-options"] = "nosniff"
         response.headers["x-frame-options"] = "DENY"
+        response.headers["strict-transport-security"] = "max-age=31536000"
         return response
 
     @app.get("/health/ready", response_class=PlainTextResponse)

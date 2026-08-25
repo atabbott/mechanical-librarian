@@ -365,6 +365,44 @@ def test_scan_qualification_survives_restart_and_resets_for_new_cycle(
     repository.close()
 
 
+def test_recovery_rebinds_the_latest_scan_after_settings_change(tmp_path: Path) -> None:
+    database = tmp_path / "application.sqlite3"
+    repository = open_repository(database)
+    first_boot = repository.request_review_scan(
+        "primary", "books", "books-v1", _PRODUCER, 1, first_boot=True
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed' WHERE scan_id=?",
+        (first_boot.scan_id,),
+    )
+    ordinary = repository.request_review_scan(
+        "primary", "books", "books-v1", _PRODUCER, 2
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='processing' WHERE scan_id=?",
+        (ordinary.scan_id,),
+    )
+    repository.close()
+
+    changed_producer = "e" * 64
+    reopened = open_repository(database, create=False)
+    try:
+        reopened.recover_review_pipeline(
+            (("primary", "books", "books-v2", changed_producer),)
+        )
+        rows = reopened._connection.execute(
+            "SELECT scan_id,state,library_id,producer_fingerprint "
+            "FROM review_preparation_scans ORDER BY requested_at,scan_id"
+        ).fetchall()
+    finally:
+        reopened.close()
+
+    assert rows == [
+        (first_boot.scan_id, "completed", "books-v1", _PRODUCER),
+        (ordinary.scan_id, "queued", "books-v2", changed_producer),
+    ]
+
+
 def test_pipeline_preflight_is_once_per_cycle_and_recovery_retains_qualification(
     application_path: Path,
 ) -> None:

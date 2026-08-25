@@ -13,6 +13,7 @@ enclosing caller's partial writes.
 from __future__ import annotations
 
 import sqlite3
+from _thread import RLock
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -22,7 +23,14 @@ if TYPE_CHECKING:
 class TransactionScope:
     """Own one transaction or savepoint over a shared connection."""
 
-    __slots__ = ("_connection", "_savepoint", "_deferred", "_nested", "_started")
+    __slots__ = (
+        "_connection",
+        "_savepoint",
+        "_deferred",
+        "_lock",
+        "_nested",
+        "_started",
+    )
 
     def __init__(
         self,
@@ -30,10 +38,12 @@ class TransactionScope:
         savepoint: str,
         *,
         deferred: bool = False,
+        serialization_lock: RLock | None = None,
     ) -> None:
         self._connection = connection
         self._savepoint = savepoint
         self._deferred = deferred
+        self._lock = serialization_lock
         self._nested = False
         self._started = False
 
@@ -49,13 +59,20 @@ class TransactionScope:
 
     def begin(self) -> None:
         """Start this scope, nesting on a savepoint inside an open transaction."""
-        self._nested = self._connection.in_transaction
-        if self._nested:
-            self._connection.execute(f"SAVEPOINT {self._savepoint}")
-        elif self._deferred:
-            self._connection.execute("BEGIN")
-        else:
-            self._connection.execute("BEGIN IMMEDIATE")
+        if self._lock is not None:
+            self._lock.acquire()
+        try:
+            self._nested = self._connection.in_transaction
+            if self._nested:
+                self._connection.execute(f"SAVEPOINT {self._savepoint}")
+            elif self._deferred:
+                self._connection.execute("BEGIN")
+            else:
+                self._connection.execute("BEGIN IMMEDIATE")
+        except Exception:
+            if self._lock is not None:
+                self._lock.release()
+            raise
         self._started = True
 
     def commit(self) -> None:
@@ -73,17 +90,23 @@ class TransactionScope:
         else:
             self._connection.commit()
         self._started = False
+        if self._lock is not None:
+            self._lock.release()
 
     def rollback(self) -> None:
         """Undo this scope's writes, leaving any enclosing transaction intact."""
         if not self._started:
             return
-        if self._nested:
-            self._connection.execute(f"ROLLBACK TO SAVEPOINT {self._savepoint}")
-            self._connection.execute(f"RELEASE SAVEPOINT {self._savepoint}")
-        elif self._connection.in_transaction:
-            self._connection.rollback()
-        self._started = False
+        try:
+            if self._nested:
+                self._connection.execute(f"ROLLBACK TO SAVEPOINT {self._savepoint}")
+                self._connection.execute(f"RELEASE SAVEPOINT {self._savepoint}")
+            elif self._connection.in_transaction:
+                self._connection.rollback()
+            self._started = False
+        finally:
+            if self._lock is not None:
+                self._lock.release()
 
 
 class ConnectionScoped:
@@ -99,12 +122,19 @@ class ConnectionScoped:
         self,
         connection: sqlite3.Connection,
         binding: _LinuxDatabaseBinding | None = None,
+        serialization_lock: RLock | None = None,
     ) -> None:
         self._connection = connection
         self._binding = binding
+        self._serialization_lock = serialization_lock
 
     def _transaction(
         self, savepoint: str, *, deferred: bool = False
     ) -> TransactionScope:
         """Open one re-entrant scope over this repository's shared connection."""
-        return TransactionScope(self._connection, savepoint, deferred=deferred)
+        return TransactionScope(
+            self._connection,
+            savepoint,
+            deferred=deferred,
+            serialization_lock=self._serialization_lock,
+        )

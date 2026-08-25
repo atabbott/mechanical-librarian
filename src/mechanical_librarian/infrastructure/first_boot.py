@@ -25,6 +25,7 @@ def select_first_boot_mode(
     database_name: str = "application.sqlite3",
     complete_store: Callable[[], bool],
     resumable_setup: Callable[[], bool],
+    uninitialized_setup: Callable[[], bool] = lambda: False,
 ) -> FirstBootMode:
     """Classify the exact process-entry volume before any runtime artefact exists."""
 
@@ -42,6 +43,8 @@ def select_first_boot_mode(
     try:
         if complete_store():
             return FirstBootMode.NORMAL
+        if entries == {database_name} and uninitialized_setup():
+            return FirstBootMode.INITIALIZE_SETUP
         if entries == {database_name} and resumable_setup():
             return FirstBootMode.RESUME_SETUP
     except Exception as error:

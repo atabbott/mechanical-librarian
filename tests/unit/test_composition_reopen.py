@@ -124,8 +124,8 @@ def test_setup_server_releases_claimed_state_for_restart_and_resume(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "application.sqlite3"
-    repository = composition.open_repository(database)
     bootstrap_verifier = PasswordHasher().hash("owner password")
+    repository = composition.open_repository(database)
     bootstrap = ReviewBootstrap(
         schema_version="review-bootstrap-v1",
         setup_owner_verifier=bootstrap_verifier,
@@ -197,6 +197,48 @@ def test_setup_server_releases_claimed_state_for_restart_and_resume(
             tmp_path,
             complete_store=lambda: False,
             resumable_setup=resumable_setup,
+        )
+        is FirstBootMode.RESUME_SETUP
+    )
+
+
+def test_exact_schema_only_kill_boundary_restarts_setup_without_generic_recovery(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "application.sqlite3"
+    bootstrap_verifier = PasswordHasher().hash("owner password")
+    repository = composition.open_repository(database)
+    repository.close()
+
+    def uninitialized_setup() -> bool:
+        reopened = composition.open_repository(database, create=False)
+        try:
+            return reopened.setup_state_store().is_exact_schema_only()
+        finally:
+            reopened.close()
+
+    assert (
+        select_first_boot_mode(
+            tmp_path,
+            complete_store=lambda: False,
+            resumable_setup=lambda: False,
+            uninitialized_setup=uninitialized_setup,
+        )
+        is FirstBootMode.INITIALIZE_SETUP
+    )
+
+    repository = composition.open_repository(database)
+    try:
+        repository.setup_state_store().initialize(bootstrap_verifier)
+    finally:
+        repository.close()
+
+    assert (
+        select_first_boot_mode(
+            tmp_path,
+            complete_store=lambda: False,
+            resumable_setup=lambda: True,
+            uninitialized_setup=uninitialized_setup,
         )
         is FirstBootMode.RESUME_SETUP
     )

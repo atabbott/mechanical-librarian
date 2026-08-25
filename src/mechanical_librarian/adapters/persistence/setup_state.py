@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+from _thread import RLock
 from collections.abc import Callable
 from typing import TypeVar
 
@@ -19,6 +20,7 @@ from mechanical_librarian.adapters.persistence.schema import (
     _SETUP_POLICY_TRANSITION_ROW,
     _SETUP_REVIEW_CONTROL_ROW,
 )
+from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.domain.owner_settings import OwnerSettingsError
 from mechanical_librarian.domain.setup_state import SetupStateDocument, SetupStateError
 from mechanical_librarian.domain.validation import credential
@@ -42,11 +44,13 @@ _SETUP_ROW_TABLES = frozenset(
 )
 
 
-class SetupStateStore:
+class SetupStateStore(ConnectionScoped):
     """Keep incomplete setup authority separate from normal owner authority."""
 
-    def __init__(self, connection: sqlite3.Connection) -> None:
-        self._connection = connection
+    def __init__(
+        self, connection: sqlite3.Connection, serialization_lock: RLock | None = None
+    ) -> None:
+        super().__init__(connection, serialization_lock=serialization_lock)
 
     def initialize(self, bootstrap_verifier: str) -> SetupStateDocument:
         digest = _verifier_digest(bootstrap_verifier)
@@ -55,8 +59,9 @@ class SetupStateStore:
             revision=1,
             bootstrap_verifier_digest=digest,
         )
+        transaction = self._transaction("initialize_setup_state")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             if (
                 self._connection.execute("SELECT 1 FROM owner_settings").fetchone()
                 is not None
@@ -73,17 +78,48 @@ class SetupStateStore:
                 "INSERT INTO owner_settings(singleton,revision,document) VALUES(1,?,?)",
                 (document.revision, _canonical_json(document.model_dump())),
             )
-            self._connection.commit()
+            transaction.commit()
         except (SetupStateError, sqlite3.Error) as error:
-            self._connection.rollback()
+            transaction.rollback()
             raise SetupStateError("setup state is unavailable") from error
         return document
 
     def read(self, bootstrap_verifier: str) -> SetupStateDocument:
-        document = self._read()
-        if document.bootstrap_verifier_digest != _verifier_digest(bootstrap_verifier):
-            raise SetupStateError("setup state is unavailable")
-        return document
+        lock = self._serialization_lock
+        if lock is not None:
+            lock.acquire()
+        try:
+            document = self._read()
+            if document.bootstrap_verifier_digest != _verifier_digest(
+                bootstrap_verifier
+            ):
+                raise SetupStateError("setup state is unavailable")
+            return document
+        finally:
+            if lock is not None:
+                lock.release()
+
+    def is_exact_schema_only(self) -> bool:
+        """Admit only the seeded schema left before first setup-state commit."""
+        lock = self._serialization_lock
+        if lock is not None:
+            lock.acquire()
+        try:
+            return self._setup_rows_are_closed() and all(
+                self._connection.execute(f'SELECT 1 FROM "{table}" LIMIT 1').fetchone()
+                is None
+                for table in (
+                    "owner_settings",
+                    "owner_setting_secrets",
+                    "review_sessions",
+                    "review_login_failures",
+                )
+            )
+        except sqlite3.Error:
+            return False
+        finally:
+            if lock is not None:
+                lock.release()
 
     def use_secret(
         self,
@@ -92,10 +128,13 @@ class SetupStateStore:
         consumer: Callable[[str], _T],
     ) -> _T:
         """Pass one admitted secret directly to its setup-only infrastructure consumer."""
-        document = self.read(bootstrap_verifier)
-        if field_id not in document.secret_fields():
-            raise SetupStateError("setup state is unavailable")
+        lock = self._serialization_lock
+        if lock is not None:
+            lock.acquire()
         try:
+            document = self.read(bootstrap_verifier)
+            if field_id not in document.secret_fields():
+                raise SetupStateError("setup state is unavailable")
             rows = self._connection.execute(
                 "SELECT value FROM owner_setting_secrets WHERE field_id=?", (field_id,)
             ).fetchall()
@@ -106,6 +145,9 @@ class SetupStateStore:
             raise
         except sqlite3.Error as error:
             raise SetupStateError("setup state is unavailable") from error
+        finally:
+            if lock is not None:
+                lock.release()
 
     def write(
         self,
@@ -116,8 +158,9 @@ class SetupStateStore:
     ) -> SetupStateDocument:
         if document.revision != expected_revision + 1:
             raise SetupStateError("setup state is unavailable")
+        transaction = self._transaction("write_setup_state")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             current = self.read(bootstrap_verifier)
             if current.revision != expected_revision:
                 raise SetupStateError("setup state is stale")
@@ -180,9 +223,9 @@ class SetupStateStore:
                     "INSERT INTO owner_setting_secrets(field_id,value) VALUES(?,?) ON CONFLICT(field_id) DO NOTHING",
                     (field_id, value),
                 )
-            self._connection.commit()
+            transaction.commit()
         except (SetupStateError, sqlite3.Error) as error:
-            self._connection.rollback()
+            transaction.rollback()
             raise SetupStateError("setup state is unavailable") from error
         return document
 
@@ -194,8 +237,9 @@ class SetupStateStore:
     ) -> None:
         """Replace setup authority with normal owner authority in one transaction."""
         _verifier_digest(owner_verifier)
+        transaction = self._transaction("promote_setup_state")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             try:
                 state = self._read()
             except SetupStateError:
@@ -209,7 +253,7 @@ class SetupStateStore:
                     or secrets.get("owner.password.verifier") != owner_verifier
                 ):
                     raise SetupStateError("setup state is unavailable") from None
-                self._connection.commit()
+                transaction.commit()
                 return
             if state.bootstrap_verifier_digest != _verifier_digest(bootstrap_verifier):
                 raise SetupStateError("setup state is unavailable")
@@ -232,9 +276,9 @@ class SetupStateStore:
                 "INSERT INTO owner_setting_secrets(field_id,value) VALUES('owner.password.verifier',?)",
                 (owner_verifier,),
             )
-            self._connection.commit()
+            transaction.commit()
         except (SetupStateError, sqlite3.Error) as error:
-            self._connection.rollback()
+            transaction.rollback()
             raise SetupStateError("setup state is unavailable") from error
 
     def _read(self) -> SetupStateDocument:

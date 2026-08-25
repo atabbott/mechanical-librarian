@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
+from pathlib import Path
 
 import pytest
 
+from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.owner_settings import (
     _validate_owner_settings_content,
 )
 from mechanical_librarian.adapters.persistence.schema import _create_schema
 from mechanical_librarian.adapters.persistence.setup_state import SetupStateStore
+from mechanical_librarian.application.review_web import OwnerSessionService
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 from mechanical_librarian.domain.owner_settings import OwnerSettingsError
 from mechanical_librarian.domain.setup_state import SetupStateDocument, SetupStateError
@@ -68,6 +72,83 @@ def test_initialize_binds_the_only_resumable_setup_state_to_bootstrap() -> None:
     assert store.read(_BOOTSTRAP) == state
     with pytest.raises(SetupStateError):
         store.read(_OWNER)
+
+
+def test_only_the_exact_seeded_schema_is_an_initialization_predecessor() -> None:
+    connection, store = _real_store()
+    assert store.is_exact_schema_only()
+
+    connection.execute(
+        "UPDATE review_preparation_control SET claim_sequence=1 WHERE singleton=1"
+    )
+
+    assert not store.is_exact_schema_only()
+
+
+def test_setup_write_rollback_cannot_discard_a_returned_owner_session(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "application.sqlite3"
+    repository = open_repository(database, cross_thread=True)
+    state = repository.setup_state_store()
+    state.initialize(_BOOTSTRAP)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def fail_setup_write() -> None:
+        entered.set()
+        assert release.wait(5)
+        raise sqlite3.OperationalError("synthetic failpoint")
+
+    repository._connection.create_function("fail_setup_write", 0, fail_setup_write)
+    repository._connection.execute(
+        "CREATE TRIGGER fail_setup_write BEFORE UPDATE ON owner_settings "
+        "BEGIN SELECT fail_setup_write(); END"
+    )
+    tokens = iter(("s" * 32, "c" * 32))
+    sessions = OwnerSessionService(
+        repository,
+        lambda _password: True,
+        lambda: 1_000,
+        3_600,
+        lambda _length: next(tokens),
+    )
+    document = state.read(_BOOTSTRAP)
+    write_failure: list[Exception] = []
+    login_tokens: list[object] = []
+
+    def write_state() -> None:
+        try:
+            state.write(
+                _next(document, completed_steps=["claim"], claimed=True),
+                document.revision,
+                _BOOTSTRAP,
+            )
+        except Exception as error:
+            write_failure.append(error)
+
+    def login() -> None:
+        login_tokens.append(sessions.login("owner password"))
+
+    writer = threading.Thread(target=write_state)
+    signer = threading.Thread(target=login)
+    writer.start()
+    assert entered.wait(5)
+    signer.start()
+    signer.join(0.1)
+    assert signer.is_alive()
+    assert not login_tokens
+    release.set()
+    writer.join(5)
+    signer.join(5)
+
+    try:
+        assert len(write_failure) == 1
+        assert isinstance(write_failure[0], SetupStateError)
+        assert len(login_tokens) == 1
+        assert sessions.authenticate("s" * 32, "c" * 32) == "owner"
+    finally:
+        repository.close()
 
 
 def test_promotion_replaces_incomplete_state_with_normal_owner_authority() -> None:

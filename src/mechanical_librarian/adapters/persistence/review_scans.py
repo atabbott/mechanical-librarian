@@ -421,7 +421,8 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 row = self._connection.execute(
                     "SELECT scan_id,state,library_id,producer_fingerprint "
                     "FROM review_preparation_scans "
-                    "WHERE connection_name=? AND library_name=?",
+                    "WHERE connection_name=? AND library_name=? "
+                    "ORDER BY requested_at DESC,scan_id DESC LIMIT 1",
                     (connection, library),
                 ).fetchone()
                 if (

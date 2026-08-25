@@ -63,8 +63,12 @@ SQLite transaction containing the exact staged settings, store-mode owner
 verifier, durable completion record, and restart request; an interruption leaves
 either that complete record or the still-bootstrap-authorized setup state, never
 a partial owner claim. A later boot may resume only the exact valid
-incomplete-setup state created under that bootstrap authority; arbitrary
-nonempty, malformed, or store-mode state still fails closed. It then enters a
+incomplete-setup state created under that bootstrap authority. If interruption
+lands between exact schema creation and the first setup-state commit, startup
+also accepts that one exact seeded-schema predecessor with no settings, secrets,
+session, throttle, or operational rows and completes only the bootstrap-bound
+initialization. Arbitrary nonempty, malformed, or store-mode state still fails
+closed. It then enters a
 restart-requested, draining state. It returns that explicit instruction and a
 bounded setup-complete state while the setup listener remains reachable, so the
 owner can see that no normal service has started; the process then shuts down
