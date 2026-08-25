@@ -796,11 +796,18 @@ class _RichQualificationBase(_ClosedModel):
     candidate_sha256: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
 
 
-class _SubtitleQualification(_RichQualificationBase):
+class _SubtitleFillQualification(_RichQualificationBase):
+    automatic_available: Literal[True]
+    disposition: Literal["passing_automatic"]
+    field: Literal["subtitle"]
+    option: Literal["fill_empty"]
+
+
+class _SubtitleSplitQualification(_RichQualificationBase):
     automatic_available: Literal[False]
     disposition: Literal["not_qualified"]
     field: Literal["subtitle"]
-    option: Literal["fill_empty", "corroborated_split"]
+    option: Literal["corroborated_split"]
 
 
 class _SeriesQualification(_RichQualificationBase):
@@ -867,7 +874,8 @@ class _ExplicitQualification(_RichQualificationBase):
 
 
 _RichQualification: TypeAlias = (
-    _SubtitleQualification
+    _SubtitleFillQualification
+    | _SubtitleSplitQualification
     | _SeriesQualification
     | _GenresQualification
     | _TagsOffQualification

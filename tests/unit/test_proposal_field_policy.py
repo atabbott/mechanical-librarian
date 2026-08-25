@@ -379,12 +379,131 @@ def test_equal_subtitles_keep_local_and_provider_scopes_separate() -> None:
         ),
         TargetDestination.SUBTITLE,
     )
-    assert 2 == len(result.alternatives)
-    assert {ProposalScope.WORK, ProposalScope.EDITION} == {
-        alternative.scope for alternative in result.alternatives
-    }
+    assert ProposalOutcome.PROPOSE_CHANGE is result.outcome
+    assert ("local_attested_subtitle",) == result.reasons
+    assert 1 == len(result.alternatives)
+    assert result.selected_alternative_id == result.alternatives[0].alternative_id
+    assert "Shared subtitle" == result.alternatives[0].value.value
+    assert 1 == len(result.alternatives[0].correlations)
+
+
+def _empty_subtitle_report(
+    local_subtitles: tuple[str, ...],
+    provider_subtitles: tuple[str, ...],
+    target_state: TargetFieldState = TargetFieldState.MISSING,
+):
+    locals_ = tuple(
+        _local_subtitle(value, ClaimScope.WORK) for value in local_subtitles
+    )
+    candidates = tuple(
+        ProviderCandidate(
+            f"edition-{index + 1}",
+            "hardcover-work",
+            (
+                _claim(
+                    "hardcover",
+                    f"edition-{index + 1}",
+                    ClaimKind.SUBTITLE,
+                    value,
+                    scope=ClaimScope.EDITION,
+                    applicability="ebook",
+                ),
+            ),
+        )
+        for index, value in enumerate(provider_subtitles)
+    )
+    subtitle = (
+        TargetField(TargetDestination.SUBTITLE, target_state, "Existing subtitle")
+        if target_state is TargetFieldState.VALUE
+        else TargetField(TargetDestination.SUBTITLE, target_state)
+    )
+    return _report(
+        fields=_fields(subtitle=subtitle),
+        local_claims=locals_,
+        providers=(
+            ProviderObservation(
+                "hardcover",
+                ProviderStatus.CANDIDATES,
+                (),
+                candidates,
+                authority="hardcover",
+            ),
+        ),
+    )
+
+
+def test_attested_subtitle_resolves_competing_empty_fill() -> None:
+    result = _result(
+        evaluate_report(
+            _empty_subtitle_report(
+                ("Printed subtitle",),
+                ("Printed subtitle", "Catalogue artifact"),
+            )
+        ),
+        TargetDestination.SUBTITLE,
+    )
+    assert ProposalOutcome.PROPOSE_CHANGE is result.outcome
+    assert ("local_attested_subtitle",) == result.reasons
+    assert "Printed subtitle" == result.alternatives[0].value.value
+    assert ProposalScope.EDITION is result.alternatives[0].scope
+
+
+def test_local_only_attestation_never_elects_a_subtitle() -> None:
+    report = _report(
+        fields=_fields(
+            subtitle=TargetField(TargetDestination.SUBTITLE, TargetFieldState.MISSING)
+        ),
+        local_claims=(_local_subtitle("Printed subtitle", ClaimScope.WORK),),
+    )
+    result = _result(evaluate_report(report), TargetDestination.SUBTITLE)
+    assert ("local_attested_subtitle",) != result.reasons
     assert all(
-        len(alternative.correlations) == 1 for alternative in result.alternatives
+        ProposalScope.EDITION is not alternative.scope
+        for alternative in result.alternatives
+    )
+
+
+def test_unattested_competing_subtitles_stay_an_owner_decision() -> None:
+    result = _result(
+        evaluate_report(
+            _empty_subtitle_report(
+                (),
+                ("One catalogue split", "Another catalogue split"),
+            )
+        ),
+        TargetDestination.SUBTITLE,
+    )
+    assert ProposalOutcome.UNRESOLVED_CHOICE is result.outcome
+    assert ("competing_evidence",) == result.reasons
+
+
+def test_conflicting_attested_subtitles_stay_an_owner_decision() -> None:
+    result = _result(
+        evaluate_report(
+            _empty_subtitle_report(
+                ("First printed form", "Second printed form"),
+                ("First printed form", "Second printed form"),
+            )
+        ),
+        TargetDestination.SUBTITLE,
+    )
+    assert ProposalOutcome.UNRESOLVED_CHOICE is result.outcome
+    assert ("competing_evidence",) == result.reasons
+
+
+def test_populated_subtitle_never_uses_local_attestation_election() -> None:
+    result = _result(
+        evaluate_report(
+            _empty_subtitle_report(
+                ("Printed subtitle",),
+                ("Printed subtitle", "Catalogue artifact"),
+                target_state=TargetFieldState.VALUE,
+            )
+        ),
+        TargetDestination.SUBTITLE,
+    )
+    assert ProposalOutcome.PROPOSE_CHANGE is not result.outcome or (
+        result.reasons != ("local_attested_subtitle",)
     )
 
 

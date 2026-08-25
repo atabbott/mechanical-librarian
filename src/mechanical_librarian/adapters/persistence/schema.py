@@ -1058,7 +1058,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
 
 
 _REVIEW_OWNER_DECISION_ACTIONS_V1_SOURCE_OBJECTS_SHA256 = (
-    "1d54249b0c30c98903e231f73064b3a43836847ed9a37f748970c7f17e150b89"
+    "ddb2b557927c8c8ad66f899d6ddfd4b5ddb4e9a441b9126b794d816a7d9bb7af"
 )
 _REVIEW_OWNER_DECISION_ACTIONS_V1_SOURCE_FACT_VALUES_SQL = (
     "json_extract(result.value,'$.destination'),"

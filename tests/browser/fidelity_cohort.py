@@ -35,7 +35,7 @@ LONG_DESCRIPTION = (
     "so a wrap that is allowed to happen has somewhere to happen."
 )
 _F20_CANDIDATE_SHA256 = (
-    "2628f9f02706e3e0e6afe244231e3fcab387b866007e016b8003f0978bd0780d"
+    "770b56be2ce7ea9d1d809be189724e5f281a0dd8570af80d63429a5ab617ff99"
 )
 _RICH_QUALIFICATION: tuple[dict[str, object], ...] = tuple(
     {
@@ -46,7 +46,7 @@ _RICH_QUALIFICATION: tuple[dict[str, object], ...] = tuple(
         "option": option,
     }
     for field, option, disposition in (
-        ("subtitle", "fill_empty", "not_qualified"),
+        ("subtitle", "fill_empty", "passing_automatic"),
         ("subtitle", "corroborated_split", "not_qualified"),
         ("series", "primary_narrative", "passing_automatic"),
         ("series", "source_order", "passing_automatic"),

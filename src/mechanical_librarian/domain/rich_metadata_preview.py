@@ -23,7 +23,8 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import (
     BibliographicSelectionKind, ProposalAlternative, ProposalAssessment,
-    ProposalOutcome, ProposalResult, ProposalSet, ProposalValueKind,
+    ProposalOutcome, ProposalResult, ProposalScope, ProposalSet,
+    ProposalValueKind,
 )
 
 
@@ -196,9 +197,25 @@ def _project(
         )
         if reason is not None:
             return _abstain(field, option, target, current, reason)
+    if field == "subtitle" and destination == "automatic":
+        reason = _automatic_subtitle_abstention(report, candidate)
+        if reason is not None:
+            return _abstain(field, option, target, current, reason)
     if candidate is None:
         reason = _candidate_reason(result)
         return RichFieldPreview(field, option, target.state.value, current, "abstain", None, reason)
+    references = candidate.evidence_references
+    if field == "subtitle" and destination == "automatic":
+        # The corroborating local claim is the decisive eligibility evidence;
+        # the durable record cites it alongside the provider claim.
+        references = tuple(
+            sorted(
+                {
+                    *references,
+                    *_corroborating_subtitle_references(report, candidate),
+                }
+            )
+        )
     desired = _data_value(candidate.value.value)
     if field in {"genres", "tags"}:
         if candidate.value.kind is not ProposalValueKind.LIST:
@@ -236,7 +253,7 @@ def _project(
     return RichFieldPreview(
         field, option, target.state.value, current, "projected",
         _data_value(desired), None, False, None,
-        candidate.alternative_id, candidate.evidence_references,
+        candidate.alternative_id, references,
         _candidate_combination_ids(proposal, candidate),
     )
 
@@ -267,6 +284,48 @@ def _series_candidate(result: ProposalResult) -> ProposalAlternative | None:
     ):
         return alternative
     return None
+
+
+def _automatic_subtitle_abstention(
+    report: MetadataReport,
+    candidate: ProposalAlternative | None,
+) -> str | None:
+    """Fill an empty subtitle automatically only when local evidence attests it.
+
+    Provider catalogues split combined titles and carry series-affiliation
+    lines as subtitles; without a matching local claim the projection cannot
+    distinguish a printed subtitle from a catalogue artifact, so it stays an
+    owner decision. The candidate itself must be provider-backed: subtitle
+    alternatives built from the book's own packaged claims carry work scope,
+    and a local claim never corroborates itself into an automatic fill.
+    """
+    if candidate is None or type(candidate.value.value) is not str:
+        return None
+    if candidate.scope is not ProposalScope.EDITION:
+        return "subtitle_local_corroboration_required"
+    if _corroborating_subtitle_references(report, candidate):
+        return None
+    return "subtitle_local_corroboration_required"
+
+
+def _corroborating_subtitle_references(
+    report: MetadataReport,
+    candidate: ProposalAlternative,
+) -> tuple[str, ...]:
+    """The valid local subtitle claims that attest the candidate's exact value."""
+    value = candidate.value.value
+    if type(value) is not str:
+        return ()
+    desired = normalize_title(value).casefold()
+    return tuple(
+        claim.reference
+        for claim in report.local_claims
+        if claim.kind is ClaimKind.SUBTITLE
+        and claim.state is FieldState.VALID
+        and type(observed := claim.canonical or claim.observed) is str
+        and observed
+        and normalize_title(observed).casefold() == desired
+    )
 
 
 def _automatic_series_abstention(
@@ -708,6 +767,10 @@ def project_f20_automatic_decision_value(
             raise RichMetadataPreviewError("rich automatic projection is invalid")
         return {"kind": "series", "value": [values[0]]}
     if field == "isbn_form":
+        if candidate_value["kind"] != "text" or type(candidate_value["value"]) is not str:
+            raise RichMetadataPreviewError("rich automatic projection is invalid")
+        return {"kind": "text", "value": candidate_value["value"]}
+    if field == "subtitle":
         if candidate_value["kind"] != "text" or type(candidate_value["value"]) is not str:
             raise RichMetadataPreviewError("rich automatic projection is invalid")
         return {"kind": "text", "value": candidate_value["value"]}

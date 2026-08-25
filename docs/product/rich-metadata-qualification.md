@@ -54,15 +54,47 @@ current extractor does not yet expose as a structured subtitle claim. Two of
 the invalid proposals were nevertheless repeated by multiple catalogues, so
 provider count is not a safe substitute. A future subtitle candidate must bind
 the selected ebook manifestation, remain distinct from the title, and exclude
-marketing or status text. Both subtitle policies therefore remain
+marketing or status text. Both subtitle policies were therefore initially
 `not_qualified`.
+
+The eighth candidate execution requalified `subtitle:fill_empty` by making the
+book's own packaged metadata the required corroborator. When the target
+subtitle is empty and provider catalogues disagree, the proposal engine now
+elects only the one competing value the local subtitle claim attests
+(`local_attested_subtitle`); the automatic projection separately abstains from
+any fill whose value no valid local subtitle claim matches
+(`subtitle_local_corroboration_required`). Every previously invalid
+prediction — series marketing, proof-only, and franchise descriptors — lacked
+a matching local claim and stays an owner decision. Evaluated with the target
+subtitle varied across the supported `missing`, `null`, and `empty` states
+while preserving observed provider evidence, `subtitle:fill_empty` made 5/5
+correct predictions in each state, 15 total at 100% precision and 55.6%
+recall, and is now `passing_automatic`. `subtitle:corroborated_split` again
+made no predictions and remains `not_qualified`.
+
+The ninth candidate execution hardened the corroboration boundary: the elected
+and projected fill must itself be provider-backed, so the book's packaged claim
+corroborates a catalogue value and never elects itself when no provider offers
+a subtitle. Three of the eighth execution's predictions were exactly such
+local-only fills and now abstain as owner decisions. Re-evaluated across the
+same three synthesized target states, `subtitle:fill_empty` makes 4/4 correct
+predictions in each state, 12 total at 100% precision and 44.4% recall, and
+remains `passing_automatic`. The same execution refreshed the genre evidence
+under the current field-parameterized state matrix: genre fill-empty makes 5/5
+correct predictions in each state, 15 total, and genre add and replace each
+make 4, all at 100% precision.
+
+The tenth candidate execution verified every recorded metric unchanged after
+the projection began citing the corroborating local subtitle claim alongside
+the provider evidence, so a persisted automatic subtitle decision's durable
+record names its decisive corroborator.
 
 The current policy separately treats the exact provider-edition label `A Novel`
 as a generic marketing subtitle. It preserves a blank target without creating
 a subtitle proposal. The vocabulary is provider-only and deliberately limited
 to that exact normalized label; local package evidence and any longer subtitle
 remain ordinary evidence. This is a proposal-policy rule, not F20 automatic
-authority, so both subtitle options remain `not_qualified`.
+authority.
 Genre add and replace each made 3 exact predictions. Genre fill-empty was
 evaluated with only the target genre field varied across the supported
 `missing`, `null`, and `empty` states while preserving the observed provider

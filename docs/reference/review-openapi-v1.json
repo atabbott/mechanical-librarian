@@ -3293,7 +3293,10 @@
             "items": {
               "anyOf": [
                 {
-                  "$ref": "#/components/schemas/_SubtitleQualification"
+                  "$ref": "#/components/schemas/_SubtitleFillQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_SubtitleSplitQualification"
                 },
                 {
                   "$ref": "#/components/schemas/_SeriesQualification"
@@ -3397,7 +3400,10 @@
             "items": {
               "anyOf": [
                 {
-                  "$ref": "#/components/schemas/_SubtitleQualification"
+                  "$ref": "#/components/schemas/_SubtitleFillQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_SubtitleSplitQualification"
                 },
                 {
                   "$ref": "#/components/schemas/_SeriesQualification"
@@ -4673,7 +4679,46 @@
         "title": "_ShadowSampleResponse",
         "type": "object"
       },
-      "_SubtitleQualification": {
+      "_SubtitleFillQualification": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic_available": {
+            "const": true,
+            "title": "Automatic Available",
+            "type": "boolean"
+          },
+          "candidate_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "disposition": {
+            "const": "passing_automatic",
+            "title": "Disposition",
+            "type": "string"
+          },
+          "field": {
+            "const": "subtitle",
+            "title": "Field",
+            "type": "string"
+          },
+          "option": {
+            "const": "fill_empty",
+            "title": "Option",
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidate_sha256",
+          "automatic_available",
+          "disposition",
+          "field",
+          "option"
+        ],
+        "title": "_SubtitleFillQualification",
+        "type": "object"
+      },
+      "_SubtitleSplitQualification": {
         "additionalProperties": false,
         "properties": {
           "automatic_available": {
@@ -4697,10 +4742,7 @@
             "type": "string"
           },
           "option": {
-            "enum": [
-              "fill_empty",
-              "corroborated_split"
-            ],
+            "const": "corroborated_split",
             "title": "Option",
             "type": "string"
           }
@@ -4712,7 +4754,7 @@
           "field",
           "option"
         ],
-        "title": "_SubtitleQualification",
+        "title": "_SubtitleSplitQualification",
         "type": "object"
       },
       "_SupportPreviewResponse": {

@@ -294,7 +294,7 @@ def _representative_database(path: Path, works: int = _WORKS) -> sqlite3.Connect
             policy_category="isbn_form",
             policy_option="preserve_exact",
             qualification_manifest_sha256=(
-                "2628f9f02706e3e0e6afe244231e3fcab387b866007e016b8003f0978bd0780d"
+                "770b56be2ce7ea9d1d809be189724e5f281a0dd8570af80d63429a5ab617ff99"
             ),
             source_outcome_id=field["outcome_id"],
             bundle_id=None,

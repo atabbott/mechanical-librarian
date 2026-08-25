@@ -132,6 +132,11 @@ class ShadowFieldOutcome:
 
     def __post_init__(self) -> None:
         expected_category = _POLICY_CATEGORY_BY_DESTINATION.get(self.destination)
+        # The subtitle destination is governed by two policy categories: the
+        # title_layout combination witness, and the independently qualified
+        # subtitle fill. Exactly one of them owns the destination per set.
+        if self.destination == "subtitle" and self.policy_category == "subtitle":
+            expected_category = "subtitle"
         expected_disposition = (
             "ignore"
             if self.policy_destination == "ignore"
@@ -355,6 +360,7 @@ class ShadowOutcomeSet:
         destinations = dict(policy.destinations)
         options = dict(policy.options)
         fields: list[ShadowFieldOutcome] = []
+        title_layout_subtitle: ShadowFieldOutcome | None = None
         for decision in decisions.decisions:
             if decision.destination in {
                 "series",
@@ -418,24 +424,26 @@ class ShadowOutcomeSet:
                 "reason_code": decision.reason_code,
                 "rule_id": rule_id,
             }
-            fields.append(
-                ShadowFieldOutcome(
-                    "shadow_outcome_" + _digest(field_data),
-                    decision.proposal_id,
-                    decision.destination,
-                    category,
-                    policy_option,
-                    policy_destination,
-                    disposition,
-                    decision.action_id,
-                    decision.candidate_id,
-                    decision.citation_ids,
-                    decision.combination_ids,
-                    decision.reason_code,
-                    rule_id,
-                    qualification_candidate_id,
-                )
+            field_outcome = ShadowFieldOutcome(
+                "shadow_outcome_" + _digest(field_data),
+                decision.proposal_id,
+                decision.destination,
+                category,
+                policy_option,
+                policy_destination,
+                disposition,
+                decision.action_id,
+                decision.candidate_id,
+                decision.citation_ids,
+                decision.combination_ids,
+                decision.reason_code,
+                rule_id,
+                qualification_candidate_id,
             )
+            if decision.destination == "subtitle":
+                title_layout_subtitle = field_outcome
+            else:
+                fields.append(field_outcome)
         rich = {
             value.field: value
             for value in compile_rich_metadata_preview(policy, report, proposal).fields
@@ -463,6 +471,27 @@ class ShadowOutcomeSet:
                     catalogue_sha256=decisions.catalogue_sha256,
                 )
             )
+        # The subtitle destination has two governing categories. An acting
+        # title_layout combination (a candidate on the subtitle witness) keeps
+        # the destination: the bundled identity authority already covers it.
+        # Otherwise, when the owner routed the subtitle category to Automatic,
+        # the independently qualified subtitle fill owns the destination.
+        if destinations["subtitle"] == "automatic" and (
+            title_layout_subtitle is None
+            or title_layout_subtitle.disposition != "candidate"
+        ):
+            fields.append(
+                _rich_field_outcome(
+                    rich["subtitle"],
+                    category="subtitle",
+                    destination="subtitle",
+                    policy_destination=destinations["subtitle"],
+                    proposal_id=proposals["subtitle"],
+                    catalogue_sha256=decisions.catalogue_sha256,
+                )
+            )
+        elif title_layout_subtitle is not None:
+            fields.append(title_layout_subtitle)
         core = {
             "authority": "none",
             "catalogue_sha256": decisions.catalogue_sha256,
