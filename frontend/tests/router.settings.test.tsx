@@ -134,7 +134,16 @@ describe('owner settings route', () => {
       expect(screen.getByRole('link', { name })).toBeVisible()
     expect(screen.getByText('Restart required for saved changes')).toBeVisible()
     await user.click(screen.getByRole('button', { name: /Providers/ }))
+    expect(screen.getByRole('checkbox', { name: 'Provider state Enable hardcover' })).toBeVisible()
+    expect(screen.getByRole('link', { name: 'Get a Hardcover key' })).toBeVisible()
     expect(screen.getByText('Configured · ····abcd')).toBeVisible()
+    expect(
+      screen.getByRole('textbox', { name: 'Open Library contact email' }),
+    ).toHaveAccessibleDescription(
+      /Sent only to Open Library; never shared with this project or retained in reports/,
+    )
+    expect(screen.queryByText('Cover evidence')).not.toBeInTheDocument()
+    expect(screen.queryByRole('checkbox', { name: /cover evidence/i })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Replace hardcover API key' }))
     await user.type(screen.getByLabelText('Replacement hardcover API key'), 'new-secret-abcd')
     await user.click(screen.getByRole('button', { name: 'Save settings' }))

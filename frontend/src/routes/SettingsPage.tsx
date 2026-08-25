@@ -636,33 +636,6 @@ const SettingsEditor = ({
                           </label>
                         )}
                       </Row>
-                      <Row
-                        fieldId={`provider.${provider.name}.cover_enabled`}
-                        title="Cover evidence"
-                        description="Allow this provider to supply cover candidates for associated libraries."
-                        effect={effect('providers')}
-                        locked={locked}
-                      >
-                        {locked ? (
-                          <strong>{provider.cover_enabled ? 'Enabled' : 'Disabled'}</strong>
-                        ) : (
-                          <label className="settings-check">
-                            <FieldInput
-                              fieldId={`provider.${provider.name}.cover_enabled`}
-                              type="checkbox"
-                              checked={provider.cover_enabled}
-                              disabled={!provider.enabled}
-                              onChange={(event) =>
-                                update((value) => {
-                                  const item = value.providers.at(index)
-                                  if (item) item.cover_enabled = event.currentTarget.checked
-                                })
-                              }
-                            />
-                            Use {provider.name.replaceAll('_', ' ')} for cover evidence
-                          </label>
-                        )}
-                      </Row>
                       {'contact_email' in provider ? (
                         <Row
                           fieldId={`provider.${provider.name}.contact_email`}
