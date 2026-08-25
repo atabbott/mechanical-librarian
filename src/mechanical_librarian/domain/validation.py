@@ -42,6 +42,18 @@ boolean = exact_type(bool)
 text = exact_type(str)
 
 
+def credential(value: object) -> bool:
+    """Accept the exact canonical bearer-token payload used by every adapter."""
+    return (
+        type(value) is str
+        and 1 <= len(value.encode("ascii", "ignore")) <= 2048
+        and value.encode("ascii", "ignore").decode("ascii") == value
+        and value.strip() == value
+        and not value.lower().startswith("bearer")
+        and all(0x21 <= ord(character) <= 0x7E for character in value)
+    )
+
+
 def matching(pattern: Pattern[str]) -> FieldCheck:
     """Accept exact text whose whole value matches one closed pattern."""
     return lambda value: text(value) and pattern.fullmatch(cast(str, value)) is not None

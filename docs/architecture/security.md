@@ -267,6 +267,19 @@ operations behind one serialization gate; SQLite remains the sole transaction
 owner. FastAPI retains only request bounds, exact Host/Origin enforcement,
 session/CSRF dependencies, response translation, and lifecycle delegation.
 
+The authenticated Settings API shares that boundary. Its closed GET/PATCH
+documents are bounded to 32 connections/providers and 128 libraries, responses
+are private and `no-store`, and unsafe requests additionally require CSRF,
+exact Origin, and the installed build identity. Revision comparison and the
+settings/secret update are one SQLite transaction. Secret values are accepted
+only as 1–2,048 printable non-whitespace ASCII characters without an
+authorization-scheme prefix; they are never returned, logged, diagnosed, put
+in URLs or browser caches, or written to public artifacts. Reads disclose only
+presence plus four indicator characters. Invalid and persistence failures use
+fixed value-free envelopes. A present `/data/config.json` prevents every
+covered write and prevents any settings-store read, so an invalid file cannot
+switch authority.
+
 The #641 live update stream is one further authenticated read on that same
 entry point and adds no authentication mechanism. `GET /api/v1/updates` requires
 the same unexpired opaque session, refuses a cross-origin subscribe, and is
@@ -373,6 +386,15 @@ configuration and redirects.
 The Hardcover secret file contains the bare provider token without an
 authorization scheme. Infrastructure adds the required `Bearer` scheme only to
 an exact POST to the fixed GraphQL URL.
+
+In settings-store mode, the same egress boundary consumes credentials from the
+owner-only application database only while composing their named target or
+provider clients. Every connection requires a credential; enabled Hardcover
+requires one, enabled Google Books may omit one, and disabled providers retain
+none. The deploy-only review bootstrap and contained-reviewer profile path are
+never browser fields. Runtime activation snapshots without clearing restart
+debt; only a completely composed graph acknowledges it, so a later composition
+failure cannot misstate desired settings as applied.
 
 Disabled providers cause no secret access, client construction, or egress.
 Unreferenced providers are never bound. Each of at most eight distinct

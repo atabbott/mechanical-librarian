@@ -572,6 +572,8 @@ _AUTOMATIC_DECISION_NO_UPDATE_SQL = "CREATE TRIGGER automatic_decisions_no_updat
 _AUTOMATIC_DECISION_NO_DELETE_SQL = "CREATE TRIGGER automatic_decisions_no_delete BEFORE DELETE ON automatic_decisions BEGIN SELECT RAISE(ABORT, 'automatic decisions are append-only'); END"
 _SHADOW_DECISION_OUTCOME_NO_UPDATE_SQL = "CREATE TRIGGER shadow_decision_outcomes_no_update BEFORE UPDATE ON shadow_decision_outcomes BEGIN SELECT RAISE(ABORT, 'shadow decision outcomes are append-only'); END"
 _SHADOW_DECISION_OUTCOME_NO_DELETE_SQL = "CREATE TRIGGER shadow_decision_outcomes_no_delete BEFORE DELETE ON shadow_decision_outcomes BEGIN SELECT RAISE(ABORT, 'shadow decision outcomes are append-only'); END"
+_OWNER_SETTINGS_SQL = "CREATE TABLE owner_settings (singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1),revision INTEGER NOT NULL CHECK(revision>=1),document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 262144))"
+_OWNER_SETTING_SECRETS_SQL = "CREATE TABLE owner_setting_secrets (field_id TEXT PRIMARY KEY NOT NULL CHECK(length(field_id) BETWEEN 1 AND 128),value TEXT NOT NULL CHECK(typeof(value)='text' AND length(CAST(value AS BLOB)) BETWEEN 1 AND 2048))"
 
 
 def _create_schema(connection: sqlite3.Connection) -> None:
@@ -658,6 +660,8 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_FIELD_EFFECT_NO_CHANGES_SQL)
     connection.execute(_FIELD_EFFECT_ACTIONS_SQL)
     connection.execute(_FIELD_EFFECT_CLEANUPS_SQL)
+    connection.execute(_OWNER_SETTINGS_SQL)
+    connection.execute(_OWNER_SETTING_SECRETS_SQL)
     connection.execute(_SHADOW_DECISION_OUTCOMES_SQL)
     connection.execute(_SHADOW_DECISION_OUTCOMES_CASE_HISTORY_INDEX_SQL)
     connection.execute(_SHADOW_OUTCOME_FIELD_FACTS_SQL)
@@ -759,6 +763,7 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
             ("index", "sqlite_autoindex_metadata_policy_transitions_1", None),
             ("index", "sqlite_autoindex_metadata_policy_transitions_2", None),
             ("index", "sqlite_autoindex_metadata_policy_transition_items_1", None),
+            ("index", "sqlite_autoindex_owner_setting_secrets_1", None),
             ("index", "sqlite_autoindex_proposal_sets_1", None),
             ("index", "sqlite_autoindex_review_cases_1", None),
             ("index", "sqlite_autoindex_review_case_transitions_1", None),
@@ -842,6 +847,8 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
                 "metadata_policy_transition_items",
                 _METADATA_POLICY_TRANSITION_ITEMS_SQL,
             ),
+            ("table", "owner_setting_secrets", _OWNER_SETTING_SECRETS_SQL),
+            ("table", "owner_settings", _OWNER_SETTINGS_SQL),
             ("table", "proposal_sets", _PROPOSAL_SETS_SQL),
             ("table", "review_case_transitions", _REVIEW_TRANSITIONS_SQL),
             ("table", "review_cases", _REVIEW_CASES_SQL),

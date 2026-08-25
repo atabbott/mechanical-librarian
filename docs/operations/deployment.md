@@ -5,10 +5,15 @@
 `Dockerfile` and `compose.yaml` define the pre-release installed runtime. It is
 one non-root container, one named `/data` volume, one HTTPS port, a read-only
 root filesystem, and no runtime package installation or extra application
-process. Put the exact `config-v6` document at `/data/config.json` and keep its
-referenced owner-only TLS, password and service-secret files within explicitly
-mounted private locations. Add ebook media mounts as read-only Compose
-overrides; never grant a writable media mount or Docker socket.
+process. Existing deployments may put the exact `config-v6` document at
+`/data/config.json` and keep its referenced owner-only TLS, password and
+service-secret files within explicitly mounted private locations. When that
+file is absent, store mode instead requires the exact-current owner settings and
+verifier in `/data/application.sqlite3` and an owner-only, read-only
+`/run/secrets/review-bootstrap.json` containing deploy-side TLS, canonical
+origin, trusted proxies, read-only mount mappings, and any contained-reviewer
+profile path. Add ebook media mounts as read-only Compose overrides; never grant
+a writable media mount or Docker socket.
 
 The published mapping is `127.0.0.1:8443:8443`, so the review surface reaches
 the host and nothing further. Exposing it to a LAN is an owner decision rather
@@ -36,10 +41,16 @@ and Compose v2.20 or newer. That is the newest runtime either file requires;
 nothing else in them assumes a version that recent.
 
 On an absent data volume the entrypoint creates the exact-current application
-and catalogue stores and private artifact area, then starts the existing review
-server. On restart it accepts only those exact-current stores. A schema mismatch,
-unowned volume, invalid configuration, backup/recovery error or permission
-failure stops startup rather than importing, migrating or repairing data.
+and catalogue stores and private artifact area. Store-mode review startup then
+refuses until #745 has atomically established complete owner settings and an
+owner verifier; this change introduces no implicit first-run defaults. On
+restart it accepts only exact-current, owner-only stores. A schema mismatch,
+missing/incomplete settings, an unowned volume, invalid file or bootstrap,
+backup/recovery error, or permission failure stops startup rather than falling
+back, importing, migrating, or repairing data. A present `/data/config.json`
+always selects file mode, even when invalid; file mode never opens the settings
+store. Store-mode restart debt remains pending unless the whole runtime graph
+composes and acknowledges its exact settings revision.
 
 Use `docker compose up --build` for a local installed-product qualification.
 `scripts/qualify_container_lifecycle.py --source-sha <exact-head>` repeats the

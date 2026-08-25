@@ -41,6 +41,12 @@ reports remain secret-free in both modes. Contained-reviewer profiles,
 executable paths, and authentication belong only to explicitly retained private
 workbench state, never runtime backups.
 
+Do not use the Settings API, its short configured indicators, or a public
+support artifact as a credential export. Recovery of store mode requires the
+complete protected database and matching deploy-side bootstrap/TLS material;
+there is no secret read-back, selective settings import, or fallback to a
+present but invalid `/data/config.json`.
+
 Backups expose bounded target metadata, cited evidence, sanitized deterministic
 packets, decisions/outcomes, and execution facts to anyone who can read them.
 Use owner-scoped access and encrypted-at-rest storage, define an operator

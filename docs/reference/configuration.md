@@ -18,6 +18,30 @@ this reference describes the file-managed `config-v6` contract. In that mode it
 also solely supplies the review TLS identity, canonical origin, and trusted
 proxy IPs; the store/setup bootstrap document is neither required nor read.
 
+When `/data/config.json` is absent, `review-serve` instead requires one
+exact-current owner-settings document and owner verifier in
+`/data/application.sqlite3`, plus an owner-only
+`/run/secrets/review-bootstrap.json`. Missing, incomplete, unreadable, or
+invalid store/bootstrap state stops startup; it does not fall back to a partial
+configuration or enter setup until #745 supplies that separately qualified
+flow. The bootstrap is a closed `review-bootstrap-v1` document containing only
+`canonical_origin`, the TLS certificate and key paths, up to 16
+`trusted_proxy_ips`, up to 32 read-only mount mappings, and the optional
+contained-reviewer profile path. Ports, volume/bind mounts, owner-password
+recovery, and proxy/TLS deployment remain outside the Settings API.
+
+Authenticated owners use the lazy `/settings` route and revision-CAS
+`GET`/`PATCH /api/v1/settings` API. Reads are private and return only a short
+secret indicator such as `Configured · ····1a2b`; secret values may only be
+set, replaced, or explicitly cleared. A present configuration file makes every
+covered write return `409 settings_managed_by_file` naming only
+`/data/config.json`; neither the API nor UI consults or exposes store values in
+that mode. Connections, libraries, providers and credentials, reviewer state,
+server timings, recovery generation, and report limits take effect after a
+successful restart composition. Reduced motion and Policy-owned cover
+preferences apply live. `pending_restart` is server-derived and is acknowledged
+only after the complete desired revision has composed successfully.
+
 `provider_recovery_generation` is a required positive operator generation for
 provider recovery. After correcting a provider credential, authorization, or
 configuration condition, increment it and restart the container. It is the

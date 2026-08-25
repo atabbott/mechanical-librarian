@@ -1,6 +1,607 @@
 {
   "components": {
     "schemas": {
+      "CoverPreferenceSettings": {
+        "additionalProperties": false,
+        "properties": {
+          "avoid_promotional_text": {
+            "default": false,
+            "title": "Avoid Promotional Text",
+            "type": "boolean"
+          },
+          "avoid_tie_in_branding": {
+            "default": false,
+            "title": "Avoid Tie In Branding",
+            "type": "boolean"
+          },
+          "prefer_minimal_composition": {
+            "default": false,
+            "title": "Prefer Minimal Composition",
+            "type": "boolean"
+          }
+        },
+        "title": "CoverPreferenceSettings",
+        "type": "object"
+      },
+      "GoogleBooksProviderSettings": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter": {
+            "const": "google_books",
+            "title": "Adapter",
+            "type": "string"
+          },
+          "cover_enabled": {
+            "const": false,
+            "default": false,
+            "title": "Cover Enabled",
+            "type": "boolean"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "adapter",
+          "enabled"
+        ],
+        "title": "GoogleBooksProviderSettings",
+        "type": "object"
+      },
+      "HardcoverProviderSettings": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter": {
+            "const": "hardcover",
+            "title": "Adapter",
+            "type": "string"
+          },
+          "cover_enabled": {
+            "default": false,
+            "title": "Cover Enabled",
+            "type": "boolean"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "adapter",
+          "enabled"
+        ],
+        "title": "HardcoverProviderSettings",
+        "type": "object"
+      },
+      "LibrarySettings": {
+        "additionalProperties": false,
+        "properties": {
+          "connection": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Connection",
+            "type": "string"
+          },
+          "library_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Library Id",
+            "type": "string"
+          },
+          "media_kind": {
+            "enum": [
+              "book",
+              "ebook",
+              "audiobook"
+            ],
+            "title": "Media Kind",
+            "type": "string"
+          },
+          "mount": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mount"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "policy_override": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policy Override"
+          },
+          "provider_connections": {
+            "default": [],
+            "items": {
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Provider Connections",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "connection",
+          "library_id",
+          "media_kind"
+        ],
+        "title": "LibrarySettings",
+        "type": "object"
+      },
+      "OpenLibraryProviderSettings": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter": {
+            "const": "open_library",
+            "title": "Adapter",
+            "type": "string"
+          },
+          "contact_email": {
+            "anyOf": [
+              {
+                "maxLength": 254,
+                "minLength": 3,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contact Email"
+          },
+          "cover_enabled": {
+            "default": false,
+            "title": "Cover Enabled",
+            "type": "boolean"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "adapter",
+          "enabled"
+        ],
+        "title": "OpenLibraryProviderSettings",
+        "type": "object"
+      },
+      "OwnerSettingsDocument": {
+        "additionalProperties": false,
+        "properties": {
+          "connections": {
+            "items": {
+              "$ref": "#/components/schemas/TargetSettings"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "title": "Connections",
+            "type": "array"
+          },
+          "cover_preferences": {
+            "$ref": "#/components/schemas/CoverPreferenceSettings",
+            "default": {
+              "avoid_promotional_text": false,
+              "avoid_tie_in_branding": false,
+              "prefer_minimal_composition": false
+            }
+          },
+          "libraries": {
+            "items": {
+              "$ref": "#/components/schemas/LibrarySettings"
+            },
+            "maxItems": 128,
+            "minItems": 1,
+            "title": "Libraries",
+            "type": "array"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/ReportLimitSettings",
+            "default": {
+              "provider_response_bytes": 65536,
+              "source_archive_bytes": 268435456,
+              "target_response_bytes": 1048576,
+              "timeout_seconds": 30
+            }
+          },
+          "pending_restart": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Pending Restart",
+            "type": "array"
+          },
+          "provider_recovery_generation": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Provider Recovery Generation",
+            "type": "integer"
+          },
+          "providers": {
+            "default": [],
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "google_books": "#/components/schemas/GoogleBooksProviderSettings",
+                  "hardcover": "#/components/schemas/HardcoverProviderSettings",
+                  "open_library": "#/components/schemas/OpenLibraryProviderSettings"
+                },
+                "propertyName": "adapter"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/HardcoverProviderSettings"
+                },
+                {
+                  "$ref": "#/components/schemas/GoogleBooksProviderSettings"
+                },
+                {
+                  "$ref": "#/components/schemas/OpenLibraryProviderSettings"
+                }
+              ]
+            },
+            "maxItems": 32,
+            "title": "Providers",
+            "type": "array"
+          },
+          "reduced_motion": {
+            "default": "follow_system",
+            "enum": [
+              "follow_system",
+              "always_reduced"
+            ],
+            "title": "Reduced Motion",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "schema_version": {
+            "const": "owner-settings-v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "server": {
+            "$ref": "#/components/schemas/ServerSettings",
+            "default": {
+              "diagnostic_timings_enabled": false,
+              "graceful_shutdown_seconds": 30,
+              "library_polling_interval_seconds": 900,
+              "reviewer_enabled": false,
+              "session_lifetime_seconds": 3600
+            }
+          }
+        },
+        "required": [
+          "schema_version",
+          "revision",
+          "connections",
+          "libraries"
+        ],
+        "title": "OwnerSettingsDocument",
+        "type": "object"
+      },
+      "ReportLimitSettings": {
+        "additionalProperties": false,
+        "properties": {
+          "provider_response_bytes": {
+            "default": 65536,
+            "maximum": 262144.0,
+            "minimum": 1024.0,
+            "title": "Provider Response Bytes",
+            "type": "integer"
+          },
+          "source_archive_bytes": {
+            "default": 268435456,
+            "maximum": 268435456.0,
+            "minimum": 1024.0,
+            "title": "Source Archive Bytes",
+            "type": "integer"
+          },
+          "target_response_bytes": {
+            "default": 1048576,
+            "maximum": 4194304.0,
+            "minimum": 1024.0,
+            "title": "Target Response Bytes",
+            "type": "integer"
+          },
+          "timeout_seconds": {
+            "default": 30,
+            "maximum": 60.0,
+            "minimum": 1.0,
+            "title": "Timeout Seconds",
+            "type": "integer"
+          }
+        },
+        "title": "ReportLimitSettings",
+        "type": "object"
+      },
+      "SecretPresence": {
+        "additionalProperties": false,
+        "properties": {
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "field_id": {
+            "title": "Field Id",
+            "type": "string"
+          },
+          "indicator": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Indicator"
+          }
+        },
+        "required": [
+          "field_id",
+          "configured"
+        ],
+        "title": "SecretPresence",
+        "type": "object"
+      },
+      "SecretWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "field_id": {
+            "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+            "title": "Field Id",
+            "type": "string"
+          },
+          "operation": {
+            "enum": [
+              "set",
+              "replace",
+              "clear"
+            ],
+            "title": "Operation",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "field_id",
+          "operation"
+        ],
+        "title": "SecretWrite",
+        "type": "object"
+      },
+      "ServerSettings": {
+        "additionalProperties": false,
+        "properties": {
+          "diagnostic_timings_enabled": {
+            "default": false,
+            "title": "Diagnostic Timings Enabled",
+            "type": "boolean"
+          },
+          "graceful_shutdown_seconds": {
+            "default": 30,
+            "maximum": 300.0,
+            "minimum": 1.0,
+            "title": "Graceful Shutdown Seconds",
+            "type": "integer"
+          },
+          "library_polling_interval_seconds": {
+            "default": 900,
+            "maximum": 86400.0,
+            "minimum": 60.0,
+            "title": "Library Polling Interval Seconds",
+            "type": "integer"
+          },
+          "reviewer_enabled": {
+            "default": false,
+            "title": "Reviewer Enabled",
+            "type": "boolean"
+          },
+          "session_lifetime_seconds": {
+            "default": 3600,
+            "maximum": 86400.0,
+            "minimum": 300.0,
+            "title": "Session Lifetime Seconds",
+            "type": "integer"
+          }
+        },
+        "title": "ServerSettings",
+        "type": "object"
+      },
+      "SettingField": {
+        "additionalProperties": false,
+        "properties": {
+          "apply_effect": {
+            "enum": [
+              "applied_live",
+              "restart_required",
+              "deploy_managed"
+            ],
+            "title": "Apply Effect",
+            "type": "string"
+          },
+          "field_id": {
+            "title": "Field Id",
+            "type": "string"
+          },
+          "group": {
+            "title": "Group",
+            "type": "string"
+          },
+          "managed_by_file": {
+            "title": "Managed By File",
+            "type": "boolean"
+          },
+          "managed_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Managed Path"
+          },
+          "pending_restart": {
+            "default": false,
+            "title": "Pending Restart",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "field_id",
+          "group",
+          "managed_by_file",
+          "apply_effect"
+        ],
+        "title": "SettingField",
+        "type": "object"
+      },
+      "SettingsView": {
+        "additionalProperties": false,
+        "properties": {
+          "authority": {
+            "enum": [
+              "file",
+              "store"
+            ],
+            "title": "Authority",
+            "type": "string"
+          },
+          "document": {
+            "$ref": "#/components/schemas/OwnerSettingsDocument"
+          },
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/SettingField"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "managed_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Managed Path"
+          },
+          "pending_restart": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Pending Restart",
+            "type": "array"
+          },
+          "secrets": {
+            "items": {
+              "$ref": "#/components/schemas/SecretPresence"
+            },
+            "title": "Secrets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "document",
+          "fields",
+          "secrets",
+          "pending_restart",
+          "authority"
+        ],
+        "title": "SettingsView",
+        "type": "object"
+      },
+      "TargetSettings": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter": {
+            "const": "audiobookshelf",
+            "default": "audiobookshelf",
+            "title": "Adapter",
+            "type": "string"
+          },
+          "endpoint": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Endpoint",
+            "type": "string"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "endpoint"
+        ],
+        "title": "TargetSettings",
+        "type": "object"
+      },
       "_ActivityCapability": {
         "additionalProperties": false,
         "properties": {
@@ -808,6 +1409,24 @@
           "scheduled"
         ],
         "title": "_ActivityWaitingReasons",
+        "type": "object"
+      },
+      "_AppearanceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "reduced_motion": {
+            "enum": [
+              "follow_system",
+              "always_reduced"
+            ],
+            "title": "Reduced Motion",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reduced_motion"
+        ],
+        "title": "_AppearanceResponse",
         "type": "object"
       },
       "_AsinQualification": {
@@ -2011,6 +2630,18 @@
           "code": {
             "title": "Code",
             "type": "string"
+          },
+          "managed_by_file": {
+            "anyOf": [
+              {
+                "const": "/data/config.json",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Managed By File"
           }
         },
         "required": [
@@ -4295,6 +4926,34 @@
         "title": "_SessionResponse",
         "type": "object"
       },
+      "_SettingsWriteRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/OwnerSettingsDocument"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "secrets": {
+            "items": {
+              "$ref": "#/components/schemas/SecretWrite"
+            },
+            "maxItems": 32,
+            "title": "Secrets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "document",
+          "secrets"
+        ],
+        "title": "_SettingsWriteRequest",
+        "type": "object"
+      },
       "_ShadowFieldOutcomeResponse": {
         "additionalProperties": false,
         "properties": {
@@ -5366,6 +6025,49 @@
           }
         ],
         "summary": "Activity Transitions"
+      }
+    },
+    "/api/v1/appearance": {
+      "get": {
+        "operationId": "appearance_api_v1_appearance_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_AppearanceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Appearance"
       }
     },
     "/api/v1/attention": {
@@ -9436,6 +10138,161 @@
           }
         ],
         "summary": "Logout"
+      }
+    },
+    "/api/v1/settings": {
+      "get": {
+        "operationId": "settings_api_v1_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Settings"
+      },
+      "patch": {
+        "operationId": "write_settings_api_v1_settings_patch",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_SettingsWriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Write Settings"
       }
     },
     "/api/v1/updates": {

@@ -18,6 +18,7 @@ from mechanical_librarian.application.operations import (
     SupportExporter,
     TimingRepository,
 )
+from mechanical_librarian.application.owner_settings import OwnerSettingsOperations
 from mechanical_librarian.application.review_application import (
     compose_review_application,
 )
@@ -100,6 +101,7 @@ def create_transport_test_app(
     operational_timer: StageTimer | None = None,
     react_asset_loader: ReactAssetLoader | None = None,
     cover_considerations=None,
+    settings: OwnerSettingsOperations | None = None,
 ):
     """Wire synthetic store capabilities before creating the HTTP adapter."""
     application = compose_review_application(
@@ -123,6 +125,7 @@ def create_transport_test_app(
         operational_support=operational_support,
         operational_timer=operational_timer,
         cover_considerations=cover_considerations,
+        settings=settings,
     )
     with patch(
         "mechanical_librarian.interfaces.web.app.ReactAssetLoader",

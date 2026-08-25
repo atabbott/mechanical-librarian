@@ -33,7 +33,7 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from fastapi.security import APIKeyCookie
-from pydantic import BaseModel, ConfigDict, Field, StrictStr, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, TypeAdapter
 from starlette.types import Message, Receive, Scope, Send
 
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
@@ -58,6 +58,11 @@ from mechanical_librarian.domain.field_effect import (
     valid_activity_transition_id,
 )
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyError
+from mechanical_librarian.domain.owner_settings import (
+    OwnerSettingsDocument,
+    SecretWrite,
+    SettingsView,
+)
 from mechanical_librarian.interfaces.web import live_stream, review_frontend
 from mechanical_librarian.interfaces.web.react_assets import (
     ReactAssetError,
@@ -141,6 +146,16 @@ class _LoginRequest(BaseModel):
 
 class _ClosedModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class _SettingsWriteRequest(_ClosedModel):
+    expected_revision: StrictInt = Field(ge=1)
+    document: OwnerSettingsDocument
+    secrets: list[SecretWrite] = Field(max_length=32)
+
+
+class _AppearanceResponse(_ClosedModel):
+    reduced_motion: Literal["follow_system", "always_reduced"]
 
 
 class _SeriesValue(_ClosedModel):
@@ -464,6 +479,7 @@ class _SessionResponse(_ClosedModel):
 
 class _ErrorCode(_ClosedModel):
     code: str
+    managed_by_file: Literal["/data/config.json"] | None = None
 
 
 class _ErrorResponse(_ClosedModel):
@@ -1192,13 +1208,20 @@ class _BodyLimitMiddleware:
             "/api/v1/metadata-policy/validate",
             "/api/v1/metadata-policy/preview",
         }
-        if scope["type"] != "http" or not (is_login or is_decision or is_policy_draft):
+        is_settings = path == "/api/v1/settings"
+        if scope["type"] != "http" or not (
+            is_login or is_decision or is_policy_draft or is_settings
+        ):
             await self._app(scope, receive, send)
             return
         maximum = (
             self._maximum_bytes
             if is_login
-            else (16_384 if is_policy_draft else self._decision_maximum_bytes)
+            else (
+                (262_144 if is_settings else 16_384)
+                if is_policy_draft or is_settings
+                else self._decision_maximum_bytes
+            )
         )
         declared = next(
             (
@@ -1344,6 +1367,7 @@ def create_review_app(
     _register_session_and_operations_routes(
         app, application, configuration, authenticated_session_cookie
     )
+    _register_settings_routes(app, application, authenticated_session_cookie)
     _register_policy_routes(app, application, authenticated_session_cookie)
     _register_case_and_effect_routes(
         app, application, session_cookie, authenticated_session_cookie
@@ -1358,7 +1382,13 @@ def create_review_app(
     async def http_error(_: Request, error: HTTPException) -> JSONResponse:
         detail: object = error.detail
         code = detail.get("code") if type(detail) is dict else "request"
-        return _error(error.status_code, str(code))
+        managed_by_file: Literal["/data/config.json"] | None = (
+            "/data/config.json"
+            if type(detail) is dict
+            and detail.get("managed_by_file") == "/data/config.json"
+            else None
+        )
+        return _error(error.status_code, str(code), managed_by_file)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(
@@ -1436,6 +1466,83 @@ def _document_build_identity_header(app: FastAPI) -> None:
         return schema
 
     app.openapi = openapi  # type: ignore[method-assign]
+
+
+def _register_settings_routes(
+    app: FastAPI,
+    application: ReviewApplication,
+    authenticated_session_cookie: _SessionDependency,
+) -> None:
+    @app.get(
+        "/api/v1/appearance",
+        response_model=_AppearanceResponse,
+        responses={status: {"model": _ErrorResponse} for status in (401, 503)},
+    )
+    def appearance(
+        ml_session: str = Depends(authenticated_session_cookie),
+    ) -> _AppearanceResponse:
+        _require_session(application, ml_session)
+        if not application.settings_available:
+            raise HTTPException(503, detail={"code": "settings_unavailable"})
+        try:
+            value = cast(SettingsView, application.owner_settings())
+        except ReviewApplicationError:
+            raise HTTPException(503, detail={"code": "settings_unavailable"}) from None
+        return _AppearanceResponse(reduced_motion=value.document.reduced_motion)
+
+    @app.get(
+        "/api/v1/settings",
+        response_model=SettingsView,
+        responses={status: {"model": _ErrorResponse} for status in (401, 503)},
+    )
+    def settings(
+        ml_session: str = Depends(authenticated_session_cookie),
+    ) -> SettingsView:
+        _require_session(application, ml_session)
+        if not application.settings_available:
+            raise HTTPException(503, detail={"code": "settings_unavailable"})
+        try:
+            return cast(SettingsView, application.owner_settings())
+        except ReviewApplicationError:
+            raise HTTPException(503, detail={"code": "settings_unavailable"}) from None
+
+    @app.patch(
+        "/api/v1/settings",
+        response_model=SettingsView,
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 409, 413, 422, 503)
+        },
+    )
+    def write_settings(
+        request: _SettingsWriteRequest,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> SettingsView:
+        _require_session(application, ml_session, x_csrf_token)
+        if not application.settings_available:
+            raise HTTPException(503, detail={"code": "settings_unavailable"})
+        try:
+            value = application.write_owner_settings(
+                request.document, request.expected_revision, tuple(request.secrets)
+            )
+        except ReviewApplicationError as error:
+            status = (
+                409
+                if error.code in {"settings_stale", "settings_locked"}
+                else (422 if error.code == "settings_invalid" else 503)
+            )
+            detail = {
+                "code": (
+                    "settings_managed_by_file"
+                    if error.code == "settings_locked"
+                    else error.code
+                )
+            }
+            if error.code == "settings_locked":
+                detail["managed_by_file"] = "/data/config.json"
+            raise HTTPException(status, detail=detail) from None
+        return cast(SettingsView, value)
 
 
 def _register_session_and_operations_routes(
@@ -2739,6 +2846,12 @@ def _register_html_routes(
     ) -> HTMLResponse:
         return shell_response(ml_session)
 
+    @app.get("/settings", include_in_schema=False)
+    def settings_page(
+        ml_session: str | None = Cookie(default=None),
+    ) -> HTMLResponse:
+        return shell_response(ml_session)
+
     @app.get("/policy", include_in_schema=False)
     def policy_page(
         ml_session: str | None = Cookie(default=None),
@@ -2796,11 +2909,19 @@ def load_owner_password_verifier(path: Path) -> Callable[[str], bool]:
         encoded = payload.decode("utf-8", "strict").strip()
         if not encoded or len(payload) > 1024 or "\n" in encoded or "\r" in encoded:
             raise ValueError
+    except (UnicodeError, ValueError, InvalidHashError) as error:
+        raise ReviewWebError("password_hash") from error
+
+    return owner_password_verifier(encoded)
+
+
+def owner_password_verifier(encoded: str) -> Callable[[str], bool]:
+    try:
         if not encoded.startswith("$argon2id$") or PasswordHasher().check_needs_rehash(
             encoded
         ):
             raise ValueError
-    except (UnicodeError, ValueError, InvalidHashError) as error:
+    except (ValueError, InvalidHashError) as error:
         raise ReviewWebError("password_hash") from error
 
     def verify(password: str) -> bool:
@@ -2893,9 +3014,19 @@ def _decision_call(call: Callable[[], dict[str, object]]) -> dict[str, object]:
         raise HTTPException(status, detail={"code": error.code}) from None
 
 
-def _error(status_code: int, code: str) -> JSONResponse:
+def _error(
+    status_code: int,
+    code: str,
+    managed_by_file: Literal["/data/config.json"] | None = None,
+) -> JSONResponse:
     return JSONResponse(
-        {"error": {"code": code}, "schema_version": "review-error-v1"},
+        {
+            "error": {
+                "code": code,
+                **({"managed_by_file": managed_by_file} if managed_by_file else {}),
+            },
+            "schema_version": "review-error-v1",
+        },
         status_code=status_code,
     )
 

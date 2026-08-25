@@ -289,6 +289,8 @@ def load_configuration_file(path: Path) -> ApplicationConfiguration:
         )
     except ConfigurationError:
         raise
+    except FileNotFoundError:
+        raise
     except (OSError, UnicodeError, ValueError, ValidationError, RecursionError):
         raise ConfigurationError("configuration document is invalid") from None
 
