@@ -1,0 +1,245 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
+import { fireEvent, screen, waitFor, within } from '@testing-library/dom'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const source = readFileSync(
+  resolve(process.cwd(), '../src/mechanical_librarian/interfaces/web/setup_frontend.py'),
+  'utf8',
+)
+const script = /SETUP_JS = r"""([\s\S]*?)"""/u.exec(source)?.[1]
+const css = /SETUP_CSS = """([\s\S]*?)"""/u.exec(source)?.[1]
+
+if (!script || !css) throw new Error('setup assets are unavailable')
+
+const response = (body: object) =>
+  new Response(JSON.stringify(body), {
+    headers: { 'content-type': 'application/json' },
+    status: 200,
+  })
+
+const setupState = (nextStep: string, overrides: Record<string, unknown> = {}) => ({
+  completed_steps: ['claim', 'connect'],
+  connection: { endpoint: 'https://example.invalid', name: 'primary' },
+  csrf_token: 'csrf-token',
+  libraries: [],
+  mounts: [],
+  next_step: nextStep,
+  providers: [],
+  revision: 3,
+  schema_version: 'setup-state-v1',
+  ...overrides,
+})
+
+const requestUrl = (request: RequestInfo | URL) => {
+  if (typeof request === 'string') return request
+  return request instanceof URL ? request.href : request.url
+}
+
+const runSetup = () => {
+  window.eval(script)
+}
+
+beforeEach(() => {
+  document.head.innerHTML = `<style>${css}</style>`
+  document.body.innerHTML = `
+    <ol id="setup-ledger"></ol>
+    <main id="setup-main"></main>
+    <div id="setup-status"></div>
+  `
+  vi.stubGlobal(
+    'matchMedia',
+    vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })),
+  )
+})
+
+describe('shipped first-run setup script', () => {
+  it('removes unchecked provider credentials from the visual and accessibility trees', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => response(setupState('providers'))),
+    )
+    runSetup()
+
+    const openLibrary = await screen.findByRole('checkbox', { name: 'Open Library' })
+    const contact = document.querySelector<HTMLInputElement>('input[name="open-email"]')
+    expect(contact).not.toBeNull()
+    const contactField = contact?.closest('.field')
+    if (!contactField) throw new Error('provider credential field missing')
+    expect(contact).toBeDisabled()
+    expect(contactField).toHaveAttribute('hidden')
+    expect(getComputedStyle(contactField).display).toBe('none')
+    expect(screen.queryByRole('textbox', { name: 'Contact email' })).toBeNull()
+
+    fireEvent.click(openLibrary)
+
+    expect(await screen.findByRole('textbox', { name: 'Contact email' })).toBeEnabled()
+    expect(contactField).not.toHaveAttribute('hidden')
+    expect(getComputedStyle(contactField).display).toBe('grid')
+  })
+
+  it('validates selected supported libraries before mutation and advances after correction', async () => {
+    let current = setupState('libraries')
+    let libraryMutations = 0
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(request)
+      if (url.startsWith('/api/setup/libraries?'))
+        return response({
+          libraries: [
+            { library_id: 'books', media_kind: 'ebook', name: 'Books' },
+            { library_id: 'podcasts', media_kind: 'unsupported', name: 'Podcasts' },
+          ],
+        })
+      if (url === '/api/setup/libraries' && init?.method === 'POST') {
+        libraryMutations += 1
+        current = setupState('mounts', {
+          completed_steps: ['claim', 'connect', 'libraries'],
+          libraries: [
+            {
+              connection: 'primary',
+              library_id: 'books',
+              media_kind: 'ebook',
+              mount: 'books',
+              name: 'valid_name',
+              provider_connections: [],
+            },
+          ],
+          revision: 4,
+        })
+        return response({})
+      }
+      return response(current)
+    })
+    vi.stubGlobal('fetch', fetch)
+    runSetup()
+
+    const heading = await screen.findByRole('heading', { name: 'Choose libraries' })
+    await waitFor(() => expect(heading).toHaveFocus())
+    const form = heading.closest('section')?.querySelector('form')
+    if (!form) throw new Error('library form missing')
+
+    fireEvent.submit(form)
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Select at least one supported book library.',
+    )
+    expect(libraryMutations).toBe(0)
+
+    const selected = screen.getByRole('checkbox', { name: 'Books' })
+    fireEvent.click(selected)
+    expect(selected).toBeChecked()
+    const localName = document.querySelector<HTMLInputElement>('input[name="name-books"]')
+    const unsupportedName = document.querySelector<HTMLInputElement>('input[name="name-podcasts"]')
+    const unsupportedKind = document.querySelector<HTMLSelectElement>(
+      'select[name="kind-podcasts"]',
+    )
+    if (!localName) throw new Error('supported local-name control missing')
+    expect(unsupportedName).toBeDisabled()
+    expect(unsupportedKind).toBeDisabled()
+    fireEvent.input(localName, { target: { value: 'Not valid' } })
+    fireEvent.submit(form)
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Use a local name of 1–64 lowercase letters, numbers, underscores, or hyphens, starting with a letter.',
+      ),
+    )
+    expect(localName).toHaveFocus()
+    expect(localName).toBeInvalid()
+    expect(libraryMutations).toBe(0)
+
+    fireEvent.input(localName, { target: { value: 'valid_name' } })
+    fireEvent.submit(form)
+    expect(await screen.findByRole('heading', { name: 'Check read-only mounts' })).toBeVisible()
+    expect(libraryMutations).toBe(1)
+  })
+
+  it('explains every mount comparison state without exposing raw enums', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        response(
+          setupState('mounts', {
+            libraries: [
+              { media_kind: 'ebook', name: 'books' },
+              { media_kind: 'ebook', name: 'history' },
+              { media_kind: 'ebook', name: 'essays' },
+              { media_kind: 'ebook', name: 'archive' },
+            ],
+            mounts: [
+              { library: 'books', state: 'matched' },
+              { library: 'history', state: 'unmatched' },
+              { library: 'essays', state: 'ambiguous' },
+              { library: 'archive', state: 'unobservable' },
+            ],
+          }),
+        ),
+      ),
+    )
+    runSetup()
+
+    const results = await screen.findByRole('status')
+    expect(results).toHaveTextContent(
+      'books: A deployment-owned read-only mapping matches this service path.',
+    )
+    expect(results).toHaveTextContent(
+      'history: No read-only mapping matches yet. Correct the Audiobookshelf service path and compare again; Mechanical Librarian never creates or changes mounts.',
+    )
+    expect(results).toHaveTextContent(
+      'essays: More than one read-only mapping matches. Correct the service path so exactly one deployment-owned read-only mapping matches.',
+    )
+    expect(results).toHaveTextContent(
+      'archive: No service path was available to compare. Enter the Audiobookshelf service path; Mechanical Librarian never creates or changes mounts.',
+    )
+    expect(within(results).queryByText(/^books: matched$/u)).toBeNull()
+  })
+
+  it.each([
+    ['Your first work is ready', 1, false],
+    ['First preparation is complete', 0, true],
+  ] as const)(
+    'offers the setup bridge at %s without navigating',
+    async (title, ready, terminal) => {
+      const previousSetInterval = globalThis.setInterval
+      const previousClearInterval = globalThis.clearInterval
+      vi.stubGlobal(
+        'setInterval',
+        vi.fn((callback: () => void) => {
+          queueMicrotask(callback)
+          return 1
+        }),
+      )
+      vi.stubGlobal('clearInterval', vi.fn())
+      const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        const url = requestUrl(request)
+        if (url === '/api/setup/kick-off' && init?.method === 'POST')
+          return response({ message: 'Restarting into the normal workspace.' })
+        if (url === '/api/v1/review-preparation')
+          return response({
+            actionable: terminal,
+            first_boot_complete: terminal,
+            libraries: [
+              {
+                checked: 1,
+                ready,
+                total: 1,
+              },
+            ],
+            paused: false,
+          })
+        return response(setupState('kick_off'))
+      })
+      vi.stubGlobal('fetch', fetch)
+      runSetup()
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Kick off preparation' }))
+
+      expect(await screen.findByRole('heading', { name: title })).toBeVisible()
+      expect(screen.getByRole('link', { name: 'Open workspace' })).toHaveAttribute(
+        'href',
+        '/library?lens=all',
+      )
+      vi.stubGlobal('setInterval', previousSetInterval)
+      vi.stubGlobal('clearInterval', previousClearInterval)
+    },
+  )
+})

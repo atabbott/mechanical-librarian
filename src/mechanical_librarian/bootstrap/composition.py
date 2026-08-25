@@ -1238,6 +1238,7 @@ def _require_report_current_loaded(
     configuration: ApplicationConfiguration,
     artifacts: CoverArtifactStore,
     report: MetadataReport,
+    credentials: dict[str, str] | None = None,
 ) -> bool:
     connection, library, mount, _ = configuration.select(
         report.target.connection, report.target.library
@@ -1245,10 +1246,18 @@ def _require_report_current_loaded(
     if mount is None:
         raise CurrentnessError("target or media changed")
     target = AudiobookshelfItemReader(
-        client_factory=lambda: target_client(
-            connection.endpoint,
-            _required_secret_file(connection.secret_file),
-            configuration.limits.timeout_seconds,
+        client_factory=lambda: (
+            target_client(
+                connection.endpoint,
+                _required_secret_file(connection.secret_file),
+                configuration.limits.timeout_seconds,
+            )
+            if credentials is None
+            else target_client_token(
+                connection.endpoint,
+                credentials["target:" + connection.name],
+                configuration.limits.timeout_seconds,
+            )
         ),
         endpoint=connection.endpoint,
         library_id=library.library_id,
@@ -1277,6 +1286,7 @@ def create_proposal_set_loaded(
     report_id: str,
     repository_authority: object | None = None,
     pipeline_repository: SQLiteMetadataReportRepository | None = None,
+    credentials: dict[str, str] | None = None,
 ) -> str:
     artifacts = CoverArtifactStore(artifact_store_path, create=False)
     repository: _NonClosingRepository | SQLiteMetadataReportRepository = (
@@ -1289,7 +1299,9 @@ def create_proposal_set_loaded(
 
     def current(report: MetadataReport) -> bool:
         try:
-            return _require_report_current_loaded(configuration, artifacts, report)
+            return _require_report_current_loaded(
+                configuration, artifacts, report, credentials
+            )
         except (CurrentnessError, TargetNotFoundError) as error:
             raise ProposalCurrentnessError("proposal report is stale") from error
 
@@ -1312,6 +1324,7 @@ def admit_review_case_loaded(
     proposal_set_id: str,
     repository_authority: object | None = None,
     pipeline_repository: SQLiteMetadataReportRepository | None = None,
+    credentials: dict[str, str] | None = None,
 ) -> str:
     artifacts = CoverArtifactStore(artifact_store_path, create=False)
     repository: _NonClosingRepository | SQLiteMetadataReportRepository = (
@@ -1328,7 +1341,9 @@ def admit_review_case_loaded(
         except Exception as error:
             raise ReviewCaseError("persistence") from error
         try:
-            if not _require_report_current_loaded(configuration, artifacts, report):
+            if not _require_report_current_loaded(
+                configuration, artifacts, report, credentials
+            ):
                 return False
             return (
                 proposal.resolved_policy_id
@@ -1640,6 +1655,7 @@ def create_review_pipeline(
             report_id,
             database_authority,
             cast("SQLiteMetadataReportRepository", pipeline_repository),
+            credentials,
         )
 
     def admit_review_case_for(
@@ -1652,6 +1668,7 @@ def create_review_pipeline(
             proposal_set_id,
             database_authority,
             cast("SQLiteMetadataReportRepository", pipeline_repository),
+            credentials,
         )
 
     def cover_considerations(

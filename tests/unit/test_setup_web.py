@@ -174,9 +174,8 @@ def test_setup_surface_exposes_only_health_shell_session_and_redacted_state() ->
     assert "location.assign('/library')" not in script.text
     assert "open.href='/library?lens=all'" in script.text
     assert "preparation.first_boot_complete" in script.text
-    assert "control.disabled=!selected.checked" in script.text
-    assert "name.maxLength=64" in script.text
-    assert "item.library}: ${item.state}" in script.text
+    assert ".field[hidden]{display:none}" in css.text
+    assert "MutationObserver" not in script.text
     assert "Writes stay off until you turn them on in Activity." in script.text
     assert client.get("/api/setup/state").status_code == 401
 

@@ -464,16 +464,14 @@ export const FirstBootHandover = () => {
         </h2>
         <p>
           {ready > 0
-            ? 'You can begin in Library while preparation continues. New work appears here as it is ready.'
-            : 'No work became ready during this preparation. Open Library to review the recorded failures and recovery.'}
+            ? 'Preparation continues here as more work becomes ready.'
+            : 'No work became ready during this preparation. Review the recorded failures and recovery below.'}
         </p>
-        <Link to="/library" search={{ lens: 'all' }}>
-          Open workspace
-        </Link>
         {data.first_boot_complete && typeof data.first_boot_works === 'number' ? (
           <p className="first-boot-measurement" role="status">
-            Preparation complete · {String(data.first_boot_works)} unique works checked, including
-            work that could not finish.
+            Preparation complete · {String(data.first_boot_works)} unique{' '}
+            {data.first_boot_works === 1 ? 'work' : 'works'} checked, including work that could not
+            finish.
           </p>
         ) : null}
       </div>

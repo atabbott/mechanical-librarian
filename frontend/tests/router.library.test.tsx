@@ -20,7 +20,8 @@ import { createApplicationRouter, normalizeLibrarySearch } from '../src/router'
 import { activity, createHttp, createLiveStream, detail, library, renderRoute } from './fixtures'
 
 describe('Library route', () => {
-  it('shows the terminal first-boot measurement when no work became ready', async () => {
+  it('shows the terminal first-boot measurement without a Library self-action', async () => {
+    const previousMatchMedia = window.matchMedia
     vi.stubGlobal(
       'matchMedia',
       vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })),
@@ -45,18 +46,25 @@ describe('Library route', () => {
             ready: 0,
             rescan_requested: false,
             scan_id: null,
-            state: 'complete',
+            state: 'complete' as const,
             total: 1,
           },
         ],
       })),
     })
+
     expect(
       await screen.findByRole('heading', { name: 'First preparation is complete' }),
     ).toBeVisible()
+    expect(
+      screen.getByText(
+        'Preparation complete · 1 unique work checked, including work that could not finish.',
+      ),
+    ).toBeVisible()
+    expect(screen.getByText(/Review the recorded failures and recovery below/u)).toBeVisible()
+    expect(screen.queryByRole('link', { name: 'Open workspace' })).toBeNull()
     expect(screen.queryByText('Your first work is ready')).toBeNull()
-    expect(screen.getByText(/1 unique works checked/u)).toBeVisible()
-    vi.unstubAllGlobals()
+    vi.stubGlobal('matchMedia', previousMatchMedia)
   })
 
   it('keeps a target route pending until its selected field commits', () => {
