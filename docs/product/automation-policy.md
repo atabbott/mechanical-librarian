@@ -29,11 +29,18 @@ automatic work in human Attention. Any field, option, or policy revision outside
 that exact envelope remains human-routed until separately qualified.
 
 The published F20 rich-metadata candidate qualifies the three `series` options,
-both `isbn_form` options, genre fill/add/replace, tag fill/add/replace, and safe
-plaintext description for decision-only Automatic. Subjective fields qualify
-on exact work-bound source projection, completeness, and safe operation—not on
-matching one preferred taxonomy or prose answer. Subtitle and Google
-visible-text remain `not_qualified`; ASIN remains
+both `isbn_form` options, genre fill/add/replace, tag fill/add/replace, safe
+plaintext description, and locally corroborated subtitle fill for decision-only
+Automatic. Subjective fields qualify on exact work-bound source projection,
+completeness, and safe operation—not on matching one preferred taxonomy or
+prose answer. `subtitle:fill_empty` fills an empty subtitle only when the
+book's own packaged metadata attests the exact provider value; uncorroborated
+candidates stay owner decisions. When Subtitle routes to Automatic, the
+qualified fill owns the subtitle destination unless an acting title-combination
+candidate already covers it; a manual title-combination witness is replaced by
+the fill, and a later human title split proceeds through the existing override
+and revoke path. Corroborated split and Google visible-text
+remain `not_qualified`; ASIN remains
 `insufficient_coverage`; `tags:off` is policy-only and stays the default; and
 `explicit:unsupported` is human-only. Owners retain `Ask me` or `Ignore` for
 every non-automatic rich option. This authority records immutable decisions

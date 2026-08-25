@@ -49,6 +49,16 @@ _PRIOR_F20_QUALIFICATION_MANIFESTS = (
             "isbn_form:preserve_exact", "isbn_form:prefer_isbn13",
         }),
     ),
+    (
+        "2628f9f02706e3e0e6afe244231e3fcab387b866007e016b8003f0978bd0780d",
+        frozenset({
+            "series:primary_narrative", "series:source_order", "series:all_qualified",
+            "genres:fill_empty", "genres:add", "genres:replace",
+            "tags:fill_empty", "tags:add", "tags:replace",
+            "description_fill:safe_plain_text",
+            "isbn_form:preserve_exact", "isbn_form:prefer_isbn13",
+        }),
+    ),
 )
 
 

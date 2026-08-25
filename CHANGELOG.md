@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Qualify locally corroborated subtitle fill for automatic decisions:
+  an empty Subtitle now fills automatically only when the book's own packaged
+  metadata attests the exact provider value, including electing that value over
+  competing catalogue splits. Existing pre-release proposal state requires a
+  clean rebuild under the revised `fixed-conservative-v12` contract. (#744)
+
 - Remove the dead review field-facts predecessor validator and its stale frozen
   schema digest from the persistence adapter; #830's owner-decision-actions
   predecessor validator superseded it and no adoption path referenced it. (#857)

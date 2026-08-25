@@ -10,7 +10,7 @@ from types import MappingProxyType
 from typing import Final, Mapping
 
 F20_QUALIFICATION_CANDIDATE_SHA256: Final = (
-    "2628f9f02706e3e0e6afe244231e3fcab387b866007e016b8003f0978bd0780d"
+    "770b56be2ce7ea9d1d809be189724e5f281a0dd8570af80d63429a5ab617ff99"
 )
 F20_RICH_FIELDS: Final = (
     "subtitle",
@@ -24,7 +24,7 @@ F20_RICH_FIELDS: Final = (
 )
 F20_OPTION_DISPOSITIONS: Final[Mapping[str, str]] = MappingProxyType(
     {
-        "subtitle:fill_empty": "not_qualified",
+        "subtitle:fill_empty": "passing_automatic",
         "subtitle:corroborated_split": "not_qualified",
         "series:primary_narrative": "passing_automatic",
         "series:source_order": "passing_automatic",
@@ -47,6 +47,7 @@ F20_OPTION_DISPOSITIONS: Final[Mapping[str, str]] = MappingProxyType(
 )
 F20_PASSING_AUTOMATIC_OPTIONS: Final[frozenset[str]] = frozenset(
     {
+        "subtitle:fill_empty",
         "series:primary_narrative",
         "series:source_order",
         "series:all_qualified",

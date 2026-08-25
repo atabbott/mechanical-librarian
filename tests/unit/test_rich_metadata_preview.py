@@ -50,7 +50,13 @@ from mechanical_librarian.domain.rich_metadata_preview import (
     compile_rich_metadata_preview,
     project_f20_automatic_decision_value,
 )
-from tests.support.proposal_evidence import _claim, _fields, _provider, _report
+from tests.support.proposal_evidence import (
+    _claim,
+    _fields,
+    _local_subtitle,
+    _provider,
+    _report,
+)
 from tests.unit.test_bibliographic_bundles import _bibliographic_report, _source
 
 
@@ -562,10 +568,10 @@ def test_corroborated_split_uses_real_admitted_candidate_members() -> None:
     assert base.bibliographic_combinations
     options = dict(MetadataPolicyProfile.builtin().options)
     options["subtitle"] = "corroborated_split"
+    destinations = dict(MetadataPolicyProfile.builtin().destinations)
+    destinations["subtitle"] = "ask"
     policy = resolve_policy(
-        MetadataPolicyProfile.create(
-            "Split", options, dict(MetadataPolicyProfile.builtin().destinations)
-        ),
+        MetadataPolicyProfile.create("Split", options, destinations),
         report.target.library,
     )
     proposal = base.create(
@@ -600,12 +606,10 @@ def test_corroborated_split_rejects_unbounded_or_absent_separator() -> None:
     )
     options = dict(MetadataPolicyProfile.builtin().options)
     options["subtitle"] = "corroborated_split"
+    destinations = dict(MetadataPolicyProfile.builtin().destinations)
+    destinations["subtitle"] = "ask"
     policy = resolve_policy(
-        MetadataPolicyProfile.create(
-            "Bounded split",
-            options,
-            dict(MetadataPolicyProfile.builtin().destinations),
-        ),
+        MetadataPolicyProfile.create("Bounded split", options, destinations),
         report.target.library,
     )
     proposal = evaluate_report(report, policy.resolved_id, dict(policy.destinations))
@@ -619,6 +623,74 @@ def test_corroborated_split_rejects_unbounded_or_absent_separator() -> None:
         selected.reason,
         selected.desired_value,
     )
+
+
+def _automatic_subtitle_fill_preview(local_claims: tuple):
+    report = _bibliographic_report(
+        current_title="Secret History",
+        providers=(
+            _source(
+                "catalogue",
+                "edition-1",
+                titles=("Secret History",),
+                subtitle="A Mistborn Novella",
+            ),
+        ),
+        local_claims=local_claims,
+    )
+    policy = resolve_policy(MetadataPolicyProfile.builtin(), report.target.library)
+    proposal = evaluate_report(report, policy.resolved_id, dict(policy.destinations))
+    return next(
+        value
+        for value in compile_rich_metadata_preview(policy, report, proposal).fields
+        if value.field == "subtitle"
+    )
+
+
+def test_automatic_subtitle_fill_requires_local_corroboration() -> None:
+    selected = _automatic_subtitle_fill_preview(())
+    assert ("abstain", "subtitle_local_corroboration_required", None) == (
+        selected.outcome,
+        selected.reason,
+        selected.desired_value,
+    )
+
+
+def test_automatic_subtitle_fill_requires_a_provider_backed_candidate() -> None:
+    report = _bibliographic_report(
+        current_title="Secret History",
+        providers=(
+            _source(
+                "catalogue",
+                "edition-1",
+                titles=("Secret History",),
+            ),
+        ),
+        local_claims=(_local_subtitle("A Mistborn Novella", ClaimScope.WORK),),
+    )
+    policy = resolve_policy(MetadataPolicyProfile.builtin(), report.target.library)
+    proposal = evaluate_report(report, policy.resolved_id, dict(policy.destinations))
+    selected = next(
+        value
+        for value in compile_rich_metadata_preview(policy, report, proposal).fields
+        if value.field == "subtitle"
+    )
+    assert ("abstain", "subtitle_local_corroboration_required", None) == (
+        selected.outcome,
+        selected.reason,
+        selected.desired_value,
+    )
+
+
+def test_automatic_subtitle_fill_projects_the_locally_attested_value() -> None:
+    corroborator = _local_subtitle("A Mistborn Novella", ClaimScope.WORK)
+    selected = _automatic_subtitle_fill_preview((corroborator,))
+    assert ("projected", "A Mistborn Novella") == (
+        selected.outcome,
+        selected.desired_value,
+    )
+    assert corroborator.reference in selected.source_evidence_references
+    assert len(selected.source_evidence_references) > 1
 
 
 @pytest.mark.parametrize(

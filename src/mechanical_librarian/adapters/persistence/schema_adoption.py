@@ -44,7 +44,7 @@ from mechanical_librarian.domain.review_case import ReviewCase
 _CHUNK_BYTES = 1024 * 1024
 _DERIVED_TABLES = {"review_case_field_facts"}
 _TARGET_SCHEMA_OBJECTS_SHA256 = (
-    "bab81844bec110fb9308b464865a9add452ca2ddc8a2c266621d0b5ffb97766f"
+    "e6323cdec1412ab7158ffcde612a927d2ca5e859e7de412041a19af0d6ab1fd1"
 )
 
 

@@ -89,13 +89,14 @@ from mechanical_librarian.domain.metadata_report import (
     TargetField,
     TargetFieldState,
 )
-from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase, ReviewTransition
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.proposal_evidence import (
     _claim,
     _fields,
+    _local_subtitle,
     _provider,
     _publication_local_isbn,
     _publication_provider,
@@ -1617,6 +1618,18 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
         ),
         providers=(_provider("catalogue", "edition-1", (description_claim,)),),
     )
+    subtitle_report = _bibliographic_report(
+        current_title="Book",
+        providers=(
+            _source(
+                "catalogue",
+                "edition-1",
+                titles=("Book",),
+                subtitle="A Corroborated Subtitle",
+            ),
+        ),
+        local_claims=(_local_subtitle("A Corroborated Subtitle", ClaimScope.WORK),),
+    )
     cases = (
         *(
             (
@@ -1632,6 +1645,13 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
                 },
             )
             for option in ("primary_narrative", "source_order", "all_qualified")
+        ),
+        (
+            "subtitle",
+            "fill_empty",
+            subtitle_report,
+            "subtitle",
+            {"kind": "text", "value": "A Corroborated Subtitle"},
         ),
         (
             "genres",
@@ -1867,6 +1887,81 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
             assert "verified" == service.apply(plan.plan.plan_id).state
             assert expected["value"] == target.read(plan.plan).value
             repository.close()
+
+
+def test_uncorroborated_subtitle_under_automatic_mints_no_decision() -> None:
+    report = _bibliographic_report(
+        current_title="Book",
+        providers=(
+            _source(
+                "catalogue",
+                "edition-1",
+                titles=("Book",),
+                subtitle="An Uncorroborated Subtitle",
+            ),
+        ),
+    )
+    with tempfile.TemporaryDirectory() as temporary:
+        repository = open_repository(Path(temporary) / "reports.sqlite")
+        options = dict(DEFAULT_OPTIONS)
+        options["subtitle"] = "fill_empty"
+        destinations = {
+            name: "unsupported" if name == "explicit" else "ask"
+            for name in OPTION_CATALOGUE
+        }
+        destinations["subtitle"] = "automatic"
+        profile = MetadataPolicyProfile.create(
+            "F20 uncorroborated subtitle", options, destinations
+        )
+        resolved = resolve_policy(profile, report.target.library)
+        repository.enter_shadow_preview(1)
+        repository.create_metadata_policy_draft(profile.canonical_json)
+        repository.activate_metadata_policy(
+            profile.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            (
+                (
+                    report.target.library,
+                    resolved.resolved_id,
+                    resolved.canonical_json,
+                ),
+            ),
+            2,
+        )
+        repository.activate_qualified_automatic(3)
+        proposal = evaluate_report(
+            report,
+            resolved.resolved_id,
+            human_review_destinations(resolved),
+        )
+        assert any(
+            value.destination is TargetDestination.SUBTITLE
+            and value.outcome is ProposalOutcome.PROPOSE_CHANGE
+            for value in proposal.results
+        )
+        repository.publish(report, lambda: True)
+        repository.publish_proposal(proposal)
+        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+        outcome = ShadowOutcomeSet.from_json(
+            repository.persist_shadow_outcome(case_id, 4)
+        )
+        subtitle = next(
+            value for value in outcome.outcomes if value.destination == "subtitle"
+        )
+        assert ("subtitle", "fill_empty", "automatic", "abstention") == (
+            subtitle.policy_category,
+            subtitle.policy_option,
+            subtitle.policy_destination,
+            subtitle.disposition,
+        )
+        assert subtitle.candidate_id is None
+        rows = repository._connection.execute(
+            "SELECT COUNT(*) FROM automatic_decisions WHERE "
+            "review_case_id=? AND destination='subtitle'",
+            (case_id,),
+        ).fetchone()
+        assert 0 == rows[0]
+        repository.close()
 
 
 def test_outcome_accepts_packet_valid_configured_provider_citations() -> None:

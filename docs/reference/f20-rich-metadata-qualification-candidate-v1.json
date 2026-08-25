@@ -1,18 +1,18 @@
 {
   "automatic_authority": "decision_only",
-  "candidate_execution_count": 7,
+  "candidate_execution_count": 10,
   "evidence_method": {
     "evaluated_reports": 49,
     "exposure_unit": "case_field_option",
     "genres_fill_empty_correct_predictions_by_state": {
-      "empty": 4,
-      "missing": 4,
-      "null": 4
+      "empty": 5,
+      "missing": 5,
+      "null": 5
     },
     "genres_fill_empty_predictions_by_state": {
-      "empty": 4,
-      "missing": 4,
-      "null": 4
+      "empty": 5,
+      "missing": 5,
+      "null": 5
     },
     "genres_fill_empty_target_states": [
       "missing",
@@ -22,8 +22,23 @@
     "network_access": false,
     "prior_unrelated_work_use_allowed": true,
     "replayed_provider_requests": 421,
-    "subjective_field_truth_model": "exact_work_bound_source_projection",
     "series_truth_model": "valid_membership_with_preferred_value",
+    "subjective_field_truth_model": "exact_work_bound_source_projection",
+    "subtitle_fill_empty_correct_predictions_by_state": {
+      "empty": 4,
+      "missing": 4,
+      "null": 4
+    },
+    "subtitle_fill_empty_predictions_by_state": {
+      "empty": 4,
+      "missing": 4,
+      "null": 4
+    },
+    "subtitle_fill_empty_target_states": [
+      "missing",
+      "null",
+      "empty"
+    ],
     "subtitle_truth_model": "ebook_manifestation_bibliographic_subtitle",
     "unseen_holdout_required": false
   },
@@ -38,15 +53,15 @@
     },
     "automatic_decision": {
       "identity": "src/mechanical_librarian/domain/automatic_decision.py",
-      "sha256": "d904386bbb2afda771c0399b8a972ae1974e5dd9e555f7fdea27c3bea0d83988"
+      "sha256": "c496d7143f23109cc567ee653ee5bad603e17078c38e0716ff7eb0fa1d6d8f06"
     },
     "compiler": {
       "identity": "src/mechanical_librarian/domain/rich_metadata_preview.py",
-      "sha256": "cfaff9c7974256bbcb9f1c734dbe6fa32604fe7e119bdf8e1766d535f5beeafd"
+      "sha256": "006f03746b63dcce6b55b280ba62ab1bda6c70d243bd1e16cb4946026f40c817"
     },
     "evaluator": {
-      "identity": "f20-field-local-evaluator-v13",
-      "sha256": "ec8b4d224abd279ab4b30a42ff90ad1811df17f083c4a9d787eae8491e163f94"
+      "identity": "f20-field-local-evaluator-v14",
+      "sha256": "b247d38207248ad20b5a45f3f3ddd367e5e51505c758dcb9583cfda1888f2331"
     },
     "evidence_execution": {
       "identity": "offline-current-adapter-and-guarded-effect-replay-v7",
@@ -71,15 +86,15 @@
   "options": [
     {
       "cohort_sufficiency": "sufficient",
-      "disposition": "not_qualified",
-      "eligible_opportunities": 49,
+      "disposition": "passing_automatic",
+      "eligible_opportunities": 147,
       "identity": "subtitle:fill_empty",
       "metrics": {
-        "automatic_precision": 0.2857142857142857,
-        "automatic_predictions": 7,
-        "automatic_recall": 0.2222222222222222,
+        "automatic_precision": 1.0,
+        "automatic_predictions": 12,
+        "automatic_recall": 0.4444444444444444,
         "structural_or_sensitive_violations": 0,
-        "unsupported_output": 5
+        "unsupported_output": 0
       }
     },
     {
@@ -141,8 +156,8 @@
       "identity": "genres:fill_empty",
       "metrics": {
         "automatic_precision": 1.0,
-        "automatic_predictions": 12,
-        "automatic_recall": 0.08163265306122448,
+        "automatic_predictions": 15,
+        "automatic_recall": 0.10204081632653061,
         "structural_or_sensitive_violations": 0,
         "unsupported_output": 0
       }
@@ -154,8 +169,8 @@
       "identity": "genres:add",
       "metrics": {
         "automatic_precision": 1.0,
-        "automatic_predictions": 3,
-        "automatic_recall": 0.061224489795918366,
+        "automatic_predictions": 4,
+        "automatic_recall": 0.08163265306122448,
         "structural_or_sensitive_violations": 0,
         "unsupported_output": 0
       }
@@ -167,8 +182,8 @@
       "identity": "genres:replace",
       "metrics": {
         "automatic_precision": 1.0,
-        "automatic_predictions": 3,
-        "automatic_recall": 0.061224489795918366,
+        "automatic_predictions": 4,
+        "automatic_recall": 0.08163265306122448,
         "structural_or_sensitive_violations": 0,
         "unsupported_output": 0
       }
@@ -314,6 +329,7 @@
     "series:all_qualified",
     "series:primary_narrative",
     "series:source_order",
+    "subtitle:fill_empty",
     "tags:add",
     "tags:fill_empty",
     "tags:replace"

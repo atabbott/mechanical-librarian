@@ -240,10 +240,11 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
     fallback: 'abstains when no decision is qualified',
   },
   'subtitle:fill_empty': {
-    admitted: 'one supported subtitle',
+    admitted: "one supported subtitle attested by the book's own metadata",
     transformation: 'uses the exact admitted text',
     effect: 'fills an empty Subtitle only',
-    fallback: 'abstains when Subtitle already has a value or evidence is missing',
+    fallback:
+      "abstains when Subtitle already has a value or the book's own metadata does not attest the candidate",
   },
   'subtitle:corroborated_split': {
     admitted: 'one corroborated title and subtitle pair',

@@ -306,6 +306,7 @@ def _automatic_decision_value(
         "tags",
         "description_fill",
         "isbn_form",
+        "subtitle",
     }:
         try:
             value = project_f20_automatic_decision_value(

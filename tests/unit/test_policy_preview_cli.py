@@ -146,6 +146,7 @@ def test_composed_preview_uses_existing_database_without_mutation() -> None:
             "series:primary_narrative",
             "series:source_order",
             "series:all_qualified",
+            "subtitle:fill_empty",
             "isbn_form:preserve_exact",
             "isbn_form:prefer_isbn13",
             "tags:fill_empty",
