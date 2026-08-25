@@ -892,6 +892,18 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const fieldRail = useRef<HTMLElement>(null)
   const advanceFocus = useRef(false)
   const advanceScroll = useRef<number | null>(null)
+  const advancePresentation = useRef<{
+    destination: string
+    source: string
+    target: string
+    resolve: () => void
+  } | null>(null)
+  const releaseAdvancePresentation = useCallback(() => {
+    const presentation = advancePresentation.current
+    if (!presentation) return
+    advancePresentation.current = null
+    presentation.resolve()
+  }, [])
   const automaticTrigger = useRef<HTMLButtonElement>(null)
   const keepManualHandling = useRef<HTMLButtonElement>(null)
   const restoreAutomaticTrigger = useRef(false)
@@ -911,6 +923,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     item: string
   } | null>(null)
   const selectedPreviewRef = useRef<string | undefined>(undefined)
+  const selectedDetailRetry = useRef<string | null>(null)
+  const selectedDetailRetryButton = useRef<HTMLButtonElement>(null)
   const pendingSuccessorRef = useRef(new Set<string>())
   const lineageGenerationRef = useRef(0)
   const [activeLineageGeneration, setActiveLineageGeneration] = useState<number | null>(null)
@@ -1248,10 +1262,41 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       const advancing = field !== selected?.destination
       advanceFocus.current = advancing
       advanceScroll.current = advancing ? window.scrollY : null
-      await navigate({
-        resetScroll: false,
-        search: (current) => (current.preview === search.preview ? { ...current, field } : current),
-      })
+      const presented = advancing
+        ? new Promise<void>((resolve) => {
+            advancePresentation.current = {
+              destination: field,
+              source: searchIdentity,
+              target: librarySearchIdentity({ ...search, field }),
+              resolve,
+            }
+          })
+        : null
+      const navigation = { committed: false }
+      try {
+        await navigate({
+          resetScroll: false,
+          search: (current) => {
+            if (current.preview !== search.preview) return current
+            navigation.committed = true
+            return { ...current, field }
+          },
+        })
+      } catch {
+        advanceFocus.current = false
+        advanceScroll.current = null
+        releaseAdvancePresentation()
+        return
+      }
+      if (!navigation.committed) {
+        advanceFocus.current = false
+        advanceScroll.current = null
+        releaseAdvancePresentation()
+        return
+      }
+      // The controller may start background aggregate convergence only after
+      // this exact next field has committed to the DOM.
+      if (presented) await presented
     },
     onComplete: (fields) => {
       const retained = selectedIdentityRef.current
@@ -1294,6 +1339,27 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
 
   const routeIdentity = `${search.lens}:${search.q ?? ''}:${search.cursor ?? ''}:${search.attentionCursor ?? ''}:${search.preview ?? ''}:${search.work ?? ''}:${search.field ?? ''}:${search.attention ?? ''}`
   useRouteReadyFocus(routeIdentity)
+  const selectedDetailReady =
+    Boolean(search.preview) && search.attention !== 'open' && !detail.isPending && !detail.isError
+  useEffect(() => {
+    selectedDetailRetry.current = null
+  }, [search.preview])
+  useEffect(() => {
+    const selectedDetailSettled = selectedDetailReady || detail.isError
+    if (!selectedDetailSettled) return
+    const workspace = document.querySelector<HTMLElement>('#main-content .workspace-detail')
+    const active = document.activeElement
+    const restoreAfterRetry =
+      selectedDetailRetry.current === search.preview && active === document.body
+    if (workspace && active === workspace && selectedDetailReady)
+      workspace.querySelector<HTMLElement>('[data-route-focus]')?.focus({ preventScroll: true })
+    else if (restoreAfterRetry) {
+      if (detail.isError) selectedDetailRetryButton.current?.focus({ preventScroll: true })
+      else
+        workspace?.querySelector<HTMLElement>('[data-route-focus]')?.focus({ preventScroll: true })
+    }
+    selectedDetailRetry.current = null
+  }, [detail.isError, search.preview, selectedDetailReady])
   useEffect(() => {
     currentSearch.current = search
   }, [search])
@@ -1304,6 +1370,17 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     if (complete?.id === selectedReviewCaseId && completionInspection === null)
       completionRegion.current?.focus({ preventScroll: true })
   }, [complete, completionInspection, selectedReviewCaseId])
+  useLayoutEffect(() => {
+    const presentation = advancePresentation.current
+    if (!presentation) return
+    if (
+      (searchIdentity === presentation.target &&
+        presentation.destination === selected?.destination) ||
+      (searchIdentity !== presentation.source && searchIdentity !== presentation.target)
+    )
+      releaseAdvancePresentation()
+  }, [releaseAdvancePresentation, searchIdentity, selected?.destination])
+  useEffect(() => releaseAdvancePresentation, [releaseAdvancePresentation])
   useEffect(() => {
     const rail = fieldRail.current
     const active = activeFieldButton.current
@@ -1835,7 +1912,15 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
           ) : detail.isError ? (
             <p role="alert">
               Selected work could not be loaded.{' '}
-              <button onClick={() => void detail.refetch()}>Try again</button>{' '}
+              <button
+                ref={selectedDetailRetryButton}
+                onClick={() => {
+                  selectedDetailRetry.current = search.preview ?? null
+                  void detail.refetch()
+                }}
+              >
+                Try again
+              </button>{' '}
             </p>
           ) : !detail.data.current ? (
             <div className="library-selection">

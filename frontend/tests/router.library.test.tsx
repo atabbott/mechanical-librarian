@@ -1374,6 +1374,209 @@ describe('Library route', () => {
     ).toHaveLength(1)
   })
 
+  it('keeps a recorded decision successful when its next-field navigation rejects', async () => {
+    const user = userEvent.setup()
+    const title = detail.fields[0]
+    if (!title) throw new Error('workspace fixture requires a title field')
+    const authors = {
+      ...title,
+      currentValue: 'Ada Example',
+      destination: 'authors',
+      proposalId: 'proposal-authors',
+      targetFingerprint: 'fingerprint-authors',
+    }
+    const recorded = {
+      ...title,
+      needsAttention: false,
+      humanDecision: {
+        actor: 'owner' as const,
+        decision_id: 'decision-title',
+        destination: 'title',
+        occurred_at: 1,
+        outcome: 'accept' as const,
+        proposal_id: title.proposalId,
+        review_case_id: 'case-1',
+        selected_value: title.proposedValues[0] ?? null,
+        target_fingerprint: title.targetFingerprint,
+      },
+    }
+    let current: CaseDetailView = { ...detail, fields: [title, authors] }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => current),
+      getLibrary: vi.fn(async () => library),
+      recordDecision: vi.fn(async () => {
+        current = { ...detail, fields: [recorded, authors] }
+        return {
+          invalidation_sequences: [],
+          schema_version: 'review-decision-v1' as const,
+          actor: 'owner' as const,
+          decision_id: 'decision-title',
+          destination: 'title',
+          occurred_at: 1,
+          outcome: 'accept' as const,
+          proposal_id: title.proposalId,
+          review_case_id: 'case-1',
+          selected_value: title.proposedValues[0] ?? null,
+          target_fingerprint: title.targetFingerprint,
+        }
+      }),
+    }
+    const { router } = renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    await screen.findByRole('button', { name: 'Choose proposed value: New title' })
+    vi.spyOn(router, 'navigate').mockRejectedValueOnce(new Error('navigation unavailable'))
+
+    await user.click(screen.getByRole('button', { name: 'Choose proposed value: New title' }))
+
+    await waitFor(() => expect(http.recordDecision).toHaveBeenCalledOnce())
+    await waitFor(() => expect(http.getLibrary).toHaveBeenCalledTimes(2))
+    expect(screen.queryByText('The decision was not recorded. Your choice is unchanged.')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Try the same decision again' })).toBeNull()
+  })
+
+  it('settles aggregate convergence when unmount interrupts a rejected owner advance', async () => {
+    const user = userEvent.setup()
+    const title = detail.fields[0]
+    if (!title) throw new Error('workspace fixture requires a title field')
+    const authors = {
+      ...title,
+      currentValue: 'Ada Example',
+      destination: 'authors',
+      proposalId: 'proposal-authors',
+      targetFingerprint: 'fingerprint-authors',
+    }
+    const recorded = {
+      ...title,
+      needsAttention: false,
+      humanDecision: {
+        actor: 'owner' as const,
+        decision_id: 'decision-title',
+        destination: 'title',
+        occurred_at: 1,
+        outcome: 'accept' as const,
+        proposal_id: title.proposalId,
+        review_case_id: 'case-1',
+        selected_value: title.proposedValues[0] ?? null,
+        target_fingerprint: title.targetFingerprint,
+      },
+    }
+    let current: CaseDetailView = { ...detail, fields: [title, authors] }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => current),
+      recordDecision: vi.fn(async () => {
+        current = { ...detail, fields: [recorded, authors] }
+        return {
+          invalidation_sequences: [],
+          schema_version: 'review-decision-v1' as const,
+          actor: 'owner' as const,
+          decision_id: 'decision-title',
+          destination: 'title',
+          occurred_at: 1,
+          outcome: 'accept' as const,
+          proposal_id: title.proposalId,
+          review_case_id: 'case-1',
+          selected_value: title.proposedValues[0] ?? null,
+          target_fingerprint: title.targetFingerprint,
+        }
+      }),
+    }
+    const { queryClient, router } = renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    let rejectNavigation: ((reason: Error) => void) | undefined
+    const pendingNavigation = new Promise<void>((_resolve, reject) => {
+      rejectNavigation = reject
+    })
+    vi.spyOn(router, 'navigate').mockImplementationOnce(async () => await pendingNavigation)
+    const invalidations = vi.spyOn(queryClient, 'invalidateQueries')
+
+    await user.click(await screen.findByRole('button', { name: 'Choose proposed value: New title' }))
+    await waitFor(() => expect(http.recordDecision).toHaveBeenCalledOnce())
+    cleanup()
+    await act(async () => {
+      rejectNavigation?.(new Error('navigation unavailable after unmount'))
+    })
+
+    await waitFor(() =>
+      expect(invalidations).toHaveBeenCalledWith({ queryKey: ['library'] }),
+    )
+  })
+
+  it('settles an owner advance when a same-case route supersedes its full search', async () => {
+    const user = userEvent.setup()
+    const title = detail.fields[0]
+    if (!title) throw new Error('workspace fixture requires a title field')
+    const authors = {
+      ...title,
+      currentValue: 'Ada Example',
+      destination: 'authors',
+      proposalId: 'proposal-authors',
+      targetFingerprint: 'fingerprint-authors',
+    }
+    const recorded = {
+      ...title,
+      needsAttention: false,
+      humanDecision: {
+        actor: 'owner' as const,
+        decision_id: 'decision-title',
+        destination: 'title',
+        occurred_at: 1,
+        outcome: 'accept' as const,
+        proposal_id: title.proposalId,
+        review_case_id: 'case-1',
+        selected_value: title.proposedValues[0] ?? null,
+        target_fingerprint: title.targetFingerprint,
+      },
+    }
+    let current: CaseDetailView = { ...detail, fields: [title, authors] }
+    let reads = 0
+    let releaseRefresh: ((value: CaseDetailView) => void) | undefined
+    const refresh = new Promise<CaseDetailView>((resolve) => {
+      releaseRefresh = resolve
+    })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => {
+        reads += 1
+        return reads === 2 ? refresh : current
+      }),
+      getLibrary: vi.fn(async () => library),
+      recordDecision: vi.fn(async () => {
+        current = { ...detail, fields: [recorded, authors] }
+        return {
+          invalidation_sequences: [],
+          schema_version: 'review-decision-v1' as const,
+          actor: 'owner' as const,
+          decision_id: 'decision-title',
+          destination: 'title',
+          occurred_at: 1,
+          outcome: 'accept' as const,
+          proposal_id: title.proposalId,
+          review_case_id: 'case-1',
+          selected_value: title.proposedValues[0] ?? null,
+          target_fingerprint: title.targetFingerprint,
+        }
+      }),
+    }
+    const { router } = renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    await user.click(await screen.findByRole('button', { name: 'Choose proposed value: New title' }))
+    await waitFor(() => expect(reads).toBe(2))
+    await act(async () => {
+      await router.navigate({
+        to: '/library',
+        search: { lens: 'no_attention_needed', q: 'other', preview: 'case-1', field: 'title' },
+      })
+      releaseRefresh?.(current)
+    })
+
+    await waitFor(() => expect(http.getLibrary).toHaveBeenCalledTimes(3))
+    expect(router.state.location.search).toMatchObject({
+      lens: 'no_attention_needed',
+      q: 'other',
+      preview: 'case-1',
+    })
+    expect(screen.queryByText('The decision was not recorded. Your choice is unchanged.')).toBeNull()
+  })
+
   it('activates a focused choice once with Enter or Space while recording in place', async () => {
     const user = userEvent.setup()
     const deferred = new Promise<never>(() => undefined)
@@ -1767,6 +1970,163 @@ describe('Library route', () => {
     expect(
       await screen.findByRole('button', { name: 'Choose current value: Old title' }),
     ).toBeVisible()
+    await waitFor(() =>
+      expect(document.querySelector('[data-route-focus]')).toHaveFocus(),
+    )
+  })
+
+  it('keeps a persistent control focused when selected detail becomes ready', async () => {
+    const user = userEvent.setup()
+    let release: ((value: CaseDetailView) => void) | undefined
+    const pendingDetail = new Promise<CaseDetailView>((resolve) => {
+      release = resolve
+    })
+    renderRoute('/library?lens=all', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => pendingDetail),
+    })
+
+    await user.click(await screen.findByRole('button', { name: /^A Book\./u }))
+    const loadingRegion = screen.getByText('Loading selected work…').closest('section')
+    if (!loadingRegion) throw new Error('loading detail requires a workspace region')
+    await waitFor(() => expect(loadingRegion).toHaveFocus())
+    const back = screen.getByRole('button', { name: 'Back to works' })
+    back.focus()
+    expect(back).toHaveFocus()
+    await act(async () => {
+      release?.(detail)
+    })
+    expect(
+      await screen.findByRole('button', { name: 'Choose current value: Old title' }),
+    ).toBeVisible()
+    await act(
+      async () =>
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+    )
+    expect(back).toHaveFocus()
+  })
+
+  it('restores selected detail focus after its retry control is replaced', async () => {
+    const user = userEvent.setup()
+    let release: ((value: CaseDetailView) => void) | undefined
+    const pendingDetail = new Promise<CaseDetailView>((resolve) => {
+      release = resolve
+    })
+    let detailReads = 0
+    renderRoute('/library?lens=all&preview=case-1&field=title', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => {
+        detailReads += 1
+        if (detailReads === 1) throw new Error('temporary selected detail failure')
+        return pendingDetail
+      }),
+    })
+
+    const retry = await screen.findByRole('button', { name: 'Try again' })
+    retry.focus()
+    expect(retry).toHaveFocus()
+    await user.click(retry)
+    expect(await screen.findByText('Loading selected work…')).toBeVisible()
+    expect(document.body).toHaveFocus()
+    await act(async () => {
+      release?.(detail)
+    })
+    expect(
+      await screen.findByRole('button', { name: 'Choose current value: Old title' }),
+    ).toBeVisible()
+    await waitFor(() =>
+      expect(document.querySelector('[data-route-focus]')).toHaveFocus(),
+    )
+  })
+
+  it('restores retry focus when selected detail retry fails', async () => {
+    const user = userEvent.setup()
+    let rejectRetry: ((error: Error) => void) | undefined
+    const pendingRetry = new Promise<CaseDetailView>((_resolve, reject) => {
+      rejectRetry = reject
+    })
+    let detailReads = 0
+    renderRoute('/library?lens=all&preview=case-1&field=title', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => {
+        detailReads += 1
+        if (detailReads === 1) throw new Error('initial selected detail failure')
+        return pendingRetry
+      }),
+    })
+
+    const retry = await screen.findByRole('button', { name: 'Try again' })
+    retry.focus()
+    await user.click(retry)
+    expect(await screen.findByText('Loading selected work…')).toBeVisible()
+    expect(document.body).toHaveFocus()
+    await act(async () => {
+      rejectRetry?.(new Error('retry selected detail failure'))
+    })
+    const remountedRetry = await screen.findByRole('button', { name: 'Try again' })
+    expect(remountedRetry).toHaveFocus()
+  })
+
+  it('keeps a persistent control focused during selected detail retry', async () => {
+    const user = userEvent.setup()
+    let release: ((value: CaseDetailView) => void) | undefined
+    const pendingDetail = new Promise<CaseDetailView>((resolve) => {
+      release = resolve
+    })
+    let detailReads = 0
+    renderRoute('/library?lens=all&preview=case-1&field=title', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => {
+        detailReads += 1
+        if (detailReads === 1) throw new Error('temporary selected detail failure')
+        return pendingDetail
+      }),
+    })
+
+    await user.click(await screen.findByRole('button', { name: 'Try again' }))
+    expect(await screen.findByText('Loading selected work…')).toBeVisible()
+    const back = screen.getByRole('button', { name: 'Back to works' })
+    back.focus()
+    expect(back).toHaveFocus()
+    await act(async () => {
+      release?.(detail)
+    })
+    expect(
+      await screen.findByRole('button', { name: 'Choose current value: Old title' }),
+    ).toBeVisible()
+    await act(
+      async () =>
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+    )
+    expect(back).toHaveFocus()
+  })
+
+  it('keeps a persistent control focused when selected detail retry fails', async () => {
+    const user = userEvent.setup()
+    let rejectRetry: ((error: Error) => void) | undefined
+    const pendingRetry = new Promise<CaseDetailView>((_resolve, reject) => {
+      rejectRetry = reject
+    })
+    let detailReads = 0
+    renderRoute('/library?lens=all&preview=case-1&field=title', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => {
+        detailReads += 1
+        if (detailReads === 1) throw new Error('initial selected detail failure')
+        return pendingRetry
+      }),
+    })
+
+    await user.click(await screen.findByRole('button', { name: 'Try again' }))
+    expect(await screen.findByText('Loading selected work…')).toBeVisible()
+    const back = screen.getByRole('button', { name: 'Back to works' })
+    back.focus()
+    expect(back).toHaveFocus()
+    await act(async () => {
+      rejectRetry?.(new Error('retry selected detail failure'))
+    })
+    await screen.findByRole('button', { name: 'Try again' })
+    expect(back).toHaveFocus()
   })
 
   it('suppresses workspace decisions for a superseded case', async () => {

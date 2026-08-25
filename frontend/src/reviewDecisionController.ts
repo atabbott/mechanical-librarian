@@ -150,6 +150,9 @@ export const useReviewDecisionController = ({
       queryClient.invalidateQueries({ queryKey: ['library'] }),
       queryClient.invalidateQueries({ queryKey: ['attention'] }),
     ])
+  const refreshAggregatesInBackground = () => {
+    void refreshAggregates().catch(() => undefined)
+  }
   const settle = async () => {
     converge()
     return await refreshCase()
@@ -219,13 +222,13 @@ export const useReviewDecisionController = ({
         await onAdvance(command.destination)
         return
       }
-      void refreshAggregates().catch(() => undefined)
       release(command.destination)
       if (!isMounted()) {
         queryClient.setQueryData(decisionStatusKey(reviewCaseId), {
           destination: command.destination,
           text: 'Decision recorded from the authoritative case.',
         })
+        refreshAggregatesInBackground()
         return
       }
       mark(command, 'confirmed')
@@ -238,11 +241,13 @@ export const useReviewDecisionController = ({
       )
       if (!next) {
         await onComplete?.(refreshed.fields)
+        refreshAggregatesInBackground()
         return
       }
       // The acknowledgement and exact-case refresh are the only authority to
       // move the owner. A pending request never changes their field.
       if (active(command.destination)) await onAdvance(next.destination)
+      refreshAggregatesInBackground()
     },
     onError: async (error, command) => {
       // Release only this failed field. Another field may still be recording;

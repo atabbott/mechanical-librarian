@@ -795,9 +795,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                 page.get_by_role(
                     "heading", name="Which title should this work use?"
                 ).wait_for()
-                assert page.locator(".workspace-detail").evaluate(
-                    "node => node === document.activeElement"
-                )
+                expect(page.locator(".selected-work-header")).to_be_focused()
                 assert page.locator("img,script:not([src])").count() == 0
                 assert "<img" in page.locator("body").inner_text()
                 assert (
@@ -1332,10 +1330,9 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
     That ordering was the whole observable until #641 gave a decision a second
     reason to rebuild the Library, on a coalescing delay long enough that the
     refetch usually landed after the counter had already been read. So the
-    Library requests *issued* across the decision loop are counted too, and
-    that count is zero: a request is issued deterministically or not at all,
-    where a response landing inside a window is a race, and the race is what
-    four qualification runs of #641 saw as green.
+    each post-advance Library request is held and checked against the committed
+    field before it is released. That makes ordering observable directly rather
+    than inferring it from a response landing inside a timing window.
     """
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -1347,6 +1344,7 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
         errors: list[str] = []
         announced: list[Any] = []
         library_requests: list[str] = []
+        library_request_fields: list[str | None] = []
         library_responses: list[float] = []
         decision_requests: list[str | None] = []
         decision_responses: list[str] = []
@@ -1381,6 +1379,10 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                     decision_requests.append(request.headers.get("idempotency-key"))
                 elif "/api/v1/library" in request.url:
                     library_requests.append(request.url)
+                    field = page.locator(_CURRENT_FIELD_SELECTOR).first
+                    library_request_fields.append(
+                        field.inner_text() if field.count() else None
+                    )
 
             page.on("request", capture_request)
             with (
@@ -1416,11 +1418,17 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                 page.evaluate("window.scrollTo(0, 220)")
                 scroll_before = page.evaluate("() => window.scrollY")
                 page.emulate_media(reduced_motion="no-preference")
+                held_library_requests: list[Any] = []
+
+                def hold_library_request(route: Any) -> None:
+                    held_library_requests.append(route)
+
+                page.route("**/api/v1/library**", hold_library_request)
 
                 def current_field() -> str:
                     return page.locator(_CURRENT_FIELD_SELECTOR).first.inner_text()
 
-                def advance(*, pointer: bool = False) -> tuple[float, int, str]:
+                def advance(*, pointer: bool = False) -> tuple[float, int, str, str]:
                     before = current_field()
                     settled = len(library_responses)
                     choice = page.get_by_role(
@@ -1440,13 +1448,33 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                         time.monotonic() - started,
                         len(library_responses) - settled,
                         before,
+                        current_field(),
                     )
 
+                def release_aggregate_request(
+                    expected: int, *, previous: str, committed: str
+                ) -> None:
+                    deadline = time.monotonic() + 5
+                    while (
+                        len(held_library_requests) < expected
+                        or len(library_request_fields) < issued + expected
+                    ) and time.monotonic() < deadline:
+                        page.wait_for_timeout(10)
+                    assert len(held_library_requests) == expected, held_library_requests
+                    assert len(library_request_fields) == issued + expected
+                    field = library_request_fields[issued + expected - 1]
+                    assert field == committed
+                    assert field != previous
+                    held_library_requests[expected - 1].continue_()
+
                 issued = len(library_requests)
-                elapsed, projections, first_field = advance(pointer=True)
-                # The projection is invalidated, not awaited. Anything that
-                # completed inside this window was waited on.
+                elapsed, projections, first_field, first_next = advance(pointer=True)
+                # The aggregate request is held after it starts. The exact
+                # case still advances, proving this presentation-ready step
+                # does not await a whole-Library read; a request can only see
+                # the committed next field, never the recorded one.
                 assert projections == 0, (elapsed, projections)
+                release_aggregate_request(1, previous=first_field, committed=first_next)
                 # A generous ceiling: the measured exact-case read is single
                 # figures of milliseconds, and a whole-Library projection over
                 # this cohort is two orders of magnitude slower.
@@ -1558,8 +1586,13 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
 
                 # A second choice is accepted while the first settlement is
                 # still converging, in order, without a reload.
-                second_elapsed, second_projections, second_field = advance()
+                second_elapsed, second_projections, second_field, second_next = (
+                    advance()
+                )
                 assert second_projections == 0, (second_elapsed, second_projections)
+                release_aggregate_request(
+                    2, previous=second_field, committed=second_next
+                )
                 assert second_field != first_field
                 deadline = time.monotonic() + 10
                 while len(decision_responses) < 2 and time.monotonic() < deadline:
@@ -1573,6 +1606,7 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                 # but remain background work: the exact-case acknowledgement
                 # above advanced and focused the next field before either one
                 # completed.
+                page.unroute("**/api/v1/library**", hold_library_request)
                 page.wait_for_timeout(600)
                 assert len(library_requests[issued:]) == 2, library_requests[issued:]
 
@@ -1741,21 +1775,26 @@ def test_z_compact_uncached_library_detail_keeps_visible_focus() -> None:
                 ) as (origin, case_id),
                 _closing_context(context),
             ):
+                held_selected_detail: list[Any] = []
 
-                def delay_selected_detail(route) -> None:
+                def hold_selected_detail(route) -> None:
                     if route.request.url.endswith(f"/api/v1/review-cases/{case_id}"):
-                        time.sleep(0.3)
-                    route.continue_()
+                        held_selected_detail.append(route)
+                    else:
+                        route.continue_()
 
-                page.route("**/api/v1/review-cases/**", delay_selected_detail)
+                page.route("**/api/v1/review-cases/**", hold_selected_detail)
                 _login(page, origin)
                 page.locator(".library-work-row").first.click()
                 page.get_by_text("Loading selected work…").wait_for()
+                assert len(held_selected_detail) == 1
                 pending_detail = page.locator(".workspace-detail")
                 expect(pending_detail).to_be_focused()
                 assert pending_detail.bounding_box() is not None
+                held_selected_detail[0].continue_()
                 page.get_by_role(
                     "button", name="Choose current value:", exact=False
                 ).wait_for()
-                page.unroute("**/api/v1/review-cases/**", delay_selected_detail)
+                expect(page.locator(".selected-work-header")).to_be_focused()
+                page.unroute("**/api/v1/review-cases/**", hold_selected_detail)
             browser.close()
