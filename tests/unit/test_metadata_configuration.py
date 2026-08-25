@@ -17,6 +17,8 @@ from mechanical_librarian.application.configuration import (
     TargetConnectionConfiguration,
 )
 from mechanical_librarian.application.metadata_report import CredentialError
+from mechanical_librarian.domain.owner_settings import SecretWrite
+from mechanical_librarian.domain.validation import credential
 from mechanical_librarian.infrastructure.configuration import (
     ConfigurationInput,
     configuration_schema_json,
@@ -608,6 +610,54 @@ def test_private_regular_file_is_required() -> None:
         link.symlink_to(secret)
         with pytest.raises(CredentialError):
             read_secret(str(link))
+
+
+@pytest.mark.parametrize(
+    ("value", "accepted"),
+    (
+        ("x", True),
+        ("x" * 2048, True),
+        ("", False),
+        ("x" * 2049, False),
+        (" token", False),
+        ("token ", False),
+        ("Bearer-token", False),
+        ("line\nbreak", False),
+        ("é", False),
+    ),
+    ids=(
+        "minimum",
+        "maximum",
+        "empty",
+        "oversized",
+        "leading-space",
+        "trailing-space",
+        "bearer-prefix",
+        "newline",
+        "non-ascii",
+    ),
+)
+def test_private_reader_and_owner_settings_share_the_credential_contract(
+    tmp_path: Path, value: str, accepted: bool
+) -> None:
+    secret = tmp_path / "credential"
+    secret.write_bytes(value.encode("utf-8"))
+    secret.chmod(0o600)
+
+    assert credential(value) is accepted
+    if accepted:
+        assert read_secret(str(secret)) == value
+        assert (
+            SecretWrite(
+                field_id="connection.primary.key", operation="set", value=value
+            ).value
+            == value
+        )
+    else:
+        with pytest.raises(CredentialError, match="credential unavailable"):
+            read_secret(str(secret))
+        with pytest.raises(ValidationError):
+            SecretWrite(field_id="connection.primary.key", operation="set", value=value)
 
 
 def test_target_authorization_is_confined_to_current_item_get() -> None:

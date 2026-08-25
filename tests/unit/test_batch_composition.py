@@ -138,6 +138,77 @@ def test_google_books_keyless_keyed_and_disabled_composition():
     assert ("private-key", None) == tuple(item[1]["api_key"] for item in constructed)
 
 
+def test_store_runtime_uses_only_injected_target_and_provider_credentials():
+    config = ApplicationConfiguration(
+        (TargetConnectionConfiguration("primary", "https://example.invalid", None),),
+        (
+            LibraryConfiguration(
+                "books",
+                "primary",
+                "library",
+                "book",
+                "media",
+                ("google", "hardcover"),
+            ),
+        ),
+        (MediaMountConfiguration("media", "/media", "/books", True),),
+        (
+            ProviderConnectionConfiguration(
+                "google", True, False, None, "google_books"
+            ),
+            ProviderConnectionConfiguration(
+                "hardcover", True, False, None, "hardcover"
+            ),
+        ),
+    )
+    credentials = {
+        "target:primary": "target-token",
+        "provider:google": "google-token",
+        "provider:hardcover": "hardcover-token",
+    }
+    service = unittest.mock.Mock()
+    service.run.return_value = "report"
+    with (
+        patch.object(composition, "CoverArtifactStore"),
+        patch.object(composition, "AudiobookshelfItemReader") as reader,
+        patch.object(composition, "target_client") as target_file_client,
+        patch.object(
+            composition, "target_client_token", return_value=object()
+        ) as target_token,
+        patch.object(composition, "hardcover_client") as hardcover_file_client,
+        patch.object(
+            composition, "hardcover_client_token", return_value=object()
+        ) as hardcover_token,
+        patch.object(composition, "google_books_client", return_value=object()),
+        patch.object(composition, "read_secret") as read_secret,
+        patch.object(composition, "GoogleBooksMetadataProvider") as google_provider,
+        patch.object(composition, "HardcoverMetadataProvider"),
+        patch.object(
+            composition, "GenerateMetadataReport", return_value=service
+        ) as generate,
+    ):
+        assert "report" == composition.run_metadata_report_loaded(
+            config,
+            Path("/reports"),
+            Path("/artifacts"),
+            "primary",
+            "books",
+            "item",
+            0,
+            credentials=credentials,
+        )
+        reader.call_args.kwargs["client_factory"]()
+        for binding in generate.call_args.kwargs["providers"]:
+            binding.factory()
+
+    target_token.assert_called_once_with("https://example.invalid", "target-token", 30)
+    hardcover_token.assert_called_once_with("hardcover-token", 30)
+    assert google_provider.call_args.kwargs["api_key"] == "google-token"
+    target_file_client.assert_not_called()
+    hardcover_file_client.assert_not_called()
+    read_secret.assert_not_called()
+
+
 def test_namespaced_equal_name_credentials():
     config = ApplicationConfiguration(
         (

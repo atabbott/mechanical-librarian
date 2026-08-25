@@ -163,6 +163,7 @@ def test_settings_file_authority_transport_is_private_and_locked(
 
 def test_settings_store_transport_redacts_secret_and_derives_effects(
     web: ReviewWebContext[FakeReviewRepository],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     document = OwnerSettingsDocument.model_validate(
         {
@@ -280,6 +281,7 @@ def test_settings_store_transport_redacts_secret_and_derives_effects(
     )
     assert invalid_secret.status_code == 422
     assert canary not in invalid_secret.text
+    assert canary not in caplog.text
     oversized = web.client.patch(
         "/api/v1/settings",
         content=b"{" + b"x" * 262_144,
@@ -1295,6 +1297,12 @@ def test_openapi_is_deterministic_and_secret_free(
         Path("docs/reference/review-openapi-v1.json").read_text(encoding="utf-8")
     )
     assert first.json() == expected
+    assert (
+        expected["components"]["schemas"]["SecretWrite"]["properties"]["value"][
+            "writeOnly"
+        ]
+        is True
+    )
     assert (
         set(
             first.json()["components"]["schemas"]["_OperationalIncident"]["properties"][

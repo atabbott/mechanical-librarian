@@ -2,7 +2,14 @@ import { act, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-import { ApiError } from '../src/api/http'
+import {
+  ApiError,
+  settingsEndpointValid,
+  settingsIntegerValid,
+  settingsOpenLibraryEmailValid,
+  settingsSecretValid,
+  settingsTextValid,
+} from '../src/api/http'
 import type { SettingsView } from '../src/api/http'
 import { createHttp, renderRoute } from './fixtures'
 
@@ -95,6 +102,25 @@ const view = (authority: 'file' | 'store' = 'store'): SettingsView => ({
   ],
 })
 
+describe('settings API field validation vocabulary', () => {
+  it('matches the generated boundary at exact and unusual values', () => {
+    expect(settingsEndpointValid('not a URL but API-valid')).toBe(true)
+    expect(settingsEndpointValid('x'.repeat(2048))).toBe(true)
+    expect(settingsEndpointValid('😀'.repeat(2048))).toBe(true)
+    expect(settingsEndpointValid('')).toBe(false)
+    expect(settingsEndpointValid('x'.repeat(2049))).toBe(false)
+    expect(settingsEndpointValid('😀'.repeat(2049))).toBe(false)
+    expect(settingsIntegerValid(60, 1, 60)).toBe(true)
+    expect(settingsIntegerValid(61, 1, 60)).toBe(false)
+    expect(settingsTextValid('x', 1, 128)).toBe(true)
+    expect(settingsTextValid('', 1, 128)).toBe(false)
+    expect(settingsSecretValid('printable-secret')).toBe(true)
+    expect(settingsSecretValid('Bearer secret')).toBe(false)
+    expect(settingsOpenLibraryEmailValid('owner@example.invalid')).toBe(true)
+    expect(settingsOpenLibraryEmailValid('not-an-email')).toBe(false)
+  })
+})
+
 describe('owner settings route', () => {
   it('keeps the primary shell intact and saves a redacted replacement with revision CAS', async () => {
     const user = userEvent.setup()
@@ -109,8 +135,8 @@ describe('owner settings route', () => {
     expect(screen.getByText('Restart required for saved changes')).toBeVisible()
     await user.click(screen.getByRole('button', { name: /Providers/ }))
     expect(screen.getByText('Configured · ····abcd')).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Replace' }))
-    await user.type(screen.getByLabelText('Replacement secret'), 'new-secret-abcd')
+    await user.click(screen.getByRole('button', { name: 'Replace hardcover API key' }))
+    await user.type(screen.getByLabelText('Replacement hardcover API key'), 'new-secret-abcd')
     await user.click(screen.getByRole('button', { name: 'Save settings' }))
 
     await waitFor(() => expect(http.writeSettings).toHaveBeenCalledOnce())
@@ -183,5 +209,67 @@ describe('owner settings route', () => {
     await user.click(screen.getByRole('button', { name: 'Save settings' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Settings changed elsewhere')
     expect(screen.queryByText('https://other.invalid')).not.toBeInTheDocument()
+  })
+
+  it('associates every editable validation family with its named field', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    renderRoute('/settings?group=connection', http)
+
+    const endpoint = await screen.findByRole('textbox', { name: 'Audiobookshelf endpoint' })
+    await waitFor(() =>
+      expect(globalThis.document.getElementById('main-content')).toHaveAttribute(
+        'data-restored-path',
+        '/settings',
+      ),
+    )
+    await user.click(endpoint)
+    await user.clear(endpoint)
+    expect(endpoint).toHaveFocus()
+    expect(endpoint).toHaveAttribute('aria-invalid', 'true')
+    expect(endpoint).toHaveAccessibleDescription(/endpoint must contain 1–2,048 characters/)
+    expect(screen.getByRole('alert')).toHaveTextContent('endpoint must contain')
+
+    await user.click(screen.getByRole('button', { name: 'Replace home access key' }))
+    const targetSecret = screen.getByLabelText('Replacement home access key')
+    await user.type(targetSecret, 'Bearer secret')
+    expect(targetSecret).toHaveAttribute('aria-invalid', 'true')
+    expect(targetSecret).toHaveAccessibleDescription(/Secrets must be 1–2,048/)
+
+    await user.click(screen.getByRole('button', { name: /Providers/ }))
+    const email = screen.getByRole('textbox', { name: 'Open Library contact email' })
+    await user.clear(email)
+    expect(email).toHaveAttribute('aria-invalid', 'true')
+    expect(email).toHaveAccessibleDescription(/needs a contact email while enabled/)
+    const openLibraryEnabled = screen.getByRole('checkbox', {
+      name: 'Provider state Enable open-library',
+    })
+    await user.click(openLibraryEnabled)
+    expect(email).not.toHaveAttribute('aria-invalid')
+    await user.click(openLibraryEnabled)
+    expect(email).toHaveAttribute('aria-invalid', 'true')
+
+    await user.click(screen.getByRole('button', { name: 'Clear hardcover API key' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm clear hardcover API key' }))
+    const requiredKey = screen.getByRole('button', {
+      name: 'Keep configured hardcover API key',
+    })
+    expect(requiredKey).toHaveAttribute('aria-invalid', 'true')
+    expect(requiredKey).toHaveAccessibleDescription(/requires an API key while enabled/)
+
+    await user.click(screen.getByRole('button', { name: /Libraries/ }))
+    const libraryId = screen.getByRole('textbox', { name: 'Library identifier' })
+    await user.clear(libraryId)
+    expect(libraryId).toHaveAttribute('aria-invalid', 'true')
+    expect(libraryId).toHaveAccessibleDescription(/identifier must contain 1–128 characters/)
+
+    await user.click(screen.getByRole('button', { name: /Automation & limits/ }))
+    const timeout = screen.getByRole('spinbutton', { name: 'Request timeout' })
+    await user.clear(timeout)
+    await user.type(timeout, '0')
+    expect(timeout).toHaveAttribute('aria-invalid', 'true')
+    expect(timeout).toHaveAccessibleDescription(/Request timeout must be from 1 to 60/)
+    expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled()
   })
 })

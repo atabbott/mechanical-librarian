@@ -563,6 +563,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .settings-field-row p { max-width:58ch; margin:.25rem 0 0; color:var(--soft); font-size:.8rem; line-height:1.5; }
 .settings-effect { display:block; margin-bottom:.3rem; color:var(--accent-strong); font-size:.66rem; font-weight:750; letter-spacing:.04em; text-transform:uppercase; }
 .settings-field-control { display:grid; align-content:start; gap:.4rem; }
+.settings-field-control .settings-field-error { color:var(--danger); font-weight:650; }
 .settings-field-control input:not([type='radio']),.settings-field-control select { width:100%; min-width:0; padding:.5rem .6rem; border:1px solid var(--line-strong); border-radius:.35rem; color:var(--ink); background:var(--paper); }
 .settings-field-control a { min-height:44px; display:inline-flex; align-items:center; overflow-wrap:anywhere; }
 .settings-lock { color:var(--soft); font-size:.68rem; font-weight:700; text-transform:uppercase; }

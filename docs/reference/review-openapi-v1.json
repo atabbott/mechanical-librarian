@@ -419,7 +419,8 @@
                 "type": "null"
               }
             ],
-            "title": "Value"
+            "title": "Value",
+            "writeOnly": true
           }
         },
         "required": [

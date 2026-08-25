@@ -341,6 +341,13 @@ class _RearProvenanceFields(TypedDict):
     tail_slot: int
 
 
+def _required_secret_file(value: str | None) -> str:
+    """Keep file-backed credential reads explicit at the composition boundary."""
+    if value is None:
+        raise ConfigurationError("credential path is unavailable")
+    return value
+
+
 def compose_audiobookshelf_field_effect_target(
     configuration: ApplicationConfiguration,
     artifact_store_path: Path,
@@ -366,7 +373,7 @@ def compose_audiobookshelf_field_effect_target(
         client_factory=lambda: (
             target_client(
                 connection.endpoint,
-                connection.secret_file,
+                _required_secret_file(connection.secret_file),
                 configuration.limits.timeout_seconds,
             )
             if credentials is None
@@ -397,7 +404,7 @@ def compose_audiobookshelf_field_effect_capabilities(
         client_factory=lambda: (
             target_client(
                 connection.endpoint,
-                connection.secret_file,
+                _required_secret_file(connection.secret_file),
                 configuration.limits.timeout_seconds,
             )
             if credentials is None
@@ -1074,7 +1081,7 @@ def run_metadata_report_loaded(
         client_factory=lambda: (
             target_client(
                 connection.endpoint,
-                connection.secret_file,
+                _required_secret_file(connection.secret_file),
                 configuration.limits.timeout_seconds,
             )
             if credentials is None
@@ -1109,12 +1116,12 @@ def run_metadata_report_loaded(
             instance: MetadataProvider
             if value.adapter == "google_books":
                 api_key = (
-                    None
-                    if value.secret_file is None
+                    credentials.get("provider:" + value.name)
+                    if credentials is not None
                     else (
-                        read_secret(value.secret_file)
-                        if credentials is None
-                        else credentials["provider:" + value.name]
+                        None
+                        if value.secret_file is None
+                        else read_secret(value.secret_file)
                     )
                 )
                 instance = GoogleBooksMetadataProvider(
@@ -1125,12 +1132,13 @@ def run_metadata_report_loaded(
                     api_key=api_key,
                 )
             elif value.adapter == "hardcover":
-                if value.secret_file is None:
+                if value.secret_file is None and credentials is None:
                     raise MetadataReportError("provider credential unavailable")
                 instance = HardcoverMetadataProvider(
                     value.name,
                     hardcover_client(
-                        value.secret_file, configuration.limits.timeout_seconds
+                        _required_secret_file(value.secret_file),
+                        configuration.limits.timeout_seconds,
                     )
                     if credentials is None
                     else hardcover_client_token(
@@ -1224,7 +1232,7 @@ def _require_report_current_loaded(
     target = AudiobookshelfItemReader(
         client_factory=lambda: target_client(
             connection.endpoint,
-            connection.secret_file,
+            _required_secret_file(connection.secret_file),
             configuration.limits.timeout_seconds,
         ),
         endpoint=connection.endpoint,
@@ -1361,7 +1369,7 @@ def create_review_pipeline(
         client_factory=lambda name: (
             target_client(
                 clients[name].endpoint,
-                clients[name].secret_file,
+                _required_secret_file(clients[name].secret_file),
                 configuration.limits.timeout_seconds,
             )
             if credentials is None
@@ -1439,12 +1447,12 @@ def create_review_pipeline(
         ) -> MetadataProvider:
             if value.adapter == "google_books":
                 api_key = (
-                    None
-                    if value.secret_file is None
+                    credentials.get("provider:" + value.name)
+                    if credentials is not None
                     else (
-                        read_secret(value.secret_file)
-                        if credentials is None
-                        else credentials["provider:" + value.name]
+                        None
+                        if value.secret_file is None
+                        else read_secret(value.secret_file)
                     )
                 )
                 return GoogleBooksMetadataProvider(
@@ -1454,12 +1462,15 @@ def create_review_pipeline(
                     configuration.limits.timeout_seconds,
                     api_key=api_key,
                 )
-            if value.adapter == "hardcover" and value.secret_file is not None:
+            if value.adapter == "hardcover" and (
+                value.secret_file is not None or credentials is not None
+            ):
                 return HardcoverMetadataProvider(
                     value.name,
                     (
                         hardcover_client(
-                            value.secret_file, configuration.limits.timeout_seconds
+                            _required_secret_file(value.secret_file),
+                            configuration.limits.timeout_seconds,
                         )
                         if credentials is None
                         else hardcover_client_token(
@@ -1500,7 +1511,7 @@ def create_review_pipeline(
             client_factory=lambda: (
                 target_client(
                     connection.endpoint,
-                    connection.secret_file,
+                    _required_secret_file(connection.secret_file),
                     configuration.limits.timeout_seconds,
                 )
                 if credentials is None
@@ -1794,7 +1805,7 @@ def run_catalogue(
     reader = AudiobookshelfCatalogueReader(
         client_factory=lambda name: target_client(
             clients[name].endpoint,
-            clients[name].secret_file,
+            _required_secret_file(clients[name].secret_file),
             configuration.limits.timeout_seconds,
         ),
         mounts=mounts,
@@ -2063,7 +2074,7 @@ def _load_batch_credentials(
     selected_provider_names: set[str],
 ) -> dict[str, str]:
     values = {
-        "target:" + item.name: read_secret(item.secret_file)
+        "target:" + item.name: read_secret(_required_secret_file(item.secret_file))
         for item in configuration.connections
         if item.name in selected_connections
     }

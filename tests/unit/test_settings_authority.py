@@ -58,6 +58,18 @@ def test_store_projection_combines_only_deploy_bootstrap_and_store_authority() -
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}
             ],
+            "providers": [
+                {
+                    "name": "google",
+                    "adapter": "google_books",
+                    "enabled": True,
+                },
+                {
+                    "name": "hardcover",
+                    "adapter": "hardcover",
+                    "enabled": True,
+                },
+            ],
             "libraries": [
                 {
                     "name": "books",
@@ -65,6 +77,7 @@ def test_store_projection_combines_only_deploy_bootstrap_and_store_authority() -
                     "library_id": "library-1",
                     "media_kind": "ebook",
                     "mount": "books",
+                    "provider_connections": ["google", "hardcover"],
                 }
             ],
         }
@@ -94,10 +107,19 @@ def test_store_projection_combines_only_deploy_bootstrap_and_store_authority() -
     )
 
     configuration = store_runtime_configuration(
-        settings, {"connection.primary.key": "target-secret"}, bootstrap
+        settings,
+        {
+            "connection.primary.key": "target-secret",
+            "provider.google.key": "google-secret",
+            "provider.hardcover.key": "hardcover-secret",
+        },
+        bootstrap,
     )
 
     assert configuration.connections[0].endpoint == "https://library.example.invalid"
+    assert configuration.connections[0].secret_file is None
+    assert all(provider.secret_file is None for provider in configuration.providers)
+    assert ".store-credential" not in repr(configuration)
     assert configuration.mounts[0].container_path == "/media/books"
     assert configuration.review is not None
     assert configuration.review.canonical_origin == "https://review.example.invalid"

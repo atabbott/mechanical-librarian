@@ -202,7 +202,15 @@ class OwnerSettingsDocument(_Closed):
 class SecretWrite(_Closed):
     field_id: Annotated[StrictStr, Field(pattern=r"^[a-z][a-z0-9_.-]{0,127}$")]
     operation: Literal["set", "replace", "clear"]
-    value: Annotated[StrictStr, Field(min_length=1, max_length=2048)] | None = None
+    value: Annotated[
+        StrictStr | None,
+        Field(
+            min_length=1,
+            max_length=2048,
+            repr=False,
+            json_schema_extra={"writeOnly": True},
+        ),
+    ] = None
 
     @field_validator("value")
     @classmethod

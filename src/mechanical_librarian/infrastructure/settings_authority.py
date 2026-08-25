@@ -110,7 +110,7 @@ def store_runtime_configuration(
             TargetConnectionConfiguration(
                 name=item.name,
                 endpoint=item.endpoint,
-                secret_file=f"/data/.store-credential/{item.name}",
+                secret_file=None,
                 adapter=item.adapter,
             )
             for item in document.connections
@@ -135,11 +135,7 @@ def store_runtime_configuration(
                 enabled=item.enabled,
                 cover_enabled=item.cover_enabled,
                 contact_email=getattr(item, "contact_email", None),
-                secret_file=(
-                    f"/data/.store-credential/{item.name}"
-                    if f"provider.{item.name}.key" in credentials
-                    else None
-                ),
+                secret_file=None,
             )
             for item in document.providers
         ),

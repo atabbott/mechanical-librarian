@@ -8,6 +8,36 @@ export type SettingsView = Schema<'SettingsView'>
 export type SettingsWrite = Schema<'_SettingsWriteRequest'>
 export type AppearanceView = Schema<'_AppearanceResponse'>
 
+// These validators live at the DTO mapping boundary so the editor cannot
+// silently become stricter than the generated API contract. Their names make
+// the contract directly testable and let TypeScript keep every caller on the
+// same exact input shape.
+export const settingsSecretValid = (value: string) =>
+  value.length >= 1 &&
+  value.length <= 2048 &&
+  /^[\x21-\x7e]+$/u.test(value) &&
+  !value.toLowerCase().startsWith('bearer')
+
+export const settingsIntegerValid = (value: number, minimum: number, maximum?: number) =>
+  Number.isInteger(value) && value >= minimum && (maximum === undefined || value <= maximum)
+
+export const settingsTextValid = (value: string, minimum: number, maximum: number) => {
+  const codePoints = Array.from(value).length
+  return codePoints >= minimum && codePoints <= maximum
+}
+
+export const settingsEndpointValid = (value: string) => settingsTextValid(value, 1, 2048)
+
+const openLibraryEmail = new RegExp(
+  "^(?=.{1,64}@)[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+" +
+    "(?:\\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*@[A-Za-z0-9]" +
+    '(?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?' +
+    '(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$',
+)
+
+export const settingsOpenLibraryEmailValid = (value: string) =>
+  settingsTextValid(value, 3, 254) && openLibraryEmail.test(value)
+
 export type LibraryLens = 'needs_attention' | 'all' | 'no_attention_needed'
 export type DetailSubview = 'evidence' | 'history'
 export type PolicySection = 'identity' | 'publication' | 'curation' | 'unsupported'

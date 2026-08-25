@@ -124,6 +124,16 @@ def test_secret_write_uses_the_adapter_credential_contract(value: str) -> None:
         SecretWrite(field_id="connection.primary.key", operation="set", value=value)
 
 
+def test_secret_write_hides_its_value_and_marks_it_write_only() -> None:
+    canary = "settings-secret-repr-canary"
+    value = SecretWrite(
+        field_id="connection.primary.key", operation="replace", value=canary
+    )
+
+    assert canary not in repr(value)
+    assert SecretWrite.model_json_schema()["properties"]["value"]["writeOnly"] is True
+
+
 def test_store_returns_redacted_secret_presence_and_metadata() -> None:
     view = _store().read()
     assert view.authority == "store"

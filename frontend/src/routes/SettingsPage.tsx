@@ -1,8 +1,15 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useMemo, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { ComponentPropsWithoutRef, ReactNode } from 'react'
 
-import { ApiError } from '../api/http'
+import {
+  ApiError,
+  settingsEndpointValid,
+  settingsIntegerValid,
+  settingsOpenLibraryEmailValid,
+  settingsSecretValid,
+  settingsTextValid,
+} from '../api/http'
 import type { SettingsView, SettingsWrite } from '../api/http'
 import { settingsRoute, useReviewContext } from '../router'
 import type { SettingsGroup } from '../router'
@@ -15,6 +22,10 @@ type Mutable<T> = T extends readonly (infer Item)[]
 type Document = Mutable<SettingsView['document']>
 type SecretWrite = SettingsWrite['secrets'][number]
 type Group = SettingsGroup
+interface FieldIssue {
+  fieldId: string
+  message: string
+}
 
 const groupById: Readonly<Record<Group, { id: Group; label: string; description: string }>> = {
   connection: { id: 'connection', label: 'Connection', description: 'Your Audiobookshelf service' },
@@ -49,102 +60,186 @@ const effectCopy = (effect: string) =>
       ? 'Deployment managed'
       : 'Applies on restart'
 
-const secretValid = (value: string) =>
-  value.length >= 1 &&
-  value.length <= 2048 &&
-  /^[\x21-\x7e]+$/u.test(value) &&
-  !value.toLowerCase().startsWith('bearer')
-
-const endpointValid = (value: string) => {
-  try {
-    const endpoint = new URL(value)
-    return (endpoint.protocol === 'http:' || endpoint.protocol === 'https:') && value.length <= 2048
-  } catch {
-    return false
-  }
-}
-
 const validationErrors = (
   document: Document,
   secrets: Record<string, SecretWrite>,
   view: SettingsView,
 ) => {
-  const errors: string[] = []
+  const errors: FieldIssue[] = []
   const ranges = [
-    [document.limits.target_response_bytes, 1024, 4_194_304, 'Target response limit'],
-    [document.limits.provider_response_bytes, 1024, 262_144, 'Provider response limit'],
-    [document.limits.source_archive_bytes, 1024, 268_435_456, 'Source archive limit'],
-    [document.limits.timeout_seconds, 1, 300, 'Request timeout'],
-    [document.server.session_lifetime_seconds, 300, 86_400, 'Session lifetime'],
-    [document.server.library_polling_interval_seconds, 60, 86_400, 'Polling interval'],
-    [document.server.graceful_shutdown_seconds, 1, 300, 'Shutdown budget'],
+    [
+      'limits.target_response_bytes',
+      document.limits.target_response_bytes,
+      1024,
+      4_194_304,
+      'Target response limit',
+    ],
+    [
+      'limits.provider_response_bytes',
+      document.limits.provider_response_bytes,
+      1024,
+      262_144,
+      'Provider response limit',
+    ],
+    [
+      'limits.source_archive_bytes',
+      document.limits.source_archive_bytes,
+      1024,
+      268_435_456,
+      'Source archive limit',
+    ],
+    ['limits.timeout_seconds', document.limits.timeout_seconds, 1, 60, 'Request timeout'],
+    [
+      'server.session_lifetime_seconds',
+      document.server.session_lifetime_seconds,
+      300,
+      86_400,
+      'Session lifetime',
+    ],
+    [
+      'server.library_polling_interval_seconds',
+      document.server.library_polling_interval_seconds,
+      60,
+      86_400,
+      'Polling interval',
+    ],
+    [
+      'server.graceful_shutdown_seconds',
+      document.server.graceful_shutdown_seconds,
+      1,
+      300,
+      'Shutdown budget',
+    ],
   ] as const
-  for (const [value, minimum, maximum, label] of ranges)
-    if (!Number.isSafeInteger(value) || value < minimum || value > maximum)
-      errors.push(
-        `${label} must be from ${minimum.toLocaleString()} to ${maximum.toLocaleString()}.`,
-      )
+  for (const [fieldId, value, minimum, maximum, label] of ranges)
+    if (!settingsIntegerValid(value, minimum, maximum))
+      errors.push({
+        fieldId,
+        message: `${label} must be from ${minimum.toLocaleString()} to ${maximum.toLocaleString()}.`,
+      })
+  if (!settingsIntegerValid(document.provider_recovery_generation, 1))
+    errors.push({
+      fieldId: 'provider_recovery_generation',
+      message: 'Provider recovery generation must be a whole number of at least 1.',
+    })
   for (const entry of Object.values(secrets))
-    if (entry.operation !== 'clear' && (!entry.value || !secretValid(entry.value)))
-      errors.push(
-        'Secrets must be 1–2,048 printable ASCII characters with no whitespace or Bearer prefix.',
-      )
+    if (entry.operation !== 'clear' && (!entry.value || !settingsSecretValid(entry.value)))
+      errors.push({
+        fieldId: entry.field_id,
+        message:
+          'Secrets must be 1–2,048 printable ASCII characters with no whitespace or Bearer prefix.',
+      })
   for (const connection of document.connections) {
-    if (!endpointValid(connection.endpoint))
-      errors.push(`${connection.name} needs a valid HTTP or HTTPS endpoint.`)
+    if (!settingsEndpointValid(connection.endpoint))
+      errors.push({
+        fieldId: `connection.${connection.name}.endpoint`,
+        message: `${connection.name} endpoint must contain 1–2,048 characters.`,
+      })
     const fieldId = `connection.${connection.name}.key`
     const existing = view.secrets.find((item) => item.field_id === fieldId)?.configured === true
     const pending = secrets[fieldId]
     if ((!existing && !pending?.value) || pending?.operation === 'clear')
-      errors.push(`${connection.name} requires an access key.`)
+      errors.push({ fieldId, message: `${connection.name} requires an access key.` })
   }
   for (const provider of document.providers) {
-    if (provider.adapter === 'open_library' && provider.enabled && !provider.contact_email)
-      errors.push(`${provider.name} needs a contact email while enabled.`)
+    if (provider.adapter === 'open_library' && provider.enabled) {
+      const fieldId = `provider.${provider.name}.contact_email`
+      if (!provider.contact_email)
+        errors.push({ fieldId, message: `${provider.name} needs a contact email while enabled.` })
+      else if (!settingsOpenLibraryEmailValid(provider.contact_email))
+        errors.push({
+          fieldId,
+          message: `${provider.name} needs a valid contact email while enabled.`,
+        })
+    }
     if (provider.adapter === 'hardcover' && provider.enabled) {
       const fieldId = `provider.${provider.name}.key`
       const existing = view.secrets.find((item) => item.field_id === fieldId)?.configured === true
       const pending = secrets[fieldId]
       if ((!existing && !pending?.value) || pending?.operation === 'clear')
-        errors.push(`${provider.name} requires an API key while enabled.`)
+        errors.push({ fieldId, message: `${provider.name} requires an API key while enabled.` })
     }
   }
+  for (const library of document.libraries)
+    if (!settingsTextValid(library.library_id, 1, 128))
+      errors.push({
+        fieldId: `library.${library.name}.library_id`,
+        message: `${library.name} identifier must contain 1–128 characters.`,
+      })
   return errors
 }
+
+const controlId = (fieldId: string) => `settings-${fieldId.replaceAll('.', '-')}`
+const descriptionId = (fieldId: string) => `${controlId(fieldId)}-description`
+const errorId = (fieldId: string) => `${controlId(fieldId)}-error`
+
+const FieldInput = ({
+  fieldId,
+  error,
+  ...properties
+}: ComponentPropsWithoutRef<'input'> & { fieldId: string; error?: string | undefined }) => (
+  <input
+    {...properties}
+    id={controlId(fieldId)}
+    aria-invalid={error ? true : undefined}
+    aria-describedby={`${descriptionId(fieldId)}${error ? ` ${errorId(fieldId)}` : ''}`}
+  />
+)
 
 const Row = ({
   title,
   description,
   effect,
   locked,
+  fieldId,
+  error,
+  group = false,
   children,
 }: {
   title: string
   description: string
   effect: string
   locked: boolean
+  fieldId?: string | undefined
+  error?: string | undefined
+  group?: boolean
   children: ReactNode
 }) => (
   <div className="settings-field-row">
     <div>
       <span className="settings-effect">{effectCopy(effect)}</span>
-      <strong>{title}</strong>
-      <p>{description}</p>
+      {fieldId && !locked && !group ? (
+        <label htmlFor={controlId(fieldId)}>
+          <strong>{title}</strong>
+        </label>
+      ) : (
+        <strong>{title}</strong>
+      )}
+      <p id={fieldId ? descriptionId(fieldId) : undefined}>{description}</p>
     </div>
     <div className="settings-field-control">
       {locked ? <span className="settings-lock">Locked</span> : null}
       {children}
+      {fieldId && error ? (
+        <p className="settings-field-error" id={errorId(fieldId)}>
+          {error}
+        </p>
+      ) : null}
     </div>
   </div>
 )
 
 const Secret = ({
   fieldId,
+  label,
+  error,
   view,
   pending,
   onChange,
 }: {
   fieldId: string
+  label: string
+  error?: string | undefined
   view: SettingsView
   pending: SecretWrite | undefined
   onChange: (value: SecretWrite | undefined) => void
@@ -156,8 +251,14 @@ const Secret = ({
     return (
       <div className="settings-secret-state">
         <strong>Will be cleared</strong>
-        <button type="button" onClick={() => onChange(undefined)}>
-          Keep configured secret
+        <button
+          type="button"
+          id={controlId(fieldId)}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={`${descriptionId(fieldId)}${error ? ` ${errorId(fieldId)}` : ''}`}
+          onClick={() => onChange(undefined)}
+        >
+          Keep configured {label}
         </button>
       </div>
     )
@@ -175,19 +276,19 @@ const Secret = ({
                 setConfirmingClear(false)
               }}
             >
-              Confirm clear
+              Confirm clear {label}
             </button>
             <button type="button" onClick={() => setConfirmingClear(false)}>
-              Keep secret
+              Keep {label}
             </button>
           </div>
         ) : (
           <span>
             <button type="button" onClick={() => setEditing(true)}>
-              Replace
+              Replace {label}
             </button>
             <button type="button" onClick={() => setConfirmingClear(true)}>
-              Clear
+              Clear {label}
             </button>
           </span>
         )}
@@ -195,11 +296,13 @@ const Secret = ({
     )
   return (
     <div className="settings-secret-editor">
-      <input
+      <FieldInput
+        fieldId={fieldId}
+        error={error}
         type="password"
         autoComplete="new-password"
         maxLength={2048}
-        aria-label={presence?.configured ? 'Replacement secret' : 'New secret'}
+        aria-label={presence?.configured ? `Replacement ${label}` : `New ${label}`}
         value={pending?.value ?? ''}
         onChange={(event) =>
           onChange({
@@ -218,7 +321,7 @@ const Secret = ({
             setEditing(false)
           }}
         >
-          Cancel replacement
+          Cancel replacement {label}
         </button>
       ) : null}
     </div>
@@ -324,6 +427,7 @@ const SettingsEditor = ({
     },
   })
   const errors = useMemo(() => validationErrors(draft, secrets, view), [draft, secrets, view])
+  const fieldError = (fieldId: string) => errors.find((item) => item.fieldId === fieldId)?.message
   const changed = useMemo(
     () =>
       JSON.stringify(view.document) !== JSON.stringify(draft) || Object.keys(secrets).length > 0,
@@ -428,6 +532,8 @@ const SettingsEditor = ({
                   <div className="settings-record" key={connection.name}>
                     <h3>{connection.name}</h3>
                     <Row
+                      fieldId={`connection.${connection.name}.endpoint`}
+                      error={fieldError(`connection.${connection.name}.endpoint`)}
                       title="Audiobookshelf endpoint"
                       description="The exact service origin used for catalogue and metadata work."
                       effect={effect('connections')}
@@ -436,8 +542,11 @@ const SettingsEditor = ({
                       {locked ? (
                         <span>{connection.endpoint}</span>
                       ) : (
-                        <input
-                          type="url"
+                        <FieldInput
+                          fieldId={`connection.${connection.name}.endpoint`}
+                          error={fieldError(`connection.${connection.name}.endpoint`)}
+                          type="text"
+                          inputMode="url"
                           maxLength={2048}
                           value={connection.endpoint}
                           onChange={(event) =>
@@ -450,6 +559,9 @@ const SettingsEditor = ({
                       )}
                     </Row>
                     <Row
+                      fieldId={`connection.${connection.name}.key`}
+                      error={fieldError(`connection.${connection.name}.key`)}
+                      group={!locked}
                       title="Access key"
                       description="Write-only target authority. It is never returned to this page."
                       effect="restart_required"
@@ -464,6 +576,8 @@ const SettingsEditor = ({
                       ) : (
                         <Secret
                           fieldId={'connection.' + connection.name + '.key'}
+                          label={`${connection.name} access key`}
+                          error={fieldError('connection.' + connection.name + '.key')}
                           view={view}
                           pending={secrets['connection.' + connection.name + '.key']}
                           onChange={(value) =>
@@ -488,6 +602,7 @@ const SettingsEditor = ({
                     <div className="settings-record" key={provider.name}>
                       <h3>{provider.name.replaceAll('_', ' ')}</h3>
                       <Row
+                        fieldId={`provider.${provider.name}.enabled`}
                         title="Provider state"
                         description={
                           provider.adapter === 'open_library'
@@ -501,7 +616,8 @@ const SettingsEditor = ({
                           <strong>{provider.enabled ? 'Enabled' : 'Disabled'}</strong>
                         ) : (
                           <label className="settings-check">
-                            <input
+                            <FieldInput
+                              fieldId={`provider.${provider.name}.enabled`}
                               type="checkbox"
                               checked={provider.enabled}
                               onChange={(event) =>
@@ -510,15 +626,18 @@ const SettingsEditor = ({
                                   if (item) {
                                     item.enabled = event.currentTarget.checked
                                     if (!item.enabled) item.cover_enabled = false
+                                    if (!item.enabled && 'contact_email' in item)
+                                      item.contact_email = null
                                   }
                                 })
                               }
                             />
-                            Enabled
+                            Enable {provider.name.replaceAll('_', ' ')}
                           </label>
                         )}
                       </Row>
                       <Row
+                        fieldId={`provider.${provider.name}.cover_enabled`}
                         title="Cover evidence"
                         description="Allow this provider to supply cover candidates for associated libraries."
                         effect={effect('providers')}
@@ -528,7 +647,8 @@ const SettingsEditor = ({
                           <strong>{provider.cover_enabled ? 'Enabled' : 'Disabled'}</strong>
                         ) : (
                           <label className="settings-check">
-                            <input
+                            <FieldInput
+                              fieldId={`provider.${provider.name}.cover_enabled`}
                               type="checkbox"
                               checked={provider.cover_enabled}
                               disabled={!provider.enabled}
@@ -539,12 +659,14 @@ const SettingsEditor = ({
                                 })
                               }
                             />
-                            Use for cover evidence
+                            Use {provider.name.replaceAll('_', ' ')} for cover evidence
                           </label>
                         )}
                       </Row>
                       {'contact_email' in provider ? (
                         <Row
+                          fieldId={`provider.${provider.name}.contact_email`}
+                          error={fieldError(`provider.${provider.name}.contact_email`)}
                           title="Open Library contact email"
                           description="Sent only to Open Library; never shared with this project or retained in reports."
                           effect={effect('providers')}
@@ -553,7 +675,9 @@ const SettingsEditor = ({
                           {locked ? (
                             <span>{provider.contact_email ?? 'Not configured'}</span>
                           ) : (
-                            <input
+                            <FieldInput
+                              fieldId={`provider.${provider.name}.contact_email`}
+                              error={fieldError(`provider.${provider.name}.contact_email`)}
                               type="email"
                               maxLength={254}
                               value={provider.contact_email ?? ''}
@@ -569,6 +693,9 @@ const SettingsEditor = ({
                         </Row>
                       ) : (
                         <Row
+                          fieldId={provider.enabled ? secretId : undefined}
+                          error={fieldError(secretId)}
+                          group={!locked && provider.enabled}
                           title="API key"
                           description="Write-only provider authority. Acquire it from the provider's own account."
                           effect="restart_required"
@@ -584,6 +711,8 @@ const SettingsEditor = ({
                           ) : (
                             <Secret
                               fieldId={secretId}
+                              label={`${provider.name.replaceAll('_', ' ')} API key`}
+                              error={fieldError(secretId)}
                               view={view}
                               pending={secrets[secretId]}
                               onChange={(value) => setSecret(secretId, value)}
@@ -614,6 +743,8 @@ const SettingsEditor = ({
                   <div className="settings-record" key={library.name}>
                     <h3>{library.name.replaceAll('_', ' ')}</h3>
                     <Row
+                      fieldId={`library.${library.name}.library_id`}
+                      error={fieldError(`library.${library.name}.library_id`)}
                       title="Library identifier"
                       description="The exact Audiobookshelf library selected for this collection."
                       effect={effect('libraries')}
@@ -622,7 +753,9 @@ const SettingsEditor = ({
                       {locked ? (
                         <span>{library.library_id}</span>
                       ) : (
-                        <input
+                        <FieldInput
+                          fieldId={`library.${library.name}.library_id`}
+                          error={fieldError(`library.${library.name}.library_id`)}
                           maxLength={128}
                           value={library.library_id}
                           onChange={(event) =>
@@ -645,6 +778,8 @@ const SettingsEditor = ({
                       </span>
                     </Row>
                     <Row
+                      fieldId={`library.${library.name}.provider_connections`}
+                      group
                       title="Provider associations"
                       description="Only selected providers contribute evidence for this library."
                       effect={effect('libraries')}
@@ -657,7 +792,13 @@ const SettingsEditor = ({
                             : 'Target evidence only'}
                         </strong>
                       ) : (
-                        <fieldset className="settings-choice">
+                        <fieldset
+                          className="settings-choice"
+                          id={controlId(`library.${library.name}.provider_connections`)}
+                          aria-describedby={descriptionId(
+                            `library.${library.name}.provider_connections`,
+                          )}
+                        >
                           <legend>Providers for {library.name}</legend>
                           {draft.providers.map((provider) => (
                             <label key={provider.name}>
@@ -712,18 +853,22 @@ const SettingsEditor = ({
             {active === 'automation' ? (
               <>
                 <Row
+                  fieldId="limits.timeout_seconds"
+                  error={fieldError('limits.timeout_seconds')}
                   title="Request timeout"
-                  description="From 1 to 300 seconds; applies to later target and provider work."
+                  description="From 1 to 60 seconds; applies to later target and provider work."
                   effect={effect('limits')}
                   locked={locked}
                 >
                   {locked ? (
                     <strong>{String(draft.limits.timeout_seconds)} seconds</strong>
                   ) : (
-                    <input
+                    <FieldInput
+                      fieldId="limits.timeout_seconds"
+                      error={fieldError('limits.timeout_seconds')}
                       type="number"
                       min={1}
-                      max={300}
+                      max={60}
                       value={draft.limits.timeout_seconds}
                       onChange={(event) =>
                         update((value) => {
@@ -744,6 +889,8 @@ const SettingsEditor = ({
                   ).map(([key, label, maximum]) => (
                     <Row
                       key={key}
+                      fieldId={`limits.${key}`}
+                      error={fieldError(`limits.${key}`)}
                       title={label}
                       description={`From 1,024 to ${maximum.toLocaleString()} bytes; applies after restart.`}
                       effect={effect('limits')}
@@ -752,7 +899,9 @@ const SettingsEditor = ({
                       {locked ? (
                         <strong>{String(draft.limits[key])} bytes</strong>
                       ) : (
-                        <input
+                        <FieldInput
+                          fieldId={`limits.${key}`}
+                          error={fieldError(`limits.${key}`)}
                           type="number"
                           min={1024}
                           max={maximum}
@@ -768,6 +917,8 @@ const SettingsEditor = ({
                   ))}
                 </details>
                 <Row
+                  fieldId="provider_recovery_generation"
+                  error={fieldError('provider_recovery_generation')}
                   title="Provider recovery generation"
                   description="Increment after correcting provider configuration or credentials."
                   effect={effect('provider_recovery_generation')}
@@ -776,7 +927,9 @@ const SettingsEditor = ({
                   {locked ? (
                     <strong>{String(draft.provider_recovery_generation)}</strong>
                   ) : (
-                    <input
+                    <FieldInput
+                      fieldId="provider_recovery_generation"
+                      error={fieldError('provider_recovery_generation')}
                       type="number"
                       min={1}
                       value={draft.provider_recovery_generation}
@@ -792,6 +945,7 @@ const SettingsEditor = ({
             ) : null}
             {active === 'reviewer' ? (
               <Row
+                fieldId="server.reviewer_enabled"
                 title="Contained reviewer"
                 description="The credential and private profile path remain deployment-side and never enter the browser."
                 effect={effect('server.reviewer_enabled')}
@@ -801,7 +955,8 @@ const SettingsEditor = ({
                   <strong>{draft.server.reviewer_enabled ? 'Enabled' : 'Disabled'}</strong>
                 ) : (
                   <label className="settings-check">
-                    <input
+                    <FieldInput
+                      fieldId="server.reviewer_enabled"
                       type="checkbox"
                       checked={draft.server.reviewer_enabled}
                       onChange={(event) =>
@@ -826,6 +981,8 @@ const SettingsEditor = ({
                 ).map(([key, label]) => (
                   <Row
                     key={key}
+                    fieldId={`server.${key}`}
+                    error={fieldError(`server.${key}`)}
                     title={label}
                     description="A bounded server behavior applied when the process next starts."
                     effect={effect('server.' + key)}
@@ -834,7 +991,9 @@ const SettingsEditor = ({
                     {locked ? (
                       <strong>{String(draft.server[key])} seconds</strong>
                     ) : (
-                      <input
+                      <FieldInput
+                        fieldId={`server.${key}`}
+                        error={fieldError(`server.${key}`)}
                         type="number"
                         min={
                           key === 'session_lifetime_seconds'
@@ -855,6 +1014,7 @@ const SettingsEditor = ({
                   </Row>
                 ))}
                 <Row
+                  fieldId="server.diagnostic_timings_enabled"
                   title="Diagnostic timings"
                   description="Record bounded stage timings for support diagnostics; values apply after restart."
                   effect={effect('server.diagnostic_timings_enabled')}
@@ -866,7 +1026,8 @@ const SettingsEditor = ({
                     </strong>
                   ) : (
                     <label className="settings-check">
-                      <input
+                      <FieldInput
+                        fieldId="server.diagnostic_timings_enabled"
                         type="checkbox"
                         checked={draft.server.diagnostic_timings_enabled}
                         onChange={(event) =>
@@ -883,6 +1044,8 @@ const SettingsEditor = ({
             ) : null}
             {active === 'appearance' ? (
               <Row
+                fieldId="reduced_motion"
+                group
                 title="Motion"
                 description="Reduced when either this setting or the operating system requests it."
                 effect={effect('reduced_motion')}
@@ -893,7 +1056,11 @@ const SettingsEditor = ({
                     {draft.reduced_motion === 'always_reduced' ? 'Always reduced' : 'Follow system'}
                   </strong>
                 ) : (
-                  <fieldset className="settings-choice">
+                  <fieldset
+                    className="settings-choice"
+                    id={controlId('reduced_motion')}
+                    aria-describedby={descriptionId('reduced_motion')}
+                  >
                     <legend>Motion preference</legend>
                     <label>
                       <input
@@ -942,7 +1109,7 @@ const SettingsEditor = ({
                 ? 'Saved. Server-authoritative settings are current.'
                 : status === 'failed'
                   ? 'Nothing changed. Correct the values or try again.'
-                  : (errors[0] ??
+                  : (errors[0]?.message ??
                     (changed ? 'Unsaved settings changes.' : 'Settings match the server.'))}
           </p>
           <button

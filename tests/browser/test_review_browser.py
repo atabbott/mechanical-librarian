@@ -2018,18 +2018,30 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 ).to_be_visible()
                 compact_group.select_option("connection")
                 expect(page.get_by_text("Configured · ····cret")).to_be_visible()
-                page.get_by_role("button", name="Clear").click()
-                expect(page.get_by_role("button", name="Confirm clear")).to_be_visible()
-                page.get_by_role("button", name="Keep secret").click()
-                page.get_by_role("button", name="Replace").click()
-                expect(page.get_by_label("Replacement secret")).to_be_visible()
+                page.get_by_role("button", name="Clear primary access key").click()
+                expect(
+                    page.get_by_role("button", name="Confirm clear primary access key")
+                ).to_be_visible()
+                page.get_by_role("button", name="Keep primary access key").click()
+                page.get_by_role("button", name="Replace primary access key").click()
+                expect(
+                    page.get_by_label("Replacement primary access key")
+                ).to_be_visible()
 
                 compact_group.select_option("automation")
-                timeout_input = page.get_by_role("spinbutton", name="").first
+                timeout_input = page.get_by_role("spinbutton", name="Request timeout")
                 timeout_input.fill("0")
                 expect(page.get_by_role("alert")).to_contain_text(
                     "Request timeout must be"
                 )
+                expect(timeout_input).to_have_attribute("aria-invalid", "true")
+                described_by = timeout_input.get_attribute("aria-describedby")
+                assert described_by is not None
+                assert "settings-limits-timeout_seconds-error" in described_by
+                expect(
+                    page.locator("#settings-limits-timeout_seconds-error")
+                ).to_contain_text("Request timeout must be from 1 to 60")
+                expect(timeout_input).to_be_focused()
                 expect(
                     page.get_by_role("button", name="Save settings")
                 ).to_be_disabled()
@@ -2039,7 +2051,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 page.evaluate("window.__settingsLongTasks = []")
                 feedback = page.evaluate(
                     """async () => {
-                      const input = document.querySelector('.settings-sheet input[type=url]');
+                      const input = document.querySelector('#settings-connection-primary-endpoint');
                       const start = performance.now();
                       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
                       setter.call(input, 'https://changed.invalid');
@@ -2081,7 +2093,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 page.unroute("**/api/v1/settings", hold_save)
                 assert max(page.evaluate("window.__settingsLongTasks"), default=0) <= 50
 
-                endpoint = page.locator(".settings-sheet input[type=url]")
+                endpoint = page.get_by_role("textbox", name="Audiobookshelf endpoint")
                 endpoint.fill("https://failed.invalid")
                 assert not errors
                 page.route(
