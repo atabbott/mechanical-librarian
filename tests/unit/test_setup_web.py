@@ -36,6 +36,25 @@ class _Sessions:
             raise KeyError(token)
         return "owner", csrf, expires
 
+    def rotate_review_session_csrf(self, token: str, csrf: str, now: int) -> str:
+        record = self.records.get(token)
+        if record is None:
+            return "inactive"
+        _old_csrf, expires = record
+        if now >= expires:
+            return "inactive"
+        self.records[token] = (csrf, expires)
+        return "rotated"
+
+    def revoke_review_session(self, token: str, csrf: str, now: int) -> str:
+        record = self.records.get(token)
+        if record is None or record[1] <= now:
+            return "unauthorized"
+        if record[0] != csrf:
+            return "csrf"
+        del self.records[token]
+        return "revoked"
+
 
 class _State:
     def __init__(self) -> None:
@@ -151,6 +170,7 @@ def test_setup_surface_exposes_only_health_shell_session_and_redacted_state() ->
     assert script.status_code == 200
     assert "localStorage" not in script.text
     assert "sessionStorage" not in script.text
+    assert "csrf=state.csrf_token" in script.text
     assert "Writes stay off until you turn them on in Activity." in script.text
     assert client.get("/api/setup/state").status_code == 401
 
@@ -167,6 +187,7 @@ def test_setup_surface_exposes_only_health_shell_session_and_redacted_state() ->
         headers={"cookie": login.headers["set-cookie"].split(";", 1)[0]},
     )
     assert state.json() == {
+        "csrf_token": "x" * 32,
         "completed_steps": ["claim"],
         "next_step": "connect",
         "revision": 2,
@@ -229,6 +250,90 @@ def test_connect_requires_session_csrf_and_origin_and_never_returns_key() -> Non
         "revision": 3,
     }
     assert "secret-value" not in response.text
+    assert connection.requests == [
+        (2, "primary", "https://abs.invalid", "secret-value")
+    ]
+
+
+def test_surviving_session_rotates_csrf_for_mutation_after_restart() -> None:
+    verifier = PasswordHasher().hash("correct horse battery staple")
+    session_store = _Sessions()
+    state = _State()
+    connection = _Connection(state)
+    login_tokens = iter(("s" * 32, "c" * 32))
+    first_sessions = OwnerSessionService(
+        session_store,
+        owner_password_verifier(verifier),
+        lambda: 1_000,
+        3,
+        lambda _n: next(login_tokens),
+    )
+    first_client = TestClient(
+        create_setup_app(
+            first_sessions,
+            state,
+            verifier,
+            connection,
+            "https://setup.invalid",
+        )
+    )
+    login = first_client.post(
+        "/api/setup/session", json={"password": "correct horse battery staple"}
+    )
+    cookie = login.headers["set-cookie"].split(";", 1)[0]
+    old_csrf = login.json()["csrf_token"]
+
+    resumed_sessions = OwnerSessionService(
+        session_store,
+        owner_password_verifier(verifier),
+        lambda: 1_000,
+        3,
+        lambda _n: "r" * 32,
+    )
+    resumed_client = TestClient(
+        create_setup_app(
+            resumed_sessions,
+            state,
+            verifier,
+            connection,
+            "https://setup.invalid",
+        )
+    )
+    resumed_state = resumed_client.get("/api/setup/state", headers={"cookie": cookie})
+    recovered_csrf = resumed_state.json()["csrf_token"]
+    assert resumed_state.status_code == 200
+    assert resumed_state.headers["cache-control"] == "private, no-store"
+    assert recovered_csrf == "r" * 32
+    assert recovered_csrf != old_csrf
+    request = {
+        "expected_revision": 2,
+        "name": "primary",
+        "endpoint": "https://abs.invalid",
+        "key": "secret-value",
+    }
+
+    for csrf in (None, "wrong" * 8, old_csrf):
+        headers = {"cookie": cookie, "origin": "https://setup.invalid"}
+        if csrf is not None:
+            headers["x-csrf-token"] = csrf
+        assert (
+            resumed_client.post(
+                "/api/setup/connect", json=request, headers=headers
+            ).status_code
+            == 403
+        )
+    assert (
+        resumed_client.post(
+            "/api/setup/connect",
+            json=request,
+            headers={
+                "cookie": cookie,
+                "origin": "https://setup.invalid",
+                "x-csrf-token": recovered_csrf,
+            },
+        ).status_code
+        == 200
+    )
     assert connection.requests == [
         (2, "primary", "https://abs.invalid", "secret-value")
     ]

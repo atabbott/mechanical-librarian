@@ -204,11 +204,13 @@ def create_setup_app(
         if ml_session is None:
             raise HTTPException(401, {"error": "unauthorized"})
         try:
-            sessions.authenticate(ml_session)
             document = state.read(bootstrap_verifier)
+            csrf_token = sessions.issue_browser_csrf(ml_session)
         except ReviewWebError as error:
-            raise HTTPException(401, {"error": error.code}) from error
+            status = 401 if error.code == "unauthorized" else 503
+            raise HTTPException(status, {"error": error.code}) from error
         return {
+            "csrf_token": csrf_token,
             "completed_steps": document.completed_steps,
             "next_step": document.next_step(),
             "revision": document.revision,
