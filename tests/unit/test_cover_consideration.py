@@ -239,7 +239,8 @@ def test_live_policy_update_changes_the_next_evaluation_and_rolls_back_on_bindin
     )
     changed = CoverPolicy(True, True, True)
 
-    service.update_policy(changed)
+    with service.policy_update(changed):
+        pass
     value = service.ensure(
         "review_case_" + "9" * 64, case.report.to_json(), case.proposal
     )

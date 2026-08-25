@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from contextlib import AbstractContextManager, nullcontext
 
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.domain.owner_settings import (
@@ -98,6 +99,7 @@ class OwnerSettingsStore:
         document: OwnerSettingsDocument,
         expected_revision: int,
         secrets: tuple[SecretWrite, ...],
+        live_update: AbstractContextManager[None] | None = None,
     ) -> SettingsView:
         if (
             type(expected_revision) is not int
@@ -176,13 +178,17 @@ class OwnerSettingsStore:
                     "DELETE FROM owner_setting_secrets WHERE field_id=?", (name,)
                 )
             committed = _settings_view(document, values)
-            self._connection.commit()
+            with live_update if live_update is not None else nullcontext():
+                self._connection.commit()
         except OwnerSettingsError:
             self._connection.rollback()
             raise
         except sqlite3.Error as error:
             self._connection.rollback()
             raise OwnerSettingsError("owner settings are unavailable") from error
+        except BaseException:
+            self._connection.rollback()
+            raise
         return committed
 
     @staticmethod

@@ -417,21 +417,25 @@ class ReviewApplication:
         try:
 
             def write() -> object:
-                result = settings.write(
-                    cast("OwnerSettingsDocument", document),
-                    revision,
-                    cast("tuple[SecretWrite, ...]", secrets),
-                )
-                if self._cover_considerations is not None:
-                    preferences = result.document.cover_preferences
-                    self._cover_considerations.update_policy(
+                validated = cast("OwnerSettingsDocument", document)
+                preferences = validated.cover_preferences
+                live_update = (
+                    self._cover_considerations.policy_update(
                         CoverPolicy(
                             avoid_promotional_text=preferences.avoid_promotional_text,
                             avoid_tie_in_branding=preferences.avoid_tie_in_branding,
                             prefer_minimal_composition=preferences.prefer_minimal_composition,
                         )
                     )
-                return result
+                    if self._cover_considerations is not None
+                    else None
+                )
+                return settings.write(
+                    validated,
+                    revision,
+                    cast("tuple[SecretWrite, ...]", secrets),
+                    live_update,
+                )
 
             return self.serialized(write)
         except OwnerSettingsError as error:

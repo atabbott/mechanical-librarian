@@ -1,10 +1,15 @@
 import sqlite3
+from typing import cast
 
 import pytest
 from pydantic import ValidationError
 
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.owner_settings import OwnerSettingsStore
+from mechanical_librarian.application.cover_consideration import (
+    CoverConsiderationService,
+)
+from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.owner_settings import FileOwnerSettingsRepository
 from mechanical_librarian.domain.owner_settings import (
     OwnerSettingsDocument,
@@ -45,8 +50,17 @@ def _document(revision: int = 1) -> OwnerSettingsDocument:
     )
 
 
-def _store() -> OwnerSettingsStore:
-    connection = sqlite3.connect(":memory:")
+class _FailingCommitConnection(sqlite3.Connection):
+    fail_commit = False
+
+    def commit(self) -> None:
+        if self.fail_commit:
+            raise sqlite3.OperationalError("synthetic commit fault")
+        super().commit()
+
+
+def _store(connection: sqlite3.Connection | None = None) -> OwnerSettingsStore:
+    connection = connection or sqlite3.connect(":memory:")
     connection.execute(
         "CREATE TABLE owner_settings (singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1),revision INTEGER NOT NULL CHECK(revision>=1),document TEXT NOT NULL)"
     )
@@ -64,6 +78,16 @@ def _store() -> OwnerSettingsStore:
     )
     connection.commit()
     return OwnerSettingsStore(connection)
+
+
+def _cover_document(revision: int) -> OwnerSettingsDocument:
+    value = _document(revision).model_dump()
+    value["cover_preferences"] = {
+        "avoid_promotional_text": True,
+        "avoid_tie_in_branding": True,
+        "prefer_minimal_composition": True,
+    }
+    return OwnerSettingsDocument.model_validate(value)
 
 
 def test_document_rejects_noncanonical_references_and_bounds() -> None:
@@ -165,6 +189,58 @@ def test_store_returns_redacted_secret_presence_and_metadata() -> None:
         item.managed_by_file and item.managed_path == "/data/config.json"
         for item in file_field_metadata(view.document)
     )
+
+
+def test_store_and_live_cover_authority_advance_or_roll_back_together() -> None:
+    connection = sqlite3.connect(":memory:", factory=_FailingCommitConnection)
+    store = _store(connection)
+    changed = CoverPolicy(True, True, True)
+    bound: dict[str, str] = {}
+    fail_binding = True
+
+    def bind(policy_reference: str, replay_reference: str) -> None:
+        if fail_binding and policy_reference == changed.reference:
+            raise RuntimeError("synthetic binding fault")
+        bound.update(policy=policy_reference, replay=replay_reference)
+
+    service = CoverConsiderationService(
+        cast("object", object()),
+        read_preview=lambda _artifact, _variant: b"",
+        read_preview_digest=lambda _digest: b"",
+        clock=lambda: 0,
+        bind_policy=bind,
+    )
+    previous = CoverPolicy()
+    service.update_policy(previous)
+    previous_replay = service.replay_reference
+
+    with pytest.raises(RuntimeError, match="binding fault"):
+        store.write(_cover_document(2), 1, (), service.policy_update(changed))
+
+    assert store.read().document.revision == 1
+    assert store.read().document.cover_preferences == _document().cover_preferences
+    assert service._policy.reference == previous.reference
+    assert service.replay_reference == previous_replay
+    assert bound == {"policy": previous.reference, "replay": previous_replay}
+
+    fail_binding = False
+    connection.fail_commit = True
+    with pytest.raises(OwnerSettingsError, match="unavailable"):
+        store.write(_cover_document(2), 1, (), service.policy_update(changed))
+
+    assert store.read().document.revision == 1
+    assert service._policy.reference == previous.reference
+    assert service.replay_reference == previous_replay
+    assert bound == {"policy": previous.reference, "replay": previous_replay}
+
+    connection.fail_commit = False
+    committed = store.write(_cover_document(2), 1, (), service.policy_update(changed))
+
+    assert committed.document == store.read().document
+    assert committed.document.revision == 2
+    assert committed.document.cover_preferences == _cover_document(2).cover_preferences
+    assert service._policy.reference == changed.reference
+    assert bound == {"policy": changed.reference, "replay": service.replay_reference}
 
 
 @pytest.mark.parametrize(

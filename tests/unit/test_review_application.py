@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import threading
 from collections.abc import Callable
+from contextlib import contextmanager, nullcontext
 from types import SimpleNamespace
 from typing import cast, get_protocol_members, get_type_hints
 
@@ -146,16 +147,19 @@ def test_settings_commit_updates_live_cover_policy_inside_the_application_gate(
         def read(self):
             return SimpleNamespace(document=document)
 
-        def write(self, _document, _revision, _secrets):
-            return SimpleNamespace(document=document)
+        def write(self, _document, _revision, _secrets, live_update=None):
+            with live_update or nullcontext():
+                return SimpleNamespace(document=document)
 
     class Covers:
         def __init__(self) -> None:
             self.policy: CoverPolicy | None = None
 
-        def update_policy(self, policy: CoverPolicy) -> None:
+        @contextmanager
+        def policy_update(self, policy: CoverPolicy):
             assert application._gate._is_owned()
             self.policy = policy
+            yield
 
     covers = Covers()
     application = compose_review_application(
@@ -202,12 +206,15 @@ def test_live_cover_binding_fault_is_a_fixed_settings_failure(
         def read(self):
             return SimpleNamespace(document=document)
 
-        def write(self, _document, _revision, _secrets):
-            return SimpleNamespace(document=document)
+        def write(self, _document, _revision, _secrets, live_update=None):
+            with live_update or nullcontext():
+                return SimpleNamespace(document=document)
 
     class Covers:
-        def update_policy(self, _policy: CoverPolicy) -> None:
+        @contextmanager
+        def policy_update(self, _policy: CoverPolicy):
             raise RuntimeError("synthetic binding fault")
+            yield
 
     application = compose_review_application(
         state_owner=repository,

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Protocol, cast
 
@@ -174,6 +175,17 @@ class CoverConsiderationService:
             self._bind_policy(policy.reference, self.replay_reference)
         except Exception:
             self._policy = previous
+            raise
+
+    @contextmanager
+    def policy_update(self, policy: CoverPolicy) -> Iterator[None]:
+        """Keep one live policy change only when its enclosing store commit succeeds."""
+        previous = self._policy
+        self.update_policy(policy)
+        try:
+            yield
+        except BaseException:
+            self.update_policy(previous)
             raise
 
     @property

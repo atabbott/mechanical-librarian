@@ -281,6 +281,12 @@ describe('owner settings route', () => {
     })
     renderRoute('/settings?group=connection', http)
     const endpoint = await screen.findByRole('textbox', { name: 'Audiobookshelf endpoint' })
+    await waitFor(() =>
+      expect(globalThis.document.getElementById('main-content')).toHaveAttribute(
+        'data-restored-path',
+        '/settings',
+      ),
+    )
     await user.clear(endpoint)
     await user.type(endpoint, 'https://submitted.invalid')
     await user.click(screen.getByRole('button', { name: 'Save settings' }))

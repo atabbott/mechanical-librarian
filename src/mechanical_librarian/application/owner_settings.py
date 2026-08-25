@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import AbstractContextManager
 from typing import Protocol
 
 from mechanical_librarian.application.configuration import ApplicationConfiguration
@@ -24,6 +25,7 @@ class OwnerSettingsRepository(Protocol):
         document: OwnerSettingsDocument,
         expected_revision: int,
         secrets: tuple[SecretWrite, ...],
+        live_update: AbstractContextManager[None] | None = None,
     ) -> SettingsView: ...
 
 
@@ -39,8 +41,9 @@ class OwnerSettingsOperations:
         document: OwnerSettingsDocument,
         expected_revision: int,
         secrets: tuple[SecretWrite, ...],
+        live_update: AbstractContextManager[None] | None = None,
     ) -> SettingsView:
-        return self._repository.write(document, expected_revision, secrets)
+        return self._repository.write(document, expected_revision, secrets, live_update)
 
 
 class FileOwnerSettingsRepository:
@@ -67,6 +70,7 @@ class FileOwnerSettingsRepository:
         document: OwnerSettingsDocument,
         expected_revision: int,
         secrets: tuple[SecretWrite, ...],
+        live_update: AbstractContextManager[None] | None = None,
     ) -> SettingsView:
         raise OwnerSettingsError("settings locked")
 
