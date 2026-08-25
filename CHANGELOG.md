@@ -4,7 +4,7 @@
 
 - Remove the dead review field-facts predecessor validator and its stale frozen
   schema digest from the persistence adapter; #830's owner-decision-actions
-  predecessor validator superseded it and no adoption path referenced it. (#856)
+  predecessor validator superseded it and no adoption path referenced it. (#857)
 
 - Restore readable per-work Evidence and History links from Library. Diagnostics
   retain exact Back state, show bounded semantic lineage and owner-language
