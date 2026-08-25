@@ -138,6 +138,13 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         parsed = urlsplit(route.request.url)
         path = parsed.path
         if path.startswith("/api/v1/"):
+            if path == "/api/v1/appearance":
+                route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps({"reduced_motion": "follow_system"}),
+                )
+                return
             if path == "/api/v1/review-cases/missing-case":
                 route.fulfill(
                     status=404,

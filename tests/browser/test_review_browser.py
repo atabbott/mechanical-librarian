@@ -118,6 +118,23 @@ def _report():
     )
 
 
+_DEFAULT_SETTINGS_DOCUMENT = OwnerSettingsDocument.model_validate(
+    {
+        "schema_version": "owner-settings-v1",
+        "revision": 1,
+        "connections": [{"name": "primary", "endpoint": "https://library.invalid"}],
+        "libraries": [
+            {
+                "name": "ebooks",
+                "connection": "primary",
+                "library_id": "library",
+                "media_kind": "ebook",
+            }
+        ],
+    }
+)
+
+
 @contextmanager
 def _server(
     *,
@@ -130,7 +147,7 @@ def _server(
     automatic_fixture: bool = False,
     cover_shapes: tuple[tuple[int, int], ...] = ((1, 1), (1, 1)),
     cohort: int = 0,
-    settings_document: OwnerSettingsDocument | None = None,
+    settings_document: OwnerSettingsDocument | None = _DEFAULT_SETTINGS_DOCUMENT,
     on_app: Callable[[Any], None] | None = None,
 ):
     repository = open_repository(database, create=True, cross_thread=True)
