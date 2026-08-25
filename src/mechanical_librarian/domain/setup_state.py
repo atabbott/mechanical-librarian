@@ -118,6 +118,7 @@ class SetupStateDocument(_Closed):
         return SetupStateDocument.model_validate(values)
 
     def secret_fields(self) -> frozenset[str]:
+        """Return every secret field this setup document permits."""
         fields: set[str] = set()
         if self.connection is not None:
             fields.add(f"connection.{self.connection.name}.key")
@@ -125,6 +126,20 @@ class SetupStateDocument(_Closed):
             f"provider.{item.name}.key"
             for item in self.providers
             if item.enabled and item.adapter in {"hardcover", "google_books"}
+        )
+        return frozenset(fields)
+
+    def required_secret_fields(self) -> frozenset[str]:
+        """Return secrets required before this document can be resumed or promoted."""
+        fields = (
+            set()
+            if self.connection is None
+            else {f"connection.{self.connection.name}.key"}
+        )
+        fields.update(
+            f"provider.{item.name}.key"
+            for item in self.providers
+            if item.enabled and item.adapter == "hardcover"
         )
         return frozenset(fields)
 

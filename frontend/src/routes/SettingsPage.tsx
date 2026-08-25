@@ -8,8 +8,10 @@ import {
   settingsEndpointValid,
   settingsIntegerValid,
   settingsOpenLibraryEmailValid,
+  settingsProviderKeyRequired,
   settingsSecretValid,
   settingsTextValid,
+  settingsValidationCopy,
 } from '../api/http'
 import type { SettingsView, SettingsWrite } from '../api/http'
 import { settingsRoute, useReviewContext } from '../router'
@@ -127,8 +129,7 @@ const validationErrors = (
     if (entry.operation !== 'clear' && (!entry.value || !settingsSecretValid(entry.value)))
       errors.push({
         fieldId: entry.field_id,
-        message:
-          'Secrets must be 1–2,048 printable ASCII characters with no whitespace or Bearer prefix.',
+        message: settingsValidationCopy.secret,
       })
   for (const connection of document.connections) {
     if (!settingsEndpointValid(connection.endpoint))
@@ -150,15 +151,15 @@ const validationErrors = (
       else if (!settingsOpenLibraryEmailValid(provider.contact_email))
         errors.push({
           fieldId,
-          message: `${provider.name} needs a valid contact email while enabled.`,
+          message: settingsValidationCopy.open_library_email,
         })
     }
-    if (provider.adapter === 'hardcover' && provider.enabled) {
+    if (settingsProviderKeyRequired(provider.adapter) && provider.enabled) {
       const fieldId = `provider.${provider.name}.key`
       const existing = view.secrets.find((item) => item.field_id === fieldId)?.configured === true
       const pending = secrets[fieldId]
       if ((!existing && !pending?.value) || pending?.operation === 'clear')
-        errors.push({ fieldId, message: `${provider.name} requires an API key while enabled.` })
+        errors.push({ fieldId, message: settingsValidationCopy.provider_key })
     }
   }
   for (const library of document.libraries)

@@ -197,3 +197,32 @@ def test_setup_server_releases_claimed_state_for_restart_and_resume(
         )
         is FirstBootMode.RESUME_SETUP
     )
+
+
+def test_first_preparation_presentation_survives_restart_debt_acknowledgement() -> None:
+    assert composition._store_first_preparation("store", 1, ("setup_complete",), False)
+    assert composition._store_first_preparation("store", 2, (), True)
+    assert not composition._store_first_preparation("store", 2, (), False)
+    assert not composition._store_first_preparation("store", 3, (), True)
+    assert not composition._store_first_preparation(
+        "file", 1, ("setup_complete",), True
+    )
+
+
+def test_preparation_history_marker_survives_repository_reopen(tmp_path: Path) -> None:
+    database = tmp_path / "application.sqlite3"
+    repository = composition.open_repository(database)
+    assert not repository.has_review_preparation_history()
+    repository._connection.execute(  # noqa: SLF001 - persistence seam proof
+        "INSERT INTO review_preparation_scans("
+        "scan_id,connection_name,library_name,library_id,producer_fingerprint,"
+        "state,requested_at,updated_at) VALUES(?,?,?,?,?,'queued',1,1)",
+        ("review_scan_" + "a" * 64, "primary", "books", "books", "b" * 64),
+    )
+    repository.close()
+
+    reopened = composition.open_repository(database, create=False)
+    try:
+        assert reopened.has_review_preparation_history()
+    finally:
+        reopened.close()

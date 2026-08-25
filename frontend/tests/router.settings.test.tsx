@@ -8,6 +8,8 @@ import {
   settingsEndpointValid,
   settingsIntegerValid,
   settingsOpenLibraryEmailValid,
+  settingsLocalLibraryNameValid,
+  settingsProviderKeyRequired,
   settingsSecretValid,
   settingsTextValid,
 } from '../src/api/http'
@@ -119,6 +121,10 @@ describe('settings API field validation vocabulary', () => {
     expect(settingsSecretValid('Bearer secret')).toBe(false)
     expect(settingsOpenLibraryEmailValid('owner@example.invalid')).toBe(true)
     expect(settingsOpenLibraryEmailValid('not-an-email')).toBe(false)
+    expect(settingsLocalLibraryNameValid('books_1')).toBe(true)
+    expect(settingsLocalLibraryNameValid('Not valid')).toBe(false)
+    expect(settingsProviderKeyRequired('hardcover')).toBe(true)
+    expect(settingsProviderKeyRequired('google_books')).toBe(false)
   })
 })
 

@@ -235,7 +235,15 @@ def test_kickoff_atomically_promotes_and_preserves_connection_secret() -> None:
         library_id="books", name="Books", media_kind="book"
     )
     journey = _journey(store, (candidate,), {"/library": ("books",)})
-    state = journey.providers(state.revision, [], {})
+    google = _PROVIDER.validate_python(
+        {
+            "name": "google",
+            "adapter": "google_books",
+            "enabled": True,
+            "cover_enabled": False,
+        }
+    )
+    state = journey.providers(state.revision, [google], {})
     state = journey.libraries(
         state.revision,
         [

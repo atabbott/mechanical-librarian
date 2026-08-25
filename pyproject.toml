@@ -126,7 +126,7 @@ package-dir = { "" = "src" }
 version = { attr = "mechanical_librarian._version.__version__" }
 
 [tool.setuptools.package-data]
-mechanical_librarian = ["py.typed"]
+mechanical_librarian = ["py.typed", "interfaces/web/*.json"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -230,6 +230,70 @@ def test_provider_key_can_be_added_without_resending_connection_key() -> None:
     ]
 
 
+def test_google_books_is_allowed_without_a_key_but_hardcover_is_not() -> None:
+    _connection, store = _store()
+    state = _connected(store)
+    google = _next(
+        state,
+        completed_steps=["claim", "connect", "providers"],
+        providers=[
+            {
+                "name": "google",
+                "adapter": "google_books",
+                "enabled": True,
+                "cover_enabled": False,
+            }
+        ],
+    )
+
+    assert store.write(google, state.revision, _BOOTSTRAP) == google
+
+    hardcover = _next(
+        google,
+        providers=[
+            {
+                "name": "hardcover",
+                "adapter": "hardcover",
+                "enabled": True,
+                "cover_enabled": False,
+            }
+        ],
+    )
+    with pytest.raises(SetupStateError):
+        store.write(hardcover, google.revision, _BOOTSTRAP)
+
+
+def test_resume_rejects_invalid_secret_value_and_runtime_rows() -> None:
+    connection, store = _store()
+    _connected(store)
+    connection.execute(
+        "UPDATE owner_setting_secrets SET value='Bearer invalid' "
+        "WHERE field_id='connection.primary.key'"
+    )
+    with pytest.raises(SetupStateError):
+        store.read(_BOOTSTRAP)
+
+    connection.execute(
+        "UPDATE owner_setting_secrets SET value='abs-secret' "
+        "WHERE field_id='connection.primary.key'"
+    )
+    connection.execute("CREATE TABLE metadata_reports(report_id TEXT)")
+    connection.execute("INSERT INTO metadata_reports VALUES('report')")
+    with pytest.raises(SetupStateError):
+        store.read(_BOOTSTRAP)
+
+
+def test_resume_allows_setup_session_and_throttle_rows() -> None:
+    connection, store = _store()
+    state = _connected(store)
+    connection.execute("CREATE TABLE review_sessions(token TEXT)")
+    connection.execute("CREATE TABLE review_login_failures(observed_at INTEGER)")
+    connection.execute("INSERT INTO review_sessions VALUES('session')")
+    connection.execute("INSERT INTO review_login_failures VALUES(1)")
+
+    assert store.read(_BOOTSTRAP) == state
+
+
 def test_provider_skip_preserves_connection_key_without_a_secret_delta() -> None:
     connection, store = _store()
     state = _connected(store)

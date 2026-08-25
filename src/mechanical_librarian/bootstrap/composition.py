@@ -2364,9 +2364,11 @@ def run_review_server(
                 field_application=field_application,
                 cover_considerations=cover_considerations,
                 settings=settings,
-                first_boot=(
-                    authority == "store"
-                    and "setup_complete" in settings_view.pending_restart
+                first_boot=_store_first_preparation(
+                    authority,
+                    settings_view.document.revision,
+                    settings_view.pending_restart,
+                    repository.has_review_preparation_history(),
                 ),
             )
             app = create_review_app(review_application, review)
@@ -2400,6 +2402,19 @@ def run_review_server(
         except Exception:
             repository.close()
             raise
+
+
+def _store_first_preparation(
+    authority: str,
+    settings_revision: int,
+    pending_restart: tuple[str, ...],
+    preparation_history: bool,
+) -> bool:
+    """Keep the setup-started presentation across normal-process restarts."""
+    return authority == "store" and (
+        "setup_complete" in pending_restart
+        or (settings_revision == 2 and preparation_history)
+    )
 
 
 def _compose_cover_considerations(

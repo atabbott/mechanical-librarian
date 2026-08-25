@@ -1862,6 +1862,15 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         """The setup-only composition is the sole caller of this incomplete-state port."""
         return SetupStateStore(self._connection)
 
+    def has_review_preparation_history(self) -> bool:
+        """Identify the durable preparation started by store-authority kickoff."""
+        return (
+            self._connection.execute(
+                "SELECT 1 FROM review_preparation_scans LIMIT 1"
+            ).fetchone()
+            is not None
+        )
+
 
 class SQLiteShadowPreviewRepository:
     """Narrow packet reader backed by a no-create, immutable SQLite connection."""

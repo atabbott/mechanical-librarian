@@ -16,6 +16,20 @@ from mechanical_librarian.domain.setup_state import SetupStateDocument, SetupSta
 from mechanical_librarian.domain.validation import credential
 
 _T = TypeVar("_T")
+_SETUP_ROW_TABLES = frozenset(
+    {
+        "metadata_policy_drafts",
+        "metadata_policy_state",
+        "metadata_policy_transitions",
+        "automatic_safety_state",
+        "field_effect_control",
+        "owner_setting_secrets",
+        "owner_settings",
+        "review_login_failures",
+        "review_preparation_control",
+        "review_sessions",
+    }
+)
 
 
 class SetupStateStore:
@@ -120,7 +134,9 @@ class SetupStateStore:
                     values[field] = value
             for field in set(values) - document.secret_fields():
                 values.pop(field)
-            if set(values) != document.secret_fields():
+            if not document.required_secret_fields().issubset(values) or not set(
+                values
+            ).issubset(document.secret_fields()):
                 raise SetupStateError("setup state is unavailable")
             if (
                 self._connection.execute(
@@ -217,7 +233,7 @@ class SetupStateStore:
                 "SELECT revision,document FROM owner_settings"
             ).fetchall()
             secrets = self._connection.execute(
-                "SELECT field_id FROM owner_setting_secrets"
+                "SELECT field_id,value FROM owner_setting_secrets"
             ).fetchall()
             if len(rows) != 1:
                 raise SetupStateError("setup state is unavailable")
@@ -228,11 +244,32 @@ class SetupStateStore:
                 or _canonical_json(document.model_dump()) != encoded
             ):
                 raise SetupStateError("setup state is unavailable")
-            if {name for (name,) in secrets} != document.secret_fields():
+            values = {name: value for name, value in secrets}
+            if (
+                not document.required_secret_fields().issubset(values)
+                or not set(values).issubset(document.secret_fields())
+                or any(
+                    type(value) is not str or not credential(value)
+                    for value in values.values()
+                )
+                or not self._setup_rows_are_closed()
+            ):
                 raise SetupStateError("setup state is unavailable")
             return document
         except (SetupStateError, ValueError, sqlite3.Error) as error:
             raise SetupStateError("setup state is unavailable") from error
+
+    def _setup_rows_are_closed(self) -> bool:
+        tables = {
+            name
+            for (name,) in self._connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+        for table in tables - _SETUP_ROW_TABLES:
+            if self._connection.execute(f'SELECT 1 FROM "{table}" LIMIT 1').fetchone():
+                return False
+        return True
 
 
 def _verifier_digest(verifier: str) -> str:

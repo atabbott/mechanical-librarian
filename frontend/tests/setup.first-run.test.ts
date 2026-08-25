@@ -4,19 +4,28 @@ import { resolve } from 'node:path'
 import { fireEvent, screen, waitFor, within } from '@testing-library/dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import settingsVocabulary from '../../src/mechanical_librarian/interfaces/web/settings_vocabulary.json'
+
 const source = readFileSync(
   resolve(process.cwd(), '../src/mechanical_librarian/interfaces/web/setup_frontend.py'),
   'utf8',
 )
-const script = /SETUP_JS = r"""([\s\S]*?)"""/u.exec(source)?.[1]
+const rawScript = /SETUP_JS = r"""([\s\S]*?)"""/u.exec(source)?.[1]
 const css = /SETUP_CSS = """([\s\S]*?)"""/u.exec(source)?.[1]
 
-if (!script || !css) throw new Error('setup assets are unavailable')
+if (!rawScript || !css) throw new Error('setup assets are unavailable')
+const script = `const settingsVocabulary=${JSON.stringify(settingsVocabulary)};
+const settingsTextValid=(value,rule)=>Array.from(value).length>=rule.minimum&&Array.from(value).length<=rule.maximum;
+const settingsSecretValid=value=>settingsTextValid(value,settingsVocabulary.secret)&&new RegExp(settingsVocabulary.secret.printable_ascii,'u').test(value)&&!value.toLowerCase().startsWith(settingsVocabulary.secret.forbidden_prefix);
+const settingsOpenLibraryEmailValid=value=>settingsTextValid(value,settingsVocabulary.open_library_email)&&new RegExp(settingsVocabulary.open_library_email.pattern,'u').test(value);
+const settingsLocalLibraryNameValid=value=>settingsTextValid(value,settingsVocabulary.local_library_name)&&new RegExp(settingsVocabulary.local_library_name.pattern,'u').test(value);
+const settingsProviderKeyRequired=adapter=>settingsVocabulary.required_provider_keys.includes(adapter);
+${rawScript}`
 
-const response = (body: object) =>
+const response = (body: object, status = 200) =>
   new Response(JSON.stringify(body), {
     headers: { 'content-type': 'application/json' },
-    status: 200,
+    status,
   })
 
 const setupState = (nextStep: string, overrides: Record<string, unknown> = {}) => ({
@@ -152,6 +161,42 @@ describe('shipped first-run setup script', () => {
     expect(await screen.findByRole('heading', { name: 'Check read-only mounts' })).toBeVisible()
     expect(libraryMutations).toBe(1)
   })
+
+  it.each([
+    ['Google Books', 'google-key', true],
+    ['Hardcover', 'hardcover-key', false],
+  ] as const)(
+    'shares optional and required provider-key admission for %s',
+    async (label, keyName, shouldAdvance) => {
+      let providerMutations = 0
+      const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        if (requestUrl(request) === '/api/setup/providers' && init?.method === 'POST') {
+          providerMutations += 1
+          return response({})
+        }
+        return response(setupState('providers'))
+      })
+      vi.stubGlobal('fetch', fetch)
+      runSetup()
+      const heading = await screen.findByRole('heading', { name: 'Choose metadata providers' })
+      await waitFor(() => expect(heading).toHaveFocus())
+      fireEvent.click(await screen.findByRole('checkbox', { name: label }))
+      const key = document.querySelector<HTMLInputElement>(`input[name="${keyName}"]`)
+      const form = key?.closest('form')
+      if (!key || !form) throw new Error('provider form missing')
+
+      fireEvent.submit(form)
+
+      if (shouldAdvance) await waitFor(() => expect(providerMutations).toBe(1))
+      else {
+        expect(await screen.findByRole('alert')).toHaveTextContent(
+          settingsVocabulary.errors.provider_key,
+        )
+        expect(key).toHaveFocus()
+        expect(providerMutations).toBe(0)
+      }
+    },
+  )
 
   it('explains every mount comparison state without exposing raw enums', async () => {
     vi.stubGlobal(
@@ -289,4 +334,46 @@ describe('shipped first-run setup script', () => {
       vi.stubGlobal('clearInterval', previousClearInterval)
     },
   )
+
+  it('stops polling and offers normal sign-in when the one-hour setup session expires', async () => {
+    const claimedAt = new Date('2026-08-25T10:00:00Z')
+    let now = claimedAt.getTime()
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
+    let poll: (() => Promise<void>) | undefined
+    vi.stubGlobal(
+      'setInterval',
+      vi.fn((callback: () => Promise<void>) => {
+        poll = callback
+        return 1
+      }),
+    )
+    const clear = vi.fn()
+    vi.stubGlobal('clearInterval', clear)
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(request)
+      if (url === '/api/setup/kick-off' && init?.method === 'POST')
+        return response({ message: 'Restarting into the normal workspace.' })
+      if (url === '/api/v1/review-preparation') return response({ error: 'unauthorized' }, 401)
+      return response(
+        setupState('kick_off', {
+          completed_steps: ['claim', 'connect', 'providers', 'libraries', 'mounts'],
+        }),
+      )
+    })
+    vi.stubGlobal('fetch', fetch)
+    runSetup()
+    fireEvent.click(await screen.findByRole('button', { name: 'Kick off preparation' }))
+    await waitFor(() => expect(poll).toBeDefined())
+
+    now = claimedAt.getTime() + 3_601_000
+    await poll?.()
+
+    expect(await screen.findByRole('heading', { name: 'Sign in to continue' })).toHaveFocus()
+    expect(screen.getByText(/setup sign-in expired/u)).toBeVisible()
+    expect(screen.getByRole('link', { name: 'Sign in to workspace' })).toHaveAttribute(
+      'href',
+      '/library?lens=all',
+    )
+    expect(clear).toHaveBeenCalled()
+  })
 })
