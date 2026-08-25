@@ -21,7 +21,7 @@ from mechanical_librarian.domain.setup_state import (
 )
 
 _BOOTSTRAP = "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$hash"
-_PROVIDER = TypeAdapter(ProviderSettings)
+_PROVIDER: TypeAdapter[ProviderSettings] = TypeAdapter(ProviderSettings)
 
 
 def _store() -> tuple[sqlite3.Connection, SetupStateStore]:
@@ -138,7 +138,8 @@ def test_library_discovery_failure_is_retryable_and_records_nothing() -> None:
     _connection, store = _store()
     state = _connected(store)
 
-    def fail(_document: SetupStateDocument) -> tuple[SetupLibraryCandidate, ...]:
+    def fail(document: SetupStateDocument) -> tuple[SetupLibraryCandidate, ...]:
+        del document
         raise RuntimeError("private detail")
 
     journey = SetupJourneyOperation(store, _BOOTSTRAP, fail, {})
