@@ -12,7 +12,7 @@ from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import httpx
 import pytest
@@ -72,7 +72,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderObservation,
     ProviderStatus,
 )
-from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.provider_recovery import MAX_TIMESTAMP
 from tests.support.review_cases import _report
 
@@ -363,6 +363,44 @@ def test_scan_qualification_survives_restart_and_resets_for_new_cycle(
     assert action is not None
     assert repository.discovery_requires_qualification(action)
     repository.close()
+
+
+def test_recovery_rebinds_the_latest_scan_after_settings_change(tmp_path: Path) -> None:
+    database = tmp_path / "application.sqlite3"
+    repository = open_repository(database)
+    first_boot = repository.request_review_scan(
+        "primary", "books", "books-v1", _PRODUCER, 1, first_boot=True
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed' WHERE scan_id=?",
+        (first_boot.scan_id,),
+    )
+    ordinary = repository.request_review_scan(
+        "primary", "books", "books-v1", _PRODUCER, 2
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='processing' WHERE scan_id=?",
+        (ordinary.scan_id,),
+    )
+    repository.close()
+
+    changed_producer = "e" * 64
+    reopened = open_repository(database, create=False)
+    try:
+        reopened.recover_review_pipeline(
+            (("primary", "books", "books-v2", changed_producer),)
+        )
+        rows = reopened._connection.execute(
+            "SELECT scan_id,state,library_id,producer_fingerprint "
+            "FROM review_preparation_scans ORDER BY requested_at,scan_id"
+        ).fetchall()
+    finally:
+        reopened.close()
+
+    assert rows == [
+        (first_boot.scan_id, "completed", "books-v1", _PRODUCER),
+        (ordinary.scan_id, "queued", "books-v2", changed_producer),
+    ]
 
 
 def test_pipeline_preflight_is_once_per_cycle_and_recovery_retains_qualification(
@@ -679,6 +717,71 @@ def test_composed_currentness_preserves_target_connection_errors(
             )
         )
     assert result["status"] == "stale"
+
+
+def test_store_credentials_reach_proposal_and_admission_currentness(
+    application_path: Path,
+) -> None:
+    """A provider-empty first run retains its private ABS credential authority."""
+    configuration = ApplicationConfiguration(
+        (TargetConnectionConfiguration("primary", "https://example.invalid", None),),
+        (
+            LibraryConfiguration(
+                "ebooks", "primary", "library-id", "ebook", "media", ()
+            ),
+        ),
+        (MediaMountConfiguration("media", "/media", "/library", True),),
+        (),
+    )
+    report = _report()
+    repository = open_repository(application_path)
+    repository.publish(report, lambda: True)
+    repository.close()
+    client = object()
+
+    class _Artifacts:
+        def require_current(self) -> None:
+            return None
+
+    class _Target:
+        def __init__(self, *, client_factory, **_arguments) -> None:
+            self.client_factory = client_factory
+
+    def current(target, *_arguments) -> bool:
+        assert target.client_factory() is client
+        return True
+
+    with (
+        patch.object(composition, "CoverArtifactStore", return_value=_Artifacts()),
+        patch.object(composition, "AudiobookshelfItemReader", _Target),
+        patch.object(composition, "target_client", side_effect=AssertionError),
+        patch.object(composition, "target_client_token", return_value=client) as token,
+        patch.object(composition, "require_report_current", side_effect=current),
+    ):
+        proposal = ProposalSet.from_json(
+            composition.create_proposal_set_loaded(
+                configuration,
+                application_path,
+                Path("ignored"),
+                report.report_id,
+                credentials={"target:primary": "stored-key"},
+            )
+        )
+        admitted = json.loads(
+            composition.admit_review_case_loaded(
+                configuration,
+                application_path,
+                Path("ignored"),
+                proposal.proposal_set_id,
+                credentials={"target:primary": "stored-key"},
+            )
+        )
+
+    assert admitted["status"] == "admitted"
+    assert token.call_args_list == [
+        call("https://example.invalid", "stored-key", 30),
+        call("https://example.invalid", "stored-key", 30),
+    ]
 
 
 def test_late_target_connection_errors_rollback_and_defer_retained_stage() -> None:

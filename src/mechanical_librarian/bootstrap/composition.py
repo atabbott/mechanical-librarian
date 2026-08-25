@@ -43,6 +43,9 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_field_effect 
 from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
     AudiobookshelfItemReader,
 )
+from mechanical_librarian.adapters.library_services.audiobookshelf_setup import (
+    AudiobookshelfSetupProbe,
+)
 from mechanical_librarian.adapters.persistence.batch_manifest import (
     create as create_batch_manifest,
 )
@@ -186,6 +189,12 @@ from mechanical_librarian.application.review_pipeline import (
 from mechanical_librarian.application.review_pipeline_stages import (
     ReviewPipelineStages,
 )
+from mechanical_librarian.application.review_web import OwnerSessionService
+from mechanical_librarian.application.setup_connection import (
+    SetupConnectionOperation,
+    SetupConnectionVerification,
+)
+from mechanical_librarian.application.setup_journey import SetupJourneyOperation
 from mechanical_librarian.bootstrap.contained_reviewer import run_cover_packet_reviewer
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
@@ -217,6 +226,10 @@ from mechanical_librarian.domain.metadata_report import (
     claim_scope,
 )
 from mechanical_librarian.domain.proposal_set import ProposalSet
+from mechanical_librarian.domain.setup_state import (
+    SetupLibraryCandidate,
+    SetupStateDocument,
+)
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 from mechanical_librarian.infrastructure.local_media import (
     LocalMediaError,
@@ -243,6 +256,7 @@ from mechanical_librarian.infrastructure.security.review_tls import (
     open_review_tls_identity,
 )
 from mechanical_librarian.infrastructure.settings_authority import (
+    ReviewBootstrap,
     load_review_bootstrap,
     store_runtime_configuration,
 )
@@ -251,6 +265,7 @@ from mechanical_librarian.interfaces.web import (
     load_owner_password_verifier,
     owner_password_verifier,
 )
+from mechanical_librarian.interfaces.web.setup import create_setup_app
 
 if TYPE_CHECKING:
     from mechanical_librarian.adapters.persistence.catalogue import (
@@ -1223,6 +1238,7 @@ def _require_report_current_loaded(
     configuration: ApplicationConfiguration,
     artifacts: CoverArtifactStore,
     report: MetadataReport,
+    credentials: dict[str, str] | None = None,
 ) -> bool:
     connection, library, mount, _ = configuration.select(
         report.target.connection, report.target.library
@@ -1230,10 +1246,18 @@ def _require_report_current_loaded(
     if mount is None:
         raise CurrentnessError("target or media changed")
     target = AudiobookshelfItemReader(
-        client_factory=lambda: target_client(
-            connection.endpoint,
-            _required_secret_file(connection.secret_file),
-            configuration.limits.timeout_seconds,
+        client_factory=lambda: (
+            target_client(
+                connection.endpoint,
+                _required_secret_file(connection.secret_file),
+                configuration.limits.timeout_seconds,
+            )
+            if credentials is None
+            else target_client_token(
+                connection.endpoint,
+                credentials["target:" + connection.name],
+                configuration.limits.timeout_seconds,
+            )
         ),
         endpoint=connection.endpoint,
         library_id=library.library_id,
@@ -1262,6 +1286,7 @@ def create_proposal_set_loaded(
     report_id: str,
     repository_authority: object | None = None,
     pipeline_repository: SQLiteMetadataReportRepository | None = None,
+    credentials: dict[str, str] | None = None,
 ) -> str:
     artifacts = CoverArtifactStore(artifact_store_path, create=False)
     repository: _NonClosingRepository | SQLiteMetadataReportRepository = (
@@ -1274,7 +1299,9 @@ def create_proposal_set_loaded(
 
     def current(report: MetadataReport) -> bool:
         try:
-            return _require_report_current_loaded(configuration, artifacts, report)
+            return _require_report_current_loaded(
+                configuration, artifacts, report, credentials
+            )
         except (CurrentnessError, TargetNotFoundError) as error:
             raise ProposalCurrentnessError("proposal report is stale") from error
 
@@ -1297,6 +1324,7 @@ def admit_review_case_loaded(
     proposal_set_id: str,
     repository_authority: object | None = None,
     pipeline_repository: SQLiteMetadataReportRepository | None = None,
+    credentials: dict[str, str] | None = None,
 ) -> str:
     artifacts = CoverArtifactStore(artifact_store_path, create=False)
     repository: _NonClosingRepository | SQLiteMetadataReportRepository = (
@@ -1313,7 +1341,9 @@ def admit_review_case_loaded(
         except Exception as error:
             raise ReviewCaseError("persistence") from error
         try:
-            if not _require_report_current_loaded(configuration, artifacts, report):
+            if not _require_report_current_loaded(
+                configuration, artifacts, report, credentials
+            ):
                 return False
             return (
                 proposal.resolved_policy_id
@@ -1340,6 +1370,7 @@ def create_review_pipeline(
     private_root: Path | None = None,
     provider_recovery: SQLiteProviderRecoveryStore | None = None,
     credentials: dict[str, str] | None = None,
+    first_boot: bool = False,
 ) -> ReviewPreparationSupervisor:
     artifact_recovery_lock = threading.Lock()
     artifacts_recovered = False
@@ -1625,6 +1656,7 @@ def create_review_pipeline(
             report_id,
             database_authority,
             cast("SQLiteMetadataReportRepository", pipeline_repository),
+            credentials,
         )
 
     def admit_review_case_for(
@@ -1637,6 +1669,7 @@ def create_review_pipeline(
             proposal_set_id,
             database_authority,
             cast("SQLiteMetadataReportRepository", pipeline_repository),
+            credentials,
         )
 
     def cover_considerations(
@@ -1667,7 +1700,7 @@ def create_review_pipeline(
         discovery_lock=discovery_lock,
         clock=lambda: int(time.time()),
     )
-    pipeline = stages.pipeline(timing)
+    pipeline = stages.pipeline(timing, first_boot=first_boot)
     pipeline_holder["pipeline"] = pipeline
     provider_recovery.require_generation_compatible(
         generation=configuration.provider_recovery_generation
@@ -2088,6 +2121,101 @@ def _load_batch_credentials(
     return values
 
 
+def run_setup_server(
+    bootstrap: ReviewBootstrap,
+    database_path: Path,
+    host: str,
+    port: int,
+    *,
+    initialize: bool,
+) -> None:
+    """Run only the bootstrap-authenticated setup surface before normal startup."""
+    verifier = bootstrap.setup_owner_verifier
+    if verifier is None:
+        raise ConfigurationError("review bootstrap is unavailable")
+    with open_review_tls_identity(
+        bootstrap.tls_certificate_file, bootstrap.tls_private_key_file
+    ) as tls:
+        repository = open_repository(
+            database_path,
+            create=initialize,
+            cross_thread=True,
+        )
+        try:
+            state = repository.setup_state_store()
+            if initialize:
+                state.initialize(verifier)
+            sessions = OwnerSessionService(
+                repository,
+                owner_password_verifier(verifier),
+                lambda: int(time.time()),
+                3600,
+            )
+            setup_probe = AudiobookshelfSetupProbe(
+                lambda endpoint, key: target_client_token(endpoint, key, 30)
+            )
+            connection = SetupConnectionOperation(
+                SetupConnectionVerification(setup_probe),
+                state,
+                verifier,
+            )
+            mount_names: dict[str, list[str]] = {}
+            for mount in bootstrap.mounts:
+                mount_names.setdefault(mount.service_path, []).append(mount.name)
+
+            def discover_setup_libraries(
+                document: SetupStateDocument,
+            ) -> tuple[SetupLibraryCandidate, ...]:
+                if document.connection is None:
+                    raise ConfigurationError("setup connection is unavailable")
+                endpoint = document.connection.endpoint
+                return state.use_secret(
+                    f"connection.{document.connection.name}.key",
+                    verifier,
+                    lambda key: setup_probe.discover(endpoint, key),
+                )
+
+            journey = SetupJourneyOperation(
+                state,
+                verifier,
+                discover_setup_libraries,
+                {path: tuple(sorted(names)) for path, names in mount_names.items()},
+            )
+            server: uvicorn.Server
+
+            def begin_setup_drain() -> None:
+                server.should_exit = True
+
+            setup_app = create_setup_app(
+                sessions,
+                state,
+                verifier,
+                connection=connection,
+                journey=journey,
+                canonical_origin=bootstrap.canonical_origin,
+                on_complete=begin_setup_drain,
+            )
+            server = uvicorn.Server(
+                uvicorn.Config(
+                    setup_app,
+                    host=host,
+                    port=port,
+                    proxy_headers=False,
+                    server_header=False,
+                    date_header=False,
+                    access_log=False,
+                    http=BoundedReviewH11Protocol,
+                    ssl_certfile=tls.certificate_file,
+                    ssl_keyfile=tls.private_key_file,
+                    ssl_keyfile_password=REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD,
+                    ssl_ciphers=REVIEW_TLS_CIPHERS,
+                )
+            )
+            server.run()
+        finally:
+            repository.close()
+
+
 def run_review_server(
     config_path: Path,
     database_path: Path,
@@ -2118,6 +2246,7 @@ def run_review_server(
         private_root = _private_root(database_path)
         repository = open_repository(database_path, create=True, cross_thread=True)
         try:
+            pending_restart: tuple[str, ...] = ()
             if authority == "store":
                 assert bootstrap is not None
                 settings_store = repository.owner_settings_store()
@@ -2134,6 +2263,7 @@ def run_review_server(
                 review = configuration.review
                 verify_password = owner_password_verifier(encoded_verifier)
                 settings = OwnerSettingsOperations(settings_store)
+                pending_restart = settings_view.pending_restart
             else:
                 assert configuration is not None and review is not None
                 credentials = _load_batch_credentials(
@@ -2170,6 +2300,11 @@ def run_review_server(
             provider_recovery = SQLiteProviderRecoveryStore.open(
                 private_root / "provider-recovery.sqlite"
             )
+            first_boot = _store_first_preparation(
+                authority,
+                pending_restart,
+                repository.has_first_boot_preparation(),
+            )
             preparation = create_review_pipeline(
                 configuration,
                 database_path,
@@ -2180,6 +2315,7 @@ def run_review_server(
                 private_root,
                 provider_recovery,
                 credentials=credentials,
+                first_boot=first_boot,
             )
             field_application = (
                 compose_continuous_guarded_application(
@@ -2239,6 +2375,7 @@ def run_review_server(
                 field_application=field_application,
                 cover_considerations=cover_considerations,
                 settings=settings,
+                first_boot=first_boot,
             )
             app = create_review_app(review_application, review)
             if authority == "store":
@@ -2271,6 +2408,17 @@ def run_review_server(
         except Exception:
             repository.close()
             raise
+
+
+def _store_first_preparation(
+    authority: str,
+    pending_restart: tuple[str, ...],
+    marked_preparation: bool,
+) -> bool:
+    """Keep the setup-started presentation across normal-process restarts."""
+    return authority == "store" and (
+        "setup_complete" in pending_restart or marked_preparation
+    )
 
 
 def _compose_cover_considerations(

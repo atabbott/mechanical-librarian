@@ -7,6 +7,25 @@ human queue. When a person is needed, the product presents one durable,
 target-shaped decision surface backed by server-authoritative state.
 
 Terminal preparation failures remain visible in Library as noninteractive rows.
+
+## Guided first run
+
+A new empty store uses one calm six-step ledger: claim, connect, providers,
+libraries, mounts, and kickoff. Completed steps collapse to recorded rows with
+Change; reopening a row removes only dependent answers and secrets, and resume
+always returns to the first incomplete step. Provider setup is optional,
+library discovery remains retryable and keeps unsupported libraries visible,
+and mount comparison reports matched, ambiguous, unmatched, or unobservable
+without creating a mount.
+
+Kickoff says exactly: `Nothing in your library changes. Writes stay off until
+you turn them on in Activity.` The setup client waits through the required
+restart and opens `/library` directly when the normal authenticated workspace
+is available; there is no completion interstitial and no setup write authority.
+As soon as one work is ready, a focused handover card appears above the live,
+bounded preparation list. The terminal first-boot measurement appears only in
+Library and counts every unique checked work, including terminal failures.
+
 Each persisted failure code maps to one closed safe reason and exactly one
 owner posture: a named supported action, a stated pending automatic recovery,
 or an explicit statement that no owner action is available. Unknown codes are

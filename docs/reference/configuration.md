@@ -21,13 +21,17 @@ proxy IPs; the store/setup bootstrap document is neither required nor read.
 When `/data/config.json` is absent, `review-serve` instead requires one
 exact-current owner-settings document and owner verifier in
 `/data/application.sqlite3`, plus an owner-only
-`/run/secrets/review-bootstrap.json`. Missing, incomplete, unreadable, or
-invalid store/bootstrap state stops startup; it does not fall back to a partial
-configuration or enter setup until #745 supplies that separately qualified
-flow. The bootstrap is a closed `review-bootstrap-v1` document containing only
+`/run/secrets/review-bootstrap.json`. A truly empty `/data` volume enters the
+guided setup flow; an exact bootstrap-bound incomplete setup store resumes it.
+Every other missing, malformed, mixed, or orphaned store/bootstrap state stops
+startup without fallback, import, migration, or repair. The bootstrap is a
+closed `review-bootstrap-v1` document containing only
 `canonical_origin`, the TLS certificate and key paths, up to 16
 `trusted_proxy_ips`, up to 32 read-only mount mappings, and the optional
-contained-reviewer profile path. Ports, volume/bind mounts, owner-password
+contained-reviewer profile path. During incomplete setup it also requires
+`setup_owner_verifier`, one deploy-provisioned Argon2id owner-password verifier;
+the browser never receives or replaces it, and normal startup stops consulting
+it after atomic completion. Ports, volume/bind mounts, owner-password
 recovery, and proxy/TLS deployment remain outside the Settings API.
 
 Authenticated owners use the lazy `/settings` route and revision-CAS

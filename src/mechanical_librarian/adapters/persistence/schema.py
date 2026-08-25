@@ -578,6 +578,26 @@ _SHADOW_DECISION_OUTCOME_NO_UPDATE_SQL = "CREATE TRIGGER shadow_decision_outcome
 _SHADOW_DECISION_OUTCOME_NO_DELETE_SQL = "CREATE TRIGGER shadow_decision_outcomes_no_delete BEFORE DELETE ON shadow_decision_outcomes BEGIN SELECT RAISE(ABORT, 'shadow decision outcomes are append-only'); END"
 _OWNER_SETTINGS_SQL = "CREATE TABLE owner_settings (singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1),revision INTEGER NOT NULL CHECK(revision>=1),document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 262144))"
 _OWNER_SETTING_SECRETS_SQL = "CREATE TABLE owner_setting_secrets (field_id TEXT PRIMARY KEY NOT NULL CHECK(length(field_id) BETWEEN 1 AND 128),value TEXT NOT NULL CHECK(typeof(value)='text' AND length(CAST(value AS BLOB)) BETWEEN 1 AND 2048))"
+_BUILTIN_POLICY = MetadataPolicyProfile.builtin()
+_SETUP_POLICY_DRAFT_ROW = (_BUILTIN_POLICY.policy_id, _BUILTIN_POLICY.canonical_json)
+_SETUP_POLICY_STATE_ROW = (1, _BUILTIN_POLICY.policy_id, 1, 0, "automatic")
+_SETUP_POLICY_TRANSITION_ROW = (
+    "policy_transition_"
+    + hashlib.sha256(
+        ("automatic-bootstrap-v1:" + _BUILTIN_POLICY.policy_id).encode("utf-8")
+    ).hexdigest(),
+    _BUILTIN_POLICY.policy_id,
+    _BUILTIN_POLICY.policy_id,
+    1,
+    "completed",
+    0,
+    0,
+    0,
+    0,
+)
+_SETUP_REVIEW_CONTROL_ROW = (1, 0, 0, None, 0, 0, 0)
+_SETUP_AUTOMATIC_SAFETY_ROW = (1, 0, None, "[]", 0)
+_SETUP_FIELD_EFFECT_CONTROL_ROW = (1, 0, 0)
 
 
 def _create_schema(connection: sqlite3.Connection) -> None:
@@ -597,27 +617,20 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_COVER_PREVIEW_INDEX_SQL)
     connection.execute(_PROPOSAL_SETS_SQL)
     connection.execute(_METADATA_POLICY_DRAFTS_SQL)
-    builtin_policy = MetadataPolicyProfile.builtin()
     connection.execute(
         "INSERT INTO metadata_policy_drafts(policy_id,document) VALUES(?,?)",
-        (builtin_policy.policy_id, builtin_policy.canonical_json),
+        _SETUP_POLICY_DRAFT_ROW,
     )
     connection.execute(_METADATA_POLICY_STATE_SQL)
     connection.execute(
-        "INSERT INTO metadata_policy_state(singleton,active_policy_id,generation,activated_at,posture) VALUES(1,?,1,0,'automatic')",
-        (builtin_policy.policy_id,),
+        "INSERT INTO metadata_policy_state(singleton,active_policy_id,generation,activated_at,posture) VALUES(?,?,?,?,?)",
+        _SETUP_POLICY_STATE_ROW,
     )
     connection.execute(_METADATA_POLICY_RESOLUTIONS_SQL)
     connection.execute(_METADATA_POLICY_TRANSITIONS_SQL)
-    bootstrap_transition_id = (
-        "policy_transition_"
-        + hashlib.sha256(
-            ("automatic-bootstrap-v1:" + builtin_policy.policy_id).encode("utf-8")
-        ).hexdigest()
-    )
     connection.execute(
-        "INSERT INTO metadata_policy_transitions(transition_id,from_policy_id,to_policy_id,generation,state,total,acknowledged,created_at,updated_at) VALUES(?,?,?,1,'completed',0,0,0,0)",
-        (bootstrap_transition_id, builtin_policy.policy_id, builtin_policy.policy_id),
+        "INSERT INTO metadata_policy_transitions(transition_id,from_policy_id,to_policy_id,generation,state,total,acknowledged,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+        _SETUP_POLICY_TRANSITION_ROW,
     )
     connection.execute(_REVIEW_CASES_SQL)
     connection.execute(_REVIEW_CASE_FIELD_FACTS_SQL)
@@ -629,7 +642,8 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_REVIEW_SCANS_SQL)
     connection.execute(_REVIEW_CONTROL_SQL)
     connection.execute(
-        "INSERT INTO review_preparation_control(singleton,paused,claim_sequence,last_library,circuit_failures,circuit_open_until,updated_at) VALUES(1,0,0,NULL,0,0,0)"
+        "INSERT INTO review_preparation_control(singleton,paused,claim_sequence,last_library,circuit_failures,circuit_open_until,updated_at) VALUES(?,?,?,?,?,?,?)",
+        _SETUP_REVIEW_CONTROL_ROW,
     )
     connection.execute(_REVIEW_CONNECTION_CONDITIONS_SQL)
     connection.execute(_REVIEW_WORK_SQL)
@@ -649,11 +663,13 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_AUTOMATIC_DECISIONS_SQL)
     connection.execute(_AUTOMATIC_SAFETY_SQL)
     connection.execute(
-        "INSERT INTO automatic_safety_state(singleton,paused,global_suspension,category_suspensions_document,updated_at) VALUES(1,0,NULL,'[]',0)"
+        "INSERT INTO automatic_safety_state(singleton,paused,global_suspension,category_suspensions_document,updated_at) VALUES(?,?,?,?,?)",
+        _SETUP_AUTOMATIC_SAFETY_ROW,
     )
     connection.execute(_FIELD_EFFECT_CONTROL_SQL)
     connection.execute(
-        "INSERT INTO field_effect_control(singleton,paused,updated_at) VALUES(1,0,0)"
+        "INSERT INTO field_effect_control(singleton,paused,updated_at) VALUES(?,?,?)",
+        _SETUP_FIELD_EFFECT_CONTROL_ROW,
     )
     connection.execute(_FIELD_EFFECT_SUSPENSIONS_SQL)
     connection.execute(_FIELD_EFFECT_AUTHORITIES_SQL)

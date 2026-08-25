@@ -1,0 +1,27 @@
+{
+  "secret": {
+    "minimum": 1,
+    "maximum": 2048,
+    "printable_ascii": "^[\\u0021-\\u007e]+$",
+    "forbidden_prefix": "bearer"
+  },
+  "endpoint": { "minimum": 1, "maximum": 2048 },
+  "open_library_email": {
+    "minimum": 3,
+    "maximum": 254,
+    "pattern": "^(?=.{1,64}@)[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$"
+  },
+  "local_library_name": {
+    "minimum": 1,
+    "maximum": 64,
+    "pattern": "^[a-z](?:[a-z0-9_]|-){0,63}$"
+  },
+  "required_provider_keys": ["hardcover"],
+  "errors": {
+    "secret": "Secrets must be 1–2,048 printable ASCII characters with no whitespace or Bearer prefix.",
+    "open_library_email": "Open Library needs a valid contact email while enabled.",
+    "provider_key": "This provider requires an API key while enabled.",
+    "libraries": "Select at least one supported book library.",
+    "library_name": "Use a local name of 1–64 lowercase letters, numbers, underscores, or hyphens, starting with a letter."
+  }
+}

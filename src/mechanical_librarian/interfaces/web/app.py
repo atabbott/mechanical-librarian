@@ -767,6 +767,9 @@ class _PreparationResponse(_ClosedModel):
     paused: bool = False
     active: bool = False
     actionable: bool = False
+    first_boot: bool = False
+    first_boot_complete: bool = False
+    first_boot_works: int | None = Field(default=None, ge=0)
     schema_version: Literal["review-preparation-v1"] = "review-preparation-v1"
 
 
@@ -1190,16 +1193,18 @@ def _policy_problem(error: MetadataPolicyError) -> str:
     }.get(str(error), "policy_validation")
 
 
-class _BodyLimitMiddleware:
+class BodyLimitMiddleware:
     def __init__(
         self,
         app: Callable[[Scope, Receive, Send], Awaitable[None]],
         maximum_bytes: int,
         decision_maximum_bytes: int,
+        path_limits: dict[str, int] | None = None,
     ) -> None:
         self._app = app
         self._maximum_bytes = maximum_bytes
         self._decision_maximum_bytes = decision_maximum_bytes
+        self._path_limits = {} if path_limits is None else dict(path_limits)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         path = scope.get("path", "")
@@ -1217,18 +1222,27 @@ class _BodyLimitMiddleware:
             "/api/v1/metadata-policy/preview",
         }
         is_settings = path == "/api/v1/settings"
+        configured_maximum = self._path_limits.get(path)
         if scope["type"] != "http" or not (
-            is_login or is_decision or is_policy_draft or is_settings
+            configured_maximum is not None
+            or is_login
+            or is_decision
+            or is_policy_draft
+            or is_settings
         ):
             await self._app(scope, receive, send)
             return
         maximum = (
-            self._maximum_bytes
-            if is_login
+            configured_maximum
+            if configured_maximum is not None
             else (
-                (262_144 if is_settings else 16_384)
-                if is_policy_draft or is_settings
-                else self._decision_maximum_bytes
+                self._maximum_bytes
+                if is_login
+                else (
+                    (262_144 if is_settings else 16_384)
+                    if is_policy_draft or is_settings
+                    else self._decision_maximum_bytes
+                )
             )
         )
         declared = next(
@@ -1335,7 +1349,7 @@ def create_review_app(
             raise HTTPException(status_code, detail={"code": error.code}) from None
 
     app.add_middleware(
-        _BodyLimitMiddleware,
+        BodyLimitMiddleware,
         maximum_bytes=2048,
         decision_maximum_bytes=8192,
     )

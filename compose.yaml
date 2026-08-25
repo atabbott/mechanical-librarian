@@ -48,7 +48,10 @@ services:
       - mechanical-librarian-data:/data
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=0700,uid=65532,gid=65532
-    stop_grace_period: 30s
+    # Uvicorn may use the configured 300s maximum to drain HTTP work before
+    # lifespan shutdown gives application workers their own 300s deadline.
+    # Ten further seconds cover signal delivery, binding cleanup and exit.
+    stop_grace_period: 610s
     restart: unless-stopped
 
 volumes:

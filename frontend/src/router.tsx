@@ -435,6 +435,62 @@ export const PreparationNotice = ({ routeIdentity }: { routeIdentity: string }) 
   )
 }
 
+export const FirstBootHandover = () => {
+  const { data } = usePreparation()
+  const heading = useRef<HTMLHeadingElement>(null)
+  const announced = useRef(false)
+  const ready = data?.libraries.reduce((total, library) => total + library.ready, 0) ?? 0
+  const terminal = Boolean(data?.first_boot_complete)
+  useLayoutEffect(() => {
+    if (!data?.first_boot || (ready < 1 && !terminal) || announced.current) return
+    announced.current = true
+    heading.current?.focus({ preventScroll: true })
+    const section = heading.current?.closest('section')
+    if (section && 'scrollIntoView' in section)
+      section.scrollIntoView({
+        block: 'start',
+        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
+          ? 'instant'
+          : 'smooth',
+      })
+  }, [data?.first_boot, ready, terminal])
+  if (!data?.first_boot || (ready < 1 && !terminal)) return null
+  return (
+    <section className="first-boot-handover" aria-labelledby="first-boot-handover-title">
+      <div className="first-boot-handover-card">
+        <p>First preparation</p>
+        <h2 id="first-boot-handover-title" ref={heading} tabIndex={-1}>
+          {ready > 0 ? 'Your first work is ready' : 'First preparation is complete'}
+        </h2>
+        <p>
+          {ready > 0
+            ? terminal
+              ? 'Preparation is complete. Review your ready work below.'
+              : 'Preparation continues here as more work becomes ready.'
+            : 'No work became ready during this preparation. Review the recorded failures and recovery below.'}
+        </p>
+        {data.first_boot_complete && typeof data.first_boot_works === 'number' ? (
+          <p className="first-boot-measurement" role="status">
+            Preparation complete · {String(data.first_boot_works)} unique{' '}
+            {data.first_boot_works === 1 ? 'work' : 'works'} checked, including work that could not
+            finish.
+          </p>
+        ) : null}
+      </div>
+      <ul aria-label="First preparation progress">
+        {data.libraries.map((library) => (
+          <li key={`${library.connection}:${library.library}`}>
+            <span>{library.library}</span>
+            <strong>
+              {`${String(library.ready)} ready · ${String(library.checked)} of ${String(library.total)} checked`}
+            </strong>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
 /**
  * The eight buckets a work moves through, in the order an owner reads them.
  *

@@ -62,6 +62,12 @@ def test_sdist_carries_the_frontend_sources_and_no_built_or_vendored_trees(
     assert any(
         name.endswith("/docs/reference/review-openapi-v1.json") for name in sdist_names
     )
+    assert any(
+        name.endswith(
+            "/src/mechanical_librarian/interfaces/web/settings_vocabulary.json"
+        )
+        for name in sdist_names
+    )
     assert not any("frontend/src/generated" in name for name in sdist_names)
     assert not any("frontend/node_modules" in name for name in sdist_names)
 
@@ -71,4 +77,8 @@ def test_wheel_carries_the_built_react_assets_and_neither_carries_source_maps(
 ) -> None:
     wheel_names, sdist_names = distribution
     assert any("interfaces/web/react_assets/assets/" in name for name in wheel_names)
+    assert any(
+        name.endswith("mechanical_librarian/interfaces/web/settings_vocabulary.json")
+        for name in wheel_names
+    )
     assert not any(name.endswith(".map") for name in wheel_names + sdist_names)

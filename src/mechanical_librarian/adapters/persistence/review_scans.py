@@ -29,6 +29,7 @@ from mechanical_librarian.application.review_pipeline import (
     PipelineProgress,
     ReviewPipelineError,
     TargetConnectionCondition,
+    is_first_boot_scan_id,
     pipeline_scan_id,
 )
 
@@ -79,6 +80,8 @@ class SQLiteReviewScanRepository(ConnectionScoped):
         library_id: str,
         producer_fingerprint: str,
         requested_at: int,
+        *,
+        first_boot: bool = False,
     ) -> PipelineProgress:
         if (
             any(
@@ -107,9 +110,38 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 raise ReviewPipelineError("paused")
             row = self._connection.execute(
                 "SELECT scan_id,state,producer_fingerprint FROM review_preparation_scans "
-                "WHERE connection_name=? AND library_name=? LIMIT 1",
+                "WHERE connection_name=? AND library_name=? "
+                "ORDER BY requested_at DESC,scan_id DESC LIMIT 1",
                 (connection, library),
             ).fetchone()
+            if (
+                row is not None
+                and row[1] in {"completed", "completed_with_failures"}
+                and is_first_boot_scan_id(row[0], connection, library)
+            ):
+                latest = self._connection.execute(
+                    "SELECT scan_id,connection_name,library_name,state "
+                    "FROM review_preparation_scans s WHERE s.scan_id=("
+                    "SELECT selected.scan_id FROM review_preparation_scans selected "
+                    "WHERE selected.connection_name=s.connection_name "
+                    "AND selected.library_name=s.library_name "
+                    "ORDER BY selected.requested_at DESC,selected.scan_id DESC LIMIT 1)"
+                ).fetchall()
+                first_preparation_incomplete = all(
+                    is_first_boot_scan_id(scan_id, row_connection, row_library)
+                    for scan_id, row_connection, row_library, _state in latest
+                ) and any(
+                    state not in {"completed", "completed_with_failures"}
+                    for _scan_id, _connection, _library, state in latest
+                )
+                if first_preparation_incomplete:
+                    transaction.commit()
+                    progress = self.review_pipeline_progress(connection, library)
+                    if progress is None:
+                        raise MetadataReportError("review preparation state is invalid")
+                    return progress
+                row = None
+                first_boot = False
             if row is not None:
                 if row[1] in {"queued", "discovering", "processing"}:
                     if row[2] != producer_fingerprint:
@@ -148,7 +180,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 if progress is None:
                     raise MetadataReportError("review preparation state is invalid")
                 return progress
-            scan_id = pipeline_scan_id(connection, library)
+            scan_id = pipeline_scan_id(connection, library, first_boot=first_boot)
             self._connection.execute(
                 "INSERT INTO review_preparation_scans("
                 "scan_id,connection_name,library_name,library_id,producer_fingerprint,"
@@ -389,7 +421,8 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 row = self._connection.execute(
                     "SELECT scan_id,state,library_id,producer_fingerprint "
                     "FROM review_preparation_scans "
-                    "WHERE connection_name=? AND library_name=?",
+                    "WHERE connection_name=? AND library_name=? "
+                    "ORDER BY requested_at DESC,scan_id DESC LIMIT 1",
                     (connection, library),
                 ).fetchone()
                 if (

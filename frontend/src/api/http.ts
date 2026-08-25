@@ -1,4 +1,5 @@
 import type { components } from '../generated/review-api'
+import settingsVocabulary from '../../../src/mechanical_librarian/interfaces/web/settings_vocabulary.json'
 
 type Schema<Name extends keyof components['schemas']> = components['schemas'][Name]
 type LibraryDto = Schema<'_LibraryResponse'>
@@ -13,10 +14,10 @@ export type AppearanceView = Schema<'_AppearanceResponse'>
 // the contract directly testable and let TypeScript keep every caller on the
 // same exact input shape.
 export const settingsSecretValid = (value: string) =>
-  value.length >= 1 &&
-  value.length <= 2048 &&
-  /^[\x21-\x7e]+$/u.test(value) &&
-  !value.toLowerCase().startsWith('bearer')
+  value.length >= settingsVocabulary.secret.minimum &&
+  value.length <= settingsVocabulary.secret.maximum &&
+  new RegExp(settingsVocabulary.secret.printable_ascii, 'u').test(value) &&
+  !value.toLowerCase().startsWith(settingsVocabulary.secret.forbidden_prefix)
 
 export const settingsIntegerValid = (value: number, minimum: number, maximum?: number) =>
   Number.isInteger(value) && value >= minimum && (maximum === undefined || value <= maximum)
@@ -26,17 +27,29 @@ export const settingsTextValid = (value: string, minimum: number, maximum: numbe
   return codePoints >= minimum && codePoints <= maximum
 }
 
-export const settingsEndpointValid = (value: string) => settingsTextValid(value, 1, 2048)
+export const settingsEndpointValid = (value: string) =>
+  settingsTextValid(value, settingsVocabulary.endpoint.minimum, settingsVocabulary.endpoint.maximum)
 
-const openLibraryEmail = new RegExp(
-  "^(?=.{1,64}@)[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+" +
-    "(?:\\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*@[A-Za-z0-9]" +
-    '(?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?' +
-    '(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$',
-)
+const openLibraryEmail = new RegExp(settingsVocabulary.open_library_email.pattern)
 
 export const settingsOpenLibraryEmailValid = (value: string) =>
-  settingsTextValid(value, 3, 254) && openLibraryEmail.test(value)
+  settingsTextValid(
+    value,
+    settingsVocabulary.open_library_email.minimum,
+    settingsVocabulary.open_library_email.maximum,
+  ) && openLibraryEmail.test(value)
+
+export const settingsLocalLibraryNameValid = (value: string) =>
+  settingsTextValid(
+    value,
+    settingsVocabulary.local_library_name.minimum,
+    settingsVocabulary.local_library_name.maximum,
+  ) && new RegExp(settingsVocabulary.local_library_name.pattern, 'u').test(value)
+
+export const settingsProviderKeyRequired = (adapter: string) =>
+  settingsVocabulary.required_provider_keys.includes(adapter)
+
+export const settingsValidationCopy = settingsVocabulary.errors
 
 export type LibraryLens = 'needs_attention' | 'all' | 'no_attention_needed'
 export type DetailSubview = 'evidence' | 'history'
@@ -270,7 +283,12 @@ export interface HistoryView {
   items: readonly HistoryItemView[]
   nextCursor?: string
 }
-export type PreparationView = Schema<'_PreparationResponse'>
+type PreparationSchema = Schema<'_PreparationResponse'>
+export type PreparationView = Omit<
+  PreparationSchema,
+  'first_boot' | 'first_boot_complete' | 'first_boot_works'
+> &
+  Partial<Pick<PreparationSchema, 'first_boot' | 'first_boot_complete' | 'first_boot_works'>>
 export type PreparationProgress = Schema<'_PreparationProgress'>
 export type PolicyStateView = Schema<'_PolicyProfileResponse'>
 export type ShadowPostureView = Schema<'_ShadowPostureResponse'>
@@ -1075,7 +1093,14 @@ export const mapPreparation = (value: unknown): PreparationView => {
     !Array.isArray(value.connections) ||
     typeof value.paused !== 'boolean' ||
     typeof value.active !== 'boolean' ||
-    typeof value.actionable !== 'boolean'
+    typeof value.actionable !== 'boolean' ||
+    (value.first_boot !== undefined && typeof value.first_boot !== 'boolean') ||
+    (value.first_boot_complete !== undefined && typeof value.first_boot_complete !== 'boolean') ||
+    (value.first_boot_works !== undefined &&
+      value.first_boot_works !== null &&
+      (typeof value.first_boot_works !== 'number' ||
+        !Number.isInteger(value.first_boot_works) ||
+        value.first_boot_works < 0))
   )
     throw new ApiError(502, 'invalid_preparation_response')
   value.libraries.forEach((item, index) => {
@@ -1099,7 +1124,12 @@ export const mapPreparation = (value: unknown): PreparationView => {
   })
   // Validated: the envelope, both collections, and every field inside them are
   // checked above, so the cast only re-attaches the generated type.
-  return value as unknown as PreparationView
+  return {
+    ...value,
+    first_boot: value.first_boot ?? false,
+    first_boot_complete: value.first_boot_complete ?? false,
+    first_boot_works: value.first_boot_works ?? null,
+  } as unknown as PreparationView
 }
 const activityPrepared = (value: unknown, field: string): ActivityPreparedView => {
   if (!record(value)) throw new ApiError(502, `invalid_${field}`)

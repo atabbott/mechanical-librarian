@@ -34,7 +34,10 @@ from mechanical_librarian.application.operations import (
     TimingRepository,
 )
 from mechanical_librarian.application.owner_settings import OwnerSettingsOperations
-from mechanical_librarian.application.review_pipeline import ReviewPreparationSupervisor
+from mechanical_librarian.application.review_pipeline import (
+    ReviewPreparationSupervisor,
+    is_first_boot_scan_id,
+)
 from mechanical_librarian.application.review_web import (
     BrowseReviewLibrary,
     CurrentReviewCaseStore,
@@ -216,6 +219,9 @@ class PreparationView:
     active: bool
     actionable: bool
     connections: tuple[dict[str, object], ...] = ()
+    first_boot: bool = False
+    first_boot_complete: bool = False
+    first_boot_works: int | None = None
     schema_version: str = "review-preparation-v1"
 
     def to_data(self) -> dict[str, object]:
@@ -224,6 +230,9 @@ class PreparationView:
             "paused": self.paused,
             "active": self.active,
             "actionable": self.actionable,
+            "first_boot": self.first_boot,
+            "first_boot_complete": self.first_boot_complete,
+            "first_boot_works": self.first_boot_works,
             "connections": [dict(item) for item in self.connections],
             "schema_version": self.schema_version,
         }
@@ -355,6 +364,7 @@ class ReviewApplication:
         updates: LiveUpdateChannel,
         cover_considerations: CoverConsiderationService | None = None,
         settings: OwnerSettingsOperations | None = None,
+        first_boot: bool = False,
     ) -> None:
         self._updates = updates
         self._state_owner = state_owner
@@ -375,6 +385,7 @@ class ReviewApplication:
         self._operations = operations
         self._cover_considerations = cover_considerations
         self._settings = settings
+        self._first_boot = first_boot
 
     @property
     def updates(self) -> LiveUpdateChannel:
@@ -841,9 +852,16 @@ class ReviewApplication:
         if self._preparation is None:
             return PreparationView((), False, False, False)
         progress_values, paused = self.serialized(self._preparation.status)
-        conditions = self.serialized(self._preparation.connection_conditions)
         if len(progress_values) != len(self._preparation.libraries):
             raise ReviewApplicationError("persistence")
+        first_boot = self._first_boot and all(
+            progress is None
+            or is_first_boot_scan_id(progress.scan_id, connection, library)
+            for (connection, library, _library_id), progress in zip(
+                self._preparation.libraries, progress_values, strict=True
+            )
+        )
+        conditions = self.serialized(self._preparation.connection_conditions)
         libraries: tuple[dict[str, object], ...] = tuple(
             {
                 "scan_id": None if progress is None else progress.scan_id,
@@ -878,6 +896,14 @@ class ReviewApplication:
             }
             for condition in conditions
         )
+        first_boot_complete = (
+            first_boot
+            and bool(libraries)
+            and all(
+                item["state"] in {"completed", "completed_with_failures"}
+                for item in libraries
+            )
+        )
         return PreparationView(
             libraries,
             paused,
@@ -887,6 +913,11 @@ class ReviewApplication:
             ),
             any(item["state"] == "completed_with_failures" for item in libraries),
             connections,
+            first_boot,
+            first_boot_complete,
+            sum(cast("int", item["total"]) for item in libraries)
+            if first_boot_complete
+            else None,
         )
 
     def request_review_scan(self, connection: str, library: str) -> dict[str, object]:
@@ -1100,6 +1131,7 @@ def compose_review_application(
     operational_timer: StageTimer | None = None,
     cover_considerations: CoverConsiderationService | None = None,
     settings: OwnerSettingsOperations | None = None,
+    first_boot: bool = False,
 ) -> ReviewApplication:
     """Compose every operation before the HTTP adapter is created."""
     gate = RLock()
@@ -1159,6 +1191,7 @@ def compose_review_application(
         updates=updates,
         cover_considerations=cover_considerations,
         settings=settings,
+        first_boot=first_boot,
     )
     return application
 

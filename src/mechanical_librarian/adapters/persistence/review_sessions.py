@@ -95,6 +95,9 @@ class SQLiteReviewSessionRepository(ConnectionScoped):
     def authenticate_review_session(
         self, session_digest: str, now: int
     ) -> tuple[str, str, int]:
+        lock = self._serialization_lock
+        if lock is not None:
+            lock.acquire()
         try:
             row = self._connection.execute(
                 "SELECT actor,csrf_digest,expires_at FROM review_sessions WHERE session_digest=? AND revoked_at IS NULL AND expires_at>?",
@@ -112,6 +115,9 @@ class SQLiteReviewSessionRepository(ConnectionScoped):
             return cast("tuple[str, str, int]", row)
         except sqlite3.Error as error:
             raise MetadataReportError("review session is unavailable") from error
+        finally:
+            if lock is not None:
+                lock.release()
 
     def rotate_review_session_csrf(
         self, session_digest: str, csrf_digest: str, now: int

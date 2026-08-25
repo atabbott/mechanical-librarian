@@ -12,7 +12,9 @@ file is absent, store mode instead requires the exact-current owner settings and
 verifier in `/data/application.sqlite3` and an owner-only, read-only
 `/run/secrets/review-bootstrap.json` containing deploy-side TLS, canonical
 origin, trusted proxies, read-only mount mappings, and any contained-reviewer
-profile path. Add ebook media mounts as read-only Compose overrides; never grant
+profile path. For a new empty volume it also supplies the deploy-provisioned
+Argon2id `setup_owner_verifier` used to claim and resume the guided first run.
+Add ebook media mounts as read-only Compose overrides; never grant
 a writable media mount or Docker socket.
 
 The published mapping is `127.0.0.1:8443:8443`, so the review surface reaches
@@ -40,10 +42,13 @@ Both healthchecks set a start interval, which needs Docker Engine 25 or newer
 and Compose v2.20 or newer. That is the newest runtime either file requires;
 nothing else in them assumes a version that recent.
 
-On an absent data volume the entrypoint creates the exact-current application
-and catalogue stores and private artifact area. Store-mode review startup then
-refuses until #745 has atomically established complete owner settings and an
-owner verifier; this change introduces no implicit first-run defaults. On
+On a truly empty data volume the entrypoint captures that empty state before
+creating an exact incomplete setup store and serves only health, setup login,
+setup assets, and the minimal authenticated setup API. The six steps are claim,
+Audiobookshelf connection, optional providers, libraries, read-only mount
+comparison, and kickoff. Kickoff atomically replaces incomplete state with
+complete owner settings, preserves verified secrets, records restart debt, and
+closes setup routes; only the next normal boot starts preparation. On
 restart it accepts only exact-current, owner-only stores. A schema mismatch,
 missing/incomplete settings, an unowned volume, invalid file or bootstrap,
 backup/recovery error, or permission failure stops startup rather than falling
@@ -81,6 +86,13 @@ deadline; an over-deadline worker remains tracked, raises a typed shutdown
 failure before the shared repository closes, and resumes from its durable
 checkpoint on restart. No fake target, direct database write or writable media
 path is composed.
+
+The supported Compose stop budget is 610 seconds. Uvicorn can first use the
+configured maximum 300 seconds to drain HTTP requests, then lifespan shutdown
+can use the application's separate 300-second worker deadline before repository
+and binding cleanup. The remaining ten seconds cover signal delivery and
+process-exit overhead; deployments that override Compose must retain at least
+that full bound.
 
 Each open browser tab holds one long-lived `text/event-stream` response on that
 same listener, which is worth knowing when sizing the direct edge's 100-

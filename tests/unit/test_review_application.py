@@ -28,7 +28,9 @@ from mechanical_librarian.application.review_application import (
     compose_review_application,
 )
 from mechanical_librarian.application.review_pipeline import (
+    PipelineProgress,
     ReviewPreparationSupervisor,
+    pipeline_scan_id,
 )
 from mechanical_librarian.application.review_web import ReviewWebError
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
@@ -370,6 +372,118 @@ def test_published_preparation_work_wakes_the_guarded_scheduler(
     assert field_application.wakes == 0
     preparation.announce("library", "review_case")
     assert field_application.wakes == 1
+
+
+def test_first_boot_presentation_survives_first_ready_until_terminal_measurement(
+    repository: FakeReviewRepository,
+) -> None:
+    class Preparation:
+        libraries = (("primary", "Books", "books"),)
+
+        def __init__(self) -> None:
+            self.progress = PipelineProgress(
+                pipeline_scan_id("primary", "Books", first_boot=True),
+                "primary",
+                "Books",
+                "processing",
+                1,
+                7,
+                1,
+                0,
+                False,
+            )
+
+        def attach_updates(self, announce: object) -> None:
+            return None
+
+        def status(self):
+            return ((self.progress,), False)
+
+        def connection_conditions(self):
+            return ()
+
+    preparation = Preparation()
+    application = compose_review_application(
+        state_owner=repository,
+        session_store=repository,
+        case_store=repository,
+        decision_store=repository,
+        library_store=repository,
+        policy_store=repository,
+        verify_password=lambda value: value == "correct horse",
+        clock=lambda: _NOW,
+        session_lifetime_seconds=600,
+        graceful_shutdown_seconds=30,
+        preparation=cast("ReviewPreparationSupervisor", preparation),
+        first_boot=True,
+    )
+
+    view = application.preparation()
+    assert view.first_boot is True
+    assert view.first_boot_complete is False
+    assert view.first_boot_works is None
+
+    preparation.progress = PipelineProgress(
+        pipeline_scan_id("primary", "Books", first_boot=True),
+        "primary",
+        "Books",
+        "completed_with_failures",
+        7,
+        7,
+        5,
+        2,
+        False,
+    )
+    view = application.preparation()
+    assert view.first_boot_complete is True
+    assert view.first_boot_works == 7
+
+    preparation.progress = PipelineProgress(
+        pipeline_scan_id("primary", "Books"),
+        "primary",
+        "Books",
+        "completed",
+        7,
+        7,
+        7,
+        0,
+        False,
+    )
+    assert application.preparation().first_boot is False
+
+
+def test_first_boot_status_length_mismatch_keeps_typed_persistence_error(
+    repository: FakeReviewRepository,
+) -> None:
+    class Preparation:
+        libraries = (("primary", "Books", "books"),)
+
+        def attach_updates(self, announce: object) -> None:
+            return None
+
+        def status(self):
+            return ((), False)
+
+        def connection_conditions(self):
+            raise AssertionError("length mismatch must fail first")
+
+    application = compose_review_application(
+        state_owner=repository,
+        session_store=repository,
+        case_store=repository,
+        decision_store=repository,
+        library_store=repository,
+        policy_store=repository,
+        verify_password=lambda value: value == "correct horse",
+        clock=lambda: _NOW,
+        session_lifetime_seconds=600,
+        graceful_shutdown_seconds=30,
+        preparation=cast("ReviewPreparationSupervisor", Preparation()),
+        first_boot=True,
+    )
+
+    with pytest.raises(ReviewApplicationError, match="^persistence$"):
+        application.preparation()
 
 
 def test_policy_candidate_workflows_are_application_operations(

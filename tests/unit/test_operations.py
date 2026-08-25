@@ -30,6 +30,7 @@ from mechanical_librarian.domain.field_effect import (
     EffectConsent,
     FieldEffectPlan,
 )
+from mechanical_librarian.infrastructure.settings_authority import ReviewBootstrap
 
 
 def _plan() -> FieldEffectPlan:
@@ -82,7 +83,13 @@ def test_deployment_contract_names_the_composed_guarded_target() -> None:
 
 
 def test_container_entrypoint_initializes_only_absent_exact_current_stores() -> None:
-    catalogue = Mock()
+    bootstrap = ReviewBootstrap(
+        schema_version="review-bootstrap-v1",
+        canonical_origin="https://setup.invalid",
+        tls_certificate_file="/run/secrets/review.crt",
+        tls_private_key_file="/run/secrets/review.key",
+        setup_owner_verifier="$argon2id$synthetic-bootstrap-verifier",
+    )
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         with (
@@ -92,21 +99,25 @@ def test_container_entrypoint_initializes_only_absent_exact_current_stores() -> 
             patch.object(container, "CATALOGUE", root / "catalogue.sqlite3"),
             patch.object(container, "ARTIFACTS", root / "artifacts"),
             patch.object(
-                container, "open_catalogue", return_value=catalogue
-            ) as open_cat,
+                container, "load_review_bootstrap", return_value=bootstrap
+            ) as load_bootstrap,
+            patch.object(container, "open_catalogue") as open_cat,
+            patch.object(container, "run_setup_server") as setup,
             patch.object(container, "run_review_server") as serve,
         ):
             container.main()
-        open_cat.assert_called_once_with(root / "catalogue.sqlite3", create=True)
-        catalogue.close.assert_called_once_with()
-        serve.assert_called_once_with(
-            root / "config.json",
+        load_bootstrap.assert_called_once_with(
+            Path("/run/secrets/review-bootstrap.json")
+        )
+        setup.assert_called_once_with(
+            bootstrap,
             root / "application.sqlite3",
-            root / "catalogue.sqlite3",
-            root / "artifacts",
             "0.0.0.0",
             8443,
+            initialize=True,
         )
+        open_cat.assert_not_called()
+        serve.assert_not_called()
         assert root.stat().st_mode & 0o777 == 0o700
 
 
@@ -125,6 +136,7 @@ def test_container_definition_keeps_one_non_root_process_volume_and_port() -> No
     assert "cap_drop:" in compose
     assert compose.count("8443:8443") == 1
     assert compose.count("mechanical-librarian-data:/data") == 1
+    assert "stop_grace_period: 610s" in compose
 
 
 def test_status_is_not_ready_until_exact_current_snapshot_opens_and_drains() -> None:

@@ -151,7 +151,9 @@ class ReviewPipelineStages:
         self._discovery_lock = discovery_lock
         self._clock = clock
 
-    def pipeline(self, timing: StageTimer | None = None) -> ReviewPreparationPipeline:
+    def pipeline(
+        self, timing: StageTimer | None = None, *, first_boot: bool = False
+    ) -> ReviewPreparationPipeline:
         """Assemble the one pipeline these stages advance."""
         return ReviewPreparationPipeline(
             repository_factory=self._repository_factory,
@@ -183,6 +185,7 @@ class ReviewPipelineStages:
             providers=self.providers,
             propose=self.propose,
             admit=self.admit,
+            first_boot=first_boot,
             project=self.project,
             before_projection=self.prepare_cover,
             after_advance=self.after_advance,

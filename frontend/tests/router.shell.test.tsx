@@ -2,14 +2,105 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { PreparationView, ReviewHttp } from '../src/api/http'
 import type { LiveStreamState, LiveUpdate, LiveUpdateStream } from '../src/liveUpdates'
 import { createApplicationRouter } from '../src/router'
 import { createHttp, renderRoute } from './fixtures'
 
+const reducedMotion = () => ({
+  matches: true,
+  media: '(prefers-reduced-motion: reduce)',
+  onchange: null,
+  addEventListener: vi.fn(),
+  removeEventListener: vi.fn(),
+  addListener: vi.fn(),
+  removeListener: vi.fn(),
+  dispatchEvent: vi.fn(() => true),
+})
+
+afterEach(() => vi.unstubAllGlobals())
+
 describe('Application shell', () => {
+  it('hands over at the first ready work while preparation keeps streaming', async () => {
+    vi.stubGlobal('matchMedia', vi.fn(reducedMotion))
+    HTMLElement.prototype.scrollIntoView = vi.fn()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async (): Promise<PreparationView> => ({
+        schema_version: 'review-preparation-v1',
+        active: true,
+        actionable: false,
+        paused: false,
+        first_boot: true,
+        first_boot_complete: false,
+        first_boot_works: null,
+        libraries: [
+          {
+            blocked: 0,
+            checked: 1,
+            connection: 'primary',
+            library: 'Books',
+            library_id: 'books',
+            ready: 1,
+            rescan_requested: false,
+            scan_id: 'scan-1',
+            state: 'processing',
+            total: 7,
+          },
+        ],
+      })),
+    }
+    renderRoute('/library?lens=all', http)
+
+    expect(await screen.findByRole('heading', { name: 'Your first work is ready' })).toHaveFocus()
+    expect(screen.queryByRole('link', { name: 'Open workspace' })).toBeNull()
+    expect(screen.getByText('Preparation continues here as more work becomes ready.')).toBeVisible()
+    expect(screen.getByText('1 ready · 1 of 7 checked')).toBeVisible()
+    expect(screen.queryByText(/Preparation complete/u)).toBeNull()
+  })
+
+  it('shows the unique-work measurement only at terminal first-boot preparation', async () => {
+    vi.stubGlobal('matchMedia', vi.fn(reducedMotion))
+    HTMLElement.prototype.scrollIntoView = vi.fn()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async (): Promise<PreparationView> => ({
+        schema_version: 'review-preparation-v1',
+        active: false,
+        actionable: true,
+        paused: false,
+        first_boot: true,
+        first_boot_complete: true,
+        first_boot_works: 7,
+        libraries: [
+          {
+            blocked: 2,
+            checked: 7,
+            connection: 'primary',
+            library: 'Books',
+            library_id: 'books',
+            ready: 5,
+            rescan_requested: false,
+            scan_id: 'scan-1',
+            state: 'completed_with_failures',
+            total: 7,
+          },
+        ],
+      })),
+    }
+    renderRoute('/library?lens=all', http)
+
+    expect(
+      await screen.findByText(
+        'Preparation complete · 7 unique works checked, including work that could not finish.',
+      ),
+    ).toBeVisible()
+    expect(screen.getByText('Preparation is complete. Review your ready work below.')).toBeVisible()
+    expect(screen.queryByText(/Preparation continues here/u)).toBeNull()
+  })
+
   it('refreshes active projections when passive preparation progress changes', async () => {
     vi.useFakeTimers()
     try {

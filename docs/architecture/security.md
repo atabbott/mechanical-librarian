@@ -257,13 +257,27 @@ path. Its setup login assets and fixed failure envelope occupy the existing
 login boundary; every wizard read or mutation requires a session minted only
 after verification against the owner-only bootstrap verifier, plus the ordinary
 CSRF and Origin checks for a mutation. That verifier is admitted only while
-no durable setup-completion record exists and `/data` is either empty or holds
-the exact valid incomplete-setup state created under bootstrap authority.
-Arbitrary nonempty, malformed, or store-mode state fails closed. The atomic
+no durable setup-completion record exists and `/data` is empty, holds the exact
+valid incomplete-setup state created under bootstrap authority, or holds only
+the exact seeded schema left by interruption before the initial setup document
+committed. That last predecessor has no settings, secrets, sessions, login
+failures, or operational rows and may only complete bootstrap-bound setup
+initialization. Arbitrary nonempty, malformed, or store-mode state fails closed.
+The atomic
 completion handoff stops reading the verifier, permanently closes setup routes,
 and returns to the ordinary owner-session boundary. An unauthenticated client
 therefore cannot claim ownership, stage settings, complete setup, or reach a
 generic write route.
+
+Connection setup performs one supported, bounded `GET /api/libraries` with TLS
+verification on, ambient environment and redirects off, one connection, and
+the submitted API key attached only to the admitted Audiobookshelf origin.
+Endpoint and key enter the incomplete store in one SQLite transaction only
+after that read succeeds. Later library discovery passes the stored key
+directly from persistence to the same setup-only infrastructure consumer; no
+application or HTTP read returns it. Provider keys follow the same write-only
+delta boundary, while the optional Open Library contact email remains a local
+non-secret setting used only for Open Library requests.
 
 The server receives a composed application boundary rather than a database or
 broad repository. Authentication, currentness, decisions, policy, preparation,
