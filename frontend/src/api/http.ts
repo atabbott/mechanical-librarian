@@ -202,7 +202,7 @@ export interface EvidenceView {
 }
 export interface HistoryValueView {
   kind: string
-  value: string | boolean | readonly string[] | readonly { name: string; sequence?: string }[]
+  value: string | boolean | readonly string[] | readonly { name: string; sequence: string | null }[]
 }
 export type HistoryItemView =
   | {
@@ -857,9 +857,10 @@ const stringValue = (value: unknown, field: string) => {
   if (typeof value !== 'string') throw new ApiError(502, `invalid_${field}`)
   return value
 }
+const codePointLength = (value: string) => Array.from(value).length
 const boundedStringValue = (value: unknown, field: string, maximum: number) => {
   const result = stringValue(value, field)
-  if (result.length > maximum) throw new ApiError(502, `invalid_${field}`)
+  if (codePointLength(result) > maximum) throw new ApiError(502, `invalid_${field}`)
   return result
 }
 const integerValue = (value: unknown, field: string) => {
@@ -1411,7 +1412,7 @@ export const mapCaseDetail = (value: unknown): CaseDetailView => {
   const dto = value as unknown as CaseDetailDto
   if (typeof dto.current !== 'boolean') throw new ApiError(502, 'invalid_case_currentness')
   const authors = stringArray(dto.target.authors, 'target_authors')
-  if (authors.length > 128 || authors.some((author) => author.length > 512))
+  if (authors.length > 128 || authors.some((author) => codePointLength(author) > 512))
     throw new ApiError(502, 'invalid_target_authors')
   const library = boundedStringValue(dto.target.library, 'target_library', 512)
   const mediaKind = boundedStringValue(dto.target.media_kind, 'target_media_kind', 64)
@@ -1527,25 +1528,26 @@ const mapHistoryValue = (value: unknown, field: string): HistoryValueView | null
   const kind = boundedStringValue(value.kind, `${field}_kind`, 64)
   const retained = value.value
   if (typeof retained === 'string') {
-    if (retained.length > 4096) throw new ApiError(502, `invalid_${field}_value`)
+    if (codePointLength(retained) > 16_384) throw new ApiError(502, `invalid_${field}_value`)
     return { kind, value: retained }
   }
   if (typeof retained === 'boolean') return { kind, value: retained }
   if (!Array.isArray(retained) || retained.length > 128)
     throw new ApiError(502, `invalid_${field}_value`)
-  if (retained.every((item) => typeof item === 'string' && item.length <= 512))
+  if (retained.every((item) => typeof item === 'string' && codePointLength(item) <= 512))
     return { kind, value: retained }
   if (
     retained.every(
       (item) =>
         record(item) &&
         typeof item.name === 'string' &&
-        item.name.length <= 512 &&
-        (item.sequence === undefined ||
-          (typeof item.sequence === 'string' && item.sequence.length <= 64)),
+        codePointLength(item.name) <= 512 &&
+        Object.hasOwn(item, 'sequence') &&
+        (item.sequence === null ||
+          (typeof item.sequence === 'string' && codePointLength(item.sequence) <= 512)),
     )
   )
-    return { kind, value: retained as { name: string; sequence?: string }[] }
+    return { kind, value: retained as { name: string; sequence: string | null }[] }
   throw new ApiError(502, `invalid_${field}_value`)
 }
 
@@ -1609,7 +1611,7 @@ export const mapHistory = (value: unknown): HistoryView => {
       if (
         kind === 'automatic_prepared' ||
         kind === 'owner_retry_prepared' ||
-        kind === 'superseded' ||
+        (kind === 'superseded' && Object.hasOwn(item, 'consideration')) ||
         kind === 'selected' ||
         kind === 'kept_incumbent' ||
         kind === 'no_action' ||
@@ -1640,7 +1642,10 @@ export const mapHistory = (value: unknown): HistoryView => {
         const policyReasons = policy
           ? stringArray(policy.reasons, `history_item_${String(index)}_policy_reasons`)
           : []
-        if (policyReasons.length > 32 || policyReasons.some((reason) => reason.length > 128))
+        if (
+          policyReasons.length > 32 ||
+          policyReasons.some((reason) => codePointLength(reason) > 128)
+        )
           throw new ApiError(502, `invalid_history_item_${String(index)}_policy_reasons`)
         const reviewerStatus = boundedStringValue(
           item.consideration.reviewer_status,
