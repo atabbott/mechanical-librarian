@@ -88,7 +88,9 @@ class SetupStateDocument(_Closed):
                 raise SetupStateError("setup state is unavailable")
         if (self.libraries != []) != ("libraries" in self.completed_steps):
             raise SetupStateError("setup state is unavailable")
-        if (self.mounts != []) != ("mounts" in self.completed_steps):
+        if self.mounts and "libraries" not in self.completed_steps:
+            raise SetupStateError("setup state is unavailable")
+        if "mounts" in self.completed_steps and not self.mounts:
             raise SetupStateError("setup state is unavailable")
         return self
 

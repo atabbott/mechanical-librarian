@@ -20,6 +20,45 @@ import { createApplicationRouter, normalizeLibrarySearch } from '../src/router'
 import { activity, createHttp, createLiveStream, detail, library, renderRoute } from './fixtures'
 
 describe('Library route', () => {
+  it('shows the terminal first-boot measurement when no work became ready', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })),
+    )
+    renderRoute('/library?lens=all', {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => ({
+        schema_version: 'review-preparation-v1' as const,
+        active: false,
+        actionable: false,
+        paused: false,
+        first_boot: true,
+        first_boot_complete: true,
+        first_boot_works: 1,
+        libraries: [
+          {
+            blocked: 1,
+            checked: 1,
+            connection: 'primary',
+            library: 'books',
+            library_id: 'books',
+            ready: 0,
+            rescan_requested: false,
+            scan_id: null,
+            state: 'complete',
+            total: 1,
+          },
+        ],
+      })),
+    })
+    expect(
+      await screen.findByRole('heading', { name: 'First preparation is complete' }),
+    ).toBeVisible()
+    expect(screen.queryByText('Your first work is ready')).toBeNull()
+    expect(screen.getByText(/1 unique works checked/u)).toBeVisible()
+    vi.unstubAllGlobals()
+  })
+
   it('keeps a target route pending until its selected field commits', () => {
     const presentation = {
       destination: 'authors',
@@ -116,8 +155,14 @@ describe('Library route', () => {
     expect(screen.queryByText('item-1')).toBeNull()
     expect(screen.getByText('Author details unavailable · Books · ebook')).toBeVisible()
     expect(http.getCaseDetail).toHaveBeenCalledWith('case-1', expect.any(AbortSignal))
-    expect(screen.getByRole('link', { name: 'Evidence' })).toHaveAttribute('href', '/review/case-1?lens=all&subview=evidence&field=title')
-    expect(screen.getByRole('link', { name: 'History' })).toHaveAttribute('href', '/review/case-1?lens=all&subview=history&field=title')
+    expect(screen.getByRole('link', { name: 'Evidence' })).toHaveAttribute(
+      'href',
+      '/review/case-1?lens=all&subview=evidence&field=title',
+    )
+    expect(screen.getByRole('link', { name: 'History' })).toHaveAttribute(
+      'href',
+      '/review/case-1?lens=all&subview=history&field=title',
+    )
   })
 
   it('opens a current summary and its source ledger for a work with no review case', async () => {
@@ -620,7 +665,9 @@ describe('Library route', () => {
           recommendation: 'no_recommendation' as const,
           recommendationReason: 'Current series evidence.',
           limitations: [],
-          evidence: [{ source: 'Current source', observation: 'Old series', role: 'local_presence' }],
+          evidence: [
+            { source: 'Current source', observation: 'Old series', role: 'local_presence' },
+          ],
         },
         {
           alternativeId: 'alternative-series-1',
@@ -629,7 +676,13 @@ describe('Library route', () => {
           recommendation: 'recommended' as const,
           recommendationReason: 'Selected automatic series evidence.',
           limitations: [],
-          evidence: [{ source: 'Candidate source', observation: 'New series', role: 'external_corroboration' }],
+          evidence: [
+            {
+              source: 'Candidate source',
+              observation: 'New series',
+              role: 'external_corroboration',
+            },
+          ],
         },
       ] as const,
       currentValue: 'Old series',
@@ -1516,7 +1569,9 @@ describe('Library route', () => {
 
     await waitFor(() => expect(http.recordDecision).toHaveBeenCalledOnce())
     await waitFor(() => expect(http.getLibrary).toHaveBeenCalledTimes(2))
-    expect(screen.queryByText('The decision was not recorded. Your choice is unchanged.')).toBeNull()
+    expect(
+      screen.queryByText('The decision was not recorded. Your choice is unchanged.'),
+    ).toBeNull()
     expect(screen.queryByRole('button', { name: 'Try the same decision again' })).toBeNull()
   })
 
@@ -1567,7 +1622,10 @@ describe('Library route', () => {
         }
       }),
     }
-    const { queryClient, router } = renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    const { queryClient, router } = renderRoute(
+      '/library?lens=all&preview=case-1&field=title',
+      http,
+    )
     let rejectNavigation: ((reason: Error) => void) | undefined
     const pendingNavigation = new Promise<void>((_resolve, reject) => {
       rejectNavigation = reject
@@ -1575,16 +1633,16 @@ describe('Library route', () => {
     vi.spyOn(router, 'navigate').mockImplementationOnce(async () => await pendingNavigation)
     const invalidations = vi.spyOn(queryClient, 'invalidateQueries')
 
-    await user.click(await screen.findByRole('button', { name: 'Choose proposed value: New title' }))
+    await user.click(
+      await screen.findByRole('button', { name: 'Choose proposed value: New title' }),
+    )
     await waitFor(() => expect(http.recordDecision).toHaveBeenCalledOnce())
     cleanup()
     await act(async () => {
       rejectNavigation?.(new Error('navigation unavailable after unmount'))
     })
 
-    await waitFor(() =>
-      expect(invalidations).toHaveBeenCalledWith({ queryKey: ['library'] }),
-    )
+    await waitFor(() => expect(invalidations).toHaveBeenCalledWith({ queryKey: ['library'] }))
   })
 
   it('settles an owner advance when an exact-source route supersedes its held target', async () => {
@@ -1653,7 +1711,9 @@ describe('Library route', () => {
       if (typeof options.search === 'function') options.search(router.state.location.search)
       await targetNavigation
     })
-    await user.click(await screen.findByRole('button', { name: 'Choose proposed value: New title' }))
+    await user.click(
+      await screen.findByRole('button', { name: 'Choose proposed value: New title' }),
+    )
     await waitFor(() => expect(reads).toBe(2))
     await act(async () => {
       releaseRefresh?.(current)
@@ -1670,7 +1730,9 @@ describe('Library route', () => {
       lens: 'all',
       preview: 'case-1',
     })
-    expect(screen.queryByText('The decision was not recorded. Your choice is unchanged.')).toBeNull()
+    expect(
+      screen.queryByText('The decision was not recorded. Your choice is unchanged.'),
+    ).toBeNull()
   })
 
   it('activates a focused choice once with Enter or Space while recording in place', async () => {
@@ -1898,12 +1960,16 @@ describe('Library route', () => {
       recordDecision,
     })
 
-    await user.click(await screen.findByRole('button', { name: 'Choose proposed value: New title' }))
+    await user.click(
+      await screen.findByRole('button', { name: 'Choose proposed value: New title' }),
+    )
     await waitFor(() =>
       expect(screen.getByRole('heading', { level: 2, name: 'Works' })).toBeVisible(),
     )
     await user.click(
-      screen.getByRole('button', { name: 'A Book. Author details unavailable. 1 field needs attention' }),
+      screen.getByRole('button', {
+        name: 'A Book. Author details unavailable. 1 field needs attention',
+      }),
     )
 
     const proposed = await screen.findByRole('button', { name: 'Choose proposed value: New title' })
@@ -1976,51 +2042,49 @@ describe('Library route', () => {
     const http: ReviewHttp = {
       ...createHttp(),
       getCaseDetail: vi.fn(async () => current),
-      recordDecision: vi.fn(async (
-        _reviewCaseId: string,
-        command: DecisionCommand,
-        _signal?: AbortSignal,
-      ) => {
-        void _signal
-        if (command.outcome === 'accept' && command.selectedValue === undefined) {
-          throw new Error('accept command requires its selected value')
-        }
-        const selectedValue = command.selectedValue ?? null
-        current = {
-          ...detail,
-          fields: [
-            {
-              ...titleField,
-              needsAttention: false,
-              humanDecision: {
-                actor: 'owner',
-                decision_id: `decision-title-${command.outcome}`,
-                destination: 'title',
-                occurred_at: 1,
-                outcome: command.outcome,
-                proposal_id: titleField.proposalId,
-                review_case_id: 'case-1',
-                selected_value: selectedValue,
-                target_fingerprint: titleField.targetFingerprint,
+      recordDecision: vi.fn(
+        async (_reviewCaseId: string, command: DecisionCommand, _signal?: AbortSignal) => {
+          void _signal
+          if (command.outcome === 'accept' && command.selectedValue === undefined) {
+            throw new Error('accept command requires its selected value')
+          }
+          const selectedValue = command.selectedValue ?? null
+          current = {
+            ...detail,
+            fields: [
+              {
+                ...titleField,
+                needsAttention: false,
+                humanDecision: {
+                  actor: 'owner',
+                  decision_id: `decision-title-${command.outcome}`,
+                  destination: 'title',
+                  occurred_at: 1,
+                  outcome: command.outcome,
+                  proposal_id: titleField.proposalId,
+                  review_case_id: 'case-1',
+                  selected_value: selectedValue,
+                  target_fingerprint: titleField.targetFingerprint,
+                },
               },
-            },
-            recordedAuthors,
-          ],
-        }
-        return {
-          invalidation_sequences: [],
-          schema_version: 'review-decision-v1',
-          actor: 'owner',
-          decision_id: `decision-title-${command.outcome}`,
-          destination: 'title',
-          occurred_at: 1,
-          outcome: command.outcome,
-          proposal_id: titleField.proposalId,
-          review_case_id: 'case-1',
-          selected_value: selectedValue,
-          target_fingerprint: titleField.targetFingerprint,
-        }
-      }),
+              recordedAuthors,
+            ],
+          }
+          return {
+            invalidation_sequences: [],
+            schema_version: 'review-decision-v1',
+            actor: 'owner',
+            decision_id: `decision-title-${command.outcome}`,
+            destination: 'title',
+            occurred_at: 1,
+            outcome: command.outcome,
+            proposal_id: titleField.proposalId,
+            review_case_id: 'case-1',
+            selected_value: selectedValue,
+            target_fingerprint: titleField.targetFingerprint,
+          }
+        },
+      ),
     }
     renderRoute('/library?lens=all&preview=case-1&field=title', http)
 
@@ -2066,9 +2130,7 @@ describe('Library route', () => {
     expect(
       await screen.findByRole('button', { name: 'Choose current value: Old title' }),
     ).toBeVisible()
-    await waitFor(() =>
-      expect(document.querySelector('[data-route-focus]')).toHaveFocus(),
-    )
+    await waitFor(() => expect(document.querySelector('[data-route-focus]')).toHaveFocus())
   })
 
   it('keeps a persistent control focused when selected detail becomes ready', async () => {
@@ -2096,8 +2158,7 @@ describe('Library route', () => {
       await screen.findByRole('button', { name: 'Choose current value: Old title' }),
     ).toBeVisible()
     await act(
-      async () =>
-        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+      async () => await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
     )
     expect(back).toHaveFocus()
   })
@@ -2130,9 +2191,7 @@ describe('Library route', () => {
     expect(
       await screen.findByRole('button', { name: 'Choose current value: Old title' }),
     ).toBeVisible()
-    await waitFor(() =>
-      expect(document.querySelector('[data-route-focus]')).toHaveFocus(),
-    )
+    await waitFor(() => expect(document.querySelector('[data-route-focus]')).toHaveFocus())
   })
 
   it('restores retry focus when selected detail retry fails', async () => {
@@ -2191,8 +2250,7 @@ describe('Library route', () => {
       await screen.findByRole('button', { name: 'Choose current value: Old title' }),
     ).toBeVisible()
     await act(
-      async () =>
-        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+      async () => await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
     )
     expect(back).toHaveFocus()
   })

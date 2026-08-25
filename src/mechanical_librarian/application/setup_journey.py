@@ -174,8 +174,15 @@ class SetupJourneyOperation:
                     "connect",
                     "providers",
                     "libraries",
-                    "mounts",
-                ],
+                ]
+                + (
+                    ["mounts"]
+                    if all(
+                        library.media_kind != "ebook" or result.state == "matched"
+                        for library, result in zip(libraries, results, strict=True)
+                    )
+                    else []
+                ),
                 "libraries": [value.model_dump() for value in libraries],
                 "mounts": [value.model_dump() for value in results],
             }

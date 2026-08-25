@@ -196,6 +196,8 @@ def test_mount_comparison_records_matched_ambiguous_unmatched_and_unobservable()
         "matched": "matched",
         "unmatched": "unmatched",
     }
+    assert state.next_step() == "mounts"
+    assert "mounts" not in state.completed_steps
     assert (
         next(value for value in state.libraries if value.name == "matched").mount
         == "books"

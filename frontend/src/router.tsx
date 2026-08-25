@@ -440,8 +440,9 @@ export const FirstBootHandover = () => {
   const heading = useRef<HTMLHeadingElement>(null)
   const announced = useRef(false)
   const ready = data?.libraries.reduce((total, library) => total + library.ready, 0) ?? 0
+  const terminal = Boolean(data?.first_boot_complete)
   useLayoutEffect(() => {
-    if (!data?.first_boot || ready < 1 || announced.current) return
+    if (!data?.first_boot || (ready < 1 && !terminal) || announced.current) return
     announced.current = true
     heading.current?.focus({ preventScroll: true })
     const section = heading.current?.closest('section')
@@ -452,18 +453,19 @@ export const FirstBootHandover = () => {
           ? 'instant'
           : 'smooth',
       })
-  }, [data?.first_boot, ready])
-  if (!data?.first_boot || ready < 1) return null
+  }, [data?.first_boot, ready, terminal])
+  if (!data?.first_boot || (ready < 1 && !terminal)) return null
   return (
     <section className="first-boot-handover" aria-labelledby="first-boot-handover-title">
       <div className="first-boot-handover-card">
         <p>First preparation</p>
         <h2 id="first-boot-handover-title" ref={heading} tabIndex={-1}>
-          Your first work is ready
+          {ready > 0 ? 'Your first work is ready' : 'First preparation is complete'}
         </h2>
         <p>
-          You can begin in Library while preparation continues. New work appears here as it is
-          ready.
+          {ready > 0
+            ? 'You can begin in Library while preparation continues. New work appears here as it is ready.'
+            : 'No work became ready during this preparation. Open Library to review the recorded failures and recovery.'}
         </p>
         <Link to="/library" search={{ lens: 'all' }}>
           Open workspace
