@@ -262,6 +262,12 @@ describe('shipped first-run setup script', () => {
       runSetup()
 
       const kickoff = await screen.findByRole('button', { name: 'Kick off preparation' })
+      const ledger = document.querySelector('#setup-ledger')
+      if (!ledger) throw new Error('setup ledger missing')
+      const kickoffRow = within(ledger).getByText('Kick off preparation').closest('li')
+      if (!kickoffRow) throw new Error('kickoff ledger row missing')
+      expect(kickoffRow).toHaveAttribute('aria-current', 'step')
+      expect(within(kickoffRow).getByText('→')).toBeVisible()
       expect(screen.getAllByRole('button', { name: 'Change' })).toHaveLength(4)
       fireEvent.click(kickoff)
 
@@ -273,6 +279,12 @@ describe('shipped first-run setup script', () => {
       )
       expect(screen.queryByRole('button', { name: 'Change' })).toBeNull()
       expect(screen.queryAllByRole('button')).toHaveLength(0)
+      const completedRows = ledger.querySelectorAll('.ledger-row')
+      expect(completedRows).toHaveLength(6)
+      expect(
+        [...completedRows].every((row) => row.querySelector('span')?.textContent === '✓'),
+      ).toBe(true)
+      expect(ledger.querySelector('[aria-current]')).toBeNull()
       vi.stubGlobal('setInterval', previousSetInterval)
       vi.stubGlobal('clearInterval', previousClearInterval)
     },
