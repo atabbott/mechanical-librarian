@@ -1057,10 +1057,6 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
     _validate_schema_against(connection, _expected_schema_objects())
 
 
-_REVIEW_FIELD_FACTS_PREDECESSOR_OBJECTS_SHA256 = (
-    "3394552b57feed912c96d40809acfd5447d743b8e51360f9b65701341619b2ab"
-)
-
 _REVIEW_OWNER_DECISION_ACTIONS_V1_SOURCE_OBJECTS_SHA256 = (
     "1d54249b0c30c98903e231f73064b3a43836847ed9a37f748970c7f17e150b89"
 )
@@ -1090,20 +1086,6 @@ _REVIEW_OWNER_DECISION_ACTIONS_V1_SOURCE_FACTS_INSERT_SQL = (
     + _REVIEW_OWNER_DECISION_ACTIONS_V1_SOURCE_FACT_VALUES_SQL
     + " FROM json_each(NEW.document,'$.results') result; END"
 )
-
-
-def _validate_review_field_facts_predecessor_schema(
-    connection: sqlite3.Connection,
-) -> None:
-    objects = connection.execute(
-        "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
-    ).fetchall()
-    digest = hashlib.sha256(
-        json.dumps(objects, ensure_ascii=True, separators=(",", ":")).encode()
-    ).hexdigest()
-    if digest != _REVIEW_FIELD_FACTS_PREDECESSOR_OBJECTS_SHA256:
-        raise MetadataReportError("database is unavailable or incompatible")
-    _validate_schema_contents_without_review_field_facts(connection)
 
 
 def _validate_review_owner_decision_actions_predecessor_schema(
