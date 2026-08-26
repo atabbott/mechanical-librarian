@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import tomllib
 from contextlib import contextmanager
 from dataclasses import replace
@@ -1097,7 +1098,9 @@ def test_gated_timeout_and_cancel_kill_the_captured_process_identity(
         artifact = adapter._BoundArtifact(10, "/proc/self/fd/10")
         killed: list[tuple[int, int, str]] = []
         with (
-            patch.object(adapter.os, "pipe", side_effect=[(20, 21), (22, 23)]),
+            patch.object(
+                adapter.os, "pipe", side_effect=[(20, 21), (22, 23), (24, 25)]
+            ),
             patch.object(adapter.os, "fork", return_value=4321),
             patch.object(adapter.os, "close"),
             patch.object(adapter.os, "read", return_value=b"R"),
@@ -1123,6 +1126,150 @@ def test_gated_timeout_and_cancel_kill_the_captured_process_identity(
                     credential_descriptor=4,
                 )
         assert killed == [(4321, 4321, "9876")]
+
+
+def test_busy_uid_baseline_leaves_the_fixed_reviewer_headroom() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
+        with (
+            patch.object(adapter, "_linux_uid_task_count", return_value=19),
+            patch.object(adapter.resource, "setrlimit") as limit,
+        ):
+            reviewer._limit_child()
+    assert limit.call_args_list[2].args == (
+        adapter.resource.RLIMIT_NPROC,
+        (51, 51),
+    )
+
+
+def test_consecutive_reviewer_limits_follow_the_current_uid_baseline() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
+        with (
+            patch.object(adapter, "_linux_uid_task_count", side_effect=(19, 27)),
+            patch.object(adapter.resource, "setrlimit") as limit,
+        ):
+            reviewer._limit_child()
+            reviewer._limit_child()
+    assert [
+        call.args[1]
+        for call in limit.call_args_list
+        if call.args[0] == adapter.resource.RLIMIT_NPROC
+    ] == [(51, 51), (59, 59)]
+
+
+def test_proc_task_count_skips_vanished_tasks_and_refuses_hostile_status() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        proc = Path(temporary)
+        current = proc / "101"
+        current.mkdir()
+        (current / "status").write_text(
+            f"Name:\ttest\nUid:\t{os.getuid()} {os.getuid()} {os.getuid()} {os.getuid()}\n",
+            encoding="ascii",
+        )
+        tasks = current / "task"
+        tasks.mkdir()
+        (tasks / "101").mkdir()
+        (tasks / "102").mkdir()
+        vanished = proc / "102"
+        vanished.mkdir()
+        (vanished / "status").write_text(
+            f"Name:\tvanished\nUid:\t{os.getuid()} {os.getuid()} {os.getuid()} {os.getuid()}\n",
+            encoding="ascii",
+        )
+        with patch.object(adapter, "_PROC_ROOT", proc):
+            assert adapter._linux_uid_task_count() == 2
+        (current / "status").write_text("Uid:\tnot-a-uid\n", encoding="ascii")
+        with patch.object(adapter, "_PROC_ROOT", proc):
+            with pytest.raises(adapter.ContainedReviewerProcessError, match="spawn"):
+                adapter._linux_uid_task_count()
+
+
+def test_proc_task_count_fails_closed_above_its_bounded_scan_limit() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        proc = Path(temporary)
+        current = proc / "101"
+        current.mkdir()
+        (current / "status").write_text(
+            f"Uid:\t{os.getuid()} {os.getuid()} {os.getuid()} {os.getuid()}\n",
+            encoding="ascii",
+        )
+        tasks = current / "task"
+        tasks.mkdir()
+        (tasks / "101").mkdir()
+        (tasks / "102").mkdir()
+        with (
+            patch.object(adapter, "_PROC_ROOT", proc),
+            patch.object(adapter, "MAX_UID_TASKS", 1),
+            pytest.raises(adapter.ContainedReviewerProcessError, match="spawn"),
+        ):
+            adapter._linux_uid_task_count()
+
+
+def test_gated_fork_and_resource_failures_are_typed_spawn_failures() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
+        artifact = adapter._BoundArtifact(10, "/proc/self/fd/10")
+        with (
+            patch.object(
+                adapter.os, "pipe", side_effect=[(20, 21), (22, 23), (24, 25)]
+            ),
+            patch.object(adapter.os, "fork", side_effect=OSError("full")),
+            patch.object(adapter.os, "close"),
+            pytest.raises(
+                adapter.ContainedReviewerProcessError, match="spawn"
+            ) as caught,
+        ):
+            reviewer._run_gated(
+                [],
+                artifact,
+                artifact,
+                1,
+                2,
+                3,
+                lambda *_: None,
+                credential_descriptor=4,
+            )
+        assert caught.value.code == "spawn"
+
+        with (
+            patch.object(
+                adapter.os, "pipe", side_effect=[(20, 21), (22, 23), (24, 25)]
+            ),
+            patch.object(adapter.os, "fork", return_value=4321),
+            patch.object(adapter.os, "close"),
+            patch.object(adapter.os, "read", side_effect=[b"R", b"S"]),
+            patch.object(adapter.os, "write"),
+            patch.object(adapter, "_process_start_token", return_value="9876"),
+            patch.object(adapter, "_wait_for_exit", return_value=126),
+            pytest.raises(
+                adapter.ContainedReviewerProcessError, match="spawn"
+            ) as caught,
+        ):
+            reviewer._run_gated(
+                [],
+                artifact,
+                artifact,
+                1,
+                2,
+                3,
+                lambda *_: None,
+                credential_descriptor=4,
+            )
+        assert caught.value.code == "spawn"
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux process proof")
+def test_killed_direct_child_is_reaped_without_a_zombie() -> None:
+    pid = os.fork()
+    if pid == 0:
+        os.setsid()
+        time.sleep(30)
+        os._exit(0)
+    token = adapter._process_start_token(pid)
+    adapter._kill_and_prove_dead(pid, pid, token)
+    with pytest.raises(ChildProcessError):
+        os.waitpid(pid, os.WNOHANG)
 
 
 def test_cleanup_kills_group_and_proves_process_death() -> None:

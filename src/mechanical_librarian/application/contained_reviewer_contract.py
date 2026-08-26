@@ -48,6 +48,7 @@ class ContainedReviewerError(RuntimeError):
             "response_format",
             "runtime",
             "setup",
+            "spawn",
             "timeout",
         }
     )
