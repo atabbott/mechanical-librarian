@@ -10,7 +10,10 @@ import pytest
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
 )
-from mechanical_librarian.application.review_web import BrowseReviewLibrary
+from mechanical_librarian.application.review_web import (
+    BrowseReviewLibrary,
+    _encode_cursor,
+)
 from tests.unit import test_review_read_indexes as support
 
 
@@ -186,3 +189,63 @@ def test_production_surfaces_use_measured_indexes_within_scale_budget() -> None:
             for statement in history_statements
         )
         repository.close()
+
+
+def test_deep_browse_pages_sort_thin_keys_before_loading_documents() -> None:
+    """A page's document payload stays fixed past 2,000 attention rows."""
+    with tempfile.TemporaryDirectory() as directory:
+        connection = support._representative_database(
+            Path(directory) / "application.sqlite3", works=4_100
+        )
+        repository = SQLiteMetadataReportRepository(connection)
+        browse = BrowseReviewLibrary(repository)
+        try:
+            calls = (
+                (
+                    "library",
+                    lambda cursor: browse.library(
+                        lens="all", search=None, limit=50, cursor=cursor
+                    ),
+                ),
+                (
+                    "attention",
+                    lambda cursor: browse.attention(
+                        search=None, limit=50, cursor=cursor
+                    ),
+                ),
+            )
+            for surface, call in calls:
+                first = call(None)
+                cursor = _encode_cursor(
+                    1_500,
+                    surface,
+                    "all" if surface == "library" else "needs_attention",
+                    None,
+                )
+                deep = call(cursor)
+                first_items = first["items"]
+                deep_items = deep["items"]
+                assert type(first_items) is list
+                assert type(deep_items) is list
+                assert len(first_items) == 50
+                assert len(deep_items) == 50
+                if surface == "attention":
+                    assert type(first["total"]) is int
+                    assert first["total"] >= 2_000
+                statements: list[str] = []
+                connection.set_trace_callback(statements.append)
+                try:
+                    call(cursor)
+                finally:
+                    connection.set_trace_callback(None)
+                statement = next(
+                    value
+                    for value in statements
+                    if value.lstrip().upper().startswith("WITH PAGE AS MATERIALIZED")
+                )
+                page, documents = statement.split(") SELECT rc.document", 1)
+                assert "rc.document" not in page
+                assert "mr.document AS" not in page
+                assert documents.startswith(",")
+        finally:
+            repository.close()

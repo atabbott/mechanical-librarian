@@ -152,6 +152,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     ) -> None:
         super().__init__(connection)
         self._setup_serialization_lock = RLock()
+        self._browse_failure_lock = RLock()
+        self._browse_unavailable_exception_classes: tuple[str, ...] = ()
         self._binding = binding
         self.identity = identity
         self._recovery_outbox = SQLiteRecoveryOutboxRepository(connection)
@@ -264,6 +266,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 lambda report, proposal: self._metadata_policy._policy_destinations_for(
                     report, proposal
                 )
+            ),
+            record_browse_unavailable_exception=(
+                lambda error: self._record_browse_unavailable_exception(error)
             ),
         )
         self._current_cover_policy_reference: str | None = None
@@ -409,6 +414,20 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 lambda search: self.count_current_attention_fields(search)
             ),
         )
+
+    def _record_browse_unavailable_exception(self, error: sqlite3.Error) -> None:
+        """Retain bounded storage-failure classes for the support export only."""
+        name = type(error).__name__
+        if not name.isidentifier() or len(name) > 64:
+            return
+        with self._browse_failure_lock:
+            self._browse_unavailable_exception_classes = tuple(
+                sorted({*self._browse_unavailable_exception_classes, name})[-8:]
+            )
+
+    def browse_unavailable_exception_classes(self) -> tuple[str, ...]:
+        with self._browse_failure_lock:
+            return self._browse_unavailable_exception_classes
 
     def bind_current_cover_policy(self, reference: str) -> None:
         """Bind guarded cover effects to this process's validated policy."""

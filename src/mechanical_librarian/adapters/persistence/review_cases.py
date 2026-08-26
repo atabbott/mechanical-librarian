@@ -110,12 +110,14 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         policy_destinations_for: Callable[
             [MetadataReport, ProposalSet], dict[str, str] | None
         ],
+        record_browse_unavailable_exception: Callable[[sqlite3.Error], None],
     ) -> None:
         super().__init__(connection, binding)
         # Both belong to the metadata-policy aggregate and are read, never
         # written, from here.  They keep the names their moved call sites use.
         self.current_resolved_metadata_policy = current_resolved_metadata_policy
         self._policy_destinations_for = policy_destinations_for
+        self._record_browse_unavailable_exception = record_browse_unavailable_exception
 
     def admit_review_case(self, proposal_set: ProposalSet) -> str:
         """Atomically bind one exact current ProposalSet to its target lineage."""
@@ -519,13 +521,10 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             ]
             if attention is not True:
                 terminal_union = (
-                    " UNION ALL SELECT NULL,json_object("
-                    "'attempt',attempt,'connection',connection_name,"
-                    "'failure_root',failure_root,'item',item_id,'lane',stage,"
-                    "'library',library_name,'recovery_attempt',recovery_attempt,"
-                    "'schema_version','review-terminal-work-v1','status',failure_code,"
-                    "'work_id',work_id),NULL,connection_name,library_name,item_id,NULL,"
-                    "1,0,'preparation unavailable','' FROM review_preparation_work "
+                    " UNION ALL SELECT NULL,NULL,NULL,connection_name,library_name,"
+                    "item_id,NULL,1,0,'preparation unavailable','',work_id,attempt,"
+                    "stage,failure_root,recovery_attempt,failure_code "
+                    "FROM review_preparation_work "
                     "WHERE state='failed' AND failure_code IS NOT NULL AND NOT EXISTS ("
                     "SELECT 1 FROM current_review_packages p WHERE "
                     "p.connection_name=review_preparation_work.connection_name AND "
@@ -539,9 +538,9 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 parameters.extend((query, pattern, pattern, pattern, pattern))
             parameters.extend((limit, offset))
             rows = self._connection.execute(
-                "SELECT case_document,report_document,proposal_set_id,connection_name,"
-                "library_name,item_id,outcome FROM (SELECT rc.document AS case_document,"
-                "mr.document AS report_document,CASE WHEN "
+                "WITH page AS MATERIALIZED (SELECT rc.review_case_id AS case_id,"
+                "mr.report_id,"
+                "CASE WHEN "
                 "rc.proposal_set_id=ml.proposal_set_id AND rc.report_id=ml.report_id "
                 "THEN rc.proposal_set_id ELSE NULL END AS proposal_set_id,"
                 "ml.connection_name AS connection_name,ml.library_name AS library_name,"
@@ -564,14 +563,27 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "'incomplete','malformed','oversized','candidate_limit_exceeded',"
                 "'query_limit_exceeded')) THEN 1 ELSE 0 END AS provider_order,"
                 "ml_casefold(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')) AS title_order,"
-                "COALESCE(rc.review_case_id,'') AS case_order "
+                "COALESCE(rc.review_case_id,'') AS case_order,"
+                "NULL AS work_id,NULL AS attempt,NULL AS stage,NULL AS failure_root,"
+                "NULL AS recovery_attempt,NULL AS failure_code "
                 + _CURRENT_LIBRARY_FROM_SQL
                 + " WHERE COALESCE(c.outcome,'')<>'tombstoned' AND "
                 + condition
                 + _REVIEW_SEARCH_SQL
                 + terminal_union
-                + ") ORDER BY attention_order,provider_order,title_order,library_name,item_id,"
-                "connection_name,case_order LIMIT ? OFFSET ?",
+                + " ORDER BY attention_order,provider_order,title_order,library_name,item_id,"
+                "connection_name,case_order LIMIT ? OFFSET ?) "
+                "SELECT rc.document,CASE WHEN page.report_id IS NULL THEN json_object("
+                "'attempt',page.attempt,'connection',page.connection_name,"
+                "'failure_root',page.failure_root,'item',page.item_id,'lane',page.stage,"
+                "'library',page.library_name,'recovery_attempt',page.recovery_attempt,"
+                "'schema_version','review-terminal-work-v1','status',page.failure_code,"
+                "'work_id',page.work_id) ELSE mr.document END,page.proposal_set_id,"
+                "page.connection_name,page.library_name,page.item_id,page.outcome "
+                "FROM page LEFT JOIN review_cases rc ON rc.review_case_id=page.case_id "
+                "LEFT JOIN metadata_reports mr ON mr.report_id=page.report_id "
+                "ORDER BY page.attention_order,page.provider_order,page.title_order,"
+                "page.library_name,page.item_id,page.connection_name,page.case_order",
                 tuple(parameters),
             ).fetchall()
             values: list[tuple[str | None, str]] = []
@@ -624,6 +636,8 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             TypeError,
             ValueError,
         ) as error:
+            if isinstance(error, sqlite3.Error):
+                self._record_browse_unavailable_exception(error)
             raise MetadataReportError("review library is unavailable") from error
 
     def count_current_review_cases(self, search: str | None) -> tuple[int, int]:
@@ -651,6 +665,8 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 raise MetadataReportError("review library count is invalid")
             return row[0] + terminal[0], row[1]
         except (sqlite3.Error, TypeError, ValueError) as error:
+            if isinstance(error, sqlite3.Error):
+                self._record_browse_unavailable_exception(error)
             raise MetadataReportError("review library is unavailable") from error
 
     def list_current_attention_documents(
@@ -663,24 +679,28 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         try:
             query, pattern = _review_search_pattern(search)
             rows = self._connection.execute(
-                "SELECT rc.document,mr.document,CASE WHEN "
+                "WITH page AS MATERIALIZED (SELECT rc.review_case_id AS review_case_id,"
+                "mr.report_id AS report_id,CASE WHEN "
                 "rc.proposal_set_id=c.proposal_set_id AND rc.report_id=c.report_id "
-                "THEN rc.proposal_set_id ELSE NULL END,"
-                "result.destination,"
+                "THEN rc.proposal_set_id ELSE NULL END AS proposal_set_id,"
+                "result.destination AS destination,"
                 "(SELECT count(*) FROM review_case_field_facts result "
                 "WHERE result.review_case_id=rc.review_case_id AND "
                 + _REVIEW_FIELD_ATTENTION_SQL
                 + _EPUB_INAPPLICABLE_ATTENTION_SQL
-                + "),"
+                + ") AS attention_count,"
                 "(SELECT outcome.disposition FROM shadow_decision_outcomes shadow "
                 "JOIN shadow_outcome_field_facts outcome "
                 "ON outcome.outcome_set_id=shadow.outcome_set_id "
                 "WHERE outcome.review_case_id=rc.review_case_id "
                 "AND outcome.destination=result.destination "
-                "ORDER BY shadow.evaluated_at DESC,shadow.outcome_set_id DESC LIMIT 1),"
+                "ORDER BY shadow.evaluated_at DESC,shadow.outcome_set_id DESC LIMIT 1) "
+                "AS disposition,"
                 "(CASE WHEN "
                 + _AUTOMATIC_SAFETY_ATTENTION_SQL
-                + " THEN 'automatic_safety_suspended' ELSE NULL END) "
+                + " THEN 'automatic_safety_suspended' ELSE NULL END) AS cause,"
+                "ml_casefold(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')) "
+                "AS title_order,c.library_name AS library_name,c.item_id AS item_id "
                 + _CURRENT_REVIEW_FROM_SQL
                 + " JOIN review_case_field_facts result "
                 "ON result.review_case_id=rc.review_case_id WHERE "
@@ -688,10 +708,14 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 + _EPUB_INAPPLICABLE_ATTENTION_SQL
                 + _REVIEW_SEARCH_SQL
                 + " ORDER BY "
-                "ml_casefold(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')),"
-                "c.library_name,c.item_id,"
-                "result.destination,rc.review_case_id "
-                "LIMIT ? OFFSET ?",
+                "title_order,library_name,item_id,destination,review_case_id "
+                "LIMIT ? OFFSET ?) "
+                "SELECT rc.document,mr.document,page.proposal_set_id,page.destination,"
+                "page.attention_count,page.disposition,page.cause FROM page "
+                "JOIN review_cases rc ON rc.review_case_id=page.review_case_id "
+                "JOIN metadata_reports mr ON mr.report_id=page.report_id "
+                "ORDER BY page.title_order,page.library_name,page.item_id,"
+                "page.destination,page.review_case_id",
                 (query, pattern, pattern, pattern, pattern, pattern, limit, offset),
             ).fetchall()
             values = []
@@ -729,6 +753,8 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             TypeError,
             ValueError,
         ) as error:
+            if isinstance(error, sqlite3.Error):
+                self._record_browse_unavailable_exception(error)
             raise MetadataReportError("review attention is unavailable") from error
 
     def count_current_attention_fields(self, search: str | None) -> int:
@@ -748,6 +774,8 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 raise MetadataReportError("review attention count is invalid")
             return row[0]
         except (sqlite3.Error, TypeError, ValueError) as error:
+            if isinstance(error, sqlite3.Error):
+                self._record_browse_unavailable_exception(error)
             raise MetadataReportError("review attention is unavailable") from error
 
     def _review_case_accepts_authority(self, review_case_id: str) -> bool:

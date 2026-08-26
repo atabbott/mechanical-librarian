@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep deep Library and Attention pages reachable with the hardened 64 MiB
+  temporary filesystem by sorting thin browse keys before loading page documents.
+  Support exports retain only a bounded SQLite exception class if storage is
+  unavailable. (#878)
+
 - Keep repeated contained cover reviews within their fixed process headroom and
   reap a killed direct child before the next attempt. A closed `spawn` failure
   now distinguishes unavailable reviewer task capacity from a runtime failure. (#866)

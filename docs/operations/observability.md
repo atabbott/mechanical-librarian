@@ -56,3 +56,7 @@ shape and size. Authenticated, CSRF-bound
 The JSON is capped at 64 KiB. It excludes secrets and auth state, unrestricted
 environment data, databases, metadata values, excerpts, paths, media, covers
 and the private recovery store. Review the preview before sharing an export.
+When a browse read maps a SQLite storage or resource failure to the owner's
+value-free `unavailable` response, this existing export retains only the bounded
+exception class. It does not retain the database error text, query, row, path,
+or a telemetry record.
