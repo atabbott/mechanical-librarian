@@ -197,31 +197,31 @@ class CoverConsiderationService:
 
     @property
     def replay_reference(self) -> str:
-        identity = canonical_packet_json(
-            {
-                "policy": self._policy.document,
-                "contracts": {
-                    "classifier_reference": CLASSIFIER_REFERENCE,
-                    "identity_schema": IDENTITY_SCHEMA_VERSION,
-                    "instruction_sha256": hashlib.sha256(
-                        INSTRUCTION.encode("utf-8")
-                    ).hexdigest(),
-                    "observation_schema": OBSERVATION_SCHEMA_VERSION,
-                    "observer_output_schema": OUTPUT_SCHEMA_VERSION,
-                    "packet_schema": PACKET_SCHEMA_VERSION,
-                    "policy_report_schema": POLICY_REPORT_SCHEMA_VERSION,
-                    "policy_schema": POLICY_SCHEMA_VERSION,
-                    "taxonomy_reference": TAXONOMY_REFERENCE,
-                },
-                "profile_sha256": (
-                    None
-                    if self._reviewer_profile is None
-                    else hashlib.sha256(self._reviewer_profile).hexdigest()
-                ),
-                "reviewer_unavailable_reason": self._reviewer_unavailable_reason,
-                "schema_version": SCHEMA_VERSION,
-            }
-        )
+        value: dict[str, object] = {
+            "policy": self._policy.document,
+            "contracts": {
+                "classifier_reference": CLASSIFIER_REFERENCE,
+                "identity_schema": IDENTITY_SCHEMA_VERSION,
+                "instruction_sha256": hashlib.sha256(
+                    INSTRUCTION.encode("utf-8")
+                ).hexdigest(),
+                "observation_schema": OBSERVATION_SCHEMA_VERSION,
+                "observer_output_schema": OUTPUT_SCHEMA_VERSION,
+                "packet_schema": PACKET_SCHEMA_VERSION,
+                "policy_report_schema": POLICY_REPORT_SCHEMA_VERSION,
+                "policy_schema": POLICY_SCHEMA_VERSION,
+                "taxonomy_reference": TAXONOMY_REFERENCE,
+            },
+            "profile_sha256": (
+                None
+                if self._reviewer_profile is None
+                else hashlib.sha256(self._reviewer_profile).hexdigest()
+            ),
+            "schema_version": SCHEMA_VERSION,
+        }
+        if self._reviewer_unavailable_reason is not None:
+            value["reviewer_unavailable_reason"] = self._reviewer_unavailable_reason
+        identity = canonical_packet_json(value)
         return "cover_replay_" + hashlib.sha256(identity.encode()).hexdigest()
 
     def _replay_digest(self, review_case_id: str, report_id: str) -> str:

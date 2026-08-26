@@ -282,6 +282,74 @@ def test_changed_reviewer_contract_makes_the_prior_consideration_noncurrent(
     assert first["consideration_id"] == successor["supersedes_id"]
 
 
+def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
+    case: _Case,
+) -> None:
+    case_id = "review_case_" + "i" * 64
+    first = case.service.ensure(case_id, case.report.to_json(), case.proposal)
+    alternative = first["candidates"][1]
+    case.service.validate_decision(
+        case_id,
+        first["consideration_id"],
+        "accept",
+        {"kind": "cover", "value": alternative["artifact_id"]},
+    )
+
+    model_free = CoverConsiderationService(
+        case.store,
+        read_preview=lambda artifact, _variant: case.payload_by_artifact[artifact],
+        read_preview_digest=lambda digest: case.payload_by_preview[digest],
+        clock=lambda: case.now + 1,
+    )
+    assert model_free.replay_reference == (
+        "cover_replay_a448a3132ed8c82b5f248650925a7ca71875dff24617246f8cb75151741d30da"
+    )
+    assert model_free.ensure(case_id, case.report.to_json(), case.proposal)[
+        "consideration_id"
+    ] == first["consideration_id"]
+    model_free.validate_decision(
+        case_id,
+        first["consideration_id"],
+        "accept",
+        {"kind": "cover", "value": alternative["artifact_id"]},
+    )
+
+    dispatches: list[object] = []
+
+    def reviewer(*args: object) -> str:
+        dispatches.append(args)
+        return _observer_result(
+            *cast(
+                "tuple[bytes, bytes, bytes, bytes, tuple[tuple[str, str, bytes], ...]]",
+                args,
+            )
+        )
+
+    def qualified() -> CoverConsiderationService:
+        return CoverConsiderationService(
+            case.store,
+            read_preview=lambda artifact, _variant: case.payload_by_artifact[artifact],
+            read_preview_digest=lambda digest: case.payload_by_preview[digest],
+            clock=lambda: case.now,
+            reviewer_profile=b"qualified-profile",
+            reviewer=cast("ReviewRunner", reviewer),
+        )
+
+    qualified_case_id = "review_case_" + "j" * 64
+    first_qualified = qualified().ensure(
+        qualified_case_id, case.report.to_json(), case.proposal
+    )
+    assert len(dispatches) == 1
+    replayed_qualified = qualified()
+    assert replayed_qualified.replay_reference == (
+        "cover_replay_b652a85e78c2a66e86410b1d413f88c54bd0bf84b4c330cf4f0d247a870e2e13"
+    )
+    assert replayed_qualified.ensure(
+        qualified_case_id, case.report.to_json(), case.proposal
+    )["consideration_id"] == first_qualified["consideration_id"]
+    assert len(dispatches) == 1
+
+
 def test_stale_reviewer_binding_is_current_only_and_replays_exactly(
     case: _Case,
 ) -> None:
