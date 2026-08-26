@@ -496,6 +496,13 @@ def test_disabled_provider_credentials_are_retained_until_explicit_clear() -> No
         "connection.primary.key",
         "provider.books.key",
     ]
+    store._connection.execute(
+        "INSERT INTO owner_setting_secrets VALUES(?,?)",
+        ("owner.password.verifier", "$argon2id$synthetic"),
+    )
+    store._connection.commit()
+    _, runtime_credentials, _ = store.activate_runtime()
+    assert runtime_credentials == {"connection.primary.key": "target-secret-1234"}
 
     disabled_replacement = result.document.model_dump()
     disabled_replacement["revision"] = 4
@@ -582,13 +589,71 @@ def test_enabled_hardcover_requires_a_key() -> None:
     assert stored.document.revision == 2
 
 
-def test_document_rejects_association_to_a_disabled_provider() -> None:
+def test_store_rejects_new_association_to_a_disabled_provider() -> None:
     value = _document().model_dump()
+    value["revision"] = 2
     value["providers"][0]["enabled"] = False
     value["providers"][0]["cover_enabled"] = False
 
-    with pytest.raises(ValidationError, match="references"):
-        OwnerSettingsDocument.model_validate(value)
+    with pytest.raises(OwnerSettingsError, match="references"):
+        _store().write(OwnerSettingsDocument.model_validate(value), 1, ())
+
+
+def test_legacy_disabled_association_loads_suppressed_and_canonicalises_on_save() -> (
+    None
+):
+    store = _store()
+    legacy = _document().model_dump()
+    legacy["providers"][0]["enabled"] = False
+    legacy["providers"][0]["cover_enabled"] = False
+    legacy_document = OwnerSettingsDocument.model_validate(legacy)
+    encoded = _canonical_json(legacy_document.model_dump())
+    store._connection.execute(
+        "UPDATE owner_settings SET document=? WHERE singleton=1", (encoded,)
+    )
+    store._connection.execute(
+        "INSERT INTO owner_setting_secrets VALUES(?,?)",
+        ("provider.books.key", "google-secret-1234"),
+    )
+    store._connection.execute(
+        "INSERT INTO owner_setting_secrets VALUES(?,?)",
+        ("owner.password.verifier", "$argon2id$synthetic"),
+    )
+    store._connection.commit()
+
+    view = store.read()
+
+    assert view.document.libraries[0].provider_connections == ["open"]
+    assert store._connection.execute(
+        "SELECT document FROM owner_settings WHERE singleton=1"
+    ).fetchone() == (encoded,)
+    _, runtime_credentials, _ = store.activate_runtime()
+    assert runtime_credentials == {"connection.primary.key": "target-secret-1234"}
+
+    candidate = view.document.model_copy(update={"revision": 2})
+    snapshot, candidate_credentials, _ = store.activation_snapshot(candidate, 1, ())
+    assert snapshot.document.libraries[0].provider_connections == ["open"]
+    assert candidate_credentials == {"connection.primary.key": "target-secret-1234"}
+    saved = store.write(candidate, 1, ())
+    stored = OwnerSettingsDocument.model_validate_json(
+        store._connection.execute(
+            "SELECT document FROM owner_settings WHERE singleton=1"
+        ).fetchone()[0]
+    )
+    assert stored.libraries[0].provider_connections == ["open"]
+
+    reenabled_value = saved.document.model_dump()
+    reenabled_value["revision"] = 3
+    reenabled_value["providers"][0]["enabled"] = True
+    reenabled = store.write(
+        OwnerSettingsDocument.model_validate(reenabled_value), 2, ()
+    )
+    assert reenabled.document.libraries[0].provider_connections == ["open"]
+    _, reenabled_credentials, _ = store.activate_runtime()
+    assert reenabled_credentials == {
+        "connection.primary.key": "target-secret-1234",
+        "provider.books.key": "google-secret-1234",
+    }
 
 
 def test_store_rejects_unknown_or_duplicate_secret_writes_without_mutation() -> None:

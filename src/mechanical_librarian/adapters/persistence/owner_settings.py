@@ -56,12 +56,12 @@ class OwnerSettingsStore:
         except sqlite3.Error as error:
             self._connection.rollback()
             raise OwnerSettingsError("owner settings are unavailable") from error
-        public_values = {
+        runtime_values = {
             name: value
             for name, value in values.items()
-            if name in document.secret_fields()
+            if name in document.runtime_secret_fields()
         }
-        return _settings_view(document, values), public_values, verifier
+        return _settings_view(document, values), runtime_values, verifier
 
     def acknowledge_runtime(self, revision: int) -> None:
         """Clear restart debt only after this exact snapshot composed successfully."""
@@ -187,7 +187,7 @@ class OwnerSettingsStore:
             credentials = {
                 name: value
                 for name, value in values.items()
-                if name in candidate.secret_fields()
+                if name in candidate.runtime_secret_fields()
             }
             snapshot = _settings_view(candidate, values)
             self._connection.rollback()
@@ -215,6 +215,7 @@ class OwnerSettingsStore:
             document
         ):
             raise OwnerSettingsError("settings document is invalid")
+        _validate_available_provider_references(document)
         values = dict(current_values)
         self._validate_secret_writes(document, secrets, values)
         for entry in secrets:
@@ -345,16 +346,48 @@ def _validate_owner_settings_content(connection: sqlite3.Connection) -> None:
 def _settings_view(
     document: OwnerSettingsDocument, values: dict[str, str]
 ) -> SettingsView:
+    projected = _available_settings_document(document)
     return SettingsView(
-        document=document,
-        fields=store_field_metadata(document),
+        document=projected,
+        fields=store_field_metadata(projected),
         secrets=tuple(
             secret_presence(name, values.get(name))
             for name in sorted(document.secret_fields())
         ),
-        provider_capabilities=provider_capabilities(document),
+        provider_capabilities=provider_capabilities(projected),
         authority="store",
     )
+
+
+def _available_settings_document(
+    document: OwnerSettingsDocument,
+) -> OwnerSettingsDocument:
+    enabled = {provider.name for provider in document.providers if provider.enabled}
+    libraries = [
+        library.model_copy(
+            update={
+                "provider_connections": [
+                    name for name in library.provider_connections if name in enabled
+                ]
+            }
+        )
+        for library in document.libraries
+    ]
+    if all(
+        projected.provider_connections == current.provider_connections
+        for projected, current in zip(libraries, document.libraries, strict=True)
+    ):
+        return document
+    return document.model_copy(update={"libraries": libraries})
+
+
+def _validate_available_provider_references(document: OwnerSettingsDocument) -> None:
+    enabled = {provider.name for provider in document.providers if provider.enabled}
+    if any(
+        not set(library.provider_connections).issubset(enabled)
+        for library in document.libraries
+    ):
+        raise OwnerSettingsError("settings library references are invalid")
 
 
 def _non_settings_library_state(

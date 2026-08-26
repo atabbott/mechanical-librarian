@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Repeatable exact-head qualification for the supported container lifecycle.
 
-The unchanged file-managed sentinel here is complemented by
-The same exact image also runs the exact-empty one-listener journey.
+The unchanged file-managed sentinel and exact-empty one-listener journey run
+against the same exact image.
 """
 
 from __future__ import annotations
@@ -370,20 +370,20 @@ def _qualify_first_run(
     seed = f"mechanical-librarian-first-run-seed-{suffix}"
     target = f"mechanical-librarian-first-run-target-{suffix}"
     review = f"mechanical-librarian-first-run-review-{suffix}"
-    for volume in (data_volume, secrets_volume, media_volume):
-        _run(
-            [
-                "docker",
-                "volume",
-                "create",
-                "--label",
-                f"{OWNERSHIP_LABEL}={run_id}",
-                volume,
-            ]
-        )
-        if not _owned("volume", volume, run_id):
-            raise QualificationError("first_run_volume_ownership_failed")
     try:
+        for volume in (data_volume, secrets_volume, media_volume):
+            _run(
+                [
+                    "docker",
+                    "volume",
+                    "create",
+                    "--label",
+                    f"{OWNERSHIP_LABEL}={run_id}",
+                    volume,
+                ]
+            )
+            if not _owned("volume", volume, run_id):
+                raise QualificationError("first_run_volume_ownership_failed")
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary)
             _run(

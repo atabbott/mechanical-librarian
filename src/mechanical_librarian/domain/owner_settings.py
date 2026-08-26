@@ -173,9 +173,6 @@ class OwnerSettingsDocument(_Closed):
     def _validate_contract(self) -> "OwnerSettingsDocument":
         connection_names = tuple(value.name for value in self.connections)
         provider_names = tuple(value.name for value in self.providers)
-        available_provider_names = {
-            value.name for value in self.providers if value.enabled
-        }
         library_names = tuple(value.name for value in self.libraries)
         if any(
             values != tuple(sorted(set(values)))
@@ -192,7 +189,7 @@ class OwnerSettingsDocument(_Closed):
         if any(
             item.connection not in connection_names for item in self.libraries
         ) or any(
-            not set(item.provider_connections).issubset(available_provider_names)
+            not set(item.provider_connections).issubset(provider_names)
             for item in self.libraries
         ):
             raise OwnerSettingsError("settings library references are invalid")
@@ -239,6 +236,17 @@ class OwnerSettingsDocument(_Closed):
                 f"provider.{item.name}.key"
                 for item in self.providers
                 if item.adapter == "hardcover" and item.enabled
+            }
+        )
+
+    def runtime_secret_fields(self) -> frozenset[str]:
+        """Credentials admitted to one active runtime generation."""
+        return frozenset(
+            {f"connection.{item.name}.key" for item in self.connections}
+            | {
+                f"provider.{item.name}.key"
+                for item in self.providers
+                if item.enabled and item.adapter in {"hardcover", "google_books"}
             }
         )
 

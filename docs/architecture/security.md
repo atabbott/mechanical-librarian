@@ -423,11 +423,13 @@ an exact POST to the fixed GraphQL URL.
 
 In settings-store mode, the same egress boundary consumes credentials from the
 owner-only application database only while composing their named target or
-provider clients. Every connection requires a credential; enabled Hardcover
-requires one and enabled Google Books may omit one. A disabled store-managed
-provider may retain its write-only value, but no provider client or egress is
-constructed from it. The deploy-only review bootstrap and contained-reviewer profile path are
-never browser fields. Runtime activation prepares an isolated candidate before
+enabled provider clients. Every connection requires a credential; enabled
+Hardcover requires one and enabled Google Books may omit one. A disabled
+store-managed provider may retain its write-only value inside settings
+authority, but that value is not copied into the runtime credential map and no
+provider client or egress is constructed from it. The deploy-only review
+bootstrap and contained-reviewer profile path are never browser fields. Runtime
+activation prepares an isolated candidate before
 persistence; failure leaves the authoritative revision and admitting generation
 unchanged. After CAS commit, the new generation governs the next admitted unit
 while requests already admitted to the predecessor drain against it.
