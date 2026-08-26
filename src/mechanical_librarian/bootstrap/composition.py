@@ -87,6 +87,7 @@ from mechanical_librarian.adapters.providers.remote_cover import (
 )
 from mechanical_librarian.adapters.reviewers.contained_reviewer import (
     ContainedReviewerProcessError,
+    cover_reviewer_profile_contract_mismatch,
     read_contained_reviewer_profile,
 )
 from mechanical_librarian.application.batch import (
@@ -2778,6 +2779,7 @@ def _compose_cover_considerations(
             artifacts = CoverArtifactStore(artifact_store_path, create=False)
         return artifacts
 
+    reviewer_unavailable_reason = None
     try:
         reviewer_profile = (
             None
@@ -2786,6 +2788,12 @@ def _compose_cover_considerations(
                 Path(review.cover_reviewer_profile_file)
             )
         )
+        if reviewer_profile is not None:
+            reviewer_unavailable_reason = cover_reviewer_profile_contract_mismatch(
+                reviewer_profile
+            )
+            if reviewer_unavailable_reason is not None:
+                reviewer_profile = None
     except ContainedReviewerProcessError:
         # Never dispatch an unqualified profile. The shared consideration
         # operation records the manual-comparison-unavailable terminal state.
@@ -2809,6 +2817,7 @@ def _compose_cover_considerations(
         policy=policy,
         reviewer_profile=reviewer_profile,
         reviewer=None if reviewer_profile is None else run_cover_packet_reviewer,
+        reviewer_unavailable_reason=reviewer_unavailable_reason,
         bind_policy=bind_policy,
     )
     service.update_policy(policy)

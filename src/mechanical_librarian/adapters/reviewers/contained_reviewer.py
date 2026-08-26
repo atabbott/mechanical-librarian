@@ -21,8 +21,6 @@ from pathlib import Path
 from typing import IO, Iterator, cast
 
 from mechanical_librarian.application.contained_reviewer_contract import (
-    COVER_MEMORY_BYTES,
-    COVER_PROCESS_LIMIT,
     ContainedReviewerAttempt,
     ContainedReviewerError,
     ContainedReviewerIdentity,
@@ -32,6 +30,7 @@ from mechanical_librarian.application.contained_reviewer_contract import (
     _CoverReviewRequest,
     admit_cover_review_request,
     canonical_json,
+    cover_profile_contract_mismatch,
 )
 
 PROFILE_SCHEMA = "contained-reviewer-profile-v1"
@@ -46,6 +45,7 @@ _FAILURES = frozenset(
         "setup",
         "auth",
         "profile",
+        "profile_contract_mismatch",
         "timeout",
         "cancel",
         "response_format",
@@ -121,6 +121,13 @@ def read_contained_reviewer_profile(path: Path) -> bytes:
     finally:
         if descriptor >= 0:
             os.close(descriptor)
+
+
+def cover_reviewer_profile_contract_mismatch(payload: bytes) -> str | None:
+    """Check the exact cover-resource contract after profile integrity admission."""
+    return cover_profile_contract_mismatch(
+        load_contained_reviewer_profile_bytes(payload).identity
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -495,11 +502,8 @@ class ContainedReviewerAdapter:
     ) -> ContainedReviewResult:
         if type(request) is not _CoverReviewRequest:
             raise ContainedReviewerProcessError("response_format")
-        if (
-            self._profile.identity.memory_bytes != COVER_MEMORY_BYTES
-            or self._profile.identity.process_limit != COVER_PROCESS_LIMIT
-        ):
-            raise ContainedReviewerProcessError("profile")
+        if cover_profile_contract_mismatch(self._profile.identity) is not None:
+            raise ContainedReviewerProcessError("profile_contract_mismatch")
         try:
             instruction = request.instruction
             input_document = request.input_document

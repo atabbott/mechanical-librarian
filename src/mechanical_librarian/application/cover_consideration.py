@@ -9,6 +9,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Protocol, cast
 
+from mechanical_librarian.application.contained_reviewer_contract import (
+    is_cover_profile_contract_reason,
+)
 from mechanical_librarian.application.cover_identity import (
     CLASSIFIER_REFERENCE,
     classify_cover_identity,
@@ -154,6 +157,7 @@ class CoverConsiderationService:
         policy: CoverPolicy = CoverPolicy(),
         reviewer_profile: bytes | None = None,
         reviewer: ReviewRunner | None = None,
+        reviewer_unavailable_reason: str | None = None,
         bind_policy: Callable[[str, str], None] | None = None,
     ) -> None:
         self._store = store
@@ -163,6 +167,9 @@ class CoverConsiderationService:
         self._policy = policy
         self._reviewer_profile = reviewer_profile
         self._reviewer = reviewer
+        if not is_cover_profile_contract_reason(reviewer_unavailable_reason):
+            raise ValueError("invalid reviewer unavailable reason")
+        self._reviewer_unavailable_reason = reviewer_unavailable_reason
         self._bind_policy = bind_policy or (lambda _policy, _replay: None)
 
     def update_policy(self, policy: CoverPolicy) -> None:
@@ -294,7 +301,19 @@ class CoverConsiderationService:
         image_payloads: tuple[tuple[str, str, bytes], ...],
     ) -> _ReviewerEvidence:
         if self._reviewer_profile is None or self._reviewer is None:
-            return _ReviewerEvidence(replay_digest, None, "unavailable", None)
+            return _ReviewerEvidence(
+                replay_digest,
+                None,
+                "unavailable",
+                (
+                    None
+                    if self._reviewer_unavailable_reason is None
+                    else {
+                        "code": "profile_contract_mismatch",
+                        "reason": self._reviewer_unavailable_reason,
+                    }
+                ),
+            )
         reviewer = self._reviewer
         dispatched = False
         observed = False
@@ -667,6 +686,11 @@ class CoverConsiderationService:
             "policy_preferences": json.loads(value["policy_document"]),
             "policy_reference": value["policy_reference"],
             "reviewer_status": value["reviewer_status"],
+            "reviewer_unavailable_reason": (
+                None
+                if value["reviewer_failure"] is None
+                else value["reviewer_failure"].get("reason")
+            ),
             "schema_version": SCHEMA_VERSION,
             "supersedes_id": value["supersedes_id"],
             "target_fingerprint": value["target_fingerprint"],

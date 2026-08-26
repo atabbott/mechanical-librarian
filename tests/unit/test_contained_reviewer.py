@@ -161,10 +161,11 @@ def test_cover_rejects_nonqualified_resource_profile_before_dispatch() -> None:
         )
         reviewer = adapter.ContainedReviewerAdapter(profile)
         dispatched: list[object] = []
-        with pytest.raises(Exception, match="profile"):
+        with pytest.raises(adapter.ContainedReviewerProcessError) as caught:
             reviewer.run_cover(
                 _cover_request(), lambda *values: dispatched.append(values)
             )
+        assert caught.value.code == "profile_contract_mismatch"
         assert [] == dispatched
 
 
@@ -318,10 +319,44 @@ def test_profile_load_is_canonical_private_and_does_not_touch_artifacts() -> Non
         os.chmod(profile, 0o600)
         loaded = adapter.load_contained_reviewer_profile(profile)
         assert loaded.identity == _identity()
+        assert (
+            adapter.cover_reviewer_profile_contract_mismatch(profile.read_bytes())
+            is None
+        )
         assert not loaded.codex_path.exists()
         os.chmod(profile, 0o644)
         with pytest.raises(Exception, match="profile"):
             adapter.load_contained_reviewer_profile(profile)
+
+
+def test_profile_contract_mismatch_names_only_the_expected_limit() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        document = {
+            "auth_store_path": str(root / "auth"),
+            "codex": {"path": str(root / "codex"), "sha256": "a" * 64, "version": "1"},
+            "job_root_path": str(root / "jobs"),
+            "limits": {
+                "file_bytes": 131_072,
+                "memory_bytes": 536_870_912,
+                "output_bytes": 65_536,
+                "processes": 32,
+                "timeout_seconds": 30,
+            },
+            "model": "reviewer",
+            "reasoning": "medium",
+            "sandbox": {
+                "path": str(root / "sandbox"),
+                "sha256": "b" * 64,
+                "version": "1",
+            },
+            "schema_version": "contained-reviewer-profile-v1",
+        }
+        payload = canonical_json(document).encode()
+        assert (
+            adapter.cover_reviewer_profile_contract_mismatch(payload)
+            == "profile contract requires memory_bytes=1073741824"
+        )
 
 
 def test_profile_limits_output_to_the_child_file_limit() -> None:

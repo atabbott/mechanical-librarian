@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Reject stale contained-reviewer resource profiles at startup with a bounded
+  manual-comparison reason, instead of allowing every cover review to fail.
+  Operators regenerate profiles explicitly when the fixed contract changes. (#867)
+
 - Qualify locally corroborated subtitle fill for automatic decisions:
   an empty Subtitle now fills automatically only when the book's own packaged
   metadata attests the exact provider value, including electing that value over

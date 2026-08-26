@@ -2241,6 +2241,11 @@ def test_composed_projection_prepares_one_qualified_cover_advice_before_f22() ->
                 return_value=b"synthetic-profile",
             ),
             patch.object(
+                composition,
+                "cover_reviewer_profile_contract_mismatch",
+                return_value=None,
+            ),
+            patch.object(
                 composition, "run_cover_packet_reviewer", side_effect=reviewer
             ),
         ):
@@ -2399,6 +2404,89 @@ def test_composed_projection_without_reviewer_persists_unavailable_before_f22() 
         repository.close()
 
 
+def test_composed_projection_reports_stale_profile_contract_before_dispatch() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        profile = root / "profile.json"
+        profile.write_text(
+            json.dumps(
+                {
+                    "auth_store_path": str(root / "auth"),
+                    "codex": {
+                        "path": str(root / "codex"),
+                        "sha256": "a" * 64,
+                        "version": "1",
+                    },
+                    "job_root_path": str(root / "jobs"),
+                    "limits": {
+                        "file_bytes": 131_072,
+                        "memory_bytes": 536_870_912,
+                        "output_bytes": 65_536,
+                        "processes": 32,
+                        "timeout_seconds": 30,
+                    },
+                    "model": "reviewer",
+                    "reasoning": "medium",
+                    "sandbox": {
+                        "path": str(root / "sandbox"),
+                        "sha256": "b" * 64,
+                        "version": "1",
+                    },
+                    "schema_version": "contained-reviewer-profile-v1",
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        profile.chmod(0o600)
+        database = root / "reports.sqlite"
+        repository = open_repository(database)
+        report, proposal = _qualified_cover_report(root)
+        recovery = composition.SQLiteProviderRecoveryStore.open(
+            root / "provider-recovery.sqlite"
+        )
+        supervisor = composition.create_review_pipeline(
+            _pipeline_configuration(cover_reviewer_profile_file=str(profile)),
+            database,
+            root / "catalogue.sqlite",
+            root / "artifacts",
+            database_authority=repository.authority,
+            provider_recovery=recovery,
+        )
+        with patch.object(composition, "run_cover_packet_reviewer") as dispatch:
+            pipeline = _run_qualified_cover_pipeline(
+                repository, root, report, proposal, supervisor
+            )
+            assert [True, True, True, True, True, False] == [
+                pipeline.run_next(1) for _ in range(6)
+            ]
+        case_id = repository._connection.execute(
+            "SELECT review_case_id FROM current_review_packages"
+        ).fetchone()[0]
+        document = repository.current_cover_consideration_document(case_id)
+        assert document is not None
+        value = json.loads(document)
+        assert value["reviewer_status"] == "unavailable"
+        assert value["reviewer_failure"] == {
+            "code": "profile_contract_mismatch",
+            "reason": "profile contract requires memory_bytes=1073741824",
+        }
+        projected = composition._compose_cover_considerations(
+            repository,
+            root / "artifacts",
+            _pipeline_configuration(cover_reviewer_profile_file=str(profile)).review,
+        ).current(case_id)
+        assert projected is not None
+        assert (
+            projected["reviewer_unavailable_reason"]
+            == "profile contract requires memory_bytes=1073741824"
+        )
+        dispatch.assert_not_called()
+        supervisor.stop()
+        repository.close()
+
+
 @pytest.mark.parametrize(
     "reviewer",
     (
@@ -2430,6 +2518,11 @@ def test_composed_projection_contains_reviewer_failures_before_f22(reviewer) -> 
                 composition, "read_contained_reviewer_profile", return_value=b"profile"
             ),
             patch.object(
+                composition,
+                "cover_reviewer_profile_contract_mismatch",
+                return_value=None,
+            ),
+            patch.object(
                 composition, "run_cover_packet_reviewer", side_effect=dispatch
             ),
         ):
@@ -2454,10 +2547,17 @@ def test_composed_projection_contains_reviewer_failures_before_f22(reviewer) -> 
         assert document is not None
         assert "failed" == json.loads(document)["reviewer_status"]
         assert 1 == len(calls)
-        with patch.object(
-            composition,
-            "read_contained_reviewer_profile",
-            return_value=b"profile",
+        with (
+            patch.object(
+                composition,
+                "read_contained_reviewer_profile",
+                return_value=b"profile",
+            ),
+            patch.object(
+                composition,
+                "cover_reviewer_profile_contract_mismatch",
+                return_value=None,
+            ),
         ):
             considerations = composition._compose_cover_considerations(
                 repository,
@@ -2495,6 +2595,11 @@ def test_composed_projection_stale_after_observation_does_not_publish() -> None:
         with (
             patch.object(
                 composition, "read_contained_reviewer_profile", return_value=b"profile"
+            ),
+            patch.object(
+                composition,
+                "cover_reviewer_profile_contract_mismatch",
+                return_value=None,
             ),
             patch.object(composition, "run_cover_packet_reviewer", side_effect=drift),
         ):
@@ -2657,6 +2762,11 @@ def test_composed_cover_replay_reuses_exact_binding_and_profile_change_supersede
                 composition,
                 "read_contained_reviewer_profile",
                 side_effect=(b"profile-1", b"profile-1", b"profile-2"),
+            ),
+            patch.object(
+                composition,
+                "cover_reviewer_profile_contract_mismatch",
+                return_value=None,
             ),
             patch.object(
                 composition, "run_cover_packet_reviewer", side_effect=reviewer
