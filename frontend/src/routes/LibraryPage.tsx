@@ -777,7 +777,7 @@ function LibraryCoverChoicesContent({
             : 'Recommendation is unavailable; comparison remains manual.'}
         </small>
       </header>
-      {reviewerDetail ? <p className="cover-track-hint">{reviewerDetail}</p> : null}
+      {reviewerDetail ? <p className="reviewer-unavailable-detail">{reviewerDetail}</p> : null}
       <p className="cover-track-hint">
         Every cover is shown whole in one row. Scroll the row, or tab between covers, to compare
         them.

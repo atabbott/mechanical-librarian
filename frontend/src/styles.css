@@ -742,6 +742,7 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .comparison-notice p + p { margin-top:5px; }
 .library-cover-comparison { display: grid; min-width: 0; gap: 10px; }
 .cover-track-hint { display: none; margin: 0; color: var(--soft); font-size: .7rem; }
+.reviewer-unavailable-detail { margin: 0; padding: 10px 12px; border-left: 3px solid var(--notice); background: var(--notice-soft); color: var(--ink); font-size: .78rem; line-height: 1.45; overflow-wrap: anywhere; }
 .library-cover-comparison > header { display: flex; align-items: end; justify-content: space-between; gap: 14px; }
 .library-cover-comparison > header small { color: var(--soft); text-align: right; }
 .library-cover-layout { display: grid; min-width: 0; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
