@@ -308,13 +308,13 @@ def test_setup_json_bodies_are_bounded_before_parsing_or_authentication(
 
 def test_oversized_setup_login_does_not_consume_the_login_throttle() -> None:
     client, _state, _connection = _client()
+    _claim(client)
     oversized = client.post(
         "/api/setup/session",
         content=b"{" + b"x" * 12_416,
         headers={"content-type": "application/json"},
     )
     assert oversized.status_code == 413
-    _claim(client)
 
     for _ in range(5):
         assert (
