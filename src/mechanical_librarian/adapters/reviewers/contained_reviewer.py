@@ -36,12 +36,16 @@ from mechanical_librarian.application.contained_reviewer_contract import (
 PROFILE_SCHEMA = "contained-reviewer-profile-v1"
 MAX_PROFILE_BYTES = 65_536
 MAX_FAILURE_SIGNAL_BYTES = 65_536
+MAX_UID_TASKS = 65_536
+MAX_PROC_STATUS_BYTES = 8_192
+_PROC_ROOT = Path("/proc")
 _LIVE_SCHEMA_REJECTION_PREFIX = (
     "Invalid schema for response_format 'codex_output_schema': "
 )
 _FAILURES = frozenset(
     {
         "runtime",
+        "spawn",
         "setup",
         "auth",
         "profile",
@@ -81,6 +85,14 @@ class ContainedReviewerProcessError(ContainedReviewerError):
             raise ValueError("invalid reviewer attempts")
         self.attempts = attempts
         super().__init__(code, count=self.count, digest=self.digest)
+
+
+def _close_descriptors(descriptors: list[int]) -> None:
+    for descriptor in descriptors:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
 
 
 def read_contained_reviewer_profile(path: Path) -> bytes:
@@ -1169,34 +1181,57 @@ class ContainedReviewerAdapter:
         credential_descriptor: int,
         sealed_images: tuple[_SealedImage, ...] = (),
     ) -> int:
-        release_read, release_write = os.pipe()
-        ready_read, ready_write = os.pipe()
-        pid = os.fork()
+        descriptors: list[int] = []
+        try:
+            for _ in range(3):
+                descriptors.extend(os.pipe())
+        except OSError as error:
+            _close_descriptors(descriptors)
+            raise ContainedReviewerProcessError("spawn") from error
+        (
+            release_read,
+            release_write,
+            ready_read,
+            ready_write,
+            failure_read,
+            failure_write,
+        ) = descriptors
+        try:
+            pid = os.fork()
+        except OSError as error:
+            _close_descriptors(descriptors)
+            raise ContainedReviewerProcessError("spawn") from error
         if pid == 0:
             try:
                 os.close(release_write)
                 os.close(ready_read)
+                os.close(failure_read)
                 os.setsid()
                 os.write(ready_write, b"R")
                 os.close(ready_write)
                 if os.read(release_read, 1) != b"G":
                     os._exit(125)
-                os.close(release_read)
-                _isolate_child_image_descriptors(sealed_images)
-                os.dup2(stdin_descriptor, 0)
-                os.dup2(stdout_descriptor, 1)
-                os.dup2(stderr_descriptor, 2)
-                os.set_inheritable(codex.descriptor, True)
-                os.set_inheritable(sandbox.descriptor, True)
-                os.set_inheritable(credential_descriptor, True)
-                for image in sealed_images:
-                    os.set_inheritable(image.descriptor, True)
-                self._limit_child()
-                os.execve(sandbox.invocation_path, command, {})
+                try:
+                    os.close(release_read)
+                    _isolate_child_image_descriptors(sealed_images)
+                    os.dup2(stdin_descriptor, 0)
+                    os.dup2(stdout_descriptor, 1)
+                    os.dup2(stderr_descriptor, 2)
+                    os.set_inheritable(codex.descriptor, True)
+                    os.set_inheritable(sandbox.descriptor, True)
+                    os.set_inheritable(credential_descriptor, True)
+                    for image in sealed_images:
+                        os.set_inheritable(image.descriptor, True)
+                    self._limit_child()
+                    os.execve(sandbox.invocation_path, command, {})
+                except BaseException:
+                    os.write(failure_write, b"S")
+                    os._exit(126)
             except BaseException:
                 os._exit(126)
         os.close(release_read)
         os.close(ready_write)
+        os.close(failure_write)
         released = False
         try:
             if os.read(ready_read, 1) != b"R":
@@ -1216,7 +1251,10 @@ class ContainedReviewerAdapter:
             released = True
             os.close(release_write)
             release_write = -1
-            return _wait_for_exit(pid, self._profile.identity.timeout_seconds)
+            returncode = _wait_for_exit(pid, self._profile.identity.timeout_seconds)
+            if _child_spawn_failed(failure_read):
+                raise ContainedReviewerProcessError("spawn")
+            return returncode
         except TimeoutError as error:
             _kill_and_prove_dead(pid, pid, _safe_start_token(pid))
             raise ContainedReviewerProcessError("timeout") from error
@@ -1225,6 +1263,7 @@ class ContainedReviewerAdapter:
             raise ContainedReviewerProcessError("cancel") from error
         finally:
             os.close(ready_read)
+            os.close(failure_read)
             if release_write >= 0:
                 os.close(release_write)
             if not released:
@@ -1234,25 +1273,31 @@ class ContainedReviewerAdapter:
                     _kill_and_prove_dead(pid, pid, _safe_start_token(pid))
 
     def _limit_child(self) -> None:
-        resource.setrlimit(
-            resource.RLIMIT_AS,
-            (self._profile.identity.memory_bytes, self._profile.identity.memory_bytes),
-        )
-        resource.setrlimit(
-            resource.RLIMIT_FSIZE,
-            (self._profile.identity.file_bytes, self._profile.identity.file_bytes),
-        )
-        resource.setrlimit(
-            resource.RLIMIT_NPROC,
-            (
-                self._profile.identity.process_limit,
-                self._profile.identity.process_limit,
-            ),
-        )
-        resource.setrlimit(
-            resource.RLIMIT_NOFILE,
-            (64, 64),
-        )
+        try:
+            process_budget = (
+                _linux_uid_task_count() + self._profile.identity.process_limit
+            )
+            resource.setrlimit(
+                resource.RLIMIT_AS,
+                (
+                    self._profile.identity.memory_bytes,
+                    self._profile.identity.memory_bytes,
+                ),
+            )
+            resource.setrlimit(
+                resource.RLIMIT_FSIZE,
+                (self._profile.identity.file_bytes, self._profile.identity.file_bytes),
+            )
+            resource.setrlimit(
+                resource.RLIMIT_NPROC,
+                (process_budget, process_budget),
+            )
+            resource.setrlimit(
+                resource.RLIMIT_NOFILE,
+                (64, 64),
+            )
+        except (OSError, ValueError) as error:
+            raise ContainedReviewerProcessError("spawn") from error
 
 
 def _process_identity_alive(pid: int, pgid: int, start_token: str) -> bool:
@@ -1470,6 +1515,65 @@ def _safe_start_token(pid: int) -> str:
         return _process_start_token(pid)
     except ContainedReviewerProcessError:
         return "0"
+
+
+def _linux_uid_task_count() -> int:
+    """Count this real uid's Linux tasks from bounded procfs records."""
+    uid = os.getuid()
+    total = 0
+    try:
+        with os.scandir(_PROC_ROOT) as processes:
+            for process in processes:
+                if not process.name.isascii() or not process.name.isdigit():
+                    continue
+                process_path = _PROC_ROOT / process.name
+                try:
+                    if _proc_real_uid(process_path / "status") != uid:
+                        continue
+                    with os.scandir(process_path / "task") as tasks:
+                        for task in tasks:
+                            if not task.name.isascii() or not task.name.isdigit():
+                                continue
+                            total += 1
+                            if total > MAX_UID_TASKS:
+                                raise ValueError("too many uid tasks")
+                except FileNotFoundError:
+                    continue
+    except (OSError, UnicodeError, ValueError) as error:
+        raise ContainedReviewerProcessError("spawn") from error
+    return total
+
+
+def _proc_real_uid(path: Path) -> int:
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        payload = os.read(descriptor, MAX_PROC_STATUS_BYTES + 1)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    if len(payload) > MAX_PROC_STATUS_BYTES:
+        raise ValueError("oversized proc status")
+    for line in payload.decode("ascii", errors="strict").splitlines():
+        if not line.startswith("Uid:\t"):
+            continue
+        values = line.removeprefix("Uid:\t").split()
+        if len(values) != 4 or any(
+            not value.isascii() or not value.isdigit() for value in values
+        ):
+            break
+        return int(values[0], 10)
+    raise ValueError("invalid proc status")
+
+
+def _child_spawn_failed(descriptor: int) -> bool:
+    try:
+        return os.read(descriptor, 1) == b"S"
+    except OSError as error:
+        raise ContainedReviewerProcessError("runtime") from error
 
 
 def _wait_for_exit(pid: int, timeout_seconds: int) -> int:

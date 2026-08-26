@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Keep repeated contained cover reviews within their fixed process headroom and
+  reap a killed direct child before the next attempt. A closed `spawn` failure
+  now distinguishes unavailable reviewer task capacity from a runtime failure. (#866)
+
 - Reject stale contained-reviewer resource profiles at startup with a bounded
   manual-comparison reason, instead of allowing every cover review to fail.
   Operators regenerate profiles explicitly when the fixed contract changes. (#867)

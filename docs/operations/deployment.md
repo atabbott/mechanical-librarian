@@ -38,6 +38,11 @@ Compose also bounds the blast radius of a runaway container with `mem_limit`,
 this image, and `compose.yaml` records that measurement beside the setting so a
 later reader can tell it from a guess.
 
+The contained reviewer sets its Linux `RLIMIT_NPROC` at fork time to the
+current real-uid task count plus its fixed profile headroom. This keeps the
+reviewer's allowance stable while the application is busy; `pids_limit` remains
+defence in depth for the whole container, not reviewer scheduling authority.
+
 Both healthchecks set a start interval, which needs Docker Engine 25 or newer
 and Compose v2.20 or newer. That is the newest runtime either file requires;
 nothing else in them assumes a version that recent.
