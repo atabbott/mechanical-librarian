@@ -236,6 +236,7 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
         },
         "policy_reference": "cover_policy_" + "2" * 64,
         "reviewer_status": "unavailable",
+        "reviewer_unavailable_reason": None,
         "schema_version": "cover-consideration-v1",
         "supersedes_id": None,
         "target_fingerprint": case.target_fingerprint,
