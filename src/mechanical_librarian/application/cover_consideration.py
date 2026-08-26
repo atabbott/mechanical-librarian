@@ -218,6 +218,7 @@ class CoverConsiderationService:
                     if self._reviewer_profile is None
                     else hashlib.sha256(self._reviewer_profile).hexdigest()
                 ),
+                "reviewer_unavailable_reason": self._reviewer_unavailable_reason,
                 "schema_version": SCHEMA_VERSION,
             }
         )

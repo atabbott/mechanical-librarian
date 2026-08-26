@@ -282,6 +282,62 @@ def test_changed_reviewer_contract_makes_the_prior_consideration_noncurrent(
     assert first["consideration_id"] == successor["supersedes_id"]
 
 
+def test_stale_reviewer_binding_is_current_only_and_replays_exactly(
+    case: _Case,
+) -> None:
+    case_id = "review_case_" + "g" * 64
+
+    def failed_reviewer(*_args: object) -> str:
+        raise RuntimeError("contained reviewer exited")
+
+    def service(
+        profile: bytes | None, reason: str | None = None
+    ) -> CoverConsiderationService:
+        return CoverConsiderationService(
+            case.store,
+            read_preview=lambda artifact, _variant: case.payload_by_artifact[artifact],
+            read_preview_digest=lambda digest: case.payload_by_preview[digest],
+            clock=lambda: case.now,
+            reviewer_profile=profile,
+            reviewer=(
+                cast("ReviewRunner", failed_reviewer)
+                if reason is None and profile
+                else None
+            ),
+            reviewer_unavailable_reason=reason,
+        )
+
+    generic = service(b"stale-profile")
+    first = generic.ensure(case_id, case.report.to_json(), case.proposal)
+    stale = service(
+        b"stale-profile", "profile contract requires memory_bytes=1073741824"
+    )
+    successor = stale.ensure(case_id, case.report.to_json(), case.proposal)
+    persisted = json.loads(case.store.current[case_id])
+
+    assert generic.replay_reference != stale.replay_reference
+    assert successor["supersedes_id"] == first["consideration_id"]
+    assert successor["reviewer_unavailable_reason"] == (
+        "profile contract requires memory_bytes=1073741824"
+    )
+    assert persisted["reviewer_failure"] is None
+    assert "reviewer_unavailable_reason" not in persisted
+    assert (
+        stale.project_historical(case.store.current[case_id])[
+            "reviewer_unavailable_reason"
+        ]
+        is None
+    )
+    assert (
+        stale.ensure(case_id, case.report.to_json(), case.proposal)["consideration_id"]
+        == successor["consideration_id"]
+    )
+    different = service(
+        b"other-stale-profile", "profile contract requires process_limit=32"
+    ).ensure(case_id, case.report.to_json(), case.proposal)
+    assert different["supersedes_id"] == successor["consideration_id"]
+
+
 def test_preview_store_failure_is_typed_unavailable(case: _Case) -> None:
     case_id = "review_case_" + "1" * 64
     value = case.service.ensure(case_id, case.report.to_json(), case.proposal)
