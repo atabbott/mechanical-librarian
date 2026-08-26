@@ -359,9 +359,9 @@ def _settings_view(
 
 def _non_settings_library_state(
     document: OwnerSettingsDocument,
-) -> tuple[tuple[str, str | None, object], ...]:
+) -> tuple[tuple[str, str | None, str | None, object], ...]:
     return tuple(
-        (library.name, library.mount, library.policy_override)
+        (library.name, library.display_name, library.mount, library.policy_override)
         for library in document.libraries
     )
 

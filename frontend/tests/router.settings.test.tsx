@@ -37,6 +37,7 @@ const document: SettingsView['document'] = {
       media_kind: 'ebook',
       mount: 'ebooks',
       name: 'a-very_long-library-name',
+      display_name: 'Ebooks & Audiobooks: Collected Editions',
       policy_override: null,
       provider_connections: ['hardcover'],
     },
@@ -234,7 +235,10 @@ describe('owner settings route', () => {
     renderRoute('/settings?group=libraries', http)
 
     expect(
-      await screen.findByRole('heading', { level: 3, name: 'A Very Long Library Name' }),
+      await screen.findByRole('heading', {
+        level: 3,
+        name: 'Ebooks & Audiobooks: Collected Editions',
+      }),
     ).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'a-very_long-library-name' })).toBeNull()
     const metadata = screen.getByText('a-very_long-library-name').closest('p')
@@ -242,8 +246,31 @@ describe('owner settings route', () => {
     expect(metadata).toHaveTextContent('Local identifier: a-very_long-library-name')
     expect(metadata).toHaveTextContent('Audiobookshelf identifier: books')
     expect(
-      screen.getByRole('group', { name: 'Providers for A Very Long Library Name' }),
+      screen.getByRole('group', {
+        name: 'Providers for Ebooks & Audiobooks: Collected Editions',
+      }),
     ).toBeVisible()
+  })
+
+  it('falls back to the exact stable library name without reconstructing punctuation', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => ({
+      ...view(),
+      document: {
+        ...document,
+        libraries: document.libraries.map((library) => {
+          const { display_name: omittedDisplayName, ...legacyLibrary } = library
+          void omittedDisplayName
+          return legacyLibrary
+        }),
+      },
+    }))
+    renderRoute('/settings?group=libraries', http)
+
+    expect(
+      await screen.findByRole('heading', { level: 3, name: 'a-very_long-library-name' }),
+    ).toBeVisible()
+    expect(screen.queryByText('A Very Long Library Name')).not.toBeInTheDocument()
   })
 
   it('announces unavailable and stale recovery states without leaking a value', async () => {

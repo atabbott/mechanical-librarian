@@ -94,6 +94,19 @@
             "title": "Connection",
             "type": "string"
           },
+          "display_name": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
           "library_id": {
             "maxLength": 128,
             "minLength": 1,

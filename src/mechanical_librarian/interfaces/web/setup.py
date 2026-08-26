@@ -114,6 +114,7 @@ class _ProvidersRequest(BaseModel):
 class _LibraryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     name: StrictStr = Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")
+    display_name: StrictStr | None = Field(default=None, min_length=1, max_length=256)
     library_id: StrictStr = Field(min_length=1, max_length=128)
     # Audiobookshelf's `book` collection already represents its combined
     # ebook/audiobook kind. The setup owner selects a library, never a media
@@ -500,6 +501,7 @@ def create_setup_app(
                 values = [
                     LibrarySettings(
                         name=value.name,
+                        display_name=value.display_name,
                         connection=document.connection.name,
                         library_id=value.library_id,
                         media_kind="book",

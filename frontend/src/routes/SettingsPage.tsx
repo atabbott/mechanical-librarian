@@ -58,12 +58,6 @@ const clone = (value: SettingsView['document'] | Document): Document =>
   structuredClone(value) as Document
 const effectCopy = (effect: string) =>
   effect === 'deploy_managed' ? 'Managed by your deployment' : null
-const humanLibraryLabel = (value: string) =>
-  value
-    .split(/[-_]+/u)
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toLocaleUpperCase() + word.slice(1))
-    .join(' ')
 
 const validationErrors = (
   document: Document,
@@ -811,7 +805,7 @@ const SettingsEditor = ({
               <>
                 {visibleLibraries.map(({ library, index }) => (
                   <div className="settings-record" key={library.name}>
-                    <h3>{humanLibraryLabel(library.name)}</h3>
+                    <h3>{library.display_name ?? library.name}</h3>
                     <p className="settings-record-meta">
                       Local identifier: <code>{library.name}</code>
                       <span aria-hidden="true"> · </span>
@@ -866,7 +860,7 @@ const SettingsEditor = ({
                             ? library.provider_connections.join(', ')
                             : 'Target evidence only'}
                         </strong>
-                      ) : (
+                      ) : draft.providers.length ? (
                         <fieldset
                           className="settings-choice"
                           id={controlId(`library.${library.name}.provider_connections`)}
@@ -874,7 +868,7 @@ const SettingsEditor = ({
                             `library.${library.name}.provider_connections`,
                           )}
                         >
-                          <legend>Providers for {humanLibraryLabel(library.name)}</legend>
+                          <legend>Providers for {library.display_name ?? library.name}</legend>
                           {draft.providers.map((provider) => (
                             <label key={provider.name}>
                               <input
@@ -896,6 +890,10 @@ const SettingsEditor = ({
                             </label>
                           ))}
                         </fieldset>
+                      ) : (
+                        <p className="settings-empty-associations">
+                          No metadata providers are configured.
+                        </p>
                       )}
                     </Row>
                   </div>

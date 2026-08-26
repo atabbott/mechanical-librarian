@@ -1988,20 +1988,28 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     route.fulfill(
                         json={
                             "libraries": [
-                                    {
-                                        "library_id": "books",
-                                        "name": "Books",
-                                        "media_kind": "book",
-                                        "service_path": "/library/books",
-                                        "service_path_state": "available",
-                                    },
+                                {
+                                    "library_id": "books",
+                                    "name": "Books",
+                                    "media_kind": "book",
+                                    "service_path": "/library/books",
+                                    "service_path_state": "available",
+                                },
                                 {
                                     "library_id": "long",
-                                        "name": "A very long library name "
-                                        + "wrapped " * 12,
-                                        "media_kind": "book",
-                                        "service_path": "/library/long",
-                                        "service_path_state": "available",
+                                    "name": (
+                                        "A very long library name " + "wrapped " * 12
+                                    ).strip(),
+                                    "media_kind": "book",
+                                    "service_path": "/library/long",
+                                    "service_path_state": "available",
+                                },
+                                {
+                                    "library_id": "books-collision",
+                                    "name": "Books!",
+                                    "media_kind": "book",
+                                    "service_path": "/library/books-collision",
+                                    "service_path_state": "available",
                                 },
                                 {
                                     "library_id": "podcasts",
@@ -2154,43 +2162,60 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     access = page.get_by_role("link", name=f"Get {provider} access")
                     expect(access).to_be_visible()
                     expect(access).to_have_class(re.compile(r"\bprovider-access\b"))
-                    assert access.evaluate(
-                        "element => getComputedStyle(element).textDecorationLine"
-                    ) == "underline"
-                    assert access.evaluate(
-                        "element => getComputedStyle(element).color"
-                    ) != "rgb(0, 0, 238)"
+                    assert (
+                        access.evaluate(
+                            "element => getComputedStyle(element).textDecorationLine"
+                        )
+                        == "underline"
+                    )
+                    assert (
+                        access.evaluate("element => getComputedStyle(element).color")
+                        != "rgb(0, 0, 238)"
+                    )
                     page.get_by_role("checkbox", name=provider).focus()
                     page.keyboard.press("Tab")
                     expect(access).to_be_focused()
-                    assert access.evaluate(
-                        "element => getComputedStyle(element).outlineStyle"
-                    ) != "none"
+                    assert (
+                        access.evaluate(
+                            "element => getComputedStyle(element).outlineStyle"
+                        )
+                        != "none"
+                    )
                 for color in ("light", "dark"):
                     page.emulate_media(color_scheme=color)
                     for width, height in protected_viewports:
                         page.set_viewport_size({"width": width, "height": height})
                         expect(
-                            page.get_by_role(
-                                "link", name="Get Open Library access"
-                            )
+                            page.get_by_role("link", name="Get Open Library access")
                         ).to_be_visible()
                         assert page.evaluate(
                             "document.documentElement.scrollWidth <= window.innerWidth"
                         )
                 page.get_by_role("button", name="Skip providers").click()
                 expect(
-                    page.get_by_text(
-                        "1 unsupported podcast library excluded."
-                    )
+                    page.get_by_text("1 unsupported podcast library excluded.")
                 ).to_be_visible()
-                page.get_by_role("checkbox", name="Books").check()
+                page.get_by_role("checkbox", name="Books", exact=True).check()
+                page.get_by_role("checkbox", name="Books!").check()
                 page.get_by_role(
                     "checkbox", name="A very long library name", exact=False
                 ).check()
-                expect(page.get_by_label("Local name").first).to_be_hidden()
+                expect(page.get_by_label("Library name").first).to_be_hidden()
                 page.get_by_role("button", name="Change name").first.click()
-                expect(page.get_by_label("Local name").first).to_be_visible()
+                display_name = page.get_by_label("Library name").first
+                expect(display_name).to_be_visible()
+                expect(display_name).to_have_value("Books")
+                display_name.fill("My Reading Shelf")
+                selected_libraries: list[dict[str, object]] = []
+
+                def record_library_selection(request) -> None:
+                    if (
+                        request.method == "POST"
+                        and urlparse(request.url).path == "/api/setup/libraries"
+                    ):
+                        selected_libraries.extend(request.post_data_json["libraries"])
+
+                page.on("request", record_library_selection)
                 page.evaluate("document.documentElement.style.fontSize = '200%'")
                 assert page.evaluate(
                     "document.documentElement.scrollWidth <= window.innerWidth"
@@ -2200,6 +2225,13 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 expect(
                     page.get_by_role("heading", name="Check read-only mounts")
                 ).to_be_visible()
+                selected_by_id = {
+                    item["library_id"]: item for item in selected_libraries
+                }
+                assert selected_by_id["books"]["name"] == "books"
+                assert selected_by_id["books"]["display_name"] == "My Reading Shelf"
+                assert selected_by_id["books-collision"]["name"] == "books-2"
+                assert selected_by_id["books-collision"]["display_name"] == "Books!"
                 expect(page.get_by_label("Books service path")).to_be_visible()
                 expect(
                     page.get_by_label(
@@ -2240,9 +2272,12 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     "element => getComputedStyle(element).transitionProperty"
                 )
                 page.emulate_media(reduced_motion="reduce")
-                assert handoff.evaluate(
-                    "element => getComputedStyle(element).transitionDuration"
-                ) == "0s"
+                assert (
+                    handoff.evaluate(
+                        "element => getComputedStyle(element).transitionDuration"
+                    )
+                    == "0s"
+                )
                 expect(
                     page.get_by_text(
                         "Writes stay off until you turn them on in Activity."
@@ -2277,6 +2312,11 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                             "a-very-long-library-name-from-audiobookshelf"
                             if index == 0
                             else f"library-{index:03d}"
+                        ),
+                        "display_name": (
+                            "Ebooks & Audiobooks: Collected Editions"
+                            if index == 0
+                            else f"Library {index:03d}"
                         ),
                         "connection": "primary",
                         "library_id": f"synthetic-{index:03d}",
@@ -2350,11 +2390,13 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     page.get_by_role("heading", name="Libraries", exact=True)
                 ).to_be_visible()
                 page.unroute("**/api/v1/settings", hold_initial_settings)
-                expect(page.get_by_text("Applies to the next operation")).to_have_count(0)
+                expect(page.get_by_text("Applies to the next operation")).to_have_count(
+                    0
+                )
                 expect(
                     page.get_by_role(
                         "heading",
-                        name="A Very Long Library Name From Audiobookshelf",
+                        name="Ebooks & Audiobooks: Collected Editions",
                     )
                 ).to_be_visible()
                 expect(
@@ -2371,12 +2413,63 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     "Audiobookshelf identifier: synthetic-000"
                 )
                 expect(
-                    page.get_by_role(
-                        "group",
-                        name="Providers for A Very Long Library Name From Audiobookshelf",
-                    )
+                    page.get_by_text("No metadata providers are configured.").first
                 ).to_be_visible()
+                expect(
+                    page.get_by_role("group", name=re.compile(r"^Providers for"))
+                ).to_have_count(0)
                 assert page.locator("*").count() < 2_000
+
+                def assert_settings_layout(
+                    *, sidebar_visible: bool, zoomed: bool = False
+                ) -> None:
+                    layout = page.evaluate(
+                        """() => {
+                          const visible = (element) => {
+                            const style = getComputedStyle(element);
+                            const rect = element.getBoundingClientRect();
+                            return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+                          };
+                          const save = [...document.querySelectorAll('button')]
+                            .find((element) => element.textContent === 'Save settings');
+                          const saveRect = save.getBoundingClientRect();
+                          const overlaps = [...document.querySelectorAll('.settings-fields > *, .settings-field-row, .settings-record-meta')]
+                            .filter(visible)
+                            .filter((element) => {
+                              const rect = element.getBoundingClientRect();
+                              return Math.min(saveRect.right, rect.right) > Math.max(saveRect.left, rect.left)
+                                && Math.min(saveRect.bottom, rect.bottom) > Math.max(saveRect.top, rect.top);
+                            }).length;
+                          const active = document.querySelector('.settings-sidebar button[aria-current="page"]');
+                          const title = active?.querySelector('strong')?.getBoundingClientRect();
+                          const subtitle = active?.querySelector('small')?.getBoundingClientRect();
+                          const heading = getComputedStyle(document.querySelector('.settings-heading h1'));
+                          return {
+                            overlaps,
+                            sidebarVisible: active ? visible(active) : false,
+                            sidebarSeparated: title && subtitle ? title.bottom < subtitle.top : false,
+                            headingSize: Number.parseFloat(heading.fontSize),
+                            headingLineHeight: Number.parseFloat(heading.lineHeight),
+                            rootSize: Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
+                            disabledOpacity: Number.parseFloat(getComputedStyle(save).opacity),
+                          };
+                        }"""
+                    )
+                    assert layout["overlaps"] == 0
+                    if zoomed:
+                        assert layout["headingSize"] / layout["rootSize"] <= 2.5
+                        assert (
+                            1
+                            <= layout["headingLineHeight"] / layout["headingSize"]
+                            <= 1.25
+                        )
+                    else:
+                        assert layout["headingSize"] <= 40
+                        assert layout["headingLineHeight"] <= 45
+                    assert layout["disabledOpacity"] < 1
+                    if sidebar_visible:
+                        assert layout["sidebarVisible"] is True
+                        assert layout["sidebarSeparated"] is True
 
                 for theme in ("light", "dark"):
                     requested = "Use dark mode" if theme == "dark" else "Use light mode"
@@ -2396,6 +2489,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                         assert page.evaluate(
                             "document.documentElement.scrollWidth <= window.innerWidth"
                         )
+                        assert_settings_layout(sidebar_visible=width > 700)
                         if width <= 390:
                             expect(
                                 page.locator("label.settings-mobile-group select")
@@ -2411,6 +2505,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 assert page.evaluate(
                     "document.documentElement.scrollWidth <= window.innerWidth"
                 )
+                assert_settings_layout(sidebar_visible=False, zoomed=True)
                 expect(
                     page.locator("label.settings-mobile-group select")
                 ).to_be_visible()
@@ -2424,6 +2519,16 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     expect(
                         page.get_by_role("button", name=f"Add {provider}")
                     ).to_be_visible()
+                assert (
+                    page.locator(".settings-sheet").evaluate(
+                        "element => element.getBoundingClientRect().height"
+                    )
+                    < 600
+                )
+                assert page.evaluate(
+                    """() => [...document.querySelectorAll('.settings-empty h3, .settings-capabilities h3')]
+                      .every((heading) => heading.getBoundingClientRect().bottom < heading.nextElementSibling.getBoundingClientRect().top)"""
+                )
                 compact_group.select_option("connection")
                 expect(page.get_by_text("Configured · ····cret")).to_be_visible()
                 page.get_by_role("button", name="Clear primary access key").click()
@@ -2454,6 +2559,33 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     page.get_by_role("button", name="Save settings")
                 ).to_be_disabled()
                 timeout_input.fill("30")
+
+                compact_group.select_option("reviewer")
+                reviewer_checkbox = page.get_by_role(
+                    "checkbox", name="Use contained review for eligible cover work"
+                )
+                reviewer_metrics = reviewer_checkbox.evaluate(
+                    """element => ({
+                      glyph: element.getBoundingClientRect().toJSON(),
+                      target: element.closest('label').getBoundingClientRect().toJSON(),
+                    })"""
+                )
+                assert reviewer_metrics["glyph"]["width"] <= 20
+                assert reviewer_metrics["glyph"]["height"] <= 20
+                assert reviewer_metrics["target"]["height"] >= 44
+                compact_group.select_option("server")
+                diagnostic_checkbox = page.get_by_role(
+                    "checkbox", name="Record diagnostic timings"
+                )
+                diagnostic_metrics = diagnostic_checkbox.evaluate(
+                    """element => ({
+                      glyph: element.getBoundingClientRect().toJSON(),
+                      target: element.closest('label').getBoundingClientRect().toJSON(),
+                    })"""
+                )
+                assert diagnostic_metrics["glyph"]["width"] <= 20
+                assert diagnostic_metrics["glyph"]["height"] <= 20
+                assert diagnostic_metrics["target"]["height"] >= 44
 
                 compact_group.select_option("connection")
                 page.evaluate("window.__settingsLongTasks = []")
@@ -2493,9 +2625,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 expect(page.get_by_text("Saving settings…")).to_be_visible()
                 assert len(held_save) == 1
                 held_save[0].continue_()
-                expect(
-                    page.get_by_text("Settings saved and in use.")
-                ).to_be_visible()
+                expect(page.get_by_text("Settings saved and in use.")).to_be_visible()
                 page.unroute("**/api/v1/settings", hold_save)
                 assert max(page.evaluate("window.__settingsLongTasks"), default=0) <= 50
 

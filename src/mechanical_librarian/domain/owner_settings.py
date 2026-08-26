@@ -110,6 +110,9 @@ _PROVIDER_CAPABILITIES: tuple[ProviderCapability, ...] = (
 
 class LibrarySettings(_Closed):
     name: Name
+    display_name: Annotated[StrictStr, Field(min_length=1, max_length=256)] | None = (
+        Field(default=None, exclude_if=lambda value: value is None)
+    )
     connection: Name
     library_id: Annotated[StrictStr, Field(min_length=1, max_length=128)]
     media_kind: Literal["book", "ebook", "audiobook"]
@@ -117,6 +120,13 @@ class LibrarySettings(_Closed):
     # Deploy-authoritative display-only association.
     mount: Name | None = None
     policy_override: dict[str, dict[str, str]] | None = None
+
+    @field_validator("display_name")
+    @classmethod
+    def _validate_display_name(cls, value: str | None) -> str | None:
+        if value is not None and ("\x00" in value or value.strip() != value):
+            raise OwnerSettingsError("library display name is invalid")
+        return value
 
 
 class ReportLimitSettings(_Closed):

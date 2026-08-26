@@ -617,6 +617,7 @@ def test_six_step_journey_closes_setup_routes_after_exact_kickoff_copy() -> None
             "libraries": [
                 {
                     "name": "books",
+                    "display_name": "Owner's Ebooks & Audiobooks",
                     "library_id": "books",
                     "media_kind": "book",
                     "provider_connections": [],
@@ -641,23 +642,24 @@ def test_six_step_journey_closes_setup_routes_after_exact_kickoff_copy() -> None
 
     assert discovery.json() == {
         "libraries": [
-                {
-                    "library_id": "books",
-                    "name": "Books",
-                    "media_kind": "book",
-                    "service_path": None,
-                    "service_path_state": "unavailable",
-                },
+            {
+                "library_id": "books",
+                "name": "Books",
+                "media_kind": "book",
+                "service_path": None,
+                "service_path_state": "unavailable",
+            },
             {
                 "library_id": "podcasts",
                 "name": "Podcasts",
-                    "media_kind": "unsupported",
-                    "service_path": None,
-                    "service_path_state": "unavailable",
+                "media_kind": "unsupported",
+                "service_path": None,
+                "service_path_state": "unavailable",
             },
         ]
     }
     assert kickoff.status_code == 202
+    assert state.document.libraries[0].display_name == "Owner's Ebooks & Audiobooks"
     assert kickoff.json() == {
         "status": "active",
         "message": "Nothing in your library changes. Writes stay off until you turn them on in Activity.",
@@ -674,8 +676,16 @@ def test_setup_library_step_uses_audiobookshelf_book_kind_without_owner_choice()
 ):
     assert "Library kind" not in SETUP_JS
     assert "media_kind:'book'" in SETUP_JS
+    assert "displayName.value=item.name" in SETUP_JS
+    assert "field('Library name',displayName)" in SETUP_JS
+    assert "display_name:row.querySelector('input[name^=display-]').value" in SETUP_JS
+    assert "row.dataset.name=stableName" in SETUP_JS
+    assert "name:row.dataset.name" in SETUP_JS
     assert "Preparation will begin in the workspace." in SETUP_JS
     assert "className='provider-access'" in SETUP_JS
     assert "`${evidence?.name||humanName(item.library)}:" in SETUP_JS
-    assert "field(`${evidence?.name||humanName(library.name)} service path`,path)" in SETUP_JS
+    assert (
+        "field(`${evidence?.name||humanName(library.name)} service path`,path)"
+        in SETUP_JS
+    )
     assert "state.mounts.length?'Retest mounts':'Check mounts'" in SETUP_JS

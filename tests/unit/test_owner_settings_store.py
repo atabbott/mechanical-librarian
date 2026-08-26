@@ -102,6 +102,31 @@ def test_document_rejects_noncanonical_references_and_bounds() -> None:
         OwnerSettingsDocument.model_validate(value)
 
 
+def test_library_display_name_is_optional_canonical_and_preserves_exact_punctuation() -> (
+    None
+):
+    legacy = _document()
+    assert "display_name" not in legacy.model_dump()["libraries"][0]
+
+    value = legacy.model_dump()
+    value["libraries"][0]["display_name"] = "Ebooks & Audiobooks: Collected Editions"
+    document = OwnerSettingsDocument.model_validate(value)
+
+    assert (
+        document.libraries[0].display_name == "Ebooks & Audiobooks: Collected Editions"
+    )
+    assert "display_name" in document.model_dump()["libraries"][0]
+
+
+@pytest.mark.parametrize("display_name", (" leading", "trailing ", "nul\x00name"))
+def test_library_display_name_rejects_noncanonical_text(display_name: str) -> None:
+    value = _document().model_dump()
+    value["libraries"][0]["display_name"] = display_name
+
+    with pytest.raises((OwnerSettingsError, ValidationError)):
+        OwnerSettingsDocument.model_validate(value)
+
+
 def test_maximum_bounded_document_fits_the_persistence_and_response_contract() -> None:
     value = _document().model_dump()
     value["connections"] = [
@@ -330,6 +355,17 @@ def test_store_rejects_non_settings_owned_library_mutation(field: str) -> None:
 
     assert store.read().document.libraries[0].mount == "books"
     assert store.read().document.libraries[0].policy_override is None
+
+
+def test_store_rejects_display_name_mutation_outside_setup() -> None:
+    store = _store()
+    value = _document(2).model_dump()
+    value["libraries"][0]["display_name"] = "Changed in a raw PATCH"
+
+    with pytest.raises(OwnerSettingsError, match="settings document is invalid"):
+        store.write(OwnerSettingsDocument.model_validate(value), 1, ())
+
+    assert store.read().document.libraries[0].display_name is None
 
 
 def test_store_managed_fields_are_live_without_restart_debt() -> None:

@@ -74,6 +74,10 @@ SETUP_JS = (
         "const humanName=value=>String(value).split(/[-_]+/u).filter(Boolean).map(word=>word.charAt(0).toUpperCase()+word.slice(1)).join(' ');const field=(label,input)=>",
     )
     .replace(
+        "invalid_library_name:settingsVocabulary.errors.library_name,",
+        "invalid_library_name:settingsVocabulary.errors.library_name,invalid_library_display_name:'Use a library name from 1 to 256 characters without leading or trailing spaces.',",
+    )
+    .replace(
         "['claim','Set owner password']",
         "['claim','Create owner access']",
     )
@@ -95,7 +99,7 @@ SETUP_JS = (
     )
     .replace(
         "loading.remove();for(const item of result.libraries){",
-        "loading.remove();const unsupported=result.libraries.filter(item=>item.media_kind==='unsupported');if(unsupported.length){const note=document.createElement('p');note.className='notice';note.textContent=`${unsupported.length} unsupported podcast ${unsupported.length===1?'library':'libraries'} excluded.`;form.append(note)}for(const item of result.libraries.filter(value=>value.media_kind!=='unsupported')){",
+        "loading.remove();const usedNames=new Set();const unsupported=result.libraries.filter(item=>item.media_kind==='unsupported');if(unsupported.length){const note=document.createElement('p');note.className='notice';note.textContent=`${unsupported.length} unsupported podcast ${unsupported.length===1?'library':'libraries'} excluded.`;form.append(note)}for(const item of result.libraries.filter(value=>value.media_kind!=='unsupported')){",
     )
     .replace(
         "row.append(field('Local name',name),field('Library kind',kind));",
@@ -146,7 +150,23 @@ SETUP_JS = (
     )
     .replace(
         "row.append(field('Local name',name));",
-        "const nameField=field('Local name',name);nameField.hidden=true;const changeName=button('Change name');changeName.type='button';changeName.addEventListener('click',()=>{nameField.hidden=false;changeName.hidden=true;name.focus()});row.append(changeName,nameField);",
+        "const displayName=input(`display-${item.library_id}`);displayName.value=item.name;displayName.required=true;const displayNameField=field('Library name',displayName);displayNameField.hidden=true;const changeName=button('Change name');changeName.type='button';changeName.addEventListener('click',()=>{displayNameField.hidden=false;changeName.hidden=true;displayName.focus()});row.append(changeName,displayNameField);",
+    )
+    .replace(
+        "row.dataset.id=item.library_id;",
+        "let stableName=escapeName(item.name);let suffix=2;while(usedNames.has(stableName)){const tail=`-${suffix++}`;stableName=`${escapeName(item.name).slice(0,64-tail.length)}${tail}`}usedNames.add(stableName);row.dataset.id=item.library_id;row.dataset.name=stableName;",
+    )
+    .replace(
+        "const invalid=selected.map(row=>row.querySelector('input[type=text]')).find(control=>!control.checkValidity()||!settingsLocalLibraryNameValid(control.value));if(invalid){invalid.focus();invalid.reportValidity();error(form,'invalid_library_name');return}",
+        "const invalid=selected.map(row=>row.querySelector('input[name^=display-]')).find(control=>{const value=control.value;return Array.from(value).length<1||Array.from(value).length>256||value.includes('\\0')||value.trim()!==value});if(invalid){invalid.focus();error(form,'invalid_library_display_name');return}",
+    )
+    .replace(
+        "const libraries=selected.map(row=>({name:",
+        "const libraries=selected.map(row=>({display_name:row.querySelector('input[name^=display-]').value,name:",
+    )
+    .replace(
+        "name:row.querySelector('input[type=text]').value",
+        "name:row.dataset.name",
     )
     .replace("Your work is ready", "Your work is ready")
     .replace("Preparation is complete", "Preparation is complete")

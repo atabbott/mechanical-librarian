@@ -164,6 +164,85 @@ def test_library_selection_rejects_duplicate_canonical_local_names() -> None:
     assert store.read(_BOOTSTRAP) == state
 
 
+def test_library_selection_preserves_discovered_name_and_owner_override() -> None:
+    _connection, store = _store()
+    state = _connected(store)
+    journey = _journey(
+        store,
+        (
+            SetupLibraryCandidate(
+                library_id="one",
+                name="Ebooks & Audiobooks: Collected Editions",
+                media_kind="book",
+            ),
+            SetupLibraryCandidate(
+                library_id="two", name="Second Shelf", media_kind="book"
+            ),
+        ),
+    )
+    state = journey.providers(state.revision, [], {})
+
+    state = journey.libraries(
+        state.revision,
+        [
+            LibrarySettings(
+                name="books",
+                connection="primary",
+                library_id="one",
+                media_kind="book",
+            ),
+            LibrarySettings(
+                name="personal",
+                display_name="My Reading Shelf",
+                connection="primary",
+                library_id="two",
+                media_kind="book",
+            ),
+        ],
+    )
+
+    assert [library.display_name for library in state.libraries] == [
+        "Ebooks & Audiobooks: Collected Editions",
+        "My Reading Shelf",
+    ]
+
+
+def test_colliding_discovered_names_keep_unique_stable_names_and_exact_labels() -> None:
+    _connection, store = _store()
+    state = _connected(store)
+    journey = _journey(
+        store,
+        (
+            SetupLibraryCandidate(library_id="one", name="Books", media_kind="book"),
+            SetupLibraryCandidate(library_id="two", name="Books!", media_kind="book"),
+        ),
+    )
+    state = journey.providers(state.revision, [], {})
+
+    state = journey.libraries(
+        state.revision,
+        [
+            LibrarySettings(
+                name="books",
+                connection="primary",
+                library_id="one",
+                media_kind="book",
+            ),
+            LibrarySettings(
+                name="books-2",
+                connection="primary",
+                library_id="two",
+                media_kind="book",
+            ),
+        ],
+    )
+
+    assert [(library.name, library.display_name) for library in state.libraries] == [
+        ("books", "Books"),
+        ("books-2", "Books!"),
+    ]
+
+
 def test_library_discovery_failure_is_retryable_and_records_nothing() -> None:
     _connection, store = _store()
     state = _connected(store)

@@ -135,7 +135,17 @@ class SetupJourneyOperation:
             )
         ):
             raise SetupJourneyError("invalid_libraries")
-        canonical = sorted(libraries, key=lambda value: value.name)
+        canonical = sorted(
+            (
+                value
+                if value.display_name is not None
+                else value.model_copy(
+                    update={"display_name": available[value.library_id].name}
+                )
+                for value in libraries
+            ),
+            key=lambda value: value.name,
+        )
         successor = SetupStateDocument.model_validate(
             {
                 **current.model_dump(),
