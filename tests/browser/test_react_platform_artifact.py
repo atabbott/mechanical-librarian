@@ -1806,12 +1806,53 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         expect(load_more).to_have_count(0)
         assert page.locator(".diagnostic-entry").count() == 6
         nav = page.get_by_role("navigation", name="Case diagnostics")
+
+        def assert_diagnostic_layout(active_page: str) -> None:
+            active_link = nav.get_by_role("link", name=active_page)
+            for scheme in ("light", "dark"):
+                if scheme == "dark":
+                    page.get_by_role("button", name="Use dark mode").click()
+                for width, height in (
+                    (1440, 900),
+                    (884, 900),
+                    (390, 844),
+                    (320, 844),
+                ):
+                    page.set_viewport_size({"width": width, "height": height})
+                    assert page.evaluate(
+                        "() => document.documentElement.scrollWidth <= window.innerWidth"
+                    ), (active_page, scheme, width)
+                    assert back.bounding_box()["height"] >= 44
+                    for link in nav.get_by_role("link").all():
+                        assert link.bounding_box()["height"] >= 44
+                    active_link.focus()
+                    expect(active_link).to_be_focused()
+                    assert active_link.evaluate(
+                        "node => getComputedStyle(node).outlineStyle === 'solid'"
+                    )
+                page.set_viewport_size({"width": 1440, "height": 900})
+                page.locator("html").evaluate(
+                    "node => { node.style.fontSize = '200%' }"
+                )
+                assert page.evaluate(
+                    "() => document.documentElement.scrollWidth <= window.innerWidth"
+                ), (active_page, scheme, "200%")
+                assert back.bounding_box()["height"] >= 44
+                for link in nav.get_by_role("link").all():
+                    assert link.bounding_box()["height"] >= 44
+                active_link.focus()
+                expect(active_link).to_be_focused()
+                page.locator("html").evaluate("node => { node.style.fontSize = '' }")
+                if scheme == "dark":
+                    page.get_by_role("button", name="Use light mode").click()
+
         nav.get_by_role("link", name="Evidence").focus()
         page.keyboard.press("Tab")
         expect(nav.get_by_role("link", name="History")).to_be_focused()
         assert nav.get_by_role("link", name="History").evaluate(
             "node => getComputedStyle(node).outlineStyle === 'solid'"
         )
+        assert_diagnostic_layout("Evidence")
         capture_visual_proof("case-diagnostics-evidence")
         nav.get_by_role("link", name="History", exact=True).click()
         page.get_by_role("heading", name="History").wait_for()
@@ -1840,40 +1881,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             ).count()
             == 0
         )
-        for scheme in ("light", "dark"):
-            if scheme == "dark":
-                page.get_by_role("button", name="Use dark mode").click()
-            for width, height in (
-                (1440, 900),
-                (884, 900),
-                (390, 844),
-                (320, 844),
-            ):
-                page.set_viewport_size({"width": width, "height": height})
-                assert page.evaluate(
-                    "() => document.documentElement.scrollWidth <= window.innerWidth"
-                ), (scheme, width)
-                assert back.bounding_box()["height"] >= 44
-                for link in nav.get_by_role("link").all():
-                    assert link.bounding_box()["height"] >= 44
-                nav.get_by_role("link", name="History").focus()
-                expect(nav.get_by_role("link", name="History")).to_be_focused()
-                assert nav.get_by_role("link", name="History").evaluate(
-                    "node => getComputedStyle(node).outlineStyle === 'solid'"
-                )
-            page.set_viewport_size({"width": 1440, "height": 900})
-            page.locator("html").evaluate("node => { node.style.fontSize = '200%' }")
-            assert page.evaluate(
-                "() => document.documentElement.scrollWidth <= window.innerWidth"
-            ), (scheme, "200%")
-            assert back.bounding_box()["height"] >= 44
-            for link in nav.get_by_role("link").all():
-                assert link.bounding_box()["height"] >= 44
-            nav.get_by_role("link", name="History").focus()
-            expect(nav.get_by_role("link", name="History")).to_be_focused()
-            page.locator("html").evaluate("node => { node.style.fontSize = '' }")
-            if scheme == "dark":
-                page.get_by_role("button", name="Use light mode").click()
+        assert_diagnostic_layout("History")
         capture_visual_proof("case-diagnostics-history")
         page.go_back()
         page.get_by_role("heading", name="Evidence").wait_for()
