@@ -45,7 +45,9 @@ async def _runtime_app(scope: object, receive: object, send: object) -> None:
     return None
 
 
-def test_store_runtime_activation_reuses_outer_control_authority_for_successors() -> None:
+def test_store_runtime_activation_reuses_outer_control_authority_for_successors() -> (
+    None
+):
     snapshot: tuple[SettingsView, dict[str, str], str] = (
         cast(SettingsView, object()),
         {},
@@ -89,9 +91,7 @@ def test_setup_and_settings_successors_open_through_live_outer_control(
 ) -> None:
     database = tmp_path / "application.sqlite3"
     control = composition.open_repository(database)
-    predecessor = composition.open_repository(
-        database, authority=control.authority
-    )
+    predecessor = composition.open_repository(database, authority=control.authority)
     snapshot: tuple[SettingsView, dict[str, str], str] = (
         cast(SettingsView, object()),
         {},

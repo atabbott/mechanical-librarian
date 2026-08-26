@@ -1222,7 +1222,9 @@ def test_linux_outer_control_keeps_successor_valid_after_predecessor_close() -> 
         successor = open_repository(path, authority=authority)
         predecessor.close()
         successor.publish(synthetic_report(), lambda: True)
-        assert successor.get(synthetic_report().report_id) == synthetic_report().to_json()
+        assert (
+            successor.get(synthetic_report().report_id) == synthetic_report().to_json()
+        )
         successor.close()
         control.close()
         with pytest.raises(MetadataReportError, match="database authority changed"):
