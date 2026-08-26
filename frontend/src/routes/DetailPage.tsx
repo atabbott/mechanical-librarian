@@ -30,16 +30,18 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
           </p>
         ) : (
           <>
-            {item.previousValue ? (
-              <p className="diagnostic-value">
-                <span>From</span> {displayValue(item.previousValue.value)}
-              </p>
-            ) : null}
-            {item.selectedValue ? (
-              <p className="diagnostic-value">
-                <span>To</span> {displayValue(item.selectedValue.value)}
-              </p>
-            ) : null}
+            <p className="diagnostic-value">
+              <span>From</span>{' '}
+              {item.previousValue
+                ? displayValue(item.previousValue.value)
+                : 'No value is recorded.'}
+            </p>
+            <p className="diagnostic-value">
+              <span>To</span>{' '}
+              {item.selectedValue
+                ? displayValue(item.selectedValue.value)
+                : 'No value is recorded.'}
+            </p>
           </>
         )}
       </article>
@@ -118,7 +120,7 @@ function displayRetainedHistoryValue(
 }
 
 function historyValuesMatch(previous: HistoryValueView | null, selected: HistoryValueView | null) {
-  if (previous === null || selected === null) return previous === selected
+  if (previous === null || selected === null) return false
   return (
     previous.kind === selected.kind &&
     JSON.stringify(previous.value) === JSON.stringify(selected.value)

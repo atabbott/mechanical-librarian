@@ -71,10 +71,13 @@ describe('Library review ownership', () => {
     const getHistory = vi.fn<ReviewHttp['getHistory']>(async () => ({
       items: [
         { category: 'owner', destination: 'title', outcome: 'accept', previousValue: { kind: 'text', value: '<script>previous</script>' }, selectedValue: { kind: 'text', value: '<script>chosen</script>' } },
+        { category: 'owner', destination: 'language', outcome: 'accept', previousValue: null, selectedValue: { kind: 'text', value: 'English' } },
+        { category: 'owner', destination: 'publisher', outcome: 'accept', previousValue: { kind: 'text', value: 'Former publisher' }, selectedValue: null },
         { category: 'owner', destination: 'subtitle', outcome: 'keep_current', previousValue: { kind: 'text', value: 'Existing subtitle' }, selectedValue: { kind: 'text', value: 'Existing subtitle' } },
         { category: 'automatic', destination: 'series', outcome: 'keep_current', previousValue: { kind: 'series', value: [{ name: 'Existing series', sequence: '2' }] }, selectedValue: { kind: 'series', value: [{ name: 'Existing series', sequence: '2' }] } },
         { category: 'owner', destination: 'isbn', outcome: 'reject', previousValue: { kind: 'text', value: '9780000000001' }, selectedValue: null },
         { category: 'automatic', destination: 'authors', outcome: 'candidate', previousValue: { kind: 'list', value: ['Old Author'] }, selectedValue: { kind: 'list', value: ['New Author'] } },
+        { category: 'automatic', destination: 'description', outcome: 'candidate', previousValue: null, selectedValue: null },
         { category: 'automatic', destination: 'genres', outcome: 'ignore', previousValue: { kind: 'list', value: ['Preserved genre'] }, selectedValue: null },
         { category: 'automatic', destination: 'tags', outcome: 'ignore', previousValue: null, selectedValue: null },
         { category: 'preview', dispositions: [{ count: 3, outcome: 'would_accept' }] },
@@ -84,9 +87,20 @@ describe('Library review ownership', () => {
     }))
     renderRoute('/review/case-1?field=title&subview=history', { ...createHttp(), getHistory })
 
-    expect(await screen.findByText('Owner selected a proposed value.')).toBeVisible()
+    const title = await screen.findByRole('heading', { name: 'Title' })
+    const titleChange = title.closest('article')
+    if (!titleChange) throw new Error('title change history article required')
+    expect(titleChange).toHaveTextContent('Owner selected a proposed value.')
     expect(screen.getByText('<script>previous</script>')).toBeVisible()
     expect(screen.getByText('<script>chosen</script>')).toBeVisible()
+    const language = screen.getByRole('heading', { name: 'Language' }).closest('article')
+    if (!language) throw new Error('absence to value history article required')
+    expect(language).toHaveTextContent('From No value is recorded.')
+    expect(language).toHaveTextContent('To English')
+    const publisher = screen.getByRole('heading', { name: 'Publisher' }).closest('article')
+    if (!publisher) throw new Error('value to absence history article required')
+    expect(publisher).toHaveTextContent('From Former publisher')
+    expect(publisher).toHaveTextContent('To No value is recorded.')
     expect(screen.getByText('Owner kept the current value.')).toBeVisible()
     expect(screen.getAllByText('Existing subtitle')).toHaveLength(1)
     expect(screen.getAllByText('Retained')).toHaveLength(5)
@@ -109,6 +123,11 @@ describe('Library review ownership', () => {
     const retainedAbsence = screen.getByRole('heading', { name: 'Tags' }).closest('article')
     if (!retainedAbsence) throw new Error('retained absence article required')
     expect(retainedAbsence).toHaveTextContent('No value is recorded.')
+    const unmatchedCandidate = screen.getByRole('heading', { name: 'Description' }).closest('article')
+    if (!unmatchedCandidate) throw new Error('unmatched automatic candidate article required')
+    expect(unmatchedCandidate).not.toHaveTextContent('Retained')
+    expect(unmatchedCandidate).toHaveTextContent('From No value is recorded.')
+    expect(unmatchedCandidate).toHaveTextContent('To No value is recorded.')
     expect(ignored).not.toHaveTextContent('Previous')
     expect(ignored).not.toHaveTextContent('New')
     expect(screen.getByText(/Visual review complete across 2 candidates/u)).toBeVisible()
