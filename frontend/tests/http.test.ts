@@ -29,7 +29,7 @@ describe('ReviewApiClient', () => {
     const context = (alternative_id: string | null, selection: 'current' | 'proposed', recommendation: 'recommended' | 'no_recommendation' = 'no_recommendation') => ({ alternative_id, selection, recommendation, recommendation_reason: recommendation === 'recommended' ? 'Authoritative policy recommendation.' : 'No recommendation retained.', rationale: 'Retained cover choice.', limitations: [], evidence: [] })
     const candidate = (overrides: Record<string, unknown> = {}) => ({ artifact_id: 'artifact-1', height: 100, identity: {}, incumbent: false, observation: null, original_sha256: 'a'.repeat(64), ordinal: 0, preview_sha256: 'b'.repeat(64), reference: 'candidate-1', selectable: true, source_kinds: [], state: 'available', width: 100, ...overrides })
     const policy = (overrides: Record<string, unknown> = {}) => ({ status: 'abstained', recommended_candidate_reference: null, acceptable_candidate_references: [], ...overrides })
-    const payload = (overrides: Record<string, unknown> = {}) => ({ schema_version: 'cover-consideration-v1', consideration_id: 'consideration', current: true, candidates: [candidate()], choice_contexts: [context(null, 'current'), context('candidate-1', 'proposed')], incumbent: { state: 'absent', reference: null }, omissions: [], policy: policy(), policy_preferences: { avoid_promotional_text: false, avoid_tie_in_branding: false, prefer_minimal_composition: false }, policy_reference: 'policy', reviewer_status: 'completed', supersedes_id: null, target_fingerprint: 'fingerprint', ...overrides })
+    const payload = (overrides: Record<string, unknown> = {}) => ({ schema_version: 'cover-consideration-v1', consideration_id: 'consideration', current: true, candidates: [candidate()], choice_contexts: [context(null, 'current'), context('candidate-1', 'proposed')], incumbent: { state: 'absent', reference: null }, omissions: [], policy: policy(), policy_preferences: { avoid_promotional_text: false, avoid_tie_in_branding: false, prefer_minimal_composition: false }, policy_reference: 'policy', reviewer_status: 'completed', reviewer_unavailable_reason: null, supersedes_id: null, target_fingerprint: 'fingerprint', ...overrides })
 
     expect(mapCoverConsideration(payload())?.choiceContexts).toHaveLength(2)
     expect(mapCoverConsideration(payload({ candidates: [], choice_contexts: [context(null, 'current')], policy: null }))).not.toBeNull()
@@ -61,6 +61,14 @@ describe('ReviewApiClient', () => {
       ['stray-recommendation-context', { choice_contexts: [context(null, 'current', 'recommended'), context('candidate-1', 'proposed')] }],
     ]
     for (const [label, overrides] of invalid) expect(() => mapCoverConsideration(payload(overrides)), label).toThrow(ApiError)
+  })
+  it('maps only the fixed unavailable reviewer-contract reasons', () => {
+    const payload = (reviewer_unavailable_reason: unknown) => ({ schema_version: 'cover-consideration-v1', consideration_id: 'consideration', current: true, candidates: [], choice_contexts: [{ alternative_id: null, selection: 'current', recommendation: 'no_recommendation', recommendation_reason: 'No recommendation retained.', rationale: 'Retained cover choice.', limitations: [], evidence: [] }], incumbent: { state: 'absent', reference: null }, omissions: [], policy: null, policy_preferences: { avoid_promotional_text: false, avoid_tie_in_branding: false, prefer_minimal_composition: false }, policy_reference: 'policy', reviewer_status: 'unavailable', reviewer_unavailable_reason, supersedes_id: null, target_fingerprint: 'fingerprint' })
+
+    expect(mapCoverConsideration(payload(null))?.reviewerUnavailableReason).toBeNull()
+    expect(mapCoverConsideration(payload('profile contract requires memory_bytes=1073741824'))?.reviewerUnavailableReason).toBe('profile contract requires memory_bytes=1073741824')
+    expect(mapCoverConsideration(payload('profile contract requires process_limit=32'))?.reviewerUnavailableReason).toBe('profile contract requires process_limit=32')
+    expect(() => mapCoverConsideration(payload('/private/profile token=secret'))).toThrow(ApiError)
   })
   it('preserves present and absent series sequences in the mapped review value', () => {
     const detail = (series: readonly Record<string, unknown>[], choiceContexts: unknown = [{ alternative_id: null, evidence: [], limitations: [], rationale: 'The local library has no retained value for this field.', recommendation: 'no_recommendation', recommendation_reason: 'No deterministic recommendation is retained for the current value.', selection: 'current' }]) => mapCaseDetail({

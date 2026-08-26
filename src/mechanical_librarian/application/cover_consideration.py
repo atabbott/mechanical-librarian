@@ -70,6 +70,29 @@ class CoverConsiderationError(RuntimeError):
         self.code = code
 
 
+def _reviewer_unavailable_reason(
+    reviewer_status: object, reviewer_failure: object
+) -> str | None:
+    """Project only closed profile-contract evidence from persisted reviewer state."""
+    if reviewer_failure is None:
+        return None
+    if type(reviewer_failure) is not dict:
+        raise CoverConsiderationError("persistence")
+    if "reason" not in reviewer_failure:
+        return None
+    reason = reviewer_failure["reason"]
+    if (
+        type(reviewer_status) is not str
+        or reviewer_status != "unavailable"
+        or set(reviewer_failure) != {"code", "reason"}
+        or reviewer_failure["code"] != "profile_contract_mismatch"
+        or type(reason) is not str
+        or not is_cover_profile_contract_reason(reason)
+    ):
+        raise CoverConsiderationError("persistence")
+    return reason
+
+
 class CoverConsiderationStore(Protocol):
     def current_cover_consideration(
         self, review_case_id: str, replay_digest: str
@@ -686,10 +709,8 @@ class CoverConsiderationService:
             "policy_preferences": json.loads(value["policy_document"]),
             "policy_reference": value["policy_reference"],
             "reviewer_status": value["reviewer_status"],
-            "reviewer_unavailable_reason": (
-                None
-                if value["reviewer_failure"] is None
-                else value["reviewer_failure"].get("reason")
+            "reviewer_unavailable_reason": _reviewer_unavailable_reason(
+                value["reviewer_status"], value["reviewer_failure"]
             ),
             "schema_version": SCHEMA_VERSION,
             "supersedes_id": value["supersedes_id"],
