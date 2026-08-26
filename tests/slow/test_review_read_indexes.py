@@ -10,7 +10,10 @@ import pytest
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
 )
-from mechanical_librarian.application.review_web import BrowseReviewLibrary
+from mechanical_librarian.application.review_web import (
+    BrowseReviewLibrary,
+    _encode_cursor,
+)
 from tests.unit import test_review_read_indexes as support
 
 
@@ -186,3 +189,81 @@ def test_production_surfaces_use_measured_indexes_within_scale_budget() -> None:
             for statement in history_statements
         )
         repository.close()
+
+
+def test_deep_browse_pages_sort_thin_keys_before_loading_documents() -> None:
+    """A page's document payload stays fixed past 2,000 attention rows."""
+    with tempfile.TemporaryDirectory() as directory:
+        connection = support._representative_database(
+            Path(directory) / "application.sqlite3", works=4_100
+        )
+        repository = SQLiteMetadataReportRepository(connection)
+        browse = BrowseReviewLibrary(repository)
+        try:
+            calls = (
+                (
+                    "library",
+                    lambda cursor: browse.library(
+                        lens="all", search=None, limit=50, cursor=cursor
+                    ),
+                ),
+                (
+                    "attention",
+                    lambda cursor: browse.attention(
+                        search=None, limit=50, cursor=cursor
+                    ),
+                ),
+            )
+            for surface, call in calls:
+                first = call(None)
+                page = first
+                seen = 0
+                while True:
+                    page_items = page["items"]
+                    assert type(page_items) is list
+                    seen += len(page_items)
+                    next_cursor = page["next_cursor"]
+                    assert next_cursor is None or type(next_cursor) is str
+                    if next_cursor is None:
+                        break
+                    page = call(next_cursor)
+                cursor = _encode_cursor(
+                    1_500,
+                    surface,
+                    "all" if surface == "library" else "needs_attention",
+                    None,
+                )
+                deep = call(cursor)
+                first_items = first["items"]
+                deep_items = deep["items"]
+                assert type(first_items) is list
+                assert type(deep_items) is list
+                assert len(first_items) == 50
+                assert len(deep_items) == 50
+                if surface == "attention":
+                    total = first["total"]
+                    assert type(total) is int
+                    assert total >= 2_000
+                else:
+                    counts = first["counts"]
+                    assert type(counts) is dict
+                    total = counts["all"]
+                    assert type(total) is int
+                assert seen == total
+                statements: list[str] = []
+                connection.set_trace_callback(statements.append)
+                try:
+                    call(cursor)
+                finally:
+                    connection.set_trace_callback(None)
+                statement = next(
+                    value
+                    for value in statements
+                    if value.lstrip().upper().startswith("WITH PAGE AS MATERIALIZED")
+                )
+                sorter, documents = statement.split(") SELECT rc.document", 1)
+                assert "rc.document" not in sorter
+                assert "mr.document AS" not in sorter
+                assert documents.startswith(",")
+        finally:
+            repository.close()

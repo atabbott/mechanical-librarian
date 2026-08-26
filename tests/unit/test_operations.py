@@ -13,7 +13,9 @@ from mechanical_librarian.adapters.operational_evidence import (
     LocalTimingStore,
     SupportBundle,
 )
+from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.private_recovery import PrivateCoverRecoveryStore
+from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.operations import (
     MAX_SUPPORT_BYTES,
     MAX_TIMINGS,
@@ -321,6 +323,33 @@ def test_support_preview_and_export_are_bounded_and_redacted_again() -> None:
     assert b"do-not-export" not in exported
     assert b"/new/private/path" not in exported
     assert json.loads(exported)["sections"]["runtime"]["status"] == "[redacted]"
+
+
+def test_support_export_retains_only_a_browse_storage_exception_class(
+    tmp_path: Path,
+) -> None:
+    repository = open_repository(tmp_path / "application.sqlite3")
+    try:
+        repository._connection.execute("DROP TABLE review_cases")
+        with pytest.raises(MetadataReportError, match="review library is unavailable"):
+            repository.list_current_review_case_documents(None, 1, 0, None)
+        exported = json.loads(
+            SupportBundle(
+                (
+                    (
+                        "browse_failures",
+                        lambda: {
+                            "exception_classes": repository.browse_unavailable_exception_classes()
+                        },
+                    ),
+                )
+            ).export()
+        )
+    finally:
+        repository.close()
+    assert exported["sections"] == {
+        "browse_failures": {"exception_classes": ["OperationalError"]}
+    }
 
 
 def test_support_preparation_incidents_match_status_and_exclude_private_values() -> (

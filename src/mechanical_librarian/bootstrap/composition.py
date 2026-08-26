@@ -2319,6 +2319,12 @@ def compose_store_runtime_generation(
                         repository.operational_snapshot()
                     ),
                 ),
+                (
+                    "browse_failures",
+                    lambda: {
+                        "exception_classes": repository.browse_unavailable_exception_classes()
+                    },
+                ),
             )
         )
         review_application = compose_review_application(
@@ -2681,6 +2687,12 @@ def run_review_server(
                         lambda: support_preparation_incidents(
                             repository.operational_snapshot()
                         ),
+                    ),
+                    (
+                        "browse_failures",
+                        lambda: {
+                            "exception_classes": repository.browse_unavailable_exception_classes()
+                        },
                     ),
                 )
             )
