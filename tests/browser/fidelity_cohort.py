@@ -811,6 +811,7 @@ def _case(case_id: str) -> dict[str, object]:
                     },
                     "policy_reference": "cover-policy-synthetic",
                     "reviewer_status": reviewer_status,
+                    "reviewer_unavailable_reason": None,
                     "schema_version": "cover-consideration-v1",
                     "supersedes_id": (
                         "cover-consideration-historical"
