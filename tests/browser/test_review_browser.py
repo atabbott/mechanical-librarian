@@ -2449,7 +2449,8 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                           const labels = [...document.querySelectorAll('.settings-field-row > div:first-child')]
                             .filter(visible).map((element) => element.getBoundingClientRect().width);
                           const masthead = document.querySelector('.masthead')?.getBoundingClientRect();
-                          const brandMark = document.querySelector('.brand-mark')?.getBoundingClientRect();
+                          const brandMarkElement = document.querySelector('.brand-mark');
+                          const brandMark = brandMarkElement?.getBoundingClientRect();
                           const shellActions = document.querySelector('.shell-actions')?.getBoundingClientRect();
                           return {
                             overlaps: overlapElements.length,
@@ -2475,6 +2476,10 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                             brandContained: masthead && brandMark
                               ? brandMark.left >= 0 && brandMark.right <= innerWidth && brandMark.top >= masthead.top && brandMark.bottom <= masthead.bottom
                               : false,
+                            brandContentContained: brandMarkElement
+                              ? brandMarkElement.scrollWidth <= brandMarkElement.clientWidth
+                                && brandMarkElement.scrollHeight <= brandMarkElement.clientHeight
+                              : false,
                             brandActionsOverlap: brandMark && shellActions
                               ? Math.min(brandMark.right, shellActions.right) > Math.max(brandMark.left, shellActions.left)
                                 && Math.min(brandMark.bottom, shellActions.bottom) > Math.max(brandMark.top, shellActions.top)
@@ -2498,6 +2503,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     if layout["minLabelWidth"] is not None:
                         assert layout["minLabelWidth"] >= 180
                     assert layout["brandContained"] is True
+                    assert layout["brandContentContained"] is True
                     assert layout["brandActionsOverlap"] is False
                     if sidebar_visible:
                         assert layout["sidebarVisible"] is True
@@ -2576,22 +2582,32 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     assert_settings_layout(sidebar_visible=True, zoomed=True)
                 page.evaluate("document.documentElement.style.fontSize = ''")
 
+                for theme in ("light", "dark"):
+                    requested = "Use dark mode" if theme == "dark" else "Use light mode"
+                    toggle = page.get_by_role("button", name=requested)
+                    if toggle.count():
+                        toggle.click()
+                    for width, height in ((390, 844), (320, 800)):
+                        page.set_viewport_size({"width": width, "height": height})
+                        page.locator(
+                            "label.settings-mobile-group select"
+                        ).select_option("libraries")
+                        page.evaluate(
+                            "document.documentElement.style.fontSize = '200%'"
+                        )
+                        expect(
+                            page.get_by_role("heading", name="Libraries", exact=True)
+                        ).to_be_visible()
+                        assert page.evaluate(
+                            "document.documentElement.scrollWidth <= window.innerWidth"
+                        )
+                        assert_settings_layout(sidebar_visible=False, zoomed=True)
+                        expect(
+                            page.locator("label.settings-mobile-group select")
+                        ).to_be_visible()
+                        page.evaluate("document.documentElement.style.fontSize = ''")
+
                 page.set_viewport_size({"width": 320, "height": 800})
-                page.locator("label.settings-mobile-group select").select_option(
-                    "libraries"
-                )
-                page.evaluate("document.documentElement.style.fontSize = '200%'")
-                expect(
-                    page.get_by_role("heading", name="Libraries", exact=True)
-                ).to_be_visible()
-                assert page.evaluate(
-                    "document.documentElement.scrollWidth <= window.innerWidth"
-                )
-                assert_settings_layout(sidebar_visible=False, zoomed=True)
-                expect(
-                    page.locator("label.settings-mobile-group select")
-                ).to_be_visible()
-                page.evaluate("document.documentElement.style.fontSize = ''")
                 compact_group = page.locator("label.settings-mobile-group select")
                 compact_group.select_option("providers")
                 expect(
