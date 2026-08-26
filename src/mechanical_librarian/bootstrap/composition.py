@@ -5,12 +5,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import stat
 import threading
 import time
 from collections.abc import Callable, Sequence
-from contextlib import AbstractContextManager
 from pathlib import Path
-from types import TracebackType
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
 
 import uvicorn
@@ -234,6 +233,7 @@ from mechanical_librarian.domain.setup_state import (
     SetupStateDocument,
 )
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
+from mechanical_librarian.infrastructure.first_boot import FirstBootMode
 from mechanical_librarian.infrastructure.local_media import (
     LocalMediaError,
     LocalMediaLimitError,
@@ -302,51 +302,6 @@ if TYPE_CHECKING:
     )
 
 
-class _PreparedRuntimeActivation(AbstractContextManager[None]):
-    """Prepare before persistence and publish only after its successful commit."""
-
-    def __init__(
-        self,
-        controller: "_StoreRuntimeActivation",
-        document: object,
-        revision: int,
-        secrets: object,
-    ) -> None:
-        self._controller = controller
-        self._document = document
-        self._revision = revision
-        self._secrets = secrets
-        self._candidate: RuntimeGeneration | None = None
-
-    def __enter__(self) -> None:
-        self._controller._lock.acquire()
-        try:
-            self._candidate = self._controller.prepare(
-                self._document, self._revision, self._secrets
-            )
-        except BaseException:
-            self._controller._lock.release()
-            raise
-
-    def __exit__(
-        self,
-        error_type: type[BaseException] | None,
-        error: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> None:
-        try:
-            candidate = self._candidate
-            if candidate is None:
-                return
-            if error_type is not None:
-                candidate.close()
-                return
-            dispatcher = self._controller.dispatcher
-            dispatcher.replace(candidate)
-        finally:
-            self._controller._lock.release()
-
-
 class _StoreRuntimeActivation:
     """One process-lifetime controller for setup and Settings cutovers."""
 
@@ -357,12 +312,14 @@ class _StoreRuntimeActivation:
         catalogue_path: Path,
         artifact_store_path: Path,
         settings_store: Any,
+        repository_authority: object,
     ) -> None:
         self._bootstrap = bootstrap
         self._database_path = database_path
         self._catalogue_path = catalogue_path
         self._artifact_store_path = artifact_store_path
         self._settings_store = settings_store
+        self._repository_authority = repository_authority
         self._dispatcher: MutableRuntimeDispatcher | None = None
         self._lock = threading.RLock()
 
@@ -377,11 +334,6 @@ class _StoreRuntimeActivation:
             raise RuntimeError("runtime dispatcher is already bound")
         self._dispatcher = dispatcher
 
-    def context(
-        self, document: object, revision: int, secrets: object
-    ) -> AbstractContextManager[None]:
-        return _PreparedRuntimeActivation(self, document, revision, secrets)
-
     def prepare(
         self, document: object, revision: int, secrets: object
     ) -> RuntimeGeneration:
@@ -391,10 +343,29 @@ class _StoreRuntimeActivation:
             self._database_path,
             self._catalogue_path,
             self._artifact_store_path,
+            repository_authority=self._repository_authority,
             authority_snapshot=snapshot,
             activation=self,
         )
         return candidate
+
+    def activate(
+        self,
+        document: object,
+        revision: int,
+        secrets: object,
+        commit: Callable[[], object],
+    ) -> object:
+        with self._lock:
+            return self._activate(self.prepare(document, revision, secrets), commit)
+
+    def _activate(
+        self, candidate: RuntimeGeneration, commit: Callable[[], object]
+    ) -> object:
+        dispatcher = self.dispatcher
+        expected = dispatcher.current()
+        dispatcher.prepare(candidate)
+        return dispatcher.transition(expected, candidate, commit)
 
     def activate_setup(
         self,
@@ -407,16 +378,12 @@ class _StoreRuntimeActivation:
                 self._database_path,
                 self._catalogue_path,
                 self._artifact_store_path,
+                repository_authority=self._repository_authority,
                 authority_snapshot=snapshot,
                 activation=self,
                 first_boot=True,
             )
-            try:
-                commit()
-            except BaseException:
-                candidate.close()
-                raise
-            self.dispatcher.replace(candidate)
+            self._activate(candidate, commit)
 
     def acknowledge_initial_runtime(self) -> None:
         """Retire compatibility debt only after the initial generation woke."""
@@ -2250,136 +2217,25 @@ def _load_batch_credentials(
     return values
 
 
-def run_setup_server(
-    bootstrap: ReviewBootstrap,
-    database_path: Path,
-    catalogue_path: Path,
-    artifact_store_path: Path,
-    host: str,
-    port: int,
-    *,
-    initialize: bool,
-) -> None:
-    """Run the verifier-free bounded setup target on the ordinary listener."""
-    verifier = ""
-    with open_review_tls_identity(
-        bootstrap.tls_certificate_file, bootstrap.tls_private_key_file
-    ) as tls:
-        repository = open_repository(
-            database_path,
-            create=initialize,
-            cross_thread=True,
-        )
-        try:
-            state = repository.setup_state_store()
-            if initialize:
-                state.initialize()
-
-            def verify_established_owner(password: str) -> bool:
-                return state.use_owner_verifier(
-                    lambda encoded: owner_password_verifier(encoded)(password)
-                )
-
-            sessions = OwnerSessionService(
-                repository,
-                verify_established_owner,
-                lambda: int(time.time()),
-                3600,
-            )
-            setup_probe = AudiobookshelfSetupProbe(
-                lambda endpoint, key: target_client_token(endpoint, key, 30)
-            )
-            connection = SetupConnectionOperation(
-                SetupConnectionVerification(setup_probe),
-                state,
-                verifier,
-            )
-            mount_names: dict[str, list[str]] = {}
-            for mount in bootstrap.mounts:
-                mount_names.setdefault(mount.service_path, []).append(mount.name)
-
-            def discover_setup_libraries(
-                document: SetupStateDocument,
-            ) -> tuple[SetupLibraryCandidate, ...]:
-                if document.connection is None:
-                    raise ConfigurationError("setup connection is unavailable")
-                endpoint = document.connection.endpoint
-                return state.use_secret(
-                    f"connection.{document.connection.name}.key",
-                    verifier,
-                    lambda key: setup_probe.discover(endpoint, key),
-                )
-
-            journey = SetupJourneyOperation(
-                state,
-                verifier,
-                discover_setup_libraries,
-                {path: tuple(sorted(names)) for path, names in mount_names.items()},
-            )
-            activation_controller = _StoreRuntimeActivation(
-                bootstrap,
-                database_path,
-                catalogue_path,
-                artifact_store_path,
-                repository.owner_settings_store(),
-            )
-            dispatcher: MutableRuntimeDispatcher
-
-            def activate_setup(expected_revision: int) -> None:
-                journey.validate_kick_off(expected_revision)
-                snapshot = state.activation_snapshot(expected_revision)
-                activation_controller.activate_setup(
-                    snapshot,
-                    lambda: journey.kick_off(expected_revision),
-                )
-
-            setup_app = create_setup_app(
-                sessions,
-                state,
-                verifier,
-                connection=connection,
-                journey=journey,
-                canonical_origin=bootstrap.canonical_origin,
-                activate=activate_setup,
-            )
-            dispatcher = MutableRuntimeDispatcher(RuntimeGeneration(setup_app))
-            activation_controller.bind(dispatcher)
-            dispatcher.start()
-            uvicorn.run(
-                dispatcher,
-                host=host,
-                port=port,
-                proxy_headers=False,
-                server_header=False,
-                date_header=False,
-                access_log=False,
-                http=BoundedReviewH11Protocol,
-                timeout_graceful_shutdown=300,
-                limit_concurrency=MAX_REVIEW_CONNECTIONS,
-                backlog=MAX_REVIEW_CONNECTIONS,
-                h11_max_incomplete_event_size=16_384,
-                ssl_certfile=tls.certificate_file,
-                ssl_keyfile=tls.private_key_file,
-                ssl_keyfile_password=REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD,
-                ssl_ciphers=REVIEW_TLS_CIPHERS,
-            )
-        finally:
-            repository.close()
-
-
 def compose_store_runtime_generation(
     bootstrap: ReviewBootstrap,
     database_path: Path,
     catalogue_path: Path,
     artifact_store_path: Path,
     *,
+    repository_authority: object,
     authority_snapshot: tuple[SettingsView, dict[str, str], str] | None = None,
     activation: _StoreRuntimeActivation | None = None,
     first_boot: bool = False,
 ) -> tuple[RuntimeGeneration, object]:
     """Build one dormant, independently owned store runtime generation."""
     private_root = _private_root(database_path)
-    repository = open_repository(database_path, create=True, cross_thread=True)
+    repository = open_repository(
+        database_path,
+        create=True,
+        cross_thread=True,
+        authority=repository_authority,
+    )
     try:
         settings_store = repository.owner_settings_store()
         if authority_snapshot is None:
@@ -2492,21 +2348,169 @@ def compose_store_runtime_generation(
                 repository, artifact_store_path, review
             ),
             settings=OwnerSettingsOperations(settings_store),
-            settings_activation=None if activation is None else activation.context,
+            settings_activation=None if activation is None else activation.activate,
             first_boot=first_boot,
+            acknowledge_first_boot=repository.acknowledge_first_boot_preparation,
         )
         return (
             RuntimeGeneration(
                 create_review_app(review_application, review),
-                start=review_application.start,
+                start_dormant=review_application.start_dormant,
+                stop_admission=review_application.stop_admission,
+                resume_admission=review_application.resume_admission,
+                admit=review_application.admit,
                 begin_drain=review_application.begin_drain,
                 close=review_application.stop,
+                shutdown_seconds=review.graceful_shutdown_seconds,
             ),
             review,
         )
     except Exception:
         repository.close()
         raise
+
+
+def _compose_setup_runtime_generation(
+    bootstrap: ReviewBootstrap,
+    database_path: Path,
+    catalogue_path: Path,
+    artifact_store_path: Path,
+    repository: Any,
+    *,
+    initialize: bool,
+) -> tuple[RuntimeGeneration, _StoreRuntimeActivation]:
+    """Build the bounded first-owner target for the ordinary application."""
+    verifier = ""
+    state = repository.setup_state_store()
+    if initialize:
+        state.initialize()
+
+    def verify_established_owner(password: str) -> bool:
+        return cast(
+            "bool",
+            state.use_owner_verifier(
+                lambda encoded: owner_password_verifier(encoded)(password)
+            ),
+        )
+
+    sessions = OwnerSessionService(
+        repository,
+        verify_established_owner,
+        lambda: int(time.time()),
+        3600,
+    )
+    setup_probe = AudiobookshelfSetupProbe(
+        lambda endpoint, key: target_client_token(endpoint, key, 30)
+    )
+    connection = SetupConnectionOperation(
+        SetupConnectionVerification(setup_probe), state, verifier
+    )
+
+    def discover_setup_libraries(
+        document: SetupStateDocument,
+    ) -> tuple[SetupLibraryCandidate, ...]:
+        if document.connection is None:
+            raise ConfigurationError("setup connection is unavailable")
+        endpoint = document.connection.endpoint
+        return cast(
+            "tuple[SetupLibraryCandidate, ...]",
+            state.use_secret(
+                f"connection.{document.connection.name}.key",
+                verifier,
+                lambda key: setup_probe.discover(endpoint, key),
+            ),
+        )
+
+    journey = SetupJourneyOperation(
+        state,
+        verifier,
+        discover_setup_libraries,
+        lambda path: _reachable_setup_mount_names(bootstrap, path),
+    )
+    activation = _StoreRuntimeActivation(
+        bootstrap,
+        database_path,
+        catalogue_path,
+        artifact_store_path,
+        repository.owner_settings_store(),
+        repository.authority,
+    )
+
+    def activate_setup(expected_revision: int) -> None:
+        journey.validate_kick_off(expected_revision)
+        snapshot = state.activation_snapshot(expected_revision)
+        activation.activate_setup(
+            snapshot,
+            lambda: journey.kick_off(expected_revision),
+        )
+
+    setup_app = create_setup_app(
+        sessions,
+        state,
+        verifier,
+        connection=connection,
+        journey=journey,
+        canonical_origin=bootstrap.canonical_origin,
+        activate=activate_setup,
+    )
+    return RuntimeGeneration(setup_app, shutdown_seconds=300), activation
+
+
+def _reachable_setup_mount_names(
+    bootstrap: ReviewBootstrap, service_path: str
+) -> tuple[str, ...]:
+    """Check only each exact deployment-owned root; never enumerate or read media."""
+    names: list[str] = []
+    for mount in bootstrap.mounts:
+        if mount.service_path != service_path:
+            continue
+        root = Path(mount.container_path)
+        try:
+            information = root.stat()
+        except OSError:
+            continue
+        if stat.S_ISDIR(information.st_mode) and os.access(root, os.R_OK | os.X_OK):
+            names.append(mount.name)
+    return tuple(sorted(names))
+
+
+def _serve_runtime_dispatcher(
+    dispatcher: MutableRuntimeDispatcher,
+    host: str,
+    port: int,
+    certificate_file: str,
+    private_key_file: str,
+    *,
+    after_start: Callable[[], None] | None = None,
+) -> None:
+    """Bind one mutable generation dispatcher to one outer HTTPS server."""
+    config = uvicorn.Config(
+        dispatcher,
+        host=host,
+        port=port,
+        proxy_headers=False,
+        server_header=False,
+        date_header=False,
+        access_log=False,
+        http=BoundedReviewH11Protocol,
+        timeout_graceful_shutdown=dispatcher.current().shutdown_seconds,
+        limit_concurrency=MAX_REVIEW_CONNECTIONS,
+        backlog=MAX_REVIEW_CONNECTIONS,
+        h11_max_incomplete_event_size=16_384,
+        ssl_certfile=certificate_file,
+        ssl_keyfile=private_key_file,
+        ssl_keyfile_password=REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD,
+        ssl_ciphers=REVIEW_TLS_CIPHERS,
+    )
+    server = uvicorn.Server(config)
+    dispatcher.bind_outer_server(
+        lambda: setattr(server, "should_exit", True),
+        lambda seconds: setattr(config, "timeout_graceful_shutdown", seconds),
+    )
+    dispatcher.start()
+    if after_start is not None:
+        after_start()
+    server.run()
 
 
 def run_review_server(
@@ -2516,6 +2520,8 @@ def run_review_server(
     artifact_store_path: Path,
     host: str,
     port: int,
+    *,
+    first_boot_mode: FirstBootMode | None = None,
 ) -> None:
     bootstrap = None
     try:
@@ -2540,86 +2546,70 @@ def run_review_server(
             assert bootstrap is not None
             control = open_repository(database_path, create=True, cross_thread=True)
             try:
-                activation = _StoreRuntimeActivation(
-                    bootstrap,
-                    database_path,
-                    catalogue_path,
-                    artifact_store_path,
-                    control.owner_settings_store(),
-                )
-                runtime, runtime_review = compose_store_runtime_generation(
-                    bootstrap,
-                    database_path,
-                    catalogue_path,
-                    artifact_store_path,
-                    activation=activation,
-                )
+                if first_boot_mode in {
+                    FirstBootMode.INITIALIZE_SETUP,
+                    FirstBootMode.RESUME_SETUP,
+                }:
+                    runtime, activation = _compose_setup_runtime_generation(
+                        bootstrap,
+                        database_path,
+                        catalogue_path,
+                        artifact_store_path,
+                        control,
+                        initialize=first_boot_mode is FirstBootMode.INITIALIZE_SETUP,
+                    )
+                    acknowledge = None
+                else:
+                    activation = _StoreRuntimeActivation(
+                        bootstrap,
+                        database_path,
+                        catalogue_path,
+                        artifact_store_path,
+                        control.owner_settings_store(),
+                        control.authority,
+                    )
+                    runtime, _ = compose_store_runtime_generation(
+                        bootstrap,
+                        database_path,
+                        catalogue_path,
+                        artifact_store_path,
+                        repository_authority=control.authority,
+                        activation=activation,
+                    )
+                    acknowledge = activation.acknowledge_initial_runtime
                 dispatcher = MutableRuntimeDispatcher(runtime)
                 activation.bind(dispatcher)
                 try:
-                    dispatcher.start()
-                    activation.acknowledge_initial_runtime()
+                    _serve_runtime_dispatcher(
+                        dispatcher,
+                        host,
+                        port,
+                        tls.certificate_file,
+                        tls.private_key_file,
+                        after_start=acknowledge,
+                    )
                 except BaseException:
                     runtime.close()
                     raise
-                uvicorn.run(
-                    dispatcher,
-                    host=host,
-                    port=port,
-                    proxy_headers=False,
-                    server_header=False,
-                    date_header=False,
-                    access_log=False,
-                    http=BoundedReviewH11Protocol,
-                    timeout_graceful_shutdown=cast(
-                        "ReviewWebConfiguration", runtime_review
-                    ).graceful_shutdown_seconds,
-                    limit_concurrency=MAX_REVIEW_CONNECTIONS,
-                    backlog=MAX_REVIEW_CONNECTIONS,
-                    h11_max_incomplete_event_size=16_384,
-                    ssl_certfile=tls.certificate_file,
-                    ssl_keyfile=tls.private_key_file,
-                    ssl_keyfile_password=REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD,
-                    ssl_ciphers=REVIEW_TLS_CIPHERS,
-                )
             finally:
                 control.close()
             return
         private_root = _private_root(database_path)
         repository = open_repository(database_path, create=True, cross_thread=True)
         try:
-            pending_restart: tuple[str, ...] = ()
-            if authority == "store":
-                assert bootstrap is not None
-                settings_store = repository.owner_settings_store()
-                settings_view, stored_credentials, encoded_verifier = (
-                    settings_store.activate_runtime()
-                )
-                credentials = {
-                    name.replace("connection.", "target:")
-                    .replace("provider.", "provider:")
-                    .removesuffix(".key"): value
-                    for name, value in stored_credentials.items()
-                }
-                configuration = store_runtime_configuration(settings_view, bootstrap)
-                review = configuration.review
-                verify_password = owner_password_verifier(encoded_verifier)
-                settings = OwnerSettingsOperations(settings_store)
-                pending_restart = tuple(settings_view.document.pending_restart)
-            else:
-                assert configuration is not None and review is not None
-                credentials = _load_batch_credentials(
-                    configuration,
-                    {item.name for item in configuration.connections},
-                    {item.name for item in configuration.providers},
-                )
-                projection = file_settings_projection(configuration, credentials)
-                settings = OwnerSettingsOperations(
-                    FileOwnerSettingsRepository(projection.document, projection.secrets)
-                )
-                verify_password = load_owner_password_verifier(
-                    Path(review.owner_password_hash_file)
-                )
+            assert configuration is not None and review is not None
+            credentials = _load_batch_credentials(
+                configuration,
+                {item.name for item in configuration.connections},
+                {item.name for item in configuration.providers},
+            )
+            projection = file_settings_projection(configuration, credentials)
+            settings = OwnerSettingsOperations(
+                FileOwnerSettingsRepository(projection.document, projection.secrets)
+            )
+            verify_password = load_owner_password_verifier(
+                Path(review.owner_password_hash_file)
+            )
             assert configuration is not None and review is not None
             logging.getLogger(__name__).info(
                 "owner settings authority selected", extra={"authority": authority}
@@ -2644,7 +2634,7 @@ def run_review_server(
             )
             first_boot = _store_first_preparation(
                 authority,
-                pending_restart,
+                (),
                 repository.has_first_boot_preparation(),
             )
             preparation = create_review_pipeline(
@@ -2720,13 +2710,15 @@ def run_review_server(
                 first_boot=first_boot,
             )
             app = create_review_app(review_application, review)
-            if authority == "store":
-                settings_store.acknowledge_runtime(settings_view.document.revision)
             runtime = RuntimeGeneration(
                 app,
-                start=review_application.start,
+                start_dormant=review_application.start_dormant,
+                stop_admission=review_application.stop_admission,
+                resume_admission=review_application.resume_admission,
+                admit=review_application.admit,
                 begin_drain=review_application.begin_drain,
                 close=review_application.stop,
+                shutdown_seconds=review.graceful_shutdown_seconds,
             )
             dispatcher = MutableRuntimeDispatcher(runtime)
             dispatcher.start()

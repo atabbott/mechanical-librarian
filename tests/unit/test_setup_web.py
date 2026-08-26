@@ -641,11 +641,19 @@ def test_six_step_journey_closes_setup_routes_after_exact_kickoff_copy() -> None
 
     assert discovery.json() == {
         "libraries": [
-            {"library_id": "books", "name": "Books", "media_kind": "book"},
+                {
+                    "library_id": "books",
+                    "name": "Books",
+                    "media_kind": "book",
+                    "service_path": None,
+                    "service_path_state": "unavailable",
+                },
             {
                 "library_id": "podcasts",
                 "name": "Podcasts",
-                "media_kind": "unsupported",
+                    "media_kind": "unsupported",
+                    "service_path": None,
+                    "service_path_state": "unavailable",
             },
         ]
     }
@@ -666,4 +674,8 @@ def test_setup_library_step_uses_audiobookshelf_book_kind_without_owner_choice()
 ):
     assert "Library kind" not in SETUP_JS
     assert "media_kind:'book'" in SETUP_JS
-    assert "Preparation begins now in your workspace." in SETUP_JS
+    assert "Preparation will begin in the workspace." in SETUP_JS
+    assert "className='provider-access'" in SETUP_JS
+    assert "`${evidence?.name||humanName(item.library)}:" in SETUP_JS
+    assert "field(`${evidence?.name||humanName(library.name)} service path`,path)" in SETUP_JS
+    assert "state.mounts.length?'Retest mounts':'Check mounts'" in SETUP_JS

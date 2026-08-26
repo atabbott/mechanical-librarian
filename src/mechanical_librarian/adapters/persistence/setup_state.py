@@ -506,7 +506,7 @@ class SetupStateStore(ConnectionScoped):
         ).fetchall() != [_SETUP_FIELD_EFFECT_CONTROL_ROW]:
             return False
         if "review_preparation_control" in tables and self._connection.execute(
-            "SELECT singleton,paused,claim_sequence,last_library,circuit_failures,"
+            "SELECT singleton,paused,claim_sequence,first_boot_acknowledged,last_library,circuit_failures,"
             "circuit_open_until,updated_at FROM review_preparation_control"
         ).fetchall() != [_SETUP_REVIEW_CONTROL_ROW]:
             return False

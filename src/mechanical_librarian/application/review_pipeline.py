@@ -1004,6 +1004,11 @@ class ReviewPreparationSupervisor:
         self._next_schedule_at: int | None = None
         self._schedule_paused = False
         self._schedule_waiting_for_action = False
+        self._admission = threading.Event()
+        self._admission.set()
+        self._startup_lock = threading.Lock()
+        self._startup_ready = threading.Event()
+        self._dormant_start = False
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._threads: tuple[threading.Thread, ...] = ()
@@ -1021,6 +1026,7 @@ class ReviewPreparationSupervisor:
         if self._threads:
             return
         self._stop.clear()
+        self._admission.set()
         self._pipeline.open_observation()
         observation_closed = False
         try:
@@ -1064,13 +1070,62 @@ class ReviewPreparationSupervisor:
                 self._pipeline.close_observation()
             raise
 
-    def begin_drain(self) -> None:
-        """Close claim admission and wake workers without waiting."""
+    def start_dormant(self) -> None:
+        """Start both lanes behind a closed claim-admission latch."""
+        if self._threads:
+            raise ReviewPipelineError("configuration")
+        self._stop.clear()
+        self._admission.clear()
+        self._startup_ready.clear()
+        self._dormant_start = True
+        self._pipeline.open_observation()
+        threads = tuple(
+            threading.Thread(
+                target=self._run,
+                args=(lane,),
+                name=f"review-preparation-{lane}",
+                daemon=True,
+            )
+            for lane in range(2)
+        )
+        started: list[threading.Thread] = []
+        try:
+            for thread in threads:
+                thread.start()
+                started.append(thread)
+        except BaseException:
+            self._threads = tuple(started)
+            self._stop.set()
+            self._admission.set()
+            self.stop()
+            raise
+        self._threads = threads
+
+    def admit(self) -> None:
+        """Open the already-started lanes after their generation is published."""
+        self._admission.set()
+        self._wake.set()
+
+    def suspend_admission(self) -> None:
+        """Close claims while leaving active lanes available for restoration."""
         drain = getattr(self._pipeline, "begin_drain", None)
         if drain is not None:
             drain()
         if self._recovery_drain is not None:
             self._recovery_drain()
+
+    def resume_admission(self) -> None:
+        if self._recovery_resume is not None:
+            self._recovery_resume()
+        resume = getattr(self._pipeline, "resume_claiming", None)
+        if resume is not None:
+            resume()
+        self._wake.set()
+
+    def begin_drain(self) -> None:
+        """Close claim admission and wake workers without waiting."""
+        self.suspend_admission()
+        self._admission.set()
         self._stop.set()
         self._wake.set()
 
@@ -1187,6 +1242,22 @@ class ReviewPreparationSupervisor:
             self._schedule_waiting_for_action = only_actionable_failures
 
     def _run(self, lane: int) -> None:
+        self._admission.wait()
+        if self._stop.is_set():
+            return
+        if self._dormant_start:
+            with self._startup_lock:
+                if self._dormant_start:
+                    try:
+                        self.resume_admission()
+                        self._pipeline.recover()
+                        self._schedule_due()
+                    except ReviewPipelineError:
+                        pass
+                    finally:
+                        self._dormant_start = False
+                        self._startup_ready.set()
+            self._startup_ready.wait()
         while not self._stop.is_set():
             self._wake.wait(timeout=1)
             self._wake.clear()

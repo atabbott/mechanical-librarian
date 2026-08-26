@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Literal, Protocol
 
 from mechanical_librarian.domain.owner_settings import LibrarySettings, ProviderSettings
@@ -52,12 +52,16 @@ class SetupJourneyOperation:
         repository: SetupJourneyRepository,
         bootstrap_verifier: str,
         discover_libraries: SetupLibraryDiscovery,
-        mount_names: dict[str, tuple[str, ...]],
+        mount_names: dict[str, tuple[str, ...]] | Callable[[str], tuple[str, ...]],
     ) -> None:
         self._repository = repository
         self._bootstrap_verifier = bootstrap_verifier
         self._discover_libraries = discover_libraries
-        self._mount_names = mount_names
+        self._mount_names = (
+            (lambda path: mount_names.get(path, ()))
+            if isinstance(mount_names, dict)
+            else mount_names
+        )
 
     def providers(
         self,
@@ -81,7 +85,9 @@ class SetupJourneyOperation:
         return self._write(successor, current.revision, values)
 
     def discover(self, expected_revision: int) -> tuple[SetupLibraryCandidate, ...]:
-        current = self._current(expected_revision, "libraries")
+        current = self._current(expected_revision)
+        if current.next_step() not in {"libraries", "mounts"}:
+            raise SetupJourneyError("stale")
         try:
             return self._discover_libraries(current)
         except SetupJourneyError:
@@ -153,19 +159,30 @@ class SetupJourneyOperation:
             raise SetupJourneyError("invalid_mounts")
         libraries: list[LibrarySettings] = []
         results: list[SetupMountResult] = []
+        discovered = {
+            value.library_id: value for value in self._discover_libraries(current)
+        }
         for library in current.libraries:
-            service_path = service_paths[library.name]
-            matches = (
-                () if service_path is None else self._mount_names.get(service_path, ())
+            supplied = service_paths[library.name]
+            evidence = discovered.get(library.library_id)
+            paths = (
+                (supplied,)
+                if supplied is not None
+                else ()
+                if evidence is None
+                else evidence.service_paths
             )
-            state: Literal["matched", "ambiguous", "unmatched", "unobservable"] = (
-                "unobservable"
-                if service_path is None
+            matches = tuple(
+                sorted({name for path in paths for name in self._mount_names(path)})
+            )
+            state: Literal["matched", "ambiguous", "missing", "unavailable"] = (
+                "unavailable"
+                if not paths
                 else "matched"
                 if len(matches) == 1
                 else "ambiguous"
                 if len(matches) > 1
-                else "unmatched"
+                else "missing"
             )
             libraries.append(
                 library.model_copy(

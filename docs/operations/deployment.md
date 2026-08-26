@@ -49,7 +49,7 @@ Audiobookshelf connection, optional providers, libraries, read-only mount
 comparison, and kickoff. Kickoff prepares a dormant runtime generation,
 atomically replaces incomplete state with complete owner settings, publishes
 the successor on the existing listener, closes setup routes, and starts
-preparation immediately. On restart it accepts only exact-current, owner-only
+preparation immediately. Ordinary startup accepts only exact-current, owner-only
 stores. A schema mismatch,
 missing/incomplete settings, an unowned volume, invalid file or bootstrap,
 backup/recovery error, or permission failure stops startup rather than falling

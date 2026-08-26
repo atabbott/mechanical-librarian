@@ -30,7 +30,7 @@ from mechanical_librarian.domain.field_effect import (
     EffectConsent,
     FieldEffectPlan,
 )
-from mechanical_librarian.infrastructure.settings_authority import ReviewBootstrap
+from mechanical_librarian.infrastructure.first_boot import FirstBootMode
 
 
 def _plan() -> FieldEffectPlan:
@@ -83,12 +83,6 @@ def test_deployment_contract_names_the_composed_guarded_target() -> None:
 
 
 def test_container_entrypoint_initializes_only_absent_exact_current_stores() -> None:
-    bootstrap = ReviewBootstrap(
-        schema_version="review-bootstrap-v1",
-        canonical_origin="https://setup.invalid",
-        tls_certificate_file="/run/secrets/review.crt",
-        tls_private_key_file="/run/secrets/review.key",
-    )
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         with (
@@ -97,29 +91,21 @@ def test_container_entrypoint_initializes_only_absent_exact_current_stores() -> 
             patch.object(container, "DATABASE", root / "application.sqlite3"),
             patch.object(container, "CATALOGUE", root / "catalogue.sqlite3"),
             patch.object(container, "ARTIFACTS", root / "artifacts"),
-            patch.object(
-                container, "load_review_bootstrap", return_value=bootstrap
-            ) as load_bootstrap,
             patch.object(container, "open_catalogue") as open_cat,
-            patch.object(container, "run_setup_server") as setup,
             patch.object(container, "run_review_server") as serve,
         ):
             container.main()
-        load_bootstrap.assert_called_once_with(
-            Path("/run/secrets/review-bootstrap.json")
-        )
-        setup.assert_called_once_with(
-            bootstrap,
+        serve.assert_called_once_with(
+            root / "config.json",
             root / "application.sqlite3",
             root / "catalogue.sqlite3",
             root / "artifacts",
             "0.0.0.0",
             8443,
-            initialize=True,
+            first_boot_mode=FirstBootMode.INITIALIZE_SETUP,
         )
         open_cat.assert_called_once_with(root / "catalogue.sqlite3", create=True)
         open_cat.return_value.close.assert_called_once_with()
-        serve.assert_not_called()
         assert root.stat().st_mode & 0o777 == 0o700
 
 

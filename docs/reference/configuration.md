@@ -12,7 +12,7 @@ uv run --frozen python scripts/generate_configuration_schema.py
 ```
 
 The file remains the complete authority while `/data/config.json` exists.
-The accepted store-mode, first-boot, secret, retirement, and apply rules are
+The accepted store-mode, first-boot, secret, authority, and apply rules are
 [ADR-0058](../architecture/decisions/0058-settings-authority-and-first-boot.md);
 this reference describes the file-managed `config-v6` contract. In that mode it
 also solely supplies the review TLS identity, canonical origin, and trusted
@@ -29,9 +29,15 @@ closed `review-bootstrap-v1` document containing only
 `canonical_origin`, the TLS certificate and key paths, up to 16
 `trusted_proxy_ips`, up to 32 read-only mount mappings, and the optional
 contained-reviewer profile path. It contains no owner credential: the first
-visitor creates the owner password through an atomic, verifier-free deployment
-claim. Ports, volume/bind mounts, owner-password
+visitor creates the owner password in the ordinary application. Ports,
+volume/bind mounts, owner-password
 recovery, and proxy/TLS deployment remain outside the Settings API.
+
+The offline `owner-settings-v1` adoption is the sole exception to ordinary
+exact-current startup. It accepts only the documented exact predecessor,
+preserves every canonical row, adds the first-preparation acknowledgement as
+unacknowledged, and requires an owner-only verified backup. A successful run
+reports `Upgrade Passed`; it is not a general migration or repair path.
 
 Authenticated owners use the lazy `/settings` route and revision-CAS
 `GET`/`PATCH /api/v1/settings` API. Reads are private and return only a short

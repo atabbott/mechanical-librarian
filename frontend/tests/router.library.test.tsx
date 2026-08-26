@@ -54,14 +54,15 @@ describe('Library route', () => {
     })
 
     expect(
-      await screen.findByRole('heading', { name: 'First preparation is complete' }),
+      await screen.findByRole('heading', { name: 'Preparation is complete' }),
     ).toBeVisible()
     expect(
       screen.getByText(
-        'Preparation complete · 1 unique work checked, including work that could not finish.',
+        'Preparation complete · 1 unique work checked.',
       ),
     ).toBeVisible()
-    expect(screen.getByText(/Review the recorded failures and recovery below/u)).toBeVisible()
+    expect(screen.getByText('Preparation finished without ready work.')).toBeVisible()
+    expect(screen.queryByText(/failures and recovery/u)).toBeNull()
     expect(screen.queryByRole('link', { name: 'Open workspace' })).toBeNull()
     expect(screen.queryByText('Your first work is ready')).toBeNull()
     vi.stubGlobal('matchMedia', previousMatchMedia)

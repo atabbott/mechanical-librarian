@@ -12,7 +12,7 @@
   schema digest from the persistence adapter; #830's owner-decision-actions
   predecessor validator superseded it and no adoption path referenced it. (#857)
 
-- Add a verifier-free first-visitor setup journey and authenticated Settings for
+- Add first-visitor owner-password setup and authenticated Settings for
   connections, providers, book libraries, limits, reviewer, server, and
   appearance. Store-managed changes activate atomically for the next operation
   on the same listener; file/deployment authority stays locked and secrets stay
@@ -56,16 +56,6 @@
   ordered write lifecycle behind the row's bounded details disclosure. Search,
   filters, date bounds, totals, and pagination now operate on those change rows
   without a mutable audit projection or new persistence schema. (#788)
-
-- Set the first-run and in-app settings authority: file-managed deployments
-  remain unchanged, store-mode secrets are write-only and backup-protected, and
-  only an empty `/data` volume may enter setup. (#762)
-
-- Guide an empty-volume owner through claim, verified Audiobookshelf connection,
-  optional providers, library selection, read-only mount checks, and safe
-  preparation kickoff without granting library-write authority. Resume refuses
-  mixed normal-runtime state, and the supported Compose stop budget preserves
-  cleanup across the full shutdown range. (#745)
 
 - Recover explicit EPUB package, front, and rear series memberships with their
   stated sequence while keeping advertisements, reading lists, prose, and

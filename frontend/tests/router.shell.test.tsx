@@ -54,7 +54,7 @@ describe('Application shell', () => {
     }
     renderRoute('/library?lens=all', http)
 
-    expect(await screen.findByRole('heading', { name: 'Your first work is ready' })).toHaveFocus()
+    expect(await screen.findByRole('heading', { name: 'Your work is ready' })).toHaveFocus()
     expect(screen.queryByRole('link', { name: 'Open workspace' })).toBeNull()
     expect(screen.getByText('Preparation continues here as more work becomes ready.')).toBeVisible()
     expect(screen.getByText('1 ready · 1 of 7 checked')).toBeVisible()
@@ -94,8 +94,11 @@ describe('Application shell', () => {
 
     expect(
       await screen.findByText(
-        'Preparation complete · 7 unique works checked, including work that could not finish.',
+        'Preparation complete · 7 unique works checked.',
       ),
+    ).toBeVisible()
+    expect(
+      screen.getByText('Some work could not finish. Review the failures and recovery below.'),
     ).toBeVisible()
     expect(screen.getByText('Preparation is complete. Review your ready work below.')).toBeVisible()
     expect(screen.queryByText(/Preparation continues here/u)).toBeNull()

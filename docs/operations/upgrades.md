@@ -8,8 +8,8 @@ reconstructible derived objects. This is not a general migration, import,
 conversion, compatibility, downgrade, or repair facility.
 
 The terminal preparation-failure codes in this increment change the
-exact-current review schema. The only supplied compatibility path is the
-closed owner-actionability plan below.
+exact-current review schema. The supplied compatibility paths are the closed
+owner-actionability plan and the exact owner-settings predecessor below.
 
 The `fixed-conservative-v9` proposal contract is not an exact predecessor of
 the installed v10 contract: its persisted decisions can disagree. It is rejected
@@ -51,6 +51,23 @@ mechanical-librarian schema-adopt review-owner-decision-actions-v1 \
 
 Keep both clone and backup until the new build has started and its measured
 behavior is accepted.
+
+## Offline owner-settings adoption
+
+`owner-settings-v1` accepts the exact 0.17.0 predecessor lacking only the
+durable first-preparation acknowledgement, preserves its seven control values,
+and initializes that acknowledgement to false. It also retains the existing
+exact predecessor that lacks the owner-settings tables. Run it offline with an
+owner-only backup in the same directory:
+
+```console
+mechanical-librarian schema-adopt owner-settings-v1 \
+  --database /data/application.sqlite3 \
+  --backup /data/application.before-owner-settings.sqlite3
+```
+
+The command reports `Upgrade Passed` only after exact-schema validation,
+canonical-row equivalence, backup read-back, and source identity checks pass.
 
 `Schema adoption requires backup recovery.` means the source may have committed;
 restore the named verified backup to a fresh clone before retrying. The ordinary

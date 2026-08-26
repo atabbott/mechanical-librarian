@@ -8,15 +8,8 @@ from pathlib import Path
 
 from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
-from mechanical_librarian.bootstrap.composition import (
-    run_review_server,
-    run_setup_server,
-)
-from mechanical_librarian.infrastructure.first_boot import (
-    FirstBootMode,
-    select_first_boot_mode,
-)
-from mechanical_librarian.infrastructure.settings_authority import load_review_bootstrap
+from mechanical_librarian.bootstrap.composition import run_review_server
+from mechanical_librarian.infrastructure.first_boot import select_first_boot_mode
 
 DATA = Path("/data")
 CONFIG = DATA / "config.json"
@@ -35,8 +28,6 @@ def main() -> None:
     if not stat.S_ISDIR(information.st_mode) or information.st_uid != os.geteuid():
         raise RuntimeError("container data volume is unavailable")
     os.chmod(DATA, 0o700)
-    bootstrap_path = Path("/run/secrets/review-bootstrap.json")
-    bootstrap = None
 
     def complete_store() -> bool:
         repository = open_repository(DATABASE, create=False)
@@ -71,28 +62,19 @@ def main() -> None:
         resumable_setup=resumable_setup,
         uninitialized_setup=uninitialized_setup,
     )
-    if mode in {FirstBootMode.INITIALIZE_SETUP, FirstBootMode.RESUME_SETUP}:
-        if bootstrap is None:
-            bootstrap = load_review_bootstrap(bootstrap_path)
-        ARTIFACTS.mkdir(mode=0o700, exist_ok=True)
-        os.chmod(ARTIFACTS, 0o700)
-        catalogue = open_catalogue(CATALOGUE, create=True)
-        catalogue.close()
-        run_setup_server(
-            bootstrap,
-            DATABASE,
-            CATALOGUE,
-            ARTIFACTS,
-            HOST,
-            PORT,
-            initialize=mode is FirstBootMode.INITIALIZE_SETUP,
-        )
-        return
     ARTIFACTS.mkdir(mode=0o700, exist_ok=True)
     os.chmod(ARTIFACTS, 0o700)
     catalogue = open_catalogue(CATALOGUE, create=True)
     catalogue.close()
-    run_review_server(CONFIG, DATABASE, CATALOGUE, ARTIFACTS, HOST, PORT)
+    run_review_server(
+        CONFIG,
+        DATABASE,
+        CATALOGUE,
+        ARTIFACTS,
+        HOST,
+        PORT,
+        first_boot_mode=mode,
+    )
 
 
 if __name__ == "__main__":

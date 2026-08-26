@@ -18,8 +18,8 @@ or import path.
 
 `/data/config.json` remains fully supported. When it exists, it is the sole
 authority for every setting it covers. The settings API rejects every covered
-write with `409`; the UI renders those fields read-only and says `Managed by
-/data/config.json — use Import and retire file management to manage in-app`.
+write with `409`; the UI renders those fields read-only and identifies
+`/data/config.json` as their authority.
 It never combines file and store values, and no UI copy instructs an owner to
 delete the file manually.
 
@@ -45,7 +45,7 @@ and key, canonical origin, and trusted proxy IPs solely from `config-v6`; it
 does not read a bootstrap document. Only setup and store mode require Compose
 to mount the strict, owner-only `/run/secrets/review-bootstrap.json` document,
 which supplies those values. It supplies no owner credential: the first visitor
-creates the owner password through the bounded setup claim.
+creates the owner password in the ordinary application.
 Bootstrap material and referenced TLS files are deploy-side material, never
 settings-store fields; missing, invalid, or unsafe bootstrap material stops
 setup/store startup before setup. An empty volume means an empty `/data` volume
@@ -55,11 +55,11 @@ does not accept Compose or bootstrap fields and never returns an apply effect
 for them; the UI directs the owner to deployment configuration. Deploy-side
 changes take effect only after an operator restart.
 
-On an empty `/data` volume, the server enters explicit setup mode and exposes
-only the first-run wizard on the ordinary HTTPS listener. The first visitor
+On an empty `/data` volume, the ordinary application initially exposes only its
+first-run journey on the ordinary HTTPS listener. The first visitor
 receives one bounded synchronizer nonce and creates the owner password; one
 SQLite transaction records its Argon2id verifier and an ordinary owner session,
-so a race has exactly one winner and no partial claim. Resume uses the ordinary
+so a race has exactly one winner and no partial owner state. Resume uses the ordinary
 password and session boundary. If interruption lands between exact schema
 creation and the first setup-state commit, startup accepts only that exact
 seeded-schema predecessor with no settings, secrets, session, throttle, or
@@ -68,39 +68,27 @@ rebuild under ADR-0013; arbitrary nonempty, malformed, or store-mode state still
 fails closed.
 
 Kickoff first validates and prepares an independent dormant runtime generation.
-It then atomically commits complete owner settings, publishes the successor on
-the same listener, wakes its workers, and drains requests already admitted to
-the setup generation. Setup routes close permanently at authority commit and
+Every store runtime repository borrows the database binding owned by a dedicated
+process-lifetime control repository, so closing the predecessor cannot revoke the
+successor's validated database authority. The control owner closes only after the
+dispatcher and all runtime generations have closed.
+Under one cutover lock it closes predecessor admission, commits complete owner
+settings, publishes the successor on the same listener, and opens successor
+admission. It then drains requests and claims already admitted to the setup
+generation. Setup routes close permanently at authority commit and
 preparation begins immediately; no container restart, second listener, or
 partially authoritative runtime exists.
 
-Existing deployments stay file-managed. The supported move to in-app management
-is an authenticated, CSRF-protected **Import and retire file management** action:
-it reads and validates the exact file and every referenced secret through the
-existing private-file rules, and, for this action only, validates the future
-store-mode bootstrap document and its referenced TLS identity. If that bootstrap
-material is missing, invalid, or unsafe, retirement refuses and the file remains
-authoritative. It then commits the resulting settings and a retirement intent
-bound to those exact file and secret snapshots, then rereads and revalidates all
-of them before renaming. A mismatch fails closed with the file still
-authoritative. The rename is same-volume and atomic to a newly created,
-owner-only, non-clobbering private retired destination. On restart, only a
-recorded intent may resume; it repeats the snapshot and bootstrap checks before
-rename and otherwise fails closed. If a crash follows a completed rename, the
-intent's exact retired destination is the only accepted recovery receipt:
-startup validates that private file against the intent, revalidates the bound
-secret snapshots and bootstrap material, and finalizes retirement. A missing
-receipt, both source and receipt, or any mismatch fails closed. Until the rename
-succeeds, the file remains authoritative; after it, the committed store is
-authoritative. Startup must not infer, merge, or repair any other state. This
-keeps the transition one deliberate owner action rather than asking operators to
-manually delete a configuration that the next boot still needs.
+Existing deployments stay file-managed. No current in-app action imports or
+retires that authority, and the interface does not advertise a future action.
 
 Every store-managed field declares `applied_live`. A settings write validates
-and prepares an independent candidate generation before taking the persistence
-lock; candidate failure leaves the current revision and runtime untouched.
-After revision-CAS commit, the same process publishes the candidate, wakes it,
-and drains the predecessor per admitted request. The saved value therefore
+and prepares an independent candidate generation through that same control-owned
+database authority before taking the persistence lock; candidate failure leaves
+the current revision and runtime untouched.
+Under one cutover lock the process closes predecessor admission, performs the
+revision-CAS commit, publishes the candidate, and opens candidate admission;
+it then drains the predecessor per admitted request and claim. The saved value therefore
 governs the next admitted operation. Compose/bootstrap fields remain
 `deploy_managed` and require an operator restart because they own the process
 listener, TLS identity, and mounts.
@@ -117,12 +105,11 @@ current credential and artifact boundary.
   convention.
 - Store-mode secret backup is an intentional operational responsibility; no
   false encryption guarantee is introduced.
-- First-run implementation must prove its atomic claim, same-listener handoff,
+- First-run implementation must prove its atomic first-owner transaction, same-listener handoff,
   immediate preparation, terminal endpoint closure, and distinction between
   the sole empty-volume setup state and corrupt or partial state.
-- File retirement needs snapshot-bound durable intent and restart tests. It is
-  not a generic migration, compatibility layer, remote secret backend, RBAC
-  system, consent change, or new write authority.
+- This decision does not introduce a generic migration, compatibility layer,
+  remote secret backend, RBAC system, consent change, or new write authority.
 
 ## Alternatives considered
 
@@ -130,12 +117,6 @@ current credential and artifact boundary.
 
 Rejected: partial precedence makes the same settings page misleading and leaves
 an edit vulnerable to silent replacement at restart.
-
-### Operator deletes the file manually
-
-Rejected: removal creates an avoidable interval in which an existing deployment
-has no authoritative configuration. The explicit retirement action can preserve
-the file until a validated store is durable.
 
 ### Encrypt store secrets with a colocated application key
 
@@ -151,9 +132,9 @@ claim would imply.
   clear/replace work; owner-password replacement is separately atomic and
   generic clear is refused.
 - Startup and integration tests prove the empty-volume setup boundary, owner
-  authentication, atomic claim and same-listener generation handoff, permanent
-  setup-route closure, bootstrap rejection, retirement crash/drift and
-  rename-receipt points, and the stated live/deploy-managed response for every
+  authentication, atomic first-owner transaction and same-listener generation handoff, permanent
+  setup-route closure, bootstrap rejection, fail-closed cutover ordering, and
+  the stated live/deploy-managed response for every
   store setting category.
 - Security review verifies secret permissions, backup guidance, CSRF/origin
   protection, and preserved contained-reviewer isolation.

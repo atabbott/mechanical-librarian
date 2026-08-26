@@ -544,7 +544,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .settings-sidebar nav { display:grid; }
 .settings-sidebar button { display:grid; gap:.12rem; width:100%; min-width:0; padding:.7rem .8rem; border:0; border-bottom:1px solid var(--line); border-radius:0; text-align:left; background:transparent; }
 .settings-sidebar button:last-child { border-bottom:0; }
-.settings-sidebar button[aria-current='true'] { color:var(--accent-strong); background:var(--accent-soft); box-shadow:inset 3px 0 var(--accent-strong); }
+.settings-sidebar button[aria-current='page'] { color:var(--accent-strong); background:var(--accent-soft); box-shadow:inset 3px 0 var(--accent-strong); }
 .settings-sidebar button strong,.settings-sidebar button small { overflow-wrap:anywhere; }
 .settings-sheet { min-width:0; border-top:4px solid var(--accent-strong); background:var(--surface); box-shadow:0 8px 24px color-mix(in srgb,var(--ink) 7%,transparent); }
 .settings-sheet > header { padding:clamp(1rem,3vw,1.5rem); border:1px solid var(--line); border-top:0; }
@@ -552,6 +552,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .settings-sheet > header p { max-width:66ch; margin:.35rem 0 0; color:var(--soft); overflow-wrap:anywhere; }
 .settings-fields,.settings-record { min-width:0; }
 .settings-record > h3 { margin:0; padding:.75rem clamp(1rem,3vw,1.5rem); border:1px solid var(--line); border-top:0; color:var(--accent-strong); background:var(--accent-soft); font:700 1rem/1.3 Georgia,'Times New Roman',serif; overflow-wrap:anywhere; }
+.settings-record-meta { margin:0; padding:.5rem clamp(1rem,3vw,1.5rem); border:1px solid var(--line); border-top:0; color:var(--soft); font-size:.72rem; overflow-wrap:anywhere; }
 .settings-field-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(13rem,26rem); gap:1rem 2rem; min-width:0; padding:clamp(1rem,3vw,1.5rem); border:1px solid var(--line); border-top:0; }
 .settings-field-row > div { min-width:0; }
 .settings-field-row strong,.settings-field-row p,.settings-field-control span { overflow-wrap:anywhere; }
@@ -579,6 +580,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .settings-stale-recovery { width:min(100%,98rem); margin:0 auto 1rem; padding:.75rem 1rem; border:1px solid var(--danger); color:var(--danger); background:var(--danger-soft); overflow-wrap:anywhere; }
 .settings-saved { width:min(100%,98rem); margin:0 auto 1rem; padding:.75rem 1rem; border:1px solid var(--accent); color:var(--accent-strong); background:var(--accent-soft); overflow-wrap:anywhere; }
 .settings-save-tray { position:sticky; z-index:4; bottom:.75rem; display:flex; align-items:center; justify-content:space-between; gap:1rem; margin:1rem 0 0; padding:.75rem 1rem; border:1px solid var(--accent); background:color-mix(in srgb,var(--surface) 94%,transparent); box-shadow:0 8px 30px color-mix(in srgb,var(--ink) 16%,transparent); backdrop-filter:blur(12px); }
+.settings-save-tray.quiet { justify-content:flex-end; border-color:transparent; background:transparent; box-shadow:none; backdrop-filter:none; }
 .settings-save-tray p { min-width:0; margin:0; overflow-wrap:anywhere; }
 .settings-save-tray button { flex:none; padding:.55rem 1rem; color:var(--surface); background:var(--accent-strong); }
 html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; animation-duration:.001ms!important; animation-iteration-count:1!important; transition-duration:.001ms!important; }
@@ -586,7 +588,7 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
   .settings-editor { grid-template-columns:1fr; }
   .settings-sidebar nav { display:flex; overflow-x:auto; scroll-snap-type:x proximity; }
   .settings-sidebar button { flex:0 0 min(15rem,78vw); border-right:1px solid var(--line); border-bottom:0; scroll-snap-align:start; }
-  .settings-sidebar button[aria-current='true'] { box-shadow:inset 0 -3px var(--accent-strong); }
+  .settings-sidebar button[aria-current='page'] { box-shadow:inset 0 -3px var(--accent-strong); }
 }
 @media (max-width:560px) {
   .settings-heading { align-items:start; flex-direction:column; }

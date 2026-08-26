@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Repeatable exact-head qualification for the supported container lifecycle."""
+"""Repeatable exact-head qualification for the supported container lifecycle.
+
+The unchanged file-managed sentinel here is complemented by
+``qualify_first_run_lifecycle.py`` for the exact-empty one-listener journey.
+"""
 
 from __future__ import annotations
 

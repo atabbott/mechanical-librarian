@@ -1472,7 +1472,8 @@ def test_openapi_is_deterministic_and_secret_free(
             "/api/v1/metadata-policy/transitions/{transition_id}/retry",
         ),
         ("post", "/api/v1/metadata-policy/validate"),
-        ("get", "/api/v1/review-preparation"),
+            ("get", "/api/v1/review-preparation"),
+            ("post", "/api/v1/review-preparation/first-boot/acknowledge"),
         # The live invalidation stream is a protected read like any other.
         ("get", "/api/v1/updates"),
         ("get", "/api/v1/review-cases/{review_case_id}"),
@@ -1879,3 +1880,39 @@ def test_served_composition_keeps_automatic_safety_reachable(
         assert safety.state().paused
     finally:
         repository.close()
+
+
+def test_first_boot_acknowledgement_is_authenticated_csrf_bound_and_durable(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    acknowledgements: list[str] = []
+    web.client.close()
+    app = create_transport_test_app(
+        web.repository,
+        ReviewWebConfiguration(
+            canonical_origin="https://review.test",
+            owner_password_hash_file=str(web.hash_path),
+        ),
+        first_boot=True,
+        acknowledge_first_boot=lambda: acknowledgements.append("acknowledged"),
+    )
+    web.client = TestClient(app, base_url="https://review.test")
+    web.client.headers["x-ml-build-identity"] = TEST_REACT_BUILD_IDENTITY
+    anonymous = web.client.post(
+        "/api/v1/review-preparation/first-boot/acknowledge",
+        headers={**web.origin, "x-csrf-token": "x" * 32},
+    )
+    assert anonymous.status_code == 401
+    login = web.login()
+    wrong_csrf = web.client.post(
+        "/api/v1/review-preparation/first-boot/acknowledge",
+        headers={**web.origin, "x-csrf-token": "x" * 32},
+    )
+    assert wrong_csrf.status_code == 403
+    acknowledged = web.client.post(
+        "/api/v1/review-preparation/first-boot/acknowledge",
+        headers={**web.origin, "x-csrf-token": str(login["csrf_token"])},
+    )
+    assert acknowledged.status_code == 200, acknowledged.text
+    assert acknowledged.json()["first_boot"] is False
+    assert acknowledgements == ["acknowledged"]

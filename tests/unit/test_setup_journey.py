@@ -183,9 +183,7 @@ def test_library_discovery_failure_is_retryable_and_records_nothing() -> None:
     assert store.read(_BOOTSTRAP) == state
 
 
-def test_mount_comparison_records_matched_ambiguous_unmatched_and_unobservable() -> (
-    None
-):
+def test_mount_comparison_records_matched_ambiguous_missing_and_unavailable() -> None:
     _connection, store = _store()
     state = _connected(store)
     candidates = tuple(
@@ -223,9 +221,9 @@ def test_mount_comparison_records_matched_ambiguous_unmatched_and_unobservable()
 
     assert {value.library: value.state for value in state.mounts} == {
         "ambiguous": "ambiguous",
-        "audio": "unobservable",
+        "audio": "unavailable",
         "matched": "matched",
-        "unmatched": "unmatched",
+        "unmatched": "missing",
     }
     assert state.next_step() == "mounts"
     assert "mounts" not in state.completed_steps
@@ -233,6 +231,38 @@ def test_mount_comparison_records_matched_ambiguous_unmatched_and_unobservable()
         next(value for value in state.libraries if value.name == "matched").mount
         == "books"
     )
+
+
+def test_mount_retest_uses_discovered_service_path_without_browser_input() -> None:
+    _connection, store = _store()
+    state = _connected(store)
+    journey = _journey(
+        store,
+        (
+            SetupLibraryCandidate(
+                library_id="books",
+                name="Books",
+                media_kind="book",
+                service_paths=("/service/books",),
+            ),
+        ),
+        {"/service/books": ("books",)},
+    )
+    state = journey.providers(state.revision, [], {})
+    state = journey.libraries(
+        state.revision,
+        [
+            LibrarySettings(
+                name="books",
+                connection="primary",
+                library_id="books",
+                media_kind="book",
+            )
+        ],
+    )
+    state = journey.mounts(state.revision, {"books": None})
+    assert state.mounts[0].state == "matched"
+    assert state.libraries[0].mount == "books"
 
 
 def test_change_removes_dependent_answers_and_only_their_secrets() -> None:

@@ -464,7 +464,26 @@ def create_setup_app(
                 values = journey.discover(expected_revision)
             except SetupJourneyError as error:
                 raise journey_failure(error) from error
-            return {"libraries": [value.model_dump() for value in values]}
+            return {
+                "libraries": [
+                    {
+                        **value.model_dump(),
+                        "service_path": (
+                            value.service_paths[0]
+                            if len(value.service_paths) == 1
+                            else None
+                        ),
+                        "service_path_state": (
+                            "available"
+                            if len(value.service_paths) == 1
+                            else "ambiguous"
+                            if value.service_paths
+                            else "unavailable"
+                        ),
+                    }
+                    for value in values
+                ]
+            }
 
         @app.post("/api/setup/libraries")
         def select_libraries(

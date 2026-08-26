@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Iterator
-from contextlib import AbstractContextManager, ExitStack, contextmanager
+from collections.abc import Callable
 from dataclasses import dataclass
 from threading import RLock
 from typing import TYPE_CHECKING, Literal, Protocol, TypeVar, cast
@@ -367,12 +366,18 @@ class ReviewApplication:
         settings: OwnerSettingsOperations | None = None,
         settings_activation: (
             Callable[
-                [OwnerSettingsDocument, int, tuple[SecretWrite, ...]],
-                AbstractContextManager[None],
+                [
+                    OwnerSettingsDocument,
+                    int,
+                    tuple[SecretWrite, ...],
+                    Callable[[], object],
+                ],
+                object,
             ]
             | None
         ) = None,
         first_boot: bool = False,
+        acknowledge_first_boot: Callable[[], None] | None = None,
     ) -> None:
         self._updates = updates
         self._state_owner = state_owner
@@ -395,6 +400,7 @@ class ReviewApplication:
         self._settings = settings
         self._settings_activation = settings_activation
         self._first_boot = first_boot
+        self._acknowledge_first_boot = acknowledge_first_boot
 
     @property
     def updates(self) -> LiveUpdateChannel:
@@ -452,25 +458,19 @@ class ReviewApplication:
                     else None
                 )
 
-                @contextmanager
-                def activate() -> Iterator[None]:
-                    with ExitStack() as stack:
-                        if self._settings_activation is not None:
-                            stack.enter_context(
-                                self._settings_activation(
-                                    validated, revision, secret_writes
-                                )
-                            )
-                        if cover_update is not None:
-                            stack.enter_context(cover_update)
-                        yield
+                def commit() -> object:
+                    return settings.write(
+                        validated,
+                        revision,
+                        secret_writes,
+                        cover_update,
+                    )
 
-                return settings.write(
-                    validated,
-                    revision,
-                    secret_writes,
-                    activate(),
-                )
+                if self._settings_activation is not None:
+                    return self._settings_activation(
+                        validated, revision, secret_writes, commit
+                    )
+                return commit()
 
             return self.serialized(write)
         except OwnerSettingsError as error:
@@ -500,6 +500,38 @@ class ReviewApplication:
             self._field_application.start()
         if self._preparation is not None:
             self._preparation.start()
+
+    def start_dormant(self) -> None:
+        """Perform fallible startup while every scheduler latch stays closed."""
+        if self._operations is not None:
+            self._operations.start()
+        if isinstance(self._field_application, ContinuousGuardedApplication):
+            self._field_application.start_dormant()
+        elif self._field_application is not None:
+            raise ReviewApplicationError("settings_unavailable")
+        if self._preparation is not None:
+            self._preparation.start_dormant()
+
+    def admit(self) -> None:
+        """Open the already-started generation after no-fail publication."""
+        if isinstance(self._field_application, ContinuousGuardedApplication):
+            self._field_application.admit()
+        if self._preparation is not None:
+            self._preparation.admit()
+
+    def stop_admission(self) -> None:
+        """Suspend only scheduler claims while captured HTTP may finish."""
+        if isinstance(self._field_application, ContinuousGuardedApplication):
+            self._field_application.suspend_admission()
+        if self._preparation is not None:
+            self._preparation.suspend_admission()
+
+    def resume_admission(self) -> None:
+        """Restore the current generation after an authority commit failure."""
+        if isinstance(self._field_application, ContinuousGuardedApplication):
+            self._field_application.resume_admission()
+        if self._preparation is not None:
+            self._preparation.resume_admission()
 
     def begin_drain(self) -> None:
         """Stop admitting successor work while captured requests finish."""
@@ -958,6 +990,13 @@ class ReviewApplication:
             else None,
         )
 
+    def acknowledge_first_boot_preparation(self) -> PreparationView:
+        if self._acknowledge_first_boot is None:
+            raise ReviewApplicationError("preparation_unavailable")
+        self.serialized(self._acknowledge_first_boot)
+        self._first_boot = False
+        return self.preparation()
+
     def request_review_scan(self, connection: str, library: str) -> dict[str, object]:
         return self._preparation_request("request", connection, library)
 
@@ -1171,12 +1210,18 @@ def compose_review_application(
     settings: OwnerSettingsOperations | None = None,
     settings_activation: (
         Callable[
-            [OwnerSettingsDocument, int, tuple[SecretWrite, ...]],
-            AbstractContextManager[None],
+            [
+                OwnerSettingsDocument,
+                int,
+                tuple[SecretWrite, ...],
+                Callable[[], object],
+            ],
+            object,
         ]
         | None
     ) = None,
     first_boot: bool = False,
+    acknowledge_first_boot: Callable[[], None] | None = None,
 ) -> ReviewApplication:
     """Compose every operation before the HTTP adapter is created."""
     gate = RLock()
@@ -1238,6 +1283,7 @@ def compose_review_application(
         settings=settings,
         settings_activation=settings_activation,
         first_boot=first_boot,
+        acknowledge_first_boot=acknowledge_first_boot,
     )
     return application
 

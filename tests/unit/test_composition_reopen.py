@@ -13,9 +13,11 @@ loaded.
 
 from __future__ import annotations
 
+import sys
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import patch
 
 import pytest
@@ -24,12 +26,139 @@ from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_pipeline import pipeline_scan_id
 from mechanical_librarian.bootstrap import composition
-from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
+from mechanical_librarian.domain.owner_settings import (
+    OwnerSettingsDocument,
+    SettingsView,
+)
 from mechanical_librarian.infrastructure.first_boot import (
     FirstBootMode,
     select_first_boot_mode,
 )
 from mechanical_librarian.infrastructure.settings_authority import ReviewBootstrap
+from mechanical_librarian.interfaces.web.runtime_dispatch import (
+    MutableRuntimeDispatcher,
+    RuntimeGeneration,
+)
+
+
+async def _runtime_app(scope: object, receive: object, send: object) -> None:
+    return None
+
+
+def test_store_runtime_activation_reuses_outer_control_authority_for_successors() -> None:
+    snapshot: tuple[SettingsView, dict[str, str], str] = (
+        cast(SettingsView, object()),
+        {},
+        "verifier",
+    )
+    authority = object()
+    settings = SimpleNamespace(activation_snapshot=lambda *_values: snapshot)
+    activation = composition._StoreRuntimeActivation(
+        ReviewBootstrap(
+            schema_version="review-bootstrap-v1",
+            canonical_origin="https://library.invalid",
+            tls_certificate_file="certificate",
+            tls_private_key_file="private-key",
+        ),
+        Path("application.sqlite3"),
+        Path("catalogue.sqlite3"),
+        Path("artifacts"),
+        settings,
+        authority,
+    )
+    candidate = RuntimeGeneration(_runtime_app)
+    with patch.object(
+        composition,
+        "compose_store_runtime_generation",
+        return_value=(candidate, object()),
+    ) as compose:
+        assert activation.prepare(object(), 2, ()) is candidate
+        with patch.object(activation, "_activate") as apply:
+            activation.activate_setup(snapshot, lambda: None)
+    assert compose.call_args_list[0].kwargs["repository_authority"] is authority
+    assert compose.call_args_list[1].kwargs["repository_authority"] is authority
+    assert compose.call_args_list[1].kwargs["first_boot"] is True
+    apply.assert_called_once()
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="Linux descriptor proof"
+)
+def test_setup_and_settings_successors_open_through_live_outer_control(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "application.sqlite3"
+    control = composition.open_repository(database)
+    predecessor = composition.open_repository(
+        database, authority=control.authority
+    )
+    snapshot: tuple[SettingsView, dict[str, str], str] = (
+        cast(SettingsView, object()),
+        {},
+        "verifier",
+    )
+    settings = SimpleNamespace(activation_snapshot=lambda *_values: snapshot)
+    activation = composition._StoreRuntimeActivation(
+        ReviewBootstrap(
+            schema_version="review-bootstrap-v1",
+            canonical_origin="https://library.invalid",
+            tls_certificate_file="certificate",
+            tls_private_key_file="private-key",
+        ),
+        database,
+        tmp_path / "catalogue.sqlite3",
+        tmp_path / "artifacts",
+        settings,
+        control.authority,
+    )
+
+    class ReachedRuntimeComposition(RuntimeError):
+        pass
+
+    try:
+        with patch.object(
+            composition,
+            "store_runtime_configuration",
+            side_effect=ReachedRuntimeComposition,
+        ):
+            with pytest.raises(ReachedRuntimeComposition):
+                activation.prepare(object(), 2, ())
+            predecessor.close()
+            with pytest.raises(ReachedRuntimeComposition):
+                activation.activate_setup(snapshot, lambda: None)
+    finally:
+        control.close()
+
+
+def test_outer_listener_uses_each_committed_shutdown_budget() -> None:
+    initial = RuntimeGeneration(_runtime_app, shutdown_seconds=5)
+    successor = RuntimeGeneration(_runtime_app, shutdown_seconds=17)
+    dispatcher = MutableRuntimeDispatcher(initial)
+
+    class Config:
+        def __init__(self, application: object, **values: object) -> None:
+            self.application = application
+            for name, value in values.items():
+                setattr(self, name, value)
+
+    class Server:
+        def __init__(self, config: Config) -> None:
+            self.config = config
+            self.should_exit = False
+
+        def run(self) -> None:
+            assert self.config.timeout_graceful_shutdown == 5
+            dispatcher.prepare(successor)
+            dispatcher.transition(initial, successor, lambda: None)
+            assert self.config.timeout_graceful_shutdown == 17
+
+    with (
+        patch.object(composition.uvicorn, "Config", Config),
+        patch.object(composition.uvicorn, "Server", Server),
+    ):
+        composition._serve_runtime_dispatcher(
+            dispatcher, "127.0.0.1", 7443, "certificate", "private-key"
+        )
 
 
 @pytest.mark.parametrize(
@@ -119,7 +248,7 @@ def test_a_configuration_loading_seam_delegates_what_it_loaded(
     assert arguments == loaded.call_args.args[3:]
 
 
-def test_setup_server_releases_claimed_state_for_restart_and_resume(
+def test_ordinary_server_releases_first_owner_state_for_interruption_and_resume(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "application.sqlite3"
@@ -155,6 +284,7 @@ def test_setup_server_releases_claimed_state_for_restart_and_resume(
             ),
         ),
         patch.object(composition, "open_repository", return_value=repository),
+        patch.object(composition, "load_review_bootstrap", return_value=bootstrap),
         patch.object(repository, "close", wraps=repository.close) as close,
         patch.object(
             composition.uvicorn.Server,
@@ -164,14 +294,14 @@ def test_setup_server_releases_claimed_state_for_restart_and_resume(
         ) as run,
     ):
         try:
-            composition.run_setup_server(
-                bootstrap,
+            composition.run_review_server(
+                tmp_path / "config.json",
                 database,
                 tmp_path / "catalogue.sqlite3",
                 tmp_path / "artifacts",
                 "127.0.0.1",
                 18444,
-                initialize=True,
+                first_boot_mode=FirstBootMode.INITIALIZE_SETUP,
             )
             close.assert_called_once_with()
         finally:
@@ -247,6 +377,48 @@ def test_first_preparation_presentation_survives_restart_debt_acknowledgement() 
     assert not composition._store_first_preparation("file", ("setup_complete",), True)
 
 
+def test_setup_mount_reachability_is_exact_bounded_and_directory_only(
+    tmp_path: Path,
+) -> None:
+    readable = tmp_path / "books"
+    readable.mkdir()
+    regular = tmp_path / "not-a-directory"
+    regular.write_text("synthetic", encoding="utf-8")
+    bootstrap = ReviewBootstrap.model_validate(
+        {
+            "schema_version": "review-bootstrap-v1",
+            "tls_certificate_file": "certificate",
+            "tls_private_key_file": "key",
+            "canonical_origin": "https://review.invalid",
+            "mounts": [
+                {
+                    "name": "books",
+                    "container_path": str(readable),
+                    "service_path": "/service/books",
+                    "read_only": True,
+                },
+                {
+                    "name": "file",
+                    "container_path": str(regular),
+                    "service_path": "/service/file",
+                    "read_only": True,
+                },
+                {
+                    "name": "missing",
+                    "container_path": str(tmp_path / "missing"),
+                    "service_path": "/service/missing",
+                    "read_only": True,
+                },
+            ],
+        }
+    )
+    assert composition._reachable_setup_mount_names(bootstrap, "/service/books") == (
+        "books",
+    )
+    assert composition._reachable_setup_mount_names(bootstrap, "/service/file") == ()
+    assert composition._reachable_setup_mount_names(bootstrap, "/service/missing") == ()
+
+
 def test_first_preparation_marker_survives_settings_edit_and_repository_reopen(
     tmp_path: Path,
 ) -> None:
@@ -307,9 +479,19 @@ def test_first_preparation_marker_survives_settings_edit_and_repository_reopen(
             "primary", "books", "books", "b" * 64, 3, first_boot=True
         )
         assert rescan.scan_id == pipeline_scan_id("primary", "books")
+        assert reopened.has_first_boot_preparation()
+        reopened.acknowledge_first_boot_preparation()
         assert not reopened.has_first_boot_preparation()
     finally:
         reopened.close()
+
+    acknowledged = composition.open_repository(database, create=False)
+    try:
+        assert not acknowledged.has_first_boot_preparation()
+        acknowledged.request_review_scan("primary", "books", "books", "b" * 64, 4)
+        assert not acknowledged.has_first_boot_preparation()
+    finally:
+        acknowledged.close()
 
 
 def test_normal_store_scan_history_never_becomes_first_preparation(
@@ -359,6 +541,6 @@ def test_completed_first_library_keeps_marker_until_initial_cohort_is_terminal(
             "primary", "books", "books", "b" * 64, 5, first_boot=True
         )
         assert ordinary.scan_id == pipeline_scan_id("primary", "books")
-        assert not repository.has_first_boot_preparation()
+        assert repository.has_first_boot_preparation()
     finally:
         repository.close()

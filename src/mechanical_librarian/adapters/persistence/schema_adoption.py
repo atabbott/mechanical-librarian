@@ -28,6 +28,7 @@ from mechanical_librarian.adapters.persistence.schema import (
     _OWNER_SETTINGS_SQL,
     _REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
     _REVIEW_CASE_FIELD_FACTS_SQL,
+    _REVIEW_CONTROL_SQL,
     _expected_schema_objects,
     _review_case_field_fact_values_sql,
     _validate_report_row,
@@ -52,29 +53,46 @@ _DERIVED_TABLES = {
     "review_case_field_facts",
 }
 _TARGET_SCHEMA_OBJECTS_SHA256 = (
-    "68ff762e845010e297c3656d8959d612cec09afc5976f22500b07aaa9c574eed"
+    "bef7545577c74e9fadda2071697a532312a289d082e5399cc9afb4d9fba4e576"
+)
+_PRE_HANDOVER_REVIEW_CONTROL_SQL = (
+    "CREATE TABLE review_preparation_control ("
+    "singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1), "
+    "paused INTEGER NOT NULL CHECK(paused IN (0,1)), "
+    "claim_sequence INTEGER NOT NULL CHECK(claim_sequence>=0), "
+    "last_library TEXT CHECK(last_library IS NULL OR (typeof(last_library)='text' AND length(CAST(last_library AS BLOB)) BETWEEN 1 AND 64 AND last_library NOT GLOB '*[^a-z0-9_-]*' AND substr(last_library,1,1) GLOB '[a-z]')), circuit_failures INTEGER NOT NULL CHECK(circuit_failures BETWEEN 0 AND 3), "
+    "circuit_open_until INTEGER NOT NULL CHECK(circuit_open_until>=0), updated_at INTEGER NOT NULL CHECK(updated_at>=0))"
 )
 
 
-def _validate_owner_settings_predecessor_schema(connection: sqlite3.Connection) -> None:
-    expected = [
-        value
-        for value in _expected_schema_objects()
-        if value[1]
-        not in {
-            "owner_settings",
-            "owner_setting_secrets",
-            "sqlite_autoindex_owner_setting_secrets_1",
-        }
-    ]
-    if (
-        connection.execute(
-            "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
-        ).fetchall()
-        != expected
+def _validate_owner_settings_predecessor_schema(
+    connection: sqlite3.Connection,
+) -> tuple[bool, bool]:
+    observed = connection.execute(
+        "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
+    ).fetchall()
+    for missing_owner_settings, pre_handover_control in (
+        (True, False),
+        (False, True),
+        (True, True),
     ):
-        raise MetadataReportError("database is unavailable or incompatible")
-    _validate_schema_contents(connection)
+        expected = []
+        for value in _expected_schema_objects():
+            if missing_owner_settings and value[1] in {
+                "owner_settings",
+                "owner_setting_secrets",
+                "sqlite_autoindex_owner_setting_secrets_1",
+            }:
+                continue
+            expected.append(
+                (value[0], value[1], _PRE_HANDOVER_REVIEW_CONTROL_SQL)
+                if pre_handover_control and value[1] == "review_preparation_control"
+                else value
+            )
+        if observed == expected:
+            _validate_schema_contents(connection)
+            return missing_owner_settings, pre_handover_control
+    raise MetadataReportError("database is unavailable or incompatible")
 
 
 def _expected_schema_objects_digest() -> str:
@@ -110,7 +128,9 @@ def _encode_value(value: object) -> bytes:
     raise MetadataReportError("database is unavailable or incompatible")
 
 
-def _application_table_digest(connection: sqlite3.Connection) -> str:
+def _application_table_digest(
+    connection: sqlite3.Connection, *, exclude_review_control: bool = False
+) -> str:
     """Digest every application value in stable physical table order."""
     digest = hashlib.sha256()
     table_names = sorted(
@@ -119,6 +139,8 @@ def _application_table_digest(connection: sqlite3.Connection) -> str:
         if value[0] == "table" and value[1] not in _DERIVED_TABLES
     )
     for table_name in table_names:
+        if exclude_review_control and table_name == "review_preparation_control":
+            continue
         encoded_name = table_name.encode("utf-8")
         digest.update(len(encoded_name).to_bytes(4, "big"))
         digest.update(encoded_name)
@@ -405,6 +427,8 @@ def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str,
     binding: _LinuxDatabaseBinding | None = None
     connection: sqlite3.Connection | None = None
     recovery_required = False
+    missing_owner_settings = False
+    pre_handover_control = False
     try:
         descriptor = os.open(
             database,
@@ -451,9 +475,12 @@ def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str,
             _validate_schema(connection)
         except MetadataReportError:
             if plan == OWNER_SETTINGS_V1:
-                _validate_owner_settings_predecessor_schema(connection)
+                missing_owner_settings, pre_handover_control = (
+                    _validate_owner_settings_predecessor_schema(connection)
+                )
             else:
                 _validate_review_owner_decision_actions_predecessor_schema(connection)
+                pre_handover_control = True
         else:
             _validate_canonical_documents(connection)
             connection.rollback()
@@ -463,16 +490,39 @@ def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str,
             return {"plan": plan, "status": "already-current"}
 
         _validate_canonical_documents(connection)
-        before = _application_table_digest(connection)
+        before = _application_table_digest(
+            connection, exclude_review_control=pre_handover_control
+        )
+        review_control = (
+            connection.execute(
+                "SELECT singleton,paused,claim_sequence,last_library,circuit_failures,"
+                "circuit_open_until,updated_at FROM review_preparation_control"
+            ).fetchone()
+            if pre_handover_control
+            else None
+        )
         backup_identity, backup_digest = _copy_verified_backup(
             source_descriptor, parent_descriptor, backup.name
         )
         if binding is not None:
             binding.require_current()
-        if plan == OWNER_SETTINGS_V1:
+        if plan == OWNER_SETTINGS_V1 and missing_owner_settings:
             connection.execute(_OWNER_SETTINGS_SQL)
             connection.execute(_OWNER_SETTING_SECRETS_SQL)
-        else:
+        if pre_handover_control:
+            connection.execute(
+                "ALTER TABLE review_preparation_control RENAME TO review_preparation_control_pre_handover"
+            )
+            connection.execute(_REVIEW_CONTROL_SQL)
+            connection.execute(
+                "INSERT INTO review_preparation_control("
+                "singleton,paused,claim_sequence,first_boot_acknowledged,last_library,"
+                "circuit_failures,circuit_open_until,updated_at) "
+                "SELECT singleton,paused,claim_sequence,0,last_library,circuit_failures,"
+                "circuit_open_until,updated_at FROM review_preparation_control_pre_handover"
+            )
+            connection.execute("DROP TABLE review_preparation_control_pre_handover")
+        if plan != OWNER_SETTINGS_V1:
             connection.execute(_OWNER_SETTINGS_SQL)
             connection.execute(_OWNER_SETTING_SECRETS_SQL)
             connection.execute("DROP TRIGGER review_cases_project_field_facts")
@@ -498,7 +548,21 @@ def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str,
             binding.require_current()
         _validate_schema(connection)
         _validate_canonical_documents(connection)
-        if _application_table_digest(connection) != before:
+        if (
+            _application_table_digest(
+                connection, exclude_review_control=pre_handover_control
+            )
+            != before
+        ):
+            raise SchemaAdoptionRecoveryRequired
+        if (
+            pre_handover_control
+            and connection.execute(
+                "SELECT singleton,paused,claim_sequence,last_library,circuit_failures,"
+                "circuit_open_until,updated_at FROM review_preparation_control"
+            ).fetchone()
+            != review_control
+        ):
             raise SchemaAdoptionRecoveryRequired
         _require_backup_current(
             parent_descriptor, backup.name, backup_identity, backup_digest

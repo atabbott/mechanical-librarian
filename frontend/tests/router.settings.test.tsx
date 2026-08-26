@@ -36,7 +36,7 @@ const document: SettingsView['document'] = {
       library_id: 'books',
       media_kind: 'ebook',
       mount: 'ebooks',
-      name: 'Books',
+      name: 'a-very_long-library-name',
       policy_override: null,
       provider_connections: ['hardcover'],
     },
@@ -144,7 +144,9 @@ describe('owner settings route', () => {
     renderRoute('/settings?group=providers', http)
 
     await user.click(await screen.findByRole('button', { name: 'Add Open Library' }))
-    expect(screen.getByRole('checkbox', { name: 'Provider state Enable open library' })).toBeVisible()
+    expect(
+      screen.getByRole('checkbox', { name: 'Provider state Enable open library' }),
+    ).toBeVisible()
     expect(screen.getByRole('textbox', { name: 'Open Library contact email' })).toBeVisible()
   })
 
@@ -185,7 +187,7 @@ describe('owner settings route', () => {
       }),
     )
     expect(screen.queryByDisplayValue('new-secret-abcd')).not.toBeInTheDocument()
-    expect(await screen.findByText(/Server-authoritative settings are current/)).toBeVisible()
+    expect(await screen.findByText('Settings saved and in use.')).toBeVisible()
   })
 
   it('renders file authority without covered edit affordances in the DOM', async () => {
@@ -224,6 +226,24 @@ describe('owner settings route', () => {
     expect(await screen.findByRole('heading', { level: 2, name: 'Appearance' })).toBeVisible()
     act(() => router.history.back())
     expect(await screen.findByRole('heading', { level: 2, name: 'Libraries' })).toBeVisible()
+  })
+
+  it('uses a human library heading while keeping exact identifiers secondary', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    renderRoute('/settings?group=libraries', http)
+
+    expect(
+      await screen.findByRole('heading', { level: 3, name: 'A Very Long Library Name' }),
+    ).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'a-very_long-library-name' })).toBeNull()
+    const metadata = screen.getByText('a-very_long-library-name').closest('p')
+    expect(metadata).toHaveClass('settings-record-meta')
+    expect(metadata).toHaveTextContent('Local identifier: a-very_long-library-name')
+    expect(metadata).toHaveTextContent('Audiobookshelf identifier: books')
+    expect(
+      screen.getByRole('group', { name: 'Providers for A Very Long Library Name' }),
+    ).toBeVisible()
   })
 
   it('announces unavailable and stale recovery states without leaking a value', async () => {
@@ -282,7 +302,7 @@ describe('owner settings route', () => {
       await user.click(screen.getByRole('button', { name: 'Save settings' }))
 
       const recovered = await screen.findByText(
-        'Authoritative Settings reloaded. Review the current values before saving again.',
+        'Current settings reloaded. Review the values before saving again.',
       )
       expect(recovered.closest('[role="alert"]')).toHaveFocus()
       expect(screen.getByRole('textbox', { name: 'Audiobookshelf endpoint' })).toHaveValue(
@@ -320,7 +340,7 @@ describe('owner settings route', () => {
     const uncertain = await screen.findByText(/Save outcome is uncertain and Settings could not/)
     expect(uncertain.closest('[role="alert"]')).toHaveFocus()
     expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Retry authoritative reload' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Retry settings reload' })).toBeVisible()
     expect(screen.queryByText(/Nothing changed/)).not.toBeInTheDocument()
     expect(http.writeSettings).toHaveBeenCalledOnce()
   })

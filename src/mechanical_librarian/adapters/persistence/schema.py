@@ -274,6 +274,7 @@ _REVIEW_CONTROL_SQL = (
     "singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1), "
     "paused INTEGER NOT NULL CHECK(paused IN (0,1)), "
     "claim_sequence INTEGER NOT NULL CHECK(claim_sequence>=0), "
+    "first_boot_acknowledged INTEGER NOT NULL CHECK(first_boot_acknowledged IN (0,1)), "
     "last_library TEXT CHECK(last_library IS NULL OR (typeof(last_library)='text' AND length(CAST(last_library AS BLOB)) BETWEEN 1 AND 64 AND last_library NOT GLOB '*[^a-z0-9_-]*' AND substr(last_library,1,1) GLOB '[a-z]')), circuit_failures INTEGER NOT NULL CHECK(circuit_failures BETWEEN 0 AND 3), "
     "circuit_open_until INTEGER NOT NULL CHECK(circuit_open_until>=0), updated_at INTEGER NOT NULL CHECK(updated_at>=0))"
 )
@@ -595,7 +596,7 @@ _SETUP_POLICY_TRANSITION_ROW = (
     0,
     0,
 )
-_SETUP_REVIEW_CONTROL_ROW = (1, 0, 0, None, 0, 0, 0)
+_SETUP_REVIEW_CONTROL_ROW = (1, 0, 0, 0, None, 0, 0, 0)
 _SETUP_AUTOMATIC_SAFETY_ROW = (1, 0, None, "[]", 0)
 _SETUP_FIELD_EFFECT_CONTROL_ROW = (1, 0, 0)
 
@@ -642,7 +643,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_REVIEW_SCANS_SQL)
     connection.execute(_REVIEW_CONTROL_SQL)
     connection.execute(
-        "INSERT INTO review_preparation_control(singleton,paused,claim_sequence,last_library,circuit_failures,circuit_open_until,updated_at) VALUES(?,?,?,?,?,?,?)",
+        "INSERT INTO review_preparation_control(singleton,paused,claim_sequence,first_boot_acknowledged,last_library,circuit_failures,circuit_open_until,updated_at) VALUES(?,?,?,?,?,?,?,?)",
         _SETUP_REVIEW_CONTROL_ROW,
     )
     connection.execute(_REVIEW_CONNECTION_CONDITIONS_SQL)

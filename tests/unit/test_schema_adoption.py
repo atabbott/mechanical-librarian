@@ -29,6 +29,7 @@ from mechanical_librarian.adapters.persistence.schema import (
     _REVIEW_WORK_AGED_CLAIM_INDEX_SQL,
 )
 from mechanical_librarian.adapters.persistence.schema_adoption import (
+    _PRE_HANDOVER_REVIEW_CONTROL_SQL,
     _application_table_digest,
     adopt_schema,
 )
@@ -74,6 +75,18 @@ def _freeze_review_field_facts_predecessor(connection: sqlite3.Connection) -> No
         + " FROM review_cases rc,json_each(rc.document,'$.results') result"
     )
     connection.execute(_REVIEW_OWNER_DECISION_ACTIONS_V1_SOURCE_FACTS_INSERT_SQL)
+    connection.execute(
+        "ALTER TABLE review_preparation_control RENAME TO current_review_preparation_control"
+    )
+    connection.execute(_PRE_HANDOVER_REVIEW_CONTROL_SQL)
+    connection.execute(
+        "INSERT INTO review_preparation_control("
+        "singleton,paused,claim_sequence,last_library,circuit_failures,"
+        "circuit_open_until,updated_at) SELECT singleton,paused,claim_sequence,"
+        "last_library,circuit_failures,circuit_open_until,updated_at "
+        "FROM current_review_preparation_control"
+    )
+    connection.execute("DROP TABLE current_review_preparation_control")
 
 
 def _predecessor(root: Path) -> Path:
@@ -103,10 +116,36 @@ def _owner_settings_predecessor(root: Path) -> Path:
     return database
 
 
-def _table_digest(path: Path) -> str:
+def _pre_handover_owner_settings_predecessor(root: Path) -> Path:
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    root.chmod(0o700)
+    database = root / "application.sqlite3"
+    repository = open_repository(database)
+    repository.close()
+    connection = sqlite3.connect(database)
+    connection.execute(
+        "ALTER TABLE review_preparation_control RENAME TO current_review_preparation_control"
+    )
+    connection.execute(_PRE_HANDOVER_REVIEW_CONTROL_SQL)
+    connection.execute(
+        "INSERT INTO review_preparation_control("
+        "singleton,paused,claim_sequence,last_library,circuit_failures,"
+        "circuit_open_until,updated_at) SELECT singleton,paused,claim_sequence,"
+        "last_library,circuit_failures,circuit_open_until,updated_at "
+        "FROM current_review_preparation_control"
+    )
+    connection.execute("DROP TABLE current_review_preparation_control")
+    connection.commit()
+    connection.close()
+    return database
+
+
+def _table_digest(path: Path, *, exclude_review_control: bool = False) -> str:
     connection = sqlite3.connect(path)
     try:
-        return _application_table_digest(connection)
+        return _application_table_digest(
+            connection, exclude_review_control=exclude_review_control
+        )
     finally:
         connection.close()
 
@@ -258,7 +297,7 @@ def test_exact_predecessor_adopts_field_facts_without_changing_canonical_tables(
 ) -> None:
     database = _predecessor(tmp_path)
     backup = tmp_path / "application.before-owner-decision-actions.sqlite3"
-    before = _table_digest(database)
+    before = _table_digest(database, exclude_review_control=True)
 
     with pytest.raises(MetadataReportError):
         open_repository(database, create=False)
@@ -267,7 +306,7 @@ def test_exact_predecessor_adopts_field_facts_without_changing_canonical_tables(
         "plan": REVIEW_OWNER_DECISION_ACTIONS_V1,
         "status": "adopted",
     } == adopt_schema(database, backup, REVIEW_OWNER_DECISION_ACTIONS_V1)
-    assert before == _table_digest(database)
+    assert before == _table_digest(database, exclude_review_control=True)
     assert backup.is_file()
     assert os.stat(backup).st_mode & 0o777 == 0o600
 
@@ -322,6 +361,27 @@ def test_owner_settings_exact_predecessor_adopts_without_changing_canonical_tabl
     assert backup.is_file()
     repository = open_repository(database, create=False)
     repository.close()
+
+
+def test_owner_settings_adopts_pre_handover_control_with_upgrade_proof(
+    tmp_path: Path,
+) -> None:
+    database = _pre_handover_owner_settings_predecessor(tmp_path)
+    backup = tmp_path / "application.before-first-handover.sqlite3"
+    before = _table_digest(database, exclude_review_control=True)
+    assert {"plan": OWNER_SETTINGS_V1, "status": "adopted"} == adopt_schema(
+        database, backup, OWNER_SETTINGS_V1
+    )
+    assert before == _table_digest(database, exclude_review_control=True)
+    connection = sqlite3.connect(database)
+    try:
+        assert connection.execute(
+            "SELECT first_boot_acknowledged FROM review_preparation_control "
+            "WHERE singleton=1"
+        ).fetchone() == (0,)
+    finally:
+        connection.close()
+    assert backup.is_file()
 
 
 def test_owner_settings_adoption_refuses_wrong_predecessor_and_tampering(
@@ -854,9 +914,11 @@ def test_postvalidation_path_replacement_cannot_report_success(
     real_digest = adoption._application_table_digest
     calls = 0
 
-    def replace_after_second_digest(connection: sqlite3.Connection) -> str:
+    def replace_after_second_digest(
+        connection: sqlite3.Connection, **kwargs: Any
+    ) -> str:
         nonlocal calls
-        result = real_digest(connection)
+        result = real_digest(connection, **kwargs)
         calls += 1
         if calls == 2:
             database.rename(displaced)

@@ -1210,6 +1210,25 @@ def test_linux_database_authority_allows_same_process_derived_connection() -> No
         owner.close()
 
 
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="Linux descriptor proof"
+)
+def test_linux_outer_control_keeps_successor_valid_after_predecessor_close() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "reports.sqlite"
+        control = open_repository(path)
+        authority = control.authority
+        predecessor = open_repository(path, authority=authority)
+        successor = open_repository(path, authority=authority)
+        predecessor.close()
+        successor.publish(synthetic_report(), lambda: True)
+        assert successor.get(synthetic_report().report_id) == synthetic_report().to_json()
+        successor.close()
+        control.close()
+        with pytest.raises(MetadataReportError, match="database authority changed"):
+            open_repository(path, authority=authority)
+
+
 def test_existing_database_runs_full_schema_validation_once_before_writable_use() -> (
     None
 ):

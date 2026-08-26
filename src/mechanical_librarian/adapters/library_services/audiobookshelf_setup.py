@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from typing import cast
+from typing import Any, cast
 
 import httpx
 
@@ -36,12 +36,17 @@ class AudiobookshelfSetupProbe:
 
     def discover(self, endpoint: str, key: str) -> tuple[SetupLibraryCandidate, ...]:
         payload = self._libraries(endpoint, key)
-        libraries = cast("list[dict[str, str]]", payload["libraries"])
+        libraries = cast("list[dict[str, Any]]", payload["libraries"])
         return tuple(
             SetupLibraryCandidate(
                 library_id=item["id"],
                 name=item["name"],
                 media_kind="book" if item.get("mediaType") == "book" else "unsupported",
+                service_paths=tuple(
+                    folder["fullPath"]
+                    for folder in item.get("folders", [])
+                    if type(folder) is dict and type(folder.get("fullPath")) is str
+                ),
             )
             for item in libraries
         )
@@ -92,6 +97,15 @@ class AudiobookshelfSetupProbe:
                     or not 1 <= len(item["name"]) <= 256
                     or "\x00" in item["name"]
                     or type(item.get("mediaType")) is not str
+                    or type(item.get("folders", [])) is not list
+                    or len(item.get("folders", [])) > 16
+                    or any(
+                        type(folder) is not dict
+                        or type(folder.get("fullPath")) is not str
+                        or not 1 <= len(folder["fullPath"]) <= 4096
+                        or "\x00" in folder["fullPath"]
+                        for folder in item.get("folders", [])
+                    )
                     for item in payload["libraries"]
                 )
             ):

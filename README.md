@@ -11,9 +11,9 @@ effect gate passes.
 The 0.17.0 configuration and first-run checkpoint runs one authenticated owner
 workspace. A first visitor creates the owner password, connects Audiobookshelf,
 selects book libraries and optional metadata providers, verifies read-only
-mounts, and starts preparation without restarting the container. The lazy
-Settings utility applies every store-managed field to the next operation through
-an atomic runtime-generation cutover; deploy-managed TLS, listener, proxy, and
+mounts, and starts preparation without restarting the container. Settings is a
+primary workspace destination, and store-managed changes take effect as soon as
+they are saved; deploy-managed TLS, listener, proxy, and
 mount values remain outside browser authority. The workspace prepares exact-current
 reports, ProposalSets, and review cases in the background, presents Library,
 Attention, detail, Policy, and Activity through one packaged React shell, and
@@ -32,9 +32,10 @@ preview, and contained-reviewer scenarios remain available through the typed
 source workbench against disposable or explicitly approved private test state.
 They are not installed runtime commands and cannot bridge to production targets.
 
-Only absent or exact-current pre-release state is supported. Earlier
-development databases, manifests, configuration schemas, and retired commands
-are intentionally rejected rather than migrated or interpreted.
+Ordinary startup supports only absent or exact-current pre-release state. The
+named offline `owner-settings-v1` adoption accepts only its documented exact
+predecessors; every other earlier database, manifest, configuration schema, or
+retired command is rejected rather than interpreted.
 
 The installed command surface contains the authenticated `review-serve`
 workspace, single-policy `policy-preview`, owner-directed `cover-review`, and

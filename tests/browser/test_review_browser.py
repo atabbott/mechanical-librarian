@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -1987,16 +1988,20 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     route.fulfill(
                         json={
                             "libraries": [
-                                {
-                                    "library_id": "books",
-                                    "name": "Books",
-                                    "media_kind": "book",
-                                },
+                                    {
+                                        "library_id": "books",
+                                        "name": "Books",
+                                        "media_kind": "book",
+                                        "service_path": "/library/books",
+                                        "service_path_state": "available",
+                                    },
                                 {
                                     "library_id": "long",
-                                    "name": "A very long library name "
-                                    + "wrapped " * 12,
-                                    "media_kind": "book",
+                                        "name": "A very long library name "
+                                        + "wrapped " * 12,
+                                        "media_kind": "book",
+                                        "service_path": "/library/long",
+                                        "service_path_state": "available",
                                 },
                                 {
                                     "library_id": "podcasts",
@@ -2122,18 +2127,19 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 _setup_asset_server(certificate, key, reserved_port) as origin,
                 _closing_context(context),
             ):
+                protected_viewports = (
+                    (1440, 900),
+                    (884, 900),
+                    (390, 844),
+                    (320, 800),
+                )
                 page.goto(origin)
                 expect(
                     page.get_by_role("heading", name="Create your owner password")
                 ).to_be_visible()
                 for color in ("light", "dark"):
                     page.emulate_media(color_scheme=color)
-                    for width, height in (
-                        (1440, 900),
-                        (884, 900),
-                        (390, 844),
-                        (320, 800),
-                    ):
+                    for width, height in protected_viewports:
                         page.set_viewport_size({"width": width, "height": height})
                         assert page.evaluate(
                             "document.documentElement.scrollWidth <= window.innerWidth"
@@ -2145,17 +2151,46 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     page.get_by_role("heading", name="Choose metadata providers")
                 ).to_be_visible()
                 for provider in ("Open Library", "Hardcover", "Google Books"):
-                    expect(page.get_by_role("link", name=provider)).to_be_visible()
+                    access = page.get_by_role("link", name=f"Get {provider} access")
+                    expect(access).to_be_visible()
+                    expect(access).to_have_class(re.compile(r"\bprovider-access\b"))
+                    assert access.evaluate(
+                        "element => getComputedStyle(element).textDecorationLine"
+                    ) == "underline"
+                    assert access.evaluate(
+                        "element => getComputedStyle(element).color"
+                    ) != "rgb(0, 0, 238)"
+                    page.get_by_role("checkbox", name=provider).focus()
+                    page.keyboard.press("Tab")
+                    expect(access).to_be_focused()
+                    assert access.evaluate(
+                        "element => getComputedStyle(element).outlineStyle"
+                    ) != "none"
+                for color in ("light", "dark"):
+                    page.emulate_media(color_scheme=color)
+                    for width, height in protected_viewports:
+                        page.set_viewport_size({"width": width, "height": height})
+                        expect(
+                            page.get_by_role(
+                                "link", name="Get Open Library access"
+                            )
+                        ).to_be_visible()
+                        assert page.evaluate(
+                            "document.documentElement.scrollWidth <= window.innerWidth"
+                        )
                 page.get_by_role("button", name="Skip providers").click()
                 expect(
                     page.get_by_text(
-                        "1 podcast library is visible in Audiobookshelf but not supported here."
+                        "1 unsupported podcast library excluded."
                     )
                 ).to_be_visible()
                 page.get_by_role("checkbox", name="Books").check()
                 page.get_by_role(
                     "checkbox", name="A very long library name", exact=False
                 ).check()
+                expect(page.get_by_label("Local name").first).to_be_hidden()
+                page.get_by_role("button", name="Change name").first.click()
+                expect(page.get_by_label("Local name").first).to_be_visible()
                 page.evaluate("document.documentElement.style.fontSize = '200%'")
                 assert page.evaluate(
                     "document.documentElement.scrollWidth <= window.innerWidth"
@@ -2165,14 +2200,49 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 expect(
                     page.get_by_role("heading", name="Check read-only mounts")
                 ).to_be_visible()
+                expect(page.get_by_label("Books service path")).to_be_visible()
+                expect(
+                    page.get_by_label(
+                        re.compile(r"^A very long library name.* service path$")
+                    )
+                ).to_be_visible()
+                expect(
+                    page.get_by_label(re.compile(r"^a-very-long-library-name"))
+                ).to_have_count(0)
+                for color in ("light", "dark"):
+                    page.emulate_media(color_scheme=color)
+                    for width, height in protected_viewports:
+                        page.set_viewport_size({"width": width, "height": height})
+                        expect(
+                            page.get_by_role("button", name="Check mounts")
+                        ).to_be_visible()
+                        assert page.evaluate(
+                            "document.documentElement.scrollWidth <= window.innerWidth"
+                        )
+                page.emulate_media(color_scheme="dark")
+                page.set_viewport_size({"width": 320, "height": 800})
+                page.evaluate("document.documentElement.style.fontSize = '200%'")
+                assert page.evaluate(
+                    "document.documentElement.scrollWidth <= window.innerWidth"
+                )
+                page.evaluate("document.documentElement.style.fontSize = ''")
                 for field in page.get_by_label("service path", exact=False).all():
-                    field.fill("/library/books")
-                page.get_by_role("button", name="Compare mounts").click()
+                    expect(field).not_to_have_value("")
+                page.get_by_role("button", name="Check mounts").click()
                 expect(
                     page.get_by_role("heading", name="Kick off preparation")
                 ).to_be_visible()
                 page.get_by_role("button", name="Kick off preparation").click()
-                expect(page.get_by_role("link", name="Open workspace")).to_be_visible()
+                handoff = page.get_by_role("link", name="Open workspace")
+                expect(handoff).to_be_visible()
+                expect(handoff).to_have_class(re.compile(r"\bprimary\b"))
+                assert "transform" in handoff.evaluate(
+                    "element => getComputedStyle(element).transitionProperty"
+                )
+                page.emulate_media(reduced_motion="reduce")
+                assert handoff.evaluate(
+                    "element => getComputedStyle(element).transitionDuration"
+                ) == "0s"
                 expect(
                     page.get_by_text(
                         "Writes stay off until you turn them on in Activity."
@@ -2203,7 +2273,11 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 "providers": [],
                 "libraries": [
                     {
-                        "name": f"library-{index:03d}",
+                        "name": (
+                            "a-very-long-library-name-from-audiobookshelf"
+                            if index == 0
+                            else f"library-{index:03d}"
+                        ),
                         "connection": "primary",
                         "library_id": f"synthetic-{index:03d}",
                         "media_kind": "ebook",
@@ -2276,8 +2350,31 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     page.get_by_role("heading", name="Libraries", exact=True)
                 ).to_be_visible()
                 page.unroute("**/api/v1/settings", hold_initial_settings)
+                expect(page.get_by_text("Applies to the next operation")).to_have_count(0)
                 expect(
-                    page.get_by_text("Applies to the next operation").first
+                    page.get_by_role(
+                        "heading",
+                        name="A Very Long Library Name From Audiobookshelf",
+                    )
+                ).to_be_visible()
+                expect(
+                    page.get_by_role(
+                        "heading",
+                        name="a-very-long-library-name-from-audiobookshelf",
+                    )
+                ).to_have_count(0)
+                library_metadata = page.locator(".settings-record-meta").first
+                expect(library_metadata).to_contain_text(
+                    "Local identifier: a-very-long-library-name-from-audiobookshelf"
+                )
+                expect(library_metadata).to_contain_text(
+                    "Audiobookshelf identifier: synthetic-000"
+                )
+                expect(
+                    page.get_by_role(
+                        "group",
+                        name="Providers for A Very Long Library Name From Audiobookshelf",
+                    )
                 ).to_be_visible()
                 assert page.locator("*").count() < 2_000
 
@@ -2397,9 +2494,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 assert len(held_save) == 1
                 held_save[0].continue_()
                 expect(
-                    page.get_by_text(
-                        "Saved. Server-authoritative settings are current."
-                    )
+                    page.get_by_text("Settings saved and in use.")
                 ).to_be_visible()
                 page.unroute("**/api/v1/settings", hold_save)
                 assert max(page.evaluate("window.__settingsLongTasks"), default=0) <= 50
@@ -2423,7 +2518,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 )
                 page.get_by_role("button", name="Save settings").click()
                 recovered_status = page.locator(".settings-stale-recovery").filter(
-                    has_text="Authoritative Settings reloaded"
+                    has_text="Current settings reloaded"
                 )
                 expect(recovered_status).to_be_visible()
                 expect(recovered_status).to_be_focused()
