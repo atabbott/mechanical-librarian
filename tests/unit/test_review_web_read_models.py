@@ -1213,7 +1213,10 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
         cover_reference,
     }
     detail = {
-        "fields": [{"provenance": sorted(references)}],
+        "fields": [
+            {"destination": "title", "provenance": sorted(references)},
+            {"destination": "authors", "provenance": [provider_claim_reference]},
+        ],
     }
     report = SimpleNamespace(providers=(), to_data=lambda: data)
     cases = InspectCurrentReviewCase(Mock())
@@ -1229,7 +1232,9 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
                 "review_case_" + "d" * 64,
                 cursor=first["next_cursor"],
             )
-        changed_detail: dict[str, Any] = {"fields": [{"provenance": []}]}
+        changed_detail: dict[str, Any] = {
+            "fields": [{"destination": "title", "provenance": []}]
+        }
         with patch.object(
             cases,
             "_read",
@@ -1241,7 +1246,12 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
                     cursor=first["next_cursor"],
                 )
         missing_detail: dict[str, Any] = {
-            "fields": [{"provenance": sorted(references | {"missing-lineage"})}]
+            "fields": [
+                {
+                    "destination": "title",
+                    "provenance": sorted(references | {"missing-lineage"}),
+                }
+            ]
         }
         with patch.object(cases, "_read", return_value=(missing_detail, report, ())):
             partial = cases.evidence("review_case_" + "c" * 64, limit=50)
@@ -1257,7 +1267,7 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
         )
 
     assert first["next_cursor"] == reopened["next_cursor"]
-    assert first["schema_version"] == "review-case-evidence-v3"
+    assert first["schema_version"] == "review-case-evidence-v4"
     assert first["missing_lineage_count"] == 0
     assert first["source_ledger"] == []
     assert partial["missing_lineage_count"] == 1
@@ -1266,7 +1276,11 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
     assert len(second["items"]) == 10
     assert second["next_cursor"] is None
     items = cast(list[Any], first["items"]) + cast(list[Any], second["items"])
-    assert all(set(item) == {"observation", "role", "source"} for item in items)
+    assert all(
+        set(item) == {"destinations", "observation", "role", "source"} for item in items
+    )
+    shared = next(item for item in items if "Example Press" in item["observation"])
+    assert shared["destinations"] == ["authors", "title"]
     assert {item["source"] for item in items} >= {
         "Hardcover",
         "Local library record",

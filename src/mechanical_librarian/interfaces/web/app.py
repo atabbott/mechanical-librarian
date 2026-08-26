@@ -379,6 +379,9 @@ class _CaseSuccessorResponse(_ClosedModel):
 
 
 class _EvidenceItem(_ClosedModel):
+    destinations: list[Annotated[StrictStr, Field(max_length=64)]] = Field(
+        min_length=1, max_length=16
+    )
     observation: str = Field(max_length=1024)
     role: Literal["external_corroboration", "local_presence"]
     source: str = Field(max_length=128)
@@ -389,7 +392,7 @@ class _EvidenceResponse(_ClosedModel):
     missing_lineage_count: int = Field(ge=0, le=10_000)
     next_cursor: str | None
     review_case_id: str
-    schema_version: Literal["review-case-evidence-v3"]
+    schema_version: Literal["review-case-evidence-v4"]
     source_ledger: list["_ProviderOutcome"] = Field(max_length=100)
 
 

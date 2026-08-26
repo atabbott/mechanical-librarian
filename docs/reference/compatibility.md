@@ -17,7 +17,7 @@ The current installed contract is intentionally narrow:
   `shadow-decision-set-v1` under
   `deterministic-shadow-decision-policy-v9`,
   and the exact-current deterministic shadow decision/outcome schema;
-- `review-session-v1`, `review-case-detail-v2`, `review-case-evidence-v3`,
+- `review-session-v1`, `review-case-detail-v2`, `review-case-evidence-v4`,
   `review-case-history-v2`, `human-decision-v1`,
   `human-decision-event-v1`, `human-decision-ack-v1`, bounded
   evidence/current-case history projections, and the exact-current
@@ -42,6 +42,11 @@ The current installed contract is intentionally narrow:
   all-eligible catalogue entries when Open Library is disabled. With Open
   Library enabled, only an explicit selection of at most five entries is
   supported.
+
+Evidence v4 associates each retained observation with its bounded, nonempty
+set of current field destinations. One observation can support several fields
+without duplicating its transport row; the association is reconstructed only
+from retained field provenance and is part of the opaque page-cursor identity.
 
 Pre-0.4 and intermediate development databases,
 `config-v1`/`config-v2`/`config-v3`,

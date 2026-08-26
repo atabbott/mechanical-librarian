@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 
-import type { CaseDetailView, EvidenceView, HistoryView } from '../api/http'
+import type { CaseDetailView, EvidenceView, HistoryValueView, HistoryView } from '../api/http'
 import { displayValue } from '../api/http'
 import { fieldLabel, labelWords } from '../labels'
 import { detailRoute, useReviewContext } from '../router'
@@ -13,28 +13,37 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
         ? item.outcome === 'accept'
           ? 'Owner selected a proposed value.'
           : item.outcome === 'keep_current'
-            ? 'Owner kept the current value.'
+            ? 'Owner chose the current value.'
             : 'Owner declined the proposed change.'
         : item.outcome === 'candidate'
           ? 'Automatic policy selected a candidate.'
           : item.outcome === 'keep_current'
-            ? 'Automatic policy kept the current value.'
+            ? 'Automatic policy chose the current value.'
             : 'Automatic policy left this field unchanged.'
     return (
       <article className="diagnostic-entry">
         <h3>{fieldLabel(item.destination)}</h3>
         <p>{action}</p>
-        {item.previousValue ? (
+        {isRetention(item) ? (
           <p className="diagnostic-value">
-            <span>Previous</span> {displayValue(item.previousValue.value)}
+            <span>Retained</span> {displayRetainedHistoryValue(item)}
           </p>
-        ) : null}
-        {item.selectedValue ? (
-          <p className="diagnostic-value">
-            <span>{item.outcome === 'keep_current' ? 'Retained' : 'New'}</span>{' '}
-            {displayValue(item.selectedValue.value)}
-          </p>
-        ) : null}
+        ) : (
+          <>
+            <p className="diagnostic-value">
+              <span>From</span>{' '}
+              {item.previousValue
+                ? displayValue(item.previousValue.value)
+                : 'No value is recorded.'}
+            </p>
+            <p className="diagnostic-value">
+              <span>To</span>{' '}
+              {item.selectedValue
+                ? displayValue(item.selectedValue.value)
+                : 'No value is recorded.'}
+            </p>
+          </>
+        )}
       </article>
     )
   }
@@ -92,6 +101,33 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
   )
 }
 
+function isRetention(
+  item: Extract<HistoryView['items'][number], { category: 'owner' | 'automatic' }>,
+) {
+  if (item.outcome === 'reject' || item.outcome === 'ignore') return true
+  if (item.outcome === 'keep_current')
+    return (
+      historyValuesMatch(item.previousValue, item.selectedValue) ||
+      (item.previousValue === null && item.selectedValue === null)
+    )
+  return historyValuesMatch(item.previousValue, item.selectedValue)
+}
+
+function displayRetainedHistoryValue(
+  item: Extract<HistoryView['items'][number], { category: 'owner' | 'automatic' }>,
+) {
+  const value = item.selectedValue ?? item.previousValue
+  return value ? displayValue(value.value) : 'No value is recorded.'
+}
+
+function historyValuesMatch(previous: HistoryValueView | null, selected: HistoryValueView | null) {
+  if (previous === null || selected === null) return false
+  return (
+    previous.kind === selected.kind &&
+    JSON.stringify(previous.value) === JSON.stringify(selected.value)
+  )
+}
+
 export default function DetailPage({ data }: { data: CaseDetailView }) {
   const { http } = useReviewContext()
   const search = detailRoute.useSearch()
@@ -130,7 +166,6 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
           {data.authors.length ? data.authors.join(', ') : 'Author details unavailable'}
         </p>
         <p className="diagnostic-origin">{data.subtitle}</p>
-        <p className="diagnostic-posture">Read-only diagnostics · decisions stay in Library</p>
       </header>
       <nav className="subviews" aria-label="Case diagnostics">
         <Link
@@ -151,7 +186,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
         </Link>
       </nav>
       {search.subview === 'evidence' ? (
-        <section className="diagnostic-sheet" aria-label="Evidence and source ledger">
+        <section className="diagnostic-sheet evidence-sheet" aria-label="Evidence">
           <header>
             <h2>Evidence</h2>
             <p>Retained observations that informed this work’s review.</p>
@@ -171,23 +206,41 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                   available. The evidence below is the retained portion only.
                 </p>
               ) : null}
-              {observations.length ? (
-                <div className="diagnostic-list">
-                  {observations.map((item, index) => (
-                    <article className="diagnostic-entry" key={`${String(index)}-${item.source}`}>
-                      <h3>{item.source}</h3>
-                      <p>{item.observation}</p>
-                      <small>
-                        {item.role === 'local_presence'
-                          ? 'Present in this library'
-                          : 'External corroboration'}
-                      </small>
-                    </article>
-                  ))}
-                </div>
-              ) : (
-                <p>No attributable observations were retained for this work.</p>
-              )}
+              <div className="diagnostic-list evidence-fields">
+                {data.fields.map((field) => {
+                  const fieldObservations = observations.filter((item) =>
+                    item.destinations.includes(field.destination),
+                  )
+                  return (
+                    <section className="diagnostic-entry evidence-field" key={field.destination}>
+                      <h3>{fieldLabel(field.destination)}</h3>
+                      {fieldObservations.length ? (
+                        <ul className="evidence-values">
+                          {fieldObservations.map((item, index) => (
+                            <li key={`${item.source}-${String(index)}-${item.observation}`}>
+                              <p>{item.observation}</p>
+                              <small>
+                                {item.source} ·{' '}
+                                {item.role === 'local_presence'
+                                  ? 'Local record'
+                                  : 'External corroboration'}
+                              </small>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : evidence.hasNextPage ? (
+                        <p className="diagnostic-complete">
+                          More retained observations may load below.
+                        </p>
+                      ) : (
+                        <p className="diagnostic-complete">
+                          No retained observations for this field.
+                        </p>
+                      )}
+                    </section>
+                  )
+                })}
+              </div>
               {evidence.hasNextPage ? (
                 <button
                   className="diagnostic-load-more"
@@ -199,9 +252,8 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
               ) : (
                 <p className="diagnostic-complete">All retained evidence is shown.</p>
               )}
-              <section className="source-ledger" aria-labelledby="source-ledger-heading">
-                <h3 id="source-ledger-heading">Source ledger</h3>
-                <p>The bounded outcome recorded for each source asked about this work.</p>
+              <details className="source-ledger">
+                <summary>Sources</summary>
                 {sourceLedger.length ? (
                   <ul>
                     {sourceLedger.map((source, index) => (
@@ -220,7 +272,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                 ) : (
                   <p>No provider outcomes were retained for this work.</p>
                 )}
-              </section>
+              </details>
             </>
           )}
         </section>

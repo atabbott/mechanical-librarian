@@ -540,12 +540,29 @@ class InspectCurrentReviewCase:
         detail, report, _ = self._read(review_case_id)
         fields = detail["fields"]
         assert type(fields) is list
-        wanted = {reference for field in fields for reference in field["provenance"]}
+        destinations_by_reference: dict[str, list[str]] = {}
+        for field in fields:
+            if type(field) is not dict:
+                raise ReviewWebError("unavailable")
+            destination = field.get("destination")
+            provenance = field.get("provenance")
+            if type(destination) is not str or type(provenance) is not list:
+                raise ReviewWebError("unavailable")
+            for reference in provenance:
+                if type(reference) is not str:
+                    raise ReviewWebError("unavailable")
+                destinations = destinations_by_reference.setdefault(reference, [])
+                if destination not in destinations:
+                    destinations.append(destination)
+        wanted = set(destinations_by_reference)
         evidence = _evidence_by_reference(report)
         missing_lineage_count = len(wanted.difference(evidence))
         reference_set_digest = hashlib.sha256(
             json.dumps(
-                sorted(wanted),
+                sorted(
+                    (reference, sorted(destinations))
+                    for reference, destinations in destinations_by_reference.items()
+                ),
                 ensure_ascii=False,
                 separators=(",", ":"),
             ).encode("utf-8")
@@ -560,7 +577,12 @@ class InspectCurrentReviewCase:
         )
         bounded = ordered[offset : offset + bounded_limit]
         return {
-            "items": [_choice_evidence(evidence[reference]) for reference in bounded],
+            "items": [
+                _choice_evidence(
+                    evidence[reference], destinations_by_reference[reference]
+                )
+                for reference in bounded
+            ],
             "missing_lineage_count": missing_lineage_count,
             "next_cursor": (
                 _encode_cursor(
@@ -573,7 +595,7 @@ class InspectCurrentReviewCase:
                 else None
             ),
             "review_case_id": review_case_id,
-            "schema_version": "review-case-evidence-v3",
+            "schema_version": "review-case-evidence-v4",
             "source_ledger": _provider_outcomes(report),
         }
 
@@ -1214,8 +1236,11 @@ def _choice_rationale(alternative: dict[str, object], supported: bool) -> str:
     return f"This alternative {assessment} using {scope} evidence {evidence}."
 
 
-def _choice_evidence(evidence: dict[str, str | None]) -> dict[str, str]:
+def _choice_evidence(
+    evidence: dict[str, str | None], destinations: list[str] | None = None
+) -> dict[str, object]:
     return {
+        **({"destinations": sorted(destinations)} if destinations is not None else {}),
         "observation": _choice_observation(evidence),
         "role": "local_presence"
         if _choice_is_local(evidence)

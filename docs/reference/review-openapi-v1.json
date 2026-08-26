@@ -2720,6 +2720,16 @@
       "_EvidenceItem": {
         "additionalProperties": false,
         "properties": {
+          "destinations": {
+            "items": {
+              "maxLength": 64,
+              "type": "string"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "title": "Destinations",
+            "type": "array"
+          },
           "observation": {
             "maxLength": 1024,
             "title": "Observation",
@@ -2740,6 +2750,7 @@
           }
         },
         "required": [
+          "destinations",
           "observation",
           "role",
           "source"
@@ -2780,7 +2791,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-evidence-v3",
+            "const": "review-case-evidence-v4",
             "title": "Schema Version",
             "type": "string"
           },

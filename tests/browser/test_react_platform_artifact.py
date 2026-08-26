@@ -1786,7 +1786,11 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert "candidate-" not in diagnostic_text
         assert page.locator("pre").count() == 0
         assert "referenced observations are no longer available" in diagnostic_text
-        expect(page.get_by_role("heading", name="Source ledger")).to_be_visible()
+        assert (
+            "Read-only diagnostics · decisions stay in Library" not in diagnostic_text
+        )
+        source_disclosure = page.get_by_text("Sources", exact=True)
+        source_disclosure.click()
         expect(page.get_by_text("Open Library", exact=True)).to_be_visible()
         expect(page.get_by_text("Hardcover", exact=True)).to_be_visible()
         assert page.locator(".direct-choice-grid").count() == 0
@@ -1802,43 +1806,73 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         expect(load_more).to_have_count(0)
         assert page.locator(".diagnostic-entry").count() == 6
         nav = page.get_by_role("navigation", name="Case diagnostics")
+
+        def assert_diagnostic_layout(active_page: str) -> None:
+            active_link = nav.get_by_role("link", name=active_page)
+
+            def assert_keyboard_path() -> None:
+                page.evaluate(
+                    "() => document.querySelector('.diagnostic-back-to-work').focus()"
+                )
+                expect(back).to_be_focused()
+                page.keyboard.press("Tab")
+                if active_page == "History":
+                    page.keyboard.press("Tab")
+                expect(active_link).to_be_focused()
+                assert active_link.evaluate(
+                    "node => getComputedStyle(node).outlineStyle === 'solid'"
+                )
+
+            for scheme in ("light", "dark"):
+                if scheme == "dark":
+                    page.get_by_role("button", name="Use dark mode").click()
+                for width, height in (
+                    (1440, 900),
+                    (884, 900),
+                    (390, 844),
+                    (320, 844),
+                ):
+                    page.set_viewport_size({"width": width, "height": height})
+                    assert page.evaluate(
+                        "() => document.documentElement.scrollWidth <= window.innerWidth"
+                    ), (active_page, scheme, width)
+                    assert back.bounding_box()["height"] >= 44
+                    for link in nav.get_by_role("link").all():
+                        assert link.bounding_box()["height"] >= 44
+                    assert_keyboard_path()
+                page.set_viewport_size({"width": 1440, "height": 900})
+                page.locator("html").evaluate(
+                    "node => { node.style.fontSize = '200%' }"
+                )
+                assert page.evaluate(
+                    "() => document.documentElement.scrollWidth <= window.innerWidth"
+                ), (active_page, scheme, "200%")
+                assert back.bounding_box()["height"] >= 44
+                for link in nav.get_by_role("link").all():
+                    assert link.bounding_box()["height"] >= 44
+                assert_keyboard_path()
+                page.locator("html").evaluate("node => { node.style.fontSize = '' }")
+                if scheme == "dark":
+                    page.get_by_role("button", name="Use light mode").click()
+
         nav.get_by_role("link", name="Evidence").focus()
         page.keyboard.press("Tab")
         expect(nav.get_by_role("link", name="History")).to_be_focused()
         assert nav.get_by_role("link", name="History").evaluate(
             "node => getComputedStyle(node).outlineStyle === 'solid'"
         )
-        for scheme in ("light", "dark"):
-            if scheme == "dark":
-                page.get_by_role("button", name="Use dark mode").click()
-            for width, height in (
-                (1440, 900),
-                (900, 900),
-                (390, 844),
-                (320, 844),
-            ):
-                page.set_viewport_size({"width": width, "height": height})
-                assert page.evaluate(
-                    "() => document.documentElement.scrollWidth <= window.innerWidth"
-                ), (scheme, width)
-                assert back.bounding_box()["height"] >= 44
-                for link in nav.get_by_role("link").all():
-                    assert link.bounding_box()["height"] >= 44
-            page.set_viewport_size({"width": 1440, "height": 900})
-            page.locator("html").evaluate("node => { node.style.fontSize = '200%' }")
-            assert page.evaluate(
-                "() => document.documentElement.scrollWidth <= window.innerWidth"
-            ), (scheme, "200%")
-            page.locator("html").evaluate("node => { node.style.fontSize = '' }")
-            if scheme == "dark":
-                page.get_by_role("button", name="Use light mode").click()
+        assert_diagnostic_layout("Evidence")
         capture_visual_proof("case-diagnostics-evidence")
         nav.get_by_role("link", name="History", exact=True).click()
         page.get_by_role("heading", name="History").wait_for()
         page.get_by_text("Owner selected a proposed value.", exact=True).wait_for()
         history_text = route.inner_text()
         assert "Owner selected a proposed value." in history_text
-        assert "Automatic policy kept the current value." in history_text
+        assert "Automatic policy chose the current value." in history_text
+        assert "From" in history_text
+        assert "To" in history_text
+        assert history_text.count("Mara Venn, Ivo North") == 1
+        assert "Retained" in history_text
         assert "This read-only preview recorded no decision authority." in history_text
         assert "Cover automatic prepared" in history_text
         for identifier in (
@@ -1856,6 +1890,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             ).count()
             == 0
         )
+        assert_diagnostic_layout("History")
         capture_visual_proof("case-diagnostics-history")
         page.go_back()
         page.get_by_role("heading", name="Evidence").wait_for()

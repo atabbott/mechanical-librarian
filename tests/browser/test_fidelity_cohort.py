@@ -153,10 +153,17 @@ def test_real_app_gates_aliases_and_synthetic_cursors() -> None:
             page_2_payload = evidence_page_2.json()
             assert page_2_payload["review_case_id"] == "case-2"
             assert len(page_2_payload["items"]) == 3
+            admitted_destinations = {"title", "authors", "series"}
             assert all(
-                set(item) == {"observation", "role", "source"}
+                set(item) == {"destinations", "observation", "role", "source"}
                 for item in page_2_payload["items"]
             )
+            for item in page_2_payload["items"]:
+                destinations = item["destinations"]
+                assert isinstance(destinations, list)
+                assert 0 < len(destinations) <= 16
+                assert len(destinations) == len(set(destinations))
+                assert set(destinations) <= admitted_destinations
             assert {item["source"] for item in page_2_payload["items"]} == {
                 "Open catalogue",
                 "Second catalogue",

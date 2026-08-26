@@ -1389,12 +1389,13 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
             cursor = query.get("cursor", [""])[0]
             page = 2 if cursor == "evidence-page-2" else 1
             return {
-                "schema_version": "review-case-evidence-v3",
+                "schema_version": "review-case-evidence-v4",
                 "review_case_id": case_id,
                 "next_cursor": "evidence-page-2" if page == 1 else None,
                 "missing_lineage_count": 2,
                 "items": [
                     {
+                        "destinations": [kind],
                         "observation": f"{kind.title()}: {fact}",
                         "role": (
                             "local_presence"
