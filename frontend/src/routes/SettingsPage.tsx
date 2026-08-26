@@ -487,6 +487,9 @@ const SettingsEditor = ({
   const visibleLibraries = draft.libraries
     .map((library, index) => ({ library, index }))
     .slice(libraryPage * 20, libraryPage * 20 + 20)
+  const availableProviderCapabilities = view.provider_capabilities.filter(
+    (capability) => !draft.providers.some((provider) => provider.adapter === capability.adapter),
+  )
   const locked = view.authority === 'file'
   const effect = (fieldId: string) =>
     view.fields.find((item) => item.field_id === fieldId)?.apply_effect ?? 'applied_live'
@@ -504,8 +507,16 @@ const SettingsEditor = ({
     setStatus('idle')
   }
   const currentGroup = groupById[active]
-  const addProvider = (capability: SettingsView['provider_capabilities'][number]) =>
-    update((value) => {
+  const addProvider = (capability: SettingsView['provider_capabilities'][number]) => {
+    setDraft((current) => {
+      if (
+        current.providers.some(
+          (provider) =>
+            provider.adapter === capability.adapter || provider.name === capability.name,
+        )
+      )
+        return current
+      const value = clone(current)
       const provider =
         capability.adapter === 'open_library'
           ? {
@@ -530,7 +541,10 @@ const SettingsEditor = ({
               }
       value.providers.push(provider)
       value.providers.sort((left, right) => left.name.localeCompare(right.name))
+      return value
     })
+    setStatus('idle')
+  }
 
   return (
     <section className="settings-route" data-route-focus tabIndex={-1}>
@@ -778,7 +792,7 @@ const SettingsEditor = ({
                     </div>
                   )
                 })}
-                {view.provider_capabilities.length ? (
+                {availableProviderCapabilities.length ? (
                   <section
                     className="settings-capabilities"
                     aria-label="Available metadata providers"
@@ -789,7 +803,7 @@ const SettingsEditor = ({
                       ready.
                     </p>
                     <div>
-                      {view.provider_capabilities.map((capability) => (
+                      {availableProviderCapabilities.map((capability) => (
                         <button
                           type="button"
                           key={capability.name}

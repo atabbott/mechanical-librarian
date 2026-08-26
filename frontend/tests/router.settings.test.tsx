@@ -128,7 +128,6 @@ describe('settings API field validation vocabulary', () => {
 
 describe('owner settings route', () => {
   it('keeps absent supported providers configurable from an empty document', async () => {
-    const user = userEvent.setup()
     const http = createHttp()
     http.getSettings = vi.fn(async () => ({
       ...view(),
@@ -144,11 +143,19 @@ describe('owner settings route', () => {
     }))
     renderRoute('/settings?group=providers', http)
 
-    await user.click(await screen.findByRole('button', { name: 'Add Open Library' }))
+    const add = await screen.findByRole('button', { name: 'Add Open Library' })
+    act(() => {
+      add.click()
+      add.click()
+    })
     expect(
       screen.getByRole('checkbox', { name: 'Provider state Enable open library' }),
     ).toBeVisible()
+    expect(
+      screen.getAllByRole('checkbox', { name: 'Provider state Enable open library' }),
+    ).toHaveLength(1)
     expect(screen.getByRole('textbox', { name: 'Open Library contact email' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Add Open Library' })).not.toBeInTheDocument()
   })
 
   it('keeps the primary shell intact and saves a redacted replacement with revision CAS', async () => {

@@ -1732,8 +1732,8 @@ def test_composition_opens_the_single_database_for_worker_threads(
         run_review_server(
             Path("/config.json"),
             database,
-            Path("/catalogue.sqlite3"),
-            Path("/artifacts"),
+            Path(web.temporary.name) / "catalogue.sqlite3",
+            Path(web.temporary.name) / "artifacts",
             "127.0.0.1",
             8443,
         )
@@ -1868,7 +1868,7 @@ def test_served_composition_keeps_automatic_safety_reachable(
             run_review_server(
                 Path("/config.json"),
                 database,
-                Path("/catalogue.sqlite3"),
+                root / "catalogue.sqlite3",
                 root / "artifacts",
                 "127.0.0.1",
                 8443,

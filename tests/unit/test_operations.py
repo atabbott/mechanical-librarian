@@ -85,27 +85,48 @@ def test_deployment_contract_names_the_composed_guarded_target() -> None:
 def test_container_entrypoint_initializes_only_absent_exact_current_stores() -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
+
+        def interrupt_before_kickoff(*_args: object, **_kwargs: object) -> None:
+            repository = container.open_repository(root / "application.sqlite3")
+            try:
+                repository.setup_state_store().initialize()
+            finally:
+                repository.close()
+
         with (
             patch.object(container, "DATA", root),
             patch.object(container, "CONFIG", root / "config.json"),
             patch.object(container, "DATABASE", root / "application.sqlite3"),
             patch.object(container, "CATALOGUE", root / "catalogue.sqlite3"),
             patch.object(container, "ARTIFACTS", root / "artifacts"),
-            patch.object(container, "open_catalogue") as open_cat,
-            patch.object(container, "run_review_server") as serve,
+            patch.object(
+                container,
+                "run_review_server",
+                side_effect=interrupt_before_kickoff,
+            ) as serve,
         ):
             container.main()
-        serve.assert_called_once_with(
-            root / "config.json",
-            root / "application.sqlite3",
-            root / "catalogue.sqlite3",
-            root / "artifacts",
-            "0.0.0.0",
-            8443,
-            first_boot_mode=FirstBootMode.INITIALIZE_SETUP,
-        )
-        open_cat.assert_called_once_with(root / "catalogue.sqlite3", create=True)
-        open_cat.return_value.close.assert_called_once_with()
+            serve.assert_called_once_with(
+                root / "config.json",
+                root / "application.sqlite3",
+                root / "catalogue.sqlite3",
+                root / "artifacts",
+                "0.0.0.0",
+                8443,
+                first_boot_mode=FirstBootMode.INITIALIZE_SETUP,
+            )
+            assert {value.name for value in root.iterdir()} == {"application.sqlite3"}
+            serve.reset_mock(side_effect=True)
+            container.main()
+            serve.assert_called_once_with(
+                root / "config.json",
+                root / "application.sqlite3",
+                root / "catalogue.sqlite3",
+                root / "artifacts",
+                "0.0.0.0",
+                8443,
+                first_boot_mode=FirstBootMode.RESUME_SETUP,
+            )
         assert root.stat().st_mode & 0o777 == 0o700
 
 

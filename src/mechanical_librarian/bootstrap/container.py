@@ -6,7 +6,6 @@ import os
 import stat
 from pathlib import Path
 
-from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.bootstrap.composition import run_review_server
 from mechanical_librarian.infrastructure.first_boot import select_first_boot_mode
@@ -62,10 +61,6 @@ def main() -> None:
         resumable_setup=resumable_setup,
         uninitialized_setup=uninitialized_setup,
     )
-    ARTIFACTS.mkdir(mode=0o700, exist_ok=True)
-    os.chmod(ARTIFACTS, 0o700)
-    catalogue = open_catalogue(CATALOGUE, create=True)
-    catalogue.close()
     run_review_server(
         CONFIG,
         DATABASE,

@@ -2594,6 +2594,8 @@ def run_review_server(
             finally:
                 control.close()
             return
+        CoverArtifactStore(artifact_store_path, create=True)
+        open_catalogue(catalogue_path, create=True).close()
         private_root = _private_root(database_path)
         repository = open_repository(database_path, create=True, cross_thread=True)
         try:

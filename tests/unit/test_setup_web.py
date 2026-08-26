@@ -310,7 +310,7 @@ def test_oversized_setup_login_does_not_consume_the_login_throttle() -> None:
     client, _state, _connection = _client()
     oversized = client.post(
         "/api/setup/session",
-        content=b'{"password":"' + b"x" * 2_049 + b'"}',
+        content=b"{" + b"x" * 12_416,
         headers={"content-type": "application/json"},
     )
     assert oversized.status_code == 413
@@ -324,6 +324,16 @@ def test_oversized_setup_login_does_not_consume_the_login_throttle() -> None:
     assert (
         client.post("/api/setup/session", json={"password": "wrong"}).status_code == 429
     )
+
+
+def test_maximum_setup_password_pair_reaches_owner_claim() -> None:
+    client, state, _connection = _client()
+    password = "\0" * 1_024
+
+    response = _claim(client, password)
+
+    assert response.status_code == 200
+    assert state.document.claimed
 
 
 @pytest.mark.parametrize(

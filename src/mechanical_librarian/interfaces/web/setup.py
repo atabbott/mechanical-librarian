@@ -32,8 +32,11 @@ from mechanical_librarian.interfaces.web.setup_frontend import (
 )
 
 _PROVIDER_ADAPTER: TypeAdapter[ProviderSettings] = TypeAdapter(ProviderSettings)
+_SETUP_SESSION_BODY_LIMIT = 2 * 1_024 * 6 + 128
 _SETUP_BODY_LIMITS = {
-    "/api/setup/session": 2_048,
+    # Two maximum passwords may each expand sixfold under JSON escaping. The
+    # remaining fixed envelope covers property names and the bounded revision.
+    "/api/setup/session": _SETUP_SESSION_BODY_LIMIT,
     "/api/setup/claim": 2_048,
     "/api/setup/connect": 16_384,
     "/api/setup/providers": 262_144,

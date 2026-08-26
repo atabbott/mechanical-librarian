@@ -182,23 +182,21 @@ class SetupJourneyOperation:
                 if evidence is None
                 else evidence.service_paths
             )
-            matches = tuple(
-                sorted({name for path in paths for name in self._mount_names(path)})
+            path_matches = tuple(
+                tuple(sorted(set(self._mount_names(path)))) for path in paths
             )
             state: Literal["matched", "ambiguous", "missing", "unavailable"] = (
                 "unavailable"
                 if not paths
-                else "matched"
-                if len(matches) == 1
-                else "ambiguous"
-                if len(matches) > 1
                 else "missing"
+                if any(not matches for matches in path_matches)
+                else "ambiguous"
+                if any(len(matches) > 1 for matches in path_matches)
+                or len({matches[0] for matches in path_matches}) > 1
+                else "matched"
             )
-            libraries.append(
-                library.model_copy(
-                    update={"mount": matches[0] if state == "matched" else None}
-                )
-            )
+            mount = path_matches[0][0] if state == "matched" else None
+            libraries.append(library.model_copy(update={"mount": mount}))
             results.append(SetupMountResult(library=library.name, state=state))
         successor = SetupStateDocument.model_validate(
             {

@@ -344,6 +344,103 @@ def test_mount_retest_uses_discovered_service_path_without_browser_input() -> No
     assert state.libraries[0].mount == "books"
 
 
+@pytest.mark.parametrize(
+    ("service_paths", "mounts", "expected"),
+    (
+        (
+            ("/service/one", "/service/missing"),
+            {"/service/one": ("books",)},
+            "missing",
+        ),
+        (
+            ("/service/one", "/service/two"),
+            {"/service/one": ("books",), "/service/two": ("other",)},
+            "ambiguous",
+        ),
+        (
+            ("/service/one", "/service/ambiguous"),
+            {
+                "/service/one": ("books",),
+                "/service/ambiguous": ("books", "other"),
+            },
+            "ambiguous",
+        ),
+    ),
+    ids=("missing-folder", "mixed-mounts", "ambiguous-folder"),
+)
+def test_every_discovered_service_path_must_resolve_to_one_consistent_mount(
+    service_paths: tuple[str, ...],
+    mounts: dict[str, tuple[str, ...]],
+    expected: str,
+) -> None:
+    _connection, store = _store()
+    state = _connected(store)
+    journey = _journey(
+        store,
+        (
+            SetupLibraryCandidate(
+                library_id="books",
+                name="Books",
+                media_kind="book",
+                service_paths=service_paths,
+            ),
+        ),
+        mounts,
+    )
+    state = journey.providers(state.revision, [], {})
+    state = journey.libraries(
+        state.revision,
+        [
+            LibrarySettings(
+                name="books",
+                connection="primary",
+                library_id="books",
+                media_kind="book",
+            )
+        ],
+    )
+
+    state = journey.mounts(state.revision, {"books": None})
+
+    assert state.mounts[0].state == expected
+    assert state.libraries[0].mount is None
+    assert state.next_step() == "mounts"
+
+
+def test_every_discovered_service_path_may_resolve_to_the_same_mount() -> None:
+    _connection, store = _store()
+    state = _connected(store)
+    journey = _journey(
+        store,
+        (
+            SetupLibraryCandidate(
+                library_id="books",
+                name="Books",
+                media_kind="book",
+                service_paths=("/service/one", "/service/two"),
+            ),
+        ),
+        {"/service/one": ("books",), "/service/two": ("books",)},
+    )
+    state = journey.providers(state.revision, [], {})
+    state = journey.libraries(
+        state.revision,
+        [
+            LibrarySettings(
+                name="books",
+                connection="primary",
+                library_id="books",
+                media_kind="book",
+            )
+        ],
+    )
+
+    state = journey.mounts(state.revision, {"books": None})
+
+    assert state.mounts[0].state == "matched"
+    assert state.libraries[0].mount == "books"
+
+
 def test_change_removes_dependent_answers_and_only_their_secrets() -> None:
     connection, store = _store()
     state = _connected(store)
