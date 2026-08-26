@@ -2449,6 +2449,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                           const labels = [...document.querySelectorAll('.settings-field-row > div:first-child')]
                             .filter(visible).map((element) => element.getBoundingClientRect().width);
                           const masthead = document.querySelector('.masthead')?.getBoundingClientRect();
+                          const main = document.querySelector('#main-content')?.getBoundingClientRect();
                           const brandMarkElement = document.querySelector('.brand-mark');
                           const brandMark = brandMarkElement?.getBoundingClientRect();
                           const shellActions = document.querySelector('.shell-actions')?.getBoundingClientRect();
@@ -2484,6 +2485,14 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                               ? Math.min(brandMark.right, shellActions.right) > Math.max(brandMark.left, shellActions.left)
                                 && Math.min(brandMark.bottom, shellActions.bottom) > Math.max(brandMark.top, shellActions.top)
                               : false,
+                            compactHeaderShare: masthead ? masthead.height / innerHeight : null,
+                            compactContentTopShare: main ? main.top / innerHeight : null,
+                            undersizedHeaderTargets: [...document.querySelectorAll('.masthead a, .masthead button')]
+                              .filter(visible)
+                              .filter((element) => {
+                                const rect = element.getBoundingClientRect();
+                                return rect.width < 44 || rect.height < 44;
+                              }).length,
                           };
                         }"""
                     )
@@ -2505,6 +2514,10 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     assert layout["brandContained"] is True
                     assert layout["brandContentContained"] is True
                     assert layout["brandActionsOverlap"] is False
+                    if zoomed and page.viewport_size["width"] <= 390:
+                        assert layout["compactHeaderShare"] <= 0.5
+                        assert layout["compactContentTopShare"] <= 0.55
+                        assert layout["undersizedHeaderTargets"] == 0
                     if sidebar_visible:
                         assert layout["sidebarVisible"] is True
                         assert layout["sidebarSeparated"] is True

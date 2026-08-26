@@ -433,12 +433,14 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
   .cm-policy-finish { position:static; }
 }
 @media (max-width:760px) {
-  .masthead { align-items:center; flex-wrap:wrap; gap:.35rem .65rem; padding:.5rem .75rem; }
-  .brand { flex:0 0 44px; margin-right:auto; }
+  .masthead { display:grid; grid-template-columns:44px minmax(0,1fr); align-items:start; gap:.35rem .65rem; padding:.5rem .75rem; }
+  .brand { grid-column:1; min-width:44px; margin-right:0; }
   .brand > span:last-child { display:none; }
-  .masthead nav { order:3; width:100%; flex-wrap:wrap; overflow:visible; }
-  .masthead nav a { min-width:44px; flex:1 1 6.5rem; text-align:center; }
-  .shell-actions { min-width:0; margin-left:auto; flex-wrap:wrap; justify-content:flex-end; }
+  .masthead nav { grid-column:1 / -1; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); width:100%; overflow:visible; }
+  .masthead nav a { min-width:44px; justify-content:center; padding:.4rem .55rem; text-align:center; }
+  .shell-actions { grid-column:2; display:grid; grid-template-columns:repeat(2,minmax(44px,auto)); min-width:0; margin-left:0; justify-content:end; }
+  .shell-actions > .live-state,.shell-actions > .preparation-activity { grid-column:1 / -1; }
+  .shell-actions > .preparation-activity > button { width:100%; }
   .shell-actions button { max-width:100%; overflow-wrap:anywhere; white-space:normal; }
   .shell-actions button { padding:.4rem .55rem; font-size:.68rem; }
   .theme-toggle > span:last-child { display:none; }
