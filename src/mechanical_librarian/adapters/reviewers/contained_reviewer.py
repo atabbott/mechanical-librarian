@@ -87,6 +87,14 @@ class ContainedReviewerProcessError(ContainedReviewerError):
         super().__init__(code, count=self.count, digest=self.digest)
 
 
+def _close_descriptors(descriptors: list[int]) -> None:
+    for descriptor in descriptors:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+
+
 def read_contained_reviewer_profile(path: Path) -> bytes:
     """Read one owner-private bounded profile without following a final symlink."""
     descriptor = -1
@@ -1173,21 +1181,25 @@ class ContainedReviewerAdapter:
         credential_descriptor: int,
         sealed_images: tuple[_SealedImage, ...] = (),
     ) -> int:
-        release_read, release_write = os.pipe()
-        ready_read, ready_write = os.pipe()
-        failure_read, failure_write = os.pipe()
+        descriptors: list[int] = []
+        try:
+            for _ in range(3):
+                descriptors.extend(os.pipe())
+        except OSError as error:
+            _close_descriptors(descriptors)
+            raise ContainedReviewerProcessError("spawn") from error
+        (
+            release_read,
+            release_write,
+            ready_read,
+            ready_write,
+            failure_read,
+            failure_write,
+        ) = descriptors
         try:
             pid = os.fork()
         except OSError as error:
-            for descriptor in (
-                release_read,
-                release_write,
-                ready_read,
-                ready_write,
-                failure_read,
-                failure_write,
-            ):
-                os.close(descriptor)
+            _close_descriptors(descriptors)
             raise ContainedReviewerProcessError("spawn") from error
         if pid == 0:
             try:
@@ -1199,22 +1211,22 @@ class ContainedReviewerAdapter:
                 os.close(ready_write)
                 if os.read(release_read, 1) != b"G":
                     os._exit(125)
-                os.close(release_read)
-                _isolate_child_image_descriptors(sealed_images)
-                os.dup2(stdin_descriptor, 0)
-                os.dup2(stdout_descriptor, 1)
-                os.dup2(stderr_descriptor, 2)
-                os.set_inheritable(codex.descriptor, True)
-                os.set_inheritable(sandbox.descriptor, True)
-                os.set_inheritable(credential_descriptor, True)
-                for image in sealed_images:
-                    os.set_inheritable(image.descriptor, True)
                 try:
+                    os.close(release_read)
+                    _isolate_child_image_descriptors(sealed_images)
+                    os.dup2(stdin_descriptor, 0)
+                    os.dup2(stdout_descriptor, 1)
+                    os.dup2(stderr_descriptor, 2)
+                    os.set_inheritable(codex.descriptor, True)
+                    os.set_inheritable(sandbox.descriptor, True)
+                    os.set_inheritable(credential_descriptor, True)
+                    for image in sealed_images:
+                        os.set_inheritable(image.descriptor, True)
                     self._limit_child()
-                except ContainedReviewerProcessError:
+                    os.execve(sandbox.invocation_path, command, {})
+                except BaseException:
                     os.write(failure_write, b"S")
                     os._exit(126)
-                os.execve(sandbox.invocation_path, command, {})
             except BaseException:
                 os._exit(126)
         os.close(release_read)

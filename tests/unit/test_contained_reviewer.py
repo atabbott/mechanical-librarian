@@ -13,7 +13,7 @@ import tempfile
 import threading
 import time
 import tomllib
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -1257,6 +1257,108 @@ def test_gated_fork_and_resource_failures_are_typed_spawn_failures() -> None:
                 credential_descriptor=4,
             )
         assert caught.value.code == "spawn"
+
+
+@pytest.mark.parametrize("allocated", (0, 1, 2), ids=("first", "second", "third"))
+def test_gated_pipe_allocation_failure_closes_every_acquired_descriptor(
+    allocated: int,
+) -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
+        artifact = adapter._BoundArtifact(10, "/proc/self/fd/10")
+        pairs = ((20, 21), (22, 23), (24, 25))
+        closed: list[int] = []
+        with (
+            patch.object(
+                adapter.os,
+                "pipe",
+                side_effect=[*pairs[:allocated], OSError("full")],
+            ),
+            patch.object(adapter.os, "close", side_effect=closed.append),
+            pytest.raises(
+                adapter.ContainedReviewerProcessError, match="spawn"
+            ) as caught,
+        ):
+            reviewer._run_gated(
+                [],
+                artifact,
+                artifact,
+                1,
+                2,
+                3,
+                lambda *_: None,
+                credential_descriptor=4,
+            )
+    assert caught.value.code == "spawn"
+    assert closed == [descriptor for pair in pairs[:allocated] for descriptor in pair]
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux fork proof")
+@pytest.mark.parametrize("failure", ("exec", "setup"))
+def test_actual_child_preexec_failures_report_spawn(failure: str) -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
+        descriptors = [os.open("/dev/null", os.O_RDWR) for _ in range(4)]
+        try:
+            artifact = adapter._BoundArtifact(descriptors[0], "/missing-sandbox")
+            patched_isolation = (
+                patch.object(
+                    adapter,
+                    "_isolate_child_image_descriptors",
+                    side_effect=OSError("synthetic"),
+                )
+                if failure == "setup"
+                else nullcontext()
+            )
+            with (
+                patched_isolation,
+                patch.object(reviewer, "_limit_child"),
+                pytest.raises(
+                    adapter.ContainedReviewerProcessError, match="spawn"
+                ) as caught,
+            ):
+                reviewer._run_gated(
+                    ["contained-reviewer"],
+                    artifact,
+                    artifact,
+                    descriptors[1],
+                    descriptors[2],
+                    descriptors[3],
+                    lambda *_: None,
+                    credential_descriptor=descriptors[3],
+                )
+            assert caught.value.code == "spawn"
+        finally:
+            for descriptor in descriptors:
+                os.close(descriptor)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux exec proof")
+def test_actual_child_exec_nonzero_remains_a_normal_returncode() -> None:
+    with (
+        tempfile.TemporaryDirectory() as temporary,
+        open(sys.executable, "rb") as executable,
+        open(os.devnull, "rb") as stdin,
+        tempfile.TemporaryFile() as stdout,
+        tempfile.TemporaryFile() as stderr,
+        open(os.devnull, "rb") as credential,
+    ):
+        reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
+        artifact = adapter._BoundArtifact(
+            executable.fileno(), f"/proc/self/fd/{executable.fileno()}"
+        )
+        with patch.object(reviewer, "_limit_child"):
+            returncode = reviewer._run_gated(
+                [artifact.invocation_path, "-c", "raise SystemExit(17)"],
+                artifact,
+                artifact,
+                stdin.fileno(),
+                stdout.fileno(),
+                stderr.fileno(),
+                lambda *_: None,
+                credential_descriptor=credential.fileno(),
+            )
+    assert returncode == 17
 
 
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux process proof")
