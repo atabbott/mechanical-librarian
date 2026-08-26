@@ -252,22 +252,19 @@ high-entropy session and CSRF tokens. Expired session rows are removed during
 login, logout records revocation, and failed logins use a durable five-attempt
 per five-minute global throttle without retaining client addresses.
 
-ADR-0058's empty-volume setup state does not add an unauthenticated mutation
-path. Its setup login assets and fixed failure envelope occupy the existing
-login boundary; every wizard read or mutation requires a session minted only
-after verification against the owner-only bootstrap verifier, plus the ordinary
-CSRF and Origin checks for a mutation. That verifier is admitted only while
-no durable setup-completion record exists and `/data` is empty, holds the exact
-valid incomplete-setup state created under bootstrap authority, or holds only
-the exact seeded schema left by interruption before the initial setup document
-committed. That last predecessor has no settings, secrets, sessions, login
-failures, or operational rows and may only complete bootstrap-bound setup
-initialization. Arbitrary nonempty, malformed, or store-mode state fails closed.
-The atomic
-completion handoff stops reading the verifier, permanently closes setup routes,
-and returns to the ordinary owner-session boundary. An unauthenticated client
-therefore cannot claim ownership, stage settings, complete setup, or reach a
-generic write route.
+ADR-0058's empty-volume setup state adds no unauthenticated settings mutation.
+The first visitor may fetch only a bounded synchronizer nonce. Creating the
+owner password requires the exact configured Origin plus the same nonce in a
+host-only cookie and request header; one SQLite transaction stores the Argon2id
+verifier and an ordinary session, so concurrent claims have one winner and no
+partial state. Every later wizard read or mutation uses that ordinary session,
+with CSRF and Origin checks for mutations. Resume verifies the owner password
+against the store verifier. Startup admits only the exact seeded predecessor or
+valid current incomplete setup; older incompatible incomplete setup requires a
+clean rebuild and arbitrary nonempty, malformed, or store-mode state fails
+closed. Kickoff commits authority, permanently closes setup routes, and swaps to
+the ordinary runtime on the same listener. An unauthenticated client therefore
+cannot stage settings, complete setup, or reach a generic write route.
 
 Connection setup performs one supported, bounded `GET /api/libraries` with TLS
 verification on, ambient environment and redirects off, one connection, and
@@ -411,9 +408,10 @@ owner-only application database only while composing their named target or
 provider clients. Every connection requires a credential; enabled Hardcover
 requires one, enabled Google Books may omit one, and disabled providers retain
 none. The deploy-only review bootstrap and contained-reviewer profile path are
-never browser fields. Runtime activation snapshots without clearing restart
-debt; only a completely composed graph acknowledges it, so a later composition
-failure cannot misstate desired settings as applied.
+never browser fields. Runtime activation prepares an isolated candidate before
+persistence; failure leaves the authoritative revision and admitting generation
+unchanged. After CAS commit, the new generation governs the next admitted unit
+while requests already admitted to the predecessor drain against it.
 
 Disabled providers cause no secret access, client construction, or egress.
 Unreferenced providers are never bound. Each of at most eight distinct

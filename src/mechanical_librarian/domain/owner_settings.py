@@ -77,6 +77,37 @@ ProviderSettings = Annotated[
 ]
 
 
+class ProviderCapability(_Closed):
+    """One fixed adapter the owner may configure when it is not yet present."""
+
+    name: Name
+    adapter: Literal["open_library", "hardcover", "google_books"]
+    label: StrictStr
+    credential: Literal["none", "contact_email", "api_key"]
+
+
+_PROVIDER_CAPABILITIES: tuple[ProviderCapability, ...] = (
+    ProviderCapability(
+        name="google_books",
+        adapter="google_books",
+        label="Google Books",
+        credential="api_key",
+    ),
+    ProviderCapability(
+        name="hardcover",
+        adapter="hardcover",
+        label="Hardcover",
+        credential="api_key",
+    ),
+    ProviderCapability(
+        name="open_library",
+        adapter="open_library",
+        label="Open Library",
+        credential="contact_email",
+    ),
+)
+
+
 class LibrarySettings(_Closed):
     name: Name
     connection: Name
@@ -229,8 +260,7 @@ class SettingField(_Closed):
     group: StrictStr
     managed_by_file: StrictBool
     managed_path: StrictStr | None = None
-    apply_effect: Literal["applied_live", "restart_required", "deploy_managed"]
-    pending_restart: StrictBool = False
+    apply_effect: Literal["applied_live", "deploy_managed"]
 
 
 class SecretPresence(_Closed):
@@ -251,19 +281,27 @@ def secret_presence(field_id: str, value: str | None) -> SecretPresence:
     )
 
 
+def provider_capabilities(
+    document: OwnerSettingsDocument,
+) -> tuple[ProviderCapability, ...]:
+    """Expose stable default instances only when their adapter is absent."""
+    configured = {provider.adapter for provider in document.providers}
+    return tuple(
+        item for item in _PROVIDER_CAPABILITIES if item.adapter not in configured
+    )
+
+
 class SettingsView(_Closed):
     document: OwnerSettingsDocument
     fields: tuple[SettingField, ...]
     secrets: tuple[SecretPresence, ...]
-    pending_restart: tuple[StrictStr, ...]
+    provider_capabilities: tuple[ProviderCapability, ...] = ()
     authority: Literal["file", "store"]
     managed_path: StrictStr | None = None
 
 
-def store_field_metadata(
-    document: OwnerSettingsDocument, pending_restart: frozenset[str] = frozenset()
-) -> tuple[SettingField, ...]:
-    restart = {
+def store_field_metadata(document: OwnerSettingsDocument) -> tuple[SettingField, ...]:
+    live = {
         "connections",
         "providers",
         "libraries",
@@ -280,11 +318,10 @@ def store_field_metadata(
             field_id=value,
             group=value.split(".", 1)[0],
             managed_by_file=False,
-            apply_effect="restart_required" if value in restart else "applied_live",
-            pending_restart=value in pending_restart,
+            apply_effect="applied_live",
         )
         for value in sorted(
-            restart
+            live
             | {
                 "reduced_motion",
                 "cover_preferences.avoid_promotional_text",
@@ -329,6 +366,7 @@ __all__ = [
     "OpenLibraryProviderSettings",
     "OwnerSettingsDocument",
     "OwnerSettingsError",
+    "ProviderCapability",
     "ReportLimitSettings",
     "SecretPresence",
     "SecretWrite",
@@ -337,6 +375,7 @@ __all__ = [
     "SettingsView",
     "TargetSettings",
     "file_field_metadata",
+    "provider_capabilities",
     "store_field_metadata",
     "secret_presence",
 ]

@@ -12,10 +12,11 @@
   schema digest from the persistence adapter; #830's owner-decision-actions
   predecessor validator superseded it and no adoption path referenced it. (#857)
 
-- Add the authenticated owner Settings utility for connections, providers,
-  libraries, limits, reviewer, server, and appearance. File authority stays
-  locked; store secrets are write-only, and restart debt clears only after a
-  complete successful composition. (#763, #764)
+- Add a verifier-free first-visitor setup journey and authenticated Settings for
+  connections, providers, book libraries, limits, reviewer, server, and
+  appearance. Store-managed changes activate atomically for the next operation
+  on the same listener; file/deployment authority stays locked and secrets stay
+  write-only. (#745, #762, #763, #764)
 
 - Restore readable per-work Evidence and History links from Library. Diagnostics
   retain exact Back state, show bounded semantic lineage and owner-language

@@ -57,7 +57,7 @@ class SetupLibraryCandidate(_Closed):
 
 
 class SetupStateDocument(_Closed):
-    """The only incomplete authority a bootstrap-authenticated process admits."""
+    """The only incomplete authority admitted before the owner is established."""
 
     schema_version: Literal["setup-state-v1"]
     revision: Annotated[StrictInt, Field(ge=1)]
@@ -153,7 +153,9 @@ class SetupStateDocument(_Closed):
                 "connections": [self.connection.model_dump()],
                 "providers": [item.model_dump() for item in self.providers],
                 "libraries": [item.model_dump() for item in self.libraries],
-                "pending_restart": ["setup_complete"],
+                # Kept in the strict v1 document for exact compatibility, but
+                # live generations leave no restart debt behind.
+                "pending_restart": [],
             }
         )
 

@@ -28,10 +28,9 @@ startup without fallback, import, migration, or repair. The bootstrap is a
 closed `review-bootstrap-v1` document containing only
 `canonical_origin`, the TLS certificate and key paths, up to 16
 `trusted_proxy_ips`, up to 32 read-only mount mappings, and the optional
-contained-reviewer profile path. During incomplete setup it also requires
-`setup_owner_verifier`, one deploy-provisioned Argon2id owner-password verifier;
-the browser never receives or replaces it, and normal startup stops consulting
-it after atomic completion. Ports, volume/bind mounts, owner-password
+contained-reviewer profile path. It contains no owner credential: the first
+visitor creates the owner password through an atomic, verifier-free deployment
+claim. Ports, volume/bind mounts, owner-password
 recovery, and proxy/TLS deployment remain outside the Settings API.
 
 Authenticated owners use the lazy `/settings` route and revision-CAS
@@ -40,15 +39,16 @@ secret indicator such as `Configured · ····1a2b`; secret values may only be
 set, replaced, or explicitly cleared. A present configuration file makes every
 covered write return `409 settings_managed_by_file` naming only
 `/data/config.json`; neither the API nor UI consults or exposes store values in
-that mode. Connections, libraries, providers and credentials, reviewer state,
-server timings, recovery generation, and report limits take effect after a
-successful restart composition. Reduced motion and Policy-owned cover
-preferences apply live. `pending_restart` is server-derived and is acknowledged
-only after the complete desired revision has composed successfully.
+that mode. All store-managed fields apply to the next admitted operation through
+one revision-CAS runtime-generation activation. Candidate preparation failure
+leaves the saved revision and active runtime unchanged. The private
+`pending_restart` member remains compatibility-shaped but is invariant-empty
+after activation; deploy-managed TLS, origin, proxy, mount, and listener values
+still require an operator restart.
 
 `provider_recovery_generation` is a required positive operator generation for
 provider recovery. After correcting a provider credential, authorization, or
-configuration condition, increment it and restart the container. It is the
+configuration condition, increment it and save Settings. It is the
 only recovery wake mechanism: the service does not watch configuration files,
 derive hashes, or accept environment overrides.
 

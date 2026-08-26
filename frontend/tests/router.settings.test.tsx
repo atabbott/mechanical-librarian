@@ -47,7 +47,7 @@ const document: SettingsView['document'] = {
     target_response_bytes: 1_048_576,
     timeout_seconds: 30,
   },
-  pending_restart: ['providers'],
+  pending_restart: [],
   provider_recovery_generation: 1,
   reduced_motion: 'follow_system',
   server: {
@@ -69,20 +69,18 @@ const view = (authority: 'file' | 'store' = 'store'): SettingsView => ({
   document,
   fields: [
     {
-      apply_effect: 'restart_required',
+      apply_effect: 'applied_live',
       field_id: 'connections',
       group: 'connections',
       managed_by_file: authority === 'file',
       managed_path: authority === 'file' ? '/data/config.json' : null,
-      pending_restart: false,
     },
     {
-      apply_effect: 'restart_required',
+      apply_effect: 'applied_live',
       field_id: 'providers',
       group: 'providers',
       managed_by_file: authority === 'file',
       managed_path: authority === 'file' ? '/data/config.json' : null,
-      pending_restart: true,
     },
     {
       apply_effect: 'applied_live',
@@ -90,11 +88,10 @@ const view = (authority: 'file' | 'store' = 'store'): SettingsView => ({
       group: 'appearance',
       managed_by_file: authority === 'file',
       managed_path: authority === 'file' ? '/data/config.json' : null,
-      pending_restart: false,
     },
   ],
   managed_path: authority === 'file' ? '/data/config.json' : null,
-  pending_restart: ['providers'],
+  provider_capabilities: [],
   secrets: [
     {
       configured: true,
@@ -129,6 +126,28 @@ describe('settings API field validation vocabulary', () => {
 })
 
 describe('owner settings route', () => {
+  it('keeps absent supported providers configurable from an empty document', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => ({
+      ...view(),
+      document: { ...document, providers: [] },
+      provider_capabilities: [
+        {
+          adapter: 'open_library' as const,
+          credential: 'contact_email' as const,
+          label: 'Open Library',
+          name: 'open_library',
+        },
+      ],
+    }))
+    renderRoute('/settings?group=providers', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Add Open Library' }))
+    expect(screen.getByRole('checkbox', { name: 'Provider state Enable open library' })).toBeVisible()
+    expect(screen.getByRole('textbox', { name: 'Open Library contact email' })).toBeVisible()
+  })
+
   it('keeps the primary shell intact and saves a redacted replacement with revision CAS', async () => {
     const user = userEvent.setup()
     const http = createHttp()
@@ -139,7 +158,8 @@ describe('owner settings route', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Settings' })).toBeVisible()
     for (const name of ['Library', 'Policy', 'Activity'])
       expect(screen.getByRole('link', { name })).toBeVisible()
-    expect(screen.getByText('Restart required for saved changes')).toBeVisible()
+    expect(screen.queryByText('Restart required for saved changes')).not.toBeInTheDocument()
+    expect(screen.queryByText('Applies on restart')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /Providers/ }))
     expect(screen.getByRole('checkbox', { name: 'Provider state Enable hardcover' })).toBeVisible()
     expect(screen.getByRole('link', { name: 'Get a Hardcover key' })).toBeVisible()

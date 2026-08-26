@@ -49,14 +49,9 @@ def main() -> None:
             repository.close()
 
     def resumable_setup() -> bool:
-        nonlocal bootstrap
-        if bootstrap is None:
-            bootstrap = load_review_bootstrap(bootstrap_path)
-        if bootstrap.setup_owner_verifier is None:
-            return False
         repository = open_repository(DATABASE, create=False)
         try:
-            repository.setup_state_store().read(bootstrap.setup_owner_verifier)
+            repository.setup_state_store().read()
             return True
         except Exception:
             return False
@@ -79,9 +74,15 @@ def main() -> None:
     if mode in {FirstBootMode.INITIALIZE_SETUP, FirstBootMode.RESUME_SETUP}:
         if bootstrap is None:
             bootstrap = load_review_bootstrap(bootstrap_path)
+        ARTIFACTS.mkdir(mode=0o700, exist_ok=True)
+        os.chmod(ARTIFACTS, 0o700)
+        catalogue = open_catalogue(CATALOGUE, create=True)
+        catalogue.close()
         run_setup_server(
             bootstrap,
             DATABASE,
+            CATALOGUE,
+            ARTIFACTS,
             HOST,
             PORT,
             initialize=mode is FirstBootMode.INITIALIZE_SETUP,

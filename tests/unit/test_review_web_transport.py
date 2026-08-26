@@ -339,14 +339,11 @@ def test_settings_store_transport_redacts_secret_and_derives_effects(
     )
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store, private"
-    assert response.json()["pending_restart"] == [
-        "connection.primary.key",
-        "provider_recovery_generation",
-    ]
+    assert "pending_restart" not in response.json()
     assert response.json()["secrets"][0]["indicator"] == "Configured · ····5678"
     assert "new-secret" not in response.text
     OwnerSettingsStore(connection).acknowledge_runtime(2)
-    assert OwnerSettingsStore(connection).read().document.revision == 3
+    assert OwnerSettingsStore(connection).read().document.revision == 2
     stale_after_ack = web.client.patch(
         "/api/v1/settings",
         json={
@@ -356,8 +353,7 @@ def test_settings_store_transport_redacts_secret_and_derives_effects(
         },
         headers={**web.origin, "x-csrf-token": session["csrf_token"]},
     )
-    assert stale_after_ack.status_code == 409
-    assert stale_after_ack.json()["error"]["code"] == "settings_stale"
+    assert stale_after_ack.status_code == 200
     connection.close()
     unavailable = web.client.get("/api/v1/settings")
     assert unavailable.status_code == 503
@@ -1752,9 +1748,9 @@ def test_store_composition_fault_preserves_pending_restart_acknowledgement(
 ) -> None:
     repository = Mock()
     store = repository.owner_settings_store.return_value
-    document = Mock(revision=7)
+    document = Mock(revision=7, pending_restart=["libraries"])
     store.activate_runtime.return_value = (
-        SimpleNamespace(document=document, pending_restart=("libraries",)),
+        SimpleNamespace(document=document),
         {"connection.primary.key": "synthetic-secret"},
         web.hash_path.read_text(encoding="utf-8").strip(),
     )

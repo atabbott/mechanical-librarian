@@ -205,7 +205,7 @@ def test_mount_comparison_records_matched_ambiguous_unmatched_and_unobservable()
                 name=name,
                 connection="primary",
                 library_id=name,
-                media_kind="audiobook" if name == "audio" else "ebook",
+                media_kind="book",
             )
             for name in ("matched", "ambiguous", "unmatched", "audio")
         ],
@@ -292,7 +292,7 @@ def test_kickoff_atomically_promotes_and_preserves_connection_secret() -> None:
 
     document = connection.execute("SELECT document FROM owner_settings").fetchone()[0]
     assert '"schema_version":"owner-settings-v1"' in document
-    assert '"pending_restart":["setup_complete"]' in document
+    assert '"pending_restart":[]' in document
     assert connection.execute(
         "SELECT field_id,value FROM owner_setting_secrets ORDER BY field_id"
     ).fetchall() == [
@@ -306,7 +306,8 @@ def test_kickoff_atomically_promotes_and_preserves_connection_secret() -> None:
             "SELECT field_id,value FROM owner_setting_secrets ORDER BY field_id"
         ).fetchall(),
     )
-    journey.kick_off(state.revision)
+    with pytest.raises(SetupJourneyError, match="stale"):
+        journey.kick_off(state.revision)
     after = (
         connection.execute("SELECT revision,document FROM owner_settings").fetchall(),
         connection.execute(

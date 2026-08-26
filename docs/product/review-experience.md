@@ -19,9 +19,9 @@ and mount comparison reports matched, ambiguous, unmatched, or unobservable
 without creating a mount.
 
 Kickoff says exactly: `Nothing in your library changes. Writes stay off until
-you turn them on in Activity.` The setup client waits through the required
-restart and opens `/library` directly when the normal authenticated workspace
-is available; there is no completion interstitial and no setup write authority.
+you turn them on in Activity.` The setup target swaps to the normal authenticated
+workspace on the same listener, starts preparation immediately, and offers
+`Open workspace`; there is no restart or setup write authority.
 As soon as one work is ready, a focused handover card appears above the live,
 bounded preparation list. The terminal first-boot measurement appears only in
 Library and counts every unique checked work, including terminal failures.
@@ -427,10 +427,10 @@ moving cover-policy ownership out of Policy. The selected group is the closed
 settings index remains beside the active paper-like page; at 390 and 320 pixels
 a labelled native selector replaces that index.
 
-Every editable field states whether it is live or restart-applied, while one
-pending-restart ledger reports server-derived debt. Loading, retry, optional
-empty, validation, save pending/saved/failed/stale, secret add/replace/confirmed
-clear, and pending-restart states are explicit. In file mode the page names
+Every editable store field states that it applies to the next operation.
+Loading, retry, optional empty, validation, preparation, save
+pending/saved/failed/stale, secret add/replace/confirmed clear, and reconnect
+states are explicit. In file mode the page names
 `/data/config.json` and renders no covered edit affordance. Secret values never
 render; only `Configured · ····xxxx` or `Not configured` appears. Controls
 retain 44-pixel targets, visible focus and semantic status announcements; long

@@ -19,7 +19,6 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-from argon2 import PasswordHasher
 
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.application.metadata_report import MetadataReportError
@@ -124,29 +123,25 @@ def test_setup_server_releases_claimed_state_for_restart_and_resume(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "application.sqlite3"
-    bootstrap_verifier = PasswordHasher().hash("owner password")
     repository = composition.open_repository(database)
     bootstrap = ReviewBootstrap(
         schema_version="review-bootstrap-v1",
-        setup_owner_verifier=bootstrap_verifier,
         tls_certificate_file="certificate",
         tls_private_key_file="private-key",
         canonical_origin="https://setup.invalid",
     )
 
     def claim_before_shutdown(_server: object) -> None:
+        _server.started = True
         state = repository.setup_state_store()
-        document = state.read(bootstrap_verifier)
-        state.write(
-            document.model_copy(
-                update={
-                    "revision": document.revision + 1,
-                    "completed_steps": ["claim"],
-                    "claimed": True,
-                }
-            ),
-            document.revision,
-            bootstrap_verifier,
+        document = state.read()
+        state.claim_owner(
+            expected_revision=document.revision,
+            owner_verifier="$argon2id$v=19$m=65536,t=3,p=4$b3duZXI$hash",
+            session_digest="d" * 64,
+            csrf_digest="e" * 64,
+            created_at=1,
+            expires_at=3_601,
         )
 
     with (
@@ -172,6 +167,8 @@ def test_setup_server_releases_claimed_state_for_restart_and_resume(
             composition.run_setup_server(
                 bootstrap,
                 database,
+                tmp_path / "catalogue.sqlite3",
+                tmp_path / "artifacts",
                 "127.0.0.1",
                 18444,
                 initialize=True,
@@ -187,7 +184,7 @@ def test_setup_server_releases_claimed_state_for_restart_and_resume(
     def resumable_setup() -> bool:
         reopened = composition.open_repository(database, create=False)
         try:
-            reopened.setup_state_store().read(bootstrap_verifier)
+            reopened.setup_state_store().read()
             return True
         finally:
             reopened.close()
@@ -206,7 +203,6 @@ def test_exact_schema_only_kill_boundary_restarts_setup_without_generic_recovery
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "application.sqlite3"
-    bootstrap_verifier = PasswordHasher().hash("owner password")
     repository = composition.open_repository(database)
     repository.close()
 
@@ -229,7 +225,7 @@ def test_exact_schema_only_kill_boundary_restarts_setup_without_generic_recovery
 
     repository = composition.open_repository(database)
     try:
-        repository.setup_state_store().initialize(bootstrap_verifier)
+        repository.setup_state_store().initialize()
     finally:
         repository.close()
 

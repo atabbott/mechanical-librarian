@@ -181,7 +181,7 @@ def test_store_returns_redacted_secret_presence_and_metadata() -> None:
         next(
             value for value in view.fields if value.field_id == "connections"
         ).apply_effect
-        == "restart_required"
+        == "applied_live"
     )
     assert next(
         value for value in view.fields if value.field_id == "mounts"
@@ -332,21 +332,24 @@ def test_store_rejects_non_settings_owned_library_mutation(field: str) -> None:
     assert store.read().document.libraries[0].policy_override is None
 
 
-def test_restart_effects_are_durable_while_reduced_motion_is_live() -> None:
+def test_store_managed_fields_are_live_without_restart_debt() -> None:
     store = _store()
     changed = _document(2).model_copy(update={"provider_recovery_generation": 2})
     result = store.write(changed, 1, ())
-    assert result.pending_restart == ("provider_recovery_generation",)
-    assert next(
-        item
-        for item in result.fields
-        if item.field_id == "provider_recovery_generation"
-    ).pending_restart
+    assert result.document.pending_restart == []
+    assert (
+        next(
+            item
+            for item in result.fields
+            if item.field_id == "provider_recovery_generation"
+        ).apply_effect
+        == "applied_live"
+    )
     live = result.document.model_copy(
         update={"revision": 3, "reduced_motion": "always_reduced"}
     )
     result = store.write(live, 2, ())
-    assert result.pending_restart == ("provider_recovery_generation",)
+    assert result.document.pending_restart == []
 
 
 def test_runtime_activation_requires_complete_authority_and_ack_clears_applied_debt() -> (
@@ -370,12 +373,12 @@ def test_runtime_activation_requires_complete_authority_and_ack_clears_applied_d
 
     view, credentials, verifier = store.activate_runtime()
 
-    assert view.pending_restart == ("providers",)
+    assert view.document.pending_restart == ["providers"]
     assert credentials == {"connection.primary.key": "target-secret-1234"}
     assert verifier == "$argon2id$synthetic"
     store.acknowledge_runtime(view.document.revision)
     acknowledged = store.read()
-    assert acknowledged.pending_restart == ()
+    assert acknowledged.document.pending_restart == []
     assert acknowledged.document.revision == 3
     with pytest.raises(OwnerSettingsError, match="stale"):
         store.write(_document(3), 2, ())

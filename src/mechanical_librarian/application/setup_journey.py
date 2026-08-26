@@ -186,7 +186,7 @@ class SetupJourneyOperation:
                 + (
                     ["mounts"]
                     if all(
-                        library.media_kind != "ebook" or result.state == "matched"
+                        library.media_kind != "book" or result.state == "matched"
                         for library, result in zip(libraries, results, strict=True)
                     )
                     else []
@@ -207,27 +207,7 @@ class SetupJourneyOperation:
         return self._write(changed, current.revision)
 
     def kick_off(self, expected_revision: int) -> None:
-        try:
-            current = self._current(expected_revision, "kick_off")
-        except SetupJourneyError as error:
-            if error.code != "stale":
-                raise
-            try:
-                self._repository.promote(
-                    self._bootstrap_verifier,
-                    self._bootstrap_verifier,
-                    expected_revision,
-                )
-            except SetupStateError:
-                raise error from None
-            return
-        mount_states = {value.library: value.state for value in current.mounts}
-        if any(
-            library.media_kind == "ebook"
-            and mount_states.get(library.name) != "matched"
-            for library in current.libraries
-        ):
-            raise SetupJourneyError("mounts_unready")
+        current = self.validate_kick_off(expected_revision)
         try:
             self._repository.promote(
                 self._bootstrap_verifier,
@@ -236,6 +216,20 @@ class SetupJourneyOperation:
             )
         except SetupStateError:
             raise SetupJourneyError("stale") from None
+
+    def validate_kick_off(self, expected_revision: int) -> SetupStateDocument:
+        """Validate the exact candidate without committing setup authority."""
+        try:
+            current = self._current(expected_revision, "kick_off")
+        except SetupJourneyError as error:
+            raise error from None
+        mount_states = {value.library: value.state for value in current.mounts}
+        if any(
+            library.media_kind == "book" and mount_states.get(library.name) != "matched"
+            for library in current.libraries
+        ):
+            raise SetupJourneyError("mounts_unready")
+        return current
 
     def _current(
         self, expected_revision: int, expected_step: SetupStep | None = None

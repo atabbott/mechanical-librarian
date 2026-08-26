@@ -88,7 +88,6 @@ def test_container_entrypoint_initializes_only_absent_exact_current_stores() -> 
         canonical_origin="https://setup.invalid",
         tls_certificate_file="/run/secrets/review.crt",
         tls_private_key_file="/run/secrets/review.key",
-        setup_owner_verifier="$argon2id$synthetic-bootstrap-verifier",
     )
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -112,11 +111,14 @@ def test_container_entrypoint_initializes_only_absent_exact_current_stores() -> 
         setup.assert_called_once_with(
             bootstrap,
             root / "application.sqlite3",
+            root / "catalogue.sqlite3",
+            root / "artifacts",
             "0.0.0.0",
             8443,
             initialize=True,
         )
-        open_cat.assert_not_called()
+        open_cat.assert_called_once_with(root / "catalogue.sqlite3", create=True)
+        open_cat.return_value.close.assert_called_once_with()
         serve.assert_not_called()
         assert root.stat().st_mode & 0o777 == 0o700
 

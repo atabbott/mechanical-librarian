@@ -8,8 +8,13 @@ effect gate passes.
 
 ## Current checkpoint
 
-The 0.14.1 interface-fidelity checkpoint runs one authenticated owner workspace.
-It discovers configured Audiobookshelf ebook libraries, prepares exact-current
+The 0.17.0 configuration and first-run checkpoint runs one authenticated owner
+workspace. A first visitor creates the owner password, connects Audiobookshelf,
+selects book libraries and optional metadata providers, verifies read-only
+mounts, and starts preparation without restarting the container. The lazy
+Settings utility applies every store-managed field to the next operation through
+an atomic runtime-generation cutover; deploy-managed TLS, listener, proxy, and
+mount values remain outside browser authority. The workspace prepares exact-current
 reports, ProposalSets, and review cases in the background, presents Library,
 Attention, detail, Policy, and Activity through one packaged React shell, and
 records immutable human decisions. Qualified policy categories may produce

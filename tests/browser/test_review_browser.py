@@ -47,7 +47,9 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
 from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.setup_state import SetupStateDocument
 from mechanical_librarian.interfaces.web.react_assets import ReactAssetLoader
+from mechanical_librarian.interfaces.web.setup import create_setup_app
 from tests.support.ports import ReservedPort
 from tests.support.proposal_evidence import _fields as _bibliographic_fields
 from tests.support.review_web_doubles import FakeActivityApplication
@@ -356,6 +358,46 @@ def _login(page: Page, origin: str) -> None:
     page.get_by_label("Password").fill(_PASSWORD)
     page.get_by_role("button", name="Sign in").click()
     page.wait_for_url(f"{origin}/library")
+
+
+@contextmanager
+def _setup_asset_server(
+    certificate: Path, key: Path, port: ReservedPort
+) -> Iterator[str]:
+    class State:
+        def read(self, _verifier: str) -> SetupStateDocument:
+            return SetupStateDocument(
+                schema_version="setup-state-v1",
+                revision=1,
+                bootstrap_verifier_digest="0" * 64,
+            )
+
+    app = create_setup_app(cast(Any, object()), cast(Any, State()), "")
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host="127.0.0.1",
+            port=port.number,
+            log_level="error",
+            access_log=False,
+            ssl_certfile=str(certificate),
+            ssl_keyfile=str(key),
+        )
+    )
+    origin = f"https://127.0.0.1:{port.number}"
+    port.release()
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not server.started and thread.is_alive() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    if not server.started:
+        raise RuntimeError("synthetic setup server did not start")
+    try:
+        yield origin
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
 
 
 @contextmanager
@@ -1907,6 +1949,239 @@ def test_z_compact_uncached_library_detail_keeps_visible_focus() -> None:
             browser.close()
 
 
+def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(ignore_https_errors=True)
+            page = context.new_page()
+            errors: list[str] = []
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            stage = {"value": "claim"}
+
+            def setup_api(route) -> None:
+                path = urlparse(route.request.url).path
+                method = route.request.method
+                if path == "/api/setup/claim":
+                    route.fulfill(
+                        json={"claimed": False, "revision": 1, "nonce": "n" * 32}
+                    )
+                    return
+                if path == "/api/setup/session":
+                    stage["value"] = "providers"
+                    route.fulfill(json={"csrf_token": "c" * 32, "expires_at": 3_601})
+                    return
+                if path == "/api/setup/providers" and method == "POST":
+                    stage["value"] = "libraries"
+                    route.fulfill(
+                        json={
+                            "completed_steps": ["claim", "connect", "providers"],
+                            "next_step": "libraries",
+                            "revision": 4,
+                        }
+                    )
+                    return
+                if path == "/api/setup/libraries" and method == "GET":
+                    route.fulfill(
+                        json={
+                            "libraries": [
+                                {
+                                    "library_id": "books",
+                                    "name": "Books",
+                                    "media_kind": "book",
+                                },
+                                {
+                                    "library_id": "long",
+                                    "name": "A very long library name "
+                                    + "wrapped " * 12,
+                                    "media_kind": "book",
+                                },
+                                {
+                                    "library_id": "podcasts",
+                                    "name": "Podcasts",
+                                    "media_kind": "unsupported",
+                                },
+                            ]
+                        }
+                    )
+                    return
+                if path == "/api/setup/libraries" and method == "POST":
+                    stage["value"] = "mounts"
+                    route.fulfill(
+                        json={
+                            "completed_steps": [
+                                "claim",
+                                "connect",
+                                "providers",
+                                "libraries",
+                            ],
+                            "next_step": "mounts",
+                            "revision": 5,
+                        }
+                    )
+                    return
+                if path == "/api/setup/mounts":
+                    stage["value"] = "kick_off"
+                    route.fulfill(
+                        json={
+                            "completed_steps": [
+                                "claim",
+                                "connect",
+                                "providers",
+                                "libraries",
+                                "mounts",
+                            ],
+                            "next_step": "kick_off",
+                            "revision": 6,
+                        }
+                    )
+                    return
+                if path == "/api/setup/kick-off":
+                    stage["value"] = "active"
+                    route.fulfill(
+                        status=202,
+                        json={
+                            "status": "active",
+                            "message": "Nothing in your library changes. Writes stay off until you turn them on in Activity.",
+                        },
+                    )
+                    return
+                if path == "/api/setup/state":
+                    value = stage["value"]
+                    selected = value in {"mounts", "kick_off"}
+                    route.fulfill(
+                        json={
+                            "csrf_token": "c" * 32,
+                            "completed_steps": ["claim", "connect"]
+                            if value == "providers"
+                            else ["claim", "connect", "providers"]
+                            if value == "libraries"
+                            else ["claim", "connect", "providers", "libraries"]
+                            if value == "mounts"
+                            else [
+                                "claim",
+                                "connect",
+                                "providers",
+                                "libraries",
+                                "mounts",
+                            ],
+                            "next_step": value,
+                            "revision": {
+                                "providers": 3,
+                                "libraries": 4,
+                                "mounts": 5,
+                                "kick_off": 6,
+                            }.get(value, 6),
+                            "connection": {
+                                "name": "primary",
+                                "endpoint": "https://library.invalid",
+                            },
+                            "providers": [],
+                            "libraries": (
+                                [
+                                    {
+                                        "name": "books",
+                                        "library_id": "books",
+                                        "media_kind": "book",
+                                        "provider_connections": [],
+                                    },
+                                    {
+                                        "name": "long",
+                                        "library_id": "long",
+                                        "media_kind": "book",
+                                        "provider_connections": [],
+                                    },
+                                ]
+                                if selected
+                                else []
+                            ),
+                            "mounts": (
+                                [
+                                    {"library": "books", "state": "matched"},
+                                    {"library": "long", "state": "matched"},
+                                ]
+                                if value == "kick_off"
+                                else []
+                            ),
+                        }
+                    )
+                    return
+                route.fulfill(status=404, json={"error": "not_found"})
+
+            page.route("**/api/setup/**", setup_api)
+            page.route(
+                "**/api/v1/review-preparation",
+                lambda route: route.fulfill(
+                    json={"libraries": [], "active": True, "paused": False}
+                ),
+            )
+            with (
+                closing(ReservedPort()) as reserved_port,
+                _setup_asset_server(certificate, key, reserved_port) as origin,
+                _closing_context(context),
+            ):
+                page.goto(origin)
+                expect(
+                    page.get_by_role("heading", name="Create your owner password")
+                ).to_be_visible()
+                for color in ("light", "dark"):
+                    page.emulate_media(color_scheme=color)
+                    for width, height in (
+                        (1440, 900),
+                        (884, 900),
+                        (390, 844),
+                        (320, 800),
+                    ):
+                        page.set_viewport_size({"width": width, "height": height})
+                        assert page.evaluate(
+                            "document.documentElement.scrollWidth <= window.innerWidth"
+                        )
+                page.get_by_label("Owner password", exact=True).fill(_PASSWORD)
+                page.get_by_label("Confirm owner password").fill(_PASSWORD)
+                page.get_by_role("button", name="Create owner access").click()
+                expect(
+                    page.get_by_role("heading", name="Choose metadata providers")
+                ).to_be_visible()
+                for provider in ("Open Library", "Hardcover", "Google Books"):
+                    expect(page.get_by_role("link", name=provider)).to_be_visible()
+                page.get_by_role("button", name="Skip providers").click()
+                expect(
+                    page.get_by_text(
+                        "1 podcast library is visible in Audiobookshelf but not supported here."
+                    )
+                ).to_be_visible()
+                page.get_by_role("checkbox", name="Books").check()
+                page.get_by_role(
+                    "checkbox", name="A very long library name", exact=False
+                ).check()
+                page.evaluate("document.documentElement.style.fontSize = '200%'")
+                assert page.evaluate(
+                    "document.documentElement.scrollWidth <= window.innerWidth"
+                )
+                page.evaluate("document.documentElement.style.fontSize = ''")
+                page.get_by_role("button", name="Continue").click()
+                expect(
+                    page.get_by_role("heading", name="Check read-only mounts")
+                ).to_be_visible()
+                for field in page.get_by_label("service path", exact=False).all():
+                    field.fill("/library/books")
+                page.get_by_role("button", name="Compare mounts").click()
+                expect(
+                    page.get_by_role("heading", name="Kick off preparation")
+                ).to_be_visible()
+                page.get_by_role("button", name="Kick off preparation").click()
+                expect(page.get_by_role("link", name="Open workspace")).to_be_visible()
+                expect(
+                    page.get_by_text(
+                        "Writes stay off until you turn them on in Activity."
+                    )
+                ).to_be_visible()
+                assert not errors
+            browser.close()
+
+
 def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -1935,7 +2210,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     }
                     for index in range(128)
                 ],
-                "pending_restart": ["libraries"],
+                "pending_restart": [],
             }
         )
         errors: list[str] = []
@@ -2002,7 +2277,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 ).to_be_visible()
                 page.unroute("**/api/v1/settings", hold_initial_settings)
                 expect(
-                    page.get_by_text("Restart required for saved changes")
+                    page.get_by_text("Applies to the next operation").first
                 ).to_be_visible()
                 assert page.locator("*").count() < 2_000
 
@@ -2046,8 +2321,12 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 compact_group = page.locator("label.settings-mobile-group select")
                 compact_group.select_option("providers")
                 expect(
-                    page.get_by_text("No metadata providers configured")
+                    page.get_by_role("heading", name="Add a metadata provider")
                 ).to_be_visible()
+                for provider in ("Google Books", "Hardcover", "Open Library"):
+                    expect(
+                        page.get_by_role("button", name=f"Add {provider}")
+                    ).to_be_visible()
                 compact_group.select_option("connection")
                 expect(page.get_by_text("Configured · ····cret")).to_be_visible()
                 page.get_by_role("button", name="Clear primary access key").click()

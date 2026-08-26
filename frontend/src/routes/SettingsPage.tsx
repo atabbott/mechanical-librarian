@@ -58,10 +58,10 @@ const clone = (value: SettingsView['document'] | Document): Document =>
   structuredClone(value) as Document
 const effectCopy = (effect: string) =>
   effect === 'applied_live'
-    ? 'Applies immediately'
+    ? 'Applies to the next operation'
     : effect === 'deploy_managed'
       ? 'Deployment managed'
-      : 'Applies on restart'
+      : 'Applies to the next operation'
 
 const validationErrors = (
   document: Document,
@@ -270,7 +270,7 @@ const Secret = ({
         <strong>{presence.indicator ?? 'Configured'}</strong>
         {confirmingClear ? (
           <div role="alert" className="settings-clear-confirmation">
-            <span>Confirm removal. This integration may stop working after restart.</span>
+            <span>Confirm removal. This integration will not be used for later work.</span>
             <button
               type="button"
               onClick={() => {
@@ -493,7 +493,7 @@ const SettingsEditor = ({
     .slice(libraryPage * 20, libraryPage * 20 + 20)
   const locked = view.authority === 'file'
   const effect = (fieldId: string) =>
-    view.fields.find((item) => item.field_id === fieldId)?.apply_effect ?? 'restart_required'
+    view.fields.find((item) => item.field_id === fieldId)?.apply_effect ?? 'applied_live'
   const update = (change: (value: Document) => void) => {
     const next = clone(draft)
     change(next)
@@ -508,15 +508,41 @@ const SettingsEditor = ({
     setStatus('idle')
   }
   const currentGroup = groupById[active]
+  const addProvider = (capability: SettingsView['provider_capabilities'][number]) =>
+    update((value) => {
+      const provider =
+        capability.adapter === 'open_library'
+          ? {
+              adapter: 'open_library' as const,
+              contact_email: null,
+              cover_enabled: false,
+              enabled: false,
+              name: capability.name,
+            }
+          : capability.adapter === 'hardcover'
+            ? {
+                adapter: 'hardcover' as const,
+                cover_enabled: false,
+                enabled: false,
+                name: capability.name,
+              }
+            : {
+                adapter: 'google_books' as const,
+                cover_enabled: false as const,
+                enabled: false,
+                name: capability.name,
+              }
+      value.providers.push(provider)
+      value.providers.sort((left, right) => left.name.localeCompare(right.name))
+    })
 
   return (
     <section className="settings-route" data-route-focus tabIndex={-1}>
       <header className="settings-heading">
         <div>
           <h1>Settings</h1>
-          <p>Owner-managed configuration, with every consequence named before it is saved.</p>
+          <p>Services, evidence sources, and review preferences.</p>
         </div>
-        <span>{locked ? 'File authority' : 'In-app authority'}</span>
       </header>
       {locked ? (
         <section className="settings-file-banner" role="status">
@@ -525,16 +551,6 @@ const SettingsEditor = ({
             These values are read-only here. Use the supported Import and retire file management
             flow when it becomes available; do not delete the file manually.
           </p>
-        </section>
-      ) : null}
-      {view.pending_restart.length ? (
-        <section className="settings-restart" aria-label="Pending restart settings">
-          <strong>Restart required for saved changes</strong>
-          <ul>
-            {view.pending_restart.map((item) => (
-              <li key={item}>{item.replaceAll('_', ' ').replaceAll('.', ' · ')}</li>
-            ))}
-          </ul>
         </section>
       ) : null}
       <label className="settings-mobile-group">
@@ -557,7 +573,6 @@ const SettingsEditor = ({
         <aside className="settings-sidebar" aria-label="Settings groups">
           <header>
             <strong>Configuration</strong>
-            <small>{String(groups.length)} focused groups</small>
           </header>
           <nav>
             {groups.map((group) => (
@@ -618,7 +633,7 @@ const SettingsEditor = ({
                       group={!locked}
                       title="Access key"
                       description="Write-only target authority. It is never returned to this page."
-                      effect="restart_required"
+                      effect={effect('connections')}
                       locked={locked}
                     >
                       {locked ? (
@@ -644,13 +659,17 @@ const SettingsEditor = ({
                 ))
               : null}
             {active === 'providers' ? (
-              draft.providers.length === 0 ? (
-                <div className="settings-empty">
-                  <h3>No metadata providers configured</h3>
-                  <p>Target evidence remains available.</p>
-                </div>
-              ) : (
-                draft.providers.map((provider, index) => {
+              <>
+                {draft.providers.length === 0 ? (
+                  <div className="settings-empty">
+                    <h3>Choose metadata providers</h3>
+                    <p>
+                      More configured sources generally give review work better evidence. They
+                      remain optional.
+                    </p>
+                  </div>
+                ) : null}
+                {draft.providers.map((provider, index) => {
                   const secretId = 'provider.' + provider.name + '.key'
                   return (
                     <div className="settings-record" key={provider.name}>
@@ -725,7 +744,7 @@ const SettingsEditor = ({
                           group={!locked && provider.enabled}
                           title="API key"
                           description="Write-only provider authority. Acquire it from the provider's own account."
-                          effect="restart_required"
+                          effect={effect('providers')}
                           locked={locked}
                         >
                           {locked ? (
@@ -761,8 +780,32 @@ const SettingsEditor = ({
                       )}
                     </div>
                   )
-                })
-              )
+                })}
+                {view.provider_capabilities.length ? (
+                  <section
+                    className="settings-capabilities"
+                    aria-label="Available metadata providers"
+                  >
+                    <h3>Add a metadata provider</h3>
+                    <p>
+                      Each provider is optional. Add it here, then enable it when its details are
+                      ready.
+                    </p>
+                    <div>
+                      {view.provider_capabilities.map((capability) => (
+                        <button
+                          type="button"
+                          key={capability.name}
+                          disabled={locked}
+                          onClick={() => addProvider(capability)}
+                        >
+                          Add {capability.label}
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
+              </>
             ) : null}
             {active === 'libraries' ? (
               <>
@@ -919,7 +962,7 @@ const SettingsEditor = ({
                       fieldId={`limits.${key}`}
                       error={fieldError(`limits.${key}`)}
                       title={label}
-                      description={`From 1,024 to ${maximum.toLocaleString()} bytes; applies after restart.`}
+                      description={`From 1,024 to ${maximum.toLocaleString()} bytes; applies to the next operation.`}
                       effect={effect('limits')}
                       locked={locked}
                     >
@@ -1043,7 +1086,7 @@ const SettingsEditor = ({
                 <Row
                   fieldId="server.diagnostic_timings_enabled"
                   title="Diagnostic timings"
-                  description="Record bounded stage timings for support diagnostics; values apply after restart."
+                  description="Record bounded stage timings for support diagnostics; applies to the next operation."
                   effect={effect('server.diagnostic_timings_enabled')}
                   locked={locked}
                 >

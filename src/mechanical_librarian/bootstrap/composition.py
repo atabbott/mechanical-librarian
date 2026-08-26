@@ -8,7 +8,9 @@ import os
 import threading
 import time
 from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager
 from pathlib import Path
+from types import TracebackType
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
 
 import uvicorn
@@ -225,6 +227,7 @@ from mechanical_librarian.domain.metadata_report import (
     RearClaimProvenance,
     claim_scope,
 )
+from mechanical_librarian.domain.owner_settings import SettingsView
 from mechanical_librarian.domain.proposal_set import ProposalSet
 from mechanical_librarian.domain.setup_state import (
     SetupLibraryCandidate,
@@ -265,6 +268,10 @@ from mechanical_librarian.interfaces.web import (
     load_owner_password_verifier,
     owner_password_verifier,
 )
+from mechanical_librarian.interfaces.web.runtime_dispatch import (
+    MutableRuntimeDispatcher,
+    RuntimeGeneration,
+)
 from mechanical_librarian.interfaces.web.setup import create_setup_app
 
 if TYPE_CHECKING:
@@ -293,6 +300,128 @@ if TYPE_CHECKING:
     from mechanical_librarian.application.review_pipeline import (
         ReviewPipelineRepository,
     )
+
+
+class _PreparedRuntimeActivation(AbstractContextManager[None]):
+    """Prepare before persistence and publish only after its successful commit."""
+
+    def __init__(
+        self,
+        controller: "_StoreRuntimeActivation",
+        document: object,
+        revision: int,
+        secrets: object,
+    ) -> None:
+        self._controller = controller
+        self._document = document
+        self._revision = revision
+        self._secrets = secrets
+        self._candidate: RuntimeGeneration | None = None
+
+    def __enter__(self) -> None:
+        self._controller._lock.acquire()
+        try:
+            self._candidate = self._controller.prepare(
+                self._document, self._revision, self._secrets
+            )
+        except BaseException:
+            self._controller._lock.release()
+            raise
+
+    def __exit__(
+        self,
+        error_type: type[BaseException] | None,
+        error: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        try:
+            candidate = self._candidate
+            if candidate is None:
+                return
+            if error_type is not None:
+                candidate.close()
+                return
+            dispatcher = self._controller.dispatcher
+            dispatcher.replace(candidate)
+        finally:
+            self._controller._lock.release()
+
+
+class _StoreRuntimeActivation:
+    """One process-lifetime controller for setup and Settings cutovers."""
+
+    def __init__(
+        self,
+        bootstrap: ReviewBootstrap,
+        database_path: Path,
+        catalogue_path: Path,
+        artifact_store_path: Path,
+        settings_store: Any,
+    ) -> None:
+        self._bootstrap = bootstrap
+        self._database_path = database_path
+        self._catalogue_path = catalogue_path
+        self._artifact_store_path = artifact_store_path
+        self._settings_store = settings_store
+        self._dispatcher: MutableRuntimeDispatcher | None = None
+        self._lock = threading.RLock()
+
+    @property
+    def dispatcher(self) -> MutableRuntimeDispatcher:
+        if self._dispatcher is None:
+            raise RuntimeError("runtime dispatcher is unavailable")
+        return self._dispatcher
+
+    def bind(self, dispatcher: MutableRuntimeDispatcher) -> None:
+        if self._dispatcher is not None:
+            raise RuntimeError("runtime dispatcher is already bound")
+        self._dispatcher = dispatcher
+
+    def context(
+        self, document: object, revision: int, secrets: object
+    ) -> AbstractContextManager[None]:
+        return _PreparedRuntimeActivation(self, document, revision, secrets)
+
+    def prepare(
+        self, document: object, revision: int, secrets: object
+    ) -> RuntimeGeneration:
+        snapshot = self._settings_store.activation_snapshot(document, revision, secrets)
+        candidate, _review = compose_store_runtime_generation(
+            self._bootstrap,
+            self._database_path,
+            self._catalogue_path,
+            self._artifact_store_path,
+            authority_snapshot=snapshot,
+            activation=self,
+        )
+        return candidate
+
+    def activate_setup(
+        self,
+        snapshot: tuple[SettingsView, dict[str, str], str],
+        commit: Callable[[], None],
+    ) -> None:
+        with self._lock:
+            candidate, _review = compose_store_runtime_generation(
+                self._bootstrap,
+                self._database_path,
+                self._catalogue_path,
+                self._artifact_store_path,
+                authority_snapshot=snapshot,
+                activation=self,
+                first_boot=True,
+            )
+            try:
+                commit()
+            except BaseException:
+                candidate.close()
+                raise
+            self.dispatcher.replace(candidate)
+
+    def acknowledge_initial_runtime(self) -> None:
+        """Retire compatibility debt only after the initial generation woke."""
+        view = self._settings_store.read()
+        self._settings_store.acknowledge_runtime(view.document.revision)
 
 
 class _PublicationReceiptRepository(Protocol):
@@ -2124,15 +2253,15 @@ def _load_batch_credentials(
 def run_setup_server(
     bootstrap: ReviewBootstrap,
     database_path: Path,
+    catalogue_path: Path,
+    artifact_store_path: Path,
     host: str,
     port: int,
     *,
     initialize: bool,
 ) -> None:
-    """Run only the bootstrap-authenticated setup surface before normal startup."""
-    verifier = bootstrap.setup_owner_verifier
-    if verifier is None:
-        raise ConfigurationError("review bootstrap is unavailable")
+    """Run the verifier-free bounded setup target on the ordinary listener."""
+    verifier = ""
     with open_review_tls_identity(
         bootstrap.tls_certificate_file, bootstrap.tls_private_key_file
     ) as tls:
@@ -2144,10 +2273,16 @@ def run_setup_server(
         try:
             state = repository.setup_state_store()
             if initialize:
-                state.initialize(verifier)
+                state.initialize()
+
+            def verify_established_owner(password: str) -> bool:
+                return state.use_owner_verifier(
+                    lambda encoded: owner_password_verifier(encoded)(password)
+                )
+
             sessions = OwnerSessionService(
                 repository,
-                owner_password_verifier(verifier),
+                verify_established_owner,
                 lambda: int(time.time()),
                 3600,
             )
@@ -2181,10 +2316,22 @@ def run_setup_server(
                 discover_setup_libraries,
                 {path: tuple(sorted(names)) for path, names in mount_names.items()},
             )
-            server: uvicorn.Server
+            activation_controller = _StoreRuntimeActivation(
+                bootstrap,
+                database_path,
+                catalogue_path,
+                artifact_store_path,
+                repository.owner_settings_store(),
+            )
+            dispatcher: MutableRuntimeDispatcher
 
-            def begin_setup_drain() -> None:
-                server.should_exit = True
+            def activate_setup(expected_revision: int) -> None:
+                journey.validate_kick_off(expected_revision)
+                snapshot = state.activation_snapshot(expected_revision)
+                activation_controller.activate_setup(
+                    snapshot,
+                    lambda: journey.kick_off(expected_revision),
+                )
 
             setup_app = create_setup_app(
                 sessions,
@@ -2193,27 +2340,173 @@ def run_setup_server(
                 connection=connection,
                 journey=journey,
                 canonical_origin=bootstrap.canonical_origin,
-                on_complete=begin_setup_drain,
+                activate=activate_setup,
             )
-            server = uvicorn.Server(
-                uvicorn.Config(
-                    setup_app,
-                    host=host,
-                    port=port,
-                    proxy_headers=False,
-                    server_header=False,
-                    date_header=False,
-                    access_log=False,
-                    http=BoundedReviewH11Protocol,
-                    ssl_certfile=tls.certificate_file,
-                    ssl_keyfile=tls.private_key_file,
-                    ssl_keyfile_password=REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD,
-                    ssl_ciphers=REVIEW_TLS_CIPHERS,
-                )
+            dispatcher = MutableRuntimeDispatcher(RuntimeGeneration(setup_app))
+            activation_controller.bind(dispatcher)
+            dispatcher.start()
+            uvicorn.run(
+                dispatcher,
+                host=host,
+                port=port,
+                proxy_headers=False,
+                server_header=False,
+                date_header=False,
+                access_log=False,
+                http=BoundedReviewH11Protocol,
+                timeout_graceful_shutdown=300,
+                limit_concurrency=MAX_REVIEW_CONNECTIONS,
+                backlog=MAX_REVIEW_CONNECTIONS,
+                h11_max_incomplete_event_size=16_384,
+                ssl_certfile=tls.certificate_file,
+                ssl_keyfile=tls.private_key_file,
+                ssl_keyfile_password=REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD,
+                ssl_ciphers=REVIEW_TLS_CIPHERS,
             )
-            server.run()
         finally:
             repository.close()
+
+
+def compose_store_runtime_generation(
+    bootstrap: ReviewBootstrap,
+    database_path: Path,
+    catalogue_path: Path,
+    artifact_store_path: Path,
+    *,
+    authority_snapshot: tuple[SettingsView, dict[str, str], str] | None = None,
+    activation: _StoreRuntimeActivation | None = None,
+    first_boot: bool = False,
+) -> tuple[RuntimeGeneration, object]:
+    """Build one dormant, independently owned store runtime generation."""
+    private_root = _private_root(database_path)
+    repository = open_repository(database_path, create=True, cross_thread=True)
+    try:
+        settings_store = repository.owner_settings_store()
+        if authority_snapshot is None:
+            settings_view, stored_credentials, encoded_verifier = (
+                settings_store.activate_runtime()
+            )
+        else:
+            settings_view, stored_credentials, encoded_verifier = authority_snapshot
+        credentials = {
+            name.replace("connection.", "target:")
+            .replace("provider.", "provider:")
+            .removesuffix(".key"): value
+            for name, value in stored_credentials.items()
+        }
+        configuration = store_runtime_configuration(settings_view, bootstrap)
+        review = configuration.review
+        if review is None:
+            raise ConfigurationError("review configuration is unavailable")
+        from mechanical_librarian.adapters.operational_evidence import (
+            LocalTimingStore,
+            SupportBundle,
+        )
+        from mechanical_librarian.application.operations import (
+            StageTimer,
+            support_preparation_incidents,
+        )
+
+        timing_store = LocalTimingStore(
+            private_root / "stage-timings.json",
+            enabled=review.diagnostic_timings_enabled,
+        )
+        timing = StageTimer(timing_store)
+        provider_recovery = SQLiteProviderRecoveryStore.open(
+            private_root / "provider-recovery.sqlite"
+        )
+        first_boot = first_boot or _store_first_preparation(
+            "store",
+            tuple(settings_view.document.pending_restart),
+            repository.has_first_boot_preparation(),
+        )
+        preparation = create_review_pipeline(
+            configuration,
+            database_path,
+            catalogue_path,
+            artifact_store_path,
+            repository.authority,
+            timing,
+            private_root,
+            provider_recovery,
+            credentials=credentials,
+            first_boot=first_boot,
+        )
+        field_application = (
+            compose_continuous_guarded_application(
+                configuration,
+                repository,
+                database_path,
+                artifact_store_path,
+                preparation,
+                private_root,
+                provider_recovery,
+                credentials=credentials,
+            )
+            if configuration.libraries
+            else None
+        )
+        support_bundle = SupportBundle(
+            (
+                (
+                    "runtime",
+                    lambda: {
+                        "deployment": "single_container",
+                        "schema_state": "exact_current",
+                        "timing_records": len(timing_store.list()),
+                    },
+                ),
+                (
+                    "operational_incidents",
+                    lambda: support_preparation_incidents(
+                        repository.operational_snapshot()
+                    ),
+                ),
+            )
+        )
+        review_application = compose_review_application(
+            state_owner=repository,
+            session_store=repository,
+            case_store=repository,
+            decision_store=repository,
+            library_store=repository,
+            policy_store=repository,
+            verify_password=owner_password_verifier(encoded_verifier),
+            clock=lambda: int(time.time()),
+            session_lifetime_seconds=review.session_lifetime_seconds,
+            graceful_shutdown_seconds=review.graceful_shutdown_seconds,
+            close_state_owner=True,
+            preparation=preparation,
+            policy_libraries=tuple(
+                (
+                    library.name,
+                    cast("dict[str, object] | None", library.policy_override),
+                )
+                for library in configuration.libraries
+            ),
+            operational_timings=timing_store,
+            operational_support=support_bundle,
+            operational_timer=timing,
+            field_application=field_application,
+            cover_considerations=_compose_cover_considerations(
+                repository, artifact_store_path, review
+            ),
+            settings=OwnerSettingsOperations(settings_store),
+            settings_activation=None if activation is None else activation.context,
+            first_boot=first_boot,
+        )
+        return (
+            RuntimeGeneration(
+                create_review_app(review_application, review),
+                start=review_application.start,
+                begin_drain=review_application.begin_drain,
+                close=review_application.stop,
+            ),
+            review,
+        )
+    except Exception:
+        repository.close()
+        raise
 
 
 def run_review_server(
@@ -2243,6 +2536,55 @@ def run_review_server(
     if tls_certificate_file is None or tls_private_key_file is None:
         raise ConfigurationError("review TLS configuration is unavailable")
     with open_review_tls_identity(tls_certificate_file, tls_private_key_file) as tls:
+        if authority == "store":
+            assert bootstrap is not None
+            control = open_repository(database_path, create=True, cross_thread=True)
+            try:
+                activation = _StoreRuntimeActivation(
+                    bootstrap,
+                    database_path,
+                    catalogue_path,
+                    artifact_store_path,
+                    control.owner_settings_store(),
+                )
+                runtime, runtime_review = compose_store_runtime_generation(
+                    bootstrap,
+                    database_path,
+                    catalogue_path,
+                    artifact_store_path,
+                    activation=activation,
+                )
+                dispatcher = MutableRuntimeDispatcher(runtime)
+                activation.bind(dispatcher)
+                try:
+                    dispatcher.start()
+                    activation.acknowledge_initial_runtime()
+                except BaseException:
+                    runtime.close()
+                    raise
+                uvicorn.run(
+                    dispatcher,
+                    host=host,
+                    port=port,
+                    proxy_headers=False,
+                    server_header=False,
+                    date_header=False,
+                    access_log=False,
+                    http=BoundedReviewH11Protocol,
+                    timeout_graceful_shutdown=cast(
+                        "ReviewWebConfiguration", runtime_review
+                    ).graceful_shutdown_seconds,
+                    limit_concurrency=MAX_REVIEW_CONNECTIONS,
+                    backlog=MAX_REVIEW_CONNECTIONS,
+                    h11_max_incomplete_event_size=16_384,
+                    ssl_certfile=tls.certificate_file,
+                    ssl_keyfile=tls.private_key_file,
+                    ssl_keyfile_password=REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD,
+                    ssl_ciphers=REVIEW_TLS_CIPHERS,
+                )
+            finally:
+                control.close()
+            return
         private_root = _private_root(database_path)
         repository = open_repository(database_path, create=True, cross_thread=True)
         try:
@@ -2263,7 +2605,7 @@ def run_review_server(
                 review = configuration.review
                 verify_password = owner_password_verifier(encoded_verifier)
                 settings = OwnerSettingsOperations(settings_store)
-                pending_restart = settings_view.pending_restart
+                pending_restart = tuple(settings_view.document.pending_restart)
             else:
                 assert configuration is not None and review is not None
                 credentials = _load_batch_credentials(
@@ -2380,8 +2722,16 @@ def run_review_server(
             app = create_review_app(review_application, review)
             if authority == "store":
                 settings_store.acknowledge_runtime(settings_view.document.revision)
-            uvicorn.run(
+            runtime = RuntimeGeneration(
                 app,
+                start=review_application.start,
+                begin_drain=review_application.begin_drain,
+                close=review_application.stop,
+            )
+            dispatcher = MutableRuntimeDispatcher(runtime)
+            dispatcher.start()
+            uvicorn.run(
+                dispatcher,
                 host=host,
                 port=port,
                 proxy_headers=False,

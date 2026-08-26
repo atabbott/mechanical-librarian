@@ -767,35 +767,19 @@ const Shell = () => {
           >
             Activity
           </Link>
+          <Link
+            to="/settings"
+            search={{ group: 'connection' }}
+            activeOptions={{ includeSearch: false }}
+            activeProps={{ 'aria-current': 'page' }}
+          >
+            Settings
+          </Link>
         </nav>
         <div className="shell-actions">
           <LiveStreamNotice state={streamState} />
           <PreparationActivity />
           <ThemeControl />
-          <Link
-            className="settings-link"
-            to="/settings"
-            search={{ group: 'connection' }}
-            aria-label="Settings"
-            activeOptions={{ includeSearch: false }}
-            activeProps={{ 'aria-current': 'page' }}
-          >
-            <svg
-              className="settings-glyph"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              aria-hidden="true"
-            >
-              <path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4.5v5M6 14.5v5" />
-            </svg>
-            <span className="settings-link-label">Settings</span>
-          </Link>
-          <span className="private-session">
-            <span aria-hidden="true">●</span> Private
-          </span>
           <button className="sign-out" type="button" onClick={() => void signOut()}>
             Sign out
           </button>

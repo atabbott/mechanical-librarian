@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, ExitStack, contextmanager
 from dataclasses import dataclass
 from threading import RLock
 from typing import TYPE_CHECKING, Literal, Protocol, TypeVar, cast
@@ -364,6 +365,13 @@ class ReviewApplication:
         updates: LiveUpdateChannel,
         cover_considerations: CoverConsiderationService | None = None,
         settings: OwnerSettingsOperations | None = None,
+        settings_activation: (
+            Callable[
+                [OwnerSettingsDocument, int, tuple[SecretWrite, ...]],
+                AbstractContextManager[None],
+            ]
+            | None
+        ) = None,
         first_boot: bool = False,
     ) -> None:
         self._updates = updates
@@ -385,6 +393,7 @@ class ReviewApplication:
         self._operations = operations
         self._cover_considerations = cover_considerations
         self._settings = settings
+        self._settings_activation = settings_activation
         self._first_boot = first_boot
 
     @property
@@ -429,8 +438,9 @@ class ReviewApplication:
 
             def write() -> object:
                 validated = cast("OwnerSettingsDocument", document)
+                secret_writes = cast("tuple[SecretWrite, ...]", secrets)
                 preferences = validated.cover_preferences
-                live_update = (
+                cover_update = (
                     self._cover_considerations.policy_update(
                         CoverPolicy(
                             avoid_promotional_text=preferences.avoid_promotional_text,
@@ -441,11 +451,25 @@ class ReviewApplication:
                     if self._cover_considerations is not None
                     else None
                 )
+
+                @contextmanager
+                def activate() -> Iterator[None]:
+                    with ExitStack() as stack:
+                        if self._settings_activation is not None:
+                            stack.enter_context(
+                                self._settings_activation(
+                                    validated, revision, secret_writes
+                                )
+                            )
+                        if cover_update is not None:
+                            stack.enter_context(cover_update)
+                        yield
+
                 return settings.write(
                     validated,
                     revision,
-                    cast("tuple[SecretWrite, ...]", secrets),
-                    live_update,
+                    secret_writes,
+                    activate(),
                 )
 
             return self.serialized(write)
@@ -476,6 +500,20 @@ class ReviewApplication:
             self._field_application.start()
         if self._preparation is not None:
             self._preparation.start()
+
+    def begin_drain(self) -> None:
+        """Stop admitting successor work while captured requests finish."""
+        self._updates.close()
+        if isinstance(self._field_application, ContinuousGuardedApplication):
+            self._field_application.close_admission()
+        if self._preparation is not None:
+            self._preparation.begin_drain()
+        if self._operations is not None:
+            self._operations.begin_drain()
+        if self._field_application is not None and not isinstance(
+            self._field_application, ContinuousGuardedApplication
+        ):
+            self._field_application.begin_drain()
 
     def stop(self) -> None:
         deadline = time.monotonic() + self._graceful_shutdown_seconds
@@ -1131,6 +1169,13 @@ def compose_review_application(
     operational_timer: StageTimer | None = None,
     cover_considerations: CoverConsiderationService | None = None,
     settings: OwnerSettingsOperations | None = None,
+    settings_activation: (
+        Callable[
+            [OwnerSettingsDocument, int, tuple[SecretWrite, ...]],
+            AbstractContextManager[None],
+        ]
+        | None
+    ) = None,
     first_boot: bool = False,
 ) -> ReviewApplication:
     """Compose every operation before the HTTP adapter is created."""
@@ -1191,6 +1236,7 @@ def compose_review_application(
         updates=updates,
         cover_considerations=cover_considerations,
         settings=settings,
+        settings_activation=settings_activation,
         first_boot=first_boot,
     )
     return application
