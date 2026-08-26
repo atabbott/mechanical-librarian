@@ -692,9 +692,14 @@ const SettingsEditor = ({
                                   const item = value.providers.at(index)
                                   if (item) {
                                     item.enabled = event.currentTarget.checked
-                                    if (!item.enabled) item.cover_enabled = false
-                                    if (!item.enabled && 'contact_email' in item)
-                                      item.contact_email = null
+                                    if (!item.enabled) {
+                                      item.cover_enabled = false
+                                      for (const library of value.libraries)
+                                        library.provider_connections =
+                                          library.provider_connections.filter(
+                                            (name) => name !== item.name,
+                                          )
+                                    }
                                   }
                                 })
                               }
@@ -733,9 +738,9 @@ const SettingsEditor = ({
                         </Row>
                       ) : (
                         <Row
-                          fieldId={provider.enabled ? secretId : undefined}
+                          fieldId={secretId}
                           error={fieldError(secretId)}
-                          group={!locked && provider.enabled}
+                          group={!locked}
                           title="API key"
                           description="Used to connect to this provider. Get it from your provider account."
                           effect={effect('providers')}
@@ -746,8 +751,6 @@ const SettingsEditor = ({
                               {view.secrets.find((item) => item.field_id === secretId)?.indicator ??
                                 'Not configured'}
                             </strong>
-                          ) : !provider.enabled ? (
-                            <strong>Enable this provider before adding a key.</strong>
                           ) : (
                             <Secret
                               fieldId={secretId}
@@ -860,7 +863,7 @@ const SettingsEditor = ({
                             ? library.provider_connections.join(', ')
                             : 'Target evidence only'}
                         </strong>
-                      ) : draft.providers.length ? (
+                      ) : draft.providers.some((provider) => provider.enabled) ? (
                         <fieldset
                           className="settings-choice"
                           id={controlId(`library.${library.name}.provider_connections`)}
@@ -869,30 +872,32 @@ const SettingsEditor = ({
                           )}
                         >
                           <legend>Providers for {library.display_name ?? library.name}</legend>
-                          {draft.providers.map((provider) => (
-                            <label key={provider.name}>
-                              <input
-                                type="checkbox"
-                                checked={library.provider_connections.includes(provider.name)}
-                                onChange={(event) =>
-                                  update((value) => {
-                                    const item = value.libraries.at(index)
-                                    if (!item) return
-                                    item.provider_connections = event.currentTarget.checked
-                                      ? [...item.provider_connections, provider.name].sort()
-                                      : item.provider_connections.filter(
-                                          (name) => name !== provider.name,
-                                        )
-                                  })
-                                }
-                              />
-                              {provider.name.replaceAll('_', ' ')}
-                            </label>
-                          ))}
+                          {draft.providers
+                            .filter((provider) => provider.enabled)
+                            .map((provider) => (
+                              <label key={provider.name}>
+                                <input
+                                  type="checkbox"
+                                  checked={library.provider_connections.includes(provider.name)}
+                                  onChange={(event) =>
+                                    update((value) => {
+                                      const item = value.libraries.at(index)
+                                      if (!item) return
+                                      item.provider_connections = event.currentTarget.checked
+                                        ? [...item.provider_connections, provider.name].sort()
+                                        : item.provider_connections.filter(
+                                            (name) => name !== provider.name,
+                                          )
+                                    })
+                                  }
+                                />
+                                {provider.name.replaceAll('_', ' ')}
+                              </label>
+                            ))}
                         </fieldset>
                       ) : (
                         <p className="settings-empty-associations">
-                          No metadata providers are configured.
+                          No enabled metadata providers are available to associate.
                         </p>
                       )}
                     </Row>

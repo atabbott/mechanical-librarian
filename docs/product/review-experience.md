@@ -434,6 +434,9 @@ pending/saved/failed/stale, secret add/replace/confirmed clear, and reconnect
 states are explicit. In file mode the page names
 `/data/config.json` and renders no covered edit affordance. Secret values never
 render; only `Configured · ····xxxx` or `Not configured` appears.
+Disabling a provider keeps its configured write-only value available to replace
+or clear, removes its library associations, and never restores those
+associations when the provider is enabled again.
 
 Copy must orient the owner, explain a real consequence or limitation, resolve
 ambiguity or status, or give a useful next or recovery action. Otherwise it is

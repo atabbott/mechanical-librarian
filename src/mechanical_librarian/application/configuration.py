@@ -173,7 +173,7 @@ class ProviderConnectionConfiguration:
                 raise ConfigurationError("provider connection is invalid")
         elif (
             self.secret_file is not None
-            or self.enabled != (self.contact_email is not None)
+            or (self.enabled and self.contact_email is None)
             or (
                 self.contact_email is not None
                 and (

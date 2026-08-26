@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { execFileSync } from 'node:child_process'
 
 import { fireEvent, screen, waitFor, within } from '@testing-library/dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -10,17 +11,17 @@ const source = readFileSync(
   resolve(process.cwd(), '../src/mechanical_librarian/interfaces/web/setup_frontend.py'),
   'utf8',
 )
-const rawScript = /SETUP_JS = r"""([\s\S]*?)"""/u.exec(source)?.[1]
 const css = /SETUP_CSS = """([\s\S]*?)"""/u.exec(source)?.[1]
 
-if (!rawScript || !css) throw new Error('setup assets are unavailable')
-const script = `const settingsVocabulary=${JSON.stringify(settingsVocabulary)};
-const settingsTextValid=(value,rule)=>Array.from(value).length>=rule.minimum&&Array.from(value).length<=rule.maximum;
-const settingsSecretValid=value=>settingsTextValid(value,settingsVocabulary.secret)&&new RegExp(settingsVocabulary.secret.printable_ascii,'u').test(value)&&!value.toLowerCase().startsWith(settingsVocabulary.secret.forbidden_prefix);
-const settingsOpenLibraryEmailValid=value=>settingsTextValid(value,settingsVocabulary.open_library_email)&&new RegExp(settingsVocabulary.open_library_email.pattern,'u').test(value);
-const settingsLocalLibraryNameValid=value=>settingsTextValid(value,settingsVocabulary.local_library_name)&&new RegExp(settingsVocabulary.local_library_name.pattern,'u').test(value);
-const settingsProviderKeyRequired=adapter=>settingsVocabulary.required_provider_keys.includes(adapter);
-${rawScript}`
+if (!css) throw new Error('setup assets are unavailable')
+const script = execFileSync(
+  resolve(process.cwd(), '../.venv/bin/python'),
+  [
+    '-c',
+    "import sys;sys.path.insert(0,'src');from mechanical_librarian.interfaces.web.setup_frontend import SETUP_JS;print(SETUP_JS,end='')",
+  ],
+  { cwd: resolve(process.cwd(), '..'), encoding: 'utf8' },
+)
 
 const response = (body: object, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -46,6 +47,11 @@ const requestUrl = (request: RequestInfo | URL) => {
   return request instanceof URL ? request.href : request.url
 }
 
+const jsonBody = (body: BodyInit | null | undefined): unknown => {
+  if (typeof body !== 'string') throw new Error('JSON request body missing')
+  return JSON.parse(body) as unknown
+}
+
 const runSetup = () => {
   window.eval(script)
 }
@@ -64,6 +70,73 @@ beforeEach(() => {
 })
 
 describe('shipped first-run setup script', () => {
+  it('creates first-owner access with confirmation and the issued nonce', async () => {
+    let claimed = false
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(request)
+      if (url === '/api/setup/claim')
+        return response({ claimed, nonce: 'n'.repeat(32), revision: 1 })
+      if (url === '/api/setup/state' && !claimed) return response({ error: 'unauthorized' }, 401)
+      if (url === '/api/setup/session' && init?.method === 'POST') {
+        expect(init.headers).toEqual(expect.objectContaining({ 'x-setup-nonce': 'n'.repeat(32) }))
+        expect(jsonBody(init.body)).toEqual({
+          confirmation: 'correct horse battery staple',
+          expected_revision: 1,
+          password: 'correct horse battery staple',
+        })
+        claimed = true
+        return response({ csrf_token: 'csrf-token' })
+      }
+      return response(setupState('providers'))
+    })
+    vi.stubGlobal('fetch', fetch)
+    runSetup()
+
+    expect(await screen.findByRole('heading', { name: 'Create your owner password' })).toBeVisible()
+    fireEvent.input(screen.getByLabelText('Owner password'), {
+      target: { value: 'correct horse battery staple' },
+    })
+    fireEvent.input(screen.getByLabelText('Confirm owner password'), {
+      target: { value: 'correct horse battery staple' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Create owner access' }))
+
+    expect(await screen.findByRole('heading', { name: 'Choose metadata providers' })).toBeVisible()
+  })
+
+  it('recovers a first-owner race by returning to established-owner sign in', async () => {
+    let claimReads = 0
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(request)
+      if (url === '/api/setup/state') return response({ error: 'unauthorized' }, 401)
+      if (url === '/api/setup/claim') {
+        claimReads += 1
+        return response({
+          claimed: claimReads > 1,
+          nonce: 'n'.repeat(32),
+          revision: claimReads > 1 ? 2 : 1,
+        })
+      }
+      if (url === '/api/setup/session' && init?.method === 'POST')
+        return response({ detail: { error: 'claimed' } }, 409)
+      throw new Error('unexpected setup request')
+    })
+    vi.stubGlobal('fetch', fetch)
+    runSetup()
+
+    fireEvent.input(await screen.findByLabelText('Owner password'), {
+      target: { value: 'correct horse battery staple' },
+    })
+    fireEvent.input(screen.getByLabelText('Confirm owner password'), {
+      target: { value: 'correct horse battery staple' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Create owner access' }))
+
+    expect(await screen.findByRole('heading', { name: 'Sign in to continue' })).toBeVisible()
+    expect(screen.queryByLabelText('Confirm owner password')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeVisible()
+  })
+
   it('removes unchecked provider credentials from the visual and accessibility trees', async () => {
     vi.stubGlobal(
       'fetch',
@@ -96,7 +169,7 @@ describe('shipped first-run setup script', () => {
       if (url.startsWith('/api/setup/libraries?'))
         return response({
           libraries: [
-            { library_id: 'books', media_kind: 'ebook', name: 'Books' },
+            { library_id: 'books', media_kind: 'book', name: 'Books' },
             { library_id: 'podcasts', media_kind: 'unsupported', name: 'Podcasts' },
           ],
         })
@@ -108,9 +181,10 @@ describe('shipped first-run setup script', () => {
             {
               connection: 'primary',
               library_id: 'books',
-              media_kind: 'ebook',
+              media_kind: 'book',
               mount: 'books',
-              name: 'valid_name',
+              name: 'books',
+              display_name: 'My Reading Shelf',
               provider_connections: [],
             },
           ],
@@ -137,29 +211,41 @@ describe('shipped first-run setup script', () => {
     const selected = screen.getByRole('checkbox', { name: 'Books' })
     fireEvent.click(selected)
     expect(selected).toBeChecked()
-    const localName = document.querySelector<HTMLInputElement>('input[name="name-books"]')
-    const unsupportedName = document.querySelector<HTMLInputElement>('input[name="name-podcasts"]')
-    const unsupportedKind = document.querySelector<HTMLSelectElement>(
-      'select[name="kind-podcasts"]',
-    )
-    if (!localName) throw new Error('supported local-name control missing')
-    expect(unsupportedName).toBeDisabled()
-    expect(unsupportedKind).toBeDisabled()
-    fireEvent.input(localName, { target: { value: 'Not valid' } })
+    expect(screen.getByText('1 unsupported podcast library excluded.')).toBeVisible()
+    expect(document.querySelector('input[name="name-books"]')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Change name' }))
+    const displayName = screen.getByRole('textbox', { name: 'Library name' })
+    expect(displayName).toHaveValue('Books')
+    fireEvent.input(displayName, { target: { value: ' My Reading Shelf' } })
     fireEvent.submit(form)
     await waitFor(() =>
       expect(screen.getByRole('alert')).toHaveTextContent(
-        'Use a local name of 1–64 lowercase letters, numbers, underscores, or hyphens, starting with a letter.',
+        'Use a library name from 1 to 256 characters without leading or trailing spaces.',
       ),
     )
-    expect(localName).toHaveFocus()
-    expect(localName).toBeInvalid()
+    expect(displayName).toHaveFocus()
     expect(libraryMutations).toBe(0)
 
-    fireEvent.input(localName, { target: { value: 'valid_name' } })
+    fireEvent.input(displayName, { target: { value: 'My Reading Shelf' } })
     fireEvent.submit(form)
     expect(await screen.findByRole('heading', { name: 'Check read-only mounts' })).toBeVisible()
     expect(libraryMutations).toBe(1)
+    const mutation = fetch.mock.calls.find(
+      ([request, init]) =>
+        requestUrl(request) === '/api/setup/libraries' && init?.method === 'POST',
+    )
+    expect(jsonBody(mutation?.[1]?.body)).toEqual({
+      expected_revision: 3,
+      libraries: [
+        {
+          display_name: 'My Reading Shelf',
+          library_id: 'books',
+          media_kind: 'book',
+          name: 'books',
+          provider_connections: [],
+        },
+      ],
+    })
   })
 
   it.each([
@@ -205,16 +291,16 @@ describe('shipped first-run setup script', () => {
         response(
           setupState('mounts', {
             libraries: [
-              { media_kind: 'ebook', name: 'books' },
-              { media_kind: 'ebook', name: 'history' },
-              { media_kind: 'ebook', name: 'essays' },
-              { media_kind: 'ebook', name: 'archive' },
+              { library_id: 'books-id', media_kind: 'book', name: 'Books' },
+              { library_id: 'history-id', media_kind: 'book', name: 'History' },
+              { library_id: 'essays-id', media_kind: 'book', name: 'Essays' },
+              { library_id: 'archive-id', media_kind: 'book', name: 'Archive' },
             ],
             mounts: [
               { library: 'books', state: 'matched' },
-              { library: 'history', state: 'unmatched' },
+              { library: 'history', state: 'missing' },
               { library: 'essays', state: 'ambiguous' },
-              { library: 'archive', state: 'unobservable' },
+              { library: 'archive', state: 'unavailable' },
             ],
           }),
         ),
@@ -224,28 +310,22 @@ describe('shipped first-run setup script', () => {
 
     const results = await screen.findByRole('status')
     expect(results).toHaveTextContent(
-      'books: A deployment-owned read-only mapping matches this service path.',
+      'Books: A deployment-owned read-only mapping matches this service path.',
     )
     expect(results).toHaveTextContent(
-      'history: No read-only mapping matches yet. Correct the Audiobookshelf service path and compare again; Mechanical Librarian never creates or changes mounts.',
+      'History: No read-only mapping matches yet. Correct the Audiobookshelf service path and compare again; Mechanical Librarian never creates or changes mounts.',
     )
     expect(results).toHaveTextContent(
-      'essays: More than one read-only mapping matches. Correct the service path so exactly one deployment-owned read-only mapping matches.',
+      'Essays: More than one read-only mapping matches. Correct the service path so exactly one deployment-owned read-only mapping matches.',
     )
     expect(results).toHaveTextContent(
-      'archive: No service path was available to compare. Enter the Audiobookshelf service path; Mechanical Librarian never creates or changes mounts.',
+      'Archive: No service path was available to compare. Enter the Audiobookshelf service path; Mechanical Librarian never creates or changes mounts.',
     )
     expect(within(results).queryByText(/^books: matched$/u)).toBeNull()
   })
 
   it.each([
-    [
-      'Your work is ready',
-      1,
-      false,
-      false,
-      'Open the workspace while preparation continues.',
-    ],
+    ['Your work is ready', 1, false, false, 'Open the workspace while preparation continues.'],
     [
       'Preparation needs attention',
       0,

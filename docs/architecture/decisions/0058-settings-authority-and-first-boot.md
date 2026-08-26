@@ -32,6 +32,11 @@ secret files. The project will not claim encryption at rest from an
 application-held key: a single-container key stored with `/data` would not
 protect a stolen volume.
 
+Disabling a provider is separate from clearing its credential or contact value.
+Disable retains the write-only value, removes every library association in the
+same save, and causes no provider egress. Re-enabling does not restore those
+associations; the owner chooses them again explicitly.
+
 The owner credential is an exception to generic secret clearing. An established
 owner password is changed only by an authenticated, CSRF-protected atomic
 replacement that records the new verifier and invalidates affected sessions; it

@@ -141,7 +141,7 @@ def test_maximum_bounded_document_fits_the_persistence_and_response_contract() -
         {
             "name": f"provider-{index:02d}",
             "adapter": "google_books",
-            "enabled": False,
+            "enabled": True,
             "cover_enabled": False,
         }
         for index in range(32)
@@ -473,9 +473,7 @@ def test_runtime_activation_refuses_missing_owner_verifier() -> None:
         _store().activate_runtime()
 
 
-def test_disabled_provider_credentials_are_removed_and_enabled_hardcover_is_required() -> (
-    None
-):
+def test_disabled_provider_credentials_are_retained_until_explicit_clear() -> None:
     store = _store()
     first = store.write(
         _document(2),
@@ -492,13 +490,61 @@ def test_disabled_provider_credentials_are_removed_and_enabled_hardcover_is_requ
     disabled["revision"] = 3
     disabled["providers"][0]["enabled"] = False
     disabled["providers"][0]["cover_enabled"] = False
+    disabled["libraries"][0]["provider_connections"] = ["open"]
     result = store.write(OwnerSettingsDocument.model_validate(disabled), 2, ())
     assert [item.field_id for item in result.secrets if item.configured] == [
+        "connection.primary.key",
+        "provider.books.key",
+    ]
+
+    disabled_replacement = result.document.model_dump()
+    disabled_replacement["revision"] = 4
+    replaced = store.write(
+        OwnerSettingsDocument.model_validate(disabled_replacement),
+        3,
+        (
+            SecretWrite(
+                field_id="provider.books.key",
+                operation="replace",
+                value="replacement-secret-5678",
+            ),
+        ),
+    )
+    assert (
+        next(
+            item.indicator
+            for item in replaced.secrets
+            if item.field_id == "provider.books.key"
+        )
+        == "Configured · ····5678"
+    )
+
+    reenabled = replaced.document.model_dump()
+    reenabled["revision"] = 5
+    reenabled["providers"][0]["enabled"] = True
+    reenabled["libraries"][0]["provider_connections"] = ["open"]
+    restored = store.write(OwnerSettingsDocument.model_validate(reenabled), 4, ())
+    assert restored.document.libraries[0].provider_connections == ["open"]
+
+    disabled_again = restored.document.model_dump()
+    disabled_again["revision"] = 6
+    disabled_again["providers"][0]["enabled"] = False
+    cleared = store.write(
+        OwnerSettingsDocument.model_validate(disabled_again),
+        5,
+        (SecretWrite(field_id="provider.books.key", operation="clear"),),
+    )
+    assert [item.field_id for item in cleared.secrets if item.configured] == [
         "connection.primary.key"
     ]
 
+
+def test_enabled_hardcover_requires_a_key() -> None:
+    store = _store()
+    result = store.read()
+
     hardcover = result.document.model_dump()
-    hardcover["revision"] = 4
+    hardcover["revision"] = 2
     hardcover["providers"] = [
         {
             "name": "hardcover",
@@ -515,11 +561,11 @@ def test_disabled_provider_credentials_are_removed_and_enabled_hardcover_is_requ
     )
     connection.commit()
     with pytest.raises(OwnerSettingsError, match="required secret"):
-        store.write(OwnerSettingsDocument.model_validate(hardcover), 3, ())
+        store.write(OwnerSettingsDocument.model_validate(hardcover), 1, ())
 
     stored = store.write(
         OwnerSettingsDocument.model_validate(hardcover),
-        3,
+        1,
         (
             SecretWrite(
                 field_id="provider.hardcover.key",
@@ -533,7 +579,16 @@ def test_disabled_provider_credentials_are_removed_and_enabled_hardcover_is_requ
         "connection.primary.key": "target-secret-1234",
         "provider.hardcover.key": "hardcover-secret-1234",
     }
-    assert stored.document.revision == 4
+    assert stored.document.revision == 2
+
+
+def test_document_rejects_association_to_a_disabled_provider() -> None:
+    value = _document().model_dump()
+    value["providers"][0]["enabled"] = False
+    value["providers"][0]["cover_enabled"] = False
+
+    with pytest.raises(ValidationError, match="references"):
+        OwnerSettingsDocument.model_validate(value)
 
 
 def test_store_rejects_unknown_or_duplicate_secret_writes_without_mutation() -> None:

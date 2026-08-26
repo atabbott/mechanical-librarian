@@ -424,14 +424,17 @@ an exact POST to the fixed GraphQL URL.
 In settings-store mode, the same egress boundary consumes credentials from the
 owner-only application database only while composing their named target or
 provider clients. Every connection requires a credential; enabled Hardcover
-requires one, enabled Google Books may omit one, and disabled providers retain
-none. The deploy-only review bootstrap and contained-reviewer profile path are
+requires one and enabled Google Books may omit one. A disabled store-managed
+provider may retain its write-only value, but no provider client or egress is
+constructed from it. The deploy-only review bootstrap and contained-reviewer profile path are
 never browser fields. Runtime activation prepares an isolated candidate before
 persistence; failure leaves the authoritative revision and admitting generation
 unchanged. After CAS commit, the new generation governs the next admitted unit
 while requests already admitted to the predecessor drain against it.
 
-Disabled providers cause no secret access, client construction, or egress.
+Disabled providers cause no client construction or egress. Disabling also
+removes their library associations; enabling them again does not recreate those
+associations.
 Unreferenced providers are never bound. Each of at most eight distinct
 checksum-valid ISBN-10/13 families selects one exact ISBN lane; one
 title-plus-complete-author work lane is also admitted when that complete input

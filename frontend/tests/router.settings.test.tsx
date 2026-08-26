@@ -13,7 +13,7 @@ import {
   settingsSecretValid,
   settingsTextValid,
 } from '../src/api/http'
-import type { SettingsView } from '../src/api/http'
+import type { SettingsView, SettingsWrite } from '../src/api/http'
 import { createHttp, renderRoute } from './fixtures'
 
 const document: SettingsView['document'] = {
@@ -189,6 +189,53 @@ describe('owner settings route', () => {
     )
     expect(screen.queryByDisplayValue('new-secret-abcd')).not.toBeInTheDocument()
     expect(await screen.findByText('Settings saved and in use.')).toBeVisible()
+  })
+
+  it('disables providers without clearing credentials and never restores associations', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    let savedRequest: SettingsWrite | undefined
+    http.getSettings = vi.fn(async () => view())
+    http.writeSettings = vi.fn(async (request: SettingsWrite) => {
+      savedRequest = request
+      return { ...view(), document: request.document }
+    })
+    renderRoute('/settings?group=providers', http)
+
+    const hardcover = await screen.findByRole('checkbox', {
+      name: 'Provider state Enable hardcover',
+    })
+    await user.click(hardcover)
+    expect(screen.getByText('Configured · ····abcd')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Replace hardcover API key' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Clear hardcover API key' })).toBeVisible()
+
+    const openLibrary = screen.getByRole('checkbox', {
+      name: 'Provider state Enable open-library',
+    })
+    await user.click(openLibrary)
+    expect(screen.getByRole('textbox', { name: 'Open Library contact email' })).toHaveValue(
+      'owner@example.invalid',
+    )
+
+    await user.click(hardcover)
+    await user.click(screen.getByRole('button', { name: /Libraries/ }))
+    expect(screen.getByRole('checkbox', { name: /^hardcover$/u })).not.toBeChecked()
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+
+    await waitFor(() => expect(http.writeSettings).toHaveBeenCalledOnce())
+    expect(savedRequest?.secrets).toEqual([])
+    expect(savedRequest?.document.libraries[0]?.provider_connections).toEqual([])
+    expect(savedRequest?.document.providers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          contact_email: 'owner@example.invalid',
+          enabled: false,
+          name: 'open-library',
+        }),
+        expect.objectContaining({ enabled: true, name: 'hardcover' }),
+      ]),
+    )
   })
 
   it('renders file authority without covered edit affordances in the DOM', async () => {

@@ -14,9 +14,10 @@
 
 - Add first-visitor owner-password setup and authenticated Settings for
   connections, providers, book libraries, limits, reviewer, server, and
-  appearance. Store-managed changes activate atomically for the next operation
-  on the same listener; file/deployment authority stays locked and secrets stay
-  write-only. (#745, #762, #763, #764)
+  appearance. Changes activate atomically on the same listener. Disabling a
+  provider retains its write-only value, removes its library associations, and
+  leaves reassociation explicit; file/deployment authority stays locked.
+  (#745, #762, #763, #764)
 
 - Restore readable per-work Evidence and History links from Library. Diagnostics
   retain exact Back state, show bounded semantic lineage and owner-language

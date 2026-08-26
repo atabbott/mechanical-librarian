@@ -62,7 +62,9 @@ Use `docker compose up --build` for a local installed-product qualification.
 `scripts/qualify_container_lifecycle.py --source-sha <exact-head>` repeats the
 head-bound build, synthetic owner-secret/TLS seeding, non-root read-only-root
 run, health probes, the container's own `HEALTHCHECK` verdict, bounded graceful
-termination and exact-current restart.
+termination and exact-current restart. The same isolated run drives an empty
+volume through first-owner access, fake Audiobookshelf discovery, mount proof,
+same-listener promotion, preparation progress and durable ordinary restart.
 Stop with `docker compose down`; do not add `-v` unless intentionally deleting
 the complete local application state. The public gate's `container-image` job
 runs `docker build` at every candidate revision, so a Dockerfile regression
