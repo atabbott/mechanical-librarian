@@ -12,7 +12,7 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -2165,11 +2165,15 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     (390, 844),
                     (320, 800),
                 )
+                color_schemes: tuple[Literal["light", "dark"], ...] = (
+                    "light",
+                    "dark",
+                )
                 page.goto(origin)
                 expect(
                     page.get_by_role("heading", name="Create your owner password")
                 ).to_be_visible()
-                for color in ("light", "dark"):
+                for color in color_schemes:
                     page.emulate_media(color_scheme=color)
                     for width, height in protected_viewports:
                         page.set_viewport_size({"width": width, "height": height})
@@ -2205,7 +2209,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                         )
                         != "none"
                     )
-                for color in ("light", "dark"):
+                for color in color_schemes:
                     page.emulate_media(color_scheme=color)
                     for width, height in protected_viewports:
                         page.set_viewport_size({"width": width, "height": height})
@@ -2265,7 +2269,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 expect(
                     page.get_by_label(re.compile(r"^a-very-long-library-name"))
                 ).to_have_count(0)
-                for color in ("light", "dark"):
+                for color in color_schemes:
                     page.emulate_media(color_scheme=color)
                     for width, height in protected_viewports:
                         page.set_viewport_size({"width": width, "height": height})
