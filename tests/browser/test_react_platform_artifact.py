@@ -767,6 +767,10 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                         - max(first_row_box["y"], 0)
                         >= 24
                     ), state
+                    first_time_box = first_row.locator("time").bounding_box()
+                    assert first_time_box is not None
+                    assert 0 <= first_time_box["y"], state
+                    assert first_time_box["y"] + first_time_box["height"] <= 844, state
                     assert filters.evaluate(
                         "node => node.scrollWidth > node.clientWidth"
                     ), state
