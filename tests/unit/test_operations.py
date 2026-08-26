@@ -30,7 +30,7 @@ from mechanical_librarian.domain.field_effect import (
     EffectConsent,
     FieldEffectPlan,
 )
-from mechanical_librarian.infrastructure.settings_authority import ReviewBootstrap
+from mechanical_librarian.infrastructure.first_boot import FirstBootMode
 
 
 def _plan() -> FieldEffectPlan:
@@ -83,15 +83,16 @@ def test_deployment_contract_names_the_composed_guarded_target() -> None:
 
 
 def test_container_entrypoint_initializes_only_absent_exact_current_stores() -> None:
-    bootstrap = ReviewBootstrap(
-        schema_version="review-bootstrap-v1",
-        canonical_origin="https://setup.invalid",
-        tls_certificate_file="/run/secrets/review.crt",
-        tls_private_key_file="/run/secrets/review.key",
-        setup_owner_verifier="$argon2id$synthetic-bootstrap-verifier",
-    )
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
+
+        def interrupt_before_kickoff(*_args: object, **_kwargs: object) -> None:
+            repository = container.open_repository(root / "application.sqlite3")
+            try:
+                repository.setup_state_store().initialize()
+            finally:
+                repository.close()
+
         with (
             patch.object(container, "DATA", root),
             patch.object(container, "CONFIG", root / "config.json"),
@@ -99,25 +100,33 @@ def test_container_entrypoint_initializes_only_absent_exact_current_stores() -> 
             patch.object(container, "CATALOGUE", root / "catalogue.sqlite3"),
             patch.object(container, "ARTIFACTS", root / "artifacts"),
             patch.object(
-                container, "load_review_bootstrap", return_value=bootstrap
-            ) as load_bootstrap,
-            patch.object(container, "open_catalogue") as open_cat,
-            patch.object(container, "run_setup_server") as setup,
-            patch.object(container, "run_review_server") as serve,
+                container,
+                "run_review_server",
+                side_effect=interrupt_before_kickoff,
+            ) as serve,
         ):
             container.main()
-        load_bootstrap.assert_called_once_with(
-            Path("/run/secrets/review-bootstrap.json")
-        )
-        setup.assert_called_once_with(
-            bootstrap,
-            root / "application.sqlite3",
-            "0.0.0.0",
-            8443,
-            initialize=True,
-        )
-        open_cat.assert_not_called()
-        serve.assert_not_called()
+            serve.assert_called_once_with(
+                root / "config.json",
+                root / "application.sqlite3",
+                root / "catalogue.sqlite3",
+                root / "artifacts",
+                "0.0.0.0",
+                8443,
+                first_boot_mode=FirstBootMode.INITIALIZE_SETUP,
+            )
+            assert {value.name for value in root.iterdir()} == {"application.sqlite3"}
+            serve.reset_mock(side_effect=True)
+            container.main()
+            serve.assert_called_once_with(
+                root / "config.json",
+                root / "application.sqlite3",
+                root / "catalogue.sqlite3",
+                root / "artifacts",
+                "0.0.0.0",
+                8443,
+                first_boot_mode=FirstBootMode.RESUME_SETUP,
+            )
         assert root.stat().st_mode & 0o777 == 0o700
 
 

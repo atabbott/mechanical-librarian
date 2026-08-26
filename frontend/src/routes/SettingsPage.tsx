@@ -32,7 +32,7 @@ interface FieldIssue {
 
 const groupById: Readonly<Record<Group, { id: Group; label: string; description: string }>> = {
   connection: { id: 'connection', label: 'Connection', description: 'Your Audiobookshelf service' },
-  providers: { id: 'providers', label: 'Providers', description: 'Metadata evidence sources' },
+  providers: { id: 'providers', label: 'Providers', description: 'Metadata sources' },
   libraries: {
     id: 'libraries',
     label: 'Libraries',
@@ -41,14 +41,14 @@ const groupById: Readonly<Record<Group, { id: Group; label: string; description:
   automation: {
     id: 'automation',
     label: 'Automation & limits',
-    description: 'Bounded work and responses',
+    description: 'Background work and limits',
   },
-  reviewer: { id: 'reviewer', label: 'Reviewer', description: 'Contained review posture' },
+  reviewer: { id: 'reviewer', label: 'Reviewer', description: 'AI reviewer' },
   server: { id: 'server', label: 'Server', description: 'Sessions, polling and shutdown' },
   appearance: {
     id: 'appearance',
     label: 'Appearance',
-    description: 'Accessible motion preference',
+    description: 'Motion preferences',
   },
 }
 const groups = Object.values(groupById)
@@ -57,11 +57,7 @@ const isGroup = (value: string): value is Group => Object.hasOwn(groupById, valu
 const clone = (value: SettingsView['document'] | Document): Document =>
   structuredClone(value) as Document
 const effectCopy = (effect: string) =>
-  effect === 'applied_live'
-    ? 'Applies immediately'
-    : effect === 'deploy_managed'
-      ? 'Deployment managed'
-      : 'Applies on restart'
+  effect === 'deploy_managed' ? 'Managed by your deployment' : null
 
 const validationErrors = (
   document: Document,
@@ -209,7 +205,7 @@ const Row = ({
 }) => (
   <div className="settings-field-row">
     <div>
-      <span className="settings-effect">{effectCopy(effect)}</span>
+      {effectCopy(effect) ? <span className="settings-effect">{effectCopy(effect)}</span> : null}
       {fieldId && !locked && !group ? (
         <label htmlFor={controlId(fieldId)}>
           <strong>{title}</strong>
@@ -270,7 +266,7 @@ const Secret = ({
         <strong>{presence.indicator ?? 'Configured'}</strong>
         {confirmingClear ? (
           <div role="alert" className="settings-clear-confirmation">
-            <span>Confirm removal. This integration may stop working after restart.</span>
+            <span>Confirm removal. This integration will not be used for later work.</span>
             <button
               type="button"
               onClick={() => {
@@ -364,7 +360,7 @@ export default function SettingsPage() {
     return (
       <section className="settings-state" aria-busy="true" data-route-focus tabIndex={-1}>
         <h1>Loading settings…</h1>
-        <p>Reading the owner-authoritative configuration.</p>
+        <p>Reading saved settings.</p>
       </section>
     )
   if (query.isError && query.data === undefined)
@@ -381,13 +377,13 @@ export default function SettingsPage() {
     <>
       {staleRecovery ? (
         <p className="settings-stale-recovery" role="alert" tabIndex={-1} ref={staleRecoveryTarget}>
-          Settings changed elsewhere. The authoritative revision replaced this draft; review it
+          Settings changed elsewhere. The latest saved values replaced this draft; review them
           before saving again.
         </p>
       ) : null}
       {saved ? (
         <p className="settings-saved" role="status">
-          Saved. Server-authoritative settings are current.
+          Settings saved and in use.
         </p>
       ) : null}
       {reconciliation !== 'idle' ? (
@@ -398,19 +394,19 @@ export default function SettingsPage() {
           ref={reconciliationTarget}
         >
           {reconciliation === 'checking' ? (
-            <p>Save outcome is uncertain. Reloading authoritative Settings before another save.</p>
+            <p>Save outcome is uncertain. Reloading saved settings before another save.</p>
           ) : reconciliation === 'failed' ? (
             <>
               <p>
-                Save outcome is uncertain and Settings could not be reloaded. Do not repeat the save
-                until the authoritative state is available.
+                Save outcome is uncertain and Settings could not be reloaded. Do not save again
+                until the current settings are available.
               </p>
               <button type="button" onClick={() => void reconcileUncertainSave()}>
-                Retry authoritative reload
+                Retry settings reload
               </button>
             </>
           ) : (
-            <p>Authoritative Settings reloaded. Review the current values before saving again.</p>
+            <p>Current settings reloaded. Review the values before saving again.</p>
           )}
         </div>
       ) : null}
@@ -491,9 +487,12 @@ const SettingsEditor = ({
   const visibleLibraries = draft.libraries
     .map((library, index) => ({ library, index }))
     .slice(libraryPage * 20, libraryPage * 20 + 20)
+  const availableProviderCapabilities = view.provider_capabilities.filter(
+    (capability) => !draft.providers.some((provider) => provider.adapter === capability.adapter),
+  )
   const locked = view.authority === 'file'
   const effect = (fieldId: string) =>
-    view.fields.find((item) => item.field_id === fieldId)?.apply_effect ?? 'restart_required'
+    view.fields.find((item) => item.field_id === fieldId)?.apply_effect ?? 'applied_live'
   const update = (change: (value: Document) => void) => {
     const next = clone(draft)
     change(next)
@@ -508,33 +507,58 @@ const SettingsEditor = ({
     setStatus('idle')
   }
   const currentGroup = groupById[active]
+  const addProvider = (capability: SettingsView['provider_capabilities'][number]) => {
+    setDraft((current) => {
+      if (
+        current.providers.some(
+          (provider) =>
+            provider.adapter === capability.adapter || provider.name === capability.name,
+        )
+      )
+        return current
+      const value = clone(current)
+      const provider =
+        capability.adapter === 'open_library'
+          ? {
+              adapter: 'open_library' as const,
+              contact_email: null,
+              cover_enabled: false,
+              enabled: false,
+              name: capability.name,
+            }
+          : capability.adapter === 'hardcover'
+            ? {
+                adapter: 'hardcover' as const,
+                cover_enabled: false,
+                enabled: false,
+                name: capability.name,
+              }
+            : {
+                adapter: 'google_books' as const,
+                cover_enabled: false as const,
+                enabled: false,
+                name: capability.name,
+              }
+      value.providers.push(provider)
+      value.providers.sort((left, right) => left.name.localeCompare(right.name))
+      return value
+    })
+    setStatus('idle')
+  }
 
   return (
     <section className="settings-route" data-route-focus tabIndex={-1}>
       <header className="settings-heading">
         <div>
           <h1>Settings</h1>
-          <p>Owner-managed configuration, with every consequence named before it is saved.</p>
         </div>
-        <span>{locked ? 'File authority' : 'In-app authority'}</span>
       </header>
       {locked ? (
         <section className="settings-file-banner" role="status">
           <strong>Managed by /data/config.json</strong>
           <p>
-            These values are read-only here. Use the supported Import and retire file management
-            flow when it becomes available; do not delete the file manually.
+            These values are read-only while this deployment is managed by its configuration file.
           </p>
-        </section>
-      ) : null}
-      {view.pending_restart.length ? (
-        <section className="settings-restart" aria-label="Pending restart settings">
-          <strong>Restart required for saved changes</strong>
-          <ul>
-            {view.pending_restart.map((item) => (
-              <li key={item}>{item.replaceAll('_', ' ').replaceAll('.', ' · ')}</li>
-            ))}
-          </ul>
         </section>
       ) : null}
       <label className="settings-mobile-group">
@@ -557,7 +581,6 @@ const SettingsEditor = ({
         <aside className="settings-sidebar" aria-label="Settings groups">
           <header>
             <strong>Configuration</strong>
-            <small>{String(groups.length)} focused groups</small>
           </header>
           <nav>
             {groups.map((group) => (
@@ -617,8 +640,8 @@ const SettingsEditor = ({
                       error={fieldError(`connection.${connection.name}.key`)}
                       group={!locked}
                       title="Access key"
-                      description="Write-only target authority. It is never returned to this page."
-                      effect="restart_required"
+                      description="Used to connect to Audiobookshelf. It is never shown again on this page."
+                      effect={effect('connections')}
                       locked={locked}
                     >
                       {locked ? (
@@ -644,13 +667,17 @@ const SettingsEditor = ({
                 ))
               : null}
             {active === 'providers' ? (
-              draft.providers.length === 0 ? (
-                <div className="settings-empty">
-                  <h3>No metadata providers configured</h3>
-                  <p>Target evidence remains available.</p>
-                </div>
-              ) : (
-                draft.providers.map((provider, index) => {
+              <>
+                {draft.providers.length === 0 ? (
+                  <div className="settings-empty">
+                    <h3>Choose metadata providers</h3>
+                    <p>
+                      More configured sources generally give review work better evidence. They
+                      remain optional.
+                    </p>
+                  </div>
+                ) : null}
+                {draft.providers.map((provider, index) => {
                   const secretId = 'provider.' + provider.name + '.key'
                   return (
                     <div className="settings-record" key={provider.name}>
@@ -679,9 +706,14 @@ const SettingsEditor = ({
                                   const item = value.providers.at(index)
                                   if (item) {
                                     item.enabled = event.currentTarget.checked
-                                    if (!item.enabled) item.cover_enabled = false
-                                    if (!item.enabled && 'contact_email' in item)
-                                      item.contact_email = null
+                                    if (!item.enabled) {
+                                      item.cover_enabled = false
+                                      for (const library of value.libraries)
+                                        library.provider_connections =
+                                          library.provider_connections.filter(
+                                            (name) => name !== item.name,
+                                          )
+                                    }
                                   }
                                 })
                               }
@@ -720,12 +752,12 @@ const SettingsEditor = ({
                         </Row>
                       ) : (
                         <Row
-                          fieldId={provider.enabled ? secretId : undefined}
+                          fieldId={secretId}
                           error={fieldError(secretId)}
-                          group={!locked && provider.enabled}
+                          group={!locked}
                           title="API key"
-                          description="Write-only provider authority. Acquire it from the provider's own account."
-                          effect="restart_required"
+                          description="Used to connect to this provider. Get it from your provider account."
+                          effect={effect('providers')}
                           locked={locked}
                         >
                           {locked ? (
@@ -733,8 +765,6 @@ const SettingsEditor = ({
                               {view.secrets.find((item) => item.field_id === secretId)?.indicator ??
                                 'Not configured'}
                             </strong>
-                          ) : !provider.enabled ? (
-                            <strong>Enable this provider before adding a key.</strong>
                           ) : (
                             <Secret
                               fieldId={secretId}
@@ -761,14 +791,43 @@ const SettingsEditor = ({
                       )}
                     </div>
                   )
-                })
-              )
+                })}
+                {availableProviderCapabilities.length ? (
+                  <section
+                    className="settings-capabilities"
+                    aria-label="Available metadata providers"
+                  >
+                    <h3>Add a metadata provider</h3>
+                    <p>
+                      Each provider is optional. Add it here, then enable it when its details are
+                      ready.
+                    </p>
+                    <div>
+                      {availableProviderCapabilities.map((capability) => (
+                        <button
+                          type="button"
+                          key={capability.name}
+                          disabled={locked}
+                          onClick={() => addProvider(capability)}
+                        >
+                          Add {capability.label}
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
+              </>
             ) : null}
             {active === 'libraries' ? (
               <>
                 {visibleLibraries.map(({ library, index }) => (
                   <div className="settings-record" key={library.name}>
-                    <h3>{library.name.replaceAll('_', ' ')}</h3>
+                    <h3>{library.display_name ?? library.name}</h3>
+                    <p className="settings-record-meta">
+                      Local identifier: <code>{library.name}</code>
+                      <span aria-hidden="true"> · </span>
+                      Audiobookshelf identifier: <code>{library.library_id}</code>
+                    </p>
                     <Row
                       fieldId={`library.${library.name}.library_id`}
                       error={fieldError(`library.${library.name}.library_id`)}
@@ -818,7 +877,7 @@ const SettingsEditor = ({
                             ? library.provider_connections.join(', ')
                             : 'Target evidence only'}
                         </strong>
-                      ) : (
+                      ) : draft.providers.some((provider) => provider.enabled) ? (
                         <fieldset
                           className="settings-choice"
                           id={controlId(`library.${library.name}.provider_connections`)}
@@ -826,28 +885,34 @@ const SettingsEditor = ({
                             `library.${library.name}.provider_connections`,
                           )}
                         >
-                          <legend>Providers for {library.name}</legend>
-                          {draft.providers.map((provider) => (
-                            <label key={provider.name}>
-                              <input
-                                type="checkbox"
-                                checked={library.provider_connections.includes(provider.name)}
-                                onChange={(event) =>
-                                  update((value) => {
-                                    const item = value.libraries.at(index)
-                                    if (!item) return
-                                    item.provider_connections = event.currentTarget.checked
-                                      ? [...item.provider_connections, provider.name].sort()
-                                      : item.provider_connections.filter(
-                                          (name) => name !== provider.name,
-                                        )
-                                  })
-                                }
-                              />
-                              {provider.name.replaceAll('_', ' ')}
-                            </label>
-                          ))}
+                          <legend>Providers for {library.display_name ?? library.name}</legend>
+                          {draft.providers
+                            .filter((provider) => provider.enabled)
+                            .map((provider) => (
+                              <label key={provider.name}>
+                                <input
+                                  type="checkbox"
+                                  checked={library.provider_connections.includes(provider.name)}
+                                  onChange={(event) =>
+                                    update((value) => {
+                                      const item = value.libraries.at(index)
+                                      if (!item) return
+                                      item.provider_connections = event.currentTarget.checked
+                                        ? [...item.provider_connections, provider.name].sort()
+                                        : item.provider_connections.filter(
+                                            (name) => name !== provider.name,
+                                          )
+                                    })
+                                  }
+                                />
+                                {provider.name.replaceAll('_', ' ')}
+                              </label>
+                            ))}
                         </fieldset>
+                      ) : (
+                        <p className="settings-empty-associations">
+                          No enabled metadata providers are available to associate.
+                        </p>
                       )}
                     </Row>
                   </div>
@@ -919,7 +984,7 @@ const SettingsEditor = ({
                       fieldId={`limits.${key}`}
                       error={fieldError(`limits.${key}`)}
                       title={label}
-                      description={`From 1,024 to ${maximum.toLocaleString()} bytes; applies after restart.`}
+                      description={`From 1,024 to ${maximum.toLocaleString()} bytes; applies to the next operation.`}
                       effect={effect('limits')}
                       locked={locked}
                     >
@@ -973,8 +1038,8 @@ const SettingsEditor = ({
             {active === 'reviewer' ? (
               <Row
                 fieldId="server.reviewer_enabled"
-                title="Contained reviewer"
-                description="The credential and private profile path remain deployment-side and never enter the browser."
+                title="AI reviewer"
+                description="The sign-in details and private profile stay on the server and never enter the browser."
                 effect={effect('server.reviewer_enabled')}
                 locked={locked}
               >
@@ -1011,7 +1076,7 @@ const SettingsEditor = ({
                     fieldId={`server.${key}`}
                     error={fieldError(`server.${key}`)}
                     title={label}
-                    description="A bounded server behavior applied when the process next starts."
+                    description="Controls the next applicable server operation."
                     effect={effect('server.' + key)}
                     locked={locked}
                   >
@@ -1043,7 +1108,7 @@ const SettingsEditor = ({
                 <Row
                   fieldId="server.diagnostic_timings_enabled"
                   title="Diagnostic timings"
-                  description="Record bounded stage timings for support diagnostics; values apply after restart."
+                  description="Record stage timings for support diagnostics."
                   effect={effect('server.diagnostic_timings_enabled')}
                   locked={locked}
                 >
@@ -1123,26 +1188,29 @@ const SettingsEditor = ({
         </div>
       </div>
       {!locked ? (
-        <footer className="settings-save-tray">
-          <p
-            ref={statusTarget}
-            tabIndex={-1}
-            role={
-              status === 'failed' || status === 'uncertain' || errors.length ? 'alert' : 'status'
-            }
-            aria-live="polite"
-          >
-            {mutation.isPending
-              ? 'Saving settings…'
-              : status === 'saved'
-                ? 'Saved. Server-authoritative settings are current.'
-                : status === 'uncertain'
-                  ? 'Save outcome uncertain. Waiting for authoritative Settings.'
-                  : status === 'failed'
-                    ? 'The server rejected these values. Nothing was saved.'
-                    : (errors[0]?.message ??
-                      (changed ? 'Unsaved settings changes.' : 'Settings match the server.'))}
-          </p>
+        <footer
+          className={`settings-save-tray${!changed && status === 'idle' && !errors.length ? ' quiet' : ''}`}
+        >
+          {changed || status !== 'idle' || errors.length ? (
+            <p
+              ref={statusTarget}
+              tabIndex={-1}
+              role={
+                status === 'failed' || status === 'uncertain' || errors.length ? 'alert' : 'status'
+              }
+              aria-live="polite"
+            >
+              {mutation.isPending
+                ? 'Saving settings…'
+                : status === 'saved'
+                  ? 'Settings saved and in use.'
+                  : status === 'uncertain'
+                    ? 'Save outcome uncertain. Waiting for current settings.'
+                    : status === 'failed'
+                      ? 'The server rejected these values. Nothing was saved.'
+                      : (errors[0]?.message ?? (changed ? 'Unsaved settings changes.' : ''))}
+            </p>
+          ) : null}
           <button
             type="button"
             disabled={!changed || mutation.isPending || saveBlocked || errors.length > 0}

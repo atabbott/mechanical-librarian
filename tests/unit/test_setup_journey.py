@@ -164,6 +164,85 @@ def test_library_selection_rejects_duplicate_canonical_local_names() -> None:
     assert store.read(_BOOTSTRAP) == state
 
 
+def test_library_selection_preserves_discovered_name_and_owner_override() -> None:
+    _connection, store = _store()
+    state = _connected(store)
+    journey = _journey(
+        store,
+        (
+            SetupLibraryCandidate(
+                library_id="one",
+                name="Ebooks & Audiobooks: Collected Editions",
+                media_kind="book",
+            ),
+            SetupLibraryCandidate(
+                library_id="two", name="Second Shelf", media_kind="book"
+            ),
+        ),
+    )
+    state = journey.providers(state.revision, [], {})
+
+    state = journey.libraries(
+        state.revision,
+        [
+            LibrarySettings(
+                name="books",
+                connection="primary",
+                library_id="one",
+                media_kind="book",
+            ),
+            LibrarySettings(
+                name="personal",
+                display_name="My Reading Shelf",
+                connection="primary",
+                library_id="two",
+                media_kind="book",
+            ),
+        ],
+    )
+
+    assert [library.display_name for library in state.libraries] == [
+        "Ebooks & Audiobooks: Collected Editions",
+        "My Reading Shelf",
+    ]
+
+
+def test_colliding_discovered_names_keep_unique_stable_names_and_exact_labels() -> None:
+    _connection, store = _store()
+    state = _connected(store)
+    journey = _journey(
+        store,
+        (
+            SetupLibraryCandidate(library_id="one", name="Books", media_kind="book"),
+            SetupLibraryCandidate(library_id="two", name="Books!", media_kind="book"),
+        ),
+    )
+    state = journey.providers(state.revision, [], {})
+
+    state = journey.libraries(
+        state.revision,
+        [
+            LibrarySettings(
+                name="books",
+                connection="primary",
+                library_id="one",
+                media_kind="book",
+            ),
+            LibrarySettings(
+                name="books-2",
+                connection="primary",
+                library_id="two",
+                media_kind="book",
+            ),
+        ],
+    )
+
+    assert [(library.name, library.display_name) for library in state.libraries] == [
+        ("books", "Books"),
+        ("books-2", "Books!"),
+    ]
+
+
 def test_library_discovery_failure_is_retryable_and_records_nothing() -> None:
     _connection, store = _store()
     state = _connected(store)
@@ -183,9 +262,7 @@ def test_library_discovery_failure_is_retryable_and_records_nothing() -> None:
     assert store.read(_BOOTSTRAP) == state
 
 
-def test_mount_comparison_records_matched_ambiguous_unmatched_and_unobservable() -> (
-    None
-):
+def test_mount_comparison_records_matched_ambiguous_missing_and_unavailable() -> None:
     _connection, store = _store()
     state = _connected(store)
     candidates = tuple(
@@ -205,7 +282,7 @@ def test_mount_comparison_records_matched_ambiguous_unmatched_and_unobservable()
                 name=name,
                 connection="primary",
                 library_id=name,
-                media_kind="audiobook" if name == "audio" else "ebook",
+                media_kind="book",
             )
             for name in ("matched", "ambiguous", "unmatched", "audio")
         ],
@@ -223,9 +300,9 @@ def test_mount_comparison_records_matched_ambiguous_unmatched_and_unobservable()
 
     assert {value.library: value.state for value in state.mounts} == {
         "ambiguous": "ambiguous",
-        "audio": "unobservable",
+        "audio": "unavailable",
         "matched": "matched",
-        "unmatched": "unmatched",
+        "unmatched": "missing",
     }
     assert state.next_step() == "mounts"
     assert "mounts" not in state.completed_steps
@@ -233,6 +310,135 @@ def test_mount_comparison_records_matched_ambiguous_unmatched_and_unobservable()
         next(value for value in state.libraries if value.name == "matched").mount
         == "books"
     )
+
+
+def test_mount_retest_uses_discovered_service_path_without_browser_input() -> None:
+    _connection, store = _store()
+    state = _connected(store)
+    journey = _journey(
+        store,
+        (
+            SetupLibraryCandidate(
+                library_id="books",
+                name="Books",
+                media_kind="book",
+                service_paths=("/service/books",),
+            ),
+        ),
+        {"/service/books": ("books",)},
+    )
+    state = journey.providers(state.revision, [], {})
+    state = journey.libraries(
+        state.revision,
+        [
+            LibrarySettings(
+                name="books",
+                connection="primary",
+                library_id="books",
+                media_kind="book",
+            )
+        ],
+    )
+    state = journey.mounts(state.revision, {"books": None})
+    assert state.mounts[0].state == "matched"
+    assert state.libraries[0].mount == "books"
+
+
+@pytest.mark.parametrize(
+    ("service_paths", "mounts", "expected"),
+    (
+        (
+            ("/service/one", "/service/missing"),
+            {"/service/one": ("books",)},
+            "missing",
+        ),
+        (
+            ("/service/one", "/service/two"),
+            {"/service/one": ("books",), "/service/two": ("other",)},
+            "ambiguous",
+        ),
+        (
+            ("/service/one", "/service/ambiguous"),
+            {
+                "/service/one": ("books",),
+                "/service/ambiguous": ("books", "other"),
+            },
+            "ambiguous",
+        ),
+    ),
+    ids=("missing-folder", "mixed-mounts", "ambiguous-folder"),
+)
+def test_every_discovered_service_path_must_resolve_to_one_consistent_mount(
+    service_paths: tuple[str, ...],
+    mounts: dict[str, tuple[str, ...]],
+    expected: str,
+) -> None:
+    _connection, store = _store()
+    state = _connected(store)
+    journey = _journey(
+        store,
+        (
+            SetupLibraryCandidate(
+                library_id="books",
+                name="Books",
+                media_kind="book",
+                service_paths=service_paths,
+            ),
+        ),
+        mounts,
+    )
+    state = journey.providers(state.revision, [], {})
+    state = journey.libraries(
+        state.revision,
+        [
+            LibrarySettings(
+                name="books",
+                connection="primary",
+                library_id="books",
+                media_kind="book",
+            )
+        ],
+    )
+
+    state = journey.mounts(state.revision, {"books": None})
+
+    assert state.mounts[0].state == expected
+    assert state.libraries[0].mount is None
+    assert state.next_step() == "mounts"
+
+
+def test_every_discovered_service_path_may_resolve_to_the_same_mount() -> None:
+    _connection, store = _store()
+    state = _connected(store)
+    journey = _journey(
+        store,
+        (
+            SetupLibraryCandidate(
+                library_id="books",
+                name="Books",
+                media_kind="book",
+                service_paths=("/service/one", "/service/two"),
+            ),
+        ),
+        {"/service/one": ("books",), "/service/two": ("books",)},
+    )
+    state = journey.providers(state.revision, [], {})
+    state = journey.libraries(
+        state.revision,
+        [
+            LibrarySettings(
+                name="books",
+                connection="primary",
+                library_id="books",
+                media_kind="book",
+            )
+        ],
+    )
+
+    state = journey.mounts(state.revision, {"books": None})
+
+    assert state.mounts[0].state == "matched"
+    assert state.libraries[0].mount == "books"
 
 
 def test_change_removes_dependent_answers_and_only_their_secrets() -> None:
@@ -292,7 +498,7 @@ def test_kickoff_atomically_promotes_and_preserves_connection_secret() -> None:
 
     document = connection.execute("SELECT document FROM owner_settings").fetchone()[0]
     assert '"schema_version":"owner-settings-v1"' in document
-    assert '"pending_restart":["setup_complete"]' in document
+    assert '"pending_restart":[]' in document
     assert connection.execute(
         "SELECT field_id,value FROM owner_setting_secrets ORDER BY field_id"
     ).fetchall() == [
@@ -306,7 +512,8 @@ def test_kickoff_atomically_promotes_and_preserves_connection_secret() -> None:
             "SELECT field_id,value FROM owner_setting_secrets ORDER BY field_id"
         ).fetchall(),
     )
-    journey.kick_off(state.revision)
+    with pytest.raises(SetupJourneyError, match="stale"):
+        journey.kick_off(state.revision)
     after = (
         connection.execute("SELECT revision,document FROM owner_settings").fetchall(),
         connection.execute(

@@ -13,6 +13,7 @@ from mechanical_librarian.domain.owner_settings import (
     SecretWrite,
     SettingsView,
     file_field_metadata,
+    provider_capabilities,
     secret_presence,
 )
 
@@ -60,7 +61,7 @@ class FileOwnerSettingsRepository:
             document=self._document,
             fields=file_field_metadata(self._document),
             secrets=self._secrets,
-            pending_restart=(),
+            provider_capabilities=provider_capabilities(self._document),
             authority="file",
             managed_path="/data/config.json",
         )
@@ -153,7 +154,7 @@ def file_settings_projection(
             )
             for name in sorted(document.secret_fields())
         ),
-        pending_restart=(),
+        provider_capabilities=provider_capabilities(document),
         authority="file",
         managed_path="/data/config.json",
     )

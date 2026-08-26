@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Literal, Protocol
 
 from mechanical_librarian.domain.owner_settings import LibrarySettings, ProviderSettings
@@ -52,12 +52,16 @@ class SetupJourneyOperation:
         repository: SetupJourneyRepository,
         bootstrap_verifier: str,
         discover_libraries: SetupLibraryDiscovery,
-        mount_names: dict[str, tuple[str, ...]],
+        mount_names: dict[str, tuple[str, ...]] | Callable[[str], tuple[str, ...]],
     ) -> None:
         self._repository = repository
         self._bootstrap_verifier = bootstrap_verifier
         self._discover_libraries = discover_libraries
-        self._mount_names = mount_names
+        self._mount_names = (
+            (lambda path: mount_names.get(path, ()))
+            if isinstance(mount_names, dict)
+            else mount_names
+        )
 
     def providers(
         self,
@@ -81,7 +85,9 @@ class SetupJourneyOperation:
         return self._write(successor, current.revision, values)
 
     def discover(self, expected_revision: int) -> tuple[SetupLibraryCandidate, ...]:
-        current = self._current(expected_revision, "libraries")
+        current = self._current(expected_revision)
+        if current.next_step() not in {"libraries", "mounts"}:
+            raise SetupJourneyError("stale")
         try:
             return self._discover_libraries(current)
         except SetupJourneyError:
@@ -129,7 +135,17 @@ class SetupJourneyOperation:
             )
         ):
             raise SetupJourneyError("invalid_libraries")
-        canonical = sorted(libraries, key=lambda value: value.name)
+        canonical = sorted(
+            (
+                value
+                if value.display_name is not None
+                else value.model_copy(
+                    update={"display_name": available[value.library_id].name}
+                )
+                for value in libraries
+            ),
+            key=lambda value: value.name,
+        )
         successor = SetupStateDocument.model_validate(
             {
                 **current.model_dump(),
@@ -153,25 +169,34 @@ class SetupJourneyOperation:
             raise SetupJourneyError("invalid_mounts")
         libraries: list[LibrarySettings] = []
         results: list[SetupMountResult] = []
+        discovered = {
+            value.library_id: value for value in self._discover_libraries(current)
+        }
         for library in current.libraries:
-            service_path = service_paths[library.name]
-            matches = (
-                () if service_path is None else self._mount_names.get(service_path, ())
+            supplied = service_paths[library.name]
+            evidence = discovered.get(library.library_id)
+            paths = (
+                (supplied,)
+                if supplied is not None
+                else ()
+                if evidence is None
+                else evidence.service_paths
             )
-            state: Literal["matched", "ambiguous", "unmatched", "unobservable"] = (
-                "unobservable"
-                if service_path is None
-                else "matched"
-                if len(matches) == 1
+            path_matches = tuple(
+                tuple(sorted(set(self._mount_names(path)))) for path in paths
+            )
+            state: Literal["matched", "ambiguous", "missing", "unavailable"] = (
+                "unavailable"
+                if not paths
+                else "missing"
+                if any(not matches for matches in path_matches)
                 else "ambiguous"
-                if len(matches) > 1
-                else "unmatched"
+                if any(len(matches) > 1 for matches in path_matches)
+                or len({matches[0] for matches in path_matches}) > 1
+                else "matched"
             )
-            libraries.append(
-                library.model_copy(
-                    update={"mount": matches[0] if state == "matched" else None}
-                )
-            )
+            mount = path_matches[0][0] if state == "matched" else None
+            libraries.append(library.model_copy(update={"mount": mount}))
             results.append(SetupMountResult(library=library.name, state=state))
         successor = SetupStateDocument.model_validate(
             {
@@ -186,7 +211,7 @@ class SetupJourneyOperation:
                 + (
                     ["mounts"]
                     if all(
-                        library.media_kind != "ebook" or result.state == "matched"
+                        library.media_kind != "book" or result.state == "matched"
                         for library, result in zip(libraries, results, strict=True)
                     )
                     else []
@@ -207,27 +232,7 @@ class SetupJourneyOperation:
         return self._write(changed, current.revision)
 
     def kick_off(self, expected_revision: int) -> None:
-        try:
-            current = self._current(expected_revision, "kick_off")
-        except SetupJourneyError as error:
-            if error.code != "stale":
-                raise
-            try:
-                self._repository.promote(
-                    self._bootstrap_verifier,
-                    self._bootstrap_verifier,
-                    expected_revision,
-                )
-            except SetupStateError:
-                raise error from None
-            return
-        mount_states = {value.library: value.state for value in current.mounts}
-        if any(
-            library.media_kind == "ebook"
-            and mount_states.get(library.name) != "matched"
-            for library in current.libraries
-        ):
-            raise SetupJourneyError("mounts_unready")
+        current = self.validate_kick_off(expected_revision)
         try:
             self._repository.promote(
                 self._bootstrap_verifier,
@@ -236,6 +241,20 @@ class SetupJourneyOperation:
             )
         except SetupStateError:
             raise SetupJourneyError("stale") from None
+
+    def validate_kick_off(self, expected_revision: int) -> SetupStateDocument:
+        """Validate the exact candidate without committing setup authority."""
+        try:
+            current = self._current(expected_revision, "kick_off")
+        except SetupJourneyError as error:
+            raise error from None
+        mount_states = {value.library: value.state for value in current.mounts}
+        if any(
+            library.media_kind == "book" and mount_states.get(library.name) != "matched"
+            for library in current.libraries
+        ):
+            raise SetupJourneyError("mounts_unready")
+        return current
 
     def _current(
         self, expected_revision: int, expected_step: SetupStep | None = None

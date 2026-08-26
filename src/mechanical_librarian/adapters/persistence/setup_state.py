@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import sqlite3
 from _thread import RLock
 from collections.abc import Callable
@@ -11,6 +12,7 @@ from typing import TypeVar
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.owner_settings import (
     _load_owner_settings_authority,
+    _settings_view,
 )
 from mechanical_librarian.adapters.persistence.schema import (
     _SETUP_AUTOMATIC_SAFETY_ROW,
@@ -21,13 +23,14 @@ from mechanical_librarian.adapters.persistence.schema import (
     _SETUP_REVIEW_CONTROL_ROW,
 )
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
-from mechanical_librarian.domain.owner_settings import OwnerSettingsError
+from mechanical_librarian.domain.owner_settings import OwnerSettingsError, SettingsView
 from mechanical_librarian.domain.setup_state import SetupStateDocument, SetupStateError
 from mechanical_librarian.domain.validation import credential
 
 _T = TypeVar("_T")
 _MAX_SETUP_SESSIONS = 100
 _MAX_SETUP_LOGIN_FAILURES = 5
+_UNCLAIMED_VERIFIER_DIGEST = "0" * 64
 _SETUP_ROW_TABLES = frozenset(
     {
         "metadata_policy_drafts",
@@ -52,12 +55,14 @@ class SetupStateStore(ConnectionScoped):
     ) -> None:
         super().__init__(connection, serialization_lock=serialization_lock)
 
-    def initialize(self, bootstrap_verifier: str) -> SetupStateDocument:
-        digest = _verifier_digest(bootstrap_verifier)
+    def initialize(self, bootstrap_verifier: str | None = None) -> SetupStateDocument:
+        """Create the verifier-free exact-current setup predecessor."""
         document = SetupStateDocument(
             schema_version="setup-state-v1",
             revision=1,
-            bootstrap_verifier_digest=digest,
+            # This closed member is retained solely to preserve setup-state-v1.
+            # It has no verifier, claim-code, or authentication meaning.
+            bootstrap_verifier_digest=_UNCLAIMED_VERIFIER_DIGEST,
         )
         transaction = self._transaction("initialize_setup_state")
         try:
@@ -84,15 +89,13 @@ class SetupStateStore(ConnectionScoped):
             raise SetupStateError("setup state is unavailable") from error
         return document
 
-    def read(self, bootstrap_verifier: str) -> SetupStateDocument:
+    def read(self, bootstrap_verifier: str | None = None) -> SetupStateDocument:
         lock = self._serialization_lock
         if lock is not None:
             lock.acquire()
         try:
             document = self._read()
-            if document.bootstrap_verifier_digest != _verifier_digest(
-                bootstrap_verifier
-            ):
+            if document.bootstrap_verifier_digest != _UNCLAIMED_VERIFIER_DIGEST:
                 raise SetupStateError("setup state is unavailable")
             return document
         finally:
@@ -132,7 +135,7 @@ class SetupStateStore(ConnectionScoped):
         if lock is not None:
             lock.acquire()
         try:
-            document = self.read(bootstrap_verifier)
+            document = self.read()
             if field_id not in document.secret_fields():
                 raise SetupStateError("setup state is unavailable")
             rows = self._connection.execute(
@@ -153,7 +156,7 @@ class SetupStateStore(ConnectionScoped):
         self,
         document: SetupStateDocument,
         expected_revision: int,
-        bootstrap_verifier: str,
+        bootstrap_verifier: str | None = None,
         secret_values: dict[str, str | None] | None = None,
     ) -> SetupStateDocument:
         if document.revision != expected_revision + 1:
@@ -161,7 +164,7 @@ class SetupStateStore(ConnectionScoped):
         transaction = self._transaction("write_setup_state")
         try:
             transaction.begin()
-            current = self.read(bootstrap_verifier)
+            current = self.read()
             if current.revision != expected_revision:
                 raise SetupStateError("setup state is stale")
             if document.bootstrap_verifier_digest != current.bootstrap_verifier_digest:
@@ -185,11 +188,14 @@ class SetupStateStore(ConnectionScoped):
                     values.pop(field, None)
                 else:
                     values[field] = value
-            for field in set(values) - document.secret_fields():
+            permitted = set(document.secret_fields())
+            if document.claimed:
+                permitted.add("owner.password.verifier")
+            for field in set(values) - permitted:
                 values.pop(field)
             if not document.required_secret_fields().issubset(values) or not set(
                 values
-            ).issubset(document.secret_fields()):
+            ).issubset(permitted):
                 raise SetupStateError("setup state is unavailable")
             if (
                 self._connection.execute(
@@ -229,6 +235,134 @@ class SetupStateStore(ConnectionScoped):
             raise SetupStateError("setup state is unavailable") from error
         return document
 
+    def claim_owner(
+        self,
+        *,
+        expected_revision: int,
+        owner_verifier: str,
+        session_digest: str,
+        csrf_digest: str,
+        created_at: int,
+        expires_at: int,
+    ) -> SetupStateDocument:
+        """Atomically establish the first owner and their ordinary session."""
+        _verifier_digest(owner_verifier)
+        if (
+            type(expected_revision) is not int
+            or type(created_at) is not int
+            or type(expires_at) is not int
+            or expires_at <= created_at
+            or _DIGEST.fullmatch(session_digest) is None
+            or _DIGEST.fullmatch(csrf_digest) is None
+        ):
+            raise SetupStateError("setup state is unavailable")
+        transaction = self._transaction("claim_setup_owner")
+        try:
+            transaction.begin()
+            current = self._read()
+            if (
+                current.revision != expected_revision
+                or current.next_step() != "claim"
+                or current.claimed
+            ):
+                raise SetupStateError("setup state is stale")
+            claimed = SetupStateDocument.model_validate(
+                {
+                    **current.model_dump(),
+                    "revision": expected_revision + 1,
+                    "completed_steps": ["claim"],
+                    "claimed": True,
+                }
+            )
+            if (
+                self._connection.execute(
+                    "UPDATE owner_settings SET revision=?,document=? "
+                    "WHERE singleton=1 AND revision=?",
+                    (
+                        claimed.revision,
+                        _canonical_json(claimed.model_dump()),
+                        expected_revision,
+                    ),
+                ).rowcount
+                != 1
+            ):
+                raise SetupStateError("setup state is stale")
+            self._connection.execute(
+                "INSERT INTO owner_setting_secrets(field_id,value) "
+                "VALUES('owner.password.verifier',?)",
+                (owner_verifier,),
+            )
+            self._connection.execute(
+                "INSERT INTO review_sessions(session_digest,csrf_digest,actor,created_at,expires_at) "
+                "VALUES(?,?,'owner',?,?)",
+                (session_digest, csrf_digest, created_at, expires_at),
+            )
+            self._connection.execute("DELETE FROM review_login_failures")
+            transaction.commit()
+            return claimed
+        except SetupStateError:
+            transaction.rollback()
+            raise
+        except sqlite3.Error as error:
+            transaction.rollback()
+            raise SetupStateError("setup state is unavailable") from error
+
+    def use_owner_verifier(self, consumer: Callable[[str], _T]) -> _T:
+        """Keep the established verifier inside the persistence boundary."""
+        lock = self._serialization_lock
+        if lock is not None:
+            lock.acquire()
+        try:
+            document = self._read()
+            if not document.claimed:
+                raise SetupStateError("setup state is unavailable")
+            rows = self._connection.execute(
+                "SELECT value FROM owner_setting_secrets "
+                "WHERE field_id='owner.password.verifier'"
+            ).fetchall()
+            if len(rows) != 1 or type(rows[0][0]) is not str:
+                raise SetupStateError("setup state is unavailable")
+            return consumer(rows[0][0])
+        except sqlite3.Error as error:
+            raise SetupStateError("setup state is unavailable") from error
+        finally:
+            if lock is not None:
+                lock.release()
+
+    def activation_snapshot(
+        self, expected_revision: int
+    ) -> tuple[SettingsView, dict[str, str], str]:
+        """Project a complete dormant runtime candidate without committing it."""
+        lock = self._serialization_lock
+        if lock is not None:
+            lock.acquire()
+        try:
+            state = self._read()
+            if state.revision != expected_revision or state.next_step() != "kick_off":
+                raise SetupStateError("setup state is stale")
+            document = state.complete_owner_document()
+            values = dict(
+                self._connection.execute(
+                    "SELECT field_id,value FROM owner_setting_secrets"
+                )
+            )
+            verifier = values.get("owner.password.verifier")
+            if type(verifier) is not str or not verifier.startswith("$argon2id$"):
+                raise SetupStateError("setup state is unavailable")
+            credentials = {
+                name: value
+                for name, value in values.items()
+                if name in document.secret_fields()
+            }
+            if not document.required_secret_fields().issubset(credentials):
+                raise SetupStateError("setup state is unavailable")
+            return _settings_view(document, values), credentials, verifier
+        except sqlite3.Error as error:
+            raise SetupStateError("setup state is unavailable") from error
+        finally:
+            if lock is not None:
+                lock.release()
+
     def promote(
         self,
         bootstrap_verifier: str,
@@ -236,7 +370,6 @@ class SetupStateStore(ConnectionScoped):
         expected_revision: int | None = None,
     ) -> None:
         """Replace setup authority with normal owner authority in one transaction."""
-        _verifier_digest(owner_verifier)
         transaction = self._transaction("promote_setup_state")
         try:
             transaction.begin()
@@ -249,17 +382,39 @@ class SetupStateStore(ConnectionScoped):
                     raise SetupStateError("setup state is unavailable") from error
                 if (
                     document.revision != 1
-                    or document.pending_restart != ["setup_complete"]
-                    or secrets.get("owner.password.verifier") != owner_verifier
+                    or document.pending_restart
+                    or not secrets.get("owner.password.verifier", "").startswith(
+                        "$argon2id$"
+                    )
                 ):
                     raise SetupStateError("setup state is unavailable") from None
                 transaction.commit()
                 return
-            if state.bootstrap_verifier_digest != _verifier_digest(bootstrap_verifier):
+            if state.bootstrap_verifier_digest != _UNCLAIMED_VERIFIER_DIGEST:
                 raise SetupStateError("setup state is unavailable")
             if expected_revision is not None and state.revision != expected_revision:
                 raise SetupStateError("setup state is stale")
             document = state.complete_owner_document()
+            verifier = self._connection.execute(
+                "SELECT value FROM owner_setting_secrets "
+                "WHERE field_id='owner.password.verifier'"
+            ).fetchone()
+            if verifier is None and owner_verifier.startswith("$argon2id$"):
+                # Compatibility for already-constructed in-process callers;
+                # the supported first-run path establishes this at claim time.
+                self._connection.execute(
+                    "INSERT INTO owner_setting_secrets(field_id,value) "
+                    "VALUES('owner.password.verifier',?)",
+                    (owner_verifier,),
+                )
+                verifier = (owner_verifier,)
+            if (
+                not state.claimed
+                or verifier is None
+                or type(verifier[0]) is not str
+                or not verifier[0].startswith("$argon2id$")
+            ):
+                raise SetupStateError("setup state is unavailable")
             if (
                 self._connection.execute(
                     "UPDATE owner_settings SET revision=?,document=? WHERE singleton=1 AND revision=?",
@@ -272,10 +427,6 @@ class SetupStateStore(ConnectionScoped):
                 != 1
             ):
                 raise SetupStateError("setup state is stale")
-            self._connection.execute(
-                "INSERT INTO owner_setting_secrets(field_id,value) VALUES('owner.password.verifier',?)",
-                (owner_verifier,),
-            )
             transaction.commit()
         except (SetupStateError, sqlite3.Error) as error:
             transaction.rollback()
@@ -299,12 +450,20 @@ class SetupStateStore(ConnectionScoped):
             ):
                 raise SetupStateError("setup state is unavailable")
             values = {name: value for name, value in secrets}
+            permitted = set(document.secret_fields())
+            if document.claimed:
+                permitted.add("owner.password.verifier")
             if (
                 not document.required_secret_fields().issubset(values)
-                or not set(values).issubset(document.secret_fields())
+                or not set(values).issubset(permitted)
                 or any(
-                    type(value) is not str or not credential(value)
-                    for value in values.values()
+                    type(value) is not str
+                    or (
+                        name == "owner.password.verifier"
+                        and not value.startswith("$argon2id$")
+                    )
+                    or (name != "owner.password.verifier" and not credential(value))
+                    for name, value in values.items()
                 )
                 or not self._setup_rows_are_closed()
             ):
@@ -347,7 +506,7 @@ class SetupStateStore(ConnectionScoped):
         ).fetchall() != [_SETUP_FIELD_EFFECT_CONTROL_ROW]:
             return False
         if "review_preparation_control" in tables and self._connection.execute(
-            "SELECT singleton,paused,claim_sequence,last_library,circuit_failures,"
+            "SELECT singleton,paused,claim_sequence,first_boot_acknowledged,last_library,circuit_failures,"
             "circuit_open_until,updated_at FROM review_preparation_control"
         ).fetchall() != [_SETUP_REVIEW_CONTROL_ROW]:
             return False
@@ -376,6 +535,9 @@ def _verifier_digest(verifier: str) -> str:
     if type(verifier) is not str or not verifier.startswith("$argon2id$"):
         raise SetupStateError("setup state is unavailable")
     return hashlib.sha256(verifier.encode("utf-8")).hexdigest()
+
+
+_DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
 
 __all__ = ["SetupStateStore"]

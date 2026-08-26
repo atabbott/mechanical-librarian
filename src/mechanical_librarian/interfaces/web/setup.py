@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import secrets
+import time
 from collections.abc import Awaitable, Callable
 from typing import Literal, Protocol
 
+from argon2 import PasswordHasher
 from fastapi import Cookie, FastAPI, Header, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, TypeAdapter
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse
@@ -28,8 +32,12 @@ from mechanical_librarian.interfaces.web.setup_frontend import (
 )
 
 _PROVIDER_ADAPTER: TypeAdapter[ProviderSettings] = TypeAdapter(ProviderSettings)
+_SETUP_SESSION_BODY_LIMIT = 2 * 1_024 * 6 + 128
 _SETUP_BODY_LIMITS = {
-    "/api/setup/session": 2_048,
+    # Two maximum passwords may each expand sixfold under JSON escaping. The
+    # remaining fixed envelope covers property names and the bounded revision.
+    "/api/setup/session": _SETUP_SESSION_BODY_LIMIT,
+    "/api/setup/claim": 2_048,
     "/api/setup/connect": 16_384,
     "/api/setup/providers": 262_144,
     "/api/setup/libraries": 262_144,
@@ -50,6 +58,17 @@ class SetupStateStore(Protocol):
         secret_values: dict[str, str | None] | None = None,
     ) -> SetupStateDocument: ...
 
+    def claim_owner(
+        self,
+        *,
+        expected_revision: int,
+        owner_verifier: str,
+        session_digest: str,
+        csrf_digest: str,
+        created_at: int,
+        expires_at: int,
+    ) -> SetupStateDocument: ...
+
 
 class SetupConnectionWriter(Protocol):
     def connect(
@@ -60,6 +79,8 @@ class SetupConnectionWriter(Protocol):
 class _LoginRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     password: StrictStr = Field(min_length=1, max_length=1024)
+    confirmation: StrictStr | None = Field(default=None, max_length=1024)
+    expected_revision: StrictInt | None = Field(default=None, ge=1)
 
 
 class _ConnectRequest(BaseModel):
@@ -96,8 +117,12 @@ class _ProvidersRequest(BaseModel):
 class _LibraryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     name: StrictStr = Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")
+    display_name: StrictStr | None = Field(default=None, min_length=1, max_length=256)
     library_id: StrictStr = Field(min_length=1, max_length=128)
-    media_kind: Literal["ebook", "audiobook"]
+    # Audiobookshelf's `book` collection already represents its combined
+    # ebook/audiobook kind. The setup owner selects a library, never a media
+    # interpretation that can contradict the service.
+    media_kind: Literal["book", "ebook", "audiobook"] = "book"
     provider_connections: list[StrictStr] = Field(default_factory=list, max_length=32)
 
 
@@ -146,7 +171,9 @@ def create_setup_app(
     canonical_origin: str = "https://testserver",
     journey: SetupJourneyOperation | None = None,
     session_lifetime_seconds: int = 3600,
-    on_complete: Callable[[], None] = lambda: None,
+    activate: Callable[[int], None] | None = None,
+    clock: Callable[[], int] = lambda: int(time.time()),
+    token_factory: Callable[[int], str] = secrets.token_urlsafe,
 ) -> FastAPI:
     """Compose no normal route, worker, target client, or write authority."""
 
@@ -158,6 +185,7 @@ def create_setup_app(
         path_limits=_SETUP_BODY_LIMITS,
     )
     app.state.setup_complete = False
+    app.state.claim_nonces = {}
 
     @app.middleware("http")
     async def close_completed_setup(
@@ -184,6 +212,39 @@ def create_setup_app(
     def shell() -> str:
         return SETUP_HTML
 
+    @app.get("/api/setup/claim")
+    def claim_state(response: Response) -> dict[str, object]:
+        """Mint a bounded host-only synchronizer nonce for first ownership."""
+        try:
+            document = state.read(bootstrap_verifier)
+        except Exception as error:
+            raise HTTPException(503, {"error": "unavailable"}) from error
+        now = clock()
+        nonces: dict[str, int] = app.state.claim_nonces
+        for value, expires_at in tuple(nonces.items()):
+            if expires_at <= now:
+                nonces.pop(value, None)
+        if len(nonces) >= 100:
+            raise HTTPException(503, {"error": "unavailable"})
+        nonce = token_factory(32)
+        if not 32 <= len(nonce) <= 128:
+            raise HTTPException(500, {"error": "unavailable"})
+        nonces[nonce] = now + 600
+        response.set_cookie(
+            "ml_setup_nonce",
+            nonce,
+            httponly=False,
+            secure=True,
+            samesite="strict",
+            path="/api/setup/session",
+            max_age=600,
+        )
+        return {
+            "claimed": document.claimed,
+            "revision": document.revision,
+            "nonce": nonce,
+        }
+
     @app.get("/assets/setup.css")
     def setup_css() -> Response:
         return Response(SETUP_CSS, media_type="text/css; charset=utf-8")
@@ -193,29 +254,67 @@ def create_setup_app(
         return Response(SETUP_JS, media_type="text/javascript; charset=utf-8")
 
     @app.post("/api/setup/session")
-    def login(request: _LoginRequest, response: Response) -> dict[str, object]:
+    def login(
+        request: _LoginRequest,
+        response: Response,
+        origin: str | None = Header(default=None),
+        x_setup_nonce: str | None = Header(default=None),
+        ml_setup_nonce: str | None = Cookie(default=None),
+    ) -> dict[str, object]:
+        try:
+            current = state.read(bootstrap_verifier)
+        except Exception as error:
+            raise HTTPException(503, {"error": "unavailable"}) from error
+        if not current.claimed:
+            now = clock()
+            nonces: dict[str, int] = app.state.claim_nonces
+            if (
+                origin != canonical_origin
+                or x_setup_nonce is None
+                or ml_setup_nonce is None
+                or not secrets.compare_digest(x_setup_nonce, ml_setup_nonce)
+                or nonces.pop(x_setup_nonce, 0) <= now
+            ):
+                raise HTTPException(403, {"error": "csrf"})
+            if (
+                request.expected_revision is None
+                or request.confirmation is None
+                or request.password != request.confirmation
+                or not 1 <= len(request.password.encode("utf-8")) <= 1024
+            ):
+                raise HTTPException(422, {"error": "invalid_password"})
+            session_token = token_factory(32)
+            csrf_token = token_factory(32)
+            if not 32 <= len(session_token) <= 128 or not 32 <= len(csrf_token) <= 128:
+                raise HTTPException(500, {"error": "unavailable"})
+            expires_at = now + session_lifetime_seconds
+            try:
+                state.claim_owner(
+                    expected_revision=request.expected_revision,
+                    owner_verifier=PasswordHasher().hash(request.password),
+                    session_digest=hashlib.sha256(session_token.encode()).hexdigest(),
+                    csrf_digest=hashlib.sha256(csrf_token.encode()).hexdigest(),
+                    created_at=now,
+                    expires_at=expires_at,
+                )
+            except Exception as error:
+                raise HTTPException(409, {"error": "claimed"}) from error
+            response.delete_cookie("ml_setup_nonce", path="/api/setup/session")
+            response.set_cookie(
+                "ml_session",
+                session_token,
+                httponly=True,
+                secure=True,
+                samesite="strict",
+                path="/",
+                max_age=session_lifetime_seconds,
+            )
+            return {"csrf_token": csrf_token, "expires_at": expires_at}
         try:
             tokens = sessions.login(request.password)
         except ReviewWebError as error:
             status = 429 if error.code == "throttled" else 401
             raise HTTPException(status, {"error": error.code}) from error
-        try:
-            document = state.read(bootstrap_verifier)
-            if document.next_step() == "claim":
-                state.write(
-                    SetupStateDocument.model_validate(
-                        {
-                            **document.model_dump(),
-                            "revision": document.revision + 1,
-                            "completed_steps": ["claim"],
-                            "claimed": True,
-                        }
-                    ),
-                    document.revision,
-                    bootstrap_verifier,
-                )
-        except Exception as error:
-            raise HTTPException(503, {"error": "unavailable"}) from error
         response.set_cookie(
             "ml_session",
             tokens.session_token,
@@ -369,7 +468,26 @@ def create_setup_app(
                 values = journey.discover(expected_revision)
             except SetupJourneyError as error:
                 raise journey_failure(error) from error
-            return {"libraries": [value.model_dump() for value in values]}
+            return {
+                "libraries": [
+                    {
+                        **value.model_dump(),
+                        "service_path": (
+                            value.service_paths[0]
+                            if len(value.service_paths) == 1
+                            else None
+                        ),
+                        "service_path_state": (
+                            "available"
+                            if len(value.service_paths) == 1
+                            else "ambiguous"
+                            if value.service_paths
+                            else "unavailable"
+                        ),
+                    }
+                    for value in values
+                ]
+            }
 
         @app.post("/api/setup/libraries")
         def select_libraries(
@@ -386,9 +504,10 @@ def create_setup_app(
                 values = [
                     LibrarySettings(
                         name=value.name,
+                        display_name=value.display_name,
                         connection=document.connection.name,
                         library_id=value.library_id,
-                        media_kind=value.media_kind,
+                        media_kind="book",
                         provider_connections=value.provider_connections,
                     )
                     for value in request.libraries
@@ -443,13 +562,17 @@ def create_setup_app(
         ) -> dict[str, object]:
             authorize_mutation(ml_session, x_csrf_token, origin)
             try:
-                journey.kick_off(request.expected_revision)
+                if activate is None:
+                    journey.kick_off(request.expected_revision)
+                else:
+                    activate(request.expected_revision)
             except SetupJourneyError as error:
                 raise journey_failure(error) from error
+            except Exception as error:
+                raise HTTPException(503, {"error": "activation_failed"}) from error
             app.state.setup_complete = True
-            on_complete()
             return {
-                "status": "restart_required",
+                "status": "active",
                 "message": "Nothing in your library changes. Writes stay off until you turn them on in Activity.",
             }
 

@@ -102,6 +102,31 @@ def test_document_rejects_noncanonical_references_and_bounds() -> None:
         OwnerSettingsDocument.model_validate(value)
 
 
+def test_library_display_name_is_optional_canonical_and_preserves_exact_punctuation() -> (
+    None
+):
+    legacy = _document()
+    assert "display_name" not in legacy.model_dump()["libraries"][0]
+
+    value = legacy.model_dump()
+    value["libraries"][0]["display_name"] = "Ebooks & Audiobooks: Collected Editions"
+    document = OwnerSettingsDocument.model_validate(value)
+
+    assert (
+        document.libraries[0].display_name == "Ebooks & Audiobooks: Collected Editions"
+    )
+    assert "display_name" in document.model_dump()["libraries"][0]
+
+
+@pytest.mark.parametrize("display_name", (" leading", "trailing ", "nul\x00name"))
+def test_library_display_name_rejects_noncanonical_text(display_name: str) -> None:
+    value = _document().model_dump()
+    value["libraries"][0]["display_name"] = display_name
+
+    with pytest.raises((OwnerSettingsError, ValidationError)):
+        OwnerSettingsDocument.model_validate(value)
+
+
 def test_maximum_bounded_document_fits_the_persistence_and_response_contract() -> None:
     value = _document().model_dump()
     value["connections"] = [
@@ -116,7 +141,7 @@ def test_maximum_bounded_document_fits_the_persistence_and_response_contract() -
         {
             "name": f"provider-{index:02d}",
             "adapter": "google_books",
-            "enabled": False,
+            "enabled": True,
             "cover_enabled": False,
         }
         for index in range(32)
@@ -181,7 +206,7 @@ def test_store_returns_redacted_secret_presence_and_metadata() -> None:
         next(
             value for value in view.fields if value.field_id == "connections"
         ).apply_effect
-        == "restart_required"
+        == "applied_live"
     )
     assert next(
         value for value in view.fields if value.field_id == "mounts"
@@ -332,21 +357,35 @@ def test_store_rejects_non_settings_owned_library_mutation(field: str) -> None:
     assert store.read().document.libraries[0].policy_override is None
 
 
-def test_restart_effects_are_durable_while_reduced_motion_is_live() -> None:
+def test_store_rejects_display_name_mutation_outside_setup() -> None:
+    store = _store()
+    value = _document(2).model_dump()
+    value["libraries"][0]["display_name"] = "Changed in a raw PATCH"
+
+    with pytest.raises(OwnerSettingsError, match="settings document is invalid"):
+        store.write(OwnerSettingsDocument.model_validate(value), 1, ())
+
+    assert store.read().document.libraries[0].display_name is None
+
+
+def test_store_managed_fields_are_live_without_restart_debt() -> None:
     store = _store()
     changed = _document(2).model_copy(update={"provider_recovery_generation": 2})
     result = store.write(changed, 1, ())
-    assert result.pending_restart == ("provider_recovery_generation",)
-    assert next(
-        item
-        for item in result.fields
-        if item.field_id == "provider_recovery_generation"
-    ).pending_restart
+    assert result.document.pending_restart == []
+    assert (
+        next(
+            item
+            for item in result.fields
+            if item.field_id == "provider_recovery_generation"
+        ).apply_effect
+        == "applied_live"
+    )
     live = result.document.model_copy(
         update={"revision": 3, "reduced_motion": "always_reduced"}
     )
     result = store.write(live, 2, ())
-    assert result.pending_restart == ("provider_recovery_generation",)
+    assert result.document.pending_restart == []
 
 
 def test_runtime_activation_requires_complete_authority_and_ack_clears_applied_debt() -> (
@@ -370,12 +409,12 @@ def test_runtime_activation_requires_complete_authority_and_ack_clears_applied_d
 
     view, credentials, verifier = store.activate_runtime()
 
-    assert view.pending_restart == ("providers",)
+    assert view.document.pending_restart == ["providers"]
     assert credentials == {"connection.primary.key": "target-secret-1234"}
     assert verifier == "$argon2id$synthetic"
     store.acknowledge_runtime(view.document.revision)
     acknowledged = store.read()
-    assert acknowledged.pending_restart == ()
+    assert acknowledged.document.pending_restart == []
     assert acknowledged.document.revision == 3
     with pytest.raises(OwnerSettingsError, match="stale"):
         store.write(_document(3), 2, ())
@@ -434,9 +473,7 @@ def test_runtime_activation_refuses_missing_owner_verifier() -> None:
         _store().activate_runtime()
 
 
-def test_disabled_provider_credentials_are_removed_and_enabled_hardcover_is_required() -> (
-    None
-):
+def test_disabled_provider_credentials_are_retained_until_explicit_clear() -> None:
     store = _store()
     first = store.write(
         _document(2),
@@ -453,13 +490,68 @@ def test_disabled_provider_credentials_are_removed_and_enabled_hardcover_is_requ
     disabled["revision"] = 3
     disabled["providers"][0]["enabled"] = False
     disabled["providers"][0]["cover_enabled"] = False
+    disabled["libraries"][0]["provider_connections"] = ["open"]
     result = store.write(OwnerSettingsDocument.model_validate(disabled), 2, ())
     assert [item.field_id for item in result.secrets if item.configured] == [
+        "connection.primary.key",
+        "provider.books.key",
+    ]
+    store._connection.execute(
+        "INSERT INTO owner_setting_secrets VALUES(?,?)",
+        ("owner.password.verifier", "$argon2id$synthetic"),
+    )
+    store._connection.commit()
+    _, runtime_credentials, _ = store.activate_runtime()
+    assert runtime_credentials == {"connection.primary.key": "target-secret-1234"}
+
+    disabled_replacement = result.document.model_dump()
+    disabled_replacement["revision"] = 4
+    replaced = store.write(
+        OwnerSettingsDocument.model_validate(disabled_replacement),
+        3,
+        (
+            SecretWrite(
+                field_id="provider.books.key",
+                operation="replace",
+                value="replacement-secret-5678",
+            ),
+        ),
+    )
+    assert (
+        next(
+            item.indicator
+            for item in replaced.secrets
+            if item.field_id == "provider.books.key"
+        )
+        == "Configured · ····5678"
+    )
+
+    reenabled = replaced.document.model_dump()
+    reenabled["revision"] = 5
+    reenabled["providers"][0]["enabled"] = True
+    reenabled["libraries"][0]["provider_connections"] = ["open"]
+    restored = store.write(OwnerSettingsDocument.model_validate(reenabled), 4, ())
+    assert restored.document.libraries[0].provider_connections == ["open"]
+
+    disabled_again = restored.document.model_dump()
+    disabled_again["revision"] = 6
+    disabled_again["providers"][0]["enabled"] = False
+    cleared = store.write(
+        OwnerSettingsDocument.model_validate(disabled_again),
+        5,
+        (SecretWrite(field_id="provider.books.key", operation="clear"),),
+    )
+    assert [item.field_id for item in cleared.secrets if item.configured] == [
         "connection.primary.key"
     ]
 
+
+def test_enabled_hardcover_requires_a_key() -> None:
+    store = _store()
+    result = store.read()
+
     hardcover = result.document.model_dump()
-    hardcover["revision"] = 4
+    hardcover["revision"] = 2
     hardcover["providers"] = [
         {
             "name": "hardcover",
@@ -476,11 +568,11 @@ def test_disabled_provider_credentials_are_removed_and_enabled_hardcover_is_requ
     )
     connection.commit()
     with pytest.raises(OwnerSettingsError, match="required secret"):
-        store.write(OwnerSettingsDocument.model_validate(hardcover), 3, ())
+        store.write(OwnerSettingsDocument.model_validate(hardcover), 1, ())
 
     stored = store.write(
         OwnerSettingsDocument.model_validate(hardcover),
-        3,
+        1,
         (
             SecretWrite(
                 field_id="provider.hardcover.key",
@@ -494,7 +586,74 @@ def test_disabled_provider_credentials_are_removed_and_enabled_hardcover_is_requ
         "connection.primary.key": "target-secret-1234",
         "provider.hardcover.key": "hardcover-secret-1234",
     }
-    assert stored.document.revision == 4
+    assert stored.document.revision == 2
+
+
+def test_store_rejects_new_association_to_a_disabled_provider() -> None:
+    value = _document().model_dump()
+    value["revision"] = 2
+    value["providers"][0]["enabled"] = False
+    value["providers"][0]["cover_enabled"] = False
+
+    with pytest.raises(OwnerSettingsError, match="references"):
+        _store().write(OwnerSettingsDocument.model_validate(value), 1, ())
+
+
+def test_legacy_disabled_association_loads_suppressed_and_canonicalises_on_save() -> (
+    None
+):
+    store = _store()
+    legacy = _document().model_dump()
+    legacy["providers"][0]["enabled"] = False
+    legacy["providers"][0]["cover_enabled"] = False
+    legacy_document = OwnerSettingsDocument.model_validate(legacy)
+    encoded = _canonical_json(legacy_document.model_dump())
+    store._connection.execute(
+        "UPDATE owner_settings SET document=? WHERE singleton=1", (encoded,)
+    )
+    store._connection.execute(
+        "INSERT INTO owner_setting_secrets VALUES(?,?)",
+        ("provider.books.key", "google-secret-1234"),
+    )
+    store._connection.execute(
+        "INSERT INTO owner_setting_secrets VALUES(?,?)",
+        ("owner.password.verifier", "$argon2id$synthetic"),
+    )
+    store._connection.commit()
+
+    view = store.read()
+
+    assert view.document.libraries[0].provider_connections == ["open"]
+    assert store._connection.execute(
+        "SELECT document FROM owner_settings WHERE singleton=1"
+    ).fetchone() == (encoded,)
+    _, runtime_credentials, _ = store.activate_runtime()
+    assert runtime_credentials == {"connection.primary.key": "target-secret-1234"}
+
+    candidate = view.document.model_copy(update={"revision": 2})
+    snapshot, candidate_credentials, _ = store.activation_snapshot(candidate, 1, ())
+    assert snapshot.document.libraries[0].provider_connections == ["open"]
+    assert candidate_credentials == {"connection.primary.key": "target-secret-1234"}
+    saved = store.write(candidate, 1, ())
+    stored = OwnerSettingsDocument.model_validate_json(
+        store._connection.execute(
+            "SELECT document FROM owner_settings WHERE singleton=1"
+        ).fetchone()[0]
+    )
+    assert stored.libraries[0].provider_connections == ["open"]
+
+    reenabled_value = saved.document.model_dump()
+    reenabled_value["revision"] = 3
+    reenabled_value["providers"][0]["enabled"] = True
+    reenabled = store.write(
+        OwnerSettingsDocument.model_validate(reenabled_value), 2, ()
+    )
+    assert reenabled.document.libraries[0].provider_connections == ["open"]
+    _, reenabled_credentials, _ = store.activate_runtime()
+    assert reenabled_credentials == {
+        "connection.primary.key": "target-secret-1234",
+        "provider.books.key": "google-secret-1234",
+    }
 
 
 def test_store_rejects_unknown_or_duplicate_secret_writes_without_mutation() -> None:

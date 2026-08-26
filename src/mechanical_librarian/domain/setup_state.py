@@ -47,17 +47,20 @@ class SetupConnection(_Closed):
 
 class SetupMountResult(_Closed):
     library: Annotated[StrictStr, Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")]
-    state: Literal["matched", "ambiguous", "unmatched", "unobservable"]
+    state: Literal["matched", "ambiguous", "missing", "unavailable"]
 
 
 class SetupLibraryCandidate(_Closed):
     library_id: Annotated[StrictStr, Field(min_length=1, max_length=128)]
     name: Annotated[StrictStr, Field(min_length=1, max_length=256)]
     media_kind: Literal["book", "unsupported"]
+    service_paths: tuple[
+        Annotated[StrictStr, Field(min_length=1, max_length=4096)], ...
+    ] = Field(default=(), max_length=16, exclude=True)
 
 
 class SetupStateDocument(_Closed):
-    """The only incomplete authority a bootstrap-authenticated process admits."""
+    """The only incomplete authority admitted before the owner is established."""
 
     schema_version: Literal["setup-state-v1"]
     revision: Annotated[StrictInt, Field(ge=1)]
@@ -153,7 +156,9 @@ class SetupStateDocument(_Closed):
                 "connections": [self.connection.model_dump()],
                 "providers": [item.model_dump() for item in self.providers],
                 "libraries": [item.model_dump() for item in self.libraries],
-                "pending_restart": ["setup_complete"],
+                # Kept in the strict v1 document for exact compatibility, but
+                # live generations leave no restart debt behind.
+                "pending_restart": [],
             }
         )
 

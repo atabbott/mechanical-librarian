@@ -959,8 +959,7 @@ export const mapSettings = (value: unknown): SettingsView => {
     !Array.isArray(value.document.providers) ||
     !Array.isArray(value.document.libraries) ||
     !Array.isArray(value.fields) ||
-    !Array.isArray(value.secrets) ||
-    !Array.isArray(value.pending_restart)
+    !Array.isArray(value.secrets)
   )
     throw new ApiError(502, 'invalid_settings_response')
   if (
@@ -985,7 +984,7 @@ export const mapSettings = (value: unknown): SettingsView => {
         typeof item.field_id === 'string' &&
         typeof item.group === 'string' &&
         typeof item.managed_by_file === 'boolean' &&
-        ['applied_live', 'restart_required', 'deploy_managed'].includes(String(item.apply_effect)),
+        ['applied_live', 'deploy_managed'].includes(String(item.apply_effect)),
     ) ||
     !value.secrets.every(
       (item) =>

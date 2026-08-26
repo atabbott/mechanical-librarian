@@ -10,18 +10,18 @@ Terminal preparation failures remain visible in Library as noninteractive rows.
 
 ## Guided first run
 
-A new empty store uses one calm six-step ledger: claim, connect, providers,
+A new empty store uses one calm six-step ledger: set owner password, connect, providers,
 libraries, mounts, and kickoff. Completed steps collapse to recorded rows with
 Change; reopening a row removes only dependent answers and secrets, and resume
 always returns to the first incomplete step. Provider setup is optional,
-library discovery remains retryable and keeps unsupported libraries visible,
-and mount comparison reports matched, ambiguous, unmatched, or unobservable
+library discovery remains retryable and summarizes filtered-out podcast libraries,
+and mount comparison reports matched, ambiguous, missing, or unavailable
 without creating a mount.
 
 Kickoff says exactly: `Nothing in your library changes. Writes stay off until
-you turn them on in Activity.` The setup client waits through the required
-restart and opens `/library` directly when the normal authenticated workspace
-is available; there is no completion interstitial and no setup write authority.
+you turn them on in Activity.` The setup target swaps to the normal authenticated
+workspace on the same listener, starts preparation immediately, and offers
+`Open workspace`; there is no restart or setup write authority.
 As soon as one work is ready, a focused handover card appears above the live,
 bounded preparation list. The terminal first-boot measurement appears only in
 Library and counts every unique checked work, including terminal failures.
@@ -417,23 +417,32 @@ Reversing unapplied decisions creates compensating decision events. Once apply
 begins, recovery uses the apply and rollback contracts instead of a user-
 interface undo action.
 
-## Settings utility route
+## Settings route
 
-`/settings` is a lazy authenticated utility route; Library, Policy, and Activity
-remain the three primary destinations. It groups Connection, Providers,
+`/settings` is a lazy authenticated primary destination alongside Library,
+Policy, and Activity. It groups Connection, Providers,
 Libraries, Automation & limits, Reviewer, Server, and Appearance without
 moving cover-policy ownership out of Policy. The selected group is the closed
 `?group=` URL state, so Back and Forward restore it. At 884 pixels and above a
 settings index remains beside the active paper-like page; at 390 and 320 pixels
 a labelled native selector replaces that index.
 
-Every editable field states whether it is live or restart-applied, while one
-pending-restart ledger reports server-derived debt. Loading, retry, optional
-empty, validation, save pending/saved/failed/stale, secret add/replace/confirmed
-clear, and pending-restart states are explicit. In file mode the page names
+Successful store-managed changes are confirmed once at page level as saved and
+in use. Only deployment-managed fields carry a per-field deployment consequence.
+Loading, retry, optional empty, validation, preparation, save
+pending/saved/failed/stale, secret add/replace/confirmed clear, and reconnect
+states are explicit. In file mode the page names
 `/data/config.json` and renders no covered edit affordance. Secret values never
-render; only `Configured · ····xxxx` or `Not configured` appears. Controls
-retain 44-pixel targets, visible focus and semantic status announcements; long
+render; only `Configured · ····xxxx` or `Not configured` appears.
+Disabling a provider keeps its configured write-only value available to replace
+or clear, removes its library associations, and never restores those
+associations when the provider is enabled again.
+
+Copy must orient the owner, explain a real consequence or limitation, resolve
+ambiguity or status, or give a useful next or recovery action. Otherwise it is
+omitted; human, concise, non-technical wording is the default.
+
+Controls retain 44-pixel targets, visible focus and semantic status announcements; long
 owner values wrap without document overflow at 320 pixels and 200% text.
 
 ## Responsive and accessible behavior

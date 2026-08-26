@@ -12,8 +12,8 @@ file is absent, store mode instead requires the exact-current owner settings and
 verifier in `/data/application.sqlite3` and an owner-only, read-only
 `/run/secrets/review-bootstrap.json` containing deploy-side TLS, canonical
 origin, trusted proxies, read-only mount mappings, and any contained-reviewer
-profile path. For a new empty volume it also supplies the deploy-provisioned
-Argon2id `setup_owner_verifier` used to claim and resume the guided first run.
+profile path. It supplies no owner credential; the first visitor creates the
+owner password inside the bounded guided first run.
 Add ebook media mounts as read-only Compose overrides; never grant
 a writable media mount or Docker socket.
 
@@ -46,22 +46,25 @@ On a truly empty data volume the entrypoint captures that empty state before
 creating an exact incomplete setup store and serves only health, setup login,
 setup assets, and the minimal authenticated setup API. The six steps are claim,
 Audiobookshelf connection, optional providers, libraries, read-only mount
-comparison, and kickoff. Kickoff atomically replaces incomplete state with
-complete owner settings, preserves verified secrets, records restart debt, and
-closes setup routes; only the next normal boot starts preparation. On
-restart it accepts only exact-current, owner-only stores. A schema mismatch,
+comparison, and kickoff. Kickoff prepares a dormant runtime generation,
+atomically replaces incomplete state with complete owner settings, publishes
+the successor on the existing listener, closes setup routes, and starts
+preparation immediately. Ordinary startup accepts only exact-current, owner-only
+stores. A schema mismatch,
 missing/incomplete settings, an unowned volume, invalid file or bootstrap,
 backup/recovery error, or permission failure stops startup rather than falling
 back, importing, migrating, or repairing data. A present `/data/config.json`
 always selects file mode, even when invalid; file mode never opens the settings
-store. Store-mode restart debt remains pending unless the whole runtime graph
-composes and acknowledges its exact settings revision.
+store. Every store-managed Settings write uses the same prepare, CAS commit,
+same-listener publish, successor wake, and predecessor-drain boundary.
 
 Use `docker compose up --build` for a local installed-product qualification.
 `scripts/qualify_container_lifecycle.py --source-sha <exact-head>` repeats the
 head-bound build, synthetic owner-secret/TLS seeding, non-root read-only-root
 run, health probes, the container's own `HEALTHCHECK` verdict, bounded graceful
-termination and exact-current restart.
+termination and exact-current restart. The same isolated run drives an empty
+volume through first-owner access, fake Audiobookshelf discovery, mount proof,
+same-listener promotion, preparation progress and durable ordinary restart.
 Stop with `docker compose down`; do not add `-v` unless intentionally deleting
 the complete local application state. The public gate's `container-image` job
 runs `docker build` at every candidate revision, so a Dockerfile regression

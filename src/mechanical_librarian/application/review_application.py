@@ -364,7 +364,20 @@ class ReviewApplication:
         updates: LiveUpdateChannel,
         cover_considerations: CoverConsiderationService | None = None,
         settings: OwnerSettingsOperations | None = None,
+        settings_activation: (
+            Callable[
+                [
+                    OwnerSettingsDocument,
+                    int,
+                    tuple[SecretWrite, ...],
+                    Callable[[], object],
+                ],
+                object,
+            ]
+            | None
+        ) = None,
         first_boot: bool = False,
+        acknowledge_first_boot: Callable[[], None] | None = None,
     ) -> None:
         self._updates = updates
         self._state_owner = state_owner
@@ -385,7 +398,9 @@ class ReviewApplication:
         self._operations = operations
         self._cover_considerations = cover_considerations
         self._settings = settings
+        self._settings_activation = settings_activation
         self._first_boot = first_boot
+        self._acknowledge_first_boot = acknowledge_first_boot
 
     @property
     def updates(self) -> LiveUpdateChannel:
@@ -429,8 +444,9 @@ class ReviewApplication:
 
             def write() -> object:
                 validated = cast("OwnerSettingsDocument", document)
+                secret_writes = cast("tuple[SecretWrite, ...]", secrets)
                 preferences = validated.cover_preferences
-                live_update = (
+                cover_update = (
                     self._cover_considerations.policy_update(
                         CoverPolicy(
                             avoid_promotional_text=preferences.avoid_promotional_text,
@@ -441,12 +457,20 @@ class ReviewApplication:
                     if self._cover_considerations is not None
                     else None
                 )
-                return settings.write(
-                    validated,
-                    revision,
-                    cast("tuple[SecretWrite, ...]", secrets),
-                    live_update,
-                )
+
+                def commit() -> object:
+                    return settings.write(
+                        validated,
+                        revision,
+                        secret_writes,
+                        cover_update,
+                    )
+
+                if self._settings_activation is not None:
+                    return self._settings_activation(
+                        validated, revision, secret_writes, commit
+                    )
+                return commit()
 
             return self.serialized(write)
         except OwnerSettingsError as error:
@@ -476,6 +500,52 @@ class ReviewApplication:
             self._field_application.start()
         if self._preparation is not None:
             self._preparation.start()
+
+    def start_dormant(self) -> None:
+        """Perform fallible startup while every scheduler latch stays closed."""
+        if self._operations is not None:
+            self._operations.start()
+        if isinstance(self._field_application, ContinuousGuardedApplication):
+            self._field_application.start_dormant()
+        elif self._field_application is not None:
+            raise ReviewApplicationError("settings_unavailable")
+        if self._preparation is not None:
+            self._preparation.start_dormant()
+
+    def admit(self) -> None:
+        """Open the already-started generation after no-fail publication."""
+        if isinstance(self._field_application, ContinuousGuardedApplication):
+            self._field_application.admit()
+        if self._preparation is not None:
+            self._preparation.admit()
+
+    def stop_admission(self) -> None:
+        """Suspend only scheduler claims while captured HTTP may finish."""
+        if isinstance(self._field_application, ContinuousGuardedApplication):
+            self._field_application.suspend_admission()
+        if self._preparation is not None:
+            self._preparation.suspend_admission()
+
+    def resume_admission(self) -> None:
+        """Restore the current generation after an authority commit failure."""
+        if isinstance(self._field_application, ContinuousGuardedApplication):
+            self._field_application.resume_admission()
+        if self._preparation is not None:
+            self._preparation.resume_admission()
+
+    def begin_drain(self) -> None:
+        """Stop admitting successor work while captured requests finish."""
+        self._updates.close()
+        if isinstance(self._field_application, ContinuousGuardedApplication):
+            self._field_application.close_admission()
+        if self._preparation is not None:
+            self._preparation.begin_drain()
+        if self._operations is not None:
+            self._operations.begin_drain()
+        if self._field_application is not None and not isinstance(
+            self._field_application, ContinuousGuardedApplication
+        ):
+            self._field_application.begin_drain()
 
     def stop(self) -> None:
         deadline = time.monotonic() + self._graceful_shutdown_seconds
@@ -920,6 +990,13 @@ class ReviewApplication:
             else None,
         )
 
+    def acknowledge_first_boot_preparation(self) -> PreparationView:
+        if self._acknowledge_first_boot is None:
+            raise ReviewApplicationError("preparation_unavailable")
+        self.serialized(self._acknowledge_first_boot)
+        self._first_boot = False
+        return self.preparation()
+
     def request_review_scan(self, connection: str, library: str) -> dict[str, object]:
         return self._preparation_request("request", connection, library)
 
@@ -1131,7 +1208,20 @@ def compose_review_application(
     operational_timer: StageTimer | None = None,
     cover_considerations: CoverConsiderationService | None = None,
     settings: OwnerSettingsOperations | None = None,
+    settings_activation: (
+        Callable[
+            [
+                OwnerSettingsDocument,
+                int,
+                tuple[SecretWrite, ...],
+                Callable[[], object],
+            ],
+            object,
+        ]
+        | None
+    ) = None,
     first_boot: bool = False,
+    acknowledge_first_boot: Callable[[], None] | None = None,
 ) -> ReviewApplication:
     """Compose every operation before the HTTP adapter is created."""
     gate = RLock()
@@ -1191,7 +1281,9 @@ def compose_review_application(
         updates=updates,
         cover_considerations=cover_considerations,
         settings=settings,
+        settings_activation=settings_activation,
         first_boot=first_boot,
+        acknowledge_first_boot=acknowledge_first_boot,
     )
     return application
 

@@ -94,6 +94,19 @@
             "title": "Connection",
             "type": "string"
           },
+          "display_name": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
           "library_id": {
             "maxLength": 128,
             "minLength": 1,
@@ -326,6 +339,47 @@
         "title": "OwnerSettingsDocument",
         "type": "object"
       },
+      "ProviderCapability": {
+        "additionalProperties": false,
+        "description": "One fixed adapter the owner may configure when it is not yet present.",
+        "properties": {
+          "adapter": {
+            "enum": [
+              "open_library",
+              "hardcover",
+              "google_books"
+            ],
+            "title": "Adapter",
+            "type": "string"
+          },
+          "credential": {
+            "enum": [
+              "none",
+              "contact_email",
+              "api_key"
+            ],
+            "title": "Credential",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "adapter",
+          "label",
+          "credential"
+        ],
+        "title": "ProviderCapability",
+        "type": "object"
+      },
       "ReportLimitSettings": {
         "additionalProperties": false,
         "properties": {
@@ -474,7 +528,6 @@
           "apply_effect": {
             "enum": [
               "applied_live",
-              "restart_required",
               "deploy_managed"
             ],
             "title": "Apply Effect",
@@ -502,11 +555,6 @@
               }
             ],
             "title": "Managed Path"
-          },
-          "pending_restart": {
-            "default": false,
-            "title": "Pending Restart",
-            "type": "boolean"
           }
         },
         "required": [
@@ -550,11 +598,12 @@
             ],
             "title": "Managed Path"
           },
-          "pending_restart": {
+          "provider_capabilities": {
+            "default": [],
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/ProviderCapability"
             },
-            "title": "Pending Restart",
+            "title": "Provider Capabilities",
             "type": "array"
           },
           "secrets": {
@@ -569,7 +618,6 @@
           "document",
           "fields",
           "secrets",
-          "pending_restart",
           "authority"
         ],
         "title": "SettingsView",
@@ -9453,6 +9501,100 @@
           }
         ],
         "summary": "Review Preparation Status"
+      }
+    },
+    "/api/v1/review-preparation/first-boot/acknowledge": {
+      "post": {
+        "operationId": "acknowledge_first_boot_preparation_api_v1_review_preparation_first_boot_acknowledge_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_PreparationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Acknowledge First Boot Preparation"
       }
     },
     "/api/v1/review-preparation/pause": {

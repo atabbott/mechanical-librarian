@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
@@ -13,6 +15,7 @@ from mechanical_librarian.domain.setup_state import (
 )
 from mechanical_librarian.interfaces.web.app import owner_password_verifier
 from mechanical_librarian.interfaces.web.setup import create_setup_app
+from mechanical_librarian.interfaces.web.setup_frontend import SETUP_JS
 
 
 class _Sessions:
@@ -58,13 +61,40 @@ class _Sessions:
 
 
 class _State:
-    def __init__(self) -> None:
+    def __init__(self, sessions: _Sessions | None = None) -> None:
+        self.sessions = sessions
         self.document = SetupStateDocument(
             schema_version="setup-state-v1",
             revision=1,
             bootstrap_verifier_digest="0" * 64,
         )
         self.promoted = False
+
+    def claim_owner(
+        self,
+        *,
+        expected_revision: int,
+        owner_verifier: str,
+        session_digest: str,
+        csrf_digest: str,
+        created_at: int,
+        expires_at: int,
+    ) -> SetupStateDocument:
+        assert owner_verifier.startswith("$argon2id$")
+        assert expected_revision == self.document.revision
+        self.document = SetupStateDocument.model_validate(
+            {
+                **self.document.model_dump(),
+                "revision": expected_revision + 1,
+                "completed_steps": ["claim"],
+                "claimed": True,
+            }
+        )
+        if self.sessions is not None:
+            self.sessions.create_review_session(
+                session_digest, csrf_digest, created_at, expires_at
+            )
+        return self.document
 
     def read(self, _bootstrap: str) -> SetupStateDocument:
         return self.document
@@ -119,14 +149,15 @@ class _Connection:
 
 def _client() -> tuple[TestClient, _State, _Connection]:
     verifier = PasswordHasher().hash("correct horse battery staple")
+    session_store = _Sessions()
     sessions = OwnerSessionService(
-        _Sessions(),
+        session_store,
         owner_password_verifier(verifier),
         lambda: 1_000,
         3,
         lambda _n: "x" * 32,
     )
-    state = _State()
+    state = _State(session_store)
     connection = _Connection(state)
     journey = SetupJourneyOperation(
         state,
@@ -155,6 +186,32 @@ def _client() -> tuple[TestClient, _State, _Connection]:
     )
 
 
+def _claim(client: TestClient, password: str = "correct horse battery staple") -> Any:
+    nonce = client.get("/api/setup/claim")
+    nonce_cookie = nonce.headers["set-cookie"].split(";", 1)[0]
+    return client.post(
+        "/api/setup/session",
+        json={
+            "password": password,
+            "confirmation": password,
+            "expected_revision": nonce.json()["revision"],
+        },
+        headers={
+            "cookie": nonce_cookie,
+            "origin": "https://setup.invalid",
+            "x-setup-nonce": nonce.json()["nonce"],
+        },
+    )
+
+
+def _session_cookie(response: Any) -> str:
+    return next(
+        value.strip().split(";", 1)[0]
+        for value in response.headers["set-cookie"].split(",")
+        if value.strip().startswith("ml_session=")
+    )
+
+
 def test_setup_surface_exposes_only_health_shell_session_and_redacted_state() -> None:
     client, _state, _connection = _client()
 
@@ -163,8 +220,7 @@ def test_setup_surface_exposes_only_health_shell_session_and_redacted_state() ->
     shell = client.get("/")
     assert shell.status_code == 200
     assert 'id="setup-ledger"' in shell.text
-    assert "https://openlibrary.org/account/create" in shell.text
-    assert "https://hardcover.app/account/api" in shell.text
+    assert "https://openlibrary.org/account/create" not in shell.text
     assert '<script type="module" src="/assets/setup.js"></script>' in shell.text
     assert "content-security-policy" in shell.headers
     assert shell.headers["cache-control"] == "private, no-store"
@@ -174,6 +230,8 @@ def test_setup_surface_exposes_only_health_shell_session_and_redacted_state() ->
     assert "@media(max-width:760px)" in css.text
     assert "prefers-reduced-motion" in css.text
     assert script.status_code == 200
+    assert "https://openlibrary.org/account/create" in script.text
+    assert "https://hardcover.app/account/api" in script.text
     assert "localStorage" not in script.text
     assert "sessionStorage" not in script.text
     assert "csrf=state.csrf_token" in script.text
@@ -185,9 +243,7 @@ def test_setup_surface_exposes_only_health_shell_session_and_redacted_state() ->
     assert "Writes stay off until you turn them on in Activity." in script.text
     assert client.get("/api/setup/state").status_code == 401
 
-    login = client.post(
-        "/api/setup/session", json={"password": "correct horse battery staple"}
-    )
+    login = _claim(client)
 
     assert login.status_code == 200
     assert "HttpOnly" in login.headers["set-cookie"]
@@ -195,7 +251,7 @@ def test_setup_surface_exposes_only_health_shell_session_and_redacted_state() ->
     assert "SameSite=strict" in login.headers["set-cookie"]
     state = client.get(
         "/api/setup/state",
-        headers={"cookie": login.headers["set-cookie"].split(";", 1)[0]},
+        headers={"cookie": _session_cookie(login)},
     )
     assert state.json() == {
         "csrf_token": "x" * 32,
@@ -212,6 +268,7 @@ def test_setup_surface_exposes_only_health_shell_session_and_redacted_state() ->
 
 def test_wrong_setup_password_is_rate_limited() -> None:
     client, _state, _connection = _client()
+    _claim(client)
     for _ in range(5):
         assert (
             client.post("/api/setup/session", json={"password": "wrong"}).status_code
@@ -251,9 +308,10 @@ def test_setup_json_bodies_are_bounded_before_parsing_or_authentication(
 
 def test_oversized_setup_login_does_not_consume_the_login_throttle() -> None:
     client, _state, _connection = _client()
+    _claim(client)
     oversized = client.post(
         "/api/setup/session",
-        content=b'{"password":"' + b"x" * 2_049 + b'"}',
+        content=b"{" + b"x" * 12_416,
         headers={"content-type": "application/json"},
     )
     assert oversized.status_code == 413
@@ -266,6 +324,16 @@ def test_oversized_setup_login_does_not_consume_the_login_throttle() -> None:
     assert (
         client.post("/api/setup/session", json={"password": "wrong"}).status_code == 429
     )
+
+
+def test_maximum_setup_password_pair_reaches_owner_claim() -> None:
+    client, state, _connection = _client()
+    password = "\0" * 1_024
+
+    response = _claim(client, password)
+
+    assert response.status_code == 200
+    assert state.document.claimed
 
 
 @pytest.mark.parametrize(
@@ -325,10 +393,8 @@ def test_unexpected_setup_failure_returns_fixed_secure_response() -> None:
 
 def test_connect_requires_session_csrf_and_origin_and_never_returns_key() -> None:
     client, _state, connection = _client()
-    login = client.post(
-        "/api/setup/session", json={"password": "correct horse battery staple"}
-    )
-    cookie = login.headers["set-cookie"].split(";", 1)[0]
+    login = _claim(client)
+    cookie = _session_cookie(login)
     request = {
         "expected_revision": 2,
         "name": "primary",
@@ -370,7 +436,7 @@ def test_connect_requires_session_csrf_and_origin_and_never_returns_key() -> Non
 def test_surviving_session_rotates_csrf_for_mutation_after_restart() -> None:
     verifier = PasswordHasher().hash("correct horse battery staple")
     session_store = _Sessions()
-    state = _State()
+    state = _State(session_store)
     connection = _Connection(state)
     login_tokens = iter(("s" * 32, "c" * 32))
     first_sessions = OwnerSessionService(
@@ -389,10 +455,8 @@ def test_surviving_session_rotates_csrf_for_mutation_after_restart() -> None:
             "https://setup.invalid",
         )
     )
-    login = first_client.post(
-        "/api/setup/session", json={"password": "correct horse battery staple"}
-    )
-    cookie = login.headers["set-cookie"].split(";", 1)[0]
+    login = _claim(first_client)
+    cookie = _session_cookie(login)
     old_csrf = login.json()["csrf_token"]
 
     resumed_sessions = OwnerSessionService(
@@ -453,9 +517,7 @@ def test_surviving_session_rotates_csrf_for_mutation_after_restart() -> None:
 
 def test_connect_failure_returns_closed_code_and_does_not_advance_state() -> None:
     client, state, connection = _client()
-    login = client.post(
-        "/api/setup/session", json={"password": "correct horse battery staple"}
-    )
+    login = _claim(client)
     connection.failure = "timeout"
 
     response = client.post(
@@ -467,7 +529,7 @@ def test_connect_failure_returns_closed_code_and_does_not_advance_state() -> Non
             "key": "secret-value",
         },
         headers={
-            "cookie": login.headers["set-cookie"].split(";", 1)[0],
+            "cookie": _session_cookie(login),
             "origin": "https://setup.invalid",
             "x-csrf-token": login.json()["csrf_token"],
         },
@@ -483,11 +545,9 @@ def test_duplicate_local_library_names_return_closed_validation_without_mutation
     None
 ):
     client, state, _connection = _client()
-    login = client.post(
-        "/api/setup/session", json={"password": "correct horse battery staple"}
-    )
+    login = _claim(client)
     headers = {
-        "cookie": login.headers["set-cookie"].split(";", 1)[0],
+        "cookie": _session_cookie(login),
         "origin": "https://setup.invalid",
         "x-csrf-token": login.json()["csrf_token"],
     }
@@ -515,7 +575,7 @@ def test_duplicate_local_library_names_return_closed_validation_without_mutation
     duplicate = {
         "name": "books",
         "library_id": "books",
-        "media_kind": "ebook",
+        "media_kind": "book",
         "provider_connections": [],
     }
 
@@ -533,11 +593,9 @@ def test_duplicate_local_library_names_return_closed_validation_without_mutation
 
 def test_six_step_journey_closes_setup_routes_after_exact_kickoff_copy() -> None:
     client, state, _connection = _client()
-    login = client.post(
-        "/api/setup/session", json={"password": "correct horse battery staple"}
-    )
+    login = _claim(client)
     headers = {
-        "cookie": login.headers["set-cookie"].split(";", 1)[0],
+        "cookie": _session_cookie(login),
         "origin": "https://setup.invalid",
         "x-csrf-token": login.json()["csrf_token"],
     }
@@ -569,8 +627,9 @@ def test_six_step_journey_closes_setup_routes_after_exact_kickoff_copy() -> None
             "libraries": [
                 {
                     "name": "books",
+                    "display_name": "Owner's Ebooks & Audiobooks",
                     "library_id": "books",
-                    "media_kind": "ebook",
+                    "media_kind": "book",
                     "provider_connections": [],
                 }
             ],
@@ -593,17 +652,26 @@ def test_six_step_journey_closes_setup_routes_after_exact_kickoff_copy() -> None
 
     assert discovery.json() == {
         "libraries": [
-            {"library_id": "books", "name": "Books", "media_kind": "book"},
+            {
+                "library_id": "books",
+                "name": "Books",
+                "media_kind": "book",
+                "service_path": None,
+                "service_path_state": "unavailable",
+            },
             {
                 "library_id": "podcasts",
                 "name": "Podcasts",
                 "media_kind": "unsupported",
+                "service_path": None,
+                "service_path_state": "unavailable",
             },
         ]
     }
     assert kickoff.status_code == 202
+    assert state.document.libraries[0].display_name == "Owner's Ebooks & Audiobooks"
     assert kickoff.json() == {
-        "status": "restart_required",
+        "status": "active",
         "message": "Nothing in your library changes. Writes stay off until you turn them on in Activity.",
     }
     assert state.promoted is True
@@ -611,3 +679,23 @@ def test_six_step_journey_closes_setup_routes_after_exact_kickoff_copy() -> None
     assert closed.status_code == 404
     assert closed.headers["strict-transport-security"] == "max-age=31536000"
     assert client.get("/health/ready").status_code == 200
+
+
+def test_setup_library_step_uses_audiobookshelf_book_kind_without_owner_choice() -> (
+    None
+):
+    assert "Library kind" not in SETUP_JS
+    assert "media_kind:'book'" in SETUP_JS
+    assert "displayName.value=item.name" in SETUP_JS
+    assert "field('Library name',displayName)" in SETUP_JS
+    assert "display_name:row.querySelector('input[name^=display-]').value" in SETUP_JS
+    assert "row.dataset.name=stableName" in SETUP_JS
+    assert "name:row.dataset.name" in SETUP_JS
+    assert "Preparation will begin in the workspace." in SETUP_JS
+    assert "className='provider-access'" in SETUP_JS
+    assert "`${evidence?.name||humanName(item.library)}:" in SETUP_JS
+    assert (
+        "field(`${evidence?.name||humanName(library.name)} service path`,path)"
+        in SETUP_JS
+    )
+    assert "state.mounts.length?'Retest mounts':'Check mounts'" in SETUP_JS

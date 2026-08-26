@@ -2561,6 +2561,25 @@ def _register_browse_and_preparation_routes(
             raise HTTPException(503, detail={"code": "persistence"}) from None
 
     @app.post(
+        "/api/v1/review-preparation/first-boot/acknowledge",
+        response_model=_PreparationResponse,
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)
+        },
+    )
+    def acknowledge_first_boot_preparation(
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> _PreparationResponse:
+        _require_session(sessions, ml_session, x_csrf_token)
+        try:
+            return _PreparationResponse.model_validate(
+                application.acknowledge_first_boot_preparation().to_data()
+            )
+        except Exception:
+            raise HTTPException(503, detail={"code": "persistence"}) from None
+
+    @app.post(
         "/api/v1/review-preparation/{connection}/{library_name}/scan",
         response_model=_PreparationProgress,
         status_code=202,

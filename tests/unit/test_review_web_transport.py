@@ -339,14 +339,11 @@ def test_settings_store_transport_redacts_secret_and_derives_effects(
     )
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store, private"
-    assert response.json()["pending_restart"] == [
-        "connection.primary.key",
-        "provider_recovery_generation",
-    ]
+    assert "pending_restart" not in response.json()
     assert response.json()["secrets"][0]["indicator"] == "Configured · ····5678"
     assert "new-secret" not in response.text
     OwnerSettingsStore(connection).acknowledge_runtime(2)
-    assert OwnerSettingsStore(connection).read().document.revision == 3
+    assert OwnerSettingsStore(connection).read().document.revision == 2
     stale_after_ack = web.client.patch(
         "/api/v1/settings",
         json={
@@ -356,8 +353,7 @@ def test_settings_store_transport_redacts_secret_and_derives_effects(
         },
         headers={**web.origin, "x-csrf-token": session["csrf_token"]},
     )
-    assert stale_after_ack.status_code == 409
-    assert stale_after_ack.json()["error"]["code"] == "settings_stale"
+    assert stale_after_ack.status_code == 200
     connection.close()
     unavailable = web.client.get("/api/v1/settings")
     assert unavailable.status_code == 503
@@ -1477,6 +1473,7 @@ def test_openapi_is_deterministic_and_secret_free(
         ),
         ("post", "/api/v1/metadata-policy/validate"),
         ("get", "/api/v1/review-preparation"),
+        ("post", "/api/v1/review-preparation/first-boot/acknowledge"),
         # The live invalidation stream is a protected read like any other.
         ("get", "/api/v1/updates"),
         ("get", "/api/v1/review-cases/{review_case_id}"),
@@ -1735,8 +1732,8 @@ def test_composition_opens_the_single_database_for_worker_threads(
         run_review_server(
             Path("/config.json"),
             database,
-            Path("/catalogue.sqlite3"),
-            Path("/artifacts"),
+            Path(web.temporary.name) / "catalogue.sqlite3",
+            Path(web.temporary.name) / "artifacts",
             "127.0.0.1",
             8443,
         )
@@ -1752,9 +1749,9 @@ def test_store_composition_fault_preserves_pending_restart_acknowledgement(
 ) -> None:
     repository = Mock()
     store = repository.owner_settings_store.return_value
-    document = Mock(revision=7)
+    document = Mock(revision=7, pending_restart=["libraries"])
     store.activate_runtime.return_value = (
-        SimpleNamespace(document=document, pending_restart=("libraries",)),
+        SimpleNamespace(document=document),
         {"connection.primary.key": "synthetic-secret"},
         web.hash_path.read_text(encoding="utf-8").strip(),
     )
@@ -1871,7 +1868,7 @@ def test_served_composition_keeps_automatic_safety_reachable(
             run_review_server(
                 Path("/config.json"),
                 database,
-                Path("/catalogue.sqlite3"),
+                root / "catalogue.sqlite3",
                 root / "artifacts",
                 "127.0.0.1",
                 8443,
@@ -1883,3 +1880,39 @@ def test_served_composition_keeps_automatic_safety_reachable(
         assert safety.state().paused
     finally:
         repository.close()
+
+
+def test_first_boot_acknowledgement_is_authenticated_csrf_bound_and_durable(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    acknowledgements: list[str] = []
+    web.client.close()
+    app = create_transport_test_app(
+        web.repository,
+        ReviewWebConfiguration(
+            canonical_origin="https://review.test",
+            owner_password_hash_file=str(web.hash_path),
+        ),
+        first_boot=True,
+        acknowledge_first_boot=lambda: acknowledgements.append("acknowledged"),
+    )
+    web.client = TestClient(app, base_url="https://review.test")
+    web.client.headers["x-ml-build-identity"] = TEST_REACT_BUILD_IDENTITY
+    anonymous = web.client.post(
+        "/api/v1/review-preparation/first-boot/acknowledge",
+        headers={**web.origin, "x-csrf-token": "x" * 32},
+    )
+    assert anonymous.status_code == 401
+    login = web.login()
+    wrong_csrf = web.client.post(
+        "/api/v1/review-preparation/first-boot/acknowledge",
+        headers={**web.origin, "x-csrf-token": "x" * 32},
+    )
+    assert wrong_csrf.status_code == 403
+    acknowledged = web.client.post(
+        "/api/v1/review-preparation/first-boot/acknowledge",
+        headers={**web.origin, "x-csrf-token": str(login["csrf_token"])},
+    )
+    assert acknowledged.status_code == 200, acknowledged.text
+    assert acknowledged.json()["first_boot"] is False
+    assert acknowledgements == ["acknowledged"]

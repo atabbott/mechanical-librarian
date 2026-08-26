@@ -13,7 +13,7 @@ import {
   settingsSecretValid,
   settingsTextValid,
 } from '../src/api/http'
-import type { SettingsView } from '../src/api/http'
+import type { SettingsView, SettingsWrite } from '../src/api/http'
 import { createHttp, renderRoute } from './fixtures'
 
 const document: SettingsView['document'] = {
@@ -36,7 +36,8 @@ const document: SettingsView['document'] = {
       library_id: 'books',
       media_kind: 'ebook',
       mount: 'ebooks',
-      name: 'Books',
+      name: 'a-very_long-library-name',
+      display_name: 'Ebooks & Audiobooks: Collected Editions',
       policy_override: null,
       provider_connections: ['hardcover'],
     },
@@ -47,7 +48,7 @@ const document: SettingsView['document'] = {
     target_response_bytes: 1_048_576,
     timeout_seconds: 30,
   },
-  pending_restart: ['providers'],
+  pending_restart: [],
   provider_recovery_generation: 1,
   reduced_motion: 'follow_system',
   server: {
@@ -69,20 +70,18 @@ const view = (authority: 'file' | 'store' = 'store'): SettingsView => ({
   document,
   fields: [
     {
-      apply_effect: 'restart_required',
+      apply_effect: 'applied_live',
       field_id: 'connections',
       group: 'connections',
       managed_by_file: authority === 'file',
       managed_path: authority === 'file' ? '/data/config.json' : null,
-      pending_restart: false,
     },
     {
-      apply_effect: 'restart_required',
+      apply_effect: 'applied_live',
       field_id: 'providers',
       group: 'providers',
       managed_by_file: authority === 'file',
       managed_path: authority === 'file' ? '/data/config.json' : null,
-      pending_restart: true,
     },
     {
       apply_effect: 'applied_live',
@@ -90,11 +89,10 @@ const view = (authority: 'file' | 'store' = 'store'): SettingsView => ({
       group: 'appearance',
       managed_by_file: authority === 'file',
       managed_path: authority === 'file' ? '/data/config.json' : null,
-      pending_restart: false,
     },
   ],
   managed_path: authority === 'file' ? '/data/config.json' : null,
-  pending_restart: ['providers'],
+  provider_capabilities: [],
   secrets: [
     {
       configured: true,
@@ -129,6 +127,37 @@ describe('settings API field validation vocabulary', () => {
 })
 
 describe('owner settings route', () => {
+  it('keeps absent supported providers configurable from an empty document', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => ({
+      ...view(),
+      document: { ...document, providers: [] },
+      provider_capabilities: [
+        {
+          adapter: 'open_library' as const,
+          credential: 'contact_email' as const,
+          label: 'Open Library',
+          name: 'open_library',
+        },
+      ],
+    }))
+    renderRoute('/settings?group=providers', http)
+
+    const add = await screen.findByRole('button', { name: 'Add Open Library' })
+    act(() => {
+      add.click()
+      add.click()
+    })
+    expect(
+      screen.getByRole('checkbox', { name: 'Provider state Enable open library' }),
+    ).toBeVisible()
+    expect(
+      screen.getAllByRole('checkbox', { name: 'Provider state Enable open library' }),
+    ).toHaveLength(1)
+    expect(screen.getByRole('textbox', { name: 'Open Library contact email' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Add Open Library' })).not.toBeInTheDocument()
+  })
+
   it('keeps the primary shell intact and saves a redacted replacement with revision CAS', async () => {
     const user = userEvent.setup()
     const http = createHttp()
@@ -139,7 +168,8 @@ describe('owner settings route', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Settings' })).toBeVisible()
     for (const name of ['Library', 'Policy', 'Activity'])
       expect(screen.getByRole('link', { name })).toBeVisible()
-    expect(screen.getByText('Restart required for saved changes')).toBeVisible()
+    expect(screen.queryByText('Restart required for saved changes')).not.toBeInTheDocument()
+    expect(screen.queryByText('Applies on restart')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /Providers/ }))
     expect(screen.getByRole('checkbox', { name: 'Provider state Enable hardcover' })).toBeVisible()
     expect(screen.getByRole('link', { name: 'Get a Hardcover key' })).toBeVisible()
@@ -165,7 +195,54 @@ describe('owner settings route', () => {
       }),
     )
     expect(screen.queryByDisplayValue('new-secret-abcd')).not.toBeInTheDocument()
-    expect(await screen.findByText(/Server-authoritative settings are current/)).toBeVisible()
+    expect(await screen.findByText('Settings saved and in use.')).toBeVisible()
+  })
+
+  it('disables providers without clearing credentials and never restores associations', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    let savedRequest: SettingsWrite | undefined
+    http.getSettings = vi.fn(async () => view())
+    http.writeSettings = vi.fn(async (request: SettingsWrite) => {
+      savedRequest = request
+      return { ...view(), document: request.document }
+    })
+    renderRoute('/settings?group=providers', http)
+
+    const hardcover = await screen.findByRole('checkbox', {
+      name: 'Provider state Enable hardcover',
+    })
+    await user.click(hardcover)
+    expect(screen.getByText('Configured · ····abcd')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Replace hardcover API key' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Clear hardcover API key' })).toBeVisible()
+
+    const openLibrary = screen.getByRole('checkbox', {
+      name: 'Provider state Enable open-library',
+    })
+    await user.click(openLibrary)
+    expect(screen.getByRole('textbox', { name: 'Open Library contact email' })).toHaveValue(
+      'owner@example.invalid',
+    )
+
+    await user.click(hardcover)
+    await user.click(screen.getByRole('button', { name: /Libraries/ }))
+    expect(screen.getByRole('checkbox', { name: /^hardcover$/u })).not.toBeChecked()
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+
+    await waitFor(() => expect(http.writeSettings).toHaveBeenCalledOnce())
+    expect(savedRequest?.secrets).toEqual([])
+    expect(savedRequest?.document.libraries[0]?.provider_connections).toEqual([])
+    expect(savedRequest?.document.providers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          contact_email: 'owner@example.invalid',
+          enabled: false,
+          name: 'open-library',
+        }),
+        expect.objectContaining({ enabled: true, name: 'hardcover' }),
+      ]),
+    )
   })
 
   it('renders file authority without covered edit affordances in the DOM', async () => {
@@ -204,6 +281,50 @@ describe('owner settings route', () => {
     expect(await screen.findByRole('heading', { level: 2, name: 'Appearance' })).toBeVisible()
     act(() => router.history.back())
     expect(await screen.findByRole('heading', { level: 2, name: 'Libraries' })).toBeVisible()
+  })
+
+  it('uses a human library heading while keeping exact identifiers secondary', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    renderRoute('/settings?group=libraries', http)
+
+    expect(
+      await screen.findByRole('heading', {
+        level: 3,
+        name: 'Ebooks & Audiobooks: Collected Editions',
+      }),
+    ).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'a-very_long-library-name' })).toBeNull()
+    const metadata = screen.getByText('a-very_long-library-name').closest('p')
+    expect(metadata).toHaveClass('settings-record-meta')
+    expect(metadata).toHaveTextContent('Local identifier: a-very_long-library-name')
+    expect(metadata).toHaveTextContent('Audiobookshelf identifier: books')
+    expect(
+      screen.getByRole('group', {
+        name: 'Providers for Ebooks & Audiobooks: Collected Editions',
+      }),
+    ).toBeVisible()
+  })
+
+  it('falls back to the exact stable library name without reconstructing punctuation', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => ({
+      ...view(),
+      document: {
+        ...document,
+        libraries: document.libraries.map((library) => {
+          const { display_name: omittedDisplayName, ...legacyLibrary } = library
+          void omittedDisplayName
+          return legacyLibrary
+        }),
+      },
+    }))
+    renderRoute('/settings?group=libraries', http)
+
+    expect(
+      await screen.findByRole('heading', { level: 3, name: 'a-very_long-library-name' }),
+    ).toBeVisible()
+    expect(screen.queryByText('A Very Long Library Name')).not.toBeInTheDocument()
   })
 
   it('announces unavailable and stale recovery states without leaking a value', async () => {
@@ -262,7 +383,7 @@ describe('owner settings route', () => {
       await user.click(screen.getByRole('button', { name: 'Save settings' }))
 
       const recovered = await screen.findByText(
-        'Authoritative Settings reloaded. Review the current values before saving again.',
+        'Current settings reloaded. Review the values before saving again.',
       )
       expect(recovered.closest('[role="alert"]')).toHaveFocus()
       expect(screen.getByRole('textbox', { name: 'Audiobookshelf endpoint' })).toHaveValue(
@@ -300,7 +421,7 @@ describe('owner settings route', () => {
     const uncertain = await screen.findByText(/Save outcome is uncertain and Settings could not/)
     expect(uncertain.closest('[role="alert"]')).toHaveFocus()
     expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Retry authoritative reload' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Retry settings reload' })).toBeVisible()
     expect(screen.queryByText(/Nothing changed/)).not.toBeInTheDocument()
     expect(http.writeSettings).toHaveBeenCalledOnce()
   })

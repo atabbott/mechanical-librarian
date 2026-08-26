@@ -11,7 +11,9 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_setup import 
 )
 
 
-def _probe(handler: httpx.MockTransport) -> AudiobookshelfSetupProbe:
+def _probe(
+    handler: httpx.MockTransport, *, maximum_bytes: int = 64
+) -> AudiobookshelfSetupProbe:
     return AudiobookshelfSetupProbe(
         lambda endpoint, _key: httpx.Client(
             base_url=endpoint,
@@ -19,7 +21,7 @@ def _probe(handler: httpx.MockTransport) -> AudiobookshelfSetupProbe:
             follow_redirects=False,
             trust_env=False,
         ),
-        maximum_bytes=64,
+        maximum_bytes=maximum_bytes,
         timeout_seconds=2,
     )
 
@@ -40,6 +42,30 @@ def test_setup_probe_performs_one_bounded_libraries_read() -> None:
     assert len(requests) == 1
     assert requests[0].url == httpx.URL("https://abs.invalid/api/libraries")
     assert requests[0].headers["accept-encoding"] == "identity"
+
+
+def test_setup_probe_carries_only_bounded_service_path_evidence() -> None:
+    response = httpx.MockTransport(
+        lambda _request: httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={
+                "libraries": [
+                    {
+                        "id": "books",
+                        "name": "Books",
+                        "mediaType": "book",
+                        "folders": [{"fullPath": "/library/books"}],
+                    }
+                ]
+            },
+        )
+    )
+    candidate = _probe(response, maximum_bytes=512).discover(
+        "https://abs.invalid", "secret-value"
+    )[0]
+    assert candidate.service_paths == ("/library/books",)
+    assert "service_paths" not in candidate.model_dump()
 
 
 @pytest.mark.parametrize(

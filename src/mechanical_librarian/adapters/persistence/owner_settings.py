@@ -12,6 +12,7 @@ from mechanical_librarian.domain.owner_settings import (
     OwnerSettingsError,
     SecretWrite,
     SettingsView,
+    provider_capabilities,
     secret_presence,
     store_field_metadata,
 )
@@ -55,12 +56,12 @@ class OwnerSettingsStore:
         except sqlite3.Error as error:
             self._connection.rollback()
             raise OwnerSettingsError("owner settings are unavailable") from error
-        public_values = {
+        runtime_values = {
             name: value
             for name, value in values.items()
-            if name in document.secret_fields()
+            if name in document.runtime_secret_fields()
         }
-        return _settings_view(document, values), public_values, verifier
+        return _settings_view(document, values), runtime_values, verifier
 
     def acknowledge_runtime(self, revision: int) -> None:
         """Clear restart debt only after this exact snapshot composed successfully."""
@@ -102,6 +103,17 @@ class OwnerSettingsStore:
         secrets: tuple[SecretWrite, ...],
         live_update: AbstractContextManager[None] | None = None,
     ) -> SettingsView:
+        # Candidate preparation enters before SQLite authority is locked;
+        # successful exit occurs only after the durable commit.
+        with live_update if live_update is not None else nullcontext():
+            return self._write_transaction(document, expected_revision, secrets)
+
+    def _write_transaction(
+        self,
+        document: OwnerSettingsDocument,
+        expected_revision: int,
+        secrets: tuple[SecretWrite, ...],
+    ) -> SettingsView:
         if (
             type(expected_revision) is not int
             or document.revision != expected_revision + 1
@@ -111,45 +123,10 @@ class OwnerSettingsStore:
             raise OwnerSettingsError("settings secret operation is invalid")
         try:
             self._connection.execute("BEGIN IMMEDIATE")
-            previous, values = _load_owner_settings_authority(self._connection)
-            if previous.revision != expected_revision:
-                self._connection.rollback()
-                raise OwnerSettingsError("settings revision is stale")
-            if document.pending_restart != previous.pending_restart:
-                self._connection.rollback()
-                raise OwnerSettingsError("settings restart state is invalid")
-            if _non_settings_library_state(previous) != _non_settings_library_state(
-                document
-            ):
-                self._connection.rollback()
-                raise OwnerSettingsError("settings document is invalid")
-            document = document.model_copy(
-                update={
-                    "pending_restart": sorted(
-                        set(previous.pending_restart)
-                        | _restart_changes(previous, document)
-                        | {entry.field_id for entry in secrets}
-                    )
-                }
+            previous, current_values = _load_owner_settings_authority(self._connection)
+            document, values, obsolete = self._candidate(
+                document, expected_revision, secrets, previous, current_values
             )
-            self._validate_secret_writes(document, secrets, values)
-            for entry in secrets:
-                if entry.operation == "clear":
-                    values.pop(entry.field_id, None)
-                else:
-                    assert entry.value is not None
-                    values[entry.field_id] = entry.value
-            obsolete = {
-                name
-                for name in values
-                if name != "owner.password.verifier"
-                and name not in document.secret_fields()
-            }
-            for name in obsolete:
-                values.pop(name)
-            if not document.required_secret_fields().issubset(values):
-                self._connection.rollback()
-                raise OwnerSettingsError("settings required secret is unavailable")
             if (
                 self._connection.execute(
                     "UPDATE owner_settings SET revision=?,document=? WHERE singleton=1 AND revision=?",
@@ -179,8 +156,7 @@ class OwnerSettingsStore:
                     "DELETE FROM owner_setting_secrets WHERE field_id=?", (name,)
                 )
             committed = _settings_view(document, values)
-            with live_update if live_update is not None else nullcontext():
-                self._connection.commit()
+            self._connection.commit()
         except OwnerSettingsError:
             self._connection.rollback()
             raise
@@ -191,6 +167,74 @@ class OwnerSettingsStore:
             self._connection.rollback()
             raise
         return committed
+
+    def activation_snapshot(
+        self,
+        document: OwnerSettingsDocument,
+        expected_revision: int,
+        secrets: tuple[SecretWrite, ...],
+    ) -> tuple[SettingsView, dict[str, str], str]:
+        """Validate a candidate without making it authoritative."""
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            previous, current_values = _load_owner_settings_authority(self._connection)
+            candidate, values, _obsolete = self._candidate(
+                document, expected_revision, secrets, previous, current_values
+            )
+            verifier = values.get("owner.password.verifier")
+            if type(verifier) is not str or not verifier.startswith("$argon2id$"):
+                raise OwnerSettingsError("owner settings are unavailable")
+            credentials = {
+                name: value
+                for name, value in values.items()
+                if name in candidate.runtime_secret_fields()
+            }
+            snapshot = _settings_view(candidate, values)
+            self._connection.rollback()
+            return snapshot, credentials, verifier
+        except OwnerSettingsError:
+            self._connection.rollback()
+            raise
+        except sqlite3.Error as error:
+            self._connection.rollback()
+            raise OwnerSettingsError("owner settings are unavailable") from error
+
+    def _candidate(
+        self,
+        document: OwnerSettingsDocument,
+        expected_revision: int,
+        secrets: tuple[SecretWrite, ...],
+        previous: OwnerSettingsDocument,
+        current_values: dict[str, str],
+    ) -> tuple[OwnerSettingsDocument, dict[str, str], set[str]]:
+        if previous.revision != expected_revision:
+            raise OwnerSettingsError("settings revision is stale")
+        if document.pending_restart or previous.pending_restart:
+            raise OwnerSettingsError("settings restart state is invalid")
+        if _non_settings_library_state(previous) != _non_settings_library_state(
+            document
+        ):
+            raise OwnerSettingsError("settings document is invalid")
+        _validate_available_provider_references(document)
+        values = dict(current_values)
+        self._validate_secret_writes(document, secrets, values)
+        for entry in secrets:
+            if entry.operation == "clear":
+                values.pop(entry.field_id, None)
+            else:
+                assert entry.value is not None
+                values[entry.field_id] = entry.value
+        obsolete = {
+            name
+            for name in values
+            if name != "owner.password.verifier"
+            and name not in document.secret_fields()
+        }
+        for name in obsolete:
+            values.pop(name)
+        if not document.required_secret_fields().issubset(values):
+            raise OwnerSettingsError("settings required secret is unavailable")
+        return document, values, obsolete
 
     @staticmethod
     def _validate_secret_writes(
@@ -210,27 +254,6 @@ class OwnerSettingsStore:
             entry.operation == "set" and entry.field_id in existing for entry in secrets
         ):
             raise OwnerSettingsError("settings secret operation is invalid")
-
-
-def _restart_changes(
-    previous: OwnerSettingsDocument, current: OwnerSettingsDocument
-) -> set[str]:
-    fields = {
-        "connections",
-        "providers",
-        "libraries",
-        "limits",
-        "provider_recovery_generation",
-    }
-    changed = {
-        field for field in fields if getattr(previous, field) != getattr(current, field)
-    }
-    changed.update(
-        f"server.{field}"
-        for field in type(current.server).model_fields
-        if getattr(previous.server, field) != getattr(current.server, field)
-    )
-    return changed
 
 
 _SECRET_FIELD_ID = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
@@ -313,30 +336,65 @@ def _validate_owner_settings_content(connection: sqlite3.Connection) -> None:
             raise OwnerSettingsError("owner settings are unavailable") from error
         if state.revision != revision or _canonical_json(state.model_dump()) != encoded:
             raise OwnerSettingsError("owner settings are unavailable") from None
-        if {name for (name,) in secrets} != state.secret_fields():
+        permitted = set(state.secret_fields())
+        if state.claimed:
+            permitted.add("owner.password.verifier")
+        if {name for (name,) in secrets} != permitted:
             raise OwnerSettingsError("owner settings are unavailable") from None
 
 
 def _settings_view(
     document: OwnerSettingsDocument, values: dict[str, str]
 ) -> SettingsView:
+    projected = _available_settings_document(document)
     return SettingsView(
-        document=document,
-        fields=store_field_metadata(document, frozenset(document.pending_restart)),
+        document=projected,
+        fields=store_field_metadata(projected),
         secrets=tuple(
             secret_presence(name, values.get(name))
             for name in sorted(document.secret_fields())
         ),
-        pending_restart=tuple(document.pending_restart),
+        provider_capabilities=provider_capabilities(projected),
         authority="store",
     )
 
 
+def _available_settings_document(
+    document: OwnerSettingsDocument,
+) -> OwnerSettingsDocument:
+    enabled = {provider.name for provider in document.providers if provider.enabled}
+    libraries = [
+        library.model_copy(
+            update={
+                "provider_connections": [
+                    name for name in library.provider_connections if name in enabled
+                ]
+            }
+        )
+        for library in document.libraries
+    ]
+    if all(
+        projected.provider_connections == current.provider_connections
+        for projected, current in zip(libraries, document.libraries, strict=True)
+    ):
+        return document
+    return document.model_copy(update={"libraries": libraries})
+
+
+def _validate_available_provider_references(document: OwnerSettingsDocument) -> None:
+    enabled = {provider.name for provider in document.providers if provider.enabled}
+    if any(
+        not set(library.provider_connections).issubset(enabled)
+        for library in document.libraries
+    ):
+        raise OwnerSettingsError("settings library references are invalid")
+
+
 def _non_settings_library_state(
     document: OwnerSettingsDocument,
-) -> tuple[tuple[str, str | None, object], ...]:
+) -> tuple[tuple[str, str | None, str | None, object], ...]:
     return tuple(
-        (library.name, library.mount, library.policy_override)
+        (library.name, library.display_name, library.mount, library.policy_override)
         for library in document.libraries
     )
 

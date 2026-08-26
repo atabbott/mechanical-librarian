@@ -1876,17 +1876,34 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
 
     def has_first_boot_preparation(self) -> bool:
         """Read explicit setup-origin scan identities without inferring store history."""
+        acknowledged = self._connection.execute(
+            "SELECT first_boot_acknowledged FROM review_preparation_control WHERE singleton=1"
+        ).fetchone()
+        if acknowledged != (0,):
+            return False
         rows = self._connection.execute(
-            "SELECT scan_id,connection_name,library_name FROM review_preparation_scans s "
-            "WHERE s.scan_id=(SELECT selected.scan_id FROM review_preparation_scans selected "
-            "WHERE selected.connection_name=s.connection_name "
-            "AND selected.library_name=s.library_name "
-            "ORDER BY selected.requested_at DESC,selected.scan_id DESC LIMIT 1)"
+            "SELECT scan_id,connection_name,library_name FROM review_preparation_scans"
         ).fetchall()
-        return bool(rows) and all(
+        return any(
             is_first_boot_scan_id(scan_id, connection, library)
             for scan_id, connection, library in rows
         )
+
+    def acknowledge_first_boot_preparation(self) -> None:
+        """Durably retire only the setup-origin handover presentation."""
+        transaction = self._transaction("acknowledge_first_boot_preparation")
+        try:
+            transaction.begin()
+            cursor = self._connection.execute(
+                "UPDATE review_preparation_control SET first_boot_acknowledged=1 "
+                "WHERE singleton=1"
+            )
+            if cursor.rowcount != 1:
+                raise MetadataReportError("review preparation state is invalid")
+            transaction.commit()
+        except Exception:
+            transaction.rollback()
+            raise
 
 
 class SQLiteShadowPreviewRepository:

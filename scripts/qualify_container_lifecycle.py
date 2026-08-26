@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Repeatable exact-head qualification for the supported container lifecycle."""
+"""Repeatable exact-head qualification for the supported container lifecycle.
+
+The unchanged file-managed sentinel and exact-empty one-listener journey run
+against the same exact image.
+"""
 
 from __future__ import annotations
 
@@ -25,6 +29,62 @@ from argon2 import PasswordHasher
 ROOT = Path(__file__).resolve().parents[1]
 OWNERSHIP_LABEL = "org.mechanical-librarian.qualification-run"
 GRACEFUL_SHUTDOWN_SECONDS = 5
+_FAKE_AUDIOBOOKSHELF = r"""
+import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlsplit
+
+library = {
+    "id": "books",
+    "name": "Synthetic Books & Essays",
+    "mediaType": "book",
+    "folders": [{"fullPath": "/library/books"}],
+}
+summary = {"id": "item-1", "libraryId": "books", "updatedAt": 1}
+detail = {
+    **summary,
+    "isInvalid": False,
+    "isMissing": False,
+    "mediaType": "book",
+    "media": {
+        "metadata": {"title": "Synthetic Book", "authors": [{"name": "Test Author"}]},
+        "ebookFile": {
+            "ebookFormat": "epub",
+            "ino": "synthetic-inode",
+            "metadata": {"relPath": "item-1.epub", "size": 1, "mtimeMs": 1},
+        },
+    },
+}
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.headers.get("Authorization") != "Bearer synthetic-target-token":
+            self.send_response(403)
+            self.end_headers()
+            return
+        route = urlsplit(self.path).path
+        if route == "/api/libraries":
+            value = {"libraries": [library]}
+        elif route == "/api/libraries/books/items":
+            value = {"total": 1, "results": [summary]}
+        elif route == "/api/items/item-1":
+            value = detail
+        else:
+            self.send_response(404)
+            self.end_headers()
+            return
+        body = json.dumps(value, separators=(",", ":")).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_):
+        pass
+
+ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()
+"""
 
 
 class QualificationError(RuntimeError):
@@ -263,6 +323,394 @@ def _clean_stop(container: str) -> int:
     return shutdown_ms
 
 
+def _json_request(
+    opener: urllib.request.OpenerDirector,
+    port: int,
+    path: str,
+    *,
+    method: str = "GET",
+    payload: dict[str, object] | None = None,
+    headers: dict[str, str] | None = None,
+) -> tuple[int, object]:
+    request = urllib.request.Request(
+        f"https://127.0.0.1:{port}{path}",
+        data=(
+            None
+            if payload is None
+            else json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        ),
+        headers={
+            "Host": "review.test",
+            **({"Content-Type": "application/json"} if payload is not None else {}),
+            **(headers or {}),
+        },
+        method=method,
+    )
+    try:
+        with opener.open(request, timeout=5) as response:
+            body = response.read(1_048_577)
+            if len(body) > 1_048_576:
+                raise QualificationError("first_run_response_oversize")
+            return response.status, json.loads(body.decode("utf-8", "strict"))
+    except urllib.error.HTTPError as error:
+        body = error.read(1_048_577)
+        if len(body) > 1_048_576:
+            raise QualificationError("first_run_response_oversize") from error
+        return error.code, json.loads(body.decode("utf-8", "strict"))
+
+
+def _qualify_first_run(
+    image: str,
+    run_id: str,
+    suffix: str,
+) -> dict[str, object]:
+    data_volume = f"mechanical-librarian-first-run-data-{suffix}"
+    secrets_volume = f"mechanical-librarian-first-run-secrets-{suffix}"
+    media_volume = f"mechanical-librarian-first-run-media-{suffix}"
+    seed = f"mechanical-librarian-first-run-seed-{suffix}"
+    target = f"mechanical-librarian-first-run-target-{suffix}"
+    review = f"mechanical-librarian-first-run-review-{suffix}"
+    try:
+        for volume in (data_volume, secrets_volume, media_volume):
+            _run(
+                [
+                    "docker",
+                    "volume",
+                    "create",
+                    "--label",
+                    f"{OWNERSHIP_LABEL}={run_id}",
+                    volume,
+                ]
+            )
+            if not _owned("volume", volume, run_id):
+                raise QualificationError("first_run_volume_ownership_failed")
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary)
+            _run(
+                [
+                    "openssl",
+                    "req",
+                    "-x509",
+                    "-newkey",
+                    "rsa:2048",
+                    "-nodes",
+                    "-keyout",
+                    str(source / "tls.key"),
+                    "-out",
+                    str(source / "tls.crt"),
+                    "-days",
+                    "1",
+                    "-subj",
+                    "/CN=review.test",
+                    "-addext",
+                    "subjectAltName=DNS:review.test",
+                ]
+            )
+            certificate_pem = (source / "tls.crt").read_text(encoding="ascii")
+            (source / "review-bootstrap.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "review-bootstrap-v1",
+                        "canonical_origin": "https://review.test",
+                        "tls_certificate_file": "/run/secrets/tls.crt",
+                        "tls_private_key_file": "/run/secrets/tls.key",
+                        "trusted_proxy_ips": [],
+                        "mounts": [
+                            {
+                                "name": "books",
+                                "container_path": "/media/books",
+                                "service_path": "/library/books",
+                                "read_only": True,
+                            }
+                        ],
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                encoding="utf-8",
+            )
+            _run(
+                [
+                    "docker",
+                    "run",
+                    "--rm",
+                    "--name",
+                    seed,
+                    "--label",
+                    f"{OWNERSHIP_LABEL}={run_id}",
+                    "--user",
+                    "0:0",
+                    "--mount",
+                    f"type=volume,src={secrets_volume},dst=/secrets",
+                    "--mount",
+                    f"type=volume,src={media_volume},dst=/media",
+                    "--mount",
+                    f"type=bind,src={source},dst=/seed,readonly",
+                    "--entrypoint",
+                    "/bin/sh",
+                    image,
+                    "-c",
+                    "cp /seed/review-bootstrap.json /seed/tls.crt /seed/tls.key /secrets/ && "
+                    "mkdir -p /media/books && printf x >/media/books/item-1.epub && "
+                    "chown -R 65532:65532 /secrets /media && chmod 700 /secrets /media /media/books && chmod 600 /secrets/* /media/books/item-1.epub",
+                ]
+            )
+
+        _run(
+            [
+                "docker",
+                "create",
+                "--name",
+                target,
+                "--label",
+                f"{OWNERSHIP_LABEL}={run_id}",
+                "--user",
+                "65532:65532",
+                "--read-only",
+                "--cap-drop",
+                "ALL",
+                "--security-opt",
+                "no-new-privileges:true",
+                "--tmpfs",
+                "/tmp:rw,noexec,nosuid,nodev,size=16m,mode=0700,uid=65532,gid=65532",
+                "-p",
+                "127.0.0.1::8443",
+                "--entrypoint",
+                "/opt/mechanical-librarian/bin/python",
+                image,
+                "-I",
+                "-c",
+                _FAKE_AUDIOBOOKSHELF,
+            ]
+        )
+        _run(["docker", "start", target])
+        _run(
+            [
+                "docker",
+                "create",
+                "--name",
+                review,
+                "--label",
+                f"{OWNERSHIP_LABEL}={run_id}",
+                "--user",
+                "65532:65532",
+                "--read-only",
+                "--network",
+                f"container:{target}",
+                "--cap-drop",
+                "ALL",
+                "--security-opt",
+                "no-new-privileges:true",
+                "--mount",
+                f"type=volume,src={data_volume},dst=/data",
+                "--mount",
+                f"type=volume,src={secrets_volume},dst=/run/secrets,readonly",
+                "--mount",
+                f"type=volume,src={media_volume},dst=/media,readonly",
+                "--tmpfs",
+                "/tmp:rw,noexec,nosuid,nodev,size=64m,mode=0700,uid=65532,gid=65532",
+                image,
+            ]
+        )
+        if not _owned("container", review, run_id):
+            raise QualificationError("first_run_container_ownership_failed")
+        _run(["docker", "start", review])
+        port = int(_run(["docker", "port", target, "8443/tcp"]).rsplit(":", 1)[1])
+        context = _verified_context(certificate_pem)
+        if not _health(port, "/health/ready", time.monotonic() + 30, context):
+            raise QualificationError("first_run_readiness_failed")
+        opener = urllib.request.build_opener(
+            urllib.request.HTTPSHandler(context=context),
+            urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()),
+        )
+        status, claim = _json_request(opener, port, "/api/setup/claim")
+        if (
+            status != 200
+            or not isinstance(claim, dict)
+            or claim.get("claimed") is not False
+        ):
+            raise QualificationError("first_run_claim_failed")
+        password = "synthetic qualification owner"
+        status, session = _json_request(
+            opener,
+            port,
+            "/api/setup/session",
+            method="POST",
+            payload={
+                "password": password,
+                "confirmation": password,
+                "expected_revision": claim["revision"],
+            },
+            headers={
+                "Origin": "https://review.test",
+                "X-Setup-Nonce": str(claim["nonce"]),
+            },
+        )
+        if status != 200 or not isinstance(session, dict):
+            raise QualificationError("first_run_password_failed")
+        csrf = str(session["csrf_token"])
+        mutation_headers = {
+            "Origin": "https://review.test",
+            "X-CSRF-Token": csrf,
+        }
+        steps = (
+            (
+                "/api/setup/connect",
+                {
+                    "expected_revision": 2,
+                    "name": "primary",
+                    "endpoint": "http://127.0.0.1:18080",
+                    "key": "synthetic-target-token",
+                },
+                3,
+            ),
+            ("/api/setup/providers", {"expected_revision": 3, "providers": []}, 4),
+        )
+        for path, payload, revision in steps:
+            status, result = _json_request(
+                opener,
+                port,
+                path,
+                method="POST",
+                payload=payload,
+                headers=mutation_headers,
+            )
+            if (
+                status != 200
+                or not isinstance(result, dict)
+                or result.get("revision") != revision
+            ):
+                raise QualificationError("first_run_step_failed")
+        status, discovery = _json_request(
+            opener, port, "/api/setup/libraries?expected_revision=4"
+        )
+        if (
+            status != 200
+            or not isinstance(discovery, dict)
+            or not isinstance(discovery.get("libraries"), list)
+            or len(discovery["libraries"]) != 1
+        ):
+            raise QualificationError("first_run_discovery_failed")
+        status, result = _json_request(
+            opener,
+            port,
+            "/api/setup/libraries",
+            method="POST",
+            payload={
+                "expected_revision": 4,
+                "libraries": [
+                    {
+                        "name": "synthetic-books-essays",
+                        "display_name": "Synthetic Books & Essays",
+                        "library_id": "books",
+                        "media_kind": "book",
+                        "provider_connections": [],
+                    }
+                ],
+            },
+            headers=mutation_headers,
+        )
+        if status != 200 or not isinstance(result, dict) or result.get("revision") != 5:
+            raise QualificationError("first_run_library_selection_failed")
+        status, mounts = _json_request(
+            opener,
+            port,
+            "/api/setup/mounts",
+            method="POST",
+            payload={
+                "expected_revision": 5,
+                "service_paths": {"synthetic-books-essays": "/library/books"},
+            },
+            headers=mutation_headers,
+        )
+        if status != 200 or not isinstance(mounts, dict) or mounts.get("revision") != 6:
+            raise QualificationError("first_run_mount_failed")
+        status, _ = _json_request(
+            opener,
+            port,
+            "/api/setup/kick-off",
+            method="POST",
+            payload={"expected_revision": 6},
+            headers=mutation_headers,
+        )
+        if status != 202:
+            raise QualificationError("first_run_promotion_failed")
+        status, _ = _json_request(opener, port, "/api/setup/state")
+        if status != 404:
+            raise QualificationError("first_run_setup_routes_open")
+        workspace = urllib.request.Request(
+            f"https://127.0.0.1:{port}/library", headers={"Host": "review.test"}
+        )
+        with opener.open(workspace, timeout=5) as response:
+            if response.status != 200 or b"review-app" not in response.read(1_048_577):
+                raise QualificationError("first_run_session_handoff_failed")
+        status, settings = _json_request(opener, port, "/api/v1/settings")
+        if (
+            status != 200
+            or not isinstance(settings, dict)
+            or settings.get("authority") != "store"
+        ):
+            raise QualificationError("first_run_settings_failed")
+        preparation_advanced = False
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            status, preparation = _json_request(
+                opener, port, "/api/v1/review-preparation"
+            )
+            if status == 200 and isinstance(preparation, dict):
+                libraries = preparation.get("libraries")
+                if isinstance(libraries, list) and any(
+                    isinstance(item, dict)
+                    and isinstance(item.get("total"), int)
+                    and item["total"] >= 1
+                    and isinstance(item.get("checked"), int)
+                    and item["checked"] >= 1
+                    for item in libraries
+                ):
+                    preparation_advanced = True
+                    break
+            time.sleep(0.2)
+        if not preparation_advanced:
+            raise QualificationError("first_run_preparation_did_not_advance")
+        _clean_stop(review)
+        _run(["docker", "start", review])
+        if not _health(port, "/health/ready", time.monotonic() + 30, context):
+            raise QualificationError("first_run_restart_failed")
+        restarted = urllib.request.build_opener(
+            urllib.request.HTTPSHandler(context=context),
+            urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()),
+        )
+        status, _ = _json_request(
+            restarted,
+            port,
+            "/api/v1/session/login",
+            method="POST",
+            payload={"password": password},
+            headers={"Origin": "https://review.test"},
+        )
+        if (
+            status != 200
+            or _json_request(restarted, port, "/api/v1/settings")[0] != 200
+        ):
+            raise QualificationError("first_run_durable_restart_failed")
+        _clean_stop(review)
+        return {
+            "durable_restart": True,
+            "empty_volume": True,
+            "ordinary_session_continuity": True,
+            "preparation_advanced": True,
+            "same_listener_promotion": True,
+            "setup_routes_closed": True,
+        }
+    finally:
+        _remove_owned("container", review, run_id)
+        _remove_owned("container", target, run_id)
+        _remove_owned("container", seed, run_id)
+        _remove_owned("volume", media_volume, run_id)
+        _remove_owned("volume", secrets_volume, run_id)
+        _remove_owned("volume", data_volume, run_id)
+
+
 def _configuration() -> dict[str, object]:
     return {
         "schema_version": "config-v6",
@@ -351,6 +799,18 @@ def main() -> None:
         if not _owned("image", image, run_id):
             raise QualificationError("image_ownership_failed")
         image_id = _run(["docker", "image", "inspect", image, "--format", "{{.Id}}"])
+        image_revision = _run(
+            [
+                "docker",
+                "image",
+                "inspect",
+                image,
+                "--format",
+                '{{ index .Config.Labels "org.opencontainers.image.revision" }}',
+            ]
+        )
+        if image_revision != source_sha:
+            raise QualificationError("image_revision_mismatch")
         _run(
             [
                 "docker",
@@ -608,6 +1068,7 @@ def main() -> None:
             second_hash = _sha256(second)
         if first_hash != second_hash:
             raise QualificationError("container_restart_state_changed")
+        first_run = _qualify_first_run(image, run_id, suffix)
         if (
             _run(["git", "rev-parse", "HEAD"]) != source_sha
             or _run(["git", "status", "--porcelain"])
@@ -627,13 +1088,16 @@ def main() -> None:
                     "guarded_checkpoint_restart": True,
                     "frontend_build_tools_excluded": True,
                     "image_id": image_id,
+                    "image_revision": image_revision,
+                    "installed_artifact": "container-image",
+                    "first_run": first_run,
                     "liveness": True,
                     "non_root": True,
                     "read_only_root": True,
                     "readiness": True,
                     "react_assets_validated": True,
                     "react_workspace_activated": True,
-                    "schema": "container-lifecycle-evidence-v4",
+                    "schema": "container-lifecycle-evidence-v5",
                     "snapshot_build": True,
                     "workbench_excluded": True,
                     "single_data_volume": True,

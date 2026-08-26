@@ -29,6 +29,15 @@ def _store() -> tuple[sqlite3.Connection, SetupStateStore]:
     connection.execute(
         "CREATE TABLE owner_setting_secrets (field_id TEXT PRIMARY KEY,value TEXT)"
     )
+    connection.execute(
+        "CREATE TABLE review_sessions ("
+        "session_digest TEXT PRIMARY KEY,csrf_digest TEXT,actor TEXT,"
+        "created_at INTEGER,expires_at INTEGER)"
+    )
+    connection.execute(
+        "CREATE TABLE review_login_failures ("
+        "failure_id TEXT PRIMARY KEY,occurred_at INTEGER)"
+    )
     return connection, SetupStateStore(connection)
 
 
@@ -44,13 +53,20 @@ def _next(state: SetupStateDocument, **changes: object) -> SetupStateDocument:
     )
 
 
+def _claimed(store: SetupStateStore, state: SetupStateDocument) -> SetupStateDocument:
+    return store.claim_owner(
+        expected_revision=state.revision,
+        owner_verifier=_OWNER,
+        session_digest="d" * 64,
+        csrf_digest="e" * 64,
+        created_at=1,
+        expires_at=3_601,
+    )
+
+
 def _connected(store: SetupStateStore) -> SetupStateDocument:
     state = store.initialize(_BOOTSTRAP)
-    state = store.write(
-        _next(state, completed_steps=["claim"], claimed=True),
-        state.revision,
-        _BOOTSTRAP,
-    )
+    state = _claimed(store, state)
     return store.write(
         _next(
             state,
@@ -63,15 +79,15 @@ def _connected(store: SetupStateStore) -> SetupStateDocument:
     )
 
 
-def test_initialize_binds_the_only_resumable_setup_state_to_bootstrap() -> None:
+def test_initialize_creates_the_only_verifier_free_resumable_setup_state() -> None:
     _connection, store = _store()
 
     state = store.initialize(_BOOTSTRAP)
 
     assert state.next_step() == "claim"
-    assert store.read(_BOOTSTRAP) == state
-    with pytest.raises(SetupStateError):
-        store.read(_OWNER)
+    assert state.bootstrap_verifier_digest == "0" * 64
+    assert store.read() == state
+    assert store.read(_OWNER) == state
 
 
 def test_only_the_exact_seeded_schema_is_an_initialization_predecessor() -> None:
@@ -119,10 +135,13 @@ def test_setup_write_rollback_cannot_discard_a_returned_owner_session(
 
     def write_state() -> None:
         try:
-            state.write(
-                _next(document, completed_steps=["claim"], claimed=True),
-                document.revision,
-                _BOOTSTRAP,
+            state.claim_owner(
+                expected_revision=document.revision,
+                owner_verifier=_OWNER,
+                session_digest="d" * 64,
+                csrf_digest="e" * 64,
+                created_at=1,
+                expires_at=3_601,
             )
         except Exception as error:
             write_failure.append(error)
@@ -154,8 +173,7 @@ def test_setup_write_rollback_cannot_discard_a_returned_owner_session(
 def test_promotion_replaces_incomplete_state_with_normal_owner_authority() -> None:
     connection, store = _store()
     state = store.initialize(_BOOTSTRAP)
-    state = _next(state, completed_steps=["claim"], claimed=True)
-    state = store.write(state, 1, _BOOTSTRAP)
+    state = _claimed(store, state)
     state = _next(
         state,
         completed_steps=["claim", "connect"],
@@ -239,8 +257,9 @@ def test_promotion_failpoint_retains_exact_resumable_state_and_retry_succeeds() 
         _BOOTSTRAP,
     )
     connection.execute(
-        "CREATE TRIGGER fail_owner_verifier BEFORE INSERT ON owner_setting_secrets "
-        "WHEN NEW.field_id='owner.password.verifier' BEGIN SELECT RAISE(ABORT,'failpoint'); END"
+        "CREATE TRIGGER fail_owner_promotion BEFORE UPDATE ON owner_settings "
+        "WHEN json_extract(NEW.document,'$.schema_version')='owner-settings-v1' "
+        "BEGIN SELECT RAISE(ABORT,'failpoint'); END"
     )
 
     with pytest.raises(SetupStateError):
@@ -248,9 +267,12 @@ def test_promotion_failpoint_retains_exact_resumable_state_and_retry_succeeds() 
 
     assert store.read(_BOOTSTRAP) == state
     assert connection.execute(
-        "SELECT field_id,value FROM owner_setting_secrets"
-    ).fetchall() == [("connection.primary.key", "abs-secret")]
-    connection.execute("DROP TRIGGER fail_owner_verifier")
+        "SELECT field_id,value FROM owner_setting_secrets ORDER BY field_id"
+    ).fetchall() == [
+        ("connection.primary.key", "abs-secret"),
+        ("owner.password.verifier", _OWNER),
+    ]
+    connection.execute("DROP TRIGGER fail_owner_promotion")
 
     store.promote(_BOOTSTRAP, _OWNER, state.revision)
 
@@ -315,6 +337,7 @@ def test_provider_key_can_be_added_without_resending_connection_key() -> None:
         "SELECT field_id,value FROM owner_setting_secrets ORDER BY field_id"
     ).fetchall() == [
         ("connection.primary.key", "abs-secret"),
+        ("owner.password.verifier", _OWNER),
         ("provider.hardcover.key", "provider-secret"),
     ]
 
@@ -437,8 +460,11 @@ def test_provider_skip_preserves_connection_key_without_a_secret_delta() -> None
 
     assert store.read(_BOOTSTRAP) == state
     assert connection.execute(
-        "SELECT field_id,value FROM owner_setting_secrets"
-    ).fetchall() == [("connection.primary.key", "abs-secret")]
+        "SELECT field_id,value FROM owner_setting_secrets ORDER BY field_id"
+    ).fetchall() == [
+        ("connection.primary.key", "abs-secret"),
+        ("owner.password.verifier", _OWNER),
+    ]
 
 
 def test_change_invalidation_removes_only_secrets_owned_by_dependents() -> None:
@@ -468,8 +494,11 @@ def test_change_invalidation_removes_only_secrets_owned_by_dependents() -> None:
     store.write(changed, state.revision, _BOOTSTRAP)
 
     assert connection.execute(
-        "SELECT field_id,value FROM owner_setting_secrets"
-    ).fetchall() == [("connection.primary.key", "abs-secret")]
+        "SELECT field_id,value FROM owner_setting_secrets ORDER BY field_id"
+    ).fetchall() == [
+        ("connection.primary.key", "abs-secret"),
+        ("owner.password.verifier", _OWNER),
+    ]
 
 
 @pytest.mark.parametrize(

@@ -8,6 +8,7 @@ from mechanical_librarian.application.configuration import ConfigurationError
 from mechanical_librarian.domain.owner_settings import (
     OwnerSettingsDocument,
     SettingsView,
+    provider_capabilities,
 )
 from mechanical_librarian.infrastructure.settings_authority import (
     ReviewBootstrap,
@@ -86,7 +87,6 @@ def test_store_projection_combines_only_deploy_bootstrap_and_store_authority() -
         document=document,
         fields=(),
         secrets=(),
-        pending_restart=(),
         authority="store",
     )
     bootstrap = ReviewBootstrap.model_validate(
@@ -115,3 +115,33 @@ def test_store_projection_combines_only_deploy_bootstrap_and_store_authority() -
     assert configuration.mounts[0].container_path == "/media/books"
     assert configuration.review is not None
     assert configuration.review.canonical_origin == "https://review.example.invalid"
+
+
+def test_settings_projects_absent_fixed_provider_capabilities() -> None:
+    document = OwnerSettingsDocument.model_validate(
+        {
+            "schema_version": "owner-settings-v1",
+            "revision": 1,
+            "connections": [{"name": "primary", "endpoint": "https://library.invalid"}],
+            "libraries": [
+                {
+                    "name": "books",
+                    "connection": "primary",
+                    "library_id": "books",
+                    "media_kind": "book",
+                }
+            ],
+        }
+    )
+    assert ("google_books", "hardcover", "open_library") == tuple(
+        item.name for item in provider_capabilities(document)
+    )
+
+    configured_value = document.model_dump()
+    configured_value["providers"] = [
+        {"name": "catalogue", "adapter": "google_books", "enabled": True}
+    ]
+    configured = OwnerSettingsDocument.model_validate(configured_value)
+    assert ("hardcover", "open_library") == tuple(
+        item.name for item in provider_capabilities(configured)
+    )

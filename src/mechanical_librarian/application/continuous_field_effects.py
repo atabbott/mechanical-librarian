@@ -265,9 +265,11 @@ class ContinuousGuardedApplication:
         self._activity_only = activity_only
         self._provider_recovery_snapshot = provider_recovery_snapshot or (lambda: ())
         self._slot = threading.Lock()
+        self._admission = threading.Event()
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._dormant_start = False
         self._last_library: str | None = None
         self._last_failure: str | None = None
         self._schedule_cursor: tuple[int, str] | None = None
@@ -300,8 +302,49 @@ class ContinuousGuardedApplication:
 
     def start(self) -> tuple[int, int, int]:
         self._stop.clear()
+        self._admission.set()
         for application in self._applications.values():
             application.resume_admission()
+        recovered, actions, cleanups = self._recover_startup()
+        self._thread = threading.Thread(
+            target=self._run, name="guarded-field-application", daemon=True
+        )
+        self._thread.start()
+        self._wake.set()
+        return recovered, actions, cleanups
+
+    def start_dormant(self) -> None:
+        """Start the worker behind a closed latch without claiming work."""
+        if self._thread is not None:
+            raise GuardedApplicationError("configuration")
+        self._stop.clear()
+        self._admission.clear()
+        self._dormant_start = True
+        for application in self._applications.values():
+            application.begin_drain()
+        self._thread = threading.Thread(
+            target=self._run, name="guarded-field-application", daemon=True
+        )
+        self._thread.start()
+
+    def admit(self) -> None:
+        """Open the already-started worker and target admission latches."""
+        for application in self._applications.values():
+            application.resume_admission()
+        self._admission.set()
+        self._wake.set()
+
+    def suspend_admission(self) -> None:
+        """Reject new claims without stopping the existing worker."""
+        for application in self._applications.values():
+            application.begin_drain()
+
+    def resume_admission(self) -> None:
+        for application in self._applications.values():
+            application.resume_admission()
+        self._wake.set()
+
+    def _recover_startup(self) -> tuple[int, int, int]:
         cleanups = 0
         failures: list[Exception] = []
         recovered = self._drain_recovery(
@@ -326,11 +369,6 @@ class ContinuousGuardedApplication:
             raise failures[0]
         if failures:
             raise ExceptionGroup("startup recovery failures", failures)
-        self._thread = threading.Thread(
-            target=self._run, name="guarded-field-application", daemon=True
-        )
-        self._thread.start()
-        self._wake.set()
         return recovered, actions, cleanups
 
     def _drain_recovery(
@@ -381,6 +419,7 @@ class ContinuousGuardedApplication:
 
     def close_admission(self) -> None:
         """Stop new claims without waiting for the active worker."""
+        self._admission.set()
         self._stop.set()
         self._wake.set()
         for application in self._applications.values():
@@ -1307,6 +1346,15 @@ class ContinuousGuardedApplication:
         return results
 
     def _run(self) -> None:
+        self._admission.wait()
+        if self._stop.is_set():
+            return
+        if self._dormant_start:
+            self._dormant_start = False
+            try:
+                self._recover_startup()
+            except Exception as error:
+                self._last_failure = getattr(error, "code", "unavailable")
         while not self._stop.is_set():
             self._wake.wait(self._polling_seconds)
             self._wake.clear()

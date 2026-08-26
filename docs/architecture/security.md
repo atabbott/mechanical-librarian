@@ -106,7 +106,11 @@ than repeated per-library integrity validation. The server performs the full
 schema-object, foreign-key, SQLite-integrity, and derived-field equivalence
 admission once for its locked database inode. Derived worker connections prove
 that same live filesystem authority and borrow its admission instead of
-rescanning the database. A Library or Attention repository request uses
+rescanning the database. Store-managed runtime generations likewise borrow the
+binding held by a dedicated process-lifetime control repository; predecessor
+drain and close cannot revoke a successor, and final listener shutdown closes
+the runtime borrowers before that control owner. A Library or Attention
+repository request uses
 size-bounded closed envelopes and lineage facts instead of repeatedly evaluating
 the same provider, proposal, and decision documents. It also proves that each
 case still embeds the exact immutable ProposalSet accepted by admission. Before
@@ -252,22 +256,19 @@ high-entropy session and CSRF tokens. Expired session rows are removed during
 login, logout records revocation, and failed logins use a durable five-attempt
 per five-minute global throttle without retaining client addresses.
 
-ADR-0058's empty-volume setup state does not add an unauthenticated mutation
-path. Its setup login assets and fixed failure envelope occupy the existing
-login boundary; every wizard read or mutation requires a session minted only
-after verification against the owner-only bootstrap verifier, plus the ordinary
-CSRF and Origin checks for a mutation. That verifier is admitted only while
-no durable setup-completion record exists and `/data` is empty, holds the exact
-valid incomplete-setup state created under bootstrap authority, or holds only
-the exact seeded schema left by interruption before the initial setup document
-committed. That last predecessor has no settings, secrets, sessions, login
-failures, or operational rows and may only complete bootstrap-bound setup
-initialization. Arbitrary nonempty, malformed, or store-mode state fails closed.
-The atomic
-completion handoff stops reading the verifier, permanently closes setup routes,
-and returns to the ordinary owner-session boundary. An unauthenticated client
-therefore cannot claim ownership, stage settings, complete setup, or reach a
-generic write route.
+ADR-0058's empty-volume setup state adds no unauthenticated settings mutation.
+The first visitor may fetch only a bounded synchronizer nonce. Creating the
+owner password requires the exact configured Origin plus the same nonce in a
+host-only cookie and request header; one SQLite transaction stores the Argon2id
+verifier and an ordinary session, so concurrent first-owner attempts have one winner and no
+partial state. Every later wizard read or mutation uses that ordinary session,
+with CSRF and Origin checks for mutations. Resume verifies the owner password
+against the store verifier. Startup admits only the exact seeded predecessor or
+valid current incomplete setup; older incompatible incomplete setup requires a
+clean rebuild and arbitrary nonempty, malformed, or store-mode state fails
+closed. Kickoff commits authority, permanently closes setup routes, and swaps to
+the ordinary runtime on the same listener. An unauthenticated client therefore
+cannot stage settings, complete setup, or reach a generic write route.
 
 Connection setup performs one supported, bounded `GET /api/libraries` with TLS
 verification on, ambient environment and redirects off, one connection, and
@@ -278,6 +279,20 @@ directly from persistence to the same setup-only infrastructure consumer; no
 application or HTTP read returns it. Provider keys follow the same write-only
 delta boundary, while the optional Open Library contact email remains a local
 non-secret setting used only for Open Library requests.
+
+When the supported response supplies service folder paths, setup retains only
+bounded non-secret path evidence for exact comparison with deployment-owned
+mount mappings. Each comparison performs one read-only root metadata check for
+directory type and reachability; it never scans, creates, writes, repairs, or
+reads media. HTTP exposes the service path and a matched, missing, ambiguous,
+or unavailable state, never the container path.
+
+Runtime replacement starts every fallible successor component while dormant.
+One cutover lock closes predecessor admission, commits authority, publishes the
+successor, and opens its local admission latch. Commit failure restores the
+predecessor before unlock. An impossible post-commit fault closes both claim
+admissions, serves a fixed unavailable target, drains both generations, and
+requests outer-server termination rather than serving mismatched authority.
 
 The server receives a composed application boundary rather than a database or
 broad repository. Authentication, currentness, decisions, policy, preparation,
@@ -408,14 +423,20 @@ an exact POST to the fixed GraphQL URL.
 
 In settings-store mode, the same egress boundary consumes credentials from the
 owner-only application database only while composing their named target or
-provider clients. Every connection requires a credential; enabled Hardcover
-requires one, enabled Google Books may omit one, and disabled providers retain
-none. The deploy-only review bootstrap and contained-reviewer profile path are
-never browser fields. Runtime activation snapshots without clearing restart
-debt; only a completely composed graph acknowledges it, so a later composition
-failure cannot misstate desired settings as applied.
+enabled provider clients. Every connection requires a credential; enabled
+Hardcover requires one and enabled Google Books may omit one. A disabled
+store-managed provider may retain its write-only value inside settings
+authority, but that value is not copied into the runtime credential map and no
+provider client or egress is constructed from it. The deploy-only review
+bootstrap and contained-reviewer profile path are never browser fields. Runtime
+activation prepares an isolated candidate before
+persistence; failure leaves the authoritative revision and admitting generation
+unchanged. After CAS commit, the new generation governs the next admitted unit
+while requests already admitted to the predecessor drain against it.
 
-Disabled providers cause no secret access, client construction, or egress.
+Disabled providers cause no client construction or egress. Disabling also
+removes their library associations; enabling them again does not recreate those
+associations.
 Unreferenced providers are never bound. Each of at most eight distinct
 checksum-valid ISBN-10/13 families selects one exact ISBN lane; one
 title-plus-complete-author work lane is also admitted when that complete input

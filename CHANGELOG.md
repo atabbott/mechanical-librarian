@@ -12,10 +12,12 @@
   schema digest from the persistence adapter; #830's owner-decision-actions
   predecessor validator superseded it and no adoption path referenced it. (#857)
 
-- Add the authenticated owner Settings utility for connections, providers,
-  libraries, limits, reviewer, server, and appearance. File authority stays
-  locked; store secrets are write-only, and restart debt clears only after a
-  complete successful composition. (#763, #764)
+- Add first-visitor owner-password setup and authenticated Settings for
+  connections, providers, book libraries, limits, reviewer, server, and
+  appearance. Changes activate atomically on the same listener. Disabling a
+  provider retains its write-only value, removes its library associations, and
+  leaves reassociation explicit; file/deployment authority stays locked.
+  (#745, #762, #763, #764)
 
 - Restore readable per-work Evidence and History links from Library. Diagnostics
   retain exact Back state, show bounded semantic lineage and owner-language
@@ -55,16 +57,6 @@
   ordered write lifecycle behind the row's bounded details disclosure. Search,
   filters, date bounds, totals, and pagination now operate on those change rows
   without a mutable audit projection or new persistence schema. (#788)
-
-- Set the first-run and in-app settings authority: file-managed deployments
-  remain unchanged, store-mode secrets are write-only and backup-protected, and
-  only an empty `/data` volume may enter setup. (#762)
-
-- Guide an empty-volume owner through claim, verified Audiobookshelf connection,
-  optional providers, library selection, read-only mount checks, and safe
-  preparation kickoff without granting library-write authority. Resume refuses
-  mixed normal-runtime state, and the supported Compose stop budget preserves
-  cleanup across the full shutdown range. (#745)
 
 - Recover explicit EPUB package, front, and rear series memberships with their
   stated sequence while keeping advertisements, reading lists, prose, and
