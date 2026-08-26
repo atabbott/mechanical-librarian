@@ -342,6 +342,7 @@ def test_server_uses_validated_tls_before_opening_the_database() -> None:
             tls_private_key_file=str(private_key),
         )
         repository = Mock()
+        review_application = Mock()
         database = root / "application.sqlite3"
 
         def qualified_run(app, **arguments):
@@ -399,7 +400,7 @@ def test_server_uses_validated_tls_before_opening_the_database() -> None:
             ),
             patch(
                 "mechanical_librarian.bootstrap.composition.compose_review_application",
-                return_value=object(),
+                return_value=review_application,
             ),
             patch(
                 "mechanical_librarian.bootstrap.composition.load_owner_password_verifier",
@@ -423,6 +424,8 @@ def test_server_uses_validated_tls_before_opening_the_database() -> None:
                 8443,
             )
         opened.assert_called_once_with(database, create=True, cross_thread=True)
+        review_application.start_dormant.assert_called_once_with()
+        review_application.admit.assert_called_once_with()
 
 
 def test_missing_or_invalid_tls_fails_before_database_or_server() -> None:
