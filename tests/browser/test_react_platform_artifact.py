@@ -1809,6 +1809,20 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
 
         def assert_diagnostic_layout(active_page: str) -> None:
             active_link = nav.get_by_role("link", name=active_page)
+
+            def assert_keyboard_path() -> None:
+                page.evaluate(
+                    "() => document.querySelector('.diagnostic-back-to-work').focus()"
+                )
+                expect(back).to_be_focused()
+                page.keyboard.press("Tab")
+                if active_page == "History":
+                    page.keyboard.press("Tab")
+                expect(active_link).to_be_focused()
+                assert active_link.evaluate(
+                    "node => getComputedStyle(node).outlineStyle === 'solid'"
+                )
+
             for scheme in ("light", "dark"):
                 if scheme == "dark":
                     page.get_by_role("button", name="Use dark mode").click()
@@ -1825,11 +1839,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     assert back.bounding_box()["height"] >= 44
                     for link in nav.get_by_role("link").all():
                         assert link.bounding_box()["height"] >= 44
-                    active_link.focus()
-                    expect(active_link).to_be_focused()
-                    assert active_link.evaluate(
-                        "node => getComputedStyle(node).outlineStyle === 'solid'"
-                    )
+                    assert_keyboard_path()
                 page.set_viewport_size({"width": 1440, "height": 900})
                 page.locator("html").evaluate(
                     "node => { node.style.fontSize = '200%' }"
@@ -1840,8 +1850,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 assert back.bounding_box()["height"] >= 44
                 for link in nav.get_by_role("link").all():
                     assert link.bounding_box()["height"] >= 44
-                active_link.focus()
-                expect(active_link).to_be_focused()
+                assert_keyboard_path()
                 page.locator("html").evaluate("node => { node.style.fontSize = '' }")
                 if scheme == "dark":
                     page.get_by_role("button", name="Use light mode").click()
