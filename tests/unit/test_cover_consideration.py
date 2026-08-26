@@ -332,10 +332,29 @@ def test_stale_reviewer_binding_is_current_only_and_replays_exactly(
         stale.ensure(case_id, case.report.to_json(), case.proposal)["consideration_id"]
         == successor["consideration_id"]
     )
-    different = service(
+    different_service = service(
         b"other-stale-profile", "profile contract requires process_limit=32"
-    ).ensure(case_id, case.report.to_json(), case.proposal)
+    )
+    different = different_service.ensure(case_id, case.report.to_json(), case.proposal)
     assert different["supersedes_id"] == successor["consideration_id"]
+    assert different["reviewer_unavailable_reason"] == (
+        "profile contract requires process_limit=32"
+    )
+    different_document = json.loads(case.store.current[case_id])
+    assert different_document["schema_version"] == "cover-consideration-v1"
+    assert different_document["reviewer_failure"] is None
+    assert "reviewer_unavailable_reason" not in different_document
+
+    model_free_case = "review_case_" + "h" * 64
+    model_free = service(None)
+    model_free_value = model_free.ensure(
+        model_free_case, case.report.to_json(), case.proposal
+    )
+    stale_model_free = stale.ensure(
+        model_free_case, case.report.to_json(), case.proposal
+    )
+    assert model_free.replay_reference != stale.replay_reference
+    assert stale_model_free["supersedes_id"] == model_free_value["consideration_id"]
 
 
 def test_preview_store_failure_is_typed_unavailable(case: _Case) -> None:
