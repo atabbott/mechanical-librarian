@@ -2120,6 +2120,17 @@
             "title": "Reviewer Status",
             "type": "string"
           },
+          "reviewer_unavailable_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewer Unavailable Reason"
+          },
           "schema_version": {
             "const": "cover-consideration-v1",
             "title": "Schema Version",
@@ -2152,6 +2163,7 @@
           "policy_preferences",
           "policy_reference",
           "reviewer_status",
+          "reviewer_unavailable_reason",
           "schema_version",
           "supersedes_id",
           "target_fingerprint"

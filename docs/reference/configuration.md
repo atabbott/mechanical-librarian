@@ -284,6 +284,11 @@ closed deterministic advisory policy. They never grant decision or write
 authority, and changing them invalidates pending cover effects until the owner
 considers and selects under the current policy.
 
+When the fixed contained-reviewer resource contract changes, explicitly
+regenerate and requalify this private canonical profile through the provisioning
+procedure that created it, then replace the configured file and restart. The
+application never rewrites, migrates, or version-upgrades a profile.
+
 There are no provider defaults, inheritance, overrides, weights, priorities,
 configurable fallback rules, environment substitutions, or undocumented
 configuration sources. The fixed complete title-plus-author discovery lane is

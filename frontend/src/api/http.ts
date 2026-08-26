@@ -221,6 +221,10 @@ export interface CoverConsiderationView {
   }
   policyReference: string
   reviewerStatus: string
+  reviewerUnavailableReason:
+    | 'profile contract requires memory_bytes=1073741824'
+    | 'profile contract requires process_limit=32'
+    | null
   supersedesId?: string
   targetFingerprint: string
 }
@@ -1993,6 +1997,22 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
   const policyStatus = policy === null ? null : stringValue(policy.status, 'cover_policy_status')
   if (policyStatus !== null && !['recommended', 'abstained'].includes(policyStatus))
     throw new ApiError(502, 'invalid_cover_policy_status')
+  const reviewerStatus = stringValue(value.reviewer_status, 'cover_reviewer_status')
+  if (!['completed', 'failed', 'unavailable'].includes(reviewerStatus))
+    throw new ApiError(502, 'invalid_cover_reviewer_status')
+  const reviewerUnavailableReason =
+    value.reviewer_unavailable_reason === null
+      ? null
+      : stringValue(value.reviewer_unavailable_reason, 'cover_reviewer_unavailable_reason')
+  if (
+    reviewerUnavailableReason !== null &&
+    (reviewerStatus !== 'unavailable' ||
+      ![
+        'profile contract requires memory_bytes=1073741824',
+        'profile contract requires process_limit=32',
+      ].includes(reviewerUnavailableReason))
+  )
+    throw new ApiError(502, 'invalid_cover_reviewer_unavailable_reason')
   const recommendedReference =
     policy === null || policy.recommended_candidate_reference === null
       ? null
@@ -2075,7 +2095,11 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
       preferMinimalComposition: preferences.prefer_minimal_composition,
     },
     policyReference: stringValue(value.policy_reference, 'cover_policy_reference'),
-    reviewerStatus: stringValue(value.reviewer_status, 'cover_reviewer_status'),
+    reviewerStatus,
+    reviewerUnavailableReason: reviewerUnavailableReason as
+      | 'profile contract requires memory_bytes=1073741824'
+      | 'profile contract requires process_limit=32'
+      | null,
     ...(value.supersedes_id === null
       ? {}
       : { supersedesId: stringValue(value.supersedes_id, 'cover_supersedes_id') }),

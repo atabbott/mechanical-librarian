@@ -69,6 +69,12 @@ export const sourceStatusLabel = (status: string) =>
               : status === 'query_limit_exceeded'
                 ? 'Query allowance reached'
                 : 'Provider failure'
+const reviewerUnavailableDetail = (reason: string | null) =>
+  reason === 'profile contract requires memory_bytes=1073741824'
+    ? 'The reviewer profile must set memory_bytes to 1073741824. Regenerate the profile for the current contract, replace the configured profile, then restart the service.'
+    : reason === 'profile contract requires process_limit=32'
+      ? 'The reviewer profile must set process_limit to 32. Regenerate the profile for the current contract, replace the configured profile, then restart the service.'
+      : null
 const initials = (title: string) =>
   title
     .split(/\s+/u)
@@ -757,6 +763,7 @@ function LibraryCoverChoicesContent({
       : reviewerUnavailable
         ? 'Manual comparison available'
         : 'Manual cover comparison'
+  const reviewerDetail = reviewerUnavailableDetail(consideration.reviewerUnavailableReason)
   return (
     <section
       className={`library-cover-comparison${expanded ? ' is-expanded' : ''}`}
@@ -770,6 +777,7 @@ function LibraryCoverChoicesContent({
             : 'Recommendation is unavailable; comparison remains manual.'}
         </small>
       </header>
+      {reviewerDetail ? <p className="reviewer-unavailable-detail">{reviewerDetail}</p> : null}
       <p className="cover-track-hint">
         Every cover is shown whole in one row. Scroll the row, or tab between covers, to compare
         them.

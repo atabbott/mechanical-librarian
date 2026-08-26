@@ -848,6 +848,7 @@ describe('Library route', () => {
       },
       policyReference: `cover_policy_${'3'.repeat(64)}`,
       reviewerStatus: 'completed',
+      reviewerUnavailableReason: null,
       targetFingerprint: 'fingerprint-cover',
     } as const
     const coverField = {
@@ -881,7 +882,12 @@ describe('Library route', () => {
     )
   })
 
-  it('retains an explicit keep-current control when the incumbent preview is unavailable', async () => {
+  it.each([
+    ['memory_bytes', 'profile contract requires memory_bytes=1073741824'],
+    ['process_limit', 'profile contract requires process_limit=32'],
+  ] as const)(
+    'keeps manual cover decisions usable for a %s reviewer-contract mismatch',
+    async (_field, reviewerUnavailableReason) => {
     const user = userEvent.setup()
     const base = detail.fields[0]
     if (!base) throw new Error('cover fixture requires a field')
@@ -943,7 +949,8 @@ describe('Library route', () => {
         preferMinimalComposition: false,
       },
       policyReference: `cover_policy_${'u'.repeat(64)}`,
-      reviewerStatus: 'completed',
+      reviewerStatus: 'unavailable',
+      reviewerUnavailableReason,
       targetFingerprint: 'fingerprint-cover',
     } as const
     const coverField = {
@@ -958,6 +965,16 @@ describe('Library route', () => {
     })
 
     expect(await screen.findByRole('button', { name: /Current cover.*Unavailable/u })).toBeVisible()
+    expect(
+      screen.getByText(
+        reviewerUnavailableReason === 'profile contract requires memory_bytes=1073741824'
+          ? /must set memory_bytes to 1073741824/u
+          : /must set process_limit to 32/u,
+      ),
+    ).toBeVisible()
+    expect(screen.getByText(/Regenerate the profile for the current contract/u)).toHaveClass(
+      'reviewer-unavailable-detail',
+    )
     const evidence = screen.getByRole('button', { name: 'Evidence for Current cover' })
     await user.click(evidence)
     expect(screen.getByRole('button', { name: 'Evidence for Current cover' })).toHaveAttribute(
@@ -974,7 +991,8 @@ describe('Library route', () => {
       'false',
     )
     expect(screen.getByText('Choices').nextElementSibling).toHaveTextContent('2')
-  })
+    },
+  )
 
   it('closes cached cover evidence after client-side A to B to A work navigation', async () => {
     const user = userEvent.setup()
@@ -1064,6 +1082,7 @@ describe('Library route', () => {
             },
             policyReference: 'policy',
             reviewerStatus: 'completed',
+            reviewerUnavailableReason: null,
             targetFingerprint: 'fingerprint',
           },
         },
@@ -1151,6 +1170,7 @@ describe('Library route', () => {
       },
       policyReference: `cover_policy_${'p'.repeat(64)}`,
       reviewerStatus: 'completed',
+      reviewerUnavailableReason: null,
       targetFingerprint: 'fingerprint-cover',
     } as const
     const absent: CaseDetailView['fields'][number] = {

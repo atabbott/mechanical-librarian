@@ -9,6 +9,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Protocol, cast
 
+from mechanical_librarian.application.contained_reviewer_contract import (
+    is_cover_profile_contract_reason,
+)
 from mechanical_librarian.application.cover_identity import (
     CLASSIFIER_REFERENCE,
     classify_cover_identity,
@@ -154,6 +157,7 @@ class CoverConsiderationService:
         policy: CoverPolicy = CoverPolicy(),
         reviewer_profile: bytes | None = None,
         reviewer: ReviewRunner | None = None,
+        reviewer_unavailable_reason: str | None = None,
         bind_policy: Callable[[str, str], None] | None = None,
     ) -> None:
         self._store = store
@@ -163,6 +167,9 @@ class CoverConsiderationService:
         self._policy = policy
         self._reviewer_profile = reviewer_profile
         self._reviewer = reviewer
+        if not is_cover_profile_contract_reason(reviewer_unavailable_reason):
+            raise ValueError("invalid reviewer unavailable reason")
+        self._reviewer_unavailable_reason = reviewer_unavailable_reason
         self._bind_policy = bind_policy or (lambda _policy, _replay: None)
 
     def update_policy(self, policy: CoverPolicy) -> None:
@@ -190,30 +197,31 @@ class CoverConsiderationService:
 
     @property
     def replay_reference(self) -> str:
-        identity = canonical_packet_json(
-            {
-                "policy": self._policy.document,
-                "contracts": {
-                    "classifier_reference": CLASSIFIER_REFERENCE,
-                    "identity_schema": IDENTITY_SCHEMA_VERSION,
-                    "instruction_sha256": hashlib.sha256(
-                        INSTRUCTION.encode("utf-8")
-                    ).hexdigest(),
-                    "observation_schema": OBSERVATION_SCHEMA_VERSION,
-                    "observer_output_schema": OUTPUT_SCHEMA_VERSION,
-                    "packet_schema": PACKET_SCHEMA_VERSION,
-                    "policy_report_schema": POLICY_REPORT_SCHEMA_VERSION,
-                    "policy_schema": POLICY_SCHEMA_VERSION,
-                    "taxonomy_reference": TAXONOMY_REFERENCE,
-                },
-                "profile_sha256": (
-                    None
-                    if self._reviewer_profile is None
-                    else hashlib.sha256(self._reviewer_profile).hexdigest()
-                ),
-                "schema_version": SCHEMA_VERSION,
-            }
-        )
+        value: dict[str, object] = {
+            "policy": self._policy.document,
+            "contracts": {
+                "classifier_reference": CLASSIFIER_REFERENCE,
+                "identity_schema": IDENTITY_SCHEMA_VERSION,
+                "instruction_sha256": hashlib.sha256(
+                    INSTRUCTION.encode("utf-8")
+                ).hexdigest(),
+                "observation_schema": OBSERVATION_SCHEMA_VERSION,
+                "observer_output_schema": OUTPUT_SCHEMA_VERSION,
+                "packet_schema": PACKET_SCHEMA_VERSION,
+                "policy_report_schema": POLICY_REPORT_SCHEMA_VERSION,
+                "policy_schema": POLICY_SCHEMA_VERSION,
+                "taxonomy_reference": TAXONOMY_REFERENCE,
+            },
+            "profile_sha256": (
+                None
+                if self._reviewer_profile is None
+                else hashlib.sha256(self._reviewer_profile).hexdigest()
+            ),
+            "schema_version": SCHEMA_VERSION,
+        }
+        if self._reviewer_unavailable_reason is not None:
+            value["reviewer_unavailable_reason"] = self._reviewer_unavailable_reason
+        identity = canonical_packet_json(value)
         return "cover_replay_" + hashlib.sha256(identity.encode()).hexdigest()
 
     def _replay_digest(self, review_case_id: str, report_id: str) -> str:
@@ -667,6 +675,11 @@ class CoverConsiderationService:
             "policy_preferences": json.loads(value["policy_document"]),
             "policy_reference": value["policy_reference"],
             "reviewer_status": value["reviewer_status"],
+            "reviewer_unavailable_reason": (
+                self._reviewer_unavailable_reason
+                if current and value["reviewer_status"] == "unavailable"
+                else None
+            ),
             "schema_version": SCHEMA_VERSION,
             "supersedes_id": value["supersedes_id"],
             "target_fingerprint": value["target_fingerprint"],

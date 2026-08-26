@@ -81,6 +81,7 @@ def test_cover_consideration_reports_its_reviewer_status(
     )
     consideration = cover["cover_consideration"]
     assert status == consideration["reviewer_status"]
+    assert consideration["reviewer_unavailable_reason"] is None
     assert cover["editable"]
     assert cover["human_decision"] is None
     assert any(candidate["selectable"] for candidate in consideration["candidates"])

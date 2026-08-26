@@ -300,6 +300,7 @@ class _CoverConsiderationResponse(_ClosedModel):
     policy_preferences: _CoverPolicyPreferences
     policy_reference: str
     reviewer_status: str
+    reviewer_unavailable_reason: str | None
     schema_version: Literal["cover-consideration-v1"]
     supersedes_id: str | None
     target_fingerprint: str
