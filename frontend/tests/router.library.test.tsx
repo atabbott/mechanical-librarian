@@ -61,9 +61,6 @@ describe('Library route', () => {
         'Preparation complete · 1 unique work checked.',
       ),
     ).toBeVisible()
-    expect(screen.getByText(/Regenerate the profile for the current contract/u)).toHaveClass(
-      'reviewer-unavailable-detail',
-    )
     expect(screen.getByText('Preparation finished without ready work.')).toBeVisible()
     expect(screen.queryByText(/failures and recovery/u)).toBeNull()
     expect(screen.queryByRole('link', { name: 'Open workspace' })).toBeNull()
@@ -975,6 +972,9 @@ describe('Library route', () => {
           : /must set process_limit to 32/u,
       ),
     ).toBeVisible()
+    expect(screen.getByText(/Regenerate the profile for the current contract/u)).toHaveClass(
+      'reviewer-unavailable-detail',
+    )
     const evidence = screen.getByRole('button', { name: 'Evidence for Current cover' })
     await user.click(evidence)
     expect(screen.getByRole('button', { name: 'Evidence for Current cover' })).toHaveAttribute(
