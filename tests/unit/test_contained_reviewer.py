@@ -1385,13 +1385,13 @@ def test_killed_direct_child_is_reaped_without_a_zombie() -> None:
     finally:
         os.close(ready_read)
         try:
-            os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        try:
-            os.waitpid(pid, 0)
+            waited, _status = os.waitpid(pid, os.WNOHANG)
         except ChildProcessError:
             pass
+        else:
+            if waited == 0:
+                os.kill(pid, signal.SIGKILL)
+                os.waitpid(pid, 0)
 
 
 def test_cleanup_kills_group_and_proves_process_death() -> None:
