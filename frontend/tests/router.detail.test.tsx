@@ -73,7 +73,9 @@ describe('Library review ownership', () => {
         { category: 'owner', destination: 'title', outcome: 'accept', previousValue: { kind: 'text', value: '<script>previous</script>' }, selectedValue: { kind: 'text', value: '<script>chosen</script>' } },
         { category: 'owner', destination: 'language', outcome: 'accept', previousValue: null, selectedValue: { kind: 'text', value: 'English' } },
         { category: 'owner', destination: 'publisher', outcome: 'accept', previousValue: { kind: 'text', value: 'Former publisher' }, selectedValue: null },
+        { category: 'owner', destination: 'title_reversal', outcome: 'keep_current', previousValue: { kind: 'text', value: 'Applied candidate' }, selectedValue: { kind: 'text', value: 'Original value' } },
         { category: 'owner', destination: 'subtitle', outcome: 'keep_current', previousValue: { kind: 'text', value: 'Existing subtitle' }, selectedValue: { kind: 'text', value: 'Existing subtitle' } },
+        { category: 'owner', destination: 'edition', outcome: 'keep_current', previousValue: null, selectedValue: null },
         { category: 'automatic', destination: 'series', outcome: 'keep_current', previousValue: { kind: 'series', value: [{ name: 'Existing series', sequence: '2' }] }, selectedValue: { kind: 'series', value: [{ name: 'Existing series', sequence: '2' }] } },
         { category: 'owner', destination: 'isbn', outcome: 'reject', previousValue: { kind: 'text', value: '9780000000001' }, selectedValue: null },
         { category: 'automatic', destination: 'authors', outcome: 'candidate', previousValue: { kind: 'list', value: ['Old Author'] }, selectedValue: { kind: 'list', value: ['New Author'] } },
@@ -101,11 +103,22 @@ describe('Library review ownership', () => {
     if (!publisher) throw new Error('value to absence history article required')
     expect(publisher).toHaveTextContent('From Former publisher')
     expect(publisher).toHaveTextContent('To No value is recorded.')
-    expect(screen.getByText('Owner kept the current value.')).toBeVisible()
-    expect(screen.getAllByText('Existing subtitle')).toHaveLength(1)
-    expect(screen.getAllByText('Retained')).toHaveLength(5)
+    const reversal = screen.getByText('Applied candidate').closest('article')
+    if (!reversal) throw new Error('keep current reversal history article required')
+    expect(reversal).toHaveTextContent('Owner chose the current value.')
+    expect(reversal).toHaveTextContent('From Applied candidate')
+    expect(reversal).toHaveTextContent('To Original value')
+    expect(reversal).not.toHaveTextContent('Retained')
+    const keptOwner = screen.getByRole('heading', { name: 'Subtitle' }).closest('article')
+    if (!keptOwner) throw new Error('same-valued owner keep current article required')
+    expect(keptOwner).toHaveTextContent('Owner chose the current value.')
+    expect(keptOwner).toHaveTextContent('Retained Existing subtitle')
+    expect(keptOwner).not.toHaveTextContent('From')
+    expect(keptOwner).not.toHaveTextContent('To')
+    expect(screen.getAllByText('Retained')).toHaveLength(6)
     const typedIdentical = screen.getByRole('heading', { name: 'Series' }).closest('article')
     if (!typedIdentical) throw new Error('typed identical history article required')
+    expect(typedIdentical).toHaveTextContent('Automatic policy chose the current value.')
     expect(typedIdentical).toHaveTextContent('Existing series · 2')
     expect(typedIdentical).not.toHaveTextContent('From')
     expect(typedIdentical).not.toHaveTextContent('To')
@@ -123,6 +136,11 @@ describe('Library review ownership', () => {
     const retainedAbsence = screen.getByRole('heading', { name: 'Tags' }).closest('article')
     if (!retainedAbsence) throw new Error('retained absence article required')
     expect(retainedAbsence).toHaveTextContent('No value is recorded.')
+    const keptAbsence = screen.getByRole('heading', { name: 'Edition' }).closest('article')
+    if (!keptAbsence) throw new Error('kept absence history article required')
+    expect(keptAbsence).toHaveTextContent('Retained No value is recorded.')
+    expect(keptAbsence).not.toHaveTextContent('From')
+    expect(keptAbsence).not.toHaveTextContent('To')
     const unmatchedCandidate = screen.getByRole('heading', { name: 'Description' }).closest('article')
     if (!unmatchedCandidate) throw new Error('unmatched automatic candidate article required')
     expect(unmatchedCandidate).not.toHaveTextContent('Retained')

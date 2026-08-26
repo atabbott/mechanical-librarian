@@ -13,12 +13,12 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
         ? item.outcome === 'accept'
           ? 'Owner selected a proposed value.'
           : item.outcome === 'keep_current'
-            ? 'Owner kept the current value.'
+            ? 'Owner chose the current value.'
             : 'Owner declined the proposed change.'
         : item.outcome === 'candidate'
           ? 'Automatic policy selected a candidate.'
           : item.outcome === 'keep_current'
-            ? 'Automatic policy kept the current value.'
+            ? 'Automatic policy chose the current value.'
             : 'Automatic policy left this field unchanged.'
     return (
       <article className="diagnostic-entry">
@@ -104,12 +104,13 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
 function isRetention(
   item: Extract<HistoryView['items'][number], { category: 'owner' | 'automatic' }>,
 ) {
-  return (
-    item.outcome === 'reject' ||
-    item.outcome === 'ignore' ||
-    item.outcome === 'keep_current' ||
-    historyValuesMatch(item.previousValue, item.selectedValue)
-  )
+  if (item.outcome === 'reject' || item.outcome === 'ignore') return true
+  if (item.outcome === 'keep_current')
+    return (
+      historyValuesMatch(item.previousValue, item.selectedValue) ||
+      (item.previousValue === null && item.selectedValue === null)
+    )
+  return historyValuesMatch(item.previousValue, item.selectedValue)
 }
 
 function displayRetainedHistoryValue(

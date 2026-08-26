@@ -1868,7 +1868,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.get_by_text("Owner selected a proposed value.", exact=True).wait_for()
         history_text = route.inner_text()
         assert "Owner selected a proposed value." in history_text
-        assert "Automatic policy kept the current value." in history_text
+        assert "Automatic policy chose the current value." in history_text
         assert "From" in history_text
         assert "To" in history_text
         assert history_text.count("Mara Venn, Ivo North") == 1
