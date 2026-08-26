@@ -72,9 +72,11 @@ describe('Library review ownership', () => {
       items: [
         { category: 'owner', destination: 'title', outcome: 'accept', previousValue: { kind: 'text', value: '<script>previous</script>' }, selectedValue: { kind: 'text', value: '<script>chosen</script>' } },
         { category: 'owner', destination: 'subtitle', outcome: 'keep_current', previousValue: { kind: 'text', value: 'Existing subtitle' }, selectedValue: { kind: 'text', value: 'Existing subtitle' } },
+        { category: 'automatic', destination: 'series', outcome: 'keep_current', previousValue: { kind: 'series', value: [{ name: 'Existing series', sequence: '2' }] }, selectedValue: { kind: 'series', value: [{ name: 'Existing series', sequence: '2' }] } },
         { category: 'owner', destination: 'isbn', outcome: 'reject', previousValue: { kind: 'text', value: '9780000000001' }, selectedValue: null },
         { category: 'automatic', destination: 'authors', outcome: 'candidate', previousValue: { kind: 'list', value: ['Old Author'] }, selectedValue: { kind: 'list', value: ['New Author'] } },
-        { category: 'automatic', destination: 'genres', outcome: 'ignore', previousValue: null, selectedValue: null },
+        { category: 'automatic', destination: 'genres', outcome: 'ignore', previousValue: { kind: 'list', value: ['Preserved genre'] }, selectedValue: null },
+        { category: 'automatic', destination: 'tags', outcome: 'ignore', previousValue: null, selectedValue: null },
         { category: 'preview', dispositions: [{ count: 3, outcome: 'would_accept' }] },
         { category: 'cover', candidateCount: 2, outcome: 'selected', ownerOutcome: 'accept', policyReasons: ['credible_source'], policyStatus: 'recommended', reviewerStatus: 'complete' },
         { category: 'transition', outcome: 'admitted', reason: '<script>actionable</script>' },
@@ -87,14 +89,28 @@ describe('Library review ownership', () => {
     expect(screen.getByText('<script>chosen</script>')).toBeVisible()
     expect(screen.getByText('Owner kept the current value.')).toBeVisible()
     expect(screen.getAllByText('Existing subtitle')).toHaveLength(1)
-    expect(screen.getAllByText('Retained')).toHaveLength(2)
+    expect(screen.getAllByText('Retained')).toHaveLength(5)
+    const typedIdentical = screen.getByRole('heading', { name: 'Series' }).closest('article')
+    if (!typedIdentical) throw new Error('typed identical history article required')
+    expect(typedIdentical).toHaveTextContent('Existing series · 2')
+    expect(typedIdentical).not.toHaveTextContent('From')
+    expect(typedIdentical).not.toHaveTextContent('To')
     const rejected = screen.getByRole('heading', { name: 'Isbn' }).closest('article')
     if (!rejected) throw new Error('reject history article required')
     expect(rejected).toHaveTextContent('Owner declined the proposed change.')
     expect(rejected).toHaveTextContent('9780000000001')
-    const absent = screen.getByRole('heading', { name: 'Genres' }).closest('article')
-    expect(absent).not.toHaveTextContent('Previous')
-    expect(absent).not.toHaveTextContent('New')
+    expect(rejected).not.toHaveTextContent('From')
+    expect(rejected).not.toHaveTextContent('To')
+    const ignored = screen.getByRole('heading', { name: 'Genres' }).closest('article')
+    if (!ignored) throw new Error('ignore history article required')
+    expect(ignored).toHaveTextContent('Preserved genre')
+    expect(ignored).not.toHaveTextContent('From')
+    expect(ignored).not.toHaveTextContent('To')
+    const retainedAbsence = screen.getByRole('heading', { name: 'Tags' }).closest('article')
+    if (!retainedAbsence) throw new Error('retained absence article required')
+    expect(retainedAbsence).toHaveTextContent('No value is recorded.')
+    expect(ignored).not.toHaveTextContent('Previous')
+    expect(ignored).not.toHaveTextContent('New')
     expect(screen.getByText(/Visual review complete across 2 candidates/u)).toBeVisible()
     expect(screen.getByText('This read-only preview recorded no decision authority.')).toBeVisible()
     expect(screen.getByText('This work entered the review queue.')).toBeVisible()

@@ -24,10 +24,9 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
       <article className="diagnostic-entry">
         <h3>{fieldLabel(item.destination)}</h3>
         <p>{action}</p>
-        {historyValuesMatch(item.previousValue, item.selectedValue) ? (
+        {isRetention(item) ? (
           <p className="diagnostic-value">
-            <span>Retained</span>{' '}
-            {item.selectedValue ? displayValue(item.selectedValue.value) : 'No value is recorded.'}
+            <span>Retained</span> {displayRetainedHistoryValue(item)}
           </p>
         ) : (
           <>
@@ -98,6 +97,24 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
       ) : null}
     </article>
   )
+}
+
+function isRetention(
+  item: Extract<HistoryView['items'][number], { category: 'owner' | 'automatic' }>,
+) {
+  return (
+    item.outcome === 'reject' ||
+    item.outcome === 'ignore' ||
+    item.outcome === 'keep_current' ||
+    historyValuesMatch(item.previousValue, item.selectedValue)
+  )
+}
+
+function displayRetainedHistoryValue(
+  item: Extract<HistoryView['items'][number], { category: 'owner' | 'automatic' }>,
+) {
+  const value = item.selectedValue ?? item.previousValue
+  return value ? displayValue(value.value) : 'No value is recorded.'
 }
 
 function historyValuesMatch(previous: HistoryValueView | null, selected: HistoryValueView | null) {

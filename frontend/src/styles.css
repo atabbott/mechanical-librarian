@@ -859,8 +859,8 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 }
 @media (prefers-reduced-motion:reduce) { .live-state i { animation:none!important; } }
 
-/* Read-only per-work diagnostics: one quiet reading column, distinct from the
-   compact Library rail and from every decision-bearing Library control. */
+/* Read-only per-work diagnostics: History keeps a quiet reading column while
+   Evidence may widen for field comparison; neither carries Library controls. */
 .selected-work-diagnostics { display:flex; align-items:center; gap:.75rem; padding-left:.9rem; border-left:1px solid var(--line); }
 .selected-work-diagnostics a { display:inline-flex; min-height:44px; align-items:center; color:var(--accent-strong); font-size:.76rem; font-weight:700; text-underline-offset:.2em; }
 .diagnostic-route { display:grid; width:min(100%,72ch); min-width:0; gap:clamp(1.4rem,4vw,2.6rem); margin-inline:auto; }
@@ -902,7 +902,7 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .evidence-fields { grid-template-columns:repeat(auto-fit,minmax(min(100%,20rem),1fr)); column-gap:2rem; }
 .evidence-field { break-inside:avoid; }
 .evidence-values { display:grid; gap:.65rem; margin:.75rem 0 0; padding:0; list-style:none; }
-.evidence-values li { min-width:0; padding:.75rem .85rem; border-left:2px solid var(--accent); background:color-mix(in srgb,var(--surface-strong) 72%,transparent); }
+.evidence-values li { min-width:0; padding:.75rem .85rem; background:color-mix(in srgb,var(--surface-strong) 72%,transparent); }
 .evidence-values p { margin:0; }
 .evidence-values small { margin-top:.4rem; }
 .source-ledger { min-width:0; margin-top:2.25rem; padding-top:1.1rem; border-top:2px solid var(--ink); }
