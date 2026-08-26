@@ -486,19 +486,38 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                 page.set_viewport_size({"width": 390, "height": 844})
                 brand_box = page.locator(".brand").bounding_box()
                 actions_box = page.locator(".shell-actions").bounding_box()
-                settings_box = page.get_by_role(
+                primary_navigation = page.get_by_role(
+                    "navigation", name="Primary workspace"
+                )
+                navigation_box = primary_navigation.bounding_box()
+                settings_box = primary_navigation.get_by_role(
                     "link", name="Settings", exact=True
                 ).bounding_box()
                 assert (
                     brand_box is not None
                     and actions_box is not None
+                    and navigation_box is not None
                     and settings_box is not None
                 )
+                assert primary_navigation.get_by_role("link").all_inner_texts() == [
+                    "Library",
+                    "Policy",
+                    "Activity",
+                    "Settings",
+                ]
                 assert settings_box["width"] >= 44
                 assert settings_box["height"] >= 44
-                assert abs(settings_box["y"] - brand_box["y"]) <= 0.5
-                assert brand_box["x"] + brand_box["width"] <= settings_box["x"]
-                assert settings_box["x"] + settings_box["width"] <= actions_box["x"]
+                assert navigation_box["y"] >= max(
+                    brand_box["y"] + brand_box["height"],
+                    actions_box["y"] + actions_box["height"],
+                )
+                assert navigation_box["x"] <= settings_box["x"]
+                assert settings_box["x"] + settings_box["width"] <= (
+                    navigation_box["x"] + navigation_box["width"]
+                )
+                assert page.evaluate(
+                    "() => document.documentElement.scrollWidth <= window.innerWidth"
+                )
                 documents = 0
 
                 def count_document(request) -> None:
@@ -1865,11 +1884,15 @@ def test_compact_lower_choice_reveals_only_the_next_focused_control() -> None:
                         Math.min(innerWidth - 1, Math.max(0, bounds.left + bounds.width / 2)),
                         Math.min(innerHeight - 1, Math.max(0, bounds.top + 1)),
                       )
-                      return {
-                        focused: control.matches('.decision-canvas button:not(:disabled)'),
-                        top: bounds.top,
-                        bottom: bounds.bottom,
-                        mastheadBottom,
+                          return {
+                            focused: control.matches('.decision-canvas button:not(:disabled)'),
+                            focusedCount: document.querySelectorAll(
+                              '.decision-canvas button:not(:disabled):focus'
+                            ).length,
+                            top: bounds.top,
+                            bottom: bounds.bottom,
+                            visibleHeight: Math.min(bounds.bottom, innerHeight) - Math.max(bounds.top, 0),
+                            mastheadBottom,
                         occluded: hit !== control && !control.contains(hit),
                         scrollY,
                         reveal: window.__compactReveal ?? null,
@@ -1878,8 +1901,9 @@ def test_compact_lower_choice_reveals_only_the_next_focused_control() -> None:
                 )
                 assert result is not None
                 assert result["focused"]
-                assert result["top"] >= result["mastheadBottom"] + 7
-                assert result["bottom"] <= 321
+                assert result["focusedCount"] == 1
+                assert abs(result["top"] - (result["mastheadBottom"] + 8)) <= 1
+                assert result["visibleHeight"] >= 44
                 assert not result["occluded"]
                 assert result["scrollY"] > 0
                 reveal = result["reveal"]
@@ -2413,7 +2437,9 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     "Audiobookshelf identifier: synthetic-000"
                 )
                 expect(
-                    page.get_by_text("No metadata providers are configured.").first
+                    page.get_by_text(
+                        "No enabled metadata providers are available to associate."
+                    ).first
                 ).to_be_visible()
                 expect(
                     page.get_by_role("group", name=re.compile(r"^Providers for"))

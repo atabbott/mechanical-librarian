@@ -720,7 +720,13 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     notice_box = notice.bounding_box()
                     brand_box = page.locator(".brand").bounding_box()
                     actions_box = page.locator(".shell-actions").bounding_box()
-                    settings_box = page.locator(".settings-link").bounding_box()
+                    primary_navigation = page.get_by_role(
+                        "navigation", name="Primary workspace"
+                    )
+                    navigation_box = primary_navigation.bounding_box()
+                    settings_box = primary_navigation.get_by_role(
+                        "link", name="Settings", exact=True
+                    ).bounding_box()
                     assert (
                         heading_box is not None
                         and ledger_heading_box is not None
@@ -729,16 +735,24 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                         and notice_box is not None
                         and brand_box is not None
                         and actions_box is not None
+                        and navigation_box is not None
                         and settings_box is not None
                     )
+                    assert primary_navigation.get_by_role("link").all_inner_texts() == [
+                        "Library",
+                        "Policy",
+                        "Activity",
+                        "Settings",
+                    ]
                     assert settings_box["width"] >= 44
                     assert settings_box["height"] >= 44
-                    assert abs(settings_box["y"] - brand_box["y"]) <= 0.5
-                    assert brand_box["x"] + brand_box["width"] <= settings_box["x"]
-                    assert (
-                        settings_box["x"] + settings_box["width"] <= actions_box["x"]
-                        or settings_box["y"] + settings_box["height"]
-                        <= actions_box["y"]
+                    assert navigation_box["y"] >= max(
+                        brand_box["y"] + brand_box["height"],
+                        actions_box["y"] + actions_box["height"],
+                    )
+                    assert navigation_box["x"] <= settings_box["x"]
+                    assert settings_box["x"] + settings_box["width"] <= (
+                        navigation_box["x"] + navigation_box["width"]
                     )
                     assert (
                         heading_box["y"]
@@ -1048,11 +1062,14 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                         ).all():
                             assert control.bounding_box()["height"] >= 40
                         for control in page.locator(
-                            ".masthead nav a, .shell-actions button, .settings-link"
+                            ".masthead nav a, .shell-actions button"
                         ).all():
                             assert control.bounding_box()["height"] >= 44
                         assert (
-                            page.locator(".settings-link").bounding_box()["width"] >= 44
+                            page.get_by_role(
+                                "link", name="Settings", exact=True
+                            ).bounding_box()["width"]
+                            >= 44
                         )
                     theme_backgrounds[scheme] = page.locator("body").evaluate(
                         "node => getComputedStyle(node).backgroundColor"
