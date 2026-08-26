@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -1363,15 +1364,34 @@ def test_actual_child_exec_nonzero_remains_a_normal_returncode() -> None:
 
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux process proof")
 def test_killed_direct_child_is_reaped_without_a_zombie() -> None:
+    ready_read, ready_write = os.pipe()
     pid = os.fork()
     if pid == 0:
-        os.setsid()
-        time.sleep(30)
-        os._exit(0)
-    token = adapter._process_start_token(pid)
-    adapter._kill_and_prove_dead(pid, pid, token)
-    with pytest.raises(ChildProcessError):
-        os.waitpid(pid, os.WNOHANG)
+        try:
+            os.close(ready_read)
+            os.setsid()
+            os.write(ready_write, b"R")
+            os.close(ready_write)
+            time.sleep(30)
+        finally:
+            os._exit(0)
+    os.close(ready_write)
+    try:
+        assert os.read(ready_read, 1) == b"R"
+        token = adapter._process_start_token(pid)
+        adapter._kill_and_prove_dead(pid, pid, token)
+        with pytest.raises(ChildProcessError):
+            os.waitpid(pid, os.WNOHANG)
+    finally:
+        os.close(ready_read)
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            os.waitpid(pid, 0)
+        except ChildProcessError:
+            pass
 
 
 def test_cleanup_kills_group_and_proves_process_death() -> None:
