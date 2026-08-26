@@ -2792,8 +2792,6 @@ def _compose_cover_considerations(
             reviewer_unavailable_reason = cover_reviewer_profile_contract_mismatch(
                 reviewer_profile
             )
-            if reviewer_unavailable_reason is not None:
-                reviewer_profile = None
     except ContainedReviewerProcessError:
         # Never dispatch an unqualified profile. The shared consideration
         # operation records the manual-comparison-unavailable terminal state.
@@ -2816,7 +2814,11 @@ def _compose_cover_considerations(
         clock=lambda: int(time.time()),
         policy=policy,
         reviewer_profile=reviewer_profile,
-        reviewer=None if reviewer_profile is None else run_cover_packet_reviewer,
+        reviewer=(
+            None
+            if reviewer_profile is None or reviewer_unavailable_reason is not None
+            else run_cover_packet_reviewer
+        ),
         reviewer_unavailable_reason=reviewer_unavailable_reason,
         bind_policy=bind_policy,
     )

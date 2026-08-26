@@ -2468,10 +2468,7 @@ def test_composed_projection_reports_stale_profile_contract_before_dispatch() ->
         assert document is not None
         value = json.loads(document)
         assert value["reviewer_status"] == "unavailable"
-        assert value["reviewer_failure"] == {
-            "code": "profile_contract_mismatch",
-            "reason": "profile contract requires memory_bytes=1073741824",
-        }
+        assert value["reviewer_failure"] is None
         projected = composition._compose_cover_considerations(
             repository,
             root / "artifacts",

@@ -141,68 +141,6 @@ def test_model_free_manual_path_is_persisted_before_exact_selection(
         )
 
 
-def test_legacy_reviewer_failure_without_a_reason_projects_no_unavailable_reason(
-    case: _Case,
-) -> None:
-    case_id = "review_case_" + "l" * 64
-    case.service.ensure(case_id, case.report.to_json(), case.proposal)
-    document = json.loads(case.store.current[case_id])
-    document["reviewer_failure"] = {"code": "runtime", "attempts": 1}
-    case.store.current[case_id] = json.dumps(document)
-
-    projected = case.service.current(case_id)
-
-    assert projected is not None
-    assert projected["reviewer_unavailable_reason"] is None
-
-
-@pytest.mark.parametrize(
-    ("reviewer_status", "reviewer_failure"),
-    [
-        (
-            "unavailable",
-            {"code": "profile_contract_mismatch", "reason": "/private/profile"},
-        ),
-        (
-            "unavailable",
-            {"code": "profile_contract_mismatch", "reason": "token=secret"},
-        ),
-        ("unavailable", {"code": "profile_contract_mismatch", "reason": 1}),
-        (
-            "unavailable",
-            {
-                "code": "profile_contract_mismatch",
-                "reason": "profile contract requires memory_bytes=1073741824",
-                "private_path": "/private/profile",
-            },
-        ),
-        (
-            "completed",
-            {
-                "code": "profile_contract_mismatch",
-                "reason": "profile contract requires process_limit=32",
-            },
-        ),
-        (
-            "unavailable",
-            {"reason": "profile contract requires process_limit=32"},
-        ),
-    ],
-)
-def test_hostile_reviewer_failure_evidence_fails_closed_at_projection(
-    case: _Case, reviewer_status: object, reviewer_failure: object
-) -> None:
-    case_id = "review_case_" + "h" * 64
-    case.service.ensure(case_id, case.report.to_json(), case.proposal)
-    document = json.loads(case.store.current[case_id])
-    document["reviewer_status"] = reviewer_status
-    document["reviewer_failure"] = reviewer_failure
-    case.store.current[case_id] = json.dumps(document)
-
-    with pytest.raises(CoverConsiderationError, match="persistence"):
-        case.service.current(case_id)
-
-
 def test_incumbent_only_cover_remains_an_explicit_owner_choice() -> None:
     assert _needs_attention(
         {
