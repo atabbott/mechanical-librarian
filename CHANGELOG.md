@@ -19,9 +19,10 @@
   leaves reassociation explicit; file/deployment authority stays locked.
   (#745, #762, #763, #764)
 
-- Restore readable per-work Evidence and History links from Library. Diagnostics
-  retain exact Back state, show bounded semantic lineage and owner-language
-  outcomes, and expose no choices, retries, raw facts, or internal identifiers.
+- Restore readable per-work Evidence and History links from Library. Evidence
+  groups retained source values by field; History shows changed values or one
+  retained value. Diagnostics retain exact Back state and expose no controls,
+  raw facts, or internal identifiers.
   (#829)
 
 - Make Library offer owner choices only when an eligible alternative exists, and

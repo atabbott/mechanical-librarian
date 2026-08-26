@@ -1786,7 +1786,11 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert "candidate-" not in diagnostic_text
         assert page.locator("pre").count() == 0
         assert "referenced observations are no longer available" in diagnostic_text
-        expect(page.get_by_role("heading", name="Source ledger")).to_be_visible()
+        assert (
+            "Read-only diagnostics · decisions stay in Library" not in diagnostic_text
+        )
+        source_disclosure = page.get_by_text("Sources", exact=True)
+        source_disclosure.click()
         expect(page.get_by_text("Open Library", exact=True)).to_be_visible()
         expect(page.get_by_text("Hardcover", exact=True)).to_be_visible()
         assert page.locator(".direct-choice-grid").count() == 0
@@ -1839,6 +1843,10 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         history_text = route.inner_text()
         assert "Owner selected a proposed value." in history_text
         assert "Automatic policy kept the current value." in history_text
+        assert "From" in history_text
+        assert "To" in history_text
+        assert history_text.count("Mara Venn, Ivo North") == 1
+        assert "Retained" in history_text
         assert "This read-only preview recorded no decision authority." in history_text
         assert "Cover automatic prepared" in history_text
         for identifier in (

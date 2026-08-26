@@ -236,6 +236,7 @@ export interface CaseDetailView {
   fields: readonly ReviewFieldView[]
 }
 export interface EvidenceObservationView {
+  destinations: readonly string[]
   observation: string
   role: 'external_corroboration' | 'local_presence'
   source: string
@@ -1619,7 +1620,7 @@ export const mapCaseDetail = (value: unknown): CaseDetailView => {
 export const mapEvidence = (value: unknown): EvidenceView => {
   if (
     !record(value) ||
-    value.schema_version !== 'review-case-evidence-v3' ||
+    value.schema_version !== 'review-case-evidence-v4' ||
     !Array.isArray(value.items) ||
     value.items.length > 50 ||
     !Array.isArray(value.source_ledger) ||
@@ -1635,6 +1636,24 @@ export const mapEvidence = (value: unknown): EvidenceView => {
       if (role !== 'external_corroboration' && role !== 'local_presence')
         throw new ApiError(502, `invalid_evidence_item_${String(index)}_role`)
       return {
+        destinations: (() => {
+          if (
+            !Array.isArray(item.destinations) ||
+            item.destinations.length === 0 ||
+            item.destinations.length > 16
+          )
+            throw new ApiError(502, `invalid_evidence_item_${String(index)}_destinations`)
+          const destinations = item.destinations.map((destination, destinationIndex) =>
+            boundedStringValue(
+              destination,
+              `evidence_item_${String(index)}_destination_${String(destinationIndex)}`,
+              64,
+            ),
+          )
+          if (new Set(destinations).size !== destinations.length)
+            throw new ApiError(502, `invalid_evidence_item_${String(index)}_destinations`)
+          return destinations
+        })(),
         observation: boundedStringValue(
           item.observation,
           `evidence_item_${String(index)}_observation`,

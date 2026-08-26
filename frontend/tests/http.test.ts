@@ -167,18 +167,20 @@ describe('ReviewApiClient', () => {
 
   it('maps only bounded readable diagnostic evidence', () => {
     const payload = {
-      schema_version: 'review-case-evidence-v3', review_case_id: 'case-1', missing_lineage_count: 1, next_cursor: 'next',
-      items: [{ observation: 'Title: A Book', role: 'external_corroboration', source: 'Hardcover' }],
+      schema_version: 'review-case-evidence-v4', review_case_id: 'case-1', missing_lineage_count: 1, next_cursor: 'next',
+      items: [{ destinations: ['title'], observation: 'Title: A Book', role: 'external_corroboration', source: 'Hardcover' }],
       source_ledger: [{ provider_requests: 1, lane_kind: 'identity', provider: 'Hardcover', reason: 'Returned matching metadata for this work.', status: 'candidates' }],
     }
     expect(mapEvidence(payload)).toEqual({
-      items: [{ observation: 'Title: A Book', role: 'external_corroboration', source: 'Hardcover' }],
+      items: [{ destinations: ['title'], observation: 'Title: A Book', role: 'external_corroboration', source: 'Hardcover' }],
       missingLineageCount: 1, nextCursor: 'next',
       sourceLedger: [{ providerRequests: 1, laneKind: 'identity', provider: 'Hardcover', reason: 'Returned matching metadata for this work.', status: 'candidates' }],
     })
     for (const invalid of [
-      { ...payload, schema_version: 'review-case-evidence-v2' },
+      { ...payload, schema_version: 'review-case-evidence-v3' },
       { ...payload, items: [{ fact: '{}', kind: 'raw', reference: 'evidence-1' }] },
+      { ...payload, items: [{ ...payload.items[0], destinations: [] }] },
+      { ...payload, items: [{ ...payload.items[0], destinations: ['title', 'title'] }] },
       { ...payload, items: [{ ...payload.items[0], role: 'unknown' }] },
       { ...payload, items: [{ ...payload.items[0], observation: 'x'.repeat(1025) }] },
       { ...payload, source_ledger: [{ provider: 'Hardcover' }] },

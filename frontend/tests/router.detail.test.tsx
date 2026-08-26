@@ -44,10 +44,10 @@ describe('Library review ownership', () => {
 
   it('renders semantic evidence, limitations, provider outcomes, and pagination', async () => {
     const getEvidence = vi.fn<ReviewHttp['getEvidence']>(async (_id, cursor) => cursor ? {
-      items: [{ observation: 'Title: <script>Second observation</script>', role: 'external_corroboration', source: 'Open Library' }],
+      items: [{ destinations: ['title'], observation: 'Title: <script>Second observation</script>', role: 'external_corroboration', source: 'Open Library' }],
       missingLineageCount: 2, sourceLedger: [],
     } : {
-      items: [{ observation: 'Title: A Book', role: 'local_presence', source: 'This library' }],
+      items: [{ destinations: ['title'], observation: 'Title: A Book', role: 'local_presence', source: 'This library' }],
       missingLineageCount: 2, nextCursor: 'next-page', sourceLedger: [
         { laneKind: 'identity', provider: 'Hardcover', providerRequests: 1, reason: 'Returned no matching metadata, so nothing was retained.', status: 'no_match' },
         { laneKind: 'cover', provider: 'Open Library', providerRequests: 2, reason: 'Returned more than the accepted bound, so nothing was retained.', status: 'oversized' },
@@ -57,7 +57,7 @@ describe('Library review ownership', () => {
     renderRoute('/review/case-1?field=title&subview=evidence', { ...createHttp(), getEvidence })
     expect(await screen.findByText('Title: A Book')).toBeVisible()
     expect(screen.getByText(/2 referenced observations are no longer available/u)).toBeVisible()
-    expect(screen.getByText('Hardcover')).toBeVisible()
+    await user.click(screen.getByText('Sources'))
     expect(screen.getByText('no match')).toBeVisible()
     expect(document.querySelector('pre')).toBeNull()
     expect(document.body).not.toHaveTextContent('evidence_')
@@ -86,7 +86,8 @@ describe('Library review ownership', () => {
     expect(screen.getByText('<script>previous</script>')).toBeVisible()
     expect(screen.getByText('<script>chosen</script>')).toBeVisible()
     expect(screen.getByText('Owner kept the current value.')).toBeVisible()
-    expect(screen.getAllByText('Existing subtitle')).toHaveLength(2)
+    expect(screen.getAllByText('Existing subtitle')).toHaveLength(1)
+    expect(screen.getAllByText('Retained')).toHaveLength(2)
     const rejected = screen.getByRole('heading', { name: 'Isbn' }).closest('article')
     if (!rejected) throw new Error('reject history article required')
     expect(rejected).toHaveTextContent('Owner declined the proposed change.')

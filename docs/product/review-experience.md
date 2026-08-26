@@ -119,8 +119,10 @@ history without decision controls, link to each other, and provide Back to work
 for the exact selected Library work, field, and lens. Their bibliographic
 identity uses the retained readable title, bounded authors, library, and media
 format rather than an internal item identifier. Evidence presents bounded
-attributable observations, missing-lineage limitations, and the closed provider
-outcome ledger; History describes durable owner and automatic outcomes and
+attributable observations in field order, with source identity beside each value
+and provider outcomes in a subordinate Sources disclosure; missing-lineage
+limitations never claim a field is empty while more evidence remains. History
+describes durable owner and automatic outcomes and
 shows values only when the retained contract carries an exact authoritative
 link. Neither page exposes raw retained facts or internal event, decision,
 candidate, report, target, consideration, or reference identifiers. They have
