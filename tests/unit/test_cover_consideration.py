@@ -304,9 +304,12 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
     assert model_free.replay_reference == (
         "cover_replay_a448a3132ed8c82b5f248650925a7ca71875dff24617246f8cb75151741d30da"
     )
-    assert model_free.ensure(case_id, case.report.to_json(), case.proposal)[
-        "consideration_id"
-    ] == first["consideration_id"]
+    assert (
+        model_free.ensure(case_id, case.report.to_json(), case.proposal)[
+            "consideration_id"
+        ]
+        == first["consideration_id"]
+    )
     model_free.validate_decision(
         case_id,
         first["consideration_id"],
@@ -344,9 +347,12 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
     assert replayed_qualified.replay_reference == (
         "cover_replay_b652a85e78c2a66e86410b1d413f88c54bd0bf84b4c330cf4f0d247a870e2e13"
     )
-    assert replayed_qualified.ensure(
-        qualified_case_id, case.report.to_json(), case.proposal
-    )["consideration_id"] == first_qualified["consideration_id"]
+    assert (
+        replayed_qualified.ensure(
+            qualified_case_id, case.report.to_json(), case.proposal
+        )["consideration_id"]
+        == first_qualified["consideration_id"]
+    )
     assert len(dispatches) == 1
 
 
