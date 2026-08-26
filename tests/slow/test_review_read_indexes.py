@@ -216,6 +216,17 @@ def test_deep_browse_pages_sort_thin_keys_before_loading_documents() -> None:
             )
             for surface, call in calls:
                 first = call(None)
+                page = first
+                seen = 0
+                while True:
+                    page_items = page["items"]
+                    assert type(page_items) is list
+                    seen += len(page_items)
+                    next_cursor = page["next_cursor"]
+                    assert next_cursor is None or type(next_cursor) is str
+                    if next_cursor is None:
+                        break
+                    page = call(next_cursor)
                 cursor = _encode_cursor(
                     1_500,
                     surface,
@@ -230,8 +241,15 @@ def test_deep_browse_pages_sort_thin_keys_before_loading_documents() -> None:
                 assert len(first_items) == 50
                 assert len(deep_items) == 50
                 if surface == "attention":
-                    assert type(first["total"]) is int
-                    assert first["total"] >= 2_000
+                    total = first["total"]
+                    assert type(total) is int
+                    assert total >= 2_000
+                else:
+                    counts = first["counts"]
+                    assert type(counts) is dict
+                    total = counts["all"]
+                    assert type(total) is int
+                assert seen == total
                 statements: list[str] = []
                 connection.set_trace_callback(statements.append)
                 try:
@@ -243,9 +261,9 @@ def test_deep_browse_pages_sort_thin_keys_before_loading_documents() -> None:
                     for value in statements
                     if value.lstrip().upper().startswith("WITH PAGE AS MATERIALIZED")
                 )
-                page, documents = statement.split(") SELECT rc.document", 1)
-                assert "rc.document" not in page
-                assert "mr.document AS" not in page
+                sorter, documents = statement.split(") SELECT rc.document", 1)
+                assert "rc.document" not in sorter
+                assert "mr.document AS" not in sorter
                 assert documents.startswith(",")
         finally:
             repository.close()
