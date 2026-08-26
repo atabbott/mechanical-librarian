@@ -2425,37 +2425,65 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 ) -> None:
                     layout = page.evaluate(
                         """() => {
-                          const visible = (element) => {
-                            const style = getComputedStyle(element);
-                            const rect = element.getBoundingClientRect();
-                            return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
-                          };
+                              const visible = (element) => {
+                                const style = getComputedStyle(element);
+                                const rect = element.getBoundingClientRect();
+                                const closedDetails = element.closest('details:not([open])');
+                                if (closedDetails && element !== closedDetails.querySelector(':scope > summary')) return false;
+                                return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+                              };
                           const save = [...document.querySelectorAll('button')]
                             .find((element) => element.textContent === 'Save settings');
                           const saveRect = save.getBoundingClientRect();
-                          const overlaps = [...document.querySelectorAll('.settings-fields > *, .settings-field-row, .settings-record-meta')]
+                          const overlapElements = [...document.querySelectorAll('.settings-fields > *, .settings-field-row, .settings-record-meta')]
                             .filter(visible)
                             .filter((element) => {
                               const rect = element.getBoundingClientRect();
                               return Math.min(saveRect.right, rect.right) > Math.max(saveRect.left, rect.left)
                                 && Math.min(saveRect.bottom, rect.bottom) > Math.max(saveRect.top, rect.top);
-                            }).length;
+                            });
                           const active = document.querySelector('.settings-sidebar button[aria-current="page"]');
                           const title = active?.querySelector('strong')?.getBoundingClientRect();
                           const subtitle = active?.querySelector('small')?.getBoundingClientRect();
                           const heading = getComputedStyle(document.querySelector('.settings-heading h1'));
+                          const labels = [...document.querySelectorAll('.settings-field-row > div:first-child')]
+                            .filter(visible).map((element) => element.getBoundingClientRect().width);
+                          const masthead = document.querySelector('.masthead')?.getBoundingClientRect();
+                          const brandMark = document.querySelector('.brand-mark')?.getBoundingClientRect();
+                          const shellActions = document.querySelector('.shell-actions')?.getBoundingClientRect();
                           return {
-                            overlaps,
+                            overlaps: overlapElements.length,
+                            overlapDiagnostic: {
+                              group: new URL(location.href).searchParams.get('group'),
+                              viewport: {width: innerWidth, height: innerHeight},
+                              theme: document.documentElement.dataset.theme ?? getComputedStyle(document.documentElement).colorScheme,
+                              save: saveRect.toJSON(),
+                              offenders: overlapElements.map((element) => ({
+                                tag: element.tagName,
+                                className: element.className,
+                                text: element.textContent?.trim().slice(0, 120),
+                                rect: element.getBoundingClientRect().toJSON(),
+                              })),
+                            },
                             sidebarVisible: active ? visible(active) : false,
                             sidebarSeparated: title && subtitle ? title.bottom < subtitle.top : false,
                             headingSize: Number.parseFloat(heading.fontSize),
                             headingLineHeight: Number.parseFloat(heading.lineHeight),
                             rootSize: Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
                             disabledOpacity: Number.parseFloat(getComputedStyle(save).opacity),
+                            minLabelWidth: labels.length ? Math.min(...labels) : null,
+                            brandContained: masthead && brandMark
+                              ? brandMark.left >= 0 && brandMark.right <= innerWidth && brandMark.top >= masthead.top && brandMark.bottom <= masthead.bottom
+                              : false,
+                            brandActionsOverlap: brandMark && shellActions
+                              ? Math.min(brandMark.right, shellActions.right) > Math.max(brandMark.left, shellActions.left)
+                                && Math.min(brandMark.bottom, shellActions.bottom) > Math.max(brandMark.top, shellActions.top)
+                              : false,
                           };
                         }"""
                     )
-                    assert layout["overlaps"] == 0
+                    if layout["overlaps"]:
+                        raise AssertionError(layout["overlapDiagnostic"])
                     if zoomed:
                         assert layout["headingSize"] / layout["rootSize"] <= 2.5
                         assert (
@@ -2467,6 +2495,10 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                         assert layout["headingSize"] <= 40
                         assert layout["headingLineHeight"] <= 45
                     assert layout["disabledOpacity"] < 1
+                    if layout["minLabelWidth"] is not None:
+                        assert layout["minLabelWidth"] >= 180
+                    assert layout["brandContained"] is True
+                    assert layout["brandActionsOverlap"] is False
                     if sidebar_visible:
                         assert layout["sidebarVisible"] is True
                         assert layout["sidebarSeparated"] is True
@@ -2476,6 +2508,12 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     toggle = page.get_by_role("button", name=requested)
                     if toggle.count():
                         toggle.click()
+                    page.locator(
+                        ".settings-sidebar button", has_text="Libraries"
+                    ).evaluate("element => element.click()")
+                    expect(
+                        page.get_by_role("heading", name="Libraries", exact=True)
+                    ).to_be_visible()
                     for width, height in (
                         (1440, 900),
                         (884, 900),
@@ -2497,7 +2535,51 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                         else:
                             expect(page.get_by_label("Settings groups")).to_be_visible()
 
+                    group_labels = {
+                        "connection": "Connection",
+                        "providers": "Providers",
+                        "libraries": "Libraries",
+                        "automation": "Automation & limits",
+                        "reviewer": "Reviewer",
+                        "server": "Server",
+                        "appearance": "Appearance",
+                    }
+                    for width, height in ((884, 1000), (390, 844), (320, 800)):
+                        page.set_viewport_size({"width": width, "height": height})
+                        for group, label in group_labels.items():
+                            if width <= 390:
+                                page.locator(
+                                    "label.settings-mobile-group select"
+                                ).select_option(group)
+                            else:
+                                page.locator(
+                                    ".settings-sidebar button", has_text=label
+                                ).click()
+                            expect(
+                                page.get_by_role("heading", name=label, exact=True)
+                            ).to_be_visible()
+                            assert page.evaluate(
+                                "document.documentElement.scrollWidth <= window.innerWidth"
+                            )
+                            assert_settings_layout(sidebar_visible=width > 700)
+
+                page.set_viewport_size({"width": 884, "height": 1000})
+                page.evaluate("document.documentElement.style.fontSize = '200%'")
+                for label in group_labels.values():
+                    page.locator(".settings-sidebar button", has_text=label).click()
+                    expect(
+                        page.get_by_role("heading", name=label, exact=True)
+                    ).to_be_visible()
+                    assert page.evaluate(
+                        "document.documentElement.scrollWidth <= window.innerWidth"
+                    )
+                    assert_settings_layout(sidebar_visible=True, zoomed=True)
+                page.evaluate("document.documentElement.style.fontSize = ''")
+
                 page.set_viewport_size({"width": 320, "height": 800})
+                page.locator("label.settings-mobile-group select").select_option(
+                    "libraries"
+                )
                 page.evaluate("document.documentElement.style.fontSize = '200%'")
                 expect(
                     page.get_by_role("heading", name="Libraries", exact=True)
