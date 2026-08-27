@@ -1,6 +1,6 @@
 # ADR-0059: Move review-session state to a dedicated session database
 
-- Status: accepted
+- Status: proposed
 - Date: 2026-08-27
 - Owners: project maintainers
 - Supersedes: the `review_sessions` / `review_login_failures` placement in
@@ -87,11 +87,21 @@ per-table digest equality over every remaining table proves it.
 
 ## Consequences
 
-- Owner sign-in, session authentication, CSRF rotation, and logout are
-  independent of application-database write traffic. The proof is a test that
-  holds an application-database write transaction and the application gate
-  for the whole request and still logs in well inside the old five-second
-  backstop.
+- Owner sign-in, session authentication, CSRF rotation, and logout no
+  longer queue behind application-database write traffic. The proof is a
+  test that holds an application-database write transaction and the
+  application gate for the whole request and still logs in well inside the
+  old five-second backstop.
+
+  The independence is from the write queue, not from the application
+  database entirely. Deriving a session digest still reads the owner
+  verifier through `use_owner_verifier`, which executes on the shared
+  application connection. That read takes the setup store's own dedicated
+  lock rather than the application transaction lock, so it interleaves per
+  statement instead of waiting for a scan transaction to commit, and this
+  decision leaves it unchanged. The proof test supplies the verifier from a
+  hash file, so it exercises the write-path coupling this decision removes
+  and not that read.
 - Against ADR-0057's bar for topology change: the application database has
   two fewer persisted concepts and one less cross-cutting lock dependency;
   the simplified consumer is the login path. Transaction rollback, restart,

@@ -582,6 +582,9 @@ from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.review_sessions import (
+    SQLiteReviewSessionRepository,
+)
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.review_application import compose_review_application
 from mechanical_librarian.interfaces.web import create_review_app, owner_password_binding
@@ -589,11 +592,12 @@ from mechanical_librarian.interfaces.web import create_review_app, owner_passwor
 with tempfile.TemporaryDirectory() as directory:
     root = Path(directory)
     repository = open_repository(root / "application.sqlite3", create=True, cross_thread=True)
+    session_store = SQLiteReviewSessionRepository.open(root / "review-sessions.sqlite")
     verifier = PasswordHasher().hash("synthetic owner")
     binding = owner_password_binding(verifier)
     application = compose_review_application(
         state_owner=repository,
-        session_store=repository,
+        session_store=session_store,
         case_store=repository,
         decision_store=repository,
         library_store=repository,
