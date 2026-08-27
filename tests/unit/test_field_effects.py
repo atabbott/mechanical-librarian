@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import sys
 import tempfile
 import threading
 import time
@@ -756,6 +757,63 @@ def test_activity_page_cache_rejects_out_of_band_event_byte_mutation(
         reader.close()
 
 
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="Linux authority bindings use hard-link aliases",
+)
+def test_activity_page_cache_ignores_authority_alias_link_churn(
+    effects: _EffectEnvironment,
+) -> None:
+    _plan(effects, suffix="a")
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    query = dict(search=None, event_type="all", occurred_after=0, page=1, page_size=25)
+    projection = reader._field_effect_activity
+    original_page = projection._field_effect_activity_page_uncached
+    page_calls = [0]
+
+    def counted_page(**values: object):
+        page_calls[0] += 1
+        return original_page(**values)
+
+    try:
+        with patch.object(
+            projection, "_field_effect_activity_page_uncached", counted_page
+        ):
+            first = reader.field_effect_activity_page(**query)
+            revision = projection._activity_projection_revision()
+            identity = projection._activity_database_identity()
+            before = os.stat(effects.database_path, follow_symlinks=False)
+
+            derived = open_repository(
+                effects.database_path,
+                create=False,
+                authority=effects.repository.authority,
+                cross_thread=True,
+            )
+            try:
+                assert (
+                    os.stat(effects.database_path, follow_symlinks=False).st_nlink
+                    == before.st_nlink + 1
+                )
+            finally:
+                derived.close()
+
+            after = os.stat(effects.database_path, follow_symlinks=False)
+            assert after.st_nlink == before.st_nlink
+            assert after.st_ctime_ns != before.st_ctime_ns
+            assert projection._activity_projection_revision() == revision
+            assert projection._activity_database_identity() == identity
+            assert reader.field_effect_activity_page(**query) == first
+        assert page_calls == [1]
+    finally:
+        reader.close()
+
+
 def test_activity_page_cache_refreshes_when_a_commit_races_its_file_sample(
     effects: _EffectEnvironment,
 ) -> None:
@@ -772,7 +830,7 @@ def test_activity_page_cache_refreshes_when_a_commit_races_its_file_sample(
     original_identity = projection._activity_database_identity
     committed = False
 
-    def commit_before_identity() -> tuple[int, int, int, int, int]:
+    def commit_before_identity() -> tuple[int, int, int, int]:
         nonlocal committed
         if not committed:
             committed = True
@@ -4231,7 +4289,7 @@ def test_activity_projection_stamps_inside_snapshot_and_validates_a_cache_hit_on
     def counted_page(
         **query: object,
     ) -> tuple[
-        dict[str, object], tuple[int, int], int | None, tuple[int, int, int, int, int]
+        dict[str, object], tuple[int, int], int | None, tuple[int, int, int, int]
     ]:
         page_calls[0] += 1
         return original_page(**query)

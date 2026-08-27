@@ -121,7 +121,7 @@ _ACTIVITY_PAGE_BUSY_RETRY_SECONDS = 0.75
 # more serialized report text than one maximum-size report document.
 _ACTIVITY_PAGE_CACHE_MAX_BYTES = MAX_REPORT_BYTES
 _ActivityRead = TypeVar("_ActivityRead")
-_ActivityDatabaseIdentity = tuple[int, int, int, int, int]
+_ActivityDatabaseIdentity = tuple[int, int, int, int]
 
 _CORRECTIVE_KEEP_CURRENT_SQL = (
     "human.outcome='keep_current' AND EXISTS (SELECT 1 FROM review_cases review, "
@@ -1843,7 +1843,6 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             information.st_ino,
             information.st_size,
             information.st_mtime_ns,
-            information.st_ctime_ns,
         )
 
     def configure_activity_page_reader(self) -> None:
