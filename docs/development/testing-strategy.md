@@ -195,7 +195,10 @@ beside them. Test identities stay the dotted, path-free names
 engine change, and an unconverted `unittest.TestCase` file needs no change: the
 runner honours `getTestCaseNames` and the `load_tests` protocol pytest does not
 implement, so a module that selects a subset of its own namespace still
-contributes only that subset.
+contributes only that subset, and one whose protocol adds a case pytest cannot
+collect runs that case rather than dropping it, in the order the protocol chose.
+An added case carries unittest's identity verbatim, so a cohort refuses rather
+than admitting one that is not itself path-free or that collides with another.
 
 A tier supplies its own arguments and refuses to run under ambient ones. The
 runner fails closed on every pytest environment variable that can change what a
@@ -205,9 +208,11 @@ cannot reorder, shard, or drop cases. `scripts/run_test_tier.py` holds the exact
 list and the reason each entry is on or off it.
 
 Tier accounting follows unittest's, not pytest's report stream: `AssertionError`
-is a failure and anything else is an error, a class-scoped fixture failure is one
-class-level error that runs no tests, an unexpected success refuses the tier, and
-a tier passes only when pytest's exit code and the runner's own accounting agree.
+is a failure and anything else is an error, shared class setup that fails or
+raises `SkipTest` is one class-level entry that runs no tests while a
+function-scoped fixture is one entry per case that did start, an unexpected
+success refuses the tier, and a tier passes only when pytest's exit code and the
+runner's own accounting agree.
 
 ## Coverage
 

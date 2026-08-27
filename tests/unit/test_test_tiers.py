@@ -709,6 +709,491 @@ def test_instance_setup_failures_stay_one_error_per_case() -> None:
     assert len(summary["failed_test_ids"]) == 2
 
 
+def test_function_scoped_fixture_failures_stay_one_error_per_case() -> None:
+    # A function-scoped fixture is the pytest-native instance `setUp`: it runs
+    # once per case, so its failure is one error per case. Keying the
+    # class-level rule on the setup phase alone claimed these for `setUpClass`
+    # and reported one error with no tests run.
+    body = (
+        "import pytest\n"
+        "import unittest\n"
+        "\n"
+        "@pytest.fixture(autouse=True)\n"
+        "def exploding() -> None:\n"
+        "    raise RuntimeError('function fixture exploded')\n"
+        "\n"
+        "class FixtureSetupTests(unittest.TestCase):\n"
+        "    def test_first(self) -> None:\n"
+        "        pass\n"
+        "\n"
+        "    def test_second(self) -> None:\n"
+        "        pass\n"
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        targets = _module(Path(directory), body)
+        passed, summary = _cohort_summary(targets)
+    assert not passed
+    assert summary["tests_run"] == 2
+    assert summary["errors"] == 2
+    assert summary["failures"] == 0
+    assert [
+        identifier.rsplit(".", 2)[-2:] for identifier in summary["failed_test_ids"]
+    ] == [["FixtureSetupTests", "test_first"], ["FixtureSetupTests", "test_second"]]
+
+
+def test_shared_class_setup_skip_is_one_skip_that_runs_no_tests() -> None:
+    # The skip path of the class-level rule. pytest emits a skipped setup
+    # report per collected method, so counting each one reported two run and
+    # two skipped where unittest reports none run and one class-level skip.
+    body = (
+        "import unittest\n"
+        "\n"
+        "class SkippedSetupTests(unittest.TestCase):\n"
+        "    @classmethod\n"
+        "    def setUpClass(cls) -> None:\n"
+        "        raise unittest.SkipTest('shared setup skipped')\n"
+        "\n"
+        "    def test_first(self) -> None:\n"
+        "        pass\n"
+        "\n"
+        "    def test_second(self) -> None:\n"
+        "        pass\n"
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        targets = _module(Path(directory), body)
+        passed, summary = _cohort_summary(targets)
+    assert passed
+    assert summary["tests_run"] == 0
+    assert summary["skipped"] == 1
+
+
+def test_a_skipped_class_stays_one_skip_per_case() -> None:
+    # The shape the class-level skip rule must not claim. unittest never
+    # reaches `setUpClass` for a class it was told to skip and records one
+    # skip against each method it did not run, so this stays two run and two
+    # skipped -- even though pytest reports it through a class-scoped fixture
+    # exactly as it reports a `SkipTest` raised inside `setUpClass`.
+    body = (
+        "import unittest\n"
+        "\n"
+        "@unittest.skip('the whole class')\n"
+        "class SkippedClassTests(unittest.TestCase):\n"
+        "    def test_first(self) -> None:\n"
+        "        pass\n"
+        "\n"
+        "    def test_second(self) -> None:\n"
+        "        pass\n"
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        targets = _module(Path(directory), body)
+        passed, summary = _cohort_summary(targets)
+    assert passed
+    assert summary["tests_run"] == 2
+    assert summary["skipped"] == 2
+
+
+_LOAD_TESTS_MODULE = (
+    "import unittest\n"
+    "\n"
+    "class CollectedTests(unittest.TestCase):\n"
+    "    def test_collected(self) -> None:\n"
+    "        pass\n"
+    "\n"
+    "    def test_deselected(self) -> None:\n"
+    "        raise AssertionError('outside the protocol case set')\n"
+    "\n"
+    "def _dynamic() -> None:\n"
+    "    raise RuntimeError('the added case ran')\n"
+    "\n"
+    "def load_tests(loader, standard_tests, pattern):\n"
+    "    suite = unittest.TestSuite()\n"
+    "    suite.addTest(CollectedTests('test_collected'))\n"
+    "    suite.addTest(unittest.FunctionTestCase(_dynamic))\n"
+    "    return suite\n"
+)
+
+
+def test_load_tests_admits_the_cases_pytest_cannot_collect() -> None:
+    # The protocol adds as well as selects. Intersecting pytest's collection
+    # with it dropped a `FunctionTestCase` silently: unittest saw two cases
+    # and the cohort reported one, with nothing to say a case was missing.
+    with tempfile.TemporaryDirectory() as directory:
+        targets = _module(Path(directory), _LOAD_TESTS_MODULE)
+        with patch("scripts.run_test_tier.cohort_targets", return_value=targets):
+            identifiers = collect_cohort(Path.cwd(), "fast")
+        summary, _ = _run_failing_cohort(targets)
+    assert "_dynamic" in identifiers
+    assert any(
+        identifier.endswith(".CollectedTests.test_collected")
+        for identifier in identifiers
+    )
+    # The selection half of the protocol still holds: a case the module owns
+    # but did not admit stays out, so its deliberate failure never runs.
+    assert not any(identifier.endswith("test_deselected") for identifier in identifiers)
+    assert len(identifiers) == 2
+    assert summary["tests_run"] == 2
+    assert summary["errors"] == 1
+    assert summary["failed_test_ids"] == ["_dynamic"]
+
+
+def test_an_added_case_cannot_carry_an_unsafe_identity() -> None:
+    # An added case is the one identity the runner does not build itself, so
+    # it is the one that can carry a path. Reaching a case through a module
+    # loaded under its own file name puts that path in `TestCase.id()`, and
+    # from there into the manifest digest and the reported failure identity.
+    helper = (
+        "import unittest\n"
+        "\n"
+        "class Helper(unittest.TestCase):\n"
+        "    def test_helper(self) -> None:\n"
+        "        pass\n"
+    )
+    body = (
+        "import importlib.util\n"
+        "import pathlib\n"
+        "import unittest\n"
+        "\n"
+        "_source = pathlib.Path(__file__).parent / 'support_helper.py'\n"
+        "_spec = importlib.util.spec_from_file_location(str(_source), _source)\n"
+        "_helper = importlib.util.module_from_spec(_spec)\n"
+        "_spec.loader.exec_module(_helper)\n"
+        "\n"
+        "class LocalTests(unittest.TestCase):\n"
+        "    def test_local(self) -> None:\n"
+        "        pass\n"
+        "\n"
+        "def load_tests(loader, standard_tests, pattern):\n"
+        "    suite = unittest.TestSuite()\n"
+        "    suite.addTest(LocalTests('test_local'))\n"
+        "    suite.addTest(_helper.Helper('test_helper'))\n"
+        "    return suite\n"
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        (root / "support_helper.py").write_text(helper, encoding="utf-8")
+        targets = _module(root, body)
+        with patch("scripts.run_test_tier.cohort_targets", return_value=targets):
+            with pytest.raises(RuntimeError) as unsafe:
+                collect_cohort(Path.cwd(), "fast")
+    assert str(unsafe.value) == "test_cohort_identity_unsafe"
+
+
+def test_an_added_case_reports_the_subtest_that_actually_failed() -> None:
+    # `TestResult` records a failed subtest without routing it through
+    # `addFailure`, so an added case whose only failure is a subtest would
+    # otherwise be reported under the unexpected-success message instead of
+    # the assertion that raised.
+    #
+    # The case has to live outside the module namespace to be an added one at
+    # all: pytest collects every `TestCase` subclass it can see there, and
+    # `getTestCaseNames` falls back to `runTest` when a class declares no
+    # `test*` method, so a locally declared class would be collected normally
+    # and never reach the added-case path.
+    helper = (
+        "import unittest\n"
+        "\n"
+        "class Subtests(unittest.TestCase):\n"
+        "    def test_sub(self) -> None:\n"
+        "        with self.subTest(index=1):\n"
+        "            self.fail('the subtest is what failed')\n"
+    )
+    body = (
+        "import importlib.util\n"
+        "import pathlib\n"
+        "import unittest\n"
+        "\n"
+        "_source = pathlib.Path(__file__).parent / 'support_subtests.py'\n"
+        "_spec = importlib.util.spec_from_file_location('support_subtests', _source)\n"
+        "_helper = importlib.util.module_from_spec(_spec)\n"
+        "_spec.loader.exec_module(_helper)\n"
+        "\n"
+        "class LocalTests(unittest.TestCase):\n"
+        "    def test_local(self) -> None:\n"
+        "        pass\n"
+        "\n"
+        "def load_tests(loader, standard_tests, pattern):\n"
+        "    suite = unittest.TestSuite()\n"
+        "    suite.addTest(LocalTests('test_local'))\n"
+        "    suite.addTest(_helper.Subtests('test_sub'))\n"
+        "    return suite\n"
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        (root / "support_subtests.py").write_text(helper, encoding="utf-8")
+        targets = _module(root, body)
+        summary, narrative = _run_failing_cohort(targets)
+    # A clean module name keeps the imported case's identity safe, so it is
+    # admitted where the path-named import above is refused.
+    assert summary["failed_test_ids"] == ["support_subtests.Subtests.test_sub"]
+    assert summary["failures"] == 1
+    assert summary["errors"] == 0
+    assert "the subtest is what failed" in narrative
+
+
+@pytest.mark.parametrize(
+    "body",
+    (
+        "import pytest\n\npytest.importorskip('a_module_that_does_not_exist')\n",
+        "import pytest\n\npytest.skip('not here', allow_module_level=True)\n",
+        # `unittest.SkipTest` is not a `pytest.skip.Exception`, and it is the
+        # form an unconverted `unittest` module reaches for.
+        "import unittest\n\nraise unittest.SkipTest('not here')\n",
+    ),
+    ids=("importorskip", "module_level_skip", "unittest_skiptest"),
+)
+def test_a_module_skipped_at_import_leaves_the_rest_of_the_cohort_alone(
+    body: str,
+) -> None:
+    # A module-level skip reports a skipped collection, not a failed one, and
+    # pytest caches no object for it -- so asking it for `load_tests`
+    # re-imports and re-raises. Reconciliation must pass it by rather than
+    # refuse the tier it never belonged to.
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        targets = (*_module(root, _AMBIENT_OPTION_MODULE), *_module(root, body))
+        with patch("scripts.run_test_tier.cohort_targets", return_value=targets):
+            identifiers = collect_cohort(Path.cwd(), "fast")
+    assert [identifier.rsplit(".", 1)[-1] for identifier in identifiers] == [
+        "test_failing",
+        "test_passing",
+    ]
+
+
+def test_a_teardown_skip_stays_one_skip_per_case() -> None:
+    # Only shared setup collapses onto one identity, and only because nothing
+    # ran. A fixture that skips in its finaliser follows two cases that both
+    # already ran, so it is two skips rather than one class-level skip.
+    body = (
+        "import pytest\n"
+        "import unittest\n"
+        "\n"
+        "@pytest.fixture(autouse=True)\n"
+        "def finalising() -> object:\n"
+        "    yield\n"
+        "    pytest.skip('skipped on the way out')\n"
+        "\n"
+        "class TeardownSkipTests(unittest.TestCase):\n"
+        "    def test_first(self) -> None:\n"
+        "        pass\n"
+        "\n"
+        "    def test_second(self) -> None:\n"
+        "        pass\n"
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        targets = _module(Path(directory), body)
+        passed, summary = _cohort_summary(targets)
+    assert passed
+    assert summary["tests_run"] == 2
+    assert summary["skipped"] == 2
+
+
+def test_an_added_case_runs_under_its_own_class_fixtures() -> None:
+    # An added case is a `TestCase` leaf, and `setUpClass` belongs to the
+    # `TestSuite` that brackets it, not to the case. Calling the leaf directly
+    # ran a case whose class setup never happened and reported a failure
+    # unittest does not report.
+    helper = (
+        "import unittest\n"
+        "\n"
+        "class NeedsClassSetup(unittest.TestCase):\n"
+        "    ready = False\n"
+        "\n"
+        "    @classmethod\n"
+        "    def setUpClass(cls) -> None:\n"
+        "        cls.ready = True\n"
+        "\n"
+        "    def test_needs_setup(self) -> None:\n"
+        "        assert self.ready, 'setUpClass never ran'\n"
+    )
+    body = (
+        "import importlib.util\n"
+        "import pathlib\n"
+        "import unittest\n"
+        "\n"
+        "_source = pathlib.Path(__file__).parent / 'support_class_setup.py'\n"
+        "_spec = importlib.util.spec_from_file_location('support_class_setup', _source)\n"
+        "_helper = importlib.util.module_from_spec(_spec)\n"
+        "_spec.loader.exec_module(_helper)\n"
+        "\n"
+        "class LocalTests(unittest.TestCase):\n"
+        "    def test_local(self) -> None:\n"
+        "        pass\n"
+        "\n"
+        "def load_tests(loader, standard_tests, pattern):\n"
+        "    suite = unittest.TestSuite()\n"
+        "    suite.addTest(LocalTests('test_local'))\n"
+        "    suite.addTest(_helper.NeedsClassSetup('test_needs_setup'))\n"
+        "    return suite\n"
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        (root / "support_class_setup.py").write_text(helper, encoding="utf-8")
+        passed, summary = _cohort_summary(_module(root, body))
+    assert passed
+    assert summary["tests_run"] == 2
+
+
+def test_added_cases_run_in_the_order_load_tests_chose() -> None:
+    # `load_tests` chooses the order its cases run in and unittest honours it.
+    # Appending the added cases after everything pytest collected ran a
+    # module's own cases first and the protocol's additions last.
+    body = (
+        "import unittest\n"
+        "\n"
+        "ORDER: list[str] = []\n"
+        "\n"
+        "def _added() -> None:\n"
+        "    ORDER.append('added')\n"
+        "\n"
+        "class OrderedTests(unittest.TestCase):\n"
+        "    def test_first(self) -> None:\n"
+        "        ORDER.append('first')\n"
+        "\n"
+        "    def test_last(self) -> None:\n"
+        "        assert ORDER == ['added', 'first'], ORDER\n"
+        "\n"
+        "def load_tests(loader, standard_tests, pattern):\n"
+        "    suite = unittest.TestSuite()\n"
+        "    suite.addTest(unittest.FunctionTestCase(_added))\n"
+        "    suite.addTest(OrderedTests('test_first'))\n"
+        "    suite.addTest(OrderedTests('test_last'))\n"
+        "    return suite\n"
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        passed, summary = _cohort_summary(_module(Path(directory), body))
+    assert passed
+    assert summary["tests_run"] == 3
+
+
+def test_added_cases_that_share_an_identity_fail_closed() -> None:
+    # unittest runs two cases that share an `id()` and reports them
+    # separately. The manifest is keyed by identity and cannot, so admitting
+    # them ran one and accounted for one where unittest ran two -- and the
+    # second case here is the one that fails, so the tier passed a run
+    # unittest refused.
+    body = (
+        "import unittest\n"
+        "\n"
+        "_calls: list[int] = []\n"
+        "\n"
+        "def _stateful() -> None:\n"
+        "    _calls.append(1)\n"
+        "    if len(_calls) > 1:\n"
+        "        raise AssertionError('the second invocation must fail')\n"
+        "\n"
+        "class LocalTests(unittest.TestCase):\n"
+        "    def test_local(self) -> None:\n"
+        "        pass\n"
+        "\n"
+        "def load_tests(loader, standard_tests, pattern):\n"
+        "    suite = unittest.TestSuite()\n"
+        "    suite.addTest(LocalTests('test_local'))\n"
+        "    suite.addTest(unittest.FunctionTestCase(_stateful))\n"
+        "    suite.addTest(unittest.FunctionTestCase(_stateful))\n"
+        "    return suite\n"
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        targets = _module(Path(directory), body)
+        with patch("scripts.run_test_tier.cohort_targets", return_value=targets):
+            with pytest.raises(RuntimeError) as refused:
+                collect_cohort(Path.cwd(), "fast")
+    assert str(refused.value) == "test_cohort_identity_collision"
+
+
+def test_an_added_case_that_skips_still_reports_its_cleanup_error() -> None:
+    # unittest records a case that skips and then raises in a cleanup both
+    # ways and refuses the run. Reporting only the skip dropped the error and
+    # let the tier pass. The error is held for the teardown phase -- the phase
+    # unittest raised it in -- so both reach the accounting.
+    helper = (
+        "import unittest\n"
+        "\n"
+        "class SkipThenCleanupError(unittest.TestCase):\n"
+        "    def setUp(self) -> None:\n"
+        "        self.addCleanup(self._boom)\n"
+        "\n"
+        "    def _boom(self) -> None:\n"
+        "        raise RuntimeError('the cleanup exploded')\n"
+        "\n"
+        "    def test_skips(self) -> None:\n"
+        "        raise unittest.SkipTest('skipping')\n"
+    )
+    body = (
+        "import importlib.util\n"
+        "import pathlib\n"
+        "import unittest\n"
+        "\n"
+        "_source = pathlib.Path(__file__).parent / 'support_skip_cleanup.py'\n"
+        "_spec = importlib.util.spec_from_file_location(\n"
+        "    'support_skip_cleanup', _source\n"
+        ")\n"
+        "_helper = importlib.util.module_from_spec(_spec)\n"
+        "_spec.loader.exec_module(_helper)\n"
+        "\n"
+        "class LocalTests(unittest.TestCase):\n"
+        "    def test_local(self) -> None:\n"
+        "        pass\n"
+        "\n"
+        "def load_tests(loader, standard_tests, pattern):\n"
+        "    suite = unittest.TestSuite()\n"
+        "    suite.addTest(LocalTests('test_local'))\n"
+        "    suite.addTest(_helper.SkipThenCleanupError('test_skips'))\n"
+        "    return suite\n"
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        (root / "support_skip_cleanup.py").write_text(helper, encoding="utf-8")
+        passed, summary = _cohort_summary(_module(root, body))
+    assert not passed
+    assert summary["tests_run"] == 2
+    assert summary["errors"] == 1
+    # The failure summary carries no skip count by contract, so the skip half
+    # of unittest's accounting is not observable here; the error is what the
+    # tier was passing over.
+    assert summary["failed_test_ids"] == [
+        "support_skip_cleanup.SkipThenCleanupError.test_skips"
+    ]
+
+
+def test_a_marked_skip_stays_that_case_and_not_its_class() -> None:
+    # pytest evaluates a `skip` mark during setup without running any fixture,
+    # so shared ownership has to be recorded positively. Treating an
+    # unexplained setup skip as shared charged a per-method skip to
+    # `setUpClass` and dropped that case from the run count.
+    body = (
+        "import pytest\n"
+        "import unittest\n"
+        "\n"
+        "class MarkedSkipTests(unittest.TestCase):\n"
+        "    @pytest.mark.skip(reason='this one only')\n"
+        "    def test_skipped(self) -> None:\n"
+        "        pass\n"
+        "\n"
+        "    def test_run(self) -> None:\n"
+        "        pass\n"
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        passed, summary = _cohort_summary(_module(Path(directory), body))
+    assert passed
+    assert summary["tests_run"] == 2
+    assert summary["skipped"] == 1
+
+
+def test_a_module_that_cannot_be_imported_fails_closed() -> None:
+    # Reconciling `load_tests` asks each collected module for its imported
+    # object, and a module that failed to collect answers that with an
+    # exception rather than a namespace. The cohort is refused on the
+    # collection failure itself, which is the reason worth reporting.
+    body = "import a_module_that_does_not_exist\n"
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        targets = (*_module(root, _AMBIENT_OPTION_MODULE), *_module(root, body))
+        with patch("scripts.run_test_tier.cohort_targets", return_value=targets):
+            with pytest.raises(RuntimeError) as refused:
+                collect_cohort(Path.cwd(), "fast")
+    assert str(refused.value) == "test_cohort_import_failed"
+
+
 def test_unexpected_success_refuses_the_tier() -> None:
     # pytest returns success for a non-strict `xfail` that passes, so the
     # engine's exit code alone would report the tier passed.
