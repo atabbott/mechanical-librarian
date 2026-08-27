@@ -63,7 +63,7 @@ from mechanical_librarian.domain.metadata_report import (
     derive_field_results,
     isbn_family,
     normalize_title,
-    provider_candidate_work_identity_admission,
+    provider_candidate_set_work_identity_admission,
     provider_lane_candidate_reference,
     validate_provider_access_time,
 )
@@ -71,7 +71,6 @@ from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     WorkTitleTransformationLineage,
     replay_provider_work_identity_admission,
-    work_title_has_variant_marker,
 )
 
 
@@ -929,50 +928,13 @@ def qualify_provider_observation(
             diagnostics=observation.diagnostics,
             request_accounting=observation.request_accounting,
         )
-    qualified: dict[
-        str, list[tuple[ProviderCandidate, WorkTitleTransformationLineage | None]]
-    ] = {}
-    blocked_work_identities: set[str] = set()
-    for candidate in observation.candidates:
-        qualification_identity = (
-            candidate.identity
-            if candidate.work_identity == "unresolved"
-            else candidate.work_identity
-        )
-        admission = provider_candidate_work_identity_admission(
-            candidate,
-            lookup.title or "",
-            lookup.authors,
-            observation.dispatch_lineage,
-        )
-        disqualifying_roles = {
-            claim.role
-            for claim in candidate.claims
-            if claim.scope is ClaimScope.WORK
-            and claim.kind is ClaimKind.CONTRIBUTOR
-            and claim.role in {"abridger", "adapter", "translator"}
-        }
-        variant_marker = any(
-            work_title_has_variant_marker(claim.value)
-            for claim in candidate.claims
-            if claim.kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE}
-            and claim.state is FieldState.VALID
-            and claim.value is not None
-        )
-        if disqualifying_roles or variant_marker:
-            blocked_work_identities.add(qualification_identity)
-        if admission.admitted and not disqualifying_roles and not variant_marker:
-            qualified.setdefault(qualification_identity, []).append(
-                (candidate, admission.transformation)
-            )
-    for identity in blocked_work_identities:
-        qualified.pop(identity, None)
-    lineages = {
-        transformation
-        for values in qualified.values()
-        for _candidate, transformation in values
-    }
-    if len(qualified) != 1 or len(lineages) != 1:
+    set_admission = provider_candidate_set_work_identity_admission(
+        observation.candidates,
+        lookup.title or "",
+        lookup.authors,
+        observation.dispatch_lineage,
+    )
+    if not set_admission.admitted:
         return ProviderObservation(
             observation.provider,
             ProviderStatus.NO_MATCH,
@@ -984,10 +946,8 @@ def qualify_provider_observation(
             diagnostics=observation.diagnostics,
             request_accounting=observation.request_accounting,
         )
-    selected_values = next(iter(qualified.values()))
-    candidate, transformation_lineage = min(
-        selected_values, key=lambda value: value[0].identity
-    )
+    candidate = min(set_admission.candidates, key=lambda value: value.identity)
+    transformation_lineage = set_admission.transformation
     neutral_creators = tuple(
         claim
         for claim in candidate.claims

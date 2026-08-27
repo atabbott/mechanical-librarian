@@ -5,6 +5,7 @@ source-lexical timestamp voting matrix.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from dataclasses import replace
 from typing import cast
@@ -729,10 +730,12 @@ def test_work_lookup_rejects_missing_or_ambiguous_decoration_lineage() -> None:
         ("Ada Author",),
     )
 
-    def candidate(identity: str, title: str) -> ProviderCandidate:
+    def candidate(
+        identity: str, title: str, work_identity: str = "work-1"
+    ) -> ProviderCandidate:
         return ProviderCandidate(
             identity,
-            "work-1",
+            work_identity,
             (
                 ProviderClaim.create(
                     provider="catalogue",
@@ -841,30 +844,118 @@ def test_work_lookup_rejects_missing_or_ambiguous_decoration_lineage() -> None:
         ),
         lookup,
     )
+    ambiguous_identity = qualify_provider_observation(
+        ProviderObservation(
+            "catalogue",
+            ProviderStatus.CANDIDATES,
+            (),
+            (
+                candidate("edition-1", "The Example"),
+                candidate("edition-2", "The Example", "work-2"),
+            ),
+            ProviderQueryKind.WORK,
+            dispatch_lineage=_work_dispatch(
+                "Ada_Author_-_The_Example", ("Ada Author",)
+            ),
+        ),
+        lookup,
+    )
 
     assert missing.status is ProviderStatus.NO_MATCH
     assert ambiguous.status is ProviderStatus.NO_MATCH
     assert false_dispatch.status is ProviderStatus.NO_MATCH
     assert exact_without_dispatch.status is ProviderStatus.NO_MATCH
     assert mixed_creators.status is ProviderStatus.NO_MATCH
+    assert ambiguous_identity.status is ProviderStatus.NO_MATCH
+
+    target = TargetFacts(
+        "primary",
+        "ebooks",
+        "item-1",
+        tuple(
+            TargetField(
+                TargetDestination.AUTHORS,
+                TargetFieldState.VALUE,
+                ("Ada Author",),
+            )
+            if field.destination is TargetDestination.AUTHORS
+            else field
+            for field in default_target_fields("Ada_Author_-_The_Example")
+        ),
+    )
+    dispatch = _work_dispatch("Ada_Author_-_The_Example", ("Ada Author",))
+    transformation = WorkTitleTransformationLineage(
+        WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
+        WorkTitleTransformationSide.LOCAL,
+    )
+    same_work_candidates = (
+        candidate("edition-1", "The Example"),
+        candidate("edition-2", "The Example"),
+    )
+    same_work_qualified = qualify_provider_observation(
+        ProviderObservation(
+            "catalogue",
+            ProviderStatus.CANDIDATES,
+            (),
+            same_work_candidates,
+            ProviderQueryKind.WORK,
+            dispatch_lineage=dispatch,
+        ),
+        lookup,
+    )
+    assert same_work_qualified.status is ProviderStatus.CANDIDATES
+    assert ("edition-1",) == tuple(
+        value.identity for value in same_work_qualified.candidates
+    )
+    same_work_report = MetadataReport.create(
+        target=target,
+        file=FileFacts(0, "b" * 64, "c" * 64),
+        local_claims=(),
+        local_reasons=("target_metadata",),
+        providers=(
+            ProviderObservation(
+                "catalogue",
+                ProviderStatus.CANDIDATES,
+                (),
+                same_work_candidates,
+                ProviderQueryKind.WORK,
+                dispatch_lineage=dispatch,
+                transformation_lineage=transformation,
+            ),
+        ),
+    )
+    assert same_work_report == MetadataReport.from_json(same_work_report.to_json())
 
     with pytest.raises(ReportValueError, match="work identity lineage"):
         MetadataReport.create(
-            target=TargetFacts(
-                "primary",
-                "ebooks",
-                "item-1",
-                tuple(
-                    TargetField(
-                        TargetDestination.AUTHORS,
-                        TargetFieldState.VALUE,
-                        ("Ada Author",),
-                    )
-                    if field.destination is TargetDestination.AUTHORS
-                    else field
-                    for field in default_target_fields("Ada_Author_-_The_Example")
+            target=target,
+            file=FileFacts(0, "b" * 64, "c" * 64),
+            local_claims=(),
+            local_reasons=("target_metadata",),
+            providers=(
+                replace(
+                    same_work_report.providers[0],
+                    candidates=(
+                        same_work_candidates[0],
+                        candidate("edition-2", "The Example", "work-2"),
+                    ),
                 ),
             ),
+        )
+
+    tampered = same_work_report.to_data()
+    tampered["providers"][0]["candidates"][1]["work_identity"] = "work-2"
+    identity_data = dict(tampered)
+    identity_data.pop("report_id")
+    tampered["report_id"] = (
+        "report_" + hashlib.sha256(canonical_json(identity_data).encode()).hexdigest()
+    )
+    with pytest.raises(ReportValueError, match="work identity lineage"):
+        MetadataReport.from_json(canonical_json(tampered))
+
+    with pytest.raises(ReportValueError, match="work identity lineage"):
+        MetadataReport.create(
+            target=target,
             file=FileFacts(0, "b" * 64, "c" * 64),
             local_claims=(),
             local_reasons=("target_metadata",),

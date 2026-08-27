@@ -2266,18 +2266,7 @@ def provider_candidate_work_identity_admission(
         and claim.role is None
     )
     creators = typed if typed else neutral
-    variant_excluded = any(
-        claim.scope is ClaimScope.WORK
-        and claim.kind is ClaimKind.CONTRIBUTOR
-        and claim.role in {"abridger", "adapter", "translator"}
-        for claim in candidate.claims
-    ) or any(
-        work_title_has_variant_marker(claim.value)
-        for claim in candidate.claims
-        if claim.kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE}
-        and claim.state is FieldState.VALID
-        and claim.value is not None
-    )
+    variant_excluded = _provider_candidate_has_work_identity_veto(candidate)
     if (
         type(candidate) is not ProviderCandidate
         or len(titles) != 1
@@ -2304,6 +2293,78 @@ def provider_candidate_work_identity_admission(
         ),
         dispatch_lineage=dispatch_lineage,
         variant_excluded=variant_excluded,
+    )
+
+
+def _provider_candidate_has_work_identity_veto(candidate: ProviderCandidate) -> bool:
+    return any(
+        claim.scope is ClaimScope.WORK
+        and claim.kind is ClaimKind.CONTRIBUTOR
+        and claim.role in {"abridger", "adapter", "translator"}
+        for claim in candidate.claims
+    ) or any(
+        work_title_has_variant_marker(claim.value)
+        for claim in candidate.claims
+        if claim.kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE}
+        and claim.state is FieldState.VALID
+        and claim.value is not None
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderWorkIdentitySetAdmission:
+    admitted: bool
+    candidates: tuple[ProviderCandidate, ...] = ()
+    work_identity: str | None = None
+    transformation: WorkTitleTransformationLineage | None = None
+
+
+def provider_candidate_set_work_identity_admission(
+    candidates: tuple[ProviderCandidate, ...],
+    local_title: str,
+    local_authors: tuple[str, ...],
+    dispatch_lineage: WorkDispatchLineage | None,
+) -> ProviderWorkIdentitySetAdmission:
+    """Admit exactly one work identity and one lineage from a candidate set."""
+    if type(candidates) is not tuple or any(
+        type(candidate) is not ProviderCandidate for candidate in candidates
+    ):
+        return ProviderWorkIdentitySetAdmission(False)
+    qualified: dict[
+        str, list[tuple[ProviderCandidate, WorkTitleTransformationLineage | None]]
+    ] = {}
+    blocked_work_identities: set[str] = set()
+    for candidate in candidates:
+        work_identity = (
+            candidate.identity
+            if candidate.work_identity == "unresolved"
+            else candidate.work_identity
+        )
+        if _provider_candidate_has_work_identity_veto(candidate):
+            blocked_work_identities.add(work_identity)
+            continue
+        admission = provider_candidate_work_identity_admission(
+            candidate, local_title, local_authors, dispatch_lineage
+        )
+        if admission.admitted:
+            qualified.setdefault(work_identity, []).append(
+                (candidate, admission.transformation)
+            )
+    for identity in blocked_work_identities:
+        qualified.pop(identity, None)
+    lineages = {
+        transformation
+        for values in qualified.values()
+        for _candidate, transformation in values
+    }
+    if len(qualified) != 1 or len(lineages) != 1:
+        return ProviderWorkIdentitySetAdmission(False)
+    work_identity, values = next(iter(qualified.items()))
+    return ProviderWorkIdentitySetAdmission(
+        True,
+        tuple(candidate for candidate, _transformation in values),
+        work_identity,
+        next(iter(lineages)),
     )
 
 
@@ -2474,39 +2535,34 @@ class MetadataReport:
                 and provider.query_kind is ProviderQueryKind.WORK
                 and provider.status is ProviderStatus.CANDIDATES
             ):
-                decisions = tuple(
-                    provider_candidate_work_identity_admission(
-                        candidate,
-                        target_title or "",
-                        target_authors,
-                        provider.dispatch_lineage,
-                    )
-                    for candidate in provider.candidates
+                set_admission = provider_candidate_set_work_identity_admission(
+                    provider.candidates,
+                    target_title or "",
+                    target_authors,
+                    provider.dispatch_lineage,
                 )
-                if any(not decision.admitted for decision in decisions) or any(
-                    decision.transformation != provider.transformation_lineage
-                    for decision in decisions
+                if (
+                    not set_admission.admitted
+                    or set_admission.candidates != provider.candidates
+                    or set_admission.transformation != provider.transformation_lineage
                 ):
                     raise ReportValueError(
                         "provider work identity lineage is inconsistent"
                     )
             for lane in work_lanes:
-                decisions = tuple(
-                    provider_candidate_work_identity_admission(
-                        candidates[value.edition_identity],
-                        target_title or "",
-                        target_authors,
-                        lane.dispatch_lineage,
-                    )
-                    for value in lane.candidates
+                lane_candidates = tuple(
+                    candidates[value.edition_identity] for value in lane.candidates
+                )
+                set_admission = provider_candidate_set_work_identity_admission(
+                    lane_candidates,
+                    target_title or "",
+                    target_authors,
+                    lane.dispatch_lineage,
                 )
                 if (
-                    not decisions
-                    or any(not decision.admitted for decision in decisions)
-                    or any(
-                        decision.transformation != lane.transformation_lineage
-                        for decision in decisions
-                    )
+                    not set_admission.admitted
+                    or set_admission.candidates != lane_candidates
+                    or set_admission.transformation != lane.transformation_lineage
                 ):
                     raise ReportValueError(
                         "provider work identity lineage is inconsistent"
@@ -4683,6 +4739,8 @@ __all__ = [
     "ProviderLaneObservation",
     "ProviderObservation",
     "provider_candidate_work_identity_admission",
+    "provider_candidate_set_work_identity_admission",
+    "ProviderWorkIdentitySetAdmission",
     "ProviderQueryKind",
     "ProviderStatus",
     "REPORT_SCHEMA",

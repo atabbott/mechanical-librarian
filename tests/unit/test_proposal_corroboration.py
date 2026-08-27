@@ -1206,6 +1206,67 @@ def test_work_lane_target_binding_admits_the_planned_candidate(
     assert _target_backed_lookup_contains(baseline, source, candidate)
 
 
+def test_work_lane_proposal_replay_rejects_sibling_work_identity_ambiguity(
+    work_lane: MetadataDiscoveryLane,
+) -> None:
+    first = _work_lane_candidate()
+    second = ProviderCandidate(
+        "edition-2",
+        "work",
+        (
+            _claim(
+                "open-connection",
+                "edition-2",
+                ClaimKind.TITLE,
+                "Real Tigers",
+                scope=ClaimScope.WORK,
+            ),
+            _claim(
+                "open-connection",
+                "edition-2",
+                ClaimKind.CREATOR,
+                "Mick Herron",
+                scope=ClaimScope.WORK,
+                role="author",
+            ),
+        ),
+    )
+    same_work_source = provider_observation(
+        "open-connection",
+        (
+            ProviderLaneResult(
+                work_lane,
+                ProviderStatus.CANDIDATES,
+                (first, second),
+                dispatch_lineage=_work_dispatch("Real Tigers", ("Mick Herron",)),
+            ),
+        ),
+        authority="open_library",
+    )
+    report = _work_lane_report((_work_lane_title(),), (same_work_source,))
+    assert _target_backed_lookup_contains(report, same_work_source, first)
+    assert _target_backed_lookup_contains(report, same_work_source, second)
+
+    ambiguous_second = replace(second, work_identity="work-2")
+    ambiguous_source = provider_observation(
+        "open-connection",
+        (
+            ProviderLaneResult(
+                work_lane,
+                ProviderStatus.CANDIDATES,
+                (first, ambiguous_second),
+                dispatch_lineage=_work_dispatch("Real Tigers", ("Mick Herron",)),
+            ),
+        ),
+        authority="open_library",
+    )
+    object.__setattr__(report, "providers", (ambiguous_source,))
+    assert not _target_backed_lookup_contains(report, ambiguous_source, first)
+    assert not _target_backed_lookup_contains(
+        report, ambiguous_source, ambiguous_second
+    )
+
+
 def test_work_lane_proposal_replay_rejects_false_dispatch_and_mixed_creators(
     work_lane: MetadataDiscoveryLane,
 ) -> None:

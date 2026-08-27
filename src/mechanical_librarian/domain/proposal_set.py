@@ -41,6 +41,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderClaim,
     ProviderEvidenceKind,
     ProviderIdentityBinding,
+    ProviderLaneObservation,
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
@@ -55,12 +56,8 @@ from mechanical_librarian.domain.metadata_report import (
     manifestation_publication_compatible,
     normalize_date_value,
     normalize_title,
-    provider_candidate_work_identity_admission,
+    provider_candidate_set_work_identity_admission,
     publication_date_is_voting,
-)
-from mechanical_librarian.domain.work_identity import (
-    WorkDispatchLineage,
-    WorkTitleTransformationLineage,
 )
 
 if TYPE_CHECKING:
@@ -1701,12 +1698,12 @@ def _target_backed_lookup_contains(
                 and expected_authors
                 and lane.input_references == target_title_references
                 and target_titles_are_exact
-                and _candidate_replays_work_qualification(
+                and _candidate_set_replays_work_qualification(
+                    provider,
+                    lane,
                     candidate,
                     expected_title,
                     expected_authors,
-                    lane.dispatch_lineage,
-                    lane.transformation_lineage,
                 )
                 and lane.identity
                 == _discovery_lane_identity(
@@ -1740,18 +1737,35 @@ def _isbn_family_claims(
     )
 
 
-def _candidate_replays_work_qualification(
+def _candidate_set_replays_work_qualification(
+    provider: ProviderObservation,
+    lane: ProviderLaneObservation,
     candidate: ProviderCandidate,
     expected_title: str,
     expected_authors: tuple[str, ...],
-    dispatch_lineage: WorkDispatchLineage | None,
-    transformation_lineage: WorkTitleTransformationLineage | None,
 ) -> bool:
-    """Replay the closed WORK candidate test before granting lane authority."""
-    admission = provider_candidate_work_identity_admission(
-        candidate, expected_title, expected_authors, dispatch_lineage
+    """Replay one unambiguous WORK candidate set before granting authority."""
+    candidates_by_identity = {value.identity: value for value in provider.candidates}
+    if any(
+        value.edition_identity not in candidates_by_identity
+        for value in lane.candidates
+    ):
+        return False
+    lane_candidates = tuple(
+        candidates_by_identity[value.edition_identity] for value in lane.candidates
     )
-    return admission.admitted and admission.transformation == transformation_lineage
+    admission = provider_candidate_set_work_identity_admission(
+        lane_candidates,
+        expected_title,
+        expected_authors,
+        lane.dispatch_lineage,
+    )
+    return (
+        admission.admitted
+        and admission.candidates == lane_candidates
+        and candidate in admission.candidates
+        and admission.transformation == lane.transformation_lineage
+    )
 
 
 def _creator_sets_match(
