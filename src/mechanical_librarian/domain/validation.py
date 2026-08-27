@@ -32,6 +32,10 @@ from typing import cast
 
 FieldCheck = Callable[[object], bool]
 
+OWNER_SESSION_LIFETIME_MINIMUM = 300
+OWNER_SESSION_LIFETIME_DEFAULT = 2_592_000
+OWNER_SESSION_LIFETIME_MAXIMUM = 2_592_000
+
 
 def exact_type(expected: type) -> FieldCheck:
     """Accept only the exact type, rejecting every subclass of it."""
@@ -82,6 +86,9 @@ def bounded_integer(minimum: int, maximum: int | None = None) -> FieldCheck:
 
 
 non_negative_integer = bounded_integer(0)
+owner_session_lifetime = bounded_integer(
+    OWNER_SESSION_LIFETIME_MINIMUM, OWNER_SESSION_LIFETIME_MAXIMUM
+)
 
 
 def closed_document(*unconstrained: str, **schema: FieldCheck) -> FieldCheck:

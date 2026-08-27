@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 import threading
 from pathlib import Path
@@ -125,6 +126,7 @@ def test_setup_write_rollback_cannot_discard_a_returned_owner_session(
     sessions = OwnerSessionService(
         repository,
         lambda _password: True,
+        lambda token: hashlib.sha256(token.encode()).hexdigest(),
         lambda: 1_000,
         3_600,
         lambda _length: next(tokens),

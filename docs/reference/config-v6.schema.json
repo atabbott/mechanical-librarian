@@ -568,8 +568,8 @@
           "type": "string"
         },
         "session_lifetime_seconds": {
-          "default": 3600,
-          "maximum": 86400,
+          "default": 2592000,
+          "maximum": 2592000,
           "minimum": 300,
           "title": "Session Lifetime Seconds",
           "type": "integer"

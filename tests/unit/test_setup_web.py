@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 import pytest
 from argon2 import PasswordHasher
@@ -13,7 +13,10 @@ from mechanical_librarian.domain.setup_state import (
     SetupLibraryCandidate,
     SetupStateDocument,
 )
-from mechanical_librarian.interfaces.web.app import owner_password_verifier
+from mechanical_librarian.interfaces.web.app import (
+    owner_password_binding,
+    owner_password_verifier,
+)
 from mechanical_librarian.interfaces.web.setup import create_setup_app
 from mechanical_librarian.interfaces.web.setup_frontend import SETUP_JS
 
@@ -69,6 +72,7 @@ class _State:
             bootstrap_verifier_digest="0" * 64,
         )
         self.promoted = False
+        self.owner_verifier: str | None = None
 
     def claim_owner(
         self,
@@ -81,6 +85,7 @@ class _State:
         expires_at: int,
     ) -> SetupStateDocument:
         assert owner_verifier.startswith("$argon2id$")
+        self.owner_verifier = owner_verifier
         assert expected_revision == self.document.revision
         self.document = SetupStateDocument.model_validate(
             {
@@ -98,6 +103,10 @@ class _State:
 
     def read(self, _bootstrap: str) -> SetupStateDocument:
         return self.document
+
+    def use_owner_verifier(self, consumer: Callable[[str], _T]) -> _T:
+        assert self.owner_verifier is not None
+        return consumer(self.owner_verifier)
 
     def write(
         self,
@@ -147,17 +156,23 @@ class _Connection:
         return self.state.document
 
 
+_T = TypeVar("_T")
+
+
 def _client() -> tuple[TestClient, _State, _Connection]:
     verifier = PasswordHasher().hash("correct horse battery staple")
     session_store = _Sessions()
+    state = _State(session_store)
     sessions = OwnerSessionService(
         session_store,
         owner_password_verifier(verifier),
+        lambda token: state.use_owner_verifier(
+            lambda encoded: owner_password_binding(encoded)[1](token)
+        ),
         lambda: 1_000,
         3,
         lambda _n: "x" * 32,
     )
-    state = _State(session_store)
     connection = _Connection(state)
     journey = SetupJourneyOperation(
         state,
@@ -249,6 +264,8 @@ def test_setup_surface_exposes_only_health_shell_session_and_redacted_state() ->
     assert "HttpOnly" in login.headers["set-cookie"]
     assert "Secure" in login.headers["set-cookie"]
     assert "SameSite=strict" in login.headers["set-cookie"]
+    assert "Path=/" in login.headers["set-cookie"]
+    assert "Max-Age=2592000" in login.headers["set-cookie"]
     state = client.get(
         "/api/setup/state",
         headers={"cookie": _session_cookie(login)},
@@ -363,6 +380,7 @@ def test_unexpected_setup_failure_returns_fixed_secure_response() -> None:
     sessions = OwnerSessionService(
         _Sessions(),
         owner_password_verifier(verifier),
+        owner_password_binding(verifier)[1],
         lambda: 1_000,
         3,
         lambda _n: "x" * 32,
@@ -442,6 +460,9 @@ def test_surviving_session_rotates_csrf_for_mutation_after_restart() -> None:
     first_sessions = OwnerSessionService(
         session_store,
         owner_password_verifier(verifier),
+        lambda token: state.use_owner_verifier(
+            lambda encoded: owner_password_binding(encoded)[1](token)
+        ),
         lambda: 1_000,
         3,
         lambda _n: next(login_tokens),
@@ -462,6 +483,9 @@ def test_surviving_session_rotates_csrf_for_mutation_after_restart() -> None:
     resumed_sessions = OwnerSessionService(
         session_store,
         owner_password_verifier(verifier),
+        lambda token: state.use_owner_verifier(
+            lambda encoded: owner_password_binding(encoded)[1](token)
+        ),
         lambda: 1_000,
         3,
         lambda _n: "r" * 32,

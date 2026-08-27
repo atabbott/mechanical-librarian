@@ -118,7 +118,7 @@ derive hashes, or accept environment overrides.
     "owner_password_hash_file": "/run/secrets/review-owner.argon2",
     "tls_certificate_file": "/run/secrets/review-tls.crt",
     "tls_private_key_file": "/run/secrets/review-tls.key",
-    "session_lifetime_seconds": 3600,
+    "session_lifetime_seconds": 2592000,
     "library_polling_interval_seconds": 900,
     "graceful_shutdown_seconds": 30,
     "diagnostic_timings_enabled": false,
@@ -251,7 +251,9 @@ environment source. The server snapshots and validates one matching TLS
 identity before it opens the
 application database and retains only immutable anonymous snapshot descriptors
 for the server's lifetime. `review-serve` has no plaintext or TLS-disable mode.
-Session lifetime is 300–86,400 seconds. The global
+Session lifetime is 300–2,592,000 seconds (five minutes to 30 days). It defaults
+to 30 days and is a fixed absolute owner-session limit: authenticated activity
+does not extend it. The global
 `library_polling_interval_seconds` is 60–86,400 seconds and controls only when
 configured libraries reconcile; concurrency, provider pacing, and retry bounds
 remain maintainer-owned. Proxy forwarding is disabled unless the

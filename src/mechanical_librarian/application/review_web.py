@@ -165,12 +165,14 @@ class OwnerSessionService:
         self,
         repository: ReviewSessionStore,
         verify_password: Callable[[str], bool],
+        session_digest: Callable[[str], str],
         clock: Callable[[], int],
         lifetime_seconds: int,
         token_factory: Callable[[int], str] = secrets.token_urlsafe,
     ) -> None:
         self._repository = repository
         self._verify_password = verify_password
+        self._session_digest = session_digest
         self._clock = clock
         self._lifetime_seconds = lifetime_seconds
         self._token_factory = token_factory
@@ -203,7 +205,10 @@ class OwnerSessionService:
         expires_at = now + self._lifetime_seconds
         try:
             self._repository.create_review_session(
-                _digest(session_token), _digest(csrf_token), now, expires_at
+                self._session_digest(session_token),
+                _digest(csrf_token),
+                now,
+                expires_at,
             )
         except Exception as error:
             raise ReviewWebError("persistence") from error
@@ -214,7 +219,7 @@ class OwnerSessionService:
             raise ReviewWebError("unauthorized")
         try:
             actor, expected_csrf, _ = self._repository.authenticate_review_session(
-                _digest(session_token), self._clock()
+                self._session_digest(session_token), self._clock()
             )
         except Exception as error:
             # Authentication is fail-closed, so the departure from this class's
@@ -238,7 +243,7 @@ class OwnerSessionService:
             raise ReviewWebError("runtime")
         try:
             outcome = self._repository.rotate_review_session_csrf(
-                _digest(session_token), _digest(csrf_token), self._clock()
+                self._session_digest(session_token), _digest(csrf_token), self._clock()
             )
         except Exception as error:
             raise ReviewWebError("persistence") from error
@@ -253,7 +258,7 @@ class OwnerSessionService:
             raise ReviewWebError("csrf")
         try:
             outcome = self._repository.revoke_review_session(
-                _digest(session_token), _digest(csrf_token), self._clock()
+                self._session_digest(session_token), _digest(csrf_token), self._clock()
             )
         except Exception as error:
             raise ReviewWebError("persistence") from error

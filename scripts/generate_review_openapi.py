@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import tempfile
@@ -44,6 +45,7 @@ def generate() -> str:
             library_store=repository,
             policy_store=repository,
             verify_password=lambda _: False,
+            session_digest=lambda token: hashlib.sha256(token.encode()).hexdigest(),
             clock=lambda: 0,
             session_lifetime_seconds=configuration.session_lifetime_seconds,
             graceful_shutdown_seconds=configuration.graceful_shutdown_seconds,

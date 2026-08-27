@@ -98,8 +98,8 @@ def test_installed_qualification_composes_application_before_fastapi() -> None:
 
     with (
         patch(
-            "scripts.qualify_audiobookshelf_field_effect.load_owner_password_verifier",
-            return_value=lambda _: False,
+            "scripts.qualify_audiobookshelf_field_effect.load_owner_password_binding",
+            return_value=(lambda _: False, lambda _: "d" * 64),
         ),
         patch(
             "scripts.qualify_audiobookshelf_field_effect.compose_review_application",
@@ -128,6 +128,8 @@ def test_installed_qualification_composes_application_before_fastapi() -> None:
         )
 
     assert result is client
+    assert compose.call_args.kwargs["verify_password"] is not None
+    assert compose.call_args.kwargs["session_digest"]("token") == "d" * 64
     compose.assert_called_once()
     assert compose.call_args.kwargs["cover_considerations"] is cover_considerations
     compose_covers.assert_called_once_with(

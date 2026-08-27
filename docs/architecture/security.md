@@ -250,11 +250,17 @@ The #447 review server adds one private owner-facing HTTP entry point and no
 target-service client. An unauthenticated network client can reach only bounded
 liveness, the login form/assets, and the fixed login failure envelope. Review
 case, evidence, current-case history, and OpenAPI data require an unexpired
-opaque session. The password is verified against one owner-only regular
-no-follow Argon2id hash file; the database stores only SHA-256 digests of fresh
-high-entropy session and CSRF tokens. Expired session rows are removed during
-login, logout records revocation, and failed logins use a durable five-attempt
+opaque session. Its fixed absolute lifetime is configured from five minutes to
+30 days and defaults to 30 days; activity never extends it. The password is
+verified against one owner-only regular no-follow Argon2id hash file; the
+database stores only a domain-separated HMAC-SHA-256 session lookup keyed by
+that exact encoded verifier and SHA-256 CSRF digests. Replacing the verifier
+therefore rejects earlier sessions before authorization. Expired session rows
+are removed during login, logout records revocation, and failed logins use a durable five-attempt
 per five-minute global throttle without retaining client addresses.
+Pre-0.18 sessions used an unbound digest, so upgrading to 0.18.0 rejects them
+once. This deliberate sign-in boundary avoids a legacy lookup fallback that
+could preserve authority after a verifier replacement.
 
 ADR-0058's empty-volume setup state adds no unauthenticated settings mutation.
 The first visitor may fetch only a bounded synchronizer nonce. Creating the
@@ -362,7 +368,9 @@ headers as required. Runtime failures retain separate, value-free meanings:
 invalid or expired sessions are unauthorized, CSRF mismatches are forbidden,
 absent case identifiers are not found, and repository outages are unavailable.
 Logout deletes the cookie only after durable revocation succeeds, so an outage
-cannot be presented as a completed logout.
+cannot be presented as a completed logout. Creation and deletion retain the
+same Path, HttpOnly, SameSite=Strict, and canonical-origin Secure attributes;
+the cookie carries only its opaque bearer token.
 
 The #448 library and attention responses join only exact-current report and
 case pointers. Pages contain at most 50 rows, cursors are bound to their lens

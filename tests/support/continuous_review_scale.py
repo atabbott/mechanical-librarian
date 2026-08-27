@@ -88,7 +88,7 @@ from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 from mechanical_librarian.interfaces.web import (
     create_review_app,
-    load_owner_password_verifier,
+    load_owner_password_binding,
 )
 from tests.support.ports import ReservedPort
 from tests.support.tls import synthetic_tls_identity
@@ -647,6 +647,7 @@ def _start_deterministic_installed_server(
         activity_projection = compose_field_effect_activity_projection(
             configuration, activity_repository, recovery
         )
+        owner_binding = load_owner_password_binding(owner_hash)
         application = compose_review_application(
             state_owner=web_state_owner,
             session_store=web_state_owner,
@@ -654,7 +655,8 @@ def _start_deterministic_installed_server(
             decision_store=web_state_owner,
             library_store=web_state_owner,
             policy_store=web_state_owner,
-            verify_password=load_owner_password_verifier(owner_hash),
+            verify_password=owner_binding[0],
+            session_digest=owner_binding[1],
             clock=lambda: int(time.time()),
             session_lifetime_seconds=review.session_lifetime_seconds,
             graceful_shutdown_seconds=review.graceful_shutdown_seconds,

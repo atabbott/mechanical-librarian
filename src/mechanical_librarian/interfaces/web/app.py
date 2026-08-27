@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 import re
 import stat
@@ -72,6 +74,7 @@ from mechanical_librarian.interfaces.web.react_assets import (
 
 _CASE_ID = re.compile(r"^review_case_[0-9a-f]{64}$")
 _COOKIE_NAME = "ml_session"
+_ShellResponse: TypeAlias = HTMLResponse | RedirectResponse
 
 # The rule these seven were chosen by:
 #
@@ -2857,8 +2860,13 @@ def _register_html_routes(
 ) -> None:
     sessions = application
 
-    def shell_response(ml_session: str | None) -> HTMLResponse:
-        _require_session(sessions, ml_session)
+    def shell_response(ml_session: str | None) -> _ShellResponse:
+        try:
+            _require_session(sessions, ml_session)
+        except HTTPException as error:
+            if error.status_code == 401:
+                return RedirectResponse(url="/login", status_code=303)
+            raise
         assert ml_session is not None
         bundle = asset_loader.load()
         if isinstance(bundle, ReactAssetRecovery):
@@ -2876,37 +2884,37 @@ def _register_html_routes(
     def review_page(
         review_case_id: str,
         ml_session: str | None = Cookie(default=None),
-    ) -> HTMLResponse:
+    ) -> Response:
         return shell_response(ml_session)
 
     @app.get("/library", include_in_schema=False)
     def library_page(
         ml_session: str | None = Cookie(default=None),
-    ) -> HTMLResponse:
+    ) -> Response:
         return shell_response(ml_session)
 
     @app.get("/attention", include_in_schema=False)
     def attention_page(
         ml_session: str | None = Cookie(default=None),
-    ) -> HTMLResponse:
+    ) -> Response:
         return shell_response(ml_session)
 
     @app.get("/settings", include_in_schema=False)
     def settings_page(
         ml_session: str | None = Cookie(default=None),
-    ) -> HTMLResponse:
+    ) -> Response:
         return shell_response(ml_session)
 
     @app.get("/policy", include_in_schema=False)
     def policy_page(
         ml_session: str | None = Cookie(default=None),
-    ) -> HTMLResponse:
+    ) -> Response:
         return shell_response(ml_session)
 
     @app.get("/activity", include_in_schema=False)
     def activity_page(
         ml_session: str | None = Cookie(default=None),
-    ) -> HTMLResponse:
+    ) -> Response:
         return shell_response(ml_session)
 
     @app.get("/assets/review-app/{asset_path:path}", include_in_schema=False)
@@ -2938,7 +2946,9 @@ def _react_asset_recovery_response() -> HTMLResponse:
     )
 
 
-def load_owner_password_verifier(path: Path) -> Callable[[str], bool]:
+def load_owner_password_binding(
+    path: Path,
+) -> tuple[Callable[[str], bool], Callable[[str], str]]:
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     if not getattr(os, "O_NOFOLLOW", 0):
         raise ReviewWebError("password_hash")
@@ -2957,10 +2967,20 @@ def load_owner_password_verifier(path: Path) -> Callable[[str], bool]:
     except (UnicodeError, ValueError, InvalidHashError) as error:
         raise ReviewWebError("password_hash") from error
 
-    return owner_password_verifier(encoded)
+    return owner_password_binding(encoded)
+
+
+def load_owner_password_verifier(path: Path) -> Callable[[str], bool]:
+    return load_owner_password_binding(path)[0]
 
 
 def owner_password_verifier(encoded: str) -> Callable[[str], bool]:
+    return owner_password_binding(encoded)[0]
+
+
+def owner_password_binding(
+    encoded: str,
+) -> tuple[Callable[[str], bool], Callable[[str], str]]:
     try:
         if not encoded.startswith("$argon2id$") or PasswordHasher().check_needs_rehash(
             encoded
@@ -2975,7 +2995,14 @@ def owner_password_verifier(encoded: str) -> Callable[[str], bool]:
         except (VerificationError, InvalidHashError):
             return False
 
-    return verify
+    def session_digest(token: str) -> str:
+        return hmac.new(
+            encoded.encode("utf-8"),
+            b"mechanical-librarian.owner-session.v1\0" + token.encode("ascii"),
+            hashlib.sha256,
+        ).hexdigest()
+
+    return verify, session_digest
 
 
 def _request_matches_origin(

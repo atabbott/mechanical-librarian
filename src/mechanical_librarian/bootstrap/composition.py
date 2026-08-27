@@ -233,6 +233,7 @@ from mechanical_librarian.domain.setup_state import (
     SetupLibraryCandidate,
     SetupStateDocument,
 )
+from mechanical_librarian.domain.validation import OWNER_SESSION_LIFETIME_DEFAULT
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 from mechanical_librarian.infrastructure.first_boot import FirstBootMode
 from mechanical_librarian.infrastructure.local_media import (
@@ -266,7 +267,8 @@ from mechanical_librarian.infrastructure.settings_authority import (
 )
 from mechanical_librarian.interfaces.web import (
     create_review_app,
-    load_owner_password_verifier,
+    load_owner_password_binding,
+    owner_password_binding,
     owner_password_verifier,
 )
 from mechanical_librarian.interfaces.web.runtime_dispatch import (
@@ -2364,6 +2366,7 @@ def compose_store_runtime_generation(
             )
         )
         try:
+            owner_binding = owner_password_binding(encoded_verifier)
             review_application = compose_review_application(
                 state_owner=repository,
                 session_store=repository,
@@ -2371,7 +2374,8 @@ def compose_store_runtime_generation(
                 decision_store=repository,
                 library_store=repository,
                 policy_store=repository,
-                verify_password=owner_password_verifier(encoded_verifier),
+                verify_password=owner_binding[0],
+                session_digest=owner_binding[1],
                 clock=lambda: int(time.time()),
                 session_lifetime_seconds=review.session_lifetime_seconds,
                 graceful_shutdown_seconds=review.graceful_shutdown_seconds,
@@ -2443,11 +2447,20 @@ def _compose_setup_runtime_generation(
             ),
         )
 
+    def established_owner_session_digest(token: str) -> str:
+        return cast(
+            "str",
+            state.use_owner_verifier(
+                lambda encoded: owner_password_binding(encoded)[1](token)
+            ),
+        )
+
     sessions = OwnerSessionService(
         repository,
         verify_established_owner,
+        established_owner_session_digest,
         lambda: int(time.time()),
-        3600,
+        OWNER_SESSION_LIFETIME_DEFAULT,
     )
     setup_probe = AudiobookshelfSetupProbe(
         lambda endpoint, key: target_client_token(endpoint, key, 30)
@@ -2659,7 +2672,7 @@ def run_review_server(
             settings = OwnerSettingsOperations(
                 FileOwnerSettingsRepository(projection.document, projection.secrets)
             )
-            verify_password = load_owner_password_verifier(
+            password_binding = load_owner_password_binding(
                 Path(review.owner_password_hash_file)
             )
             assert configuration is not None and review is not None
@@ -2761,7 +2774,8 @@ def run_review_server(
                     decision_store=repository,
                     library_store=repository,
                     policy_store=repository,
-                    verify_password=verify_password,
+                    verify_password=password_binding[0],
+                    session_digest=password_binding[1],
                     clock=lambda: int(time.time()),
                     session_lifetime_seconds=review.session_lifetime_seconds,
                     graceful_shutdown_seconds=review.graceful_shutdown_seconds,
@@ -2925,6 +2939,7 @@ def run_cover_review(
             library_store=repository,
             policy_store=repository,
             verify_password=lambda _: False,
+            session_digest=lambda _: "",
             clock=lambda: int(time.time()),
             session_lifetime_seconds=1,
             graceful_shutdown_seconds=1,

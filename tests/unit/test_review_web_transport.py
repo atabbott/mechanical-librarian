@@ -5,6 +5,7 @@ served composition.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -61,6 +62,7 @@ from mechanical_librarian.domain.proposal_set import (
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_OPTION_DISPOSITIONS,
 )
+from mechanical_librarian.interfaces.web.app import owner_password_binding
 from tests.support.review_web_doubles import (
     FakeReviewRepository,
     ReviewWebContext,
@@ -787,6 +789,39 @@ def test_login_case_evidence_history_and_logout_round_trip(
     assert denied.status_code == 401
 
 
+def test_session_cookie_lifetime_and_logout_deletion_attributes_match(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    login = web.client.post(
+        "/api/v1/session/login", headers=web.origin, json={"password": "correct horse"}
+    )
+    assert login.status_code == 200
+    created = login.headers["set-cookie"]
+    assert "Max-Age=600" in created
+    assert "Path=/" in created
+    assert "HttpOnly" in created
+    assert "SameSite=strict" in created
+    assert "Secure" in created
+    session = web.client.cookies.get("ml_session")
+    assert session is not None
+    logout = web.client.post(
+        "/api/v1/session/logout",
+        headers={
+            **web.origin,
+            "X-CSRF-Token": login.json()["csrf_token"],
+            "x-ml-build-identity": TEST_REACT_BUILD_IDENTITY,
+        },
+    )
+    assert logout.status_code == 204
+    assert session not in web.repository.sessions
+    deleted = logout.headers["set-cookie"]
+    assert "Max-Age=0" in deleted
+    assert "Path=/" in deleted
+    assert "HttpOnly" in deleted
+    assert "SameSite=strict" in deleted
+    assert "Secure" in deleted
+
+
 def test_case_detail_orders_selectable_contexts_before_preservation_contexts(
     web: ReviewWebContext[FakeReviewRepository],
 ) -> None:
@@ -1155,6 +1190,19 @@ def test_authenticated_page_preserves_expired_rotation_as_unauthorized(
         assert denied.json()["error"]["code"] == "unauthorized", path
 
 
+def test_expired_session_redirects_html_shell_while_api_remains_json(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    web.login()
+    web.now += 601
+    shell = web.client.get("/library", follow_redirects=False)
+    assert shell.status_code == 303
+    assert shell.headers["location"] == "/login"
+    api = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}")
+    assert api.status_code == 401
+    assert api.json()["error"]["code"] == "unauthorized"
+
+
 def test_malformed_case_decision_body_is_bounded_before_validation(
     web: ReviewWebContext[FakeReviewRepository],
 ) -> None:
@@ -1282,6 +1330,7 @@ def _session_service(repository, token: str, requested: list[int]):
     return OwnerSessionService(
         repository,
         lambda _password: True,
+        lambda token: hashlib.sha256(token.encode()).hexdigest(),
         lambda: 1_000,
         600,
         token_factory=token_factory,
@@ -1316,6 +1365,40 @@ def test_login_pins_the_token_and_password_bounds_it_declares(
                 _FailingSessionStore(failing_begin=failing_begin), "a" * 32, []
             ).login("correct horse")
         assert "persistence" == unavailable.value.code
+
+
+def test_verifier_bound_session_digest_invalidates_replaced_owner_verifier(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    old_verifier = PasswordHasher().hash("correct horse")
+    old_verify, old_digest = owner_password_binding(old_verifier)
+    tokens = iter(("s" * 32, "c" * 32))
+    old_sessions = OwnerSessionService(
+        web.repository,
+        old_verify,
+        old_digest,
+        lambda: 1_000,
+        600,
+        lambda _length: next(tokens),
+    )
+    issued = old_sessions.login("correct horse")
+    assert old_sessions.authenticate(issued.session_token) == "owner"
+
+    new_verifier = PasswordHasher().hash("correct horse")
+    new_verify, new_digest = owner_password_binding(new_verifier)
+    replaced_sessions = OwnerSessionService(
+        web.repository,
+        new_verify,
+        new_digest,
+        lambda: 1_000,
+        600,
+        lambda _length: "n" * 32,
+    )
+    with pytest.raises(ReviewWebError, match="unauthorized"):
+        replaced_sessions.authenticate(issued.session_token)
+    assert replaced_sessions.login("correct horse").session_token == "n" * 32
+    assert issued.session_token not in web.repository.sessions
+    assert old_verifier not in repr(web.repository.sessions)
 
 
 def test_openapi_is_deterministic_and_secret_free(

@@ -25,7 +25,7 @@ from mechanical_librarian.application.review_application import (
 from mechanical_librarian.application.review_pipeline import ReviewPreparationSupervisor
 from mechanical_librarian.interfaces.web import (
     create_review_app,
-    load_owner_password_verifier,
+    load_owner_password_binding,
 )
 from mechanical_librarian.interfaces.web.react_assets import (
     ReactAsset,
@@ -106,6 +106,9 @@ def create_transport_test_app(
     acknowledge_first_boot: Callable[[], None] | None = None,
 ):
     """Wire synthetic store capabilities before creating the HTTP adapter."""
+    password_binding = load_owner_password_binding(
+        Path(configuration.owner_password_hash_file)
+    )
     application = compose_review_application(
         state_owner=repository,
         session_store=repository,
@@ -113,9 +116,8 @@ def create_transport_test_app(
         decision_store=repository,
         library_store=repository,
         policy_store=repository,
-        verify_password=load_owner_password_verifier(
-            Path(configuration.owner_password_hash_file)
-        ),
+        verify_password=password_binding[0],
+        session_digest=password_binding[1],
         clock=clock,
         session_lifetime_seconds=configuration.session_lifetime_seconds,
         graceful_shutdown_seconds=configuration.graceful_shutdown_seconds,
