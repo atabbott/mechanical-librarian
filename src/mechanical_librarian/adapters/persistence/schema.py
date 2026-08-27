@@ -326,18 +326,6 @@ _REVIEW_WORK_LINEAGE_HISTORY_INDEX_SQL = (
     "CREATE INDEX review_preparation_work_lineage_history "
     "ON review_preparation_work(connection_name,library_name,item_id,updated_at DESC,work_id DESC)"
 )
-_REVIEW_SESSIONS_SQL = (
-    "CREATE TABLE review_sessions ("
-    "session_digest TEXT PRIMARY KEY NOT NULL CHECK(length(session_digest)=64 AND session_digest NOT GLOB '*[^0-9a-f]*'), "
-    "csrf_digest TEXT NOT NULL CHECK(length(csrf_digest)=64 AND csrf_digest NOT GLOB '*[^0-9a-f]*'), "
-    "actor TEXT NOT NULL CHECK(actor='owner'), created_at INTEGER NOT NULL CHECK(created_at>=0), "
-    "expires_at INTEGER NOT NULL CHECK(expires_at>created_at), revoked_at INTEGER CHECK(revoked_at IS NULL OR revoked_at>=created_at))"
-)
-_REVIEW_LOGIN_FAILURES_SQL = (
-    "CREATE TABLE review_login_failures ("
-    "failure_id TEXT PRIMARY KEY NOT NULL CHECK(length(failure_id)=64 AND failure_id NOT GLOB '*[^0-9a-f]*'), "
-    "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0))"
-)
 _HUMAN_DECISIONS_SQL = (
     "CREATE TABLE human_decisions ("
     "ordinal INTEGER PRIMARY KEY NOT NULL, "
@@ -654,8 +642,6 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_REVIEW_WORK_DUE_PROMOTION_INDEX_SQL)
     connection.execute(_REVIEW_WORK_RECENT_CLAIM_INDEX_SQL)
     connection.execute(_REVIEW_WORK_LINEAGE_HISTORY_INDEX_SQL)
-    connection.execute(_REVIEW_SESSIONS_SQL)
-    connection.execute(_REVIEW_LOGIN_FAILURES_SQL)
     connection.execute(_HUMAN_DECISIONS_SQL)
     connection.execute(_HUMAN_DECISION_EVENTS_SQL)
     connection.execute(_COVER_CONSIDERATIONS_SQL)
@@ -818,8 +804,6 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
                 "review_preparation_work_lineage_history",
                 _REVIEW_WORK_LINEAGE_HISTORY_INDEX_SQL,
             ),
-            ("index", "sqlite_autoindex_review_login_failures_1", None),
-            ("index", "sqlite_autoindex_review_sessions_1", None),
             ("index", "sqlite_autoindex_shadow_decision_outcomes_1", None),
             (
                 "index",
@@ -883,8 +867,6 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
             ("table", "review_preparation_scans", _REVIEW_SCANS_SQL),
             ("table", "review_preparation_absences", _REVIEW_ABSENCES_SQL),
             ("table", "review_preparation_work", _REVIEW_WORK_SQL),
-            ("table", "review_login_failures", _REVIEW_LOGIN_FAILURES_SQL),
-            ("table", "review_sessions", _REVIEW_SESSIONS_SQL),
             ("table", "shadow_decision_outcomes", _SHADOW_DECISION_OUTCOMES_SQL),
             (
                 "table",

@@ -29,8 +29,12 @@ remembered browser session is still a bearer credential, so do not use it on an
 untrusted endpoint or transport.
 The 0.18.0 upgrade signs out existing owners once because remembered sessions
 are now bound to the exact owner verifier. Sign in again after upgrading;
-otherwise-valid sessions created on 0.18.0 continue across exact-current
-application and repository restarts until logout or absolute expiry.
+otherwise-valid sessions continue across exact-current application and
+repository restarts until logout or absolute expiry. The #912 session
+decoupling likewise signs existing owners out once: sessions now persist in
+the dedicated `/data/private/review-sessions.sqlite` database (ADR-0059), so
+owner sign-in never waits on a running library scan, and the sessions
+recorded inside an older application database are discarded by its adoption.
 
 The container declares its own health. `HEALTHCHECK` runs the installed
 `mechanical-librarian-container-health` and the Compose `healthcheck` block runs

@@ -28,8 +28,6 @@ from mechanical_librarian.domain.setup_state import SetupStateDocument, SetupSta
 from mechanical_librarian.domain.validation import credential
 
 _T = TypeVar("_T")
-_MAX_SETUP_SESSIONS = 100
-_MAX_SETUP_LOGIN_FAILURES = 5
 _UNCLAIMED_VERIFIER_DIGEST = "0" * 64
 _SETUP_ROW_TABLES = frozenset(
     {
@@ -40,9 +38,7 @@ _SETUP_ROW_TABLES = frozenset(
         "field_effect_control",
         "owner_setting_secrets",
         "owner_settings",
-        "review_login_failures",
         "review_preparation_control",
-        "review_sessions",
     }
 )
 
@@ -114,8 +110,6 @@ class SetupStateStore(ConnectionScoped):
                 for table in (
                     "owner_settings",
                     "owner_setting_secrets",
-                    "review_sessions",
-                    "review_login_failures",
                 )
             )
         except sqlite3.Error:
@@ -240,21 +234,17 @@ class SetupStateStore(ConnectionScoped):
         *,
         expected_revision: int,
         owner_verifier: str,
-        session_digest: str,
-        csrf_digest: str,
-        created_at: int,
-        expires_at: int,
     ) -> SetupStateDocument:
-        """Atomically establish the first owner and their ordinary session."""
+        """Atomically establish the first owner's claim and verifier.
+
+        The first session is not part of this transaction: #912 moved session
+        state to its own database, so the claim endpoint issues it through the
+        ordinary login path after this commit. If that later step fails, the
+        claim stands and resubmitting the same form reaches the
+        already-claimed login branch.
+        """
         _verifier_digest(owner_verifier)
-        if (
-            type(expected_revision) is not int
-            or type(created_at) is not int
-            or type(expires_at) is not int
-            or expires_at <= created_at
-            or _DIGEST.fullmatch(session_digest) is None
-            or _DIGEST.fullmatch(csrf_digest) is None
-        ):
+        if type(expected_revision) is not int:
             raise SetupStateError("setup state is unavailable")
         transaction = self._transaction("claim_setup_owner")
         try:
@@ -292,12 +282,6 @@ class SetupStateStore(ConnectionScoped):
                 "VALUES('owner.password.verifier',?)",
                 (owner_verifier,),
             )
-            self._connection.execute(
-                "INSERT INTO review_sessions(session_digest,csrf_digest,actor,created_at,expires_at) "
-                "VALUES(?,?,'owner',?,?)",
-                (session_digest, csrf_digest, created_at, expires_at),
-            )
-            self._connection.execute("DELETE FROM review_login_failures")
             transaction.commit()
             return claimed
         except SetupStateError:
@@ -510,24 +494,6 @@ class SetupStateStore(ConnectionScoped):
             "circuit_open_until,updated_at FROM review_preparation_control"
         ).fetchall() != [_SETUP_REVIEW_CONTROL_ROW]:
             return False
-        if "review_sessions" in tables:
-            session_count = self._connection.execute(
-                "SELECT count(*) FROM review_sessions"
-            ).fetchone()
-            if (
-                session_count is None
-                or not 0 <= session_count[0] <= _MAX_SETUP_SESSIONS
-            ):
-                return False
-        if "review_login_failures" in tables:
-            failure_count = self._connection.execute(
-                "SELECT count(*) FROM review_login_failures"
-            ).fetchone()
-            if (
-                failure_count is None
-                or not 0 <= failure_count[0] <= _MAX_SETUP_LOGIN_FAILURES
-            ):
-                return False
         return True
 
 

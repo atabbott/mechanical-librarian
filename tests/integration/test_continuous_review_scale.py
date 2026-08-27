@@ -313,10 +313,13 @@ def test_installed_preparation_closes_browser_observer_before_server() -> None:
     run._recovery = type(
         "Recovery", (), {"close": lambda _: events.append("recovery")}
     )()
+    run._session_store = type(
+        "Sessions", (), {"close": lambda _: events.append("sessions")}
+    )()
 
     run.close()
 
-    assert events == ["observer", "join:30", "recovery"]
+    assert events == ["observer", "join:30", "recovery", "sessions"]
     assert run._fixture_case_release.is_set()
 
 

@@ -29,6 +29,8 @@ from mechanical_librarian.adapters.persistence.schema import (
     _REVIEW_WORK_AGED_CLAIM_INDEX_SQL,
 )
 from mechanical_librarian.adapters.persistence.schema_adoption import (
+    _PRE_DECOUPLING_REVIEW_LOGIN_FAILURES_SQL,
+    _PRE_DECOUPLING_REVIEW_SESSIONS_SQL,
     _PRE_HANDOVER_REVIEW_CONTROL_SQL,
     _application_table_digest,
     adopt_schema,
@@ -38,6 +40,7 @@ from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.application.schema_adoption import (
     OWNER_SETTINGS_V1,
     REVIEW_OWNER_DECISION_ACTIONS_V1,
+    REVIEW_SESSION_DECOUPLING_V1,
     SchemaAdoptionRecoveryRequired,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision, decision_actions
@@ -61,7 +64,14 @@ def _drop_field_facts_projection(connection: sqlite3.Connection) -> None:
     connection.execute("DROP TABLE review_case_field_facts")
 
 
+def _restore_predecessor_session_tables(connection: sqlite3.Connection) -> None:
+    """Every adoption predecessor predates #912 and carries the session tables."""
+    connection.execute(_PRE_DECOUPLING_REVIEW_SESSIONS_SQL)
+    connection.execute(_PRE_DECOUPLING_REVIEW_LOGIN_FAILURES_SQL)
+
+
 def _freeze_review_field_facts_predecessor(connection: sqlite3.Connection) -> None:
+    _restore_predecessor_session_tables(connection)
     connection.execute("DROP TABLE owner_setting_secrets")
     connection.execute("DROP TABLE owner_settings")
     connection.execute("DROP TRIGGER review_cases_project_field_facts")
@@ -109,6 +119,7 @@ def _owner_settings_predecessor(root: Path) -> Path:
     repository = open_repository(database)
     repository.close()
     connection = sqlite3.connect(database)
+    _restore_predecessor_session_tables(connection)
     connection.execute("DROP TABLE owner_setting_secrets")
     connection.execute("DROP TABLE owner_settings")
     connection.commit()
@@ -123,6 +134,7 @@ def _pre_handover_owner_settings_predecessor(root: Path) -> Path:
     repository = open_repository(database)
     repository.close()
     connection = sqlite3.connect(database)
+    _restore_predecessor_session_tables(connection)
     connection.execute(
         "ALTER TABLE review_preparation_control RENAME TO current_review_preparation_control"
     )
@@ -382,6 +394,75 @@ def test_owner_settings_adopts_pre_handover_control_with_upgrade_proof(
     finally:
         connection.close()
     assert backup.is_file()
+
+
+def _session_decoupling_predecessor(root: Path) -> Path:
+    """The exact pre-#912 schema: the previous target with live session rows."""
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    root.chmod(0o700)
+    database = root / "application.sqlite3"
+    repository = open_repository(database)
+    repository.close()
+    connection = sqlite3.connect(database)
+    _restore_predecessor_session_tables(connection)
+    connection.execute(
+        "INSERT INTO review_sessions(session_digest,csrf_digest,actor,"
+        "created_at,expires_at) VALUES(?,?,'owner',1,3601)",
+        ("a" * 64, "b" * 64),
+    )
+    connection.execute(
+        "INSERT INTO review_login_failures(failure_id,occurred_at) VALUES(?,1)",
+        ("c" * 64,),
+    )
+    connection.commit()
+    connection.close()
+    return database
+
+
+def test_session_decoupling_adopts_the_previous_target_and_discards_only_sessions(
+    tmp_path: Path,
+) -> None:
+    database = _session_decoupling_predecessor(tmp_path)
+    backup = tmp_path / "application.before-session-decoupling.sqlite3"
+    before = _table_digest(database)
+
+    with pytest.raises(MetadataReportError):
+        open_repository(database, create=False)
+    assert {"plan": REVIEW_SESSION_DECOUPLING_V1, "status": "adopted"} == adopt_schema(
+        database, backup, REVIEW_SESSION_DECOUPLING_V1
+    )
+    assert before == _table_digest(database)
+    assert backup.is_file()
+    connection = sqlite3.connect(database)
+    try:
+        assert connection.execute(
+            "SELECT count(*) FROM sqlite_master "
+            "WHERE name IN ('review_sessions','review_login_failures')"
+        ).fetchone() == (0,)
+    finally:
+        connection.close()
+    repository = open_repository(database, create=False)
+    repository.close()
+    assert {
+        "plan": REVIEW_SESSION_DECOUPLING_V1,
+        "status": "already-current",
+    } == adopt_schema(
+        database,
+        tmp_path / "application.second-backup.sqlite3",
+        REVIEW_SESSION_DECOUPLING_V1,
+    )
+
+
+def test_session_decoupling_refuses_the_older_predecessors(tmp_path: Path) -> None:
+    legacy = _predecessor(tmp_path / "legacy")
+    legacy_before = legacy.read_bytes()
+    with pytest.raises(MetadataReportError, match="incompatible"):
+        adopt_schema(
+            legacy,
+            (tmp_path / "legacy") / "backup.sqlite3",
+            REVIEW_SESSION_DECOUPLING_V1,
+        )
+    assert legacy.read_bytes() == legacy_before
 
 
 def test_owner_settings_adoption_refuses_wrong_predecessor_and_tampering(

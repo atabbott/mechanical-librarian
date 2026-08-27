@@ -46,6 +46,26 @@ def test_only_exact_bootstrap_bound_database_can_resume_setup(tmp_path: Path) ->
     assert _select(tmp_path, resume=True) is FirstBootMode.RESUME_SETUP
 
 
+def test_private_session_store_does_not_block_setup_resume(tmp_path: Path) -> None:
+    """Setup's first sign-in creates the session database inside private/ (#912)."""
+    (tmp_path / "application.sqlite3").touch()
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    (private / "review-sessions.sqlite").touch()
+    assert _select(tmp_path, resume=True) is FirstBootMode.RESUME_SETUP
+
+
+def test_other_private_runtime_state_still_fails_closed(tmp_path: Path) -> None:
+    """Only the session database is a setup-time private artifact."""
+    (tmp_path / "application.sqlite3").touch()
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    (private / "review-sessions.sqlite").touch()
+    (private / "provider-recovery.sqlite").touch()
+    with pytest.raises(FirstBootError):
+        _select(tmp_path, resume=True)
+
+
 @pytest.mark.parametrize(
     "names", (("orphan",), ("application.sqlite3", "artifacts"), ("catalogue.sqlite3",))
 )

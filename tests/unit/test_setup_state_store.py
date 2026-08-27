@@ -11,6 +11,9 @@ from mechanical_librarian.adapters.persistence.metadata_reports import open_repo
 from mechanical_librarian.adapters.persistence.owner_settings import (
     _validate_owner_settings_content,
 )
+from mechanical_librarian.adapters.persistence.review_sessions import (
+    SQLiteReviewSessionRepository,
+)
 from mechanical_librarian.adapters.persistence.schema import _create_schema
 from mechanical_librarian.adapters.persistence.setup_state import SetupStateStore
 from mechanical_librarian.application.review_web import OwnerSessionService
@@ -29,15 +32,6 @@ def _store() -> tuple[sqlite3.Connection, SetupStateStore]:
     )
     connection.execute(
         "CREATE TABLE owner_setting_secrets (field_id TEXT PRIMARY KEY,value TEXT)"
-    )
-    connection.execute(
-        "CREATE TABLE review_sessions ("
-        "session_digest TEXT PRIMARY KEY,csrf_digest TEXT,actor TEXT,"
-        "created_at INTEGER,expires_at INTEGER)"
-    )
-    connection.execute(
-        "CREATE TABLE review_login_failures ("
-        "failure_id TEXT PRIMARY KEY,occurred_at INTEGER)"
     )
     return connection, SetupStateStore(connection)
 
@@ -58,10 +52,6 @@ def _claimed(store: SetupStateStore, state: SetupStateDocument) -> SetupStateDoc
     return store.claim_owner(
         expected_revision=state.revision,
         owner_verifier=_OWNER,
-        session_digest="d" * 64,
-        csrf_digest="e" * 64,
-        created_at=1,
-        expires_at=3_601,
     )
 
 
@@ -122,9 +112,12 @@ def test_setup_write_rollback_cannot_discard_a_returned_owner_session(
         "CREATE TRIGGER fail_setup_write BEFORE UPDATE ON owner_settings "
         "BEGIN SELECT fail_setup_write(); END"
     )
+    session_store = SQLiteReviewSessionRepository.open(
+        tmp_path / "review-sessions.sqlite"
+    )
     tokens = iter(("s" * 32, "c" * 32))
     sessions = OwnerSessionService(
-        repository,
+        session_store,
         lambda _password: True,
         lambda token: hashlib.sha256(token.encode()).hexdigest(),
         lambda: 1_000,
@@ -140,10 +133,6 @@ def test_setup_write_rollback_cannot_discard_a_returned_owner_session(
             state.claim_owner(
                 expected_revision=document.revision,
                 owner_verifier=_OWNER,
-                session_digest="d" * 64,
-                csrf_digest="e" * 64,
-                created_at=1,
-                expires_at=3_601,
             )
         except Exception as error:
             write_failure.append(error)
@@ -155,20 +144,24 @@ def test_setup_write_rollback_cannot_discard_a_returned_owner_session(
     signer = threading.Thread(target=login)
     writer.start()
     assert entered.wait(5)
+    # The session store is a separate database (#912): the login completes
+    # while the setup claim transaction is still open, instead of queueing
+    # behind it on a shared connection.
     signer.start()
-    signer.join(0.1)
-    assert signer.is_alive()
-    assert not login_tokens
+    signer.join(5)
+    assert not signer.is_alive()
+    assert len(login_tokens) == 1
     release.set()
     writer.join(5)
-    signer.join(5)
 
     try:
         assert len(write_failure) == 1
         assert isinstance(write_failure[0], SetupStateError)
-        assert len(login_tokens) == 1
+        # The claim's rollback ran on the application database only; the
+        # returned session is untouched.
         assert sessions.authenticate("s" * 32, "c" * 32) == "owner"
     finally:
+        session_store.close()
         repository.close()
 
 
@@ -397,22 +390,6 @@ def test_resume_rejects_invalid_secret_value_and_runtime_rows() -> None:
         store.read(_BOOTSTRAP)
 
 
-def test_resume_allows_setup_session_and_throttle_rows() -> None:
-    connection, store = _real_store()
-    state = _connected(store)
-    connection.execute(
-        "INSERT INTO review_sessions(session_digest,csrf_digest,actor,created_at,"
-        "expires_at) VALUES(?,?,'owner',1,3601)",
-        ("a" * 64, "b" * 64),
-    )
-    connection.execute(
-        "INSERT INTO review_login_failures(failure_id,occurred_at) VALUES(?,1)",
-        ("c" * 64,),
-    )
-
-    assert store.read(_BOOTSTRAP) == state
-
-
 def test_resume_rejects_a_second_valid_seeded_policy_draft() -> None:
     connection, store = _real_store()
     _connected(store)
@@ -433,18 +410,6 @@ def test_resume_rejects_changed_seeded_singleton_value() -> None:
     connection, store = _real_store()
     _connected(store)
     connection.execute("UPDATE review_preparation_control SET paused=1")
-
-    with pytest.raises(SetupStateError):
-        store.read(_BOOTSTRAP)
-
-
-def test_resume_rejects_more_than_the_setup_login_throttle_bound() -> None:
-    connection, store = _real_store()
-    _connected(store)
-    connection.executemany(
-        "INSERT INTO review_login_failures(failure_id,occurred_at) VALUES(?,1)",
-        ((f"{index:064x}",) for index in range(6)),
-    )
 
     with pytest.raises(SetupStateError):
         store.read(_BOOTSTRAP)

@@ -39,6 +39,24 @@ a clean rebuild, and is not adopted. The index remains reconstructible derived
 state under ADR-0013, but this increment delivers no exact-predecessor adoption
 plan for that immediate predecessor.
 
+## Offline review-session decoupling adoption
+
+#912 (ADR-0059) moved `review_sessions` and `review_login_failures` into the
+dedicated session database `private/review-sessions.sqlite`, which ordinary
+startup creates on its own. `review-session-decoupling-v1` accepts only the
+exact immediately preceding schema and drops those two application-database
+tables, discarding at most a few live sessions (one owner re-login) and five
+minutes of throttle history; every other table is preserved and
+digest-verified. The two older plans below now also drop the session tables,
+so their predecessors still adopt straight to the current target. Run it
+offline with an owner-only backup in the same directory:
+
+```console
+mechanical-librarian schema-adopt review-session-decoupling-v1 \
+  --database /data/application.sqlite3 \
+  --backup /data/application.before-session-decoupling.sqlite3
+```
+
 ## Offline owner-actionability adoption
 
 `review-owner-decision-actions-v1` accepts only the exact pre-#830 schema and

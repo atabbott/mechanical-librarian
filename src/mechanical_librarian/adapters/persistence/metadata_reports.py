@@ -61,9 +61,6 @@ from mechanical_librarian.adapters.persistence.review_projections import (
 from mechanical_librarian.adapters.persistence.review_scans import (
     SQLiteReviewScanRepository,
 )
-from mechanical_librarian.adapters.persistence.review_sessions import (
-    SQLiteReviewSessionRepository,
-)
 from mechanical_librarian.adapters.persistence.schema import (
     _create_schema,
     _provider_recovery_outbox_id,
@@ -195,9 +192,6 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                     )
                 )
             ),
-        )
-        self._review_sessions = SQLiteReviewSessionRepository(
-            connection, serialization_lock=self._setup_serialization_lock
         )
         self._owner_settings = OwnerSettingsStore(connection)
         self._review_scans = SQLiteReviewScanRepository(connection)
@@ -1191,9 +1185,6 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def count_current_attention_fields(self, search: str | None) -> int:
         return self._review_cases.count_current_attention_fields(search)
 
-    def begin_login(self, now: int, window_seconds: int, maximum_failures: int) -> bool:
-        return self._review_sessions.begin_login(now, window_seconds, maximum_failures)
-
     def shadow_posture(self) -> str:
         return self._metadata_policy.shadow_posture()
 
@@ -1599,58 +1590,6 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         self, library: str, limit: int
     ) -> tuple[int, tuple[tuple[MetadataReport, ProposalSet], ...]]:
         return self._metadata_policy.current_policy_impact_pairs(library, limit)
-
-    def create_review_session(
-        self,
-        session_digest: str,
-        csrf_digest: str,
-        created_at: int,
-        expires_at: int,
-    ) -> None:
-        self._review_sessions.create_review_session(
-            session_digest, csrf_digest, created_at, expires_at
-        )
-
-    def authenticate_review_session(
-        self, session_digest: str, now: int
-    ) -> tuple[str, str, int]:
-        return self._review_sessions.authenticate_review_session(session_digest, now)
-
-    def rotate_review_session_csrf(
-        self, session_digest: str, csrf_digest: str, now: int
-    ) -> str:
-        return self._review_sessions.rotate_review_session_csrf(
-            session_digest, csrf_digest, now
-        )
-
-    def revoke_review_session(
-        self, session_digest: str, csrf_digest: str, now: int
-    ) -> str:
-        # Belongs to the review-session aggregate, and is deliberately still
-        # here: `test_sqlite_logout_classification_is_atomic_across_connections`
-        # substitutes `_connection` on this repository to interleave a competing
-        # logout at the exact statement below. An aggregate holds its own
-        # reference to the shared connection, so moving this method would leave
-        # the substitution addressing an object the statement never reaches.
-        transaction = self._transaction("revoke_review_session")
-        try:
-            transaction.begin()
-            cursor = self._connection.execute(
-                "UPDATE review_sessions SET revoked_at=? WHERE session_digest=? AND csrf_digest=? AND revoked_at IS NULL AND expires_at>?",
-                (now, session_digest, csrf_digest, now),
-            )
-            if cursor.rowcount != 1:
-                active = self._connection.execute(
-                    "SELECT 1 FROM review_sessions WHERE session_digest=? AND revoked_at IS NULL AND expires_at>?",
-                    (session_digest, now),
-                ).fetchone()
-                transaction.rollback()
-                return "csrf" if active is not None else "unauthorized"
-            transaction.commit()
-            return "revoked"
-        except sqlite3.Error as error:
-            transaction.rollback()
-            raise MetadataReportError("review session is unavailable") from error
 
     def get_review_case_decisions(self, review_case_id: str) -> tuple[str, ...]:
         return self._decisions.get_review_case_decisions(review_case_id)

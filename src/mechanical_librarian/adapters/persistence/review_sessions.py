@@ -1,4 +1,4 @@
-"""The review-session aggregate.
+"""The review-session aggregate on its own dedicated SQLite database.
 
 Owns the `review_sessions` table and the `review_login_failures` table that
 rate-limits admission to it: who is currently signed in to the review surface,
@@ -11,16 +11,17 @@ prunes sessions -- so splitting them would put one transaction across two
 modules for no gain.
 
 Nothing here reads another aggregate: the session is authority over the review
-surface, not over any report, case or policy it later reaches.
+surface, not over any report, case or policy it later reaches. #912 turned
+that independence physical. Session state lives in its own database file with
+its own connection and lock, so owner sign-in never queues behind a library
+scan's transaction on the application database -- neither on the in-process
+transaction lock nor on SQLite's rollback-journal write lock.
 
-`revoke_review_session` belongs here and is deliberately still on the composing
-repository. `test_sqlite_logout_classification_is_atomic_across_connections`
-proves the CSRF-versus-unauthorized classification is atomic by substituting
-`_connection` on the repository and starting a competing logout from inside the
-substituted `execute`. An aggregate holds its own reference to the one shared
-connection, so moving the method would leave that substitution addressing an
-object the statement never reaches. It moves once the composition root owns the
-connection every holder sees.
+The restart contract mirrors the application database's posture under
+ADR-0013: an absent file is created with the exact schema, the exact current
+schema is accepted, and anything else is rejected clearly without mutation.
+Losing this file costs one owner re-login; it holds only token digests,
+expiries and throttle timestamps, never a password, token or review document.
 """
 
 from __future__ import annotations
@@ -28,49 +29,127 @@ from __future__ import annotations
 import hashlib
 import secrets
 import sqlite3
+import threading
+from pathlib import Path
 from typing import cast
 
-from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.application.metadata_report import MetadataReportError
 
+_REVIEW_SESSIONS_SQL = (
+    "CREATE TABLE review_sessions ("
+    "session_digest TEXT PRIMARY KEY NOT NULL CHECK(length(session_digest)=64 AND session_digest NOT GLOB '*[^0-9a-f]*'), "
+    "csrf_digest TEXT NOT NULL CHECK(length(csrf_digest)=64 AND csrf_digest NOT GLOB '*[^0-9a-f]*'), "
+    "actor TEXT NOT NULL CHECK(actor='owner'), created_at INTEGER NOT NULL CHECK(created_at>=0), "
+    "expires_at INTEGER NOT NULL CHECK(expires_at>created_at), revoked_at INTEGER CHECK(revoked_at IS NULL OR revoked_at>=created_at))"
+)
+_REVIEW_LOGIN_FAILURES_SQL = (
+    "CREATE TABLE review_login_failures ("
+    "failure_id TEXT PRIMARY KEY NOT NULL CHECK(length(failure_id)=64 AND failure_id NOT GLOB '*[^0-9a-f]*'), "
+    "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0))"
+)
+_EXPECTED_OBJECTS = (
+    ("index", "sqlite_autoindex_review_login_failures_1", None),
+    ("index", "sqlite_autoindex_review_sessions_1", None),
+    ("table", "review_login_failures", _REVIEW_LOGIN_FAILURES_SQL),
+    ("table", "review_sessions", _REVIEW_SESSIONS_SQL),
+)
 
-class SQLiteReviewSessionRepository(ConnectionScoped):
+
+class SQLiteReviewSessionRepository:
     """Admit, authenticate, rotate and revoke the review surface's sessions."""
 
-    def begin_login(self, now: int, window_seconds: int, maximum_failures: int) -> bool:
-        transaction = self._transaction("begin_login")
+    def __init__(
+        self, connection: sqlite3.Connection, lock: threading.RLock | None = None
+    ) -> None:
+        self._connection = connection
+        self._lock = lock if lock is not None else threading.RLock()
+
+    @classmethod
+    def open(cls, path: Path) -> SQLiteReviewSessionRepository:
+        """Open or create the exact-current session database at ``path``.
+
+        The parent directory is the composition root's owner-only private
+        root; this opener owns only the database file's schema contract.
+        """
+        connection = sqlite3.connect(
+            path, isolation_level=None, check_same_thread=False
+        )
         try:
-            transaction.begin()
-            self._connection.execute(
-                "DELETE FROM review_login_failures WHERE occurred_at<?",
-                (now - window_seconds,),
-            )
-            self._connection.execute(
-                "DELETE FROM review_sessions WHERE expires_at<=?", (now,)
-            )
-            count = self._connection.execute(
-                "SELECT count(*) FROM review_login_failures"
-            ).fetchone()
-            if count is None:
-                raise MetadataReportError("review login is unavailable")
-            permitted: bool = count[0] < maximum_failures
-            if permitted:
-                identity = hashlib.sha256(
-                    f"review-login-attempt-v1:{now}:{secrets.token_hex(16)}".encode()
-                ).hexdigest()
-                self._connection.execute(
-                    "INSERT INTO review_login_failures(failure_id,occurred_at) "
-                    "VALUES(?,?)",
-                    (identity, now),
-                )
-            transaction.commit()
-            return permitted
+            connection.execute("PRAGMA journal_mode=DELETE")
+            connection.execute("PRAGMA synchronous=FULL")
+            connection.execute("PRAGMA busy_timeout=5000")
+            objects = connection.execute(
+                "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
+            ).fetchall()
+            if not objects:
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    # Re-read under the write lock: a concurrent opener may
+                    # have created the schema between the snapshot above and
+                    # this transaction.
+                    objects = connection.execute(
+                        "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
+                    ).fetchall()
+                    if not objects:
+                        connection.execute(_REVIEW_SESSIONS_SQL)
+                        connection.execute(_REVIEW_LOGIN_FAILURES_SQL)
+                    connection.execute("COMMIT")
+                except sqlite3.Error:
+                    if connection.in_transaction:
+                        connection.execute("ROLLBACK")
+                    raise
+                if objects:
+                    _validate_session_schema(connection, objects)
+            else:
+                _validate_session_schema(connection, objects)
+            return cls(connection)
         except MetadataReportError:
-            transaction.rollback()
+            connection.close()
             raise
         except sqlite3.Error as error:
-            transaction.rollback()
-            raise MetadataReportError("review login is unavailable") from error
+            connection.close()
+            raise MetadataReportError(
+                "review session database is unavailable or incompatible"
+            ) from error
+
+    def close(self) -> None:
+        with self._lock:
+            self._connection.close()
+
+    def begin_login(self, now: int, window_seconds: int, maximum_failures: int) -> bool:
+        with self._lock:
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                self._connection.execute(
+                    "DELETE FROM review_login_failures WHERE occurred_at<?",
+                    (now - window_seconds,),
+                )
+                self._connection.execute(
+                    "DELETE FROM review_sessions WHERE expires_at<=?", (now,)
+                )
+                count = self._connection.execute(
+                    "SELECT count(*) FROM review_login_failures"
+                ).fetchone()
+                if count is None:
+                    raise MetadataReportError("review login is unavailable")
+                permitted: bool = count[0] < maximum_failures
+                if permitted:
+                    identity = hashlib.sha256(
+                        f"review-login-attempt-v1:{now}:{secrets.token_hex(16)}".encode()
+                    ).hexdigest()
+                    self._connection.execute(
+                        "INSERT INTO review_login_failures(failure_id,occurred_at) "
+                        "VALUES(?,?)",
+                        (identity, now),
+                    )
+                self._connection.execute("COMMIT")
+                return permitted
+            except MetadataReportError:
+                self._rollback()
+                raise
+            except sqlite3.Error as error:
+                self._rollback()
+                raise MetadataReportError("review login is unavailable") from error
 
     def create_review_session(
         self,
@@ -79,68 +158,103 @@ class SQLiteReviewSessionRepository(ConnectionScoped):
         created_at: int,
         expires_at: int,
     ) -> None:
-        transaction = self._transaction("create_review_session")
-        try:
-            transaction.begin()
-            self._connection.execute(
-                "INSERT INTO review_sessions(session_digest,csrf_digest,actor,created_at,expires_at) VALUES(?,?,'owner',?,?)",
-                (session_digest, csrf_digest, created_at, expires_at),
-            )
-            self._connection.execute("DELETE FROM review_login_failures")
-            transaction.commit()
-        except sqlite3.Error as error:
-            transaction.rollback()
-            raise MetadataReportError("review session is unavailable") from error
+        with self._lock:
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                self._connection.execute(
+                    "INSERT INTO review_sessions(session_digest,csrf_digest,actor,created_at,expires_at) VALUES(?,?,'owner',?,?)",
+                    (session_digest, csrf_digest, created_at, expires_at),
+                )
+                self._connection.execute("DELETE FROM review_login_failures")
+                self._connection.execute("COMMIT")
+            except sqlite3.Error as error:
+                self._rollback()
+                raise MetadataReportError("review session is unavailable") from error
 
     def authenticate_review_session(
         self, session_digest: str, now: int
     ) -> tuple[str, str, int]:
-        lock = self._serialization_lock
-        if lock is not None:
-            lock.acquire()
-        try:
-            row = self._connection.execute(
-                "SELECT actor,csrf_digest,expires_at FROM review_sessions WHERE session_digest=? AND revoked_at IS NULL AND expires_at>?",
-                (session_digest, now),
-            ).fetchone()
-            if (
-                row is None
-                or len(row) != 3
-                or row[0] != "owner"
-                or type(row[1]) is not str
-                or type(row[2]) is not int
-            ):
-                raise MetadataReportError("review session is unavailable")
-            # The guard above proves the exact ("owner", str, int) shape.
-            return cast("tuple[str, str, int]", row)
-        except sqlite3.Error as error:
-            raise MetadataReportError("review session is unavailable") from error
-        finally:
-            if lock is not None:
-                lock.release()
+        with self._lock:
+            try:
+                row = self._connection.execute(
+                    "SELECT actor,csrf_digest,expires_at FROM review_sessions WHERE session_digest=? AND revoked_at IS NULL AND expires_at>?",
+                    (session_digest, now),
+                ).fetchone()
+                if (
+                    row is None
+                    or len(row) != 3
+                    or row[0] != "owner"
+                    or type(row[1]) is not str
+                    or type(row[2]) is not int
+                ):
+                    raise MetadataReportError("review session is unavailable")
+                # The guard above proves the exact ("owner", str, int) shape.
+                return cast("tuple[str, str, int]", row)
+            except sqlite3.Error as error:
+                raise MetadataReportError("review session is unavailable") from error
 
     def rotate_review_session_csrf(
         self, session_digest: str, csrf_digest: str, now: int
     ) -> str:
-        transaction = self._transaction("rotate_review_session_csrf")
-        try:
-            transaction.begin()
-            row = self._connection.execute(
-                "UPDATE review_sessions SET csrf_digest=? "
-                "WHERE session_digest=? AND revoked_at IS NULL AND expires_at>? "
-                "RETURNING actor,expires_at",
-                (csrf_digest, session_digest, now),
-            ).fetchone()
-            if row is None:
-                transaction.rollback()
-                return "unauthorized"
-            if len(row) != 2 or row[0] != "owner" or type(row[1]) is not int:
-                raise MetadataReportError("review session is unavailable")
-            transaction.commit()
-            return "rotated"
-        except MetadataReportError:
-            transaction.rollback()
-            raise
-        except sqlite3.Error as error:
-            transaction.rollback()
-            raise MetadataReportError("review session is unavailable") from error
+        with self._lock:
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                row = self._connection.execute(
+                    "UPDATE review_sessions SET csrf_digest=? "
+                    "WHERE session_digest=? AND revoked_at IS NULL AND expires_at>? "
+                    "RETURNING actor,expires_at",
+                    (csrf_digest, session_digest, now),
+                ).fetchone()
+                if row is None:
+                    self._rollback()
+                    return "unauthorized"
+                if len(row) != 2 or row[0] != "owner" or type(row[1]) is not int:
+                    raise MetadataReportError("review session is unavailable")
+                self._connection.execute("COMMIT")
+                return "rotated"
+            except MetadataReportError:
+                self._rollback()
+                raise
+            except sqlite3.Error as error:
+                self._rollback()
+                raise MetadataReportError("review session is unavailable") from error
+
+    def revoke_review_session(
+        self, session_digest: str, csrf_digest: str, now: int
+    ) -> str:
+        with self._lock:
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                cursor = self._connection.execute(
+                    "UPDATE review_sessions SET revoked_at=? WHERE session_digest=? AND csrf_digest=? AND revoked_at IS NULL AND expires_at>?",
+                    (now, session_digest, csrf_digest, now),
+                )
+                if cursor.rowcount != 1:
+                    active = self._connection.execute(
+                        "SELECT 1 FROM review_sessions WHERE session_digest=? AND revoked_at IS NULL AND expires_at>?",
+                        (session_digest, now),
+                    ).fetchone()
+                    self._rollback()
+                    return "csrf" if active is not None else "unauthorized"
+                self._connection.execute("COMMIT")
+                return "revoked"
+            except sqlite3.Error as error:
+                self._rollback()
+                raise MetadataReportError("review session is unavailable") from error
+
+    def _rollback(self) -> None:
+        if self._connection.in_transaction:
+            self._connection.execute("ROLLBACK")
+
+
+def _validate_session_schema(
+    connection: sqlite3.Connection, objects: list[tuple[str, str, str | None]]
+) -> None:
+    if tuple(tuple(value) for value in objects) != _EXPECTED_OBJECTS:
+        raise MetadataReportError(
+            "review session database is unavailable or incompatible"
+        )
+    if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
+        raise MetadataReportError(
+            "review session database is unavailable or incompatible"
+        )

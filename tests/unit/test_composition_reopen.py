@@ -267,10 +267,6 @@ def test_ordinary_server_releases_first_owner_state_for_interruption_and_resume(
         state.claim_owner(
             expected_revision=document.revision,
             owner_verifier="$argon2id$v=19$m=65536,t=3,p=4$b3duZXI$hash",
-            session_digest="d" * 64,
-            csrf_digest="e" * 64,
-            created_at=1,
-            expires_at=3_601,
         )
 
     with (

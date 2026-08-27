@@ -36,6 +36,7 @@ class _Sessions:
         self, token: str, csrf: str, _now: int, expires: int
     ) -> None:
         self.records[token] = (csrf, expires)
+        self.failures = 0
 
     def authenticate_review_session(self, token: str, now: int) -> tuple[str, str, int]:
         csrf, expires = self.records[token]
@@ -79,10 +80,6 @@ class _State:
         *,
         expected_revision: int,
         owner_verifier: str,
-        session_digest: str,
-        csrf_digest: str,
-        created_at: int,
-        expires_at: int,
     ) -> SetupStateDocument:
         assert owner_verifier.startswith("$argon2id$")
         self.owner_verifier = owner_verifier
@@ -95,10 +92,6 @@ class _State:
                 "claimed": True,
             }
         )
-        if self.sessions is not None:
-            self.sessions.create_review_session(
-                session_digest, csrf_digest, created_at, expires_at
-            )
         return self.document
 
     def read(self, _bootstrap: str) -> SetupStateDocument:
@@ -165,7 +158,11 @@ def _client() -> tuple[TestClient, _State, _Connection]:
     state = _State(session_store)
     sessions = OwnerSessionService(
         session_store,
-        owner_password_verifier(verifier),
+        # Mirror the composition root: verify against the claimed verifier,
+        # which is what serves the first login right after the claim (#912).
+        lambda password: state.use_owner_verifier(
+            lambda encoded: owner_password_verifier(encoded)(password)
+        ),
         lambda token: state.use_owner_verifier(
             lambda encoded: owner_password_binding(encoded)[1](token)
         ),

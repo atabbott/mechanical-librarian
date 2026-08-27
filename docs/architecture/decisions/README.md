@@ -72,6 +72,7 @@ context and consequences rather than reproducing code.
 | [0056](0056-edition-overflow-work-witness.md) | accepted | Retain a work-only witness for bounded edition overflow |
 | [0057](0057-sustain-explicit-sqlite-aggregate-topology.md) | accepted | Sustain the explicit SQLite aggregate topology |
 | [0058](0058-settings-authority-and-first-boot.md) | accepted | Make settings-store authority explicit after first boot |
+| [0059](0059-dedicated-review-session-database.md) | accepted | Move review-session state to a dedicated session database |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

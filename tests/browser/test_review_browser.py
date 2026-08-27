@@ -34,6 +34,9 @@ from scripts.verify_playwright_browser import verify_playwright_browser
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.review_sessions import (
+    SQLiteReviewSessionRepository,
+)
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
@@ -284,12 +287,16 @@ def _server(
         repository.publish_proposal(extra_proposal)
         repository.admit_review_case(extra_proposal)
     origin = f"https://127.0.0.1:{port.number}"
+    session_store = SQLiteReviewSessionRepository.open(
+        database.with_name("review-sessions.sqlite")
+    )
     app = create_transport_test_app(
         repository,
         ReviewWebConfiguration(
             canonical_origin=origin,
             owner_password_hash_file=str(hash_path),
         ),
+        session_store=session_store,
         clock=lambda: 1_000,
         close_repository=True,
         field_application=_BrowserActivityApplication(),
@@ -352,6 +359,7 @@ def _server(
         if thread.is_alive():
             server.force_exit = True
             thread.join(timeout=5)
+        session_store.close()
 
 
 def _login(page: Page, origin: str) -> None:
@@ -472,8 +480,10 @@ def test_remembered_owner_session_survives_profile_and_server_restart() -> None:
             )
             connection.commit()
 
+        sessions_database = database.with_name("review-sessions.sqlite")
+
         def persisted_sessions() -> list[tuple[int, int]]:
-            with closing(sqlite3.connect(database)) as connection:
+            with closing(sqlite3.connect(sessions_database)) as connection:
                 return cast(
                     list[tuple[int, int]],
                     connection.execute(
@@ -483,7 +493,7 @@ def test_remembered_owner_session_survives_profile_and_server_restart() -> None:
                 )
 
         def revocations() -> list[tuple[int]]:
-            with closing(sqlite3.connect(database)) as connection:
+            with closing(sqlite3.connect(sessions_database)) as connection:
                 return cast(
                     list[tuple[int]],
                     connection.execute(

@@ -5,6 +5,14 @@ is an architectural inventory, not a second schema definition: the executable
 definition and open-time exact-object validation remain in
 [`schema.py`](../../src/mechanical_librarian/adapters/persistence/schema.py).
 
+#912 (ADR-0059) later moved the two security/session tables —
+`review_sessions` and `review_login_failures` — out of the application
+database into the dedicated session database
+`private/review-sessions.sqlite`, so owner sign-in never queues behind a
+scan's write transaction. Rows and counts below that name those two tables
+are retained August 2026 audit evidence of the pre-#912 schema; the current
+application database no longer contains them.
+
 ## Audit boundary and evidence
 
 The map was checked against the exact-current schema, production persistence
@@ -62,8 +70,8 @@ nearest KiB.
 | Operational/recovery | `field_effects` | 0 R / 4 KiB | effect record/claim/transition; effect/activity readers | Mutable guarded-effect plan with a closed retry state machine. |
 | Operational/recovery | `field_effect_actions` | 0 R / 4 KiB | reconciliation scheduler/claim; effect runner | Bounded action queue is distinct from plan state for restartable execution. |
 | Operational/recovery | `field_effect_cleanups` | 0 R / 4 KiB | effect cleanup; activity reader | Cleanup completion is a separate durable recovery boundary. |
-| Security/session | `review_sessions` | 4 R / 4 KiB | session create/authenticate/revoke; web authentication | Only token digests and expiry/revocation are retained; session state has no review identity role. |
-| Security/session | `review_login_failures` | 0 R / 4 KiB | failed-login throttle; authentication reader | Bounded global throttle history must not be conflated with sessions. |
+| Security/session | `review_sessions` | 4 R / 4 KiB | session create/authenticate/revoke; web authentication | Only token digests and expiry/revocation are retained; session state has no review identity role. Moved to the dedicated session database by #912. |
+| Security/session | `review_login_failures` | 0 R / 4 KiB | failed-login throttle; authentication reader | Bounded global throttle history must not be conflated with sessions. Moved to the dedicated session database by #912. |
 | Control/configuration | `metadata_policy_state` | 1 R / 4 KiB | policy activation/posture; all policy/currentness readers | Singleton selects active immutable policy and generation. |
 | Control/configuration | `review_preparation_control` | 1 R / 4 KiB | pipeline pause/fair-claim/circuit state; claim readers | Singleton controls fair preparation scheduling, not policy authority. |
 | Control/configuration | `automatic_safety_state` | 1 R / 4 KiB | safety pause/suspension; decision and Attention readers | Singleton safety gate is deliberately independent of policy selection. |
@@ -419,6 +427,10 @@ same-transaction, reconstructible read projection; no cluster is `redundant`.
 | effect control / suspensions / authorities / consents / holds | Required | independent control command | command scope | state reread | scope key | authority/consent currentness | — |
 | effects / actions / cleanups / events | Required | plan/action command | command scope | claim/retry | plan/action key | plan state | events |
 | sessions / login failures | Required | authentication command | command scope | bounded state | — | — | — |
+
+The sessions / login-failures cluster remains one aggregate, and #912 moved
+it whole into `private/review-sessions.sqlite` under ADR-0059; its invariants
+above are unchanged, now proven against the session database.
 
 ## #800 and #802 assessment
 

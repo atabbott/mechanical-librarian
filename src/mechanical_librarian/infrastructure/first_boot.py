@@ -40,12 +40,26 @@ def select_first_boot_mode(
         return FirstBootMode.INITIALIZE_SETUP
     if database_name not in entries:
         raise FirstBootError("first boot state is unavailable")
+    # The private directory holds the dedicated session database (#912), which
+    # setup's first sign-in legitimately creates before setup completes; it is
+    # not evidence of a completed runtime. Any other private content is
+    # runtime state and keeps the volume failing closed as before.
+    setup_entries = set(entries)
+    if "private" in entries:
+        try:
+            private_entries = {
+                entry.name for entry in (data_path / "private").iterdir()
+            }
+        except OSError as error:
+            raise FirstBootError("first boot state is unavailable") from error
+        if private_entries <= {"review-sessions.sqlite"}:
+            setup_entries.discard("private")
     try:
         if complete_store():
             return FirstBootMode.NORMAL
-        if entries == {database_name} and uninitialized_setup():
+        if setup_entries == {database_name} and uninitialized_setup():
             return FirstBootMode.INITIALIZE_SETUP
-        if entries == {database_name} and resumable_setup():
+        if setup_entries == {database_name} and resumable_setup():
             return FirstBootMode.RESUME_SETUP
     except Exception as error:
         raise FirstBootError("first boot state is unavailable") from error

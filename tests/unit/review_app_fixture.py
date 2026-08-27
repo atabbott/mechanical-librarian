@@ -8,6 +8,9 @@ from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
 
+from mechanical_librarian.adapters.persistence.review_sessions import (
+    SQLiteReviewSessionRepository,
+)
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
@@ -89,6 +92,7 @@ def create_transport_test_app(
     repository,
     configuration: ReviewWebConfiguration,
     *,
+    session_store=None,
     clock: Callable[[], int] = lambda: int(time.time()),
     close_repository: bool = False,
     review_preparation: ReviewPreparationSupervisor | None = None,
@@ -109,9 +113,18 @@ def create_transport_test_app(
     password_binding = load_owner_password_binding(
         Path(configuration.owner_password_hash_file)
     )
+    if session_store is None:
+        # A double that still implements the session protocol serves as its
+        # own store; a real repository no longer does (#912), so compose a
+        # fresh in-memory session store beside it.
+        session_store = (
+            repository
+            if hasattr(repository, "begin_login")
+            else SQLiteReviewSessionRepository.open(Path(":memory:"))
+        )
     application = compose_review_application(
         state_owner=repository,
-        session_store=repository,
+        session_store=session_store,
         case_store=repository,
         decision_store=repository,
         library_store=repository,
