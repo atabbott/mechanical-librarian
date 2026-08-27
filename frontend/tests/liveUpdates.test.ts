@@ -353,7 +353,6 @@ describe('live invalidation', () => {
       resync[1]()
     }
     expect(invalidate.mock.calls.map(([argument]) => argument?.queryKey)).toEqual([
-      ['review-preparation'],
       ['library'],
       ['attention'],
       ['activity'],

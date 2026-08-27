@@ -103,9 +103,11 @@ export const startLiveInvalidation = (
   let lastIdleRefreshAt = lastActivityAt
   let wasVisible = visible()
 
-  const queueResync = () => {
-    for (const key of invalidationKeys({ sequence: 0, subject: null, topic: 'resync' }))
+  const queueResync = (includePreparation = true) => {
+    for (const key of invalidationKeys({ sequence: 0, subject: null, topic: 'resync' })) {
+      if (!includePreparation && key[0] === 'review-preparation') continue
       pending.set(JSON.stringify(key), key)
+    }
     handle ??= schedule(flush, coalesceMilliseconds)
   }
 
@@ -166,13 +168,14 @@ export const startLiveInvalidation = (
   })
   const stopObservingActivity = observeActivity(() => {
     const owedResync = deferredWhileIdle || idleHandle !== null
+    const preparationAlreadyRefreshed = deferredWhileIdle && idleHandle === null
     lastActivityAt = now()
     lastIdleRefreshAt = lastActivityAt
     if (!owedResync) return
     deferredWhileIdle = false
     if (idleHandle !== null) cancel(idleHandle)
     idleHandle = null
-    queueResync()
+    queueResync(!preparationAlreadyRefreshed)
   })
   const stopObservingVisibility = observeVisibility(() => {
     const isVisible = visible()
