@@ -231,6 +231,9 @@ class _PagedRepository:
             for (library, destination), count in sorted(counts.items())
         )
 
+    def field_effect_activity_example(self, _decisions):
+        return None
+
     def current_field_effect_consent(self, connection, library, destination):
         if library == "alpha":
             raise FieldEffectError("consent")

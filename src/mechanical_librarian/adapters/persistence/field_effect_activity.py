@@ -262,7 +262,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         # commits; it is not a shared cache or an event transport.
         self._activity_page_cache: dict[
             tuple[str | None, str, int, int, int],
-            tuple[tuple[int, int], dict[str, object]],
+            tuple[tuple[int, int, int, int, int, int], dict[str, object]],
         ] = {}
         self._activity_page_cache_lock = RLock()
         self._activity_page_busy_retry_seconds = 0.0
@@ -294,6 +294,57 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             # Every `FieldEffectError` raised below passes through untouched
             # because nothing but `sqlite3.Error` is caught here.
             raise FieldEffectError("persistence") from error
+
+    def field_effect_activity_example(
+        self, decisions: tuple[HumanDecision | AutomaticDecision, ...]
+    ) -> dict[str, object] | None:
+        """Resolve the first current prepared example from one read snapshot."""
+        if (
+            type(decisions) is not tuple
+            or len(decisions) > 100
+            or any(
+                type(value) not in {HumanDecision, AutomaticDecision}
+                for value in decisions
+            )
+        ):
+            raise FieldEffectError("persistence")
+        deadline = time.monotonic() + self._activity_page_busy_retry_seconds
+        while True:
+            try:
+                return self._field_effect_activity_example_once(decisions)
+            except FieldEffectError as error:
+                if (
+                    self._activity_page_busy_retry_seconds == 0
+                    or not self._retryable_activity_page_busy(error)
+                    or time.monotonic()
+                    + _ACTIVITY_PAGE_BUSY_TIMEOUT_MILLISECONDS / 1_000
+                    > deadline
+                ):
+                    raise
+
+    def _field_effect_activity_example_once(
+        self, decisions: tuple[HumanDecision | AutomaticDecision, ...]
+    ) -> dict[str, object] | None:
+        transaction = self._transaction("field_effect_activity_example", deferred=True)
+        try:
+            transaction.begin()
+            for decision in decisions:
+                try:
+                    source = self._authority_source(decision)
+                except FieldEffectError as error:
+                    if error.code == "persistence":
+                        raise
+                    continue
+                transaction.commit()
+                return source
+            transaction.commit()
+            return None
+        except (sqlite3.Error, MetadataReportError) as error:
+            transaction.rollback()
+            raise FieldEffectError("persistence") from error
+        except BaseException:
+            transaction.rollback()
+            raise
 
     def _authority_source(
         self, decision: HumanDecision | AutomaticDecision
@@ -1696,17 +1747,27 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             )
         return projected_events, report_documents, reports
 
-    def _activity_projection_revision(self) -> tuple[int, int]:
-        """Return the reader's exact-current durable Activity revision."""
+    def _activity_projection_revision(self) -> tuple[int, int, int, int, int, int]:
+        """Return the exact append-only high-watermark for Activity's union."""
         try:
-            row = self._connection.execute("PRAGMA data_version").fetchone()
-            if row is None or type(row[0]) is not int:
+            row = self._connection.execute(
+                "SELECT (SELECT count(*) FROM field_effect_events),"
+                "(SELECT count(*) FROM human_decision_events),"
+                "(SELECT count(*) FROM automatic_decisions),"
+                "(SELECT count(*) FROM field_effect_no_changes),"
+                "(SELECT count(*) FROM cover_consideration_events),"
+                "(SELECT count(*) FROM metadata_policy_transitions)"
+            ).fetchone()
+            if (
+                row is None
+                or len(row) != 6
+                or any(type(value) is not int or value < 0 for value in row)
+            ):
                 raise FieldEffectError("persistence")
-            # ``data_version`` advances for every other connection's commit;
-            # ``total_changes`` also invalidates direct writes through this
-            # repository. Together they cover every durable source the page
-            # joins without relying on a partial ledger census.
-            return row[0], self._connection.total_changes
+            # Each source is append-only, so its exact count is a durable
+            # high-watermark.  Non-event preparation writes deliberately do
+            # not invalidate the immutable ledger projection.
+            return cast("tuple[int, int, int, int, int, int]", row)
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
 

@@ -672,7 +672,9 @@ def test_activity_page_cache_keeps_only_an_exact_current_reader_projection(
         second = reader.field_effect_activity_page(**query)
         reader._connection.set_trace_callback(None)
         assert second == first
-        assert ["PRAGMA data_version"] == statements
+        assert len(statements) == 1
+        assert "field_effect_events" in statements[0]
+        assert "metadata_policy_transitions" in statements[0]
 
         # A caller receives a copy: its owner-readable shaping cannot corrupt
         # the reader's retained immutable projection.
@@ -3644,7 +3646,7 @@ def test_activity_projection_returns_an_uncached_snapshot_when_post_read_revisio
     revision_calls = [0]
     page_calls = [0]
 
-    def post_read_busy_revision() -> tuple[int, int]:
+    def post_read_busy_revision() -> tuple[int, int, int, int, int, int]:
         revision_calls[0] += 1
         if revision_calls[0] == 2:
             error = sqlite3.OperationalError()
