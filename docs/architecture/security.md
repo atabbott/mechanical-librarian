@@ -518,11 +518,11 @@ only sorted unique provider-component aggregates whose category and stage are
 one supported provider combination.
 
 Work-query shaping never rewrites retained evidence. The canonical report keeps
-only a closed dispatch lineage and, when the domain admits decoration-equivalent
-identity, the one closed family and side that proved it; rendered queries,
-shaped values, credentials, and responses are not retained. Only the exact
-first-author filename-prefix grammar has admission authority. Every other
-transformation is query-only and cannot grant candidate or write authority.
+only a closed dispatch lineage; rendered queries, shaped values, credentials,
+and responses are not retained. The 0.18.0 decoration-admission subset is empty,
+so every transformation is query-only and cannot grant candidate or write
+authority. The nullable transformation-lineage replay field rejects every
+non-null value.
 All widening and narrowing requests remain inside the existing deadline,
 pacing, byte, dispatch-count, and retry-accounting boundaries; ISBN/ASIN
 dispatch is unchanged.

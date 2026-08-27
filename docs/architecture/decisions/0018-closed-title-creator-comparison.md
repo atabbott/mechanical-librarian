@@ -57,28 +57,26 @@ database schema originally advanced to `metadata-report-v20`.
 
 The #870 amendment adds one separate, domain-owned work-identity admission
 decision without broadening ordinary title agreement. Its closed transformation
-table distinguishes query-enabled from admission-enabled families. Only
-`filename_author_title_prefix` is admission-enabled: the complete prefix must
-equal the complete first ordered author and precede a non-empty title through
-one bounded filename separator. It permits no author inversion, initials
-expansion, token reordering, partial match, alternate-author choice, or fuzzy
-comparison. All other table rows are query-only.
+table distinguishes query-enabled from admission-enabled families. The reviewed
+0.18.0 admission subset is empty: no isolated family cleared both independently
+corroborated positive and same-author boundary evidence. Every table row,
+including `filename_author_title_prefix`, is therefore query-only. Enabling a
+future family requires new per-family evidence and a new ADR and persisted-schema
+change; changing the table flag alone cannot create a canonical lineage.
 
-Admission retains both sides' original claims, requires the exact complete
-ordered authors and one provider-local work identity, and preserves every
-translation, adaptation, abridgement, and variant-marker veto. It records the
-exact transformation family and local/provider side; zero or multiple valid
-lineages reject. Dispatch lineage is independently retained and never creates
-equivalence. Initial qualification, overflow witnesses, persisted readback,
-retry successors, and ProposalSet replay invoke the same decision. The schema
-therefore advances to `metadata-report-v28`; ADR-0013 rejects v27 and every
+Admission retains both sides' original claims, requires the unchanged closed
+title comparison, exact complete ordered authors, and one provider-local work
+identity, and preserves every translation, adaptation, abridgement, and
+variant-marker veto. Dispatch lineage is retained and never creates
+equivalence. The nullable v28 transformation-lineage field remains a replay
+guard: because the admitted subset is empty, every non-null value is invalid.
+Initial qualification, overflow witnesses, persisted readback, retry successors,
+and ProposalSet replay invoke the same decision. ADR-0013 rejects v27 and every
 other predecessor during ordinary startup.
 
 The admission baseline retains the pre-amendment target-normalization floor:
 NFC, case folding, and collapse of all Unicode whitespace while preserving
-punctuation. Filename-prefix admission tokenizes underscores only inside the
-bounded author prefix; underscores in the remaining title are query-only and
-cannot create admission equivalence.
+punctuation. Query transformations never create admission equivalence.
 
 ## Consequences
 

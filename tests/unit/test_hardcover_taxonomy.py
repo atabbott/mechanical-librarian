@@ -40,8 +40,6 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchRung,
     WorkTitleTransformationFamily,
-    WorkTitleTransformationLineage,
-    WorkTitleTransformationSide,
 )
 from tests.support.hardcover_evidence import (
     hardcover_envelope,
@@ -123,7 +121,7 @@ def test_decoration_only_work_query_is_insufficient_without_request(title: str) 
     )
 
 
-def test_filename_author_prefix_reaches_qualified_hardcover_candidate() -> None:
+def test_filename_author_prefix_shapes_hardcover_query_but_never_admits() -> None:
     lookup = work_lookup("Ada_Example_-_Plain Work")
     payload = hardcover_envelope(
         [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}],
@@ -156,12 +154,13 @@ def test_filename_author_prefix_reaches_qualified_hardcover_candidate() -> None:
     ).observe(lookup)
     qualified = qualify_provider_observation(observation, lookup)
 
-    assert ProviderStatus.CANDIDATES is qualified.status
-    assert qualified.dispatch_lineage is not None
-    assert qualified.transformation_lineage == WorkTitleTransformationLineage(
-        WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
-        WorkTitleTransformationSide.LOCAL,
+    assert ProviderStatus.CANDIDATES is observation.status
+    assert observation.dispatch_lineage is not None
+    assert WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX in (
+        observation.dispatch_lineage.transformations
     )
+    assert ProviderStatus.NO_MATCH is qualified.status
+    assert qualified.transformation_lineage is None
 
 
 def test_hardcover_candidate_limit_retries_with_primary_author_equality() -> None:

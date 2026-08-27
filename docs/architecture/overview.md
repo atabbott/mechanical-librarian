@@ -156,8 +156,8 @@ envelope remains only its scope, identity, digest, and schema-version index.
 The domain owns one closed work-title transformation table, bounded query ladder,
 and work-identity admission decision. Provider adapters render its values into
 their documented grammars but cannot define title equivalence. Exact dispatch
-and admitted transformation lineages survive report replay, retry successors,
-overflow witnesses, and ProposalSet evaluation.
+lineage survives report replay, retry successors, overflow witnesses, and
+ProposalSet evaluation; the reviewed decoration-admission subset is empty.
 Candidate-aware domain finalization deterministically reclassifies publication
 facts between claims and evidence, promotes safely linked manifestation dates,
 demotes incompatible publication claims, and assigns canonical comparison

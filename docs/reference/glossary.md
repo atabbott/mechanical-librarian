@@ -12,8 +12,9 @@ request, plus whether its single candidate-limit narrowing retry occurred. It
 records no query text and grants no evidence or write authority.
 
 **Work transformation lineage**
-The one admission-enabled decoration family and local or provider side that the
-domain used to establish decoration-equivalent work identity.
+The nullable v28 replay field reserved for a future evidence-qualified
+decoration family and local or provider side. The 0.18.0 admitted subset is
+empty, so every non-null value is invalid.
 
 **Current pointer**
 The separate mutable reference from one connection/library/item/file identity

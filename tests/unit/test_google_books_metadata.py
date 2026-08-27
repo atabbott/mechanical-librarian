@@ -45,8 +45,6 @@ from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchRung,
     WorkTitleTransformationFamily,
-    WorkTitleTransformationLineage,
-    WorkTitleTransformationSide,
 )
 
 
@@ -804,7 +802,7 @@ def test_decoration_only_work_query_is_insufficient_without_request(title: str) 
     )
 
 
-def test_filename_author_prefix_reaches_qualified_google_books_candidate() -> None:
+def test_filename_author_prefix_shapes_google_books_query_but_never_admits() -> None:
     lookup = MetadataLookup(
         ProviderQueryKind.WORK,
         (),
@@ -826,12 +824,13 @@ def test_filename_author_prefix_reaches_qualified_google_books_candidate() -> No
     ).observe(lookup)
     qualified = qualify_provider_observation(observation, lookup)
 
-    assert ProviderStatus.CANDIDATES is qualified.status
-    assert qualified.dispatch_lineage is not None
-    assert qualified.transformation_lineage == WorkTitleTransformationLineage(
-        WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
-        WorkTitleTransformationSide.LOCAL,
+    assert ProviderStatus.CANDIDATES is observation.status
+    assert observation.dispatch_lineage is not None
+    assert WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX in (
+        observation.dispatch_lineage.transformations
     )
+    assert ProviderStatus.NO_MATCH is qualified.status
+    assert qualified.transformation_lineage is None
 
 
 def test_work_query_ladder_stops_on_first_candidates_and_accounts_retry() -> None:

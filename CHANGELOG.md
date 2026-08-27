@@ -14,10 +14,9 @@
   (#701)
 
 - Shape work-only provider searches with a bounded query ladder and one
-  provider-specific narrowing retry. Exact dispatch and decoration lineages are
-  retained, and a closed primary-author filename prefix may qualify the same
-  work without changing either side's claims. Pre-release v27 state requires a
-  clean rebuild. (#870)
+  provider-specific narrowing retry while retaining exact dispatch lineage.
+  Query decoration never creates work identity; the reviewed admission subset
+  is empty. Pre-release v27 state requires a clean rebuild. (#870)
 
 - Keep valid Hardcover discovery candidates when optional cover descriptors
   conflict across lanes; the conflicting cover remains fail-closed. Provider

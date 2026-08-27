@@ -1,4 +1,4 @@
-"""Closed work-query shaping and decoration-equivalent identity admission."""
+"""Closed work-query shaping and exact work-identity admission."""
 
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ WORK_TITLE_TRANSFORMATION_RULES = (
     WorkTitleTransformationRule(
         WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
         True,
-        True,
+        False,
         WorkDispatchRung.NORMALIZED,
     ),
     WorkTitleTransformationRule(
@@ -200,14 +200,14 @@ class WorkTitleTransformationLineage:
     side: WorkTitleTransformationSide
 
     def __post_init__(self) -> None:
-        rule = _RULES_BY_FAMILY.get(self.family)
         if (
             type(self.family) is not WorkTitleTransformationFamily
             or type(self.side) is not WorkTitleTransformationSide
-            or rule is None
-            or not rule.admission_enabled
         ):
             raise ValueError("work title transformation lineage is invalid")
+        # The v28 field remains a closed replay guard, but the reviewed 0.18.0
+        # admission subset is empty. No non-null lineage is canonical.
+        raise ValueError("work title transformation lineage is invalid")
 
     def to_data(self) -> dict[str, str]:
         return {"family": self.family.value, "side": self.side.value}
@@ -219,21 +219,15 @@ class WorkIdentityAdmission:
     transformation: WorkTitleTransformationLineage | None = None
 
     def __post_init__(self) -> None:
-        if type(self.admitted) is not bool or (
-            (self.transformation is not None)
-            != (self.admitted and self.transformation is not None)
-        ):
-            raise ValueError("work identity admission is invalid")
-        if (
-            self.transformation is not None
-            and type(self.transformation) is not WorkTitleTransformationLineage
-        ):
+        if type(self.admitted) is not bool or self.transformation is not None:
             raise ValueError("work identity admission is invalid")
 
 
 _RULES_BY_FAMILY = {value.family: value for value in WORK_TITLE_TRANSFORMATION_RULES}
 if len(_RULES_BY_FAMILY) != len(WorkTitleTransformationFamily):
     raise RuntimeError("work title transformation table is incomplete")
+if any(rule.admission_enabled for rule in WORK_TITLE_TRANSFORMATION_RULES):
+    raise RuntimeError("work title admission subset requires a schema decision")
 _RULE_ORDINAL = {
     rule.family: ordinal for ordinal, rule in enumerate(WORK_TITLE_TRANSFORMATION_RULES)
 }
@@ -426,28 +420,7 @@ def admit_provider_work_identity(
         )
     ):
         return WorkIdentityAdmission(False)
-    if _closed_equal(local_title, provider_title):
-        return WorkIdentityAdmission(True)
-    possible: list[WorkTitleTransformationLineage] = []
-    local_plain = _filename_author_title_prefix(local_title, local_authors)
-    if local_plain is not None and _closed_equal(local_plain, provider_title):
-        possible.append(
-            WorkTitleTransformationLineage(
-                WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
-                WorkTitleTransformationSide.LOCAL,
-            )
-        )
-    provider_plain = _filename_author_title_prefix(provider_title, provider_authors)
-    if provider_plain is not None and _closed_equal(provider_plain, local_title):
-        possible.append(
-            WorkTitleTransformationLineage(
-                WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
-                WorkTitleTransformationSide.PROVIDER,
-            )
-        )
-    if len(possible) != 1:
-        return WorkIdentityAdmission(False)
-    return WorkIdentityAdmission(True, possible[0])
+    return WorkIdentityAdmission(_closed_equal(local_title, provider_title))
 
 
 def replay_provider_work_identity_admission(
@@ -527,7 +500,7 @@ def apply_work_title_transformation(
     ):
         raise ValueError("work title transformation input is invalid")
     if family is WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX:
-        return _filename_author_title_prefix(title, authors, query=True) or title
+        return _filename_author_title_prefix_query(title, authors) or title
     if family is WorkTitleTransformationFamily.FILENAME_UNDERSCORES:
         return _clean(title.replace("_", " "))
     if family is WorkTitleTransformationFamily.BRACKET_SOURCE_TAG:
@@ -571,8 +544,8 @@ def apply_work_title_transformation(
     raise RuntimeError("work title transformation table is incomplete")
 
 
-def _filename_author_title_prefix(
-    value: str, authors: tuple[str, ...], *, query: bool = False
+def _filename_author_title_prefix_query(
+    value: str, authors: tuple[str, ...]
 ) -> str | None:
     if not authors:
         return None
@@ -585,9 +558,7 @@ def _filename_author_title_prefix(
         return None
     prefix_tokens = _identity_tokens(match.group("prefix"))
     author_tokens = _identity_tokens(authors[0])
-    title = match.group("title")
-    if query:
-        title = _clean(title.replace("_", " "))
+    title = _clean(match.group("title").replace("_", " "))
     return title if prefix_tokens == author_tokens and _comparison_text(title) else None
 
 

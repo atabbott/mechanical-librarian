@@ -31,7 +31,7 @@ def test_closed_rule_table_has_one_independent_row_per_family() -> None:
         WorkTitleTransformationFamily
     )
     assert all(rule.query_enabled for rule in WORK_TITLE_TRANSFORMATION_RULES)
-    assert [WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX] == [
+    assert [] == [
         rule.family
         for rule in WORK_TITLE_TRANSFORMATION_RULES
         if rule.admission_enabled
@@ -157,7 +157,9 @@ def test_ladder_deduplicates_and_narrowing_preserves_base_lineage() -> None:
 
 
 @pytest.mark.parametrize("separator", (" - ", "–", "—", " – ", " — ", ":"))
-def test_exact_primary_author_filename_prefix_admits_local_side(separator: str) -> None:
+def test_primary_author_filename_prefix_is_query_only_local_side(
+    separator: str,
+) -> None:
     decision = admit_provider_work_identity(
         local_title=f"Ada_Example{separator}Plain Work",
         local_authors=("Ada Example",),
@@ -166,14 +168,10 @@ def test_exact_primary_author_filename_prefix_admits_local_side(separator: str) 
         provider_work_identity="work-1",
     )
 
-    assert decision.admitted
-    assert decision.transformation == WorkTitleTransformationLineage(
-        WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
-        WorkTitleTransformationSide.LOCAL,
-    )
+    assert not decision.admitted
 
 
-def test_exact_primary_author_filename_prefix_admits_provider_side() -> None:
+def test_primary_author_filename_prefix_is_query_only_provider_side() -> None:
     decision = admit_provider_work_identity(
         local_title="Plain Work",
         local_authors=("Ada Example",),
@@ -182,10 +180,7 @@ def test_exact_primary_author_filename_prefix_admits_provider_side() -> None:
         provider_work_identity="work-1",
     )
 
-    assert decision.transformation == WorkTitleTransformationLineage(
-        WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
-        WorkTitleTransformationSide.PROVIDER,
-    )
+    assert not decision.admitted
 
 
 @pytest.mark.parametrize(
@@ -335,7 +330,7 @@ def test_admission_retains_established_unicode_whitespace_equality(
 
 
 def test_replay_requires_one_exact_ladder_dispatch_or_its_narrowing_successor() -> None:
-    local_title = "Ada_Example_-_Plain Work"
+    local_title = "Plain Work"
     authors = ("Ada Example",)
     query = work_query_ladder(local_title, authors)[0]
     exact = WorkDispatchLineage.from_query(query)
@@ -403,6 +398,11 @@ def test_lineage_readback_rejects_unknown_malformed_and_query_only_admission() -
         work_title_transformation_lineage_from_data(
             {"family": "bracket_source_tag", "side": "local"}
         )
+    with pytest.raises(ValueError):
+        WorkTitleTransformationLineage(
+            WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
+            WorkTitleTransformationSide.LOCAL,
+        )
 
 
 @pytest.mark.parametrize(
@@ -432,7 +432,9 @@ def test_dispatch_lineage_readback_rejects_impossible_ladder_combinations(
         )
 
 
-def test_persisted_lane_lineages_round_trip_and_reject_tampering() -> None:
+def test_persisted_dispatch_lineage_round_trips_and_non_null_transform_rejects() -> (
+    None
+):
     lane = ProviderLaneObservation(
         "lane_" + ("a" * 64),
         ProviderQueryKind.WORK,
@@ -446,10 +448,6 @@ def test_persisted_lane_lineages_round_trip_and_reject_tampering() -> None:
             ),
             True,
         ),
-        transformation_lineage=WorkTitleTransformationLineage(
-            WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
-            WorkTitleTransformationSide.LOCAL,
-        ),
     )
     data = lane.to_data()
 
@@ -459,7 +457,7 @@ def test_persisted_lane_lineages_round_trip_and_reject_tampering() -> None:
             {
                 **data,
                 "transformation_lineage": {
-                    "family": "subtitle_segment",
+                    "family": "filename_author_title_prefix",
                     "side": "local",
                 },
             }

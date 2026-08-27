@@ -265,7 +265,7 @@ inheriting query authority:
 | Family | Query rung | Admission |
 | --- | --- | --- |
 | filename underscores | normalized | query-only |
-| complete first-author filename prefix | normalized | enabled |
+| complete first-author filename prefix | normalized | query-only |
 | bracketed source or retailer tag | normalized | query-only |
 | labelled checksum-valid ISBN or bounded ASIN | normalized | query-only |
 | edition label | normalized | query-only |
@@ -277,14 +277,12 @@ inheriting query authority:
 | colon or spaced-dash subtitle segment | subtitle-stripped | query-only |
 | broad punctuation and ampersand folding | punctuation-folded | query-only |
 
-The admitted filename grammar requires the complete prefix token sequence to
-equal the complete first ordered author after NFC, balanced typographic, and
-ASCII-whitespace handling. Underscores may separate prefix tokens; one bounded
-filename separator and a non-empty title must follow. It permits no inversion,
-initial expansion, reordering, partial author, alternate author, or fuzzy match.
-The same domain decision applies during initial qualification, overflow-witness
-qualification, persisted readback, retry-successor merging, and ProposalSet
-replay. Zero or multiple admissible lineages fail closed.
+The filename-prefix query grammar requires the complete prefix token sequence
+to equal the complete first ordered author. It permits no inversion, initial
+expansion, reordering, partial author, alternate author, or fuzzy match. Query
+shaping grants no identity authority: the same exact domain decision applies
+during initial qualification, overflow-witness qualification, persisted
+readback, retry-successor merging, and ProposalSet replay.
 
 The work lane dispatches at most three distinct widening variants in that order:
 normalized, subtitle-stripped, then punctuation-folded. It stops immediately on

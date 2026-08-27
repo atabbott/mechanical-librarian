@@ -61,8 +61,6 @@ from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     WorkDispatchRung,
     WorkTitleTransformationFamily,
-    WorkTitleTransformationLineage,
-    WorkTitleTransformationSide,
     work_query_ladder,
 )
 from tests.support.proposal_evidence import (
@@ -494,7 +492,7 @@ def _work_lane_report(
     )
 
 
-def test_proposal_replay_uses_persisted_provider_side_work_identity_lineage(
+def test_proposal_replay_uses_exact_work_identity_with_persisted_dispatch(
     work_lane: MetadataDiscoveryLane,
 ) -> None:
     candidate = replace(
@@ -504,7 +502,7 @@ def test_proposal_replay_uses_persisted_provider_side_work_identity_lineage(
                 "open-connection",
                 "edition",
                 ClaimKind.TITLE,
-                "Mick_Herron_-_Real Tigers",
+                "Real Tigers",
                 scope=ClaimScope.WORK,
             ),
             _work_lane_creator_claim(),
@@ -545,10 +543,7 @@ def test_proposal_replay_uses_persisted_provider_side_work_identity_lineage(
 
     replayed = MetadataReport.from_json(report.to_json())
     retained = replayed.providers[0]
-    assert retained.lanes[0].transformation_lineage == WorkTitleTransformationLineage(
-        WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
-        WorkTitleTransformationSide.PROVIDER,
-    )
+    assert retained.lanes[0].transformation_lineage is None
     assert _target_backed_lookup_contains(replayed, retained, retained.candidates[0])
     assert ProposalSet.from_json(evaluate_report(replayed).to_json())
 
@@ -1328,107 +1323,36 @@ def test_work_lane_replay_preserves_punctuation_underscore_and_whitespace_floor(
     object.__setattr__(baseline, "providers", (punctuated_source,))
     assert not _target_backed_lookup_contains(baseline, punctuated_source, punctuated)
 
-    filename_title = "Mick Herron - Plain_Work"
-    filename_claim = LocalClaim.create(
-        kind=ClaimKind.TITLE,
-        observed=filename_title,
-        canonical=filename_title,
-        excerpt=filename_title,
-        applicability="not_applicable",
-        checksum="not_applicable",
-        applicability_basis="not_applicable",
-        scope=ClaimScope.WORK,
-        basis="target_metadata",
-    )
-    filename_fields = _fields(
-        filename_title,
-        authors=TargetField(
-            TargetDestination.AUTHORS,
-            TargetFieldState.VALUE,
-            ("Mick Herron",),
-        ),
-    )
-    filename_lane = metadata_discovery_plan(
-        TargetSnapshot(
-            "ebook", filename_title, ("Mick Herron",), fields=filename_fields
-        ),
-        (filename_claim,),
-    ).lanes[0]
-    filename_candidate = replace(
+    decorated_candidate = replace(
         candidate,
         claims=(
             _claim(
                 "open-connection",
                 "edition",
                 ClaimKind.TITLE,
-                "Plain_Work",
+                "Mick_Herron_-_Real Tigers",
                 scope=ClaimScope.WORK,
             ),
             _work_lane_creator_claim(),
         ),
     )
-    filename_dispatch = _work_dispatch(filename_title, ("Mick Herron",))
-    filename_lineage = WorkTitleTransformationLineage(
-        WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
-        WorkTitleTransformationSide.LOCAL,
-    )
-    filename_source = provider_observation(
+    decorated_source = provider_observation(
         "open-connection",
         (
             ProviderLaneResult(
-                filename_lane,
+                work_lane,
                 ProviderStatus.CANDIDATES,
-                (filename_candidate,),
-                dispatch_lineage=filename_dispatch,
-                transformation_lineage=filename_lineage,
-            ),
-        ),
-        authority="open_library",
-    )
-    filename_report = MetadataReport.create(
-        target=TargetFacts("primary", "ebooks", "item-1", filename_fields),
-        file=FileFacts(0, "a" * 64, "b" * 64),
-        local_claims=(filename_claim,),
-        local_reasons=("opening_matter_isbn",),
-        providers=(filename_source,),
-    )
-    collision = replace(
-        filename_candidate,
-        claims=(
-            _claim(
-                "open-connection",
-                "edition",
-                ClaimKind.TITLE,
-                "Plain Work",
-                scope=ClaimScope.WORK,
-            ),
-            _work_lane_creator_claim(),
-        ),
-    )
-    collision_source = provider_observation(
-        "open-connection",
-        (
-            ProviderLaneResult(
-                filename_lane,
-                ProviderStatus.CANDIDATES,
-                (collision,),
-                dispatch_lineage=filename_dispatch,
-                transformation_lineage=filename_lineage,
+                (decorated_candidate,),
+                dispatch_lineage=_work_dispatch("Real Tigers", ("Mick Herron",)),
             ),
         ),
         authority="open_library",
     )
     with pytest.raises(ReportValueError, match="work identity lineage"):
-        MetadataReport.create(
-            target=filename_report.target,
-            file=filename_report.file,
-            local_claims=filename_report.local_claims,
-            local_reasons=filename_report.local_reasons,
-            providers=(collision_source,),
-        )
-    object.__setattr__(filename_report, "providers", (collision_source,))
+        _work_lane_report((_work_lane_title(),), (decorated_source,))
+    object.__setattr__(baseline, "providers", (decorated_source,))
     assert not _target_backed_lookup_contains(
-        filename_report, collision_source, collision
+        baseline, decorated_source, decorated_candidate
     )
 
     unicode_whitespace = replace(

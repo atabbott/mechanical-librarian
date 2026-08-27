@@ -81,8 +81,6 @@ from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     WorkDispatchRung,
     WorkTitleTransformationFamily,
-    WorkTitleTransformationLineage,
-    WorkTitleTransformationSide,
     narrowing_work_query,
     work_query_ladder,
 )
@@ -665,9 +663,7 @@ def test_work_lookup_admits_one_exact_work_and_strips_edition_authority() -> Non
     )
 
 
-def test_work_lookup_admits_exact_primary_author_filename_prefix_and_persists_lineage() -> (
-    None
-):
+def test_work_lookup_treats_filename_author_prefix_as_query_only() -> None:
     lookup = MetadataLookup(
         ProviderQueryKind.WORK,
         (),
@@ -714,12 +710,9 @@ def test_work_lookup_admits_exact_primary_author_filename_prefix_and_persists_li
         lookup,
     )
 
-    assert qualified.status is ProviderStatus.CANDIDATES
-    assert qualified.dispatch_lineage == dispatch
-    assert qualified.transformation_lineage == WorkTitleTransformationLineage(
-        WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
-        WorkTitleTransformationSide.LOCAL,
-    )
+    assert qualified.status is ProviderStatus.NO_MATCH
+    assert qualified.dispatch_lineage is None
+    assert qualified.transformation_lineage is None
 
 
 def test_work_lookup_rejects_missing_or_ambiguous_decoration_lineage() -> None:
@@ -868,6 +861,12 @@ def test_work_lookup_rejects_missing_or_ambiguous_decoration_lineage() -> None:
     assert mixed_creators.status is ProviderStatus.NO_MATCH
     assert ambiguous_identity.status is ProviderStatus.NO_MATCH
 
+    exact_lookup = MetadataLookup(
+        ProviderQueryKind.WORK,
+        (),
+        "The Example",
+        ("Ada Author",),
+    )
     target = TargetFacts(
         "primary",
         "ebooks",
@@ -880,14 +879,10 @@ def test_work_lookup_rejects_missing_or_ambiguous_decoration_lineage() -> None:
             )
             if field.destination is TargetDestination.AUTHORS
             else field
-            for field in default_target_fields("Ada_Author_-_The Example")
+            for field in default_target_fields("The Example")
         ),
     )
-    dispatch = _work_dispatch("Ada_Author_-_The Example", ("Ada Author",))
-    transformation = WorkTitleTransformationLineage(
-        WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
-        WorkTitleTransformationSide.LOCAL,
-    )
+    dispatch = _work_dispatch("The Example", ("Ada Author",))
     same_work_candidates = (
         candidate("edition-1", "The Example"),
         candidate("edition-2", "The Example"),
@@ -901,7 +896,7 @@ def test_work_lookup_rejects_missing_or_ambiguous_decoration_lineage() -> None:
             ProviderQueryKind.WORK,
             dispatch_lineage=dispatch,
         ),
-        lookup,
+        exact_lookup,
     )
     assert same_work_qualified.status is ProviderStatus.CANDIDATES
     assert ("edition-1",) == tuple(
@@ -920,7 +915,6 @@ def test_work_lookup_rejects_missing_or_ambiguous_decoration_lineage() -> None:
                 same_work_candidates,
                 ProviderQueryKind.WORK,
                 dispatch_lineage=dispatch,
-                transformation_lineage=transformation,
             ),
         ),
     )
@@ -966,19 +960,13 @@ def test_work_lookup_rejects_missing_or_ambiguous_decoration_lineage() -> None:
                     (),
                     (mixed,),
                     ProviderQueryKind.WORK,
-                    dispatch_lineage=_work_dispatch(
-                        "Ada_Author_-_The Example", ("Ada Author",)
-                    ),
-                    transformation_lineage=WorkTitleTransformationLineage(
-                        WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
-                        WorkTitleTransformationSide.LOCAL,
-                    ),
+                    dispatch_lineage=_work_dispatch("The Example", ("Ada Author",)),
                 ),
             ),
         )
 
 
-def test_edition_overflow_witness_uses_the_same_decoration_admission() -> None:
+def test_edition_overflow_rejects_query_only_decoration_and_admits_exact() -> None:
     author = ProviderClaim.create(
         provider="catalogue",
         candidate="work-1",
@@ -1024,12 +1012,31 @@ def test_edition_overflow_witness_uses_the_same_decoration_admission() -> None:
         ),
     )
 
-    assert qualified.edition_enrichment_overflow == witness
-    assert qualified.dispatch_lineage == dispatch
-    assert qualified.transformation_lineage == WorkTitleTransformationLineage(
-        WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
-        WorkTitleTransformationSide.LOCAL,
+    assert qualified.edition_enrichment_overflow is None
+    assert qualified.dispatch_lineage is None
+    assert qualified.transformation_lineage is None
+
+    exact_dispatch = _work_dispatch("The Example", ("Ada Author",), narrowed=True)
+    exact = qualify_provider_observation(
+        ProviderObservation(
+            "catalogue",
+            ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+            (),
+            (),
+            ProviderQueryKind.WORK,
+            edition_enrichment_overflow=witness,
+            dispatch_lineage=exact_dispatch,
+        ),
+        MetadataLookup(
+            ProviderQueryKind.WORK,
+            (),
+            "The Example",
+            ("Ada Author",),
+        ),
     )
+    assert exact.edition_enrichment_overflow == witness
+    assert exact.dispatch_lineage == exact_dispatch
+    assert exact.transformation_lineage is None
 
     variant_witness = EditionEnrichmentOverflow(
         witness.work_identity,

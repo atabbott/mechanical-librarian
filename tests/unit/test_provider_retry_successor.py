@@ -63,9 +63,6 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     WorkDispatchRung,
-    WorkTitleTransformationFamily,
-    WorkTitleTransformationLineage,
-    WorkTitleTransformationSide,
     work_query_ladder,
 )
 
@@ -814,7 +811,7 @@ def test_retry_that_erases_retained_work_overflow_fails_closed(retry: _Retry) ->
     assert before == original.to_data()
 
 
-def test_retry_successor_preserves_exact_work_dispatch_and_transformation_lineage(
+def test_retry_successor_preserves_exact_work_dispatch_without_transformation(
     retry: _Retry,
 ) -> None:
     plan, work, isbn, _overflow = _overflow_source(retry)
@@ -828,12 +825,8 @@ def test_retry_successor_preserves_exact_work_dispatch_and_transformation_lineag
     )
     dispatch = WorkDispatchLineage(
         WorkDispatchRung.NORMALIZED,
-        (WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,),
+        (),
         True,
-    )
-    transformation = WorkTitleTransformationLineage(
-        WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
-        WorkTitleTransformationSide.LOCAL,
     )
     replacement = provider_observation(
         "catalogue",
@@ -843,7 +836,6 @@ def test_retry_successor_preserves_exact_work_dispatch_and_transformation_lineag
                 ProviderStatus.CANDIDATES,
                 (ProviderCandidate("new", "work", ()),),
                 dispatch_lineage=dispatch,
-                transformation_lineage=transformation,
             ),
         ),
         authority="open_library",
@@ -853,11 +845,18 @@ def test_retry_successor_preserves_exact_work_dispatch_and_transformation_lineag
 
     recovered = next(lane for lane in merged.lanes if lane.identity == work.identity)
     assert recovered.dispatch_lineage == dispatch
-    assert recovered.transformation_lineage == transformation
+    assert recovered.transformation_lineage is None
 
 
-def test_retry_successor_rejects_mixed_work_creators_before_publication(
+@pytest.mark.parametrize(
+    ("candidate_title", "include_neutral_creator"),
+    (("Current title", True), ("Ada_Example_-_Current title", False)),
+    ids=("mixed_creators", "query_only_filename_prefix"),
+)
+def test_retry_successor_rejects_invalid_work_identity_before_publication(
     retry: _Retry,
+    candidate_title: str,
+    include_neutral_creator: bool,
 ) -> None:
     plan, work, isbn, _overflow = _overflow_source(retry)
     fields = tuple(
@@ -886,12 +885,12 @@ def test_retry_successor_rejects_mixed_work_creators_before_publication(
     )
     retry.snapshot = snapshot
     retry.repository = _Repository(source)
-    claims = (
+    claims = [
         ProviderClaim.create(
             provider="catalogue",
             candidate="edition",
             kind=ClaimKind.TITLE,
-            value="Current title",
+            value=candidate_title,
             state=FieldState.VALID,
             scope=ClaimScope.WORK,
             applicability="not_applicable",
@@ -907,18 +906,21 @@ def test_retry_successor_rejects_mixed_work_creators_before_publication(
             role="author",
             raw_order=1,
         ),
-        ProviderClaim.create(
-            provider="catalogue",
-            candidate="edition",
-            kind=ClaimKind.CREATOR,
-            value="Ada Example",
-            state=FieldState.VALID,
-            scope=ClaimScope.WORK,
-            applicability="not_applicable",
-            role=None,
-            raw_order=2,
-        ),
-    )
+    ]
+    if include_neutral_creator:
+        claims.append(
+            ProviderClaim.create(
+                provider="catalogue",
+                candidate="edition",
+                kind=ClaimKind.CREATOR,
+                value="Ada Example",
+                state=FieldState.VALID,
+                scope=ClaimScope.WORK,
+                applicability="not_applicable",
+                role=None,
+                raw_order=2,
+            )
+        )
     dispatch = WorkDispatchLineage.from_query(
         work_query_ladder("Current title", ("Ada Example",))[0]
     )
@@ -928,7 +930,7 @@ def test_retry_successor_rejects_mixed_work_creators_before_publication(
             ProviderLaneResult(
                 work,
                 ProviderStatus.CANDIDATES,
-                (ProviderCandidate("edition", "work", claims),),
+                (ProviderCandidate("edition", "work", tuple(claims)),),
                 dispatch_lineage=dispatch,
             ),
         ),
