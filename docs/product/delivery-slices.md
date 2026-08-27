@@ -96,11 +96,69 @@ applicable`. #598 and #599 are focused defects blocked on the final installed
 copied nor modified by this checkpoint. This checkpoint creates no horizontal
 plan or additional constituents.
 
-## Delivery checkpoint 0.17.0: full-library evidence foundation
+## Delivery checkpoint 0.17.0: completed full-library experience
 
 | Slice | Tracker | Demonstrable outcome | Planning state |
 | --- | --- | --- | --- |
-| F25 Bounded EPUB series evidence | #375 | Exact installed inspection and report paths retain explicit package, front, and rear series/sequence indicia without prose or catalogue inference. | In delivery as one activation slice. |
+| F25 Bounded EPUB series evidence | #375 | Exact installed inspection and report paths retain explicit package, front, and rear series/sequence indicia without prose or catalogue inference. | Complete. |
+| F26 Cold-start automatic decision tranche | #744 | One measured field tranche advances automatically during the qualified cold-start path without widening authority beyond its evidence. | Complete. |
+| F27 Owner-managed settings | #763 | The owner manages typed configuration through one authenticated API and native Settings surface. | Complete through constituent #764. |
+| F28 Guided browser first run | #745 | An owner progresses from an empty volume through configuration and preparation into the first usable Library handover. | Complete. |
+
+## Delivery checkpoint 0.18.0: covers and responsiveness
+
+This checkpoint makes cover choice useful without an AI reviewer, makes optional
+reviewer setup an owner-managed product flow, and keeps full-library interaction
+and preparation legible at realistic scale.
+
+| Slice | Tracker | Demonstrable outcome | Planning state |
+| --- | --- | --- | --- |
+| F29 Reviewer-independent cover choice | #864 | An owner can inspect and act on a deterministic recommendation among confirmed cover matches without configuring an AI reviewer; qualified automatic policy remains explicit and owner decisions remain final. | Ready; the focused reliability prerequisites its reviewer-dependent qualification waited on are met. |
+| F30 Explainable cover observations | #865 | Cover evidence distinguishes high-signal defects from owner preferences through closed, observation-only dimensions before any new automatic authority exists. | Ready; the focused resource prerequisite #866 is met. |
+| F31 Owner-managed reviewer engines | #872 | First run and Settings let the owner continue without a reviewer or configure one usable engine per task, including contained Codex device authentication and OpenRouter cover observation through constituent #873. | Ready; the focused profile prerequisite #867 is met. #873 still follows F30. |
+| F32 Pipelined preparation experience | #869 | One server-owned preparation run moves from the final setup step into a selectable summary above Works and a right-panel detail, while naming active books and showing how many made it through each stage; terminal dismissal, reconnect, compact, and reduced-motion behavior remain truthful. | Ready. |
+| F33 Remembered owner session | #862 | One server-authoritative owner session remains valid across ordinary browser and application restarts for up to 30 days without becoming sliding or browser-stored authority. | Complete. |
+
+The selected F29, F31, and F32 storyboards are directional visual references,
+but their ticketed hierarchy, state meaning, interaction ownership, focus
+continuity, responsive composition, and reduced-motion equivalence are protected
+acceptance characteristics. `DESIGN.md` and direct exact-installed inspection
+remain the visual authority; implementation variance cannot remove or substitute
+an accepted state or interaction.
+
+Focused work remains outside the slice sequence, each using `Delivery slice: Not
+applicable`. #867 then #866 restored honest, repeatable reviewer operation; #853
+bounded owner-felt read latency; #871 contained malformed provider inputs; #870
+shapes provider work queries and is the one still open. F29 followed the
+reviewer defects only where its qualification consumes reviewer evidence; its
+reviewer-independent owner path remains the slice's required floor. F31 is one
+delivery transaction with #873 as its independently closable constituent.
+
+## Delivery checkpoint 0.19.0: evidence economy and decided fields
+
+This checkpoint spends provider request budgets deliberately, widens keyless
+first-run corroboration, and converts the measured classes of stalled owner
+decisions into qualified automatic decisions.
+
+| Slice | Tracker | Demonstrable outcome | Planning state |
+| --- | --- | --- | --- |
+| F34 Inventaire provider evidence | #883 | Inventaire serves qualified keyless edition-scope claims, covers, and identifier-first lookup through the existing provider route. | Ready. |
+| F35 Consensus title election | #884 | A title with recognizable local-only noise advances automatically when every present provider converges on the clean form. | Ready. |
+| F36 Language equivalence classes | #885 | Same-language representation variants collapse into one policy-rendered alternative; genuine conflicts survive. | Ready. |
+| F37 Empty-description tiebreaker | #886 | An empty description fills automatically under a qualified deterministic tiebreaker. | Ready. |
+| F38 Canonical contributor display | #887 | Canonical equivalence elects the display form as the stored value and the decision is stated plainly. | Ready. |
+| F39 Advised description rewrite | #892 | The configured reviewer engine offers one rewritten or fused description as marked authored content; an explicit owner policy may apply in-policy rewrites automatically, and otherwise candidates park for owner review. | Follows 0.18.0's #872/#873. |
+
+Focused work remains outside the slice sequence: #877 closes the checkpoint
+as its final measurement, grading 0.18.0 and 0.19.0 together against the
+#744 baselines (isolated 0.18.0 attribution is deliberately traded away;
+per-issue evidence and the preserved 2026-08-25 volume carry the interim
+proof); #881 then #882 make provider spending identifier-first and
+decisive-work-first within #876's pacing; #888 then #889 recover WORK-lane
+retrieval and reordered author sets, measure-first; #890 and #891 keep the
+fields rail and Library rail legible; each uses `Delivery slice: Not
+applicable`. The tranche slices F35–F38 qualify through the #445 route. The
+audiobook evidence-source selection (#893) stays outside this checkpoint.
 
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
 
