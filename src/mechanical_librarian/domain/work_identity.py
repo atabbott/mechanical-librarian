@@ -295,14 +295,16 @@ def work_query_ladder(title: str, authors: tuple[str, ...]) -> tuple[WorkQuery, 
         if transformed != shaped_title:
             shaped_title = transformed
             applied.append(rule.family)
-    candidates = [
-        WorkQuery(
-            shaped_title,
-            shaped_authors,
-            WorkDispatchRung.NORMALIZED,
-            tuple(applied),
+    candidates: list[WorkQuery] = []
+    if shaped_title and all(shaped_authors):
+        candidates.append(
+            WorkQuery(
+                shaped_title,
+                shaped_authors,
+                WorkDispatchRung.NORMALIZED,
+                tuple(applied),
+            )
         )
-    ]
     subtitle = apply_work_title_transformation(
         WorkTitleTransformationFamily.SUBTITLE_SEGMENT,
         shaped_title,
@@ -311,14 +313,15 @@ def work_query_ladder(title: str, authors: tuple[str, ...]) -> tuple[WorkQuery, 
     subtitle_applied = tuple(applied)
     if subtitle != shaped_title:
         subtitle_applied += (WorkTitleTransformationFamily.SUBTITLE_SEGMENT,)
-    candidates.append(
-        WorkQuery(
-            subtitle,
-            shaped_authors,
-            WorkDispatchRung.SUBTITLE_STRIPPED,
-            subtitle_applied,
+    if subtitle and all(shaped_authors):
+        candidates.append(
+            WorkQuery(
+                subtitle,
+                shaped_authors,
+                WorkDispatchRung.SUBTITLE_STRIPPED,
+                subtitle_applied,
+            )
         )
-    )
     folded_title = apply_work_title_transformation(
         WorkTitleTransformationFamily.PUNCTUATION_AMPERSAND_FOLD,
         subtitle,
@@ -328,19 +331,20 @@ def work_query_ladder(title: str, authors: tuple[str, ...]) -> tuple[WorkQuery, 
     folded_applied = subtitle_applied
     if folded_title != subtitle or folded_authors != shaped_authors:
         folded_applied += (WorkTitleTransformationFamily.PUNCTUATION_AMPERSAND_FOLD,)
-    candidates.append(
-        WorkQuery(
-            folded_title,
-            folded_authors,
-            WorkDispatchRung.PUNCTUATION_FOLDED,
-            folded_applied,
+    if folded_title and all(folded_authors):
+        candidates.append(
+            WorkQuery(
+                folded_title,
+                folded_authors,
+                WorkDispatchRung.PUNCTUATION_FOLDED,
+                folded_applied,
+            )
         )
-    )
     distinct: list[WorkQuery] = []
     seen: set[tuple[str, tuple[str, ...]]] = set()
     for value in candidates:
         key = (value.title.casefold(), tuple(item.casefold() for item in value.authors))
-        if value.title and all(value.authors) and key not in seen:
+        if key not in seen:
             seen.add(key)
             distinct.append(value)
     return tuple(distinct)

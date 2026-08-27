@@ -37,7 +37,12 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
     default_target_fields,
 )
-from mechanical_librarian.domain.work_identity import WorkDispatchRung
+from mechanical_librarian.domain.work_identity import (
+    WorkDispatchRung,
+    WorkTitleTransformationFamily,
+    WorkTitleTransformationLineage,
+    WorkTitleTransformationSide,
+)
 from tests.support.hardcover_evidence import (
     hardcover_envelope,
     isbn_claim,
@@ -91,6 +96,72 @@ def test_work_query_ladder_and_narrowing_use_closed_graphql_grammars() -> None:
     )
     assert 1 == observation.request_accounting.initial_dispatches
     assert 1 == observation.request_accounting.retry_dispatches
+
+
+@pytest.mark.parametrize(
+    "title",
+    ("[retail]", "(1)", "(2010)", "ISBN 9780306406157", "2nd Edition", "Book 2"),
+)
+def test_decoration_only_work_query_is_insufficient_without_request(title: str) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(500)
+
+    observation = HardcoverMetadataProvider(
+        "catalogue",
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        65_536,
+    ).observe(work_lookup(title))
+
+    assert ProviderStatus.INSUFFICIENT_INPUT is observation.status
+    assert [] == requests
+    assert (0, 0) == (
+        observation.request_accounting.initial_dispatches,
+        observation.request_accounting.retry_dispatches,
+    )
+
+
+def test_filename_author_prefix_reaches_qualified_hardcover_candidate() -> None:
+    lookup = work_lookup("Ada_Example_-_Plain_Work")
+    payload = hardcover_envelope(
+        [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}],
+        [
+            {
+                "id": 1,
+                "title": "Plain Work",
+                "contributions": [
+                    {
+                        "id": 1,
+                        "contribution": "Author",
+                        "author": {"id": 7, "name": "Ada Example"},
+                    }
+                ],
+            }
+        ],
+    )
+    observation = HardcoverMetadataProvider(
+        "catalogue",
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json=payload,
+                )
+            )
+        ),
+        65_536,
+    ).observe(lookup)
+    qualified = qualify_provider_observation(observation, lookup)
+
+    assert ProviderStatus.CANDIDATES is qualified.status
+    assert qualified.dispatch_lineage is not None
+    assert qualified.transformation_lineage == WorkTitleTransformationLineage(
+        WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
+        WorkTitleTransformationSide.LOCAL,
+    )
 
 
 def test_hardcover_candidate_limit_retries_with_primary_author_equality() -> None:

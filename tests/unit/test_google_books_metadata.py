@@ -42,7 +42,12 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
-from mechanical_librarian.domain.work_identity import WorkDispatchRung
+from mechanical_librarian.domain.work_identity import (
+    WorkDispatchRung,
+    WorkTitleTransformationFamily,
+    WorkTitleTransformationLineage,
+    WorkTitleTransformationSide,
+)
 
 
 def _isbn(value: str = "9780306406157") -> LocalClaim:
@@ -770,6 +775,62 @@ def test_work_query_requires_exact_complete_title_and_author_order() -> None:
     assert all(
         value.scope is ClaimScope.WORK or value is retained
         for value in observation.candidates[0].evidence
+    )
+
+
+@pytest.mark.parametrize(
+    "title",
+    ("[retail]", "(1)", "(2010)", "ISBN 9780306406157", "2nd Edition", "Book 2"),
+)
+def test_decoration_only_work_query_is_insufficient_without_request(title: str) -> None:
+    requests: list[httpx.Request] = []
+    lookup = MetadataLookup(ProviderQueryKind.WORK, (), title, ("Ada Example",))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(500)
+
+    observation = GoogleBooksMetadataProvider(
+        "google_books",
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        65_536,
+    ).observe(lookup)
+
+    assert ProviderStatus.INSUFFICIENT_INPUT is observation.status
+    assert [] == requests
+    assert (0, 0) == (
+        observation.request_accounting.initial_dispatches,
+        observation.request_accounting.retry_dispatches,
+    )
+
+
+def test_filename_author_prefix_reaches_qualified_google_books_candidate() -> None:
+    lookup = MetadataLookup(
+        ProviderQueryKind.WORK,
+        (),
+        "Ada_Example_-_Example_Book",
+        ("Ada Example",),
+    )
+    observation = GoogleBooksMetadataProvider(
+        "google_books",
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json={"totalItems": 1, "items": [_volume()]},
+                )
+            )
+        ),
+        65_536,
+    ).observe(lookup)
+    qualified = qualify_provider_observation(observation, lookup)
+
+    assert ProviderStatus.CANDIDATES is qualified.status
+    assert qualified.dispatch_lineage is not None
+    assert qualified.transformation_lineage == WorkTitleTransformationLineage(
+        WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
+        WorkTitleTransformationSide.LOCAL,
     )
 
 

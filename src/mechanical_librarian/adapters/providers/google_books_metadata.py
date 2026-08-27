@@ -292,6 +292,8 @@ class GoogleBooksMetadataProvider:
             family = None
             references = ()
             work_queries = work_query_ladder(lookup.title, lookup.authors)
+            if not work_queries:
+                return self._result(lookup, ProviderStatus.INSUFFICIENT_INPUT)
         else:
             return self._result(lookup, ProviderStatus.INSUFFICIENT_INPUT)
         if lookup.kind is ProviderQueryKind.WORK:

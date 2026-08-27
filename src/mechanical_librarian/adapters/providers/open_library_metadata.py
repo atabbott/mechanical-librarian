@@ -401,7 +401,14 @@ class OpenLibraryMetadataProvider:
                 ProviderStatus.NO_MATCH,
                 query_kind=lookup.kind,
             )
-            for work_query in work_query_ladder(lookup.title, lookup.authors):
+            work_queries = work_query_ladder(lookup.title, lookup.authors)
+            if not work_queries:
+                return ProviderObservation(
+                    self._name,
+                    ProviderStatus.INSUFFICIENT_INPUT,
+                    query_kind=lookup.kind,
+                )
+            for work_query in work_queries:
                 shaped_lookup = replace(
                     lookup,
                     title=work_query.title,

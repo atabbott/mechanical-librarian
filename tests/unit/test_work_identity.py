@@ -233,6 +233,23 @@ def test_query_only_families_never_admit(decorated: str) -> None:
     ).admitted
 
 
+@pytest.mark.parametrize(
+    "decoration_only",
+    (
+        "[retail]",
+        "(1)",
+        "(2010)",
+        "ISBN 9780306406157",
+        "2nd Edition",
+        "Book 2",
+    ),
+)
+def test_decoration_only_work_titles_have_no_dispatches(
+    decoration_only: str,
+) -> None:
+    assert () == work_query_ladder(decoration_only, ("Ada Example",))
+
+
 def test_complete_ordered_authors_and_variant_veto_remain_identity_floor() -> None:
     assert not admit_provider_work_identity(
         local_title="Ada_Example_-_Plain_Work",
