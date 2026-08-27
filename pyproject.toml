@@ -54,7 +54,7 @@ dev = [
   # runtime `httpx==0.28.1` the adapters call remains a separate distribution
   # with a separate import name and is unaffected by it.
   "httpx2==2.10.0",
-  "mutmut==3.3.1",
+  "mutmut==3.5.0",
   "mypy==2.3.1",
   "playwright==1.62.0",
   "pytest==9.1.1",
