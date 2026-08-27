@@ -751,6 +751,34 @@ def test_activity_example_selector_returns_one_current_published_candidate(
     assert snapshot.destination == selected.destination
 
 
+def test_activity_backup_readiness_rechecks_each_exact_database_revision(
+    effects: _EffectEnvironment,
+) -> None:
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    statements: list[str] = []
+    reader._connection.set_trace_callback(statements.append)
+    try:
+        assert reader.field_effect_backup_ready() is True
+        assert reader.field_effect_backup_ready() is True
+        assert statements.count("PRAGMA quick_check") == 1
+
+        effects.repository.set_field_effect_paused(True, effects.clock())
+        assert reader.field_effect_backup_ready() is True
+        assert statements.count("PRAGMA quick_check") == 2
+
+        reader.set_field_effect_paused(False, effects.clock())
+        assert reader.field_effect_backup_ready() is True
+        assert statements.count("PRAGMA quick_check") == 3
+    finally:
+        reader._connection.set_trace_callback(None)
+        reader.close()
+
+
 def test_activity_page_cache_invalidates_an_in_place_policy_transition_update(
     effects: _EffectEnvironment,
 ) -> None:

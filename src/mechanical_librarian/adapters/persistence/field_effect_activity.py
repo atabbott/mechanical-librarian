@@ -270,6 +270,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             ],
         ] = {}
         self._activity_page_cache_lock = RLock()
+        self._backup_ready_cache: tuple[tuple[int, int], bool] | None = None
         self._activity_page_busy_retry_seconds = 0.0
 
     @property
@@ -865,8 +866,27 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
     def field_effect_backup_ready(self) -> bool:
         """Prove the exact-current durable store can form a consistent checkpoint."""
         try:
-            row = self._connection.execute("PRAGMA quick_check").fetchone()
-            return row == ("ok",) and not self._connection.in_transaction
+            with self._activity_page_cache_lock:
+                data_version = self._connection.execute(
+                    "PRAGMA data_version"
+                ).fetchone()
+                if (
+                    data_version is None
+                    or len(data_version) != 1
+                    or type(data_version[0]) is not int
+                    or data_version[0] < 0
+                ):
+                    return False
+                revision = (data_version[0], self._connection.total_changes)
+                if (
+                    self._backup_ready_cache is not None
+                    and self._backup_ready_cache[0] == revision
+                ):
+                    return self._backup_ready_cache[1]
+                row = self._connection.execute("PRAGMA quick_check").fetchone()
+                ready = row == ("ok",) and not self._connection.in_transaction
+                self._backup_ready_cache = (revision, ready)
+                return ready
         except sqlite3.Error:
             return False
 
