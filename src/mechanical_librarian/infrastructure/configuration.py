@@ -31,6 +31,11 @@ from mechanical_librarian.application.configuration import (
     ReviewWebConfiguration,
     TargetConnectionConfiguration,
 )
+from mechanical_librarian.domain.validation import (
+    OWNER_SESSION_LIFETIME_DEFAULT,
+    OWNER_SESSION_LIFETIME_MAXIMUM,
+    OWNER_SESSION_LIFETIME_MINIMUM,
+)
 
 _MAX_CONFIG_BYTES = 262_144
 Name = Annotated[StrictStr, Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")]
@@ -185,7 +190,10 @@ class ReviewInput(_Closed):
     owner_password_hash_file: BoundedAbsolutePath
     tls_certificate_file: BoundedAbsolutePath | None = None
     tls_private_key_file: BoundedAbsolutePath | None = None
-    session_lifetime_seconds: Annotated[StrictInt, Field(ge=300, le=86_400)] = 3600
+    session_lifetime_seconds: Annotated[
+        StrictInt,
+        Field(ge=OWNER_SESSION_LIFETIME_MINIMUM, le=OWNER_SESSION_LIFETIME_MAXIMUM),
+    ] = OWNER_SESSION_LIFETIME_DEFAULT
     trusted_proxy_ips: Annotated[
         list[Annotated[StrictStr, Field(min_length=1, max_length=64)]],
         Field(max_length=16),

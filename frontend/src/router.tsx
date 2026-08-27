@@ -11,7 +11,7 @@ import {
 import { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import type { createMemoryHistory } from '@tanstack/react-router'
-import { ApiError, BuildMismatchError } from './api/http'
+import { ApiError, BuildMismatchError, SessionExpiredError } from './api/http'
 import type {
   ActivitySearch,
   AttentionSearch,
@@ -960,6 +960,9 @@ export interface PolicyCritical {
 }
 const PolicyRouteComponent = () => {
   const initial = policyRoute.useLoaderData()
+  return initial === null ? null : <LoadedPolicyRoute initial={initial} />
+}
+const LoadedPolicyRoute = ({ initial }: { initial: PolicyCritical }) => {
   const { http } = rootRoute.useRouteContext()
   const state = useQuery({ ...policyStateQuery(http), initialData: initial.state })
   const shadow = useQuery({ ...shadowQuery(http), initialData: initial.shadow })
@@ -971,7 +974,7 @@ export const policyRoute = createRoute({
   path: '/policy',
   validateSearch: normalizePolicySearch,
   loader: async ({ context, abortController }) => {
-    const [state, shadow, safety] = await Promise.all([
+    const [state, shadow, safety] = await Promise.allSettled([
       context.queryClient.ensureQueryData({
         ...policyStateQuery(context.http),
         queryFn: () => context.http.getPolicyState(abortController.signal),
@@ -985,7 +988,17 @@ export const policyRoute = createRoute({
         queryFn: () => context.http.getAutomaticSafety(abortController.signal),
       }),
     ])
-    return { state, shadow, safety }
+    for (const result of [state, shadow, safety]) {
+      if (result.status === 'fulfilled') continue
+      // The client has scheduled document navigation. Keeping this loader
+      // fulfilled avoids an unhandled concurrent loader rejection during it.
+      if (result.reason instanceof SessionExpiredError) return null
+      throw result.reason
+    }
+    if (state.status !== 'fulfilled') throw state.reason
+    if (shadow.status !== 'fulfilled') throw shadow.reason
+    if (safety.status !== 'fulfilled') throw safety.reason
+    return { state: state.value, shadow: shadow.value, safety: safety.value }
   },
   component: PolicyRouteComponent,
 })

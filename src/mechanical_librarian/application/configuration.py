@@ -12,6 +12,10 @@ from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
     resolve_policy,
 )
+from mechanical_librarian.domain.validation import (
+    OWNER_SESSION_LIFETIME_DEFAULT,
+    owner_session_lifetime,
+)
 
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _CONTACT_EMAIL = re.compile(
@@ -44,7 +48,7 @@ def _absolute_path(value: object, label: str) -> None:
 class ReviewWebConfiguration:
     canonical_origin: str
     owner_password_hash_file: str
-    session_lifetime_seconds: int = 3600
+    session_lifetime_seconds: int = OWNER_SESSION_LIFETIME_DEFAULT
     trusted_proxy_ips: tuple[str, ...] = ()
     tls_certificate_file: str | None = None
     tls_private_key_file: str | None = None
@@ -88,8 +92,7 @@ class ReviewWebConfiguration:
                 self.cover_reviewer_profile_file, "cover reviewer profile file"
             )
         if (
-            type(self.session_lifetime_seconds) is not int
-            or not 300 <= self.session_lifetime_seconds <= 86_400
+            not owner_session_lifetime(self.session_lifetime_seconds)
             or type(self.trusted_proxy_ips) is not tuple
             or len(self.trusted_proxy_ips) > 16
             or any(

@@ -24,7 +24,11 @@ from mechanical_librarian.application.setup_journey import (
 )
 from mechanical_librarian.domain.owner_settings import LibrarySettings, ProviderSettings
 from mechanical_librarian.domain.setup_state import SetupStateDocument
-from mechanical_librarian.interfaces.web.app import BodyLimitMiddleware
+from mechanical_librarian.domain.validation import OWNER_SESSION_LIFETIME_DEFAULT
+from mechanical_librarian.interfaces.web.app import (
+    BodyLimitMiddleware,
+    owner_password_binding,
+)
 from mechanical_librarian.interfaces.web.setup_frontend import (
     SETUP_CSS,
     SETUP_HTML,
@@ -170,7 +174,7 @@ def create_setup_app(
     connection: SetupConnectionWriter | None = None,
     canonical_origin: str = "https://testserver",
     journey: SetupJourneyOperation | None = None,
-    session_lifetime_seconds: int = 3600,
+    session_lifetime_seconds: int = OWNER_SESSION_LIFETIME_DEFAULT,
     activate: Callable[[int], None] | None = None,
     clock: Callable[[], int] = lambda: int(time.time()),
     token_factory: Callable[[int], str] = secrets.token_urlsafe,
@@ -288,11 +292,13 @@ def create_setup_app(
             if not 32 <= len(session_token) <= 128 or not 32 <= len(csrf_token) <= 128:
                 raise HTTPException(500, {"error": "unavailable"})
             expires_at = now + session_lifetime_seconds
+            owner_verifier = PasswordHasher().hash(request.password)
+            session_digest = owner_password_binding(owner_verifier)[1](session_token)
             try:
                 state.claim_owner(
                     expected_revision=request.expected_revision,
-                    owner_verifier=PasswordHasher().hash(request.password),
-                    session_digest=hashlib.sha256(session_token.encode()).hexdigest(),
+                    owner_verifier=owner_verifier,
+                    session_digest=session_digest,
                     csrf_digest=hashlib.sha256(csrf_token.encode()).hexdigest(),
                     created_at=now,
                     expires_at=expires_at,

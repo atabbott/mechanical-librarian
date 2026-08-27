@@ -84,7 +84,7 @@ from mechanical_librarian.infrastructure.configuration import load_configuration
 from mechanical_librarian.infrastructure.security.credentials import target_client_token
 from mechanical_librarian.interfaces.web.app import (
     create_review_app,
-    load_owner_password_verifier,
+    load_owner_password_binding,
 )
 from mechanical_librarian.interfaces.web.react_assets import (
     ReactAssetLoader,
@@ -163,6 +163,9 @@ def _compose_review_client(
     cover_considerations = composition._compose_cover_considerations(
         repository, artifact_store_path, review
     )
+    password_binding = load_owner_password_binding(
+        Path(review.owner_password_hash_file)
+    )
     application = compose_review_application(
         state_owner=repository,
         session_store=repository,
@@ -170,9 +173,8 @@ def _compose_review_client(
         decision_store=repository,
         library_store=repository,
         policy_store=repository,
-        verify_password=load_owner_password_verifier(
-            Path(review.owner_password_hash_file)
-        ),
+        verify_password=password_binding[0],
+        session_digest=password_binding[1],
         clock=lambda: int(time.time()),
         session_lifetime_seconds=review.session_lifetime_seconds,
         graceful_shutdown_seconds=review.graceful_shutdown_seconds,

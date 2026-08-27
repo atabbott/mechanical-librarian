@@ -21,7 +21,12 @@ from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
     resolve_policy,
 )
-from mechanical_librarian.domain.validation import credential
+from mechanical_librarian.domain.validation import (
+    OWNER_SESSION_LIFETIME_DEFAULT,
+    OWNER_SESSION_LIFETIME_MAXIMUM,
+    OWNER_SESSION_LIFETIME_MINIMUM,
+    credential,
+)
 
 Name = Annotated[StrictStr, Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")]
 Email = Annotated[StrictStr, Field(min_length=3, max_length=254)]
@@ -141,7 +146,10 @@ class ReportLimitSettings(_Closed):
 
 
 class ServerSettings(_Closed):
-    session_lifetime_seconds: Annotated[StrictInt, Field(ge=300, le=86_400)] = 3600
+    session_lifetime_seconds: Annotated[
+        StrictInt,
+        Field(ge=OWNER_SESSION_LIFETIME_MINIMUM, le=OWNER_SESSION_LIFETIME_MAXIMUM),
+    ] = OWNER_SESSION_LIFETIME_DEFAULT
     library_polling_interval_seconds: Annotated[StrictInt, Field(ge=60, le=86_400)] = (
         900
     )

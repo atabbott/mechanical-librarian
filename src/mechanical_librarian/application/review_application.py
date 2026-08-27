@@ -1213,6 +1213,7 @@ def compose_review_application(
     clock: Callable[[], int],
     session_lifetime_seconds: int,
     graceful_shutdown_seconds: int,
+    session_digest: Callable[[str], str],
     close_state_owner: bool = False,
     preparation: ReviewPreparationSupervisor | None = None,
     policy_libraries: tuple[tuple[str, dict[str, object] | None], ...] = (),
@@ -1278,7 +1279,11 @@ def compose_review_application(
     application = ReviewApplication(
         state_owner=state_owner,
         sessions=OwnerSessionService(
-            session_store, verify_password, clock, session_lifetime_seconds
+            session_store,
+            verify_password,
+            session_digest,
+            clock,
+            session_lifetime_seconds,
         ),
         cases=InspectCurrentReviewCase(case_store, cover_considerations),
         decisions=RecordHumanDecision(decision_store, clock, timing),

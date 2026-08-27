@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Remember the owner login for up to 30 days with a fixed, server-enforced
+  expiry and verifier-bound session lookup. Logout and owner-verifier
+  replacement end remembered authority. (#862)
+- Upgrading to 0.18.0 signs out existing owners once: earlier sessions used an
+  unbound digest and cannot be retained while preserving verifier replacement
+  invalidation. Sign in again after the upgrade. (#862)
+
 - Keep Activity reads out of the guarded background-operation gate and derive
   ordinary page totals from the same bounded activity projection as their rows.
   Live updates stay immediate during owner input, bound preparation reads in an

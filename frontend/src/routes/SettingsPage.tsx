@@ -92,8 +92,8 @@ const validationErrors = (
       'server.session_lifetime_seconds',
       document.server.session_lifetime_seconds,
       300,
-      86_400,
-      'Session lifetime',
+      2_592_000,
+      'Fixed owner session lifetime',
     ],
     [
       'server.library_polling_interval_seconds',
@@ -1094,7 +1094,13 @@ const SettingsEditor = ({
                               ? 60
                               : 1
                         }
-                        max={key === 'graceful_shutdown_seconds' ? 300 : 86_400}
+                        max={
+                          key === 'session_lifetime_seconds'
+                            ? 2_592_000
+                            : key === 'graceful_shutdown_seconds'
+                              ? 300
+                              : 86_400
+                        }
                         value={draft.server[key]}
                         onChange={(event) =>
                           update((value) => {
