@@ -64,6 +64,13 @@ from mechanical_librarian.domain.metadata_report import (
     normalize_title,
     provider_access_time,
 )
+from mechanical_librarian.domain.work_identity import (
+    WorkDispatchLineage,
+    WorkDispatchRung,
+    WorkQuery,
+    narrowing_work_query,
+    work_query_ladder,
+)
 
 GOOGLE_BOOKS_URL = "https://www.googleapis.com/books/v1/volumes"
 _VOLUME_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -230,6 +237,8 @@ class GoogleBooksMetadataProvider:
                         observation.status,
                         observation.candidates,
                         observation.accessed_at,
+                        dispatch_lineage=observation.dispatch_lineage,
+                        transformation_lineage=observation.transformation_lineage,
                     )
                 )
         finally:
@@ -282,12 +291,33 @@ class GoogleBooksMetadataProvider:
         ):
             family = None
             references = ()
-            query = " ".join(
-                [f'intitle:"{lookup.title}"']
-                + [f'inauthor:"{author}"' for author in lookup.authors]
-            )
+            work_queries = work_query_ladder(lookup.title, lookup.authors)
+            if not work_queries:
+                return self._result(lookup, ProviderStatus.INSUFFICIENT_INPUT)
         else:
             return self._result(lookup, ProviderStatus.INSUFFICIENT_INPUT)
+        if lookup.kind is ProviderQueryKind.WORK:
+            last = self._result(lookup, ProviderStatus.NO_MATCH)
+            for work_query in work_queries:
+                last = self._observe_work_query(
+                    lookup,
+                    work_query,
+                    local_claims,
+                    deadline=deadline,
+                )
+                if last.status is ProviderStatus.CANDIDATES:
+                    return last
+                if last.status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED:
+                    return self._observe_work_query(
+                        lookup,
+                        narrowing_work_query(work_query),
+                        local_claims,
+                        deadline=deadline,
+                        query_retry=True,
+                    )
+                if last.status is not ProviderStatus.NO_MATCH:
+                    return last
+            return last
         try:
             payload = self._request(query, deadline=deadline)
             candidates = _candidates(
@@ -323,6 +353,53 @@ class GoogleBooksMetadataProvider:
             references=references,
         )
 
+    def _observe_work_query(
+        self,
+        lookup: MetadataLookup,
+        work_query: WorkQuery,
+        local_claims: tuple[LocalClaim, ...],
+        *,
+        deadline: float | None,
+        query_retry: bool = False,
+    ) -> ProviderObservation:
+        query = _google_books_work_query(work_query)
+        try:
+            payload = self._request(
+                query,
+                deadline=deadline,
+                query_retry=query_retry
+                or work_query.rung is not WorkDispatchRung.NORMALIZED
+                or work_query.candidate_limit_narrowing_retry,
+            )
+            candidates = _candidates(
+                self._name,
+                payload,
+                local_claims,
+                requested_family=None,
+                schema_rejections=lambda count: self._reject_schema_members(count),
+            )
+        except ProviderFailure as error:
+            return self._result(lookup, error.status)
+        except (
+            EvidenceValueError,
+            KeyError,
+            TypeError,
+            ValueError,
+            UnicodeError,
+            RecursionError,
+        ):
+            return self._result(lookup, ProviderStatus.MALFORMED)
+        if len(candidates) > _MAX_RESULTS:
+            return self._result(lookup, ProviderStatus.CANDIDATE_LIMIT_EXCEEDED)
+        if not candidates:
+            return self._result(lookup, ProviderStatus.NO_MATCH)
+        return self._result(
+            lookup,
+            ProviderStatus.CANDIDATES,
+            candidates,
+            dispatch_lineage=WorkDispatchLineage.from_query(work_query),
+        )
+
     def _reject_schema_members(self, count: int = 1) -> None:
         if count <= 0:
             return
@@ -350,6 +427,7 @@ class GoogleBooksMetadataProvider:
         candidates: tuple[ProviderCandidate, ...] = (),
         *,
         references: tuple[str, ...] = (),
+        dispatch_lineage: WorkDispatchLineage | None = None,
     ) -> ProviderObservation:
         return ProviderObservation(
             self._name,
@@ -360,15 +438,24 @@ class GoogleBooksMetadataProvider:
             "google_books",
             accessed_at=self._accessed_at,
             diagnostics=self._schema_diagnostics(),
+            dispatch_lineage=dispatch_lineage,
         )
 
-    def _request(self, query: str, *, deadline: float | None) -> dict[str, Any]:
+    def _request(
+        self,
+        query: str,
+        *,
+        deadline: float | None,
+        query_retry: bool = False,
+    ) -> dict[str, Any]:
         for retry_index in range(_MAX_ATTEMPTS_PER_QUERY):
             started = self._clock()
             attempts_before_dispatch = self._attempt_count
             try:
                 value = self._request_once(
-                    query, deadline=deadline, is_retry=retry_index > 0
+                    query,
+                    deadline=deadline,
+                    is_retry=query_retry or retry_index > 0,
                 )
             except (asyncio.CancelledError, KeyboardInterrupt):
                 if self._attempt_count != attempts_before_dispatch:
@@ -1115,6 +1202,17 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
 
 def _reject_number(_: str) -> float:
     raise ValueError("provider number is invalid")
+
+
+def _google_books_work_query(value: WorkQuery) -> str:
+    """Render the documented Google Books q grammar without changing identity."""
+    title = value.title.replace('"', " ")
+    authors = tuple(author.replace('"', " ") for author in value.authors)
+    if value.candidate_limit_narrowing_retry:
+        return f'intitle:"{title}" inauthor:"{" ".join(authors)}"'
+    return " ".join(
+        [f'intitle:"{title}"'] + [f'inauthor:"{author}"' for author in authors]
+    )
 
 
 __all__ = ["GOOGLE_BOOKS_URL", "GoogleBooksMetadataProvider"]

@@ -39,8 +39,12 @@ metadata attempts, at most nine Google Books Volumes queries and 54 aggregate
 attempts, and separately credential-free bounded cover
 request chains for admitted descriptors. These
 metadata maxima apply only when their provider and corresponding discovery
-lanes are enabled and admitted. It may append a neutral report and update its
-current pointer. It has
+lanes are enabled and admitted. Each ISBN family and each distinct work-query
+ladder rung consumes one fixed query; a plan that cannot fit every lane inside
+that limit is rejected before provider construction rather than partially
+dispatched. Candidate-limit narrowing and transport retries consume the
+separate aggregate-attempt allowance. It may append a neutral report and update
+its current pointer. It has
 no target-write, media-write, review, decision, apply, background, durable retry,
 deletion, repair, import, schema-migration, or backward-compatibility authority.
 An existing database must match the installed increment's exact current schema
@@ -508,7 +512,7 @@ deadline, byte, and request-count authority. Attempt records are bounded and
 process-local. Provider adapters also count optional parser/schema rejections
 at their actual rejection points. The application canonically merges those
 counts once with the attempt categories and incomplete-outcome mapping for
-`metadata-report-v27`; provider, attempt ordinal, delay, elapsed time,
+`metadata-report-v28`; provider, attempt ordinal, delay, elapsed time,
 headers, bodies, and exception text are dropped. Application-created
 query-limit outcomes follow the same closed mapping and persist
 provider/lookup_construction/lookup without constructing or invoking a
@@ -516,6 +520,16 @@ provider. Missing, malformed, or exception-raising optional attempt records map
 to a bounded provider/unknown/response aggregate. Provider observations admit
 only sorted unique provider-component aggregates whose category and stage are
 one supported provider combination.
+
+Work-query shaping never rewrites retained evidence. The canonical report keeps
+only a closed dispatch lineage; rendered queries, shaped values, credentials,
+and responses are not retained. The 0.18.0 decoration-admission subset is empty,
+so every transformation is query-only and cannot grant candidate or write
+authority. The nullable transformation-lineage replay field rejects every
+non-null value.
+All widening and narrowing requests remain inside the existing deadline,
+pacing, byte, dispatch-count, and retry-accounting boundaries; ISBN/ASIN
+dispatch is unchanged.
 
 The fixed Hardcover selections stay within three relationship levels. Typed
 taxonomy is joined from bounded sibling-root tag rows by exact provider IDs.

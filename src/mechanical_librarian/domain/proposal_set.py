@@ -41,6 +41,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderClaim,
     ProviderEvidenceKind,
     ProviderIdentityBinding,
+    ProviderLaneObservation,
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
@@ -55,6 +56,7 @@ from mechanical_librarian.domain.metadata_report import (
     manifestation_publication_compatible,
     normalize_date_value,
     normalize_title,
+    provider_candidate_set_work_identity_admission,
     publication_date_is_voting,
 )
 
@@ -1696,7 +1698,9 @@ def _target_backed_lookup_contains(
                 and expected_authors
                 and lane.input_references == target_title_references
                 and target_titles_are_exact
-                and _candidate_replays_work_qualification(
+                and _candidate_set_replays_work_qualification(
+                    provider,
+                    lane,
                     candidate,
                     expected_title,
                     expected_authors,
@@ -1733,78 +1737,34 @@ def _isbn_family_claims(
     )
 
 
-def _candidate_replays_work_qualification(
+def _candidate_set_replays_work_qualification(
+    provider: ProviderObservation,
+    lane: ProviderLaneObservation,
     candidate: ProviderCandidate,
     expected_title: str,
     expected_authors: tuple[str, ...],
 ) -> bool:
-    """Replay the closed WORK candidate test before granting lane authority."""
-    titles = tuple(
-        normalize_title(claim.value).casefold()
-        for claim in candidate.claims
-        if claim.scope is ClaimScope.WORK
-        and claim.kind is ClaimKind.TITLE
-        and claim.state is FieldState.VALID
-        and claim.value is not None
-    )
-    creators = tuple(
-        claim
-        for claim in candidate.claims
-        if claim.scope is ClaimScope.WORK and claim.kind is ClaimKind.CREATOR
-    )
-    if (
-        titles != (expected_title.casefold(),)
-        or not creators
-        or any(
-            claim.state is not FieldState.VALID or claim.value is None
-            for claim in creators
-        )
-        or any(
-            claim.scope is ClaimScope.WORK
-            and claim.kind is ClaimKind.CONTRIBUTOR
-            and claim.role in {"abridger", "adapter", "translator"}
-            for claim in candidate.claims
-        )
-        or any(
-            _variant_marker(claim.value)
-            for claim in candidate.claims
-            if claim.kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE}
-            and claim.state is FieldState.VALID
-            and claim.value is not None
-        )
+    """Replay one unambiguous WORK candidate set before granting authority."""
+    candidates_by_identity = {value.identity: value for value in provider.candidates}
+    if any(
+        value.edition_identity not in candidates_by_identity
+        for value in lane.candidates
     ):
         return False
-    # The guard above returned False when any creator claim carried no value.
-    creator_names = tuple(
-        normalize_title(cast("str", claim.value)).casefold() for claim in creators
+    lane_candidates = tuple(
+        candidates_by_identity[value.edition_identity] for value in lane.candidates
     )
-    expected = tuple(value.casefold() for value in expected_authors)
-    if all(claim.role == "author" for claim in creators):
-        return creator_names == expected
-    if not all(claim.role is None for claim in creators):
-        return False
+    admission = provider_candidate_set_work_identity_admission(
+        lane_candidates,
+        expected_title,
+        expected_authors,
+        lane.dispatch_lineage,
+    )
     return (
-        creator_names == expected
-        and complete_creator_identity_bindings(candidate, creators) is not None
-    )
-
-
-def _variant_marker(value: str) -> bool:
-    tokens = {
-        "".join(character for character in token if character.isalnum())
-        for token in normalize_title(value).casefold().split()
-    }
-    return bool(
-        tokens
-        & {
-            "abridgement",
-            "abridgment",
-            "abridged",
-            "adaptation",
-            "adapted",
-            "translation",
-            "translated",
-        }
+        admission.admitted
+        and admission.candidates == lane_candidates
+        and candidate in admission.candidates
+        and admission.transformation == lane.transformation_lineage
     )
 
 

@@ -53,6 +53,10 @@ from mechanical_librarian.domain.shadow_review import (
     ShadowReviewValueError,
     canonical_json,
 )
+from mechanical_librarian.domain.work_identity import (
+    WorkDispatchLineage,
+    work_query_ladder,
+)
 from tests.support.proposal_evidence import (
     _claim,
     _contradictory_publication_provider,
@@ -988,7 +992,7 @@ def test_publication_candidate_projects_typed_source_and_access_context() -> Non
                         ),
                     ),
                 ),
-                ProviderQueryKind.WORK,
+                ProviderQueryKind.ISBN,
                 "hardcover",
                 accessed_at="2023-11-14T22:13:20.125000Z",
             ),
@@ -1010,7 +1014,7 @@ def test_publication_candidate_projects_typed_source_and_access_context() -> Non
                         ),
                     ),
                 ),
-                ProviderQueryKind.WORK,
+                ProviderQueryKind.ISBN,
                 "open_library",
             ),
         ),
@@ -1130,7 +1134,7 @@ def test_publication_candidate_projects_typed_source_and_access_context() -> Non
         (value for value in packet.citations if value["citation_id"] == claim.reference)
     )["fact"]
     assert "hardcover" == citation["access"]["authority"]
-    assert "work" == citation["access"]["query_kind"]
+    assert "isbn" == citation["access"]["query_kind"]
     assert "2023-11-14T22:13:20.125000Z" == citation["access"]["accessed_at"]
     assert "edition-1" == citation["candidate"]
     assert "work-1" == citation["work_identity"]
@@ -1416,13 +1420,24 @@ def test_unbound_manifestation_incompatibility_replays_from_target_lookup() -> N
         provider="catalogue",
         candidate="edition-1",
         kind=ClaimKind.TITLE,
-        value="Provider title",
+        value="Target title",
         state=FieldState.VALID,
         scope=ClaimScope.WORK,
         applicability="not_applicable",
     )
     publication_text = ProviderEvidence(
         ProviderEvidenceKind.PUBLICATION_DATE_TEXT, "2001-02-03", ClaimScope.EDITION
+    )
+    provider_author = ProviderClaim.create(
+        provider="catalogue",
+        candidate="edition-1",
+        kind=ClaimKind.CREATOR,
+        value="Ada Author",
+        state=FieldState.VALID,
+        scope=ClaimScope.WORK,
+        applicability="not_applicable",
+        role="author",
+        raw_order=1,
     )
     target_fields = tuple(
         (
@@ -1445,10 +1460,16 @@ def test_unbound_manifestation_incompatibility_replays_from_target_lookup() -> N
                 ProviderStatus.CANDIDATES,
                 candidates=(
                     ProviderCandidate(
-                        "edition-1", "work-1", (provider_title,), (publication_text,)
+                        "edition-1",
+                        "work-1",
+                        (provider_title, provider_author),
+                        (publication_text,),
                     ),
                 ),
                 query_kind=ProviderQueryKind.WORK,
+                dispatch_lineage=WorkDispatchLineage.from_query(
+                    work_query_ladder("Target title", ("Ada Author",))[0]
+                ),
             ),
         ),
     )

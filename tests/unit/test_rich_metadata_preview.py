@@ -1165,9 +1165,10 @@ def test_automatic_series_abstains_when_a_candidate_provider_has_a_failed_lane()
     candidate = provider.candidates[0]
     successful_lane = ProviderLaneObservation(
         "lane_" + "a" * 64,
-        ProviderQueryKind.WORK,
+        ProviderQueryKind.ISBN,
         ProviderStatus.CANDIDATES,
         (local.reference,),
+        "9780306406157",
         candidates=(
             ProviderLaneCandidate(
                 provider_lane_candidate_reference(

@@ -44,6 +44,10 @@ from mechanical_librarian.domain.metadata_report import (
     finalize_candidate_comparisons,
     manifestation_publication_compatible,
 )
+from mechanical_librarian.domain.work_identity import (
+    WorkDispatchLineage,
+    work_query_ladder,
+)
 
 
 @pytest.fixture
@@ -116,6 +120,27 @@ def local(local_isbn: LocalClaim, local_date: LocalClaim) -> tuple[LocalClaim, .
 
 @pytest.fixture
 def unbound_report(candidate: ProviderCandidate) -> MetadataReport:
+    title = ProviderClaim.create(
+        provider="catalogue",
+        candidate="edition-1",
+        kind=ClaimKind.TITLE,
+        value="Target title",
+        state=FieldState.VALID,
+        scope=ClaimScope.WORK,
+        applicability="not_applicable",
+    )
+    author = ProviderClaim.create(
+        provider="catalogue",
+        candidate="edition-1",
+        kind=ClaimKind.CREATOR,
+        value="Ada Author",
+        state=FieldState.VALID,
+        scope=ClaimScope.WORK,
+        applicability="not_applicable",
+        role="author",
+        raw_order=1,
+    )
+    qualified_candidate = replace(candidate, claims=(*candidate.claims, title, author))
     target_fields = tuple(
         (
             TargetField(
@@ -142,8 +167,11 @@ def unbound_report(candidate: ProviderCandidate) -> MetadataReport:
             ProviderObservation(
                 "catalogue",
                 ProviderStatus.CANDIDATES,
-                candidates=(candidate,),
+                candidates=(qualified_candidate,),
                 query_kind=ProviderQueryKind.WORK,
+                dispatch_lineage=WorkDispatchLineage.from_query(
+                    work_query_ladder("Target title", ("Ada Author",))[0]
+                ),
             ),
         ),
     )
@@ -344,6 +372,7 @@ def test_unlinkable_evidence_rejects_the_unbound_manifestation_link(
     unbound_report: MetadataReport,
 ) -> None:
     unbound_link = unbound_report.providers[0].candidates[0].evidence[0].links[0]
+    qualified_candidate = unbound_report.providers[0].candidates[0]
 
     def target_report(evidence: ProviderEvidence) -> MetadataReport:
         return MetadataReport.create(
@@ -355,8 +384,11 @@ def test_unlinkable_evidence_rejects_the_unbound_manifestation_link(
                 ProviderObservation(
                     "catalogue",
                     ProviderStatus.CANDIDATES,
-                    candidates=(replace(candidate, evidence=(evidence,)),),
+                    candidates=(replace(qualified_candidate, evidence=(evidence,)),),
                     query_kind=ProviderQueryKind.WORK,
+                    dispatch_lineage=WorkDispatchLineage.from_query(
+                        work_query_ladder("Target title", ("Ada Author",))[0]
+                    ),
                 ),
             ),
         )

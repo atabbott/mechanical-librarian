@@ -70,7 +70,7 @@ _REPORTS_SQL = (
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
     "file_identity TEXT NOT NULL CHECK (length(file_identity) = 64 AND file_identity NOT GLOB '*[^0-9a-f]*'), "
     "content_digest TEXT NOT NULL CHECK (length(content_digest) = 64 AND content_digest NOT GLOB '*[^0-9a-f]*'), "
-    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v27'), "
+    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v28'), "
     "document_digest TEXT NOT NULL CHECK (length(document_digest) = 64 AND document_digest NOT GLOB '*[^0-9a-f]*'), "
     "document TEXT NOT NULL CHECK (typeof(document) = 'text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152), "
     "UNIQUE (connection_name, library_name, item_id, file_identity, document_digest))"
@@ -1090,7 +1090,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
 
 
 _REVIEW_OWNER_DECISION_ACTIONS_V1_SOURCE_OBJECTS_SHA256 = (
-    "98b2f9b1816c1ac343eb859af86058d5551b233d9cfc47a983af2a288654cc38"
+    "252c7b4837e6f4a5046038c9576a9f9cbf211f1b9fd84ac7c472d0e8f90751ca"
 )
 _REVIEW_OWNER_DECISION_ACTIONS_V1_SOURCE_FACT_VALUES_SQL = (
     "json_extract(result.value,'$.destination'),"

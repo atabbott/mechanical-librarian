@@ -2250,7 +2250,9 @@ def _typed_discovery_identity_case(
             if lane_kind is ProviderQueryKind.ISBN or unrelated_isbn_mapping
             else None
         )
-        work_candidate = candidate if lane_kind is ProviderQueryKind.WORK else None
+        # A successful WORK lane requires complete target-author authority and
+        # replayable dispatch lineage. This fixture only tests ISBN mapping.
+        work_candidate = None
 
         def lane(
             identity: str,
@@ -2357,7 +2359,7 @@ def test_typed_discovery_creator_evidence_uses_any_agreement_over_pairwise_noise
 @pytest.mark.parametrize(
     ("lane_kind", "unrelated_isbn_mapping", "expected"),
     (
-        (ProviderQueryKind.WORK, False, "unknown"),
+        (ProviderQueryKind.WORK, False, "plausible_match"),
         (ProviderQueryKind.ISBN, False, "plausible_match"),
         (ProviderQueryKind.WORK, True, "unknown"),
         (None, False, "plausible_match"),

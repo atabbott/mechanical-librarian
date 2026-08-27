@@ -18,7 +18,8 @@ and could increase downstream evidence authority.
 
 ## Decision
 
-`closed-title-creator-v3` is the only current comparison policy. It records a
+`closed-title-creator-publication-work-identity-v5` is the only current
+comparison policy. It records a
 truthful deterministic method on every agreement link:
 
 1. exact source bytes;
@@ -52,8 +53,30 @@ seam adds comparison links after the complete candidate is assembled.
 Construction and replay run the same finalizer and reject any non-canonical
 link or binding. `ComparisonMethod.NONE` is valid only for disagreement,
 incompatible, or not-comparable outcomes. The exact-current report and
-database schema advances to `metadata-report-v20`; ADR-0013 rejects v19 and all
-earlier state without migration or compatibility parsing.
+database schema originally advanced to `metadata-report-v20`.
+
+The #870 amendment adds one separate, domain-owned work-identity admission
+decision without broadening ordinary title agreement. Its closed transformation
+table distinguishes query-enabled from admission-enabled families. The reviewed
+0.18.0 admission subset is empty: no isolated family cleared both independently
+corroborated positive and same-author boundary evidence. Every table row,
+including `filename_author_title_prefix`, is therefore query-only. Enabling a
+future family requires new per-family evidence and a new ADR and persisted-schema
+change; changing the table flag alone cannot create a canonical lineage.
+
+Admission retains both sides' original claims, requires the unchanged closed
+title comparison, exact complete ordered authors, and one provider-local work
+identity, and preserves every translation, adaptation, abridgement, and
+variant-marker veto. Dispatch lineage is retained and never creates
+equivalence. The nullable v28 transformation-lineage field remains a replay
+guard: because the admitted subset is empty, every non-null value is invalid.
+Initial qualification, overflow witnesses, persisted readback, retry successors,
+and ProposalSet replay invoke the same decision. ADR-0013 rejects v27 and every
+other predecessor during ordinary startup.
+
+The admission baseline retains the pre-amendment target-normalization floor:
+NFC, case folding, and collapse of all Unicode whitespace while preserving
+punctuation. Query transformations never create admission equivalence.
 
 ## Consequences
 
@@ -63,6 +86,7 @@ earlier state without migration or compatibility parsing.
 - Complete creator order and identity binding are validated once in the domain.
 - Provider rank, response order, aliases, and repeated queries cannot create
   another evidence source or silently widen downstream authority.
+- Provider-specific query grammar cannot define work-title equivalence.
 
 ### Negative
 
@@ -73,5 +97,5 @@ earlier state without migration or compatibility parsing.
 ### Neutral or deferred
 
 - No fuzzy matching, edit distance, token subsets, accent stripping, author
-  reordering, subtitle composition, adaptive query, manifestation selection,
+  reordering, subtitle admission, manifestation selection,
   reviewer decision, or production write is added.
