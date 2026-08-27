@@ -11,23 +11,39 @@
 
 #912 established that owner sign-in can block for up to five seconds while a
 library scan runs. `ReviewSessions.login` performed two SQLite writes on the
-request path, and both went through the one connection and re-entrant
-transaction lock the application database shares across every persistence
-module, under `journal_mode=DELETE`, `synchronous=FULL`, and
-`busy_timeout=5000`. Login therefore queued behind whatever transaction the
-scan held — first on the in-process transaction lock, then on SQLite's
-rollback-journal write lock — and additionally behind the application-wide
-serialization gate that wrapped every session operation. The Argon2id verify
-is not implicated (measured 27ms at the configured parameters).
+request path against the application database, under `journal_mode=DELETE`,
+`synchronous=FULL`, and `busy_timeout=5000`.
+
+The queue is SQLite's, not Python's. The supported deployment opens several
+connections to the application database — a state owner, foreground
+observation, an activity projection, and per-action connections, all borrowing
+one authority — so a scan writing on one connection holds the rollback-journal
+write lock against login on another. `busy_timeout=5000` is therefore the
+ceiling the owner feels, not a backstop beneath an in-process wait: sessions
+and the composing repository do not share a transaction lock. Session
+operations additionally took the application-wide serialization gate. The
+Argon2id verify is not implicated (measured 27ms at the configured
+parameters).
+
+Measured against this topology, with a batch writer holding one transaction
+across many rows on a second connection, login latency is:
+
+| session placement | p50 | p95 | max |
+| --- | --- | --- | --- |
+| application database, `DELETE` | 204ms | 4494ms | 5009ms |
+| application database, `WAL` | 198ms | 2218ms | 2643ms |
+| dedicated database, `DELETE` | 1.7ms | 3.3ms | 6.1ms |
 
 The owner decided the coupling is unacceptable: login must not wait on scan
-writes. Mitigations inside the shared database fall short. A dedicated
-connection to the same file still waits on the DELETE-journal write lock for
-the full scan transaction. Writing the throttle record only on failure halves
-the writes but leaves the session insert in the same queue. Adopting WAL for
-the application database changes the supported-restart contract, which
-rejects `-wal`/`-shm` sidecars, and ADR-0057 records that the sustained
-topology adds no WAL change.
+writes. Mitigations inside the shared database fall short, and the middle row
+is why: WAL removes reader/writer contention but still admits one writer, so
+login — itself a writer — keeps waiting whole seconds. Writing the throttle
+record only on failure halves the writes but leaves the session insert in the
+same queue. Adopting WAL would also change the supported-restart contract,
+which rejects `-wal`/`-shm` sidecars and validates the rollback-journal
+signature in the database header, and ADR-0057 records that the sustained
+topology adds no WAL change. Only separation moves login off the contended
+lock entirely.
 
 ADR-0057's own separation criterion already isolates session state
 conceptually: it is the only state whose authority is the review surface
