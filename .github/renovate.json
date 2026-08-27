@@ -153,8 +153,7 @@
         "typescript",
         "typescript-eslint",
         "vite",
-        "vitest",
-        "uv"
+        "vitest"
       ],
       "automerge": false,
       "groupName": "runtime, toolchain, and build-backend dependencies"
@@ -177,6 +176,20 @@
       ],
       "automerge": false,
       "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Move the qualified and shipped interpreter and resolver in lockstep",
+      "matchManagers": [
+        "dockerfile",
+        "github-actions"
+      ],
+      "matchDepNames": [
+        "python",
+        "astral-sh/uv",
+        "ghcr.io/astral-sh/uv"
+      ],
+      "groupName": "qualified runtime toolchain",
+      "automerge": false
     }
   ]
 }

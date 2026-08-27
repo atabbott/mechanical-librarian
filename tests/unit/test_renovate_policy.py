@@ -4,7 +4,7 @@ import json
 import re
 import tomllib
 from pathlib import Path
-from typing import cast
+from typing import NamedTuple, cast
 
 import pytest
 
@@ -24,6 +24,7 @@ def _effective_policy(
     package: str,
     current_version: str,
     update_type: str,
+    dep_name: str | None = None,
 ) -> dict[str, object]:
     effective: dict[str, object] = {
         "automerge": config["automerge"],
@@ -35,6 +36,9 @@ def _effective_policy(
                 continue
         if packages := rule.get("matchPackageNames"):
             if package not in packages:
+                continue
+        if dep_names := rule.get("matchDepNames"):
+            if (dep_name or package) not in dep_names:
                 continue
         if update_types := rule.get("matchUpdateTypes"):
             if update_type not in update_types:
@@ -155,6 +159,7 @@ def test_protected_classes_override_earlier_automerge_rules(
         "Prevent automatic merging of runtime, toolchain, and build-backend updates",
         "Prevent automatic merging of Playwright minor updates",
         "Require approval for dependency replacements",
+        "Move the qualified and shipped interpreter and resolver in lockstep",
     }
     for description in protected:
         rule = config["packageRules"][positions[description]]
@@ -193,7 +198,6 @@ def test_protected_classes_override_earlier_automerge_rules(
         "typescript-eslint",
         "vite",
         "vitest",
-        "uv",
     }
 
 
@@ -337,3 +341,137 @@ def test_application_manifests_and_toolchains_remain_exact() -> None:
     assert frontend["engines"]["node"] == "24.19.0"
     assert frontend["engines"]["npm"] == "11.17.0"
     assert frontend["packageManager"] == "npm@11.17.0"
+
+
+class _PinSite(NamedTuple):
+    """One place a toolchain version is written down in the repository."""
+
+    path: str
+    pattern: str
+    expected: int
+
+
+# Every repository surface that declares a toolchain version, keyed by the
+# logical tool. The gate's promise is that what was qualified is what ships,
+# so all sites for one tool must state one version (#911). `count` pins the
+# number of declarations, so a site that moves or changes shape fails loudly
+# instead of silently dropping out of the comparison.
+_TOOLCHAIN_PINS: dict[str, tuple[_PinSite, ...]] = {
+    "python": (
+        _PinSite(
+            "Dockerfile", r"^FROM python:(\d+\.\d+\.\d+)-slim-bookworm@sha256:", 2
+        ),
+        _PinSite(
+            ".github/workflows/public-gate.yml",
+            r'^\s+python-version: "(\d+\.\d+\.\d+)"$',
+            3,
+        ),
+    ),
+    "uv": (
+        _PinSite(
+            "Dockerfile", r"^COPY --from=ghcr\.io/astral-sh/uv:(\d+\.\d+\.\d+)@", 1
+        ),
+        _PinSite(
+            ".github/workflows/public-gate.yml", r'^\s+version: "(\d+\.\d+\.\d+)"$', 3
+        ),
+    ),
+    "node": (
+        _PinSite("Dockerfile", r"^FROM node:(\d+\.\d+\.\d+)-bookworm-slim@sha256:", 1),
+        _PinSite("Dockerfile", r'test "\$\(node --version\)" = "v(\d+\.\d+\.\d+)"', 1),
+        _PinSite(
+            ".github/workflows/public-gate.yml",
+            r'^\s+node-version: "(\d+\.\d+\.\d+)"$',
+            3,
+        ),
+        _PinSite(
+            ".github/workflows/public-gate.yml",
+            r'test "\$\(node --version\)" = "v(\d+\.\d+\.\d+)"',
+            2,
+        ),
+        _PinSite("frontend/package.json", r'"node": "(\d+\.\d+\.\d+)"', 1),
+        _PinSite(
+            "scripts/build_frontend.py", r'^NODE_VERSION = "v(\d+\.\d+\.\d+)"$', 1
+        ),
+    ),
+    "npm": (
+        _PinSite("Dockerfile", r'test "\$\(npm --version\)" = "(\d+\.\d+\.\d+)"', 1),
+        _PinSite(
+            ".github/workflows/public-gate.yml",
+            r'test "\$\(npm --version\)" = "(\d+\.\d+\.\d+)"',
+            2,
+        ),
+        _PinSite("frontend/package.json", r'"npm": "(\d+\.\d+\.\d+)"', 1),
+        _PinSite(
+            "frontend/package.json", r'"packageManager": "npm@(\d+\.\d+\.\d+)"', 1
+        ),
+        _PinSite("scripts/build_frontend.py", r'^NPM_VERSION = "(\d+\.\d+\.\d+)"$', 1),
+    ),
+    "setuptools": (_PinSite("pyproject.toml", r'"setuptools==(\d+\.\d+\.\d+)"', 2),),
+}
+
+
+@pytest.mark.parametrize("tool", sorted(_TOOLCHAIN_PINS))
+def test_every_pin_site_for_a_tool_declares_one_version(tool: str) -> None:
+    """The shipped artifact and the gate that qualifies it state one toolchain.
+
+    The interpreter and the resolver are each pinned once for the container
+    ADR-0001 ships and once for the gate that qualifies it; Node and npm add
+    manifest, build-script, and inline-assert declarations. Nothing structural
+    binds the sites, so parity is asserted here: an update that moves one site
+    without the others is a red test instead of a quiet fact (#911).
+    """
+    observed: dict[str, set[str]] = {}
+    for site in _TOOLCHAIN_PINS[tool]:
+        text = (ROOT / site.path).read_text(encoding="utf-8")
+        versions = re.findall(site.pattern, text, flags=re.MULTILINE)
+        assert len(versions) == site.expected, (
+            f"{site.path} declares {len(versions)} {tool} pins where "
+            f"{site.expected} are registered; update _TOOLCHAIN_PINS for the "
+            "moved or reshaped declaration"
+        )
+        observed[f"{site.path}#{site.pattern}"] = set(versions)
+    distinct: set[str] = set()
+    for versions_at_site in observed.values():
+        distinct |= versions_at_site
+    assert len(distinct) == 1, f"{tool} pin sites disagree: {observed}"
+
+
+# The dependency names Renovate's managers report for the qualified pair, as
+# the Dependency Dashboard (#610) lists them. The lockstep rule must match
+# exactly these via `matchDepNames`: the bare name `uv` matches neither
+# manager's dependency, which is how the pair originally split across two
+# groups and drifted (#911).
+_QUALIFIED_PAIR_DEPENDENCIES: tuple[tuple[str, str], ...] = (
+    ("dockerfile", "python"),
+    ("dockerfile", "ghcr.io/astral-sh/uv"),
+    ("github-actions", "python"),
+    ("github-actions", "astral-sh/uv"),
+)
+
+
+def test_qualified_pair_moves_as_one_manual_group(
+    config: dict[str, object],
+) -> None:
+    """One Renovate branch moves all four interpreter and resolver pins.
+
+    Grouping is co-scheduling, not atomicity: a group pull request can still
+    carry a half-eligible pair, and the parity sentinel above is what refuses
+    it at the merge boundary. This test keeps the compliant path in existence
+    — without one shared group, every Renovate proposal for the pair would
+    arrive pre-split and permanently red (#911).
+    """
+    for manager, dep_name in _QUALIFIED_PAIR_DEPENDENCIES:
+        effective = _effective_policy(
+            config,
+            manager=manager,
+            package=dep_name,
+            current_version="3.14.7",
+            update_type="minor",
+            dep_name=dep_name,
+        )
+        assert effective["groupName"] == "qualified runtime toolchain", (
+            manager,
+            dep_name,
+        )
+        assert not effective["automerge"]
+        assert not effective["dependencyDashboardApproval"]
