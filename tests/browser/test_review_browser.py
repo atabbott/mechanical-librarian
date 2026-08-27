@@ -529,6 +529,11 @@ def test_remembered_owner_session_survives_profile_and_server_restart() -> None:
         @contextmanager
         def running_server(port: int, listener: socket.socket) -> Iterator[str]:
             repository = open_repository(database, create=True, cross_thread=True)
+            # The session store must be the real file this test reads back, not
+            # the fixture's in-memory fallback: remembered authority surviving a
+            # restart is exactly what is under test, and an in-memory store
+            # would discard it at every server boundary (#912).
+            session_store = SQLiteReviewSessionRepository.open(sessions_database)
             origin = f"https://127.0.0.1:{port}"
             app = create_transport_test_app(
                 repository,
@@ -537,6 +542,7 @@ def test_remembered_owner_session_survives_profile_and_server_restart() -> None:
                     owner_password_hash_file=str(hash_path),
                     session_lifetime_seconds=300,
                 ),
+                session_store=session_store,
                 clock=lambda: now[0],
                 close_repository=True,
                 field_application=_BrowserActivityApplication(),
@@ -578,6 +584,7 @@ def test_remembered_owner_session_survives_profile_and_server_restart() -> None:
                 if thread.is_alive():
                     server.force_exit = True
                     thread.join(timeout=5)
+                session_store.close()
 
         listener = bind_loopback(0)
         assert listener is not None
