@@ -107,6 +107,28 @@ def test_project_python_compatibility_range_is_not_managed(
     assert not ignored[0]["enabled"]
 
 
+def test_npm_is_not_managed_independently_of_the_pinned_node(
+    config: dict[str, object],
+) -> None:
+    """npm is whatever the pinned Node ships, so Renovate must not move it alone.
+
+    ADR-0043 pins the pair, and the gate, the Dockerfile frontend stage, and
+    `scripts/build_frontend.py` each assert the real `npm --version` rather than
+    the manifest, so a standalone bump declares a toolchain nothing installs.
+    The exactness sentinel below catches that once per Renovate run; this rule
+    is what stops the run (#902).
+    """
+    ignored = [
+        rule
+        for rule in config["packageRules"]
+        if rule.get("matchManagers") == ["npm"]
+        and rule.get("matchDepTypes") == ["engines", "packageManager"]
+    ]
+    assert len(ignored) == 1
+    assert ignored[0]["matchPackageNames"] == ["npm"]
+    assert not ignored[0]["enabled"]
+
+
 def test_only_major_and_replacement_updates_require_dashboard_approval(
     config: dict[str, object],
 ) -> None:
