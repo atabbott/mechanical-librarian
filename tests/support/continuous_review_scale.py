@@ -124,6 +124,46 @@ _PHASE_BANDS = (
 _MINIMUM_INSTALLED_RECONCILIATION_WORKS_PER_SECOND = 5.0
 _FOREGROUND_RESPONSE_BUDGET_MS = 2_000
 
+# How long a harness client waits for the installed server to answer, and why
+# it is not httpx's default.
+#
+# `ReviewSessions.login` writes twice before it can answer -- `begin_login`
+# records the throttle attempt and `create_review_session` stores the session
+# -- against the store in `adapters/persistence/metadata_reports.py`, which
+# connects with `journal_mode=DELETE`, `synchronous=FULL`, and
+# `busy_timeout=5000`. httpx's default read timeout is also five seconds, so
+# the client's patience and the server's lock wait were exactly equal. A login
+# contending with this qualification's own concurrent writes could not be
+# observed: SQLite waited for the lock up to five seconds and the client gave
+# up at five seconds, so the test recorded an `httpx.ReadTimeout` instead of
+# whichever answer the server was about to return -- `200`, or its own honest
+# `503 persistence` (#909).
+#
+# Thirty seconds leaves the server's five-second lock wait a wide margin and
+# still fails a genuinely hung request as a test failure rather than a hang.
+# The asymmetry is deliberate: too low reintroduces the false red this bounds,
+# while too high only delays a real defect that is already failing.
+_CLIENT_TIMEOUT_SECONDS = 30.0
+
+# The start-up poll is the one client that must not wait for a lock. It retries
+# `/health/live` against its own `_REVIEW_SERVER_START_SECONDS` deadline and
+# treats a timeout as one more not-yet-serving attempt, so a long per-request
+# wait would spend the start budget instead of retrying inside it.
+_HEALTH_POLL_TIMEOUT_SECONDS = 5.0
+
+
+def _review_client(timeout_seconds: float = _CLIENT_TIMEOUT_SECONDS) -> httpx.Client:
+    """The one place this qualification constructs an HTTP client.
+
+    Every caller goes through here so no request can silently inherit httpx's
+    default timeout, which is exactly the login store's lock wait. The unit
+    sentinel asserts this module builds `httpx.Client` nowhere else.
+    """
+
+    return httpx.Client(
+        verify=False, trust_env=False, timeout=httpx.Timeout(timeout_seconds)
+    )
+
 
 def _validate_receipt_budgets(
     receipt: dict[str, object],
@@ -221,7 +261,7 @@ def _sample_routes(
         "observation_db_contention": (("preparation", "/api/v1/review-preparation"),),
     }
     for _ in range(_MEASUREMENT_SAMPLES):
-        with httpx.Client(verify=False, trust_env=False) as disposable:
+        with _review_client() as disposable:
             started = time.monotonic()
             response = disposable.post(
                 origin + "/api/v1/session/login",
@@ -832,7 +872,7 @@ class _InstalledPreparationRun:
                 after_advance=self._hold_fixture_case_after_advance,
             )
         )
-        with httpx.Client(verify=False, trust_env=False) as client:
+        with _review_client() as client:
             login = client.post(
                 self._origin + "/api/v1/session/login",
                 headers={"Origin": self._origin},
@@ -947,7 +987,7 @@ class _InstalledPreparationRun:
     def assert_fixture_case_active(self) -> None:
         """Confirm admission occurred while the installed scan is still active."""
 
-        with httpx.Client(verify=False, trust_env=False) as client:
+        with _review_client() as client:
             login = client.post(
                 self._origin + "/api/v1/session/login",
                 headers={"Origin": self._origin},
@@ -967,7 +1007,7 @@ class _InstalledPreparationRun:
         """Record the fixture title choice from the authoritative public projection."""
 
         review_case_id = self.wait_for_fixture_case()
-        with httpx.Client(verify=False, trust_env=False) as client:
+        with _review_client() as client:
             login = client.post(
                 self._origin + "/api/v1/session/login",
                 headers={"Origin": self._origin},
@@ -1077,7 +1117,7 @@ class _InstalledPreparationRun:
     ) -> _InstalledActivityEvidence:
         """Follow the durable decision through the supported public projections."""
 
-        with httpx.Client(verify=False, trust_env=False) as client:
+        with _review_client() as client:
             login = client.post(
                 self._origin + "/api/v1/session/login",
                 headers={"Origin": self._origin},
@@ -1243,7 +1283,7 @@ class _InstalledPreparationRun:
         """Wait through the authenticated progress projection without profiling it."""
 
         assert self._server_thread is not None
-        with httpx.Client(verify=False, trust_env=False) as client:
+        with _review_client() as client:
             login = client.post(
                 self._origin + "/api/v1/session/login",
                 headers={"Origin": self._origin},
@@ -1309,7 +1349,7 @@ class _InstalledPreparationRun:
         float | None,
     ]:
         assert self._server_thread is not None
-        with httpx.Client(verify=False, trust_env=False) as client:
+        with _review_client() as client:
             login = client.post(
                 self._origin + "/api/v1/session/login",
                 headers={"Origin": self._origin},
@@ -1973,7 +2013,7 @@ def qualify_installed_pipeline(
         assert installed_cases == expected_total
         second_process = _start_review_server(review_port, arguments, origin)
         try:
-            with httpx.Client(verify=False, trust_env=False) as client:
+            with _review_client() as client:
                 login = client.post(
                     origin + "/api/v1/session/login",
                     headers={"Origin": origin},
@@ -2171,7 +2211,7 @@ def _wait_for_https(process: subprocess.Popen[bytes], origin: str) -> None:
     """
 
     deadline = time.monotonic() + _REVIEW_SERVER_START_SECONDS
-    with httpx.Client(verify=False, trust_env=False) as client:
+    with _review_client(_HEALTH_POLL_TIMEOUT_SECONDS) as client:
         while True:
             code = process.poll()
             if code is not None:
