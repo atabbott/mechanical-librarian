@@ -238,6 +238,10 @@ class ContinuousGuardedApplication:
             [Callable[[], dict[str, object]]], dict[str, object]
         ]
         | None = None,
+        activity_capability_readiness: Callable[
+            [tuple[str, ...]], list[dict[str, object]]
+        ]
+        | None = None,
     ) -> None:
         if (
             (activity_only and (applications or capabilities))
@@ -270,6 +274,7 @@ class ContinuousGuardedApplication:
         self._activity_only = activity_only
         self._provider_recovery_snapshot = provider_recovery_snapshot or (lambda: ())
         self._activity_snapshot = activity_snapshot or (lambda call: call())
+        self._activity_capability_readiness = activity_capability_readiness
         self._activity_reader_lock = threading.Lock()
         self._slot = threading.Lock()
         self._admission = threading.Event()
@@ -856,6 +861,9 @@ class ContinuousGuardedApplication:
         ):
             raise GuardedApplicationError("activity_query")
         with self._activity_reader_lock:
+            capabilities = self._capability_readiness(
+                tuple(library for _, library in self._libraries), force=False
+            )
             backup_ready = self._repository.field_effect_backup_ready()
             return self._activity_snapshot(
                 lambda: self._activity_projection(
@@ -865,6 +873,7 @@ class ContinuousGuardedApplication:
                     page=page,
                     page_size=page_size,
                     backup_ready=backup_ready,
+                    capabilities=capabilities,
                 )
             )
 
@@ -877,6 +886,7 @@ class ContinuousGuardedApplication:
         page: int,
         page_size: int,
         backup_ready: bool,
+        capabilities: list[dict[str, object]],
     ) -> dict[str, object]:
         """Project Activity inside the repository's exact read boundary."""
 
@@ -1048,9 +1058,6 @@ class ContinuousGuardedApplication:
                 for candidate_connection, candidate_library, _ in consented
             ):
                 enabled.append({"connection": connection, "library": library})
-        capabilities = self._capability_readiness(
-            tuple(library for _, library in self._libraries), force=False
-        )
         for capability in capabilities:
             connection = str(capability["connection"])
             library = str(capability["library"])
@@ -1149,6 +1156,8 @@ class ContinuousGuardedApplication:
         *,
         force: bool,
     ) -> list[dict[str, object]]:
+        if self._activity_only and self._activity_capability_readiness is not None:
+            return self._activity_capability_readiness(libraries)
         affected_review_case_ids: set[str] = set()
         try:
             return self._collect_capability_readiness(
@@ -1158,6 +1167,15 @@ class ContinuousGuardedApplication:
             )
         finally:
             self._flush_affected_review_case_ids(affected_review_case_ids)
+
+    def activity_capability_readiness(
+        self, libraries: tuple[str, ...]
+    ) -> list[dict[str, object]]:
+        """Read live write readiness for the separately connected Activity view."""
+
+        if self._activity_only:
+            raise GuardedApplicationError("configuration")
+        return self._capability_readiness(libraries, force=False)
 
     def _collect_capability_readiness(
         self,

@@ -294,6 +294,74 @@ describe('live invalidation', () => {
     stop()
   })
 
+  it('keeps Library debt after the periodic preparation refresh until owner input', () => {
+    const queryClient = new QueryClient()
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries').mockResolvedValue(undefined)
+    const timers = new Map<number, () => void>()
+    const listeners: ((update: LiveUpdate) => void)[] = []
+    let nextTimer = 0
+    let now = 0
+    let activityListener: (() => void) | undefined
+    const stream = {
+      state: 'live' as const,
+      subscribe(listener: (update: LiveUpdate) => void) {
+        listeners.push(listener)
+        return () => undefined
+      },
+      observeState: () => () => undefined,
+      close: () => undefined,
+    }
+    const stop = startLiveInvalidation(stream, queryClient, {
+      schedule: (run) => {
+        nextTimer += 1
+        timers.set(nextTimer, run)
+        return nextTimer
+      },
+      cancel: (handle) => void timers.delete(handle),
+      now: () => now,
+      observeActivity: (listener) => {
+        activityListener = listener
+        return () => undefined
+      },
+      observeVisibility: () => () => undefined,
+    })
+
+    now = ownerIdleMilliseconds
+    for (const listener of listeners) listener({ sequence: 1, subject: null, topic: 'library' })
+    const periodic = [...timers.entries()][0]
+    expect(periodic).toBeDefined()
+    if (periodic) {
+      timers.delete(periodic[0])
+      periodic[1]()
+    }
+    const preparationFlush = [...timers.entries()][0]
+    expect(preparationFlush).toBeDefined()
+    if (preparationFlush) {
+      timers.delete(preparationFlush[0])
+      preparationFlush[1]()
+    }
+    expect(invalidate.mock.calls.map(([argument]) => argument?.queryKey)).toEqual([
+      ['review-preparation'],
+    ])
+
+    invalidate.mockClear()
+    activityListener?.()
+    const resync = [...timers.entries()][0]
+    expect(resync).toBeDefined()
+    if (resync) {
+      timers.delete(resync[0])
+      resync[1]()
+    }
+    expect(invalidate.mock.calls.map(([argument]) => argument?.queryKey)).toEqual([
+      ['review-preparation'],
+      ['library'],
+      ['attention'],
+      ['activity'],
+      ['review-case'],
+    ])
+    stop()
+  })
+
   it.each([
     {
       expected: [['review-case', CASE]],

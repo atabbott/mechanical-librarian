@@ -131,7 +131,6 @@ export const startLiveInvalidation = (
       deferredWhileIdle = false
       return
     }
-    deferredWhileIdle = false
     lastIdleRefreshAt = now()
     const key = ['review-preparation'] as const
     pending.set(JSON.stringify(key), key)
