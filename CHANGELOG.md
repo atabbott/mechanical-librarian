@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Report unittest-equivalent tier accounting for three pytest-native shapes:
+  a function-scoped fixture failure is one error per case rather than one
+  class-level error, `SkipTest` in `setUpClass` runs no tests and skips once,
+  and a `load_tests` case pytest cannot collect is run instead of dropped.
+  (#701)
+
 - Keep valid Hardcover discovery candidates when optional cover descriptors
   conflict across lanes; the conflicting cover remains fail-closed. Provider
   lane diagnostics now persist their bounded rejection category; existing

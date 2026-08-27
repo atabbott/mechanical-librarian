@@ -16,7 +16,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, TracebackType
 
 import pytest
 
@@ -109,6 +109,17 @@ _PYTEST_ARGUMENTS = (
     "no:cacheprovider",
 )
 _RUN_EXIT_CODES = frozenset((pytest.ExitCode.OK, pytest.ExitCode.TESTS_FAILED))
+# The shape `unittest.TestResult` is handed a failure in, spelled out
+# because typeshed keeps its own alias private.
+_ExceptionInfo = (
+    tuple[type[BaseException], BaseException, TracebackType | None]
+    | tuple[None, None, None]
+)
+_SubTestInfo = (
+    tuple[type[BaseException], BaseException, TracebackType]
+    | tuple[None, None, None]
+    | None
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,8 +233,15 @@ def _case_identity(item: pytest.Item) -> str:
     `_SAFE_TEST_ID` guard would withhold it entirely. It is rebuilt from the
     same parts a unittest identity uses, with the parameters as one further
     dotted component reduced to the safe alphabet.
+
+    A case the `load_tests` protocol added carries unittest's own identity,
+    which it was constructed with and this runner cannot rebuild from a node
+    id it never had.
     """
 
+    added = getattr(item, "unittest_identity", None)
+    if added is not None:
+        return added
     cls = getattr(item, "cls", None)
     if isinstance(cls, type):
         prefix = f"{cls.__module__}.{cls.__qualname__}"
@@ -238,48 +256,273 @@ def _case_identity(item: pytest.Item) -> str:
     return f"{stem}.{_reduced_parameters(parameters.removesuffix(']'), available)}"
 
 
-def _shared_fixture_identity(owner: str | None, phase: str) -> str | None:
+def _shared_fixture_identity(
+    owner: str | None,
+    phase: str,
+    shared_setup: bool,
+) -> str | None:
     """Name a class-scoped setup or teardown failure once, as unittest does.
 
     pytest injects `setUpClass`/`tearDownClass` as class-scoped fixtures and
-    reports their failure against every method of the class, so an unexecuted
+    reports their outcome against every method of the class, so an unexecuted
     two-method class would otherwise report two tests run and two errors where
     unittest reports none run and one class-level error. A `TestCase` runs its
-    instance `setUp` inside the call phase, so a failure in any other phase
-    belongs to the class, not to the method it is reported against.
+    instance `setUp` inside the call phase, so a call-phase failure belongs to
+    the method rather than to the class.
+
+    Not every setup phase a `TestCase` reports is that shared fixture, though,
+    and `shared_setup` is what the caller has established about the one that
+    actually raised. It is positive rather than an absence: a setup phase no
+    fixture at all stands behind -- a `skip` mark, which pytest evaluates
+    before any fixture runs -- is per-case, and reading it as shared would
+    charge a per-method skip to `setUpClass` and drop that case from the run
+    count. A function-scoped fixture is the instance `setUp` of a
+    pytest-native suite: it runs once per case, so unittest's accounting for it
+    is one error per case, not one for the class. A class carrying
+    `__unittest_skip__` is likewise per-case, because unittest never reaches
+    `setUpClass` for it and records one skip against each method it did not
+    run -- where a `SkipTest` raised inside `setUpClass` is one class-level
+    skip with nothing run.
+
+    The teardown phase stays class-level unconditionally. Its unittest-parity
+    edge is the mirror of the setup one -- a function-scoped fixture's
+    finalizer raising is per-case -- but pytest reports a finalizer failure
+    with no hook that names the fixture behind it, and #701 bounds this to the
+    three setup-side and collection-side cases it names.
     """
 
     if owner is None or phase == "call":
         return None
+    if phase == "setup" and not shared_setup:
+        return None
     return f"{owner}.{'setUpClass' if phase == 'setup' else 'tearDownClass'}"
 
 
-def _load_tests_exclusions(items: list[pytest.Item]) -> list[pytest.Item]:
-    """Return the items a module's `load_tests` protocol excludes.
+class _AddedCaseResult(unittest.TestResult):
+    """Capture one added case's outcome without unittest's own reporting.
+
+    `TestResult` keeps formatted text, not the exception, and the tier's
+    failure-versus-error rule needs the exception itself. Retaining it lets the
+    item re-raise the original, so an `AssertionError` stays a failure and
+    everything else stays an error on the same rule every other case uses.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.raised: BaseException | None = None
+        self.skip_reason: str | None = None
+
+    def addError(self, test: unittest.TestCase, err: _ExceptionInfo) -> None:
+        self.raised = err[1]
+
+    def addFailure(self, test: unittest.TestCase, err: _ExceptionInfo) -> None:
+        self.raised = err[1]
+
+    def addSkip(self, test: unittest.TestCase, reason: str) -> None:
+        self.skip_reason = reason
+
+    def addSubTest(
+        self,
+        test: unittest.TestCase,
+        subtest: unittest.TestCase,
+        # Narrower than `_ExceptionInfo` and optional, because a passing
+        # subtest is reported through the same call with no exception.
+        outcome: _SubTestInfo,
+    ) -> None:
+        # `TestResult` records a failed subtest directly, without passing it
+        # through `addFailure`, so the first one is retained here too. Without
+        # this the case still refuses the tier, but under the unexpected-
+        # success message rather than the exception that actually raised.
+        super().addSubTest(test, subtest, outcome)
+        if outcome is not None and self.raised is None:
+            self.raised = outcome[1]
+
+
+class _AddedCaseItem(pytest.Item):
+    """Run one case a module's `load_tests` added that pytest cannot collect.
+
+    A `FunctionTestCase`, a case built inside `load_tests`, or one imported
+    from a namespace pytest never sees has no node for pytest to collect, so
+    the cohort would otherwise run everything else in the module and report a
+    count that silently omits it. This item is the node the session needs to
+    schedule that case and report its phases like any other.
+
+    The case runs inside a one-case `unittest.TestSuite` rather than being
+    called directly. `TestCase.__call__` runs the case body and its instance
+    fixtures; `setUpClass`, `tearDownClass`, and the module-level pair belong
+    to `TestSuite`, which is what actually orders and brackets them. Calling
+    the leaf directly would run a case whose class setup never happened --
+    reporting a failure unittest does not report. Delegating keeps that
+    orchestration where unittest implements it instead of restating it here.
+    """
+
+    def __init__(self, *, name: str, parent: pytest.Module, case: unittest.TestCase):
+        super().__init__(name=name, parent=parent)
+        self._case = case
+        self._raised: BaseException | None = None
+        self.unittest_identity = case.id()
+
+    def runtest(self) -> None:
+        result = _AddedCaseResult()
+        unittest.TestSuite((self._case,)).run(result)
+        # A case can skip and still raise, from a cleanup or a `tearDown` that
+        # runs anyway: unittest records one skip *and* one error and refuses
+        # the run. Reporting only the skip here would let the tier pass, and
+        # reporting only the error would lose a skip unittest counted, so the
+        # error is held for the teardown phase -- the phase unittest raised it
+        # in -- and both reach the accounting.
+        self._raised = result.raised
+        if result.skip_reason is not None:
+            pytest.skip(result.skip_reason)
+        if result.raised is not None:
+            self._raised = None
+            raise result.raised
+        if not result.wasSuccessful():
+            # Everything `wasSuccessful` refuses beyond the two branches above
+            # is an unexpected success, which pytest reports through `xfail`
+            # marks an added case has no node to carry. Refusing the tier is
+            # the accounting that matters; the field it lands in is not.
+            raise AssertionError("added_case_unexpected_success")
+
+    def teardown(self) -> None:
+        raised, self._raised = self._raised, None
+        if raised is not None:
+            raise raised
+
+    def reportinfo(self) -> tuple[Path, None, str]:
+        return self.path, None, self.unittest_identity
+
+
+class _CohortRefusal(RuntimeError):
+    """A refusal raised from a collection hook, carrying its own reason.
+
+    pytest owns the exception: a hook that raises leaves the engine reporting
+    an internal error and an exit code that says only "not OK", which the
+    caller would otherwise flatten onto whichever generic reason it checks
+    first. The reason is recorded on the session so the caller can state the
+    one that actually happened.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+def _load_tests_reconciliation(
+    modules: list[pytest.Module],
+    items: list[pytest.Item],
+) -> tuple[list[pytest.Item], list[pytest.Item], dict[ModuleType, list[pytest.Item]]]:
+    """Reconcile a `load_tests` module's cohort with unittest's own case set.
 
     pytest does not implement `load_tests`, so a module that uses it to select
     a subset of its own namespace would otherwise contribute every `TestCase`
     reachable from that namespace -- including imported bases, whose cases
     already belong to another tier. Ask unittest for the module's authoritative
     case set and drop anything outside it.
+
+    The protocol adds as well as selects, and the authoritative set is the one
+    unittest returns, not the intersection with what pytest happened to
+    collect. A case the protocol constructed, or imported from somewhere
+    pytest cannot reach, is admitted as an item of its own rather than
+    silently dropped.
+
+    The suite is a sequence, not a set: `load_tests` chooses the order its
+    cases run in, and a case it lists twice runs twice. The reconciled module
+    keeps that order, and a repeated identity is refused rather than silently
+    collapsed -- the cohort cannot account for two cases under one name, which
+    is the same reason the collision guard exists.
     """
 
     loader = unittest.TestLoader()
-    admitted: dict[ModuleType, frozenset[str]] = {}
-    excluded: list[pytest.Item] = []
+    collected: dict[ModuleType, dict[str, pytest.Item]] = {}
     for item in items:
         module = getattr(item, "module", None)
-        if module is None or not hasattr(module, "load_tests"):
+        if module is not None:
+            collected.setdefault(module, {})[_case_identity(item)] = item
+    excluded: list[pytest.Item] = []
+    added: list[pytest.Item] = []
+    ordered: dict[ModuleType, list[pytest.Item]] = {}
+    for collector in modules:
+        try:
+            module = collector.obj
+        except (pytest.skip.Exception, unittest.SkipTest):
+            # A module that skipped at import reports a skipped collection
+            # rather than a failed one, and pytest caches no object for it, so
+            # asking again re-imports and re-raises. It contributed no case to
+            # reconcile.
+            #
+            # Both exceptions are load-bearing: pytest's `Skipped` and
+            # `unittest.SkipTest` are unrelated classes, neither a subclass of
+            # the other, and a module written against `unittest` reaches for
+            # the latter -- which is the whole point of a tier that runs an
+            # unconverted file unchanged.
             continue
-        if module not in admitted:
-            admitted[module] = frozenset(
-                test.id() for test in _leaf_tests(loader.loadTestsFromModule(module))
-            )
-            if loader.errors:
-                raise RuntimeError("test_cohort_import_failed")
-        if _case_identity(item) not in admitted[module]:
-            excluded.append(item)
-    return excluded
+        if not hasattr(module, "load_tests"):
+            continue
+        cases = _leaf_tests(loader.loadTestsFromModule(module))
+        if loader.errors:
+            raise _CohortRefusal("test_cohort_import_failed")
+        identities = [case.id() for case in cases]
+        if len(set(identities)) != len(identities):
+            # unittest runs two cases that share an `id()` -- two
+            # `FunctionTestCase`s over one function, say -- and reports them
+            # separately. The manifest is keyed by identity and cannot, so
+            # admitting them would run one and account for one where unittest
+            # ran two. The cohort refuses instead of silently halving itself.
+            raise _CohortRefusal("test_cohort_identity_collision")
+        admitted = frozenset(identities)
+        already = collected.get(module, {})
+        excluded.extend(
+            item for identity, item in already.items() if identity not in admitted
+        )
+        sequence: list[pytest.Item] = []
+        for identity, case in zip(identities, cases, strict=True):
+            existing = already.get(identity)
+            if existing is not None:
+                sequence.append(existing)
+                continue
+            item = _AddedCaseItem.from_parent(collector, name=identity, case=case)
+            added.append(item)
+            sequence.append(item)
+        ordered[module] = sequence
+    return excluded, added, ordered
+
+
+def _in_load_tests_order(
+    items: list[pytest.Item],
+    ordered: dict[ModuleType, list[pytest.Item]],
+) -> list[pytest.Item]:
+    """Rebuild the session's items with each reconciled module in suite order.
+
+    `load_tests` chooses the order its cases run in, and unittest honours it.
+    Appending the added cases after everything pytest collected would run a
+    module's own cases first and the protocol's additions last, so a suite
+    whose order carries meaning would execute in an order unittest never
+    produces. Each reconciled module's block is replaced in place, which also
+    keeps the modules themselves in collection order.
+    """
+
+    if not ordered:
+        return items
+    emitted: set[int] = set()
+    rebuilt: list[pytest.Item] = []
+    for item in items:
+        module = getattr(item, "module", None)
+        sequence = ordered.get(module) if module is not None else None
+        if sequence is None:
+            rebuilt.append(item)
+            continue
+        if id(module) in emitted:
+            continue
+        emitted.add(id(module))
+        rebuilt.extend(sequence)
+    # A module whose protocol added every case it owns collected nothing to
+    # anchor its block to, so its sequence has not been emitted yet.
+    for module, sequence in ordered.items():
+        if id(module) not in emitted:
+            emitted.add(id(module))
+            rebuilt.extend(sequence)
+    return rebuilt
 
 
 @dataclass(frozen=True, slots=True)
@@ -315,11 +558,15 @@ class _CohortSession:
         self._current_started_at = 0.0
         self._identities: dict[str, str] = {}
         self._owners: dict[str, str] = {}
+        self._modules: list[pytest.Module] = []
+        self._shared_setup_nodes: set[str] = set()
+        self._decorator_skipped: set[str] = set()
         self._records: list[_PhaseRecord] = []
         self._assertions: dict[tuple[str, str], bool] = {}
         self.identifiers: tuple[str, ...] = ()
         self.import_failed = False
         self.identity_collision = False
+        self.refused: str | None = None
         self.tests_run = 0
         self.failures = 0
         self.errors = 0
@@ -332,17 +579,105 @@ class _CohortSession:
         if report.failed:
             self.import_failed = True
 
+    def pytest_collectstart(self, collector: pytest.Collector) -> None:
+        # A module whose `load_tests` adds every case it owns contributes no
+        # collected item to reach it through, so the modules are recorded as
+        # they are collected rather than recovered from the items afterwards.
+        if isinstance(collector, pytest.Module):
+            self._modules.append(collector)
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup(
+        self,
+        fixturedef: pytest.FixtureDef[object],
+        request: pytest.FixtureRequest,
+    ) -> object:
+        """Record which node owns a shared fixture that failed or skipped.
+
+        This is the only point that names the fixture behind a setup phase:
+        the report carries the phase and the outcome, never the fixture. What
+        is recorded is the *node the fixture belongs to* -- the class for a
+        class-scoped fixture, the module for a module-scoped one -- because a
+        broader-scoped fixture raises once and pytest replays the cached
+        exception for every later case in its scope, so there is no per-item
+        call to observe.
+
+        Recording shared ownership positively is what keeps the class-level
+        rule off setup phases no fixture is behind at all. pytest evaluates a
+        `skip` mark during setup without running any fixture, so treating an
+        unexplained setup skip as shared would charge a per-method
+        `@pytest.mark.skip` to `setUpClass` and drop that case from the run
+        count.
+        """
+
+        try:
+            return (yield)
+        except BaseException:
+            if fixturedef.scope != "function":
+                self._shared_setup_nodes.add(request.node.nodeid)
+            raise
+
+    def _shared_setup(self, nodeid: str) -> bool:
+        """Whether a shared fixture owning this case failed or skipped.
+
+        A class-scoped fixture is recorded against its class node and a
+        module-scoped one against its module node, so ownership is a node-id
+        prefix rather than an equality. A `__unittest_skip__` class is excluded
+        because unittest attributes that skip to each method it did not run,
+        not to the class.
+        """
+
+        if nodeid in self._decorator_skipped:
+            return False
+        return any(
+            not owner or nodeid == owner or nodeid.startswith(f"{owner}::")
+            for owner in self._shared_setup_nodes
+        )
+
     def pytest_collection_modifyitems(
         self,
         config: pytest.Config,
         items: list[pytest.Item],
     ) -> None:
-        excluded = _load_tests_exclusions(items)
+        if self.import_failed:
+            # A module that failed to collect has no imported object to ask
+            # about `load_tests`, and asking raises rather than answering. The
+            # cohort is already refused on the collection failure alone, so
+            # leaving the identities empty reports that and nothing else.
+            return
+        try:
+            excluded, added, ordered = _load_tests_reconciliation(self._modules, items)
+        except _CohortRefusal as refusal:
+            self.refused = refusal.reason
+            raise
+        # Every other identity is built path-free from a module, class, and
+        # function name. An added one is whatever `TestCase.id()` returned, so
+        # a case reached through a path-named module or an overridden `id()`
+        # would carry that text into the manifest digest and into the reported
+        # failure identity. The cohort refuses rather than reporting it, and
+        # the flag carries the reason past the engine's own exit code.
+        if any(
+            _SAFE_TEST_ID.fullmatch(item.unittest_identity) is None for item in added
+        ):
+            self.refused = "test_cohort_identity_unsafe"
+            raise _CohortRefusal(self.refused)
         if excluded:
             dropped = {item.nodeid for item in excluded}
             items[:] = [item for item in items if item.nodeid not in dropped]
             config.hook.pytest_deselected(items=excluded)
+        items[:] = _in_load_tests_order(items, ordered)
         self._identities = {item.nodeid: _case_identity(item) for item in items}
+        # unittest never runs `setUpClass` for a class it was told to skip; it
+        # records one skip against each method instead, so the class-level rule
+        # must not claim those the way it claims a `SkipTest` raised inside a
+        # `setUpClass` that did run. pytest reports both through the same
+        # class-scoped fixture, so the class itself is the only thing that
+        # separates them.
+        self._decorator_skipped.update(
+            item.nodeid
+            for item in items
+            if getattr(getattr(item, "cls", None), "__unittest_skip__", False)
+        )
         self._owners = {
             item.nodeid: f"{item.cls.__module__}.{item.cls.__qualname__}"
             for item in items
@@ -386,7 +721,11 @@ class _CohortSession:
             _PhaseRecord(
                 nodeid=report.nodeid,
                 identity=self._identities.get(report.nodeid, report.nodeid),
-                shared=_shared_fixture_identity(self._owners.get(report.nodeid), phase),
+                shared=_shared_fixture_identity(
+                    self._owners.get(report.nodeid),
+                    phase,
+                    self._shared_setup(report.nodeid),
+                ),
                 phase=phase,
                 outcome=report.outcome,
                 expected_failure=hasattr(report, "wasxfail"),
@@ -399,11 +738,22 @@ class _CohortSession:
 
         shared_seen: set[str] = set()
         for record in self._records:
-            if record.phase == "setup" and record.outcome != "failed":
+            # A case whose setup ran started, whether that setup then passed,
+            # skipped, or failed for that case alone -- exactly what unittest
+            # counts for an instance `setUp` that raises. Shared setup is the
+            # one that runs nothing: unittest reports no tests run for a
+            # `setUpClass` that failed and for one that raised `SkipTest`.
+            if record.phase == "setup" and (
+                record.outcome == "passed" or record.shared is None
+            ):
                 self.tests_run += 1
             if record.outcome == "skipped":
                 if not record.expected_failure:
-                    self.skipped.add(record.identity)
+                    # Only shared *setup* collapses onto one identity, and only
+                    # because nothing ran. A teardown-phase skip follows a case
+                    # that already ran, so it stays that case's own.
+                    shared_skip = record.shared if record.phase == "setup" else None
+                    self.skipped.add(shared_skip or record.identity)
                 continue
             if record.outcome == "passed":
                 if record.expected_failure:
@@ -459,6 +809,8 @@ def _drive_pytest(
 def collect_cohort(root: Path, name: str) -> tuple[str, ...]:
     session = _CohortSession()
     outcome = _drive_pytest(root, name, session, collect_only=True)
+    if session.refused is not None:
+        raise RuntimeError(session.refused)
     if session.import_failed or outcome != pytest.ExitCode.OK:
         raise RuntimeError("test_cohort_import_failed")
     if session.identity_collision:
@@ -493,6 +845,8 @@ def run_cohort(root: Path, name: str) -> bool:
     finally:
         stopped.set()
         reporter.join(timeout=2)
+    if session.refused is not None:
+        raise RuntimeError(session.refused)
     if session.import_failed:
         raise RuntimeError("test_cohort_import_failed")
     if session.identity_collision:
