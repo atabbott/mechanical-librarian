@@ -44,7 +44,7 @@ from collections import deque
 from collections.abc import Callable
 from copy import deepcopy
 from threading import RLock
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
@@ -112,6 +112,7 @@ from mechanical_librarian.domain.shadow_outcome import (
 
 _ACTIVITY_PAGE_BUSY_TIMEOUT_MILLISECONDS = 150
 _ACTIVITY_PAGE_BUSY_RETRY_SECONDS = 0.75
+_ActivityRead = TypeVar("_ActivityRead")
 
 _CORRECTIVE_KEEP_CURRENT_SQL = (
     "human.outcome='keep_current' AND EXISTS (SELECT 1 FROM review_cases review, "
@@ -1788,6 +1789,45 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             and getattr(cause, "sqlite_errorcode", None) == sqlite3.SQLITE_BUSY
         )
 
+    def _retry_activity_busy(self, call: Callable[[], _ActivityRead]) -> _ActivityRead:
+        deadline = time.monotonic() + self._activity_page_busy_retry_seconds
+        while True:
+            try:
+                return call()
+            except FieldEffectError as error:
+                if (
+                    self._activity_page_busy_retry_seconds == 0
+                    or not self._retryable_activity_page_busy(error)
+                    or time.monotonic()
+                    + _ACTIVITY_PAGE_BUSY_TIMEOUT_MILLISECONDS / 1_000
+                    > deadline
+                ):
+                    raise
+
+    def field_effect_activity_snapshot(
+        self, call: Callable[[], dict[str, object]]
+    ) -> dict[str, object]:
+        """Run one Activity projection in a bounded exact read snapshot."""
+
+        transaction = self._transaction("field_effect_activity_snapshot", deferred=True)
+
+        def begin() -> None:
+            try:
+                transaction.begin()
+                self._activity_projection_revision()
+            except sqlite3.Error as error:
+                transaction.rollback()
+                raise FieldEffectError("persistence") from error
+            except Exception:
+                transaction.rollback()
+                raise
+
+        self._retry_activity_busy(begin)
+        try:
+            return call()
+        finally:
+            transaction.rollback()
+
     def field_effect_activity_page(
         self,
         *,
@@ -1798,26 +1838,15 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         page_size: int,
     ) -> dict[str, object]:
         """Return a current bounded page, retrying only this reader's busy lock."""
-
-        deadline = time.monotonic() + self._activity_page_busy_retry_seconds
-        while True:
-            try:
-                return self._field_effect_activity_page_once(
-                    search=search,
-                    event_type=event_type,
-                    occurred_after=occurred_after,
-                    page=page,
-                    page_size=page_size,
-                )
-            except FieldEffectError as error:
-                if (
-                    self._activity_page_busy_retry_seconds == 0
-                    or not self._retryable_activity_page_busy(error)
-                    or time.monotonic()
-                    + _ACTIVITY_PAGE_BUSY_TIMEOUT_MILLISECONDS / 1_000
-                    > deadline
-                ):
-                    raise
+        return self._retry_activity_busy(
+            lambda: self._field_effect_activity_page_once(
+                search=search,
+                event_type=event_type,
+                occurred_after=occurred_after,
+                page=page,
+                page_size=page_size,
+            )
+        )
 
     def _field_effect_activity_page_once(
         self,

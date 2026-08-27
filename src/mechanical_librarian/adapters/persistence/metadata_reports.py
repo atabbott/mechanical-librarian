@@ -542,6 +542,11 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             self._field_effect_activity.pending_field_effect_activity_example_document()
         )
 
+    def field_effect_activity_snapshot(
+        self, call: Callable[[], dict[str, object]]
+    ) -> dict[str, object]:
+        return self._field_effect_activity.field_effect_activity_snapshot(call)
+
     def pending_field_effect_decision_counts(self) -> tuple[dict[str, object], ...]:
         return self._field_effect_activity.pending_field_effect_decision_counts()
 

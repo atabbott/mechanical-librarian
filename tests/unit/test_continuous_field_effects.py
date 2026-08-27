@@ -412,6 +412,41 @@ def test_activity_resolves_at_most_one_current_example() -> None:
     }
 
 
+def test_activity_projection_runs_inside_the_injected_read_snapshot() -> None:
+    events: list[str] = []
+
+    class Repository(_ActivityPagedRepository):
+        def field_effect_backup_ready(self):
+            events.append("backup")
+            return True
+
+        def field_effect_activity_page(self, **query):
+            events.append("page")
+            return super().field_effect_activity_page(**query)
+
+    def snapshot(call):
+        events.append("snapshot_enter")
+        result = call()
+        events.append("snapshot_exit")
+        return result
+
+    service = ContinuousGuardedApplication(
+        Repository([]),
+        {},
+        {},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
+        activity_only=True,
+        activity_snapshot=snapshot,
+    )
+
+    service.activity()
+
+    assert events == ["backup", "snapshot_enter", "page", "snapshot_exit"]
+
+
 def test_activity_example_binding_race_is_absent_but_storage_fault_propagates() -> None:
     repository = _ActivityPagedRepository(_decisions(1))
 

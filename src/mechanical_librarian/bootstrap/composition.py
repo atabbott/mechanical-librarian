@@ -612,6 +612,7 @@ def compose_continuous_guarded_application(
         ).graceful_shutdown_seconds,
         scan_progress=preparation.progress,
         provider_recovery_snapshot=provider_recovery.activity_snapshot,
+        activity_snapshot=repository.field_effect_activity_snapshot,
     )
 
 
@@ -644,6 +645,7 @@ def compose_field_effect_activity_projection(
             if provider_recovery is not None
             else None
         ),
+        activity_snapshot=repository.field_effect_activity_snapshot,
     )
 
 

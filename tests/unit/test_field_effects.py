@@ -779,6 +779,52 @@ def test_activity_backup_readiness_rechecks_each_exact_database_revision(
         reader.close()
 
 
+def test_activity_snapshot_holds_and_releases_one_exact_read_transaction(
+    effects: _EffectEnvironment,
+) -> None:
+    _plan(effects, suffix="5")
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    reader.configure_activity_page_reader()
+    statements: list[str] = []
+    reader._connection.set_trace_callback(statements.append)
+
+    def projection() -> dict[str, object]:
+        assert reader._connection.in_transaction
+        summary = reader.field_effect_activity_summary()
+        page = reader.field_effect_activity_page(
+            search=None,
+            event_type="all",
+            occurred_after=0,
+            page=1,
+            page_size=25,
+        )
+        return {"summary": summary, "page": page}
+
+    def fail_projection() -> dict[str, object]:
+        raise RuntimeError("projection failure")
+
+    try:
+        result = reader.field_effect_activity_snapshot(projection)
+        assert result["summary"]
+        assert result["page"]
+        assert not reader._connection.in_transaction
+
+        with pytest.raises(RuntimeError, match="projection failure"):
+            reader.field_effect_activity_snapshot(fail_projection)
+        assert not reader._connection.in_transaction
+    finally:
+        reader._connection.set_trace_callback(None)
+        reader.close()
+
+    assert statements.count("BEGIN") == 2
+    assert statements.count("ROLLBACK") == 2
+
+
 def test_activity_page_cache_invalidates_an_in_place_policy_transition_update(
     effects: _EffectEnvironment,
 ) -> None:

@@ -234,6 +234,10 @@ class ContinuousGuardedApplication:
             [], tuple[dict[str, int | str | None], ...]
         ]
         | None = None,
+        activity_snapshot: Callable[
+            [Callable[[], dict[str, object]]], dict[str, object]
+        ]
+        | None = None,
     ) -> None:
         if (
             (activity_only and (applications or capabilities))
@@ -265,6 +269,7 @@ class ContinuousGuardedApplication:
         self._scan_progress = scan_progress
         self._activity_only = activity_only
         self._provider_recovery_snapshot = provider_recovery_snapshot or (lambda: ())
+        self._activity_snapshot = activity_snapshot or (lambda call: call())
         self._slot = threading.Lock()
         self._admission = threading.Event()
         self._wake = threading.Event()
@@ -849,6 +854,30 @@ class ContinuousGuardedApplication:
             or page_size not in {25, 50, 100}
         ):
             raise GuardedApplicationError("activity_query")
+        backup_ready = self._repository.field_effect_backup_ready()
+        return self._activity_snapshot(
+            lambda: self._activity_projection(
+                normalized_search=normalized_search,
+                event_type=event_type,
+                range_days=range_days,
+                page=page,
+                page_size=page_size,
+                backup_ready=backup_ready,
+            )
+        )
+
+    def _activity_projection(
+        self,
+        *,
+        normalized_search: str | None,
+        event_type: str,
+        range_days: int,
+        page: int,
+        page_size: int,
+        backup_ready: bool,
+    ) -> dict[str, object]:
+        """Project Activity inside the repository's exact read boundary."""
+
         data = self._repository.field_effect_activity_summary()
         page_projection = self._repository.field_effect_activity_page(
             search=normalized_search,
@@ -1065,7 +1094,7 @@ class ContinuousGuardedApplication:
             raise GuardedApplicationError("activity")
         return {
             **data,
-            "backup_ready": self._repository.field_effect_backup_ready(),
+            "backup_ready": backup_ready,
             "waiting": _waiting_reasons(
                 counts=cast("dict[str, int]", data.get("counts", {})),
                 prepared_by_destination=prepared_by_destination,
