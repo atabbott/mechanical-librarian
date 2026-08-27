@@ -87,6 +87,7 @@ from mechanical_librarian.domain.metadata_policy import (
     resolve_policy,
 )
 from mechanical_librarian.domain.metadata_report import (
+    MAX_REPORT_BYTES,
     MetadataReport,
     ProviderStatus,
     ReportValueError,
@@ -112,6 +113,9 @@ from mechanical_librarian.domain.shadow_outcome import (
 
 _ACTIVITY_PAGE_BUSY_TIMEOUT_MILLISECONDS = 150
 _ACTIVITY_PAGE_BUSY_RETRY_SECONDS = 0.75
+# Oversized pages are still served, but the two-entry cache together retains no
+# more serialized report text than one maximum-size report document.
+_ACTIVITY_PAGE_CACHE_MAX_BYTES = MAX_REPORT_BYTES
 _ActivityRead = TypeVar("_ActivityRead")
 
 _CORRECTIVE_KEEP_CURRENT_SQL = (
@@ -267,9 +271,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 tuple[int, int, int, int, int, str],
                 int,
                 int | None,
+                int,
                 dict[str, object],
             ],
         ] = {}
+        self._activity_page_cache_bytes = 0
         self._activity_page_cache_lock = RLock()
         self._backup_ready_cache: tuple[tuple[int, int], bool] | None = None
         self._activity_page_busy_retry_seconds = 0.0
@@ -1869,7 +1875,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     and occurred_after >= cached_cutoff
                     and (oldest_included is None or occurred_after <= oldest_included)
                 ):
-                    return deepcopy(cached[3])
+                    return deepcopy(cached[4])
             result, revision, oldest_included = (
                 self._field_effect_activity_page_uncached(
                     search=search,
@@ -1879,14 +1885,31 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     page_size=page_size,
                 )
             )
-            self._activity_page_cache[key] = (
-                revision,
-                occurred_after,
-                oldest_included,
-                deepcopy(result),
+            report_documents = cast("dict[str, str]", result["report_documents"])
+            retained_bytes = sum(
+                len(document.encode("utf-8")) for document in report_documents.values()
             )
-            if len(self._activity_page_cache) > 2:
-                self._activity_page_cache.pop(next(iter(self._activity_page_cache)))
+            replaced = self._activity_page_cache.pop(key, None)
+            if replaced is not None:
+                self._activity_page_cache_bytes -= replaced[3]
+            if retained_bytes <= _ACTIVITY_PAGE_CACHE_MAX_BYTES:
+                while self._activity_page_cache and (
+                    len(self._activity_page_cache) >= 2
+                    or self._activity_page_cache_bytes + retained_bytes
+                    > _ACTIVITY_PAGE_CACHE_MAX_BYTES
+                ):
+                    evicted = self._activity_page_cache.pop(
+                        next(iter(self._activity_page_cache))
+                    )
+                    self._activity_page_cache_bytes -= evicted[3]
+                self._activity_page_cache[key] = (
+                    revision,
+                    occurred_after,
+                    oldest_included,
+                    retained_bytes,
+                    deepcopy(result),
+                )
+                self._activity_page_cache_bytes += retained_bytes
             return result
 
     def _field_effect_activity_page_uncached(

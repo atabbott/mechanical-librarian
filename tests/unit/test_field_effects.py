@@ -31,6 +31,9 @@ from mechanical_librarian.adapters.field_effect_fakes import (
     PrivateCoverRecoveryStore,
 )
 from mechanical_librarian.adapters.field_effect_runtime import PersistedEffectConsent
+from mechanical_librarian.adapters.persistence.field_effect_activity import (
+    _ACTIVITY_PAGE_CACHE_MAX_BYTES,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
     SQLiteMetadataReportRepository,
@@ -63,12 +66,19 @@ from mechanical_librarian.domain.metadata_policy import (
     resolve_policy,
 )
 from mechanical_librarian.domain.metadata_report import (
+    MAX_DESCRIPTION_CHARACTERS,
     ClaimKind,
     ClaimScope,
+    FieldState,
     FileFacts,
     LocalClaim,
     MetadataReport,
+    ProviderCandidate,
+    ProviderClaim,
+    ProviderObservation,
+    ProviderStatus,
     TargetFacts,
+    comparison_links,
     default_target_fields,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
@@ -733,6 +743,176 @@ def test_activity_page_cache_reuses_a_rolling_range_until_an_event_ages_out(
 
     assert projection_calls == [2]
     assert expired != first
+
+
+def test_activity_page_cache_declines_valid_reports_over_its_byte_budget(
+    effects: _EffectEnvironment,
+) -> None:
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    projection = reader._field_effect_activity
+
+    def large_report(index: int) -> MetadataReport:
+        local = LocalClaim.create(
+            kind=ClaimKind.TITLE,
+            observed="Large",
+            canonical="Large",
+            excerpt="Large",
+            applicability="not_applicable",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.WORK,
+        )
+        candidates = []
+        for candidate_index in range(5):
+            candidate = f"candidate-{index}-{candidate_index}"
+            bare = ProviderClaim.create(
+                provider="catalogue",
+                candidate=candidate,
+                kind=ClaimKind.DESCRIPTION,
+                value="d" * MAX_DESCRIPTION_CHARACTERS,
+                state=FieldState.VALID,
+                scope=ClaimScope.WORK,
+                applicability="not_applicable",
+                raw_order=0,
+            )
+            claim = ProviderClaim.create(
+                provider="catalogue",
+                candidate=candidate,
+                kind=bare.kind,
+                value=bare.value,
+                state=bare.state,
+                scope=bare.scope,
+                applicability=bare.applicability,
+                raw_order=bare.raw_order,
+                links=comparison_links(bare, (local,)),
+            )
+            candidates.append(ProviderCandidate(candidate, candidate, (claim,)))
+        return MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "books",
+                f"item-{index}",
+                default_target_fields("Large"),
+            ),
+            file=FileFacts(0, "a" * 64, f"{index:064d}"),
+            local_claims=(local,),
+            local_reasons=("opening_matter_title",),
+            providers=(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.CANDIDATES,
+                    (),
+                    tuple(candidates),
+                ),
+            ),
+        )
+
+    reports = [large_report(index) for index in range(25)]
+    documents = {report.report_id: report.to_json() for report in reports}
+    assert sum(len(value.encode("utf-8")) for value in documents.values()) > (
+        _ACTIVITY_PAGE_CACHE_MAX_BYTES
+    )
+    assert all(
+        MetadataReport.from_json(document) == report
+        for report, document in zip(reports, documents.values(), strict=True)
+    )
+    result: dict[str, object] = {
+        "current_waiting": None,
+        "events": [],
+        "page": 1,
+        "page_count": 1,
+        "page_size": 100,
+        "report_documents": documents,
+        "total": 0,
+    }
+    revision = (0, 0, 0, 0, 0, "")
+    projection_calls = [0]
+    reader.field_effect_activity_page(
+        search=None,
+        event_type="all",
+        occurred_after=0,
+        page=1,
+        page_size=25,
+    )
+
+    def large_page(**_query: object):
+        projection_calls[0] += 1
+        return result, revision, None
+
+    with patch.object(projection, "_field_effect_activity_page_uncached", large_page):
+        try:
+            query = dict(
+                search=None,
+                event_type="all",
+                occurred_after=0,
+                page=1,
+                page_size=100,
+            )
+            assert reader.field_effect_activity_page(**query) == result
+            assert reader.field_effect_activity_page(**query) == result
+        finally:
+            reader.close()
+
+    assert projection_calls == [2]
+    assert list(projection._activity_page_cache) == [(None, "all", 1, 25)]
+    assert projection._activity_page_cache_bytes == 0
+
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    projection = reader._field_effect_activity
+    first_documents = dict(list(documents.items())[:15])
+    second_documents = dict(list(documents.items())[15:])
+    first_bytes = sum(len(value.encode("utf-8")) for value in first_documents.values())
+    second_bytes = sum(
+        len(value.encode("utf-8")) for value in second_documents.values()
+    )
+    assert first_bytes <= _ACTIVITY_PAGE_CACHE_MAX_BYTES
+    assert second_bytes <= _ACTIVITY_PAGE_CACHE_MAX_BYTES
+    assert first_bytes + second_bytes > _ACTIVITY_PAGE_CACHE_MAX_BYTES
+    page_results = {
+        25: {**result, "page_size": 25, "report_documents": first_documents},
+        50: {**result, "page_size": 50, "report_documents": second_documents},
+    }
+    bounded_calls: list[int] = []
+
+    def bounded_page(**query: object):
+        page_size = cast(int, query["page_size"])
+        bounded_calls.append(page_size)
+        return page_results[page_size], revision, None
+
+    with (
+        patch.object(projection, "_field_effect_activity_page_uncached", bounded_page),
+        patch.object(
+            projection, "_activity_projection_revision", return_value=revision
+        ),
+    ):
+        try:
+            for page_size in (25, 25, 50, 25):
+                assert (
+                    reader.field_effect_activity_page(
+                        search=None,
+                        event_type="all",
+                        occurred_after=0,
+                        page=1,
+                        page_size=page_size,
+                    )
+                    == page_results[page_size]
+                )
+        finally:
+            reader.close()
+
+    assert bounded_calls == [25, 50, 25]
+    assert list(projection._activity_page_cache) == [(None, "all", 1, 25)]
+    assert projection._activity_page_cache_bytes == first_bytes
 
 
 def test_activity_example_selector_returns_one_current_published_candidate(

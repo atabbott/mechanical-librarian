@@ -88,7 +88,7 @@ export const startLiveInvalidation = (
     options.observeActivity ??
     ((listener) => {
       if (typeof document === 'undefined') return () => undefined
-      const events = ['pointerdown', 'keydown', 'click'] as const
+      const events = ['pointerdown', 'keydown', 'click', 'wheel'] as const
       for (const event of events) document.addEventListener(event, listener)
       return () => {
         for (const event of events) document.removeEventListener(event, listener)

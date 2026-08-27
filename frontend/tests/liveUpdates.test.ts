@@ -246,7 +246,6 @@ describe('live invalidation', () => {
     const listeners: ((update: LiveUpdate) => void)[] = []
     let nextTimer = 0
     let now = 0
-    let activityListener: (() => void) | undefined
     const stream = {
       state: 'live' as const,
       subscribe(listener: (update: LiveUpdate) => void) {
@@ -264,10 +263,6 @@ describe('live invalidation', () => {
       },
       cancel: (handle) => void timers.delete(handle),
       now: () => now,
-      observeActivity: (listener) => {
-        activityListener = listener
-        return () => undefined
-      },
       observeVisibility: () => () => undefined,
     })
 
@@ -276,7 +271,7 @@ describe('live invalidation', () => {
     expect(invalidate).not.toHaveBeenCalled()
     expect(timers).toHaveLength(1)
 
-    activityListener?.()
+    document.dispatchEvent(new WheelEvent('wheel'))
     expect(timers).toHaveLength(1)
     const queued = [...timers.entries()][0]
     expect(queued?.[1].delay).toBe(120)
