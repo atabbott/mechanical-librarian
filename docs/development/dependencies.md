@@ -339,6 +339,14 @@ nothing installs: the gate, the container's frontend stage, and
 the manifest. npm moves by hand with a Node update, and the manifest exactness
 test refuses a manifest that has drifted from the pinned pair.
 
+The interpreter and the resolver are each pinned twice: once in the shipped
+container image and once in the gate that qualifies it. Renovate
+moves those four pins as one `qualified runtime toolchain` group, matched by
+the exact dependency names its managers report, and the unit policy suite
+asserts both that grouping and version parity across every declaration site.
+A group is co-scheduling, not atomicity, so the parity test is what refuses a
+half-landed pair at the merge boundary.
+
 Major updates and dependency replacements require Dependency Dashboard approval
 before Renovate prepares their pull requests, and never auto-merge. Newly
 introduced dependencies, licensing changes, and changes to network, credential,
