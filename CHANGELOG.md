@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep valid Hardcover discovery candidates when optional cover descriptors
+  conflict across lanes; the conflicting cover remains fail-closed. Provider
+  lane diagnostics now persist their bounded rejection category; existing
+  pre-release `metadata-report-v26` state requires a clean rebuild. (#871)
+
 - Remember the owner login for up to 30 days with a fixed, server-enforced
   expiry and verifier-bound session lookup. Logout and owner-verifier
   replacement end remembered authority. (#862)

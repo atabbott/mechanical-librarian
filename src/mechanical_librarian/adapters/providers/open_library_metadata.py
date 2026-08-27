@@ -1522,6 +1522,7 @@ def _canonical_discovery_results(
                 for candidate in result.candidates
             ),
             result.accessed_at,
+            diagnostics=result.diagnostics,
         )
         for result in results
     )

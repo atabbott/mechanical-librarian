@@ -25,6 +25,9 @@ from mechanical_librarian.adapters.providers.retry_safety import (
     bounded_retry_after,
     transient_transport_failure,
 )
+from mechanical_librarian.application.failure_diagnostics import (
+    provider_attempt_diagnostics,
+)
 from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryPlan,
     MetadataLookup,
@@ -290,6 +293,7 @@ class HardcoverMetadataProvider:
                     lane.authors,
                     lane.matched_family,
                 )
+                attempts_before = len(self._attempt_records)
                 physical, _replayed = ledger.resolve(
                     kind=lookup.kind.value,
                     matched_family=lookup.matched_family,
@@ -303,6 +307,10 @@ class HardcoverMetadataProvider:
                     execute=lambda: self._observe_lookup(lookup, deadline=deadline),  # noqa: B023 - `ledger.resolve` calls `execute` before it returns, so the lambda only ever sees this lane's lookup
                 )
                 observation = qualify_provider_observation(physical, lookup)
+                diagnostics = provider_attempt_diagnostics(
+                    tuple(self._attempt_records[attempts_before:]),
+                    status=observation.status.value,
+                )
                 results.append(
                     ProviderLaneResult(
                         lane,
@@ -310,6 +318,7 @@ class HardcoverMetadataProvider:
                         observation.candidates,
                         observation.accessed_at,
                         observation.edition_enrichment_overflow,
+                        diagnostics,
                     )
                 )
                 merged = merge_provider_cover_descriptors(
@@ -320,13 +329,7 @@ class HardcoverMetadataProvider:
                         else ()
                     ),
                 )
-                if merged is None:
-                    results[-1] = ProviderLaneResult(
-                        lane,
-                        ProviderStatus.MALFORMED,
-                        accessed_at=observation.accessed_at,
-                    )
-                else:
+                if merged is not None:
                     descriptors = merged
         finally:
             self._client.close()
