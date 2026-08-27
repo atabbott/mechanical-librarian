@@ -1754,8 +1754,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 if (
                     self._activity_page_busy_retry_seconds == 0
                     or not self._retryable_activity_page_busy(error)
-                    or time.monotonic() + _ACTIVITY_PAGE_BUSY_TIMEOUT_MILLISECONDS
-                    / 1_000
+                    or time.monotonic()
+                    + _ACTIVITY_PAGE_BUSY_TIMEOUT_MILLISECONDS / 1_000
                     > deadline
                 ):
                     raise
@@ -1785,7 +1785,18 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             )
             # A commit racing the projection must never be stamped with a
             # newer revision than the snapshot that produced it.
-            if self._activity_projection_revision() == before:
+            try:
+                after = self._activity_projection_revision()
+            except FieldEffectError as error:
+                # The completed read transaction is one immutable SQLite
+                # snapshot.  A pending writer can make this cache-only
+                # freshness check busy after that snapshot is complete.  Do
+                # not rerun the expensive projection or stamp it with an
+                # unobserved revision; return it uncached instead.
+                if self._retryable_activity_page_busy(error):
+                    return result
+                raise
+            if after == before:
                 self._activity_page_cache[key] = (before, deepcopy(result))
                 if len(self._activity_page_cache) > 2:
                     self._activity_page_cache.pop(next(iter(self._activity_page_cache)))

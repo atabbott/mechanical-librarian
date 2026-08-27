@@ -3625,6 +3625,54 @@ def test_activity_projection_retries_a_short_delete_journal_convoy(
     assert result["events"]
 
 
+def test_activity_projection_returns_an_uncached_snapshot_when_post_read_revision_is_busy(
+    effects: _EffectEnvironment,
+) -> None:
+    """A post-projection busy read cannot make the completed page run again."""
+
+    _plan(effects, suffix="d")
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    reader.configure_activity_page_reader()
+    projection = reader._field_effect_activity
+    original_revision = projection._activity_projection_revision
+    original_page = projection._field_effect_activity_page_uncached
+    revision_calls = [0]
+    page_calls = [0]
+
+    def post_read_busy_revision() -> tuple[int, int]:
+        revision_calls[0] += 1
+        if revision_calls[0] == 2:
+            error = sqlite3.OperationalError()
+            error.sqlite_errorcode = sqlite3.SQLITE_BUSY
+            raise FieldEffectError("persistence") from error
+        return original_revision()
+
+    def counted_page(**query: object) -> dict[str, object]:
+        page_calls[0] += 1
+        return original_page(**query)
+
+    projection._activity_projection_revision = post_read_busy_revision
+    projection._field_effect_activity_page_uncached = counted_page
+    try:
+        result = reader.field_effect_activity_page(
+            search=None,
+            event_type="all",
+            occurred_after=0,
+            page=1,
+            page_size=25,
+        )
+    finally:
+        reader.close()
+    assert result["events"]
+    assert page_calls == [1]
+    assert projection._activity_page_cache == {}
+
+
 def test_activity_projection_never_retries_a_nonbusy_error(
     effects: _EffectEnvironment,
 ) -> None:
