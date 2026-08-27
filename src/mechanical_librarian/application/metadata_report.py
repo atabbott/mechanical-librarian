@@ -71,6 +71,7 @@ from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     WorkTitleTransformationLineage,
     replay_provider_work_identity_admission,
+    work_query_ladder,
 )
 
 
@@ -195,6 +196,7 @@ class MetadataLookup:
 
 
 MAX_ISBN_DISCOVERY_LANES = 8
+MAX_PROVIDER_DISCOVERY_QUERIES = 9
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,6 +240,17 @@ class MetadataDiscoveryLane:
             raise MetadataReportError("provider discovery lane is invalid")
 
 
+def _metadata_discovery_query_count(
+    lanes: tuple[MetadataDiscoveryLane, ...],
+) -> int:
+    return sum(
+        len(work_query_ladder(lane.title, lane.authors))
+        if lane.kind is ProviderQueryKind.WORK and lane.title is not None
+        else 1
+        for lane in lanes
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class MetadataDiscoveryPlan:
     local_claims: tuple[LocalClaim, ...]
@@ -251,6 +264,8 @@ class MetadataDiscoveryPlan:
             or type(self.lanes) is not tuple
             or any(type(value) is not MetadataDiscoveryLane for value in self.lanes)
             or len(self.lanes) > MAX_ISBN_DISCOVERY_LANES + 1
+            or _metadata_discovery_query_count(self.lanes)
+            > MAX_PROVIDER_DISCOVERY_QUERIES
             or tuple(value.identity for value in self.lanes)
             != tuple(sorted({value.identity for value in self.lanes}))
             or type(self.overflow) is not bool
@@ -430,9 +445,10 @@ def metadata_discovery_plan(
                     authors=normalized_authors,
                 )
             )
-    return MetadataDiscoveryPlan(
-        local_claims, tuple(sorted(lanes, key=lambda value: value.identity))
-    )
+    ordered_lanes = tuple(sorted(lanes, key=lambda value: value.identity))
+    if _metadata_discovery_query_count(ordered_lanes) > MAX_PROVIDER_DISCOVERY_QUERIES:
+        return MetadataDiscoveryPlan(local_claims, (), True)
+    return MetadataDiscoveryPlan(local_claims, ordered_lanes)
 
 
 def provider_observation(

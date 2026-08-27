@@ -39,8 +39,12 @@ metadata attempts, at most nine Google Books Volumes queries and 54 aggregate
 attempts, and separately credential-free bounded cover
 request chains for admitted descriptors. These
 metadata maxima apply only when their provider and corresponding discovery
-lanes are enabled and admitted. It may append a neutral report and update its
-current pointer. It has
+lanes are enabled and admitted. Each ISBN family and each distinct work-query
+ladder rung consumes one fixed query; a plan that cannot fit every lane inside
+that limit is rejected before provider construction rather than partially
+dispatched. Candidate-limit narrowing and transport retries consume the
+separate aggregate-attempt allowance. It may append a neutral report and update
+its current pointer. It has
 no target-write, media-write, review, decision, apply, background, durable retry,
 deletion, repair, import, schema-migration, or backward-compatibility authority.
 An existing database must match the installed increment's exact current schema

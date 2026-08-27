@@ -25,6 +25,7 @@ from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryPlan,
     MetadataLookup,
     MetadataProvider,
+    MetadataReportError,
     ProviderBinding,
     ProviderLaneResult,
     ReportRepository,
@@ -499,6 +500,49 @@ def test_discovery_plan_reports_exact_family_overflow_without_subset() -> None:
     plan = metadata_discovery_plan(TargetSnapshot("ebook", None, ()), tuple(claims))
     assert plan.overflow
     assert () == plan.lanes
+
+    title = LocalClaim.create(
+        kind=ClaimKind.TITLE,
+        observed="Example: A Subtitle",
+        canonical="Example: A Subtitle",
+        excerpt="Example: A Subtitle",
+        applicability="not_applicable",
+        basis="target_metadata",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.WORK,
+    )
+    fields = tuple(
+        TargetField(
+            field.destination,
+            TargetFieldState.VALUE,
+            ("Ada & Bea",),
+        )
+        if field.destination is TargetDestination.AUTHORS
+        else field
+        for field in default_target_fields("Example: A Subtitle")
+    )
+    target_with_work = TargetSnapshot("ebook", "Example: A Subtitle", (), fields=fields)
+    assert 3 == len(work_query_ladder("Example: A Subtitle", ("Ada & Bea",)))
+    over_budget = metadata_discovery_plan(target_with_work, (title, *claims[:7]))
+    assert over_budget.overflow
+    assert () == over_budget.lanes
+    boundary = metadata_discovery_plan(target_with_work, (title, *claims[:6]))
+    assert not boundary.overflow
+    assert 7 == len(boundary.lanes)
+    isbn_only = metadata_discovery_plan(
+        TargetSnapshot("ebook", None, ()), tuple(claims[:7])
+    )
+    work_only = metadata_discovery_plan(target_with_work, (title,))
+    with pytest.raises(MetadataReportError):
+        MetadataDiscoveryPlan(
+            (title, *claims[:7]),
+            tuple(
+                sorted(
+                    (*isbn_only.lanes, *work_only.lanes), key=lambda lane: lane.identity
+                )
+            ),
+        )
 
     selected = TargetFile("a" * 64, "book.epub", "epub")
     snapshot = TargetSnapshot("ebook", None, (selected,))
