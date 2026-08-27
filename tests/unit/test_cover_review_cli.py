@@ -55,13 +55,10 @@ def test_activity_composition_calls_the_shared_query_only_projection() -> None:
     repository.close.assert_called_once_with()
 
 
-def test_independent_activity_reader_gets_busy_configuration_and_live_readiness() -> (
-    None
-):
+def test_independent_activity_reader_gets_the_bounded_busy_configuration() -> None:
     repository = Mock()
     projection = Mock()
     configuration = Mock(review=object())
-    capability_readiness = Mock()
 
     with (
         patch(
@@ -74,18 +71,12 @@ def test_independent_activity_reader_gets_busy_configuration_and_live_readiness(
         ) as compose,
     ):
         actual, close = open_field_effect_activity_projection(
-            configuration,
-            Path("/database.sqlite3"),
-            object(),
-            None,
-            capability_readiness,
+            configuration, Path("/database.sqlite3"), object()
         )
 
     assert actual is projection
     repository.configure_activity_page_reader.assert_called_once_with()
-    compose.assert_called_once_with(
-        configuration, repository, None, capability_readiness
-    )
+    compose.assert_called_once_with(configuration, repository, None)
     close()
     repository.close.assert_called_once_with()
 

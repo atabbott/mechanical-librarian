@@ -430,11 +430,6 @@ def test_activity_projection_runs_inside_the_injected_read_snapshot() -> None:
         events.append("snapshot_exit")
         return result
 
-    def capability_readiness(libraries):
-        events.append("capability")
-        assert libraries == ("alpha",)
-        return []
-
     service = ContinuousGuardedApplication(
         Repository([]),
         {},
@@ -445,18 +440,11 @@ def test_activity_projection_runs_inside_the_injected_read_snapshot() -> None:
         lambda *_: None,
         activity_only=True,
         activity_snapshot=snapshot,
-        activity_capability_readiness=capability_readiness,
     )
 
     service.activity()
 
-    assert events == [
-        "capability",
-        "backup",
-        "snapshot_enter",
-        "page",
-        "snapshot_exit",
-    ]
+    assert events == ["backup", "snapshot_enter", "page", "snapshot_exit"]
 
 
 def test_activity_reader_serializes_overlapping_requests() -> None:
@@ -1483,9 +1471,9 @@ def test_activity_only_projection_uses_only_persisted_capability_state() -> None
     destinations = {
         value["destination"]: value["state"] for value in readiness[0]["destinations"]
     }
-    assert "not_ready" == readiness[0]["state"]
+    assert "partially_allowed" == readiness[0]["state"]
     assert "field_unavailable" == destinations["subtitle"]
-    assert "not_ready" == destinations["title"]
+    assert "allowed" == destinations["title"]
     assert {
         ("destination", "primary", "subtitle"): ("field_unavailable", 1)
     } == repository.suspensions
@@ -1493,13 +1481,6 @@ def test_activity_only_projection_uses_only_persisted_capability_state() -> None
 
 def test_activity_only_projection_preserves_live_readiness_for_prepared_work() -> None:
     repository = _ActivityPagedRepository([_decisions(1)[0]])
-    destinations = [
-        {
-            "destination": destination,
-            "state": "field_unavailable" if destination == "subtitle" else "allowed",
-        }
-        for destination in sorted(SUPPORTED_DESTINATIONS)
-    ]
     service = ContinuousGuardedApplication(
         repository,
         {},
@@ -1509,14 +1490,6 @@ def test_activity_only_projection_preserves_live_readiness_for_prepared_work() -
         lambda: 1,
         lambda *_: None,
         activity_only=True,
-        activity_capability_readiness=lambda libraries: [
-            {
-                "connection": "primary",
-                "library": libraries[0],
-                "state": "partially_allowed",
-                "destinations": destinations,
-            }
-        ],
     )
 
     activity = service.activity()
@@ -1526,8 +1499,7 @@ def test_activity_only_projection_preserves_live_readiness_for_prepared_work() -
         value["destination"]: value
         for value in cast("list[dict[str, object]]", capability["destinations"])
     }
-    assert capability["state"] == "partially_allowed"
-    assert projected["subtitle"]["state"] == "field_unavailable"
+    assert capability["state"] == "allowed"
     assert projected["title"]["state"] == "allowed"
     assert projected["title"]["prepared"] == 1
     assert projected["title"]["consented"] is False

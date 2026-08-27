@@ -620,8 +620,6 @@ def compose_field_effect_activity_projection(
     configuration: ApplicationConfiguration,
     repository: SQLiteMetadataReportRepository,
     provider_recovery: SQLiteProviderRecoveryStore | None = None,
-    capability_readiness: Callable[[tuple[str, ...]], list[dict[str, object]]]
-    | None = None,
 ) -> ContinuousGuardedApplication:
     """Compose the shared Activity projection without write-capable adapters."""
     configured = tuple(
@@ -648,7 +646,6 @@ def compose_field_effect_activity_projection(
             else None
         ),
         activity_snapshot=repository.field_effect_activity_snapshot,
-        activity_capability_readiness=capability_readiness,
     )
 
 
@@ -657,8 +654,6 @@ def open_field_effect_activity_projection(
     database_path: Path,
     authority: object,
     provider_recovery: SQLiteProviderRecoveryStore | None = None,
-    capability_readiness: Callable[[tuple[str, ...]], list[dict[str, object]]]
-    | None = None,
 ) -> tuple[ContinuousGuardedApplication, Callable[[], None]]:
     """Open the Activity reader independently of the state-owner connection."""
     repository = open_repository(
@@ -668,10 +663,7 @@ def open_field_effect_activity_projection(
         repository.configure_activity_page_reader()
         return (
             compose_field_effect_activity_projection(
-                configuration,
-                repository,
-                provider_recovery,
-                capability_readiness,
+                configuration, repository, provider_recovery
             ),
             repository.close,
         )
@@ -2345,7 +2337,6 @@ def compose_store_runtime_generation(
                     database_path,
                     repository.authority,
                     provider_recovery,
-                    field_application.activity_capability_readiness,
                 )
             )
         support_bundle = SupportBundle(
@@ -2733,7 +2724,6 @@ def run_review_server(
                         database_path,
                         repository.authority,
                         provider_recovery,
-                        field_application.activity_capability_readiness,
                     )
                 )
             support_bundle = SupportBundle(
