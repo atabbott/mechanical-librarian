@@ -214,6 +214,9 @@ class _PagedRepository:
             ]
         return tuple(value.to_json() for value in values[:limit])
 
+    def pending_field_effect_activity_example_document(self):
+        return self.decisions[-1].to_json() if self.decisions else None
+
     def pending_field_effect_decision_counts(self):
         counts: dict[tuple[str, str], int] = {}
         for value in self.decisions:
@@ -230,9 +233,6 @@ class _PagedRepository:
             }
             for (library, destination), count in sorted(counts.items())
         )
-
-    def field_effect_activity_example(self, _decisions):
-        return None
 
     def current_field_effect_consent(self, connection, library, destination):
         if library == "alpha":
@@ -296,6 +296,18 @@ class _PagedRepository:
         )
         value = connection_value or destination_value
         return None if value is None else value[0]
+
+
+class _ActivityPagedRepository(_PagedRepository):
+    def field_effect_activity_data(self, _limit):
+        return {
+            "consented_destinations": [],
+            "consented_libraries": [],
+            "counts": {},
+            "events": [],
+            "paused": False,
+            "suspensions": [],
+        }
 
 
 class _HoldRepository(_Repository):
@@ -363,6 +375,68 @@ class _Authority:
             review_case_id=decision.review_case_id,
             source="persisted_review_case",
         )
+
+
+def test_activity_resolves_at_most_one_current_example() -> None:
+    decisions = _decisions(3)
+
+    class CountingAuthority(_Authority):
+        def __init__(self) -> None:
+            self.resolved: list[str] = []
+
+        def resolve(self, decision):
+            self.resolved.append(decision.decision_id)
+            return super().resolve(decision)
+
+    authority = CountingAuthority()
+    service = ContinuousGuardedApplication(
+        _ActivityPagedRepository(decisions),
+        {},
+        {},
+        authority,
+        (("primary", "alpha"), ("primary", "beta")),
+        lambda: 1,
+        lambda *_: None,
+        activity_only=True,
+    )
+
+    activity = service.activity()
+
+    assert authority.resolved == [decisions[-1].decision_id]
+    assert activity["example"] == {
+        "after": "After",
+        "before": "Before",
+        "destination": "title",
+        "library": "alpha",
+        "work_id": "work",
+    }
+
+
+def test_activity_example_binding_race_is_absent_but_storage_fault_propagates() -> None:
+    repository = _ActivityPagedRepository(_decisions(1))
+
+    def service(authority):
+        return ContinuousGuardedApplication(
+            repository,
+            {},
+            {},
+            authority,
+            (("primary", "alpha"),),
+            lambda: 1,
+            lambda *_: None,
+            activity_only=True,
+        )
+
+    class RaisingAuthority:
+        def __init__(self, code: str) -> None:
+            self.code = code
+
+        def resolve(self, _decision):
+            raise FieldEffectError(self.code)
+
+    assert service(RaisingAuthority("authority_binding")).activity()["example"] is None
+    with pytest.raises(FieldEffectError, match="^persistence$"):
+        service(RaisingAuthority("persistence")).activity()
 
 
 class _Planner:

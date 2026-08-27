@@ -9,7 +9,7 @@ import threading
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -673,8 +673,15 @@ def test_activity_page_cache_keeps_only_an_exact_current_reader_projection(
         reader._connection.set_trace_callback(None)
         assert second == first
         assert len(statements) == 1
-        assert "field_effect_events" in statements[0]
-        assert "metadata_policy_transitions" in statements[0]
+        for source in (
+            "field_effect_events",
+            "human_decision_events",
+            "automatic_decisions",
+            "field_effect_no_changes",
+            "cover_consideration_events",
+            "metadata_policy_transitions",
+        ):
+            assert source in statements[0]
 
         # A caller receives a copy: its owner-readable shaping cannot corrupt
         # the reader's retained immutable projection.
@@ -683,10 +690,76 @@ def test_activity_page_cache_keeps_only_an_exact_current_reader_projection(
 
         _plan(effects, suffix="b")
         refreshed = reader.field_effect_activity_page(**query)
-        assert refreshed["total"] > first["total"]
+        assert cast(int, refreshed["total"]) > cast(int, first["total"])
     finally:
         reader._connection.set_trace_callback(None)
         reader.close()
+
+
+def test_activity_example_selector_returns_one_current_published_candidate(
+    effects: _EffectEnvironment,
+) -> None:
+    from tests.unit.test_activity_end_to_end import _automatic_candidate_decision
+
+    _automatic_candidate_decision(effects)
+
+    document = effects.repository.pending_field_effect_activity_example_document()
+
+    assert document is not None
+    selected = AutomaticDecision.from_json(document)
+    snapshot = PersistedFieldEffectAuthority(effects.repository).resolve(selected)
+    assert snapshot.review_case_id == selected.review_case_id
+    assert snapshot.destination == selected.destination
+
+
+def test_activity_page_cache_invalidates_an_in_place_policy_transition_update(
+    effects: _EffectEnvironment,
+) -> None:
+    builtin = MetadataPolicyProfile.builtin()
+    replacement = MetadataPolicyProfile.create(
+        "Replacement", dict(builtin.options), dict(builtin.destinations)
+    )
+    effects.repository.create_metadata_policy_draft(replacement.canonical_json)
+    resolution = resolve_policy(replacement, "books")
+    effects.repository.activate_metadata_policy(
+        replacement.policy_id,
+        builtin.policy_id,
+        (("books", resolution.resolved_id, resolution.canonical_json),),
+        2,
+    )
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    query = dict(
+        search=None, event_type="policy", occurred_after=0, page=1, page_size=25
+    )
+    projection_calls = [0]
+    projection = reader._field_effect_activity
+    original = projection._field_effect_activity_page_uncached
+
+    def counted_projection(**values):
+        projection_calls[0] += 1
+        return original(**values)
+
+    with patch.object(
+        projection, "_field_effect_activity_page_uncached", counted_projection
+    ):
+        try:
+            first = reader.field_effect_activity_page(**query)
+            assert reader.field_effect_activity_page(**query) == first
+            effects.repository._connection.execute(
+                "UPDATE metadata_policy_transitions SET updated_at=updated_at+1"
+            )
+            effects.repository._connection.commit()
+            refreshed = reader.field_effect_activity_page(**query)
+        finally:
+            reader.close()
+
+    assert projection_calls == [2]
+    assert refreshed != first
 
 
 def test_activity_page_fails_closed_for_corrupt_or_oversized_durable_rows(
@@ -776,7 +849,7 @@ def test_activity_summary_reads_no_legacy_events_or_report_documents(
     assert "from metadata_reports where report_id" not in sql
 
 
-def test_activity_page_rejects_a_selected_report_digest_mismatch(
+def test_activity_page_ignores_a_corrupt_later_current_report_for_field_event(
     effects: _EffectEnvironment,
 ) -> None:
     report = metadata_report("Readable work", "5", "6", item_id="book-1")
@@ -791,18 +864,18 @@ def test_activity_page_rejects_a_selected_report_digest_mismatch(
     effects.repository._connection.execute("PRAGMA ignore_check_constraints=OFF")
     effects.repository._connection.commit()
 
-    with pytest.raises(FieldEffectError, match="^persistence$"):
-        effects.repository.field_effect_activity_page(
-            search=None,
-            event_type="all",
-            occurred_after=2_000_000,
-            page=1,
-            page_size=25,
-        )
+    page = effects.repository.field_effect_activity_page(
+        search=None,
+        event_type="all",
+        occurred_after=0,
+        page=1,
+        page_size=25,
+    )
+    assert any(event["destination"] == "title" for event in page["events"])
     assert not effects.repository._connection.in_transaction
 
 
-def test_activity_page_rejects_an_oversized_current_waiting_report(
+def test_activity_page_does_not_substitute_a_later_report_for_current_waiting(
     effects: _EffectEnvironment,
 ) -> None:
     report = metadata_report("Readable work", "7", "8", item_id="book-1")
@@ -818,14 +891,14 @@ def test_activity_page_rejects_an_oversized_current_waiting_report(
     effects.repository._connection.execute("PRAGMA ignore_check_constraints=OFF")
     effects.repository._connection.commit()
 
-    with pytest.raises(FieldEffectError, match="^persistence$"):
-        effects.repository.field_effect_activity_page(
-            search=None,
-            event_type="all",
-            occurred_after=2_000_000,
-            page=1,
-            page_size=25,
-        )
+    page = effects.repository.field_effect_activity_page(
+        search=None,
+        event_type="all",
+        occurred_after=2_000_000,
+        page=1,
+        page_size=25,
+    )
+    assert page["current_waiting"]["work_label"] == "Recorded work"
     assert not effects.repository._connection.in_transaction
 
 
@@ -3536,7 +3609,7 @@ def test_activity_projection_bounds_delete_journal_pending_writer_convoy(
         reader_c.close()
     assert writer_errors == []
     assert writer_committed.is_set()
-    assert activity_result["elapsed"] < 1
+    assert cast(float, activity_result["elapsed"]) < 1
     assert activity_result["sqlite_errorcode"] == sqlite3.SQLITE_BUSY
     assert activity_result["sqlite_errorname"] == "SQLITE_BUSY"
 
@@ -3592,34 +3665,36 @@ def test_activity_projection_retries_a_short_delete_journal_convoy(
         time.sleep(0.2)
         reader_a._connection.rollback()
 
-    projection._field_effect_activity_page_once = counted_page
     writer = threading.Thread(target=pending_writer)
     release = threading.Thread(target=release_reader)
-    try:
-        assert reader_a._connection.execute("PRAGMA journal_mode").fetchone() == (
-            "delete",
-        )
-        reader_a._connection.execute("BEGIN")
-        reader_a._connection.execute("SELECT 1 FROM field_effects LIMIT 1").fetchone()
-        writer.start()
-        assert writer_ready.wait(1)
-        release.start()
-        started = time.monotonic()
-        result = reader_c.field_effect_activity_page(
-            search=None,
-            event_type="all",
-            occurred_after=0,
-            page=1,
-            page_size=25,
-        )
-        elapsed = time.monotonic() - started
-    finally:
-        if reader_a._connection.in_transaction:
-            reader_a._connection.rollback()
-        release.join(2)
-        writer.join(9)
-        reader_a.close()
-        reader_c.close()
+    with patch.object(projection, "_field_effect_activity_page_once", counted_page):
+        try:
+            assert reader_a._connection.execute("PRAGMA journal_mode").fetchone() == (
+                "delete",
+            )
+            reader_a._connection.execute("BEGIN")
+            reader_a._connection.execute(
+                "SELECT 1 FROM field_effects LIMIT 1"
+            ).fetchone()
+            writer.start()
+            assert writer_ready.wait(1)
+            release.start()
+            started = time.monotonic()
+            result = reader_c.field_effect_activity_page(
+                search=None,
+                event_type="all",
+                occurred_after=0,
+                page=1,
+                page_size=25,
+            )
+            elapsed = time.monotonic() - started
+        finally:
+            if reader_a._connection.in_transaction:
+                reader_a._connection.rollback()
+            release.join(2)
+            writer.join(9)
+            reader_a.close()
+            reader_c.close()
     assert writer_errors == []
     assert writer_committed.is_set()
     assert attempts[0] >= 2
@@ -3627,10 +3702,10 @@ def test_activity_projection_retries_a_short_delete_journal_convoy(
     assert result["events"]
 
 
-def test_activity_projection_returns_an_uncached_snapshot_when_post_read_revision_is_busy(
+def test_activity_projection_stamps_inside_snapshot_and_validates_a_cache_hit_once(
     effects: _EffectEnvironment,
 ) -> None:
-    """A post-projection busy read cannot make the completed page run again."""
+    """A miss stamps its snapshot; a hit performs only one current check."""
 
     _plan(effects, suffix="d")
     reader = open_repository(
@@ -3643,36 +3718,46 @@ def test_activity_projection_returns_an_uncached_snapshot_when_post_read_revisio
     projection = reader._field_effect_activity
     original_revision = projection._activity_projection_revision
     original_page = projection._field_effect_activity_page_uncached
-    revision_calls = [0]
+    revision_transactions: list[bool] = []
     page_calls = [0]
 
-    def post_read_busy_revision() -> tuple[int, int, int, int, int, int]:
-        revision_calls[0] += 1
-        if revision_calls[0] == 2:
-            error = sqlite3.OperationalError()
-            error.sqlite_errorcode = sqlite3.SQLITE_BUSY
-            raise FieldEffectError("persistence") from error
+    def observed_revision() -> tuple[int, int, int, int, int, str]:
+        revision_transactions.append(projection._connection.in_transaction)
         return original_revision()
 
-    def counted_page(**query: object) -> dict[str, object]:
+    def counted_page(
+        **query: object,
+    ) -> tuple[dict[str, object], tuple[int, int, int, int, int, str]]:
         page_calls[0] += 1
         return original_page(**query)
 
-    projection._activity_projection_revision = post_read_busy_revision
-    projection._field_effect_activity_page_uncached = counted_page
-    try:
-        result = reader.field_effect_activity_page(
-            search=None,
-            event_type="all",
-            occurred_after=0,
-            page=1,
-            page_size=25,
-        )
-    finally:
-        reader.close()
+    with (
+        patch.object(projection, "_activity_projection_revision", observed_revision),
+        patch.object(projection, "_field_effect_activity_page_uncached", counted_page),
+    ):
+        try:
+            result = reader.field_effect_activity_page(
+                search=None,
+                event_type="all",
+                occurred_after=0,
+                page=1,
+                page_size=25,
+            )
+            assert (
+                reader.field_effect_activity_page(
+                    search=None,
+                    event_type="all",
+                    occurred_after=0,
+                    page=1,
+                    page_size=25,
+                )
+                == result
+            )
+        finally:
+            reader.close()
     assert result["events"]
     assert page_calls == [1]
-    assert projection._activity_page_cache == {}
+    assert revision_transactions == [True, False]
 
 
 def test_activity_projection_never_retries_a_nonbusy_error(
@@ -3694,18 +3779,22 @@ def test_activity_projection_never_retries_a_nonbusy_error(
         except sqlite3.OperationalError as error:
             raise FieldEffectError("persistence") from error
 
-    reader._field_effect_activity._field_effect_activity_page_once = unavailable_page
-    try:
-        with pytest.raises(FieldEffectError, match="^persistence$"):
-            reader.field_effect_activity_page(
-                search=None,
-                event_type="all",
-                occurred_after=0,
-                page=1,
-                page_size=25,
-            )
-    finally:
-        reader.close()
+    with patch.object(
+        reader._field_effect_activity,
+        "_field_effect_activity_page_once",
+        unavailable_page,
+    ):
+        try:
+            with pytest.raises(FieldEffectError, match="^persistence$"):
+                reader.field_effect_activity_page(
+                    search=None,
+                    event_type="all",
+                    occurred_after=0,
+                    page=1,
+                    page_size=25,
+                )
+        finally:
+            reader.close()
     assert attempts == [1]
 
 

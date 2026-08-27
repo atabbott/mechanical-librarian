@@ -537,10 +537,10 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             limit, after
         )
 
-    def field_effect_activity_example(
-        self, decisions: tuple[HumanDecision | AutomaticDecision, ...]
-    ) -> dict[str, object] | None:
-        return self._field_effect_activity.field_effect_activity_example(decisions)
+    def pending_field_effect_activity_example_document(self) -> str | None:
+        return (
+            self._field_effect_activity.pending_field_effect_activity_example_document()
+        )
 
     def pending_field_effect_decision_counts(self) -> tuple[dict[str, object], ...]:
         return self._field_effect_activity.pending_field_effect_decision_counts()

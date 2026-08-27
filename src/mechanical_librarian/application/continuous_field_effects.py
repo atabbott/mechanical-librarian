@@ -6,11 +6,10 @@ import json
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol, cast
+from typing import Callable, Protocol, cast
 
 from mechanical_librarian.application.field_effects import (
     AuthorityCurrentness,
-    AuthoritySnapshot,
     CapabilityObserver,
     GuardedApplicationError,
     GuardedFieldApplication,
@@ -91,9 +90,7 @@ class ContinuousFieldEffectRepository(Protocol):
     def pending_field_effect_decision_documents(
         self, limit: int, after: tuple[int, str] | None = None
     ) -> tuple[str, ...]: ...
-    def field_effect_activity_example(
-        self, decisions: tuple[HumanDecision | AutomaticDecision, ...]
-    ) -> dict[str, object] | None: ...
+    def pending_field_effect_activity_example_document(self) -> str | None: ...
     def record_current_field_effect_no_change(
         self, decision: AutomaticDecision, occurred_at: int
     ) -> bool: ...
@@ -970,7 +967,9 @@ class ContinuousGuardedApplication:
                 data.pop("consented_destinations", []),
             )
         }
-        documents = self._repository.pending_field_effect_decision_documents(100)
+        example_document = (
+            self._repository.pending_field_effect_activity_example_document()
+        )
         prepared_rows = self._repository.pending_field_effect_decision_counts()
         prepared_by_library: dict[str, dict[str, int]] = {
             library: {"automatic": 0, "human": 0, "total": 0}
@@ -993,21 +992,24 @@ class ContinuousGuardedApplication:
             values["total"] += count
             key = (library, prepared_destination)
             prepared_by_destination[key] = prepared_by_destination.get(key, 0) + count
-        source = self._repository.field_effect_activity_example(
-            tuple(self._decision(document) for document in documents)
-        )
         example: dict[str, object] | None = None
-        if source is not None:
-            snapshot = AuthoritySnapshot(**cast(Any, source))
-            example = {
-                "after": project_decision_value(
-                    snapshot.destination, snapshot.decision_value
-                ),
-                "before": snapshot.pre_value,
-                "destination": snapshot.destination,
-                "library": snapshot.library,
-                "work_id": snapshot.work_id,
-            }
+        if example_document is not None:
+            try:
+                snapshot = self._authority.resolve(self._decision(example_document))
+                example = {
+                    "after": project_decision_value(
+                        snapshot.destination, snapshot.decision_value
+                    ),
+                    "before": snapshot.pre_value,
+                    "destination": snapshot.destination,
+                    "library": snapshot.library,
+                    "work_id": snapshot.work_id,
+                }
+            except (FieldEffectError, GuardedApplicationError, ValueError) as error:
+                # A binding race removes the optional illustration. A storage
+                # fault cannot be represented as an absent prepared example.
+                if getattr(error, "code", None) == "persistence":
+                    raise
         enabled = []
         for connection, library in self._libraries:
             if any(

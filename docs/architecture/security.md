@@ -340,6 +340,11 @@ previous process is answered with a full resync rather than a position in this
 order. A hidden tab does not refetch from frames; on its next foreground
 transition it takes one ordinary snapshot read, so HTTP still supplies the
 current redacted state and no stale frame can manufacture a transition.
+Activity keeps at most two reader-local pages, stamped inside the same SQLite
+snapshot from the five append-only ledgers and the exact owner-visible policy
+transition shape. Field-effect rows resolve their optional report through the
+immutable originating decision and review case, never through a later current
+report pointer; a cache hit serves only after one current stamp comparison.
 
 The generated API contract declares that opaque owner session as an API-key
 cookie on every protected operation and marks mutation CSRF and idempotency

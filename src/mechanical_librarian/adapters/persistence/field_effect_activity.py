@@ -262,7 +262,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         # commits; it is not a shared cache or an event transport.
         self._activity_page_cache: dict[
             tuple[str | None, str, int, int, int],
-            tuple[tuple[int, int, int, int, int, int], dict[str, object]],
+            tuple[tuple[int, int, int, int, int, str], dict[str, object]],
         ] = {}
         self._activity_page_cache_lock = RLock()
         self._activity_page_busy_retry_seconds = 0.0
@@ -294,57 +294,6 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             # Every `FieldEffectError` raised below passes through untouched
             # because nothing but `sqlite3.Error` is caught here.
             raise FieldEffectError("persistence") from error
-
-    def field_effect_activity_example(
-        self, decisions: tuple[HumanDecision | AutomaticDecision, ...]
-    ) -> dict[str, object] | None:
-        """Resolve the first current prepared example from one read snapshot."""
-        if (
-            type(decisions) is not tuple
-            or len(decisions) > 100
-            or any(
-                type(value) not in {HumanDecision, AutomaticDecision}
-                for value in decisions
-            )
-        ):
-            raise FieldEffectError("persistence")
-        deadline = time.monotonic() + self._activity_page_busy_retry_seconds
-        while True:
-            try:
-                return self._field_effect_activity_example_once(decisions)
-            except FieldEffectError as error:
-                if (
-                    self._activity_page_busy_retry_seconds == 0
-                    or not self._retryable_activity_page_busy(error)
-                    or time.monotonic()
-                    + _ACTIVITY_PAGE_BUSY_TIMEOUT_MILLISECONDS / 1_000
-                    > deadline
-                ):
-                    raise
-
-    def _field_effect_activity_example_once(
-        self, decisions: tuple[HumanDecision | AutomaticDecision, ...]
-    ) -> dict[str, object] | None:
-        transaction = self._transaction("field_effect_activity_example", deferred=True)
-        try:
-            transaction.begin()
-            for decision in decisions:
-                try:
-                    source = self._authority_source(decision)
-                except FieldEffectError as error:
-                    if error.code == "persistence":
-                        raise
-                    continue
-                transaction.commit()
-                return source
-            transaction.commit()
-            return None
-        except (sqlite3.Error, MetadataReportError) as error:
-            transaction.rollback()
-            raise FieldEffectError("persistence") from error
-        except BaseException:
-            transaction.rollback()
-            raise
 
     def _authority_source(
         self, decision: HumanDecision | AutomaticDecision
@@ -635,6 +584,20 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         limit: int,
         after: tuple[int, str] | None = None,
     ) -> tuple[str, ...]:
+        return self._pending_field_effect_decision_documents(limit, after, newest=False)
+
+    def pending_field_effect_activity_example_document(self) -> str | None:
+        """Select one newest exact-current pending decision for illustration."""
+        documents = self._pending_field_effect_decision_documents(1, None, newest=True)
+        return documents[0] if documents else None
+
+    def _pending_field_effect_decision_documents(
+        self,
+        limit: int,
+        after: tuple[int, str] | None,
+        *,
+        newest: bool,
+    ) -> tuple[str, ...]:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise FieldEffectError("invalid_limit")
         if after is not None and (
@@ -698,7 +661,13 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "WHERE effect.decision_id=pending.decision_id AND "
                 "effect.state NOT IN ('superseded','abandoned')) AND NOT EXISTS (SELECT 1 FROM field_effect_no_changes no_change WHERE no_change.decision_id=pending.decision_id) "
                 + cursor
-                + "ORDER BY pending.occurred_at,pending.decision_id LIMIT ?",
+                + "ORDER BY pending.occurred_at "
+                + (
+                    "DESC,pending.decision_id DESC "
+                    if newest
+                    else ",pending.decision_id "
+                )
+                + "LIMIT ?",
                 (*parameters, limit),
             ).fetchall()
             return tuple(row[0] for row in rows)
@@ -1588,11 +1557,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             failure = scalar(raw.get("failure"), nullable=True)
             if report_id is not None:
                 scalar(report_id)
-            if searched and report_id is None:
-                # The public renderer accepts a value-free historical row
-                # without a report join.  It must not receive a current
-                # connection/title pair that this immutable event did not
-                # name.
+            if source_kind == "field_effect" and report_id is None:
+                # An older field-effect event may not have a persisted
+                # decision-to-report lineage. Keep that canonical event
+                # value-free rather than substituting a later current report.
                 connection = None
             # Every fact below leaves this loop from the document that
             # was just checked against its own identity above, so an
@@ -1747,8 +1715,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             )
         return projected_events, report_documents, reports
 
-    def _activity_projection_revision(self) -> tuple[int, int, int, int, int, int]:
-        """Return the exact append-only high-watermark for Activity's union."""
+    def _activity_projection_revision(self) -> tuple[int, int, int, int, int, str]:
+        """Return exact event high-watermarks and visible policy state."""
         try:
             row = self._connection.execute(
                 "SELECT (SELECT count(*) FROM field_effect_events),"
@@ -1756,18 +1724,22 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "(SELECT count(*) FROM automatic_decisions),"
                 "(SELECT count(*) FROM field_effect_no_changes),"
                 "(SELECT count(*) FROM cover_consideration_events),"
-                "(SELECT count(*) FROM metadata_policy_transitions)"
+                "(SELECT COALESCE(json_group_array(json_array(transition_id,updated_at,state,generation,from_policy_id,to_policy_id)),'[]') FROM ("
+                "SELECT transition_id,updated_at,state,generation,from_policy_id,to_policy_id "
+                "FROM metadata_policy_transitions ORDER BY transition_id))"
             ).fetchone()
             if (
                 row is None
                 or len(row) != 6
-                or any(type(value) is not int or value < 0 for value in row)
+                or any(type(value) is not int or value < 0 for value in row[:5])
+                or type(row[5]) is not str
             ):
                 raise FieldEffectError("persistence")
-            # Each source is append-only, so its exact count is a durable
-            # high-watermark.  Non-event preparation writes deliberately do
-            # not invalidate the immutable ledger projection.
-            return cast("tuple[int, int, int, int, int, int]", row)
+            # The first five sources are protected append-only ledgers. The
+            # transition row is mutable, so its fingerprint covers exactly
+            # the columns the Activity union projects. Field-effect state and
+            # waiting-order changes append an event in the same transaction.
+            return cast("tuple[int, int, int, int, int, str]", row)
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
 
@@ -1833,34 +1805,21 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         """Return a bounded page, reusing only an exact-current projection."""
         key = (search, event_type, occurred_after, page, page_size)
         with self._activity_page_cache_lock:
-            before = self._activity_projection_revision()
             cached = self._activity_page_cache.get(key)
-            if cached is not None and cached[0] == before:
-                return deepcopy(cached[1])
-            result = self._field_effect_activity_page_uncached(
+            if cached is not None:
+                current = self._activity_projection_revision()
+                if cached[0] == current:
+                    return deepcopy(cached[1])
+            result, revision = self._field_effect_activity_page_uncached(
                 search=search,
                 event_type=event_type,
                 occurred_after=occurred_after,
                 page=page,
                 page_size=page_size,
             )
-            # A commit racing the projection must never be stamped with a
-            # newer revision than the snapshot that produced it.
-            try:
-                after = self._activity_projection_revision()
-            except FieldEffectError as error:
-                # The completed read transaction is one immutable SQLite
-                # snapshot.  A pending writer can make this cache-only
-                # freshness check busy after that snapshot is complete.  Do
-                # not rerun the expensive projection or stamp it with an
-                # unobserved revision; return it uncached instead.
-                if self._retryable_activity_page_busy(error):
-                    return result
-                raise
-            if after == before:
-                self._activity_page_cache[key] = (before, deepcopy(result))
-                if len(self._activity_page_cache) > 2:
-                    self._activity_page_cache.pop(next(iter(self._activity_page_cache)))
+            self._activity_page_cache[key] = (revision, deepcopy(result))
+            if len(self._activity_page_cache) > 2:
+                self._activity_page_cache.pop(next(iter(self._activity_page_cache)))
             return result
 
     def _field_effect_activity_page_uncached(
@@ -1871,7 +1830,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         occurred_after: int,
         page: int,
         page_size: int,
-    ) -> dict[str, object]:
+    ) -> tuple[dict[str, object], tuple[int, int, int, int, int, str]]:
         """Return one exact, bounded page from the durable owner activity ledgers."""
         if (
             (
@@ -1906,7 +1865,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             SELECT event.event_id, effect.connection_name, effect.destination,
                    effect.library_name, event.occurred_at,
                    COALESCE(CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN json_extract(event.document, '$.origin') END, 'unknown'),
-                   lineage.report_id, event.kind, effect.work_id, event.document,
+                   COALESCE(human_review.report_id,automatic_review.report_id), event.kind, effect.work_id, event.document,
                    CASE WHEN event.kind IN ('retryable','stale','superseded','abandoned')
                              OR CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN json_extract(event.document, '$.failure') END IS NOT NULL
                         THEN 'safety'
@@ -1917,10 +1876,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                    CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN 1 ELSE 0 END
               FROM field_effect_events event
               JOIN field_effects effect ON effect.plan_id=event.plan_id
-         LEFT JOIN current_metadata_report_lineages lineage
-                ON lineage.connection_name=effect.connection_name
-               AND lineage.library_name=effect.library_name AND lineage.item_id=effect.work_id
-              LEFT JOIN metadata_reports report ON report.report_id=lineage.report_id
+         LEFT JOIN human_decisions human ON human.decision_id=effect.decision_id
+         LEFT JOIN review_cases human_review ON human_review.review_case_id=human.review_case_id
+         LEFT JOIN automatic_decisions automatic ON automatic.decision_id=effect.decision_id
+         LEFT JOIN review_cases automatic_review ON automatic_review.review_case_id=automatic.review_case_id
+         LEFT JOIN metadata_reports report ON report.report_id=COALESCE(human_review.report_id,automatic_review.report_id)
             UNION ALL
             SELECT event.event_id, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.connection') END, event.destination,
                    CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.library') END, event.occurred_at, 'human', review.report_id,
@@ -1965,24 +1925,6 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                    'Library policy', 'Policy generation ' || transition.generation, 'policy_transition', NULL, NULL, NULL, NULL, transition.from_policy_id, transition.to_policy_id, 1
               FROM metadata_policy_transitions transition
         """
-        if search is not None:
-            # Field-effect events name a decision but not a report.  A search
-            # must not substitute the work's later current report for that
-            # missing immutable identity, so those rows retain their own
-            # readable event values and no report title.  The normal page path
-            # keeps its established bounded current projection below.
-            events = (
-                cast(str, events)
-                .replace(
-                    """         LEFT JOIN current_metadata_report_lineages lineage
-                ON lineage.connection_name=effect.connection_name
-               AND lineage.library_name=effect.library_name AND lineage.item_id=effect.work_id
-              LEFT JOIN metadata_reports report ON report.report_id=lineage.report_id""",
-                    "LEFT JOIN metadata_reports report ON 0",
-                    1,
-                )
-                .replace("lineage.report_id", "NULL", 1)
-            )
         where = ["occurred_at>=?"]
         parameters: list[object] = [occurred_after]
         if event_type != "all":
@@ -2150,9 +2092,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 }
             waiting = self._connection.execute(
                 "SELECT effect.connection_name,effect.destination,effect.library_name,effect.work_id,effect.state,"
-                "lineage.report_id FROM field_effects effect "
-                "LEFT JOIN current_metadata_report_lineages lineage ON lineage.connection_name=effect.connection_name "
-                "AND lineage.library_name=effect.library_name AND lineage.item_id=effect.work_id "
+                "COALESCE(human_review.report_id,automatic_review.report_id) FROM field_effects effect "
+                "LEFT JOIN human_decisions human ON human.decision_id=effect.decision_id "
+                "LEFT JOIN review_cases human_review ON human_review.review_case_id=human.review_case_id "
+                "LEFT JOIN automatic_decisions automatic ON automatic.decision_id=effect.decision_id "
+                "LEFT JOIN review_cases automatic_review ON automatic_review.review_case_id=automatic.review_case_id "
                 "WHERE effect.state IN ('planned','claimed','applying','reconciling','retryable') "
                 "ORDER BY effect.updated_at DESC,effect.plan_id DESC LIMIT 1"
             ).fetchone()
@@ -2208,8 +2152,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 },
                 "total": total,
             }
+            revision = self._activity_projection_revision()
             transaction.commit()
-            return result
+            return result, revision
         except (
             json.JSONDecodeError,
             RecursionError,
