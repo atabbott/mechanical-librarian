@@ -767,6 +767,109 @@ describe('Application shell', () => {
     expect(router.state.location.href).toBe(href)
   })
 
+  it('does not poll an idle foreground stream and makes one authoritative read after foreground recovery', async () => {
+    vi.useFakeTimers()
+    try {
+      let visibility: DocumentVisibilityState = 'visible'
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => visibility,
+      })
+      const listeners = new Set<(update: LiveUpdate) => void>()
+      const stateListeners = new Set<(state: LiveStreamState) => void>()
+      let streamState: LiveStreamState = 'live'
+      const updates: LiveUpdateStream = {
+        get state() {
+          return streamState
+        },
+        subscribe(listener) {
+          listeners.add(listener)
+          return () => listeners.delete(listener)
+        },
+        observeState(listener) {
+          stateListeners.add(listener)
+          return () => stateListeners.delete(listener)
+        },
+        close: () => undefined,
+      }
+      const announce = (update: LiveUpdate) => {
+        for (const listener of [...listeners]) listener(update)
+      }
+      const active: PreparationView = {
+        schema_version: 'review-preparation-v1',
+        active: true,
+        actionable: false,
+        paused: false,
+        libraries: [],
+      }
+      const http: ReviewHttp = { ...createHttp(), getPreparation: vi.fn(async () => active) }
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      const router = createApplicationRouter(
+        http,
+        queryClient,
+        createMemoryHistory({ initialEntries: ['/library?lens=all'] }),
+        updates,
+      )
+      render(
+        <QueryClientProvider client={queryClient}>
+          <RouterProvider router={router} />
+        </QueryClientProvider>,
+      )
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1)
+      })
+      expect(screen.getByRole('heading', { level: 2, name: 'Works' })).toBeVisible()
+      const before = {
+        attention: vi.mocked(http.getAttention).mock.calls.length,
+        library: vi.mocked(http.getLibrary).mock.calls.length,
+        preparation: vi.mocked(http.getPreparation).mock.calls.length,
+      }
+
+      // The old 1.5-second foreground cadence would have made 1,680 reads in
+      // this interval. A healthy, idle stream owes no HTTP work at all.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(42 * 60 * 1_000)
+      })
+      expect(vi.mocked(http.getAttention)).toHaveBeenCalledTimes(before.attention)
+      expect(vi.mocked(http.getLibrary)).toHaveBeenCalledTimes(before.library)
+      expect(vi.mocked(http.getPreparation)).toHaveBeenCalledTimes(before.preparation)
+      const idleRequests =
+        vi.mocked(http.getAttention).mock.calls.length -
+        before.attention +
+        (vi.mocked(http.getLibrary).mock.calls.length - before.library) +
+        (vi.mocked(http.getPreparation).mock.calls.length - before.preparation)
+      expect(idleRequests).toBeLessThanOrEqual(Math.floor(237 / 10))
+
+      visibility = 'hidden'
+      document.dispatchEvent(new Event('visibilitychange'))
+      announce({ sequence: 1, subject: null, topic: 'library' })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(200)
+      })
+      expect(vi.mocked(http.getLibrary)).toHaveBeenCalledTimes(before.library)
+
+      visibility = 'visible'
+      document.dispatchEvent(new Event('visibilitychange'))
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(200)
+      })
+      expect(vi.mocked(http.getAttention)).toHaveBeenCalledTimes(before.attention + 1)
+      expect(vi.mocked(http.getLibrary)).toHaveBeenCalledTimes(before.library + 1)
+      expect(vi.mocked(http.getPreparation)).toHaveBeenCalledTimes(before.preparation + 1)
+
+      await act(async () => {
+        streamState = 'degraded'
+        for (const listener of [...stateListeners]) listener(streamState)
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_600)
+      })
+      expect(vi.mocked(http.getPreparation)).toHaveBeenCalledTimes(before.preparation + 2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('says the stream is down only once it has stayed down', async () => {
     vi.useFakeTimers()
     try {
