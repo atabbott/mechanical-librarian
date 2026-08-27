@@ -6,6 +6,8 @@ import errno
 import math
 import socket
 import ssl
+import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import format_datetime
@@ -34,6 +36,50 @@ _SAFE_OS_ERRNOS = frozenset(
 
 
 _Result = TypeVar("_Result")
+
+
+class ProviderRequestPacer:
+    """Serialize request starts behind one shared provider-authority clock."""
+
+    def __init__(
+        self,
+        minimum_interval_seconds: float = 1.0,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        if (
+            type(minimum_interval_seconds) not in {int, float}
+            or isinstance(minimum_interval_seconds, bool)
+            or not 0 < minimum_interval_seconds <= 60
+        ):
+            raise ValueError("provider pacing interval is invalid")
+        self._minimum_interval_seconds = float(minimum_interval_seconds)
+        self._clock = clock
+        self._sleep = sleep
+        self._last_start: float | None = None
+        self._lock = threading.Lock()
+
+    def wait(self, deadline: float | None = None) -> bool:
+        with self._lock:
+            now = self._clock()
+            delay = (
+                0.0
+                if self._last_start is None
+                else max(
+                    0.0,
+                    self._minimum_interval_seconds - (now - self._last_start),
+                )
+            )
+            if deadline is not None and now + delay >= deadline:
+                return False
+            if delay:
+                self._sleep(delay)
+            now = self._clock()
+            if deadline is not None and now >= deadline:
+                return False
+            self._last_start = now
+            return True
 
 
 class ProviderIncompleteCause(str, Enum):

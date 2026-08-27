@@ -7,6 +7,7 @@ otherwise awkward successor transaction testable without granting execution.
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -14,6 +15,10 @@ from dataclasses import dataclass, replace
 from mechanical_librarian.application.configuration import (
     MediaMountConfiguration,
     ReportLimits,
+)
+from mechanical_librarian.application.failure_diagnostics import (
+    merge_provider_diagnostics,
+    provider_attempt_diagnostics,
 )
 from mechanical_librarian.application.metadata_report import (
     CurrentnessError,
@@ -26,10 +31,12 @@ from mechanical_librarian.application.metadata_report import (
     ProviderLaneResult,
     ReportRepository,
     TargetReader,
-    merge_provider_diagnostics,
     metadata_discovery_plan,
     provider_observation,
     require_report_current,
+)
+from mechanical_librarian.application.provider_recovery_policy import (
+    provider_recovery_decision,
 )
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
@@ -39,6 +46,10 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderRequestAccounting,
     ProviderStatus,
     ReportValueError,
+)
+from mechanical_librarian.domain.provider_recovery import (
+    MAX_RECOVERY_DELAY,
+    MAX_TIMESTAMP,
 )
 
 
@@ -55,11 +66,19 @@ class ProviderRetrySharedFailure(ProviderRetrySuccessorError):
             "authorization",
             "configuration",
             "rate_limited",
+            "burst_throttled",
+            "quota_exhausted",
+            "transient",
             "unavailable",
             "incomplete",
         } or (
             retry_after is not None
-            and (type(retry_after) is not int or not 1 <= retry_after <= 86_400)
+            and (
+                type(retry_after) is not int
+                or not 1 <= retry_after <= MAX_RECOVERY_DELAY
+                or failure != "quota_exhausted"
+                and retry_after > 86_400
+            )
         ):
             raise ProviderRetrySuccessorError("provider retry failure is invalid")
         super().__init__("provider retry shared failure")
@@ -136,6 +155,7 @@ class GenerateProviderRetrySuccessor:
         # return type is unconstrained rather than required to be None.
         after_publication: Callable[[ReportRepository, MetadataReport], object],
         heartbeat: Callable[[], None] = lambda: None,
+        wall_clock: Callable[[], float] = time.time,
     ) -> None:
         self._target = target
         self._inspector = inspector
@@ -144,6 +164,7 @@ class GenerateProviderRetrySuccessor:
             not callable(provider_resolver)
             or not callable(after_publication)
             or not callable(heartbeat)
+            or not callable(wall_clock)
         ):
             raise ProviderRetrySuccessorError("provider retry composition is invalid")
         self._provider_resolver = provider_resolver
@@ -151,6 +172,7 @@ class GenerateProviderRetrySuccessor:
         self._limits = limits
         self._after_publication = after_publication
         self._heartbeat = heartbeat
+        self._wall_clock = wall_clock
 
     def run(
         self,
@@ -209,11 +231,24 @@ class GenerateProviderRetrySuccessor:
             # A shared provider condition is not evidence for a successor.
             # Leave the predecessor current so the recovery claim can back off
             # before any sibling is contacted.
-            shared = self._shared_failure(replacement)
-            if shared is not None:
+            reading = self._wall_clock()
+            if (
+                type(reading) not in {int, float}
+                or isinstance(reading, bool)
+                or not math.isfinite(reading)
+                or not 0 <= reading <= MAX_TIMESTAMP
+            ):
+                raise ProviderRetrySuccessorError("provider retry clock is invalid")
+            decision = provider_recovery_decision(replacement, now=int(reading))
+            if decision is not None:
+                failure, scheduled_delay = decision
                 raise ProviderRetrySharedFailure(
-                    shared,
-                    retry_after if shared == "rate_limited" else None,
+                    failure,
+                    scheduled_delay
+                    if scheduled_delay is not None
+                    else retry_after
+                    if failure == "rate_limited"
+                    else None,
                 )
             merged = self._merged(plan, original, selected, replacement)
             successor = MetadataReport.create(
@@ -419,22 +454,26 @@ class GenerateProviderRetrySuccessor:
             lane.status is ProviderStatus.MALFORMED for lane in observation.lanes
         ):
             raise ProviderRetrySuccessorError("provider retry result is invalid")
+        try:
+            attempt_records = getattr(client, "attempt_records", ())
+        except Exception:
+            attempt_records = None
+        try:
+            incomplete_causes = getattr(client, "incomplete_causes", ())
+        except Exception:
+            incomplete_causes = None
+        observation = replace(
+            observation,
+            diagnostics=merge_provider_diagnostics(
+                observation.diagnostics,
+                provider_attempt_diagnostics(
+                    attempt_records,
+                    status=observation.status.value,
+                    incomplete_causes=incomplete_causes,
+                ),
+            ),
+        )
         return observation, self._retry_after(client)
-
-    @staticmethod
-    def _shared_failure(observation: ProviderObservation) -> str | None:
-        """Classify provider health before any successor can be published."""
-        statuses = (observation.status, *(lane.status for lane in observation.lanes))
-        for status in (
-            ProviderStatus.AUTHENTICATION,
-            ProviderStatus.AUTHORIZATION,
-            ProviderStatus.RATE_LIMITED,
-            ProviderStatus.UNAVAILABLE,
-            ProviderStatus.INCOMPLETE,
-        ):
-            if status in statuses:
-                return status.value
-        return None
 
     @staticmethod
     def _retry_after(provider: MetadataProvider) -> int | None:

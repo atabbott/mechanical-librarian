@@ -102,6 +102,37 @@ def _predecessor(root: Path) -> Path:
     return database
 
 
+@pytest.mark.parametrize(
+    "plan",
+    (OWNER_SETTINGS_V1, REVIEW_OWNER_DECISION_ACTIONS_V1),
+)
+def test_v28_report_schema_is_not_adoptable_without_mutation_or_backup(
+    tmp_path: Path, plan: str
+) -> None:
+    predecessor = (
+        _owner_settings_predecessor if plan == OWNER_SETTINGS_V1 else _predecessor
+    )
+    database = predecessor(tmp_path)
+    connection = sqlite3.connect(database)
+    connection.execute("PRAGMA writable_schema=ON")
+    connection.execute(
+        "UPDATE sqlite_master SET sql=replace(sql,"
+        "'metadata-report-v29','metadata-report-v28') "
+        "WHERE type='table' AND name='metadata_reports'"
+    )
+    connection.execute("PRAGMA writable_schema=OFF")
+    connection.commit()
+    connection.close()
+    before = database.read_bytes()
+    backup = tmp_path / "backup.sqlite3"
+
+    with pytest.raises(MetadataReportError, match="unavailable or incompatible"):
+        adopt_schema(database, backup, plan)
+
+    assert database.read_bytes() == before
+    assert not backup.exists()
+
+
 def _owner_settings_predecessor(root: Path) -> Path:
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     root.chmod(0o700)

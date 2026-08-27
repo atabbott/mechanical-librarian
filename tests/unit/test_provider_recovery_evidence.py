@@ -39,7 +39,17 @@ from mechanical_librarian.application.provider_retry_successor import (
     ProviderRetrySuccessorError,
 )
 from mechanical_librarian.application.review_pipeline import ReviewPipelineError
-from mechanical_librarian.domain.metadata_report import MetadataReport, ProviderStatus
+from mechanical_librarian.domain.failure_diagnostics import (
+    FailureCategory,
+    FailureComponent,
+    FailureDiagnostic,
+    FailureStage,
+)
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    ProviderObservation,
+    ProviderStatus,
+)
 
 _CONFIGURATION = ApplicationConfiguration(
     (
@@ -95,7 +105,7 @@ def _lane(identity: str, status: ProviderStatus) -> object:
 
 class _Observer:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, str, str, int, str, int]] = []
+        self.calls: list[tuple[str, str, str, int, str, int, int | None]] = []
 
     def observe_failure(
         self,
@@ -106,8 +116,11 @@ class _Observer:
         generation: int,
         failure: str,
         now: int,
+        retry_after: int | None = None,
     ) -> None:
-        self.calls.append((connection, adapter, scope, generation, failure, now))
+        self.calls.append(
+            (connection, adapter, scope, generation, failure, now, retry_after)
+        )
 
 
 def _recognised_failures() -> dict[str, tuple[Exception, tuple[str, int | None]]]:
@@ -220,7 +233,73 @@ def test_credential_failure_outranks_a_transient_one_on_the_same_provider() -> N
         now=7,
     )
     assert [
-        ("catalogue-a", "hardcover", "books", 4, "authorization", 7)
+        ("catalogue-a", "hardcover", "books", 4, "authorization", 7, None)
+    ] == observer.calls
+
+
+def test_initial_report_uses_exact_burst_evidence_and_provider_window() -> None:
+    observer = _Observer()
+    observation = ProviderObservation(
+        "catalogue-a",
+        ProviderStatus.RATE_LIMITED,
+        authority="google_books",
+        diagnostics=(
+            FailureDiagnostic(
+                FailureCategory.BURST_THROTTLE,
+                FailureComponent.PROVIDER,
+                FailureStage.RESPONSE,
+            ),
+        ),
+    )
+    record_provider_recovery_observations(
+        observer,
+        _report(observation),
+        adapters={"catalogue-a": "google_books"},
+        scope="books",
+        generation=4,
+        now=7,
+    )
+    assert [
+        ("catalogue-a", "google_books", "books", 4, "burst_throttled", 7, 100)
+    ] == observer.calls
+
+
+def test_initial_report_keeps_specific_plus_generic_rate_limit_evidence_ambiguous() -> (
+    None
+):
+    observer = _Observer()
+    specific = FailureDiagnostic(
+        FailureCategory.BURST_THROTTLE,
+        FailureComponent.PROVIDER,
+        FailureStage.RESPONSE,
+    )
+    generic = FailureDiagnostic(
+        FailureCategory.QUOTA_RATE_LIMIT,
+        FailureComponent.PROVIDER,
+        FailureStage.RESPONSE,
+    )
+    observation = SimpleNamespace(
+        provider="catalogue-a",
+        status=ProviderStatus.RATE_LIMITED,
+        authority="google_books",
+        diagnostics=(specific,),
+        lanes=(
+            SimpleNamespace(
+                status=ProviderStatus.RATE_LIMITED,
+                diagnostics=(generic,),
+            ),
+        ),
+    )
+    record_provider_recovery_observations(
+        observer,
+        _report(observation),
+        adapters={"catalogue-a": "google_books"},
+        scope="books",
+        generation=4,
+        now=7,
+    )
+    assert [
+        ("catalogue-a", "google_books", "books", 4, "rate_limited", 7, None)
     ] == observer.calls
 
 

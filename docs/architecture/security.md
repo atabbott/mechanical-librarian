@@ -489,8 +489,8 @@ lane. An individual request may retry once, with at most four retries across the
 observation and 49 aggregate attempts. Each referenced enabled Google Books
 provider makes one fixed Volumes query per lane, with at most five retries and
 54 aggregate attempts. The lanes share one client, response-byte aggregate, and
-deadline; Hardcover and Open Library also use shared one-second request-start
-pacers.
+deadline; Google Books, Hardcover, and Open Library also use shared one-second
+request-start pacers across foreground and recovery work.
 
 Within one provider observation, semantically identical provider lookups are
 coalesced before dispatch and later lanes replay the exact immutable result.
@@ -512,7 +512,7 @@ deadline, byte, and request-count authority. Attempt records are bounded and
 process-local. Provider adapters also count optional parser/schema rejections
 at their actual rejection points. The application canonically merges those
 counts once with the attempt categories and incomplete-outcome mapping for
-`metadata-report-v28`; provider, attempt ordinal, delay, elapsed time,
+`metadata-report-v29`; provider, attempt ordinal, delay, elapsed time,
 headers, bodies, and exception text are dropped. Application-created
 query-limit outcomes follow the same closed mapping and persist
 provider/lookup_construction/lookup without constructing or invoking a
@@ -805,7 +805,13 @@ review-package tuple, target and media identity, the enabled provider binding,
 and the positive configuration generation immediately before constructing the
 client. Provider work runs outside SQLite writer transactions. Shared
 authentication, authorization, quota, unavailable and incomplete results are
-classified before publication. Outbox delivery atomically enrolls each job's
+classified before publication by one application-owned rule shared with the
+initial report. Exact Google API reasons and exact Hardcover rate-limit header
+grammars distinguish bounded burst waits from daily quota waits aligned to
+Pacific and UTC midnight respectively. Missing, malformed, contradictory, and
+unknown evidence remains the generic conservative case. A deferred burst or
+daily-quota result consumes no recovery-health or job execution attempt.
+Outbox delivery atomically enrolls each job's
 bounded member and health scope before it is claimable; a failed delivery keeps
 its row for retry, continues the bounded drain, and returns any already-claimed
 preparation successor through the existing typed state machine. Diagnostics retain no credential, raw

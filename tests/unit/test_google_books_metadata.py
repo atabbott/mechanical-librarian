@@ -1134,6 +1134,80 @@ def test_declared_quota_and_http_errors_are_typed() -> None:
         assert expected == observation.status
 
 
+@pytest.mark.parametrize(
+    ("status_code", "reasons", "category", "delay"),
+    (
+        (403, ("dailyLimitExceeded",), "quota_exhausted", None),
+        (403, ("dailyLimitExceededUnreg",), "quota_exhausted", None),
+        (403, ("rateLimitExceeded",), "burst_throttled", 100.0),
+        (403, ("userRateLimitExceeded",), "burst_throttled", 100.0),
+        (429, ("quotaExceeded",), "http_429", None),
+        (429, (), "http_429", None),
+        (
+            429,
+            ("dailyLimitExceeded", "rateLimitExceeded"),
+            "http_429",
+            None,
+        ),
+    ),
+)
+def test_google_rate_limit_grammar_is_closed_and_records_exact_evidence(
+    status_code: int,
+    reasons: tuple[str, ...],
+    category: str,
+    delay: float | None,
+) -> None:
+    provider = GoogleBooksMetadataProvider(
+        "google_books",
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(
+                    status_code,
+                    headers={"content-type": "application/json"},
+                    json={
+                        "error": {"errors": [{"reason": value} for value in reasons]}
+                    },
+                )
+            )
+        ),
+        65_536,
+        clock=lambda: 0.0,
+        wall_clock=lambda: 1_787_875_200.0,
+        sleep=lambda _: pytest.fail("classified throttling must leave the lane"),
+    )
+    observation = provider.observe(_lookup(), deadline=50.0)
+    assert ProviderStatus.RATE_LIMITED == observation.status
+    record = provider.attempt_records[-1]
+    assert category == record.category
+    if category == "quota_exhausted":
+        assert record.delay_seconds is not None
+        assert 1 <= record.delay_seconds <= 90_000
+    else:
+        assert delay == record.delay_seconds
+
+
+def test_google_authentication_status_outranks_untrusted_quota_reason() -> None:
+    provider = GoogleBooksMetadataProvider(
+        "google_books",
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(
+                    401,
+                    headers={"content-type": "application/json"},
+                    json={"error": {"errors": [{"reason": "dailyLimitExceeded"}]}},
+                )
+            )
+        ),
+        65_536,
+        clock=lambda: 0.0,
+        wall_clock=lambda: 1_787_875_200.0,
+        sleep=lambda _: pytest.fail("authentication must remain terminal"),
+    )
+    observation = provider.observe(_lookup(), deadline=50.0)
+    assert ProviderStatus.AUTHENTICATION == observation.status
+    assert "http_401" == provider.attempt_records[-1].category
+
+
 def test_invalid_scalar_claims_are_field_local_and_keep_valid_evidence() -> None:
     volume = _volume()
     info = volume["volumeInfo"]
