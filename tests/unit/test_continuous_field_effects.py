@@ -447,6 +447,70 @@ def test_activity_projection_runs_inside_the_injected_read_snapshot() -> None:
     assert events == ["backup", "snapshot_enter", "page", "snapshot_exit"]
 
 
+def test_activity_reader_serializes_overlapping_requests() -> None:
+    first_snapshot_entered = threading.Event()
+    release_first_snapshot = threading.Event()
+    later_reader_access = threading.Event()
+    snapshot_guard = threading.Lock()
+    snapshot_calls = 0
+    errors: list[BaseException] = []
+
+    class Repository(_ActivityPagedRepository):
+        def field_effect_activity_transitions(self, event_id, after_sequence=None):
+            later_reader_access.set()
+            return ()
+
+    def snapshot(call):
+        nonlocal snapshot_calls
+        with snapshot_guard:
+            snapshot_calls += 1
+            call_number = snapshot_calls
+        if call_number == 1:
+            first_snapshot_entered.set()
+            assert release_first_snapshot.wait(1)
+        else:
+            later_reader_access.set()
+        return call()
+
+    service = ContinuousGuardedApplication(
+        Repository([]),
+        {},
+        {},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
+        activity_only=True,
+        activity_snapshot=snapshot,
+    )
+
+    def run(call) -> None:
+        try:
+            call()
+        except BaseException as error:
+            errors.append(error)
+
+    first = threading.Thread(target=lambda: run(service.activity))
+    second = threading.Thread(target=lambda: run(service.activity))
+    transitions = threading.Thread(
+        target=lambda: run(lambda: service.activity_transitions("event-1"))
+    )
+    first.start()
+    assert first_snapshot_entered.wait(1)
+    second.start()
+    transitions.start()
+
+    assert not later_reader_access.wait(0.05)
+    release_first_snapshot.set()
+    for thread in (first, second, transitions):
+        thread.join(1)
+
+    assert not errors
+    assert snapshot_calls == 2
+    assert later_reader_access.is_set()
+    assert not any(thread.is_alive() for thread in (first, second, transitions))
+
+
 def test_activity_example_binding_race_is_absent_but_storage_fault_propagates() -> None:
     repository = _ActivityPagedRepository(_decisions(1))
 

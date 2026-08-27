@@ -4,8 +4,9 @@
 
 - Keep Activity reads out of the guarded background-operation gate and derive
   ordinary page totals from the same bounded activity projection as their rows.
-  Live updates now coalesce while foregrounded, remain quiet in hidden tabs,
-  and restore the server snapshot once when a tab returns. (#853)
+  Live updates stay immediate during owner input, bound preparation reads in an
+  untouched visible tab, remain quiet while hidden, and restore the server
+  snapshot once when the owner returns. (#853)
 
 - Keep deep Library and Attention pages reachable with the hardened 64 MiB
   temporary filesystem by sorting thin browse keys before loading page documents.

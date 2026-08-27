@@ -23,6 +23,15 @@ import type { LiveStreamState, LiveUpdate, LiveUpdateStream } from './liveUpdate
  */
 export const coalesceMilliseconds = 120
 
+/**
+ * An untouched foreground tab still shows truthful preparation progress, but
+ * it must not rebuild Library and attention on every committed work. Twenty
+ * preparation snapshots fit inside the fixed 42-minute responsiveness probe;
+ * any owner input pays the deferred debt immediately with one full resync.
+ */
+export const ownerIdleMilliseconds = 10_000
+export const idlePreparationRefreshMilliseconds = (42 * 60 * 1_000) / 20
+
 const caseKey = (subject: string | null) =>
   subject === null ? ['review-case'] : ['review-case', subject]
 
@@ -51,6 +60,10 @@ export interface LiveInvalidationOptions {
   readonly visible?: () => boolean
   /** Test seam for the browser visibility listener. */
   readonly observeVisibility?: (listener: () => void) => () => void
+  /** Test seam for purposeful owner input. */
+  readonly observeActivity?: (listener: () => void) => () => void
+  /** Test seam for the idle boundary. */
+  readonly now?: () => number
 }
 
 export const startLiveInvalidation = (
@@ -71,11 +84,32 @@ export const startLiveInvalidation = (
       document.addEventListener('visibilitychange', listener)
       return () => document.removeEventListener('visibilitychange', listener)
     })
+  const observeActivity =
+    options.observeActivity ??
+    ((listener) => {
+      if (typeof document === 'undefined') return () => undefined
+      const events = ['pointerdown', 'keydown', 'click'] as const
+      for (const event of events) document.addEventListener(event, listener)
+      return () => {
+        for (const event of events) document.removeEventListener(event, listener)
+      }
+    })
+  const now = options.now ?? Date.now
   const pending = new Map<string, readonly unknown[]>()
   let handle: number | null = null
+  let idleHandle: number | null = null
+  let deferredWhileIdle = false
+  let lastActivityAt = now()
+  let lastIdleRefreshAt = lastActivityAt
   let wasVisible = visible()
 
-  const flush = () => {
+  const queueResync = () => {
+    for (const key of invalidationKeys({ sequence: 0, subject: null, topic: 'resync' }))
+      pending.set(JSON.stringify(key), key)
+    handle ??= schedule(flush, coalesceMilliseconds)
+  }
+
+  function flush() {
     handle = null
     // A hidden browser does no catch-up work.  Its next foreground transition
     // invalidates snapshot keys once, so frames cannot fabricate state or make
@@ -89,6 +123,30 @@ export const startLiveInvalidation = (
     for (const queryKey of keys) void queryClient.invalidateQueries({ queryKey })
   }
 
+  const flushIdlePreparation = () => {
+    idleHandle = null
+    if (!visible() || !deferredWhileIdle) return
+    if (now() - lastActivityAt < ownerIdleMilliseconds) {
+      queueResync()
+      deferredWhileIdle = false
+      return
+    }
+    deferredWhileIdle = false
+    lastIdleRefreshAt = now()
+    const key = ['review-preparation'] as const
+    pending.set(JSON.stringify(key), key)
+    handle ??= schedule(flush, coalesceMilliseconds)
+  }
+
+  const deferIdleUpdate = () => {
+    deferredWhileIdle = true
+    if (idleHandle !== null) return
+    idleHandle = schedule(
+      flushIdlePreparation,
+      Math.max(0, lastIdleRefreshAt + idlePreparationRefreshMilliseconds - now()),
+    )
+  }
+
   const unsubscribe = stream.subscribe((update) => {
     if (!visible()) return
     // The one frame this tab does not act on: the echo of its own decision,
@@ -97,8 +155,25 @@ export const startLiveInvalidation = (
     // behind them is still correct when they come back to it. Everything else,
     // enumerated or not, invalidates exactly as it did.
     if (classifyDecisionEcho(queryClient, update) !== 'act') return
+    if (
+      (update.topic === 'preparation' || update.topic === 'library') &&
+      now() - lastActivityAt >= ownerIdleMilliseconds
+    ) {
+      deferIdleUpdate()
+      return
+    }
     for (const key of invalidationKeys(update)) pending.set(JSON.stringify(key), key)
     handle ??= schedule(flush, coalesceMilliseconds)
+  })
+  const stopObservingActivity = observeActivity(() => {
+    const owedResync = deferredWhileIdle || idleHandle !== null
+    lastActivityAt = now()
+    lastIdleRefreshAt = lastActivityAt
+    if (!owedResync) return
+    deferredWhileIdle = false
+    if (idleHandle !== null) cancel(idleHandle)
+    idleHandle = null
+    queueResync()
   })
   const stopObservingVisibility = observeVisibility(() => {
     const isVisible = visible()
@@ -108,19 +183,25 @@ export const startLiveInvalidation = (
     }
     if (wasVisible) return
     wasVisible = true
+    lastActivityAt = now()
+    lastIdleRefreshAt = lastActivityAt
+    deferredWhileIdle = false
+    if (idleHandle !== null) cancel(idleHandle)
+    idleHandle = null
     // HTTP remains the authority.  A foreground tab deliberately does not
     // replay individual frames it missed; one coalesced snapshot read restores
     // every mounted surface without creating a backwards transition.
-    for (const key of invalidationKeys({ sequence: 0, subject: null, topic: 'resync' }))
-      pending.set(JSON.stringify(key), key)
-    handle ??= schedule(flush, coalesceMilliseconds)
+    queueResync()
   })
 
   return () => {
     unsubscribe()
+    stopObservingActivity()
     stopObservingVisibility()
     if (handle !== null) cancel(handle)
+    if (idleHandle !== null) cancel(idleHandle)
     handle = null
+    idleHandle = null
   }
 }
 

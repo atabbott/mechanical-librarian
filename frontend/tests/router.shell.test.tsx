@@ -92,11 +92,7 @@ describe('Application shell', () => {
     }
     renderRoute('/library?lens=all', http)
 
-    expect(
-      await screen.findByText(
-        'Preparation complete · 7 unique works checked.',
-      ),
-    ).toBeVisible()
+    expect(await screen.findByText('Preparation complete · 7 unique works checked.')).toBeVisible()
     expect(
       screen.getByText('Some work could not finish. Review the failures and recovery below.'),
     ).toBeVisible()
@@ -767,7 +763,7 @@ describe('Application shell', () => {
     expect(router.state.location.href).toBe(href)
   })
 
-  it('does not poll an idle foreground stream and makes one authoritative read after foreground recovery', async () => {
+  it('bounds the captured active-preparation cadence and resyncs after foreground recovery', async () => {
     vi.useFakeTimers()
     try {
       let visibility: DocumentVisibilityState = 'visible'
@@ -825,19 +821,41 @@ describe('Application shell', () => {
         preparation: vi.mocked(http.getPreparation).mock.calls.length,
       }
 
-      // The old 1.5-second foreground cadence would have made 1,680 reads in
-      // this interval. A healthy, idle stream owes no HTTP work at all.
+      // Replay the fixed baseline's 98 preparation and 69 Library refresh
+      // causes uniformly rather than in their original bursts. Uniform spacing
+      // is the harder case for coalescing and would still cost the old bridge
+      // 236 requests during this untouched 42-minute foreground session.
+      const probeMilliseconds = 42 * 60 * 1_000
+      const frames = [
+        ...Array.from({ length: 98 }, (_, index) => ({
+          at: Math.floor(((index + 1) * probeMilliseconds) / 98),
+          topic: 'preparation' as const,
+        })),
+        ...Array.from({ length: 69 }, (_, index) => ({
+          at: Math.floor(((index + 1) * probeMilliseconds) / 69),
+          topic: 'library' as const,
+        })),
+      ].sort((left, right) => left.at - right.at)
+      for (const [index, frame] of frames.entries())
+        setTimeout(
+          () => announce({ sequence: index + 1, subject: null, topic: frame.topic }),
+          frame.at,
+        )
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(42 * 60 * 1_000)
+        await vi.advanceTimersByTimeAsync(probeMilliseconds)
       })
       expect(vi.mocked(http.getAttention)).toHaveBeenCalledTimes(before.attention)
       expect(vi.mocked(http.getLibrary)).toHaveBeenCalledTimes(before.library)
-      expect(vi.mocked(http.getPreparation)).toHaveBeenCalledTimes(before.preparation)
+      const afterIdle = {
+        attention: vi.mocked(http.getAttention).mock.calls.length,
+        library: vi.mocked(http.getLibrary).mock.calls.length,
+        preparation: vi.mocked(http.getPreparation).mock.calls.length,
+      }
       const idleRequests =
-        vi.mocked(http.getAttention).mock.calls.length -
+        afterIdle.attention -
         before.attention +
-        (vi.mocked(http.getLibrary).mock.calls.length - before.library) +
-        (vi.mocked(http.getPreparation).mock.calls.length - before.preparation)
+        (afterIdle.library - before.library) +
+        (afterIdle.preparation - before.preparation)
       expect(idleRequests).toBeLessThanOrEqual(Math.floor(237 / 10))
 
       visibility = 'hidden'
@@ -846,16 +864,16 @@ describe('Application shell', () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(200)
       })
-      expect(vi.mocked(http.getLibrary)).toHaveBeenCalledTimes(before.library)
+      expect(vi.mocked(http.getLibrary)).toHaveBeenCalledTimes(afterIdle.library)
 
       visibility = 'visible'
       document.dispatchEvent(new Event('visibilitychange'))
       await act(async () => {
         await vi.advanceTimersByTimeAsync(200)
       })
-      expect(vi.mocked(http.getAttention)).toHaveBeenCalledTimes(before.attention + 1)
-      expect(vi.mocked(http.getLibrary)).toHaveBeenCalledTimes(before.library + 1)
-      expect(vi.mocked(http.getPreparation)).toHaveBeenCalledTimes(before.preparation + 1)
+      expect(vi.mocked(http.getAttention)).toHaveBeenCalledTimes(afterIdle.attention + 1)
+      expect(vi.mocked(http.getLibrary)).toHaveBeenCalledTimes(afterIdle.library + 1)
+      expect(vi.mocked(http.getPreparation)).toHaveBeenCalledTimes(afterIdle.preparation + 1)
 
       await act(async () => {
         streamState = 'degraded'
@@ -864,7 +882,7 @@ describe('Application shell', () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(1_600)
       })
-      expect(vi.mocked(http.getPreparation)).toHaveBeenCalledTimes(before.preparation + 2)
+      expect(vi.mocked(http.getPreparation)).toHaveBeenCalledTimes(afterIdle.preparation + 2)
     } finally {
       vi.useRealTimers()
     }

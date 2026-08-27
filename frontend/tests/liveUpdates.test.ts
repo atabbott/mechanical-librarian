@@ -1,7 +1,11 @@
 import { QueryClient } from '@tanstack/react-query'
 import { describe, expect, it, vi } from 'vitest'
 
-import { invalidationKeys, startLiveInvalidation } from '../src/liveInvalidation'
+import {
+  invalidationKeys,
+  ownerIdleMilliseconds,
+  startLiveInvalidation,
+} from '../src/liveInvalidation'
 import { createLiveUpdateStream, readLiveUpdate } from '../src/liveUpdates'
 import type { LiveUpdate } from '../src/liveUpdates'
 
@@ -232,6 +236,104 @@ describe('live invalidation', () => {
       ['activity'],
       ['review-case'],
     ])
+    stop()
+  })
+
+  it('defers an untouched foreground burst and resyncs once on owner input', () => {
+    const queryClient = new QueryClient()
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries').mockResolvedValue(undefined)
+    const timers = new Map<number, { delay: number; run: () => void }>()
+    const listeners: ((update: LiveUpdate) => void)[] = []
+    let nextTimer = 0
+    let now = 0
+    let activityListener: (() => void) | undefined
+    const stream = {
+      state: 'live' as const,
+      subscribe(listener: (update: LiveUpdate) => void) {
+        listeners.push(listener)
+        return () => undefined
+      },
+      observeState: () => () => undefined,
+      close: () => undefined,
+    }
+    const stop = startLiveInvalidation(stream, queryClient, {
+      schedule: (run, delay) => {
+        nextTimer += 1
+        timers.set(nextTimer, { delay, run })
+        return nextTimer
+      },
+      cancel: (handle) => void timers.delete(handle),
+      now: () => now,
+      observeActivity: (listener) => {
+        activityListener = listener
+        return () => undefined
+      },
+      observeVisibility: () => () => undefined,
+    })
+
+    now = ownerIdleMilliseconds
+    for (const listener of listeners) listener({ sequence: 1, subject: null, topic: 'library' })
+    expect(invalidate).not.toHaveBeenCalled()
+    expect(timers).toHaveLength(1)
+
+    activityListener?.()
+    expect(timers).toHaveLength(1)
+    const queued = [...timers.entries()][0]
+    expect(queued?.[1].delay).toBe(120)
+    if (queued) {
+      timers.delete(queued[0])
+      queued[1].run()
+    }
+    expect(invalidate.mock.calls.map(([argument]) => argument?.queryKey)).toEqual([
+      ['review-preparation'],
+      ['library'],
+      ['attention'],
+      ['activity'],
+      ['review-case'],
+    ])
+    stop()
+  })
+
+  it.each([
+    {
+      expected: [['review-case', CASE]],
+      topic: 'case' as const,
+    },
+    {
+      expected: [['activity']],
+      topic: 'activity' as const,
+    },
+  ])('keeps idle-visible $topic invalidation immediate', ({ expected, topic }) => {
+    const queryClient = new QueryClient()
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries').mockResolvedValue(undefined)
+    const timers: (() => void)[] = []
+    const listeners: ((update: LiveUpdate) => void)[] = []
+    const stream = {
+      state: 'live' as const,
+      subscribe(listener: (update: LiveUpdate) => void) {
+        listeners.push(listener)
+        return () => undefined
+      },
+      observeState: () => () => undefined,
+      close: () => undefined,
+    }
+    const stop = startLiveInvalidation(stream, queryClient, {
+      schedule: (run) => {
+        timers.push(run)
+        return timers.length
+      },
+      cancel: () => undefined,
+      now: () => ownerIdleMilliseconds,
+      observeActivity: () => () => undefined,
+      observeVisibility: () => () => undefined,
+    })
+
+    for (const listener of listeners)
+      listener({ sequence: 1, subject: topic === 'case' ? CASE : null, topic })
+    expect(invalidate).not.toHaveBeenCalled()
+    expect(timers).toHaveLength(1)
+    timers[0]?.()
+    expect(invalidate.mock.calls.map(([argument]) => argument?.queryKey)).toEqual(expected)
     stop()
   })
 })
