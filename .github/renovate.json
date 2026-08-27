@@ -56,6 +56,20 @@
       "enabled": false
     },
     {
+      "description": "Track npm through the pinned Node runtime rather than independently",
+      "matchManagers": [
+        "npm"
+      ],
+      "matchDepTypes": [
+        "engines",
+        "packageManager"
+      ],
+      "matchPackageNames": [
+        "npm"
+      ],
+      "enabled": false
+    },
+    {
       "description": "Group compatible frontend updates",
       "matchManagers": [
         "npm"

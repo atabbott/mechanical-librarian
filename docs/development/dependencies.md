@@ -326,11 +326,18 @@ It prepares a pull request without requesting auto-merge for:
 
 - pre-1.0 minor updates;
 - Docker images and GitHub Actions;
-- Python, Node, npm, and uv runtimes or toolchains;
+- Python, Node, and uv runtimes or toolchains;
 - the current frontend compiler, bundler, linter, generator, test runner, test
   environment, and build plugins;
 - Python build backends; and
 - Playwright minor updates.
+
+Renovate does not propose npm itself. npm is whatever the pinned Node ships, so
+a standalone `engines` or `packageManager` update would declare a toolchain
+nothing installs: the gate, the container's frontend stage, and
+`scripts/build_frontend.py` each assert the running `npm --version` rather than
+the manifest. npm moves by hand with a Node update, and the manifest exactness
+test refuses a manifest that has drifted from the pinned pair.
 
 Major updates and dependency replacements require Dependency Dashboard approval
 before Renovate prepares their pull requests, and never auto-merge. Newly
