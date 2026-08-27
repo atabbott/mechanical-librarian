@@ -261,8 +261,13 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         # from re-running its expensive union while preparation is between
         # commits; it is not a shared cache or an event transport.
         self._activity_page_cache: dict[
-            tuple[str | None, str, int, int, int],
-            tuple[tuple[int, int, int, int, int, str], dict[str, object]],
+            tuple[str | None, str, int, int],
+            tuple[
+                tuple[int, int, int, int, int, str],
+                int,
+                int | None,
+                dict[str, object],
+            ],
         ] = {}
         self._activity_page_cache_lock = RLock()
         self._activity_page_busy_retry_seconds = 0.0
@@ -1803,21 +1808,33 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         page_size: int,
     ) -> dict[str, object]:
         """Return a bounded page, reusing only an exact-current projection."""
-        key = (search, event_type, occurred_after, page, page_size)
+        key = (search, event_type, page, page_size)
         with self._activity_page_cache_lock:
             cached = self._activity_page_cache.get(key)
             if cached is not None:
                 current = self._activity_projection_revision()
-                if cached[0] == current:
-                    return deepcopy(cached[1])
-            result, revision = self._field_effect_activity_page_uncached(
-                search=search,
-                event_type=event_type,
-                occurred_after=occurred_after,
-                page=page,
-                page_size=page_size,
+                cached_cutoff, oldest_included = cached[1:3]
+                if (
+                    cached[0] == current
+                    and occurred_after >= cached_cutoff
+                    and (oldest_included is None or occurred_after <= oldest_included)
+                ):
+                    return deepcopy(cached[3])
+            result, revision, oldest_included = (
+                self._field_effect_activity_page_uncached(
+                    search=search,
+                    event_type=event_type,
+                    occurred_after=occurred_after,
+                    page=page,
+                    page_size=page_size,
+                )
             )
-            self._activity_page_cache[key] = (revision, deepcopy(result))
+            self._activity_page_cache[key] = (
+                revision,
+                occurred_after,
+                oldest_included,
+                deepcopy(result),
+            )
             if len(self._activity_page_cache) > 2:
                 self._activity_page_cache.pop(next(iter(self._activity_page_cache)))
             return result
@@ -1830,7 +1847,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         occurred_after: int,
         page: int,
         page_size: int,
-    ) -> tuple[dict[str, object], tuple[int, int, int, int, int, str]]:
+    ) -> tuple[dict[str, object], tuple[int, int, int, int, int, str], int | None]:
         """Return one exact, bounded page from the durable owner activity ledgers."""
         if (
             (
@@ -1988,26 +2005,38 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     projection
                     + columns.replace(
                         " FROM activity_events",
-                        ",count(*) OVER () AS activity_total FROM activity_events",
+                        ",count(*) OVER () AS activity_total,"
+                        "min(occurred_at) OVER () AS oldest_included "
+                        "FROM activity_events",
                     )
                     + predicate
                     + " ORDER BY occurred_at DESC,event_id DESC LIMIT ? OFFSET ?",
                     (*parameters, page_size, (page - 1) * page_size),
                 ).fetchall()
                 if page_rows:
-                    total = int(page_rows[0][-1])
-                    rows = [row[:-1] for row in page_rows]
+                    total = int(page_rows[0][-2])
+                    oldest_included = page_rows[0][-1]
+                    if type(oldest_included) is not int:
+                        raise FieldEffectError("persistence")
+                    rows = [row[:-2] for row in page_rows]
                     page_count = max(1, (total + page_size - 1) // page_size)
                     selected_page = page
                 else:
-                    total = int(
-                        self._connection.execute(
-                            projection
-                            + "SELECT count(*) FROM activity_events"
-                            + predicate,
-                            parameters,
-                        ).fetchone()[0]
-                    )
+                    count_row = self._connection.execute(
+                        projection
+                        + "SELECT count(*),min(occurred_at) FROM activity_events"
+                        + predicate,
+                        parameters,
+                    ).fetchone()
+                    if (
+                        count_row is None
+                        or type(count_row[0]) is not int
+                        or count_row[0] < 0
+                        or (count_row[1] is not None and type(count_row[1]) is not int)
+                    ):
+                        raise FieldEffectError("persistence")
+                    total = count_row[0]
+                    oldest_included = count_row[1]
                     page_count = max(1, (total + page_size - 1) // page_size)
                     selected_page = min(page, page_count)
                     rows = (
@@ -2029,6 +2058,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 total = 0
                 page_count = 1
                 selected_page = page
+                oldest_included = None
             if search is None:
                 projected_events, report_documents, _ = self._project_activity_rows(
                     rows,
@@ -2065,6 +2095,14 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         )
                         if search not in activity_search_text(event, report):
                             continue
+                        occurred_at = event.get("occurred_at")
+                        if type(occurred_at) is not int:
+                            raise FieldEffectError("persistence")
+                        oldest_included = (
+                            occurred_at
+                            if oldest_included is None
+                            else min(oldest_included, occurred_at)
+                        )
                         report_document = (
                             batch_documents.get(report_id)
                             if type(report_id) is str
@@ -2154,7 +2192,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             }
             revision = self._activity_projection_revision()
             transaction.commit()
-            return result, revision
+            return result, revision, oldest_included
         except (
             json.JSONDecodeError,
             RecursionError,

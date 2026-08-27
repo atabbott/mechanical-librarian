@@ -696,6 +696,45 @@ def test_activity_page_cache_keeps_only_an_exact_current_reader_projection(
         reader.close()
 
 
+def test_activity_page_cache_reuses_a_rolling_range_until_an_event_ages_out(
+    effects: _EffectEnvironment,
+) -> None:
+    _plan(effects, suffix="a")
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    projection = reader._field_effect_activity
+    original = projection._field_effect_activity_page_uncached
+    projection_calls = [0]
+
+    def counted_projection(**values):
+        projection_calls[0] += 1
+        return original(**values)
+
+    query = dict(search=None, event_type="review", page=1, page_size=25)
+    with patch.object(
+        projection, "_field_effect_activity_page_uncached", counted_projection
+    ):
+        try:
+            first = reader.field_effect_activity_page(occurred_after=0, **query)
+            oldest = min(
+                cast(int, event["occurred_at"])
+                for event in cast("list[dict[str, object]]", first["events"])
+            )
+            assert reader.field_effect_activity_page(occurred_after=1, **query) == first
+            expired = reader.field_effect_activity_page(
+                occurred_after=oldest + 1, **query
+            )
+        finally:
+            reader.close()
+
+    assert projection_calls == [2]
+    assert expired != first
+
+
 def test_activity_example_selector_returns_one_current_published_candidate(
     effects: _EffectEnvironment,
 ) -> None:
@@ -3727,7 +3766,7 @@ def test_activity_projection_stamps_inside_snapshot_and_validates_a_cache_hit_on
 
     def counted_page(
         **query: object,
-    ) -> tuple[dict[str, object], tuple[int, int, int, int, int, str]]:
+    ) -> tuple[dict[str, object], tuple[int, int, int, int, int, str], int | None]:
         page_calls[0] += 1
         return original_page(**query)
 
