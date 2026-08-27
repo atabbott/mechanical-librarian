@@ -57,7 +57,7 @@ class ContinuousFieldEffectRepository(Protocol):
 
     def pending_field_effect_plan_ids(self, limit: int) -> tuple[str, ...]: ...
     def pending_field_effect_action_plan_ids(self, limit: int) -> tuple[str, ...]: ...
-    def field_effect_backup_ready(self) -> bool: ...
+    def field_effect_backup_ready(self, *, fresh: bool = False) -> bool: ...
     def pending_field_effect_decision_counts(self) -> tuple[dict[str, object], ...]: ...
     def grant_field_effect_consent_matrix(
         self,
@@ -496,7 +496,7 @@ class ContinuousGuardedApplication:
             for library, destinations in grants
         ):
             raise GuardedApplicationError("consent")
-        if not self._repository.field_effect_backup_ready():
+        if not self._repository.field_effect_backup_ready(fresh=True):
             raise GuardedApplicationError("backup")
         prepared = self._repository.pending_field_effect_decision_counts()
         prepared_libraries = {

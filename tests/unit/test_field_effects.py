@@ -7,6 +7,7 @@ import sqlite3
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -30,7 +31,10 @@ from mechanical_librarian.adapters.field_effect_fakes import (
     FakeTargetService,
     PrivateCoverRecoveryStore,
 )
-from mechanical_librarian.adapters.field_effect_runtime import PersistedEffectConsent
+from mechanical_librarian.adapters.field_effect_runtime import (
+    DurableBackupReadiness,
+    PersistedEffectConsent,
+)
 from mechanical_librarian.adapters.persistence.field_effect_activity import (
     _ACTIVITY_PAGE_CACHE_MAX_BYTES,
 )
@@ -682,16 +686,7 @@ def test_activity_page_cache_keeps_only_an_exact_current_reader_projection(
         second = reader.field_effect_activity_page(**query)
         reader._connection.set_trace_callback(None)
         assert second == first
-        assert len(statements) == 1
-        for source in (
-            "field_effect_events",
-            "human_decision_events",
-            "automatic_decisions",
-            "field_effect_no_changes",
-            "cover_consideration_events",
-            "metadata_policy_transitions",
-        ):
-            assert source in statements[0]
+        assert statements == ["PRAGMA data_version"]
 
         # A caller receives a copy: its owner-readable shaping cannot corrupt
         # the reader's retained immutable projection.
@@ -959,6 +954,43 @@ def test_activity_backup_readiness_rechecks_each_exact_database_revision(
         reader.close()
 
 
+def test_write_preclaim_requires_fresh_backup_readiness(
+    effects: _EffectEnvironment,
+) -> None:
+    checks: list[bool] = []
+
+    class Repository:
+        def field_effect_backup_ready(self, *, fresh: bool = False) -> bool:
+            checks.append(fresh)
+            return True
+
+    assert DurableBackupReadiness(Repository()).ready(_plan(effects, suffix="0").plan)
+    assert checks == [True]
+
+
+def test_fresh_backup_readiness_rejects_corruption_after_a_cached_success(
+    effects: _EffectEnvironment,
+) -> None:
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    with effects.database_path.open("r+b") as database:
+        header = database.read(1)
+    try:
+        assert reader.field_effect_backup_ready() is True
+        with effects.database_path.open("r+b") as database:
+            database.write(b"X")
+        assert reader.field_effect_backup_ready() is True
+        assert reader.field_effect_backup_ready(fresh=True) is False
+    finally:
+        with effects.database_path.open("r+b") as database:
+            database.write(header)
+        reader.close()
+
+
 def test_activity_snapshot_holds_and_releases_one_exact_read_transaction(
     effects: _EffectEnvironment,
 ) -> None:
@@ -1053,6 +1085,33 @@ def test_activity_page_cache_invalidates_an_in_place_policy_transition_update(
 
     assert projection_calls == [2]
     assert refreshed != first
+
+
+def test_activity_page_cache_revalidates_an_in_place_malformed_event(
+    effects: _EffectEnvironment,
+) -> None:
+    operation = _plan(effects, suffix="2")
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    query = dict(search=None, event_type="all", occurred_after=0, page=1, page_size=25)
+    try:
+        assert reader.field_effect_activity_page(**query)["events"]
+        effects.repository._connection.execute(
+            "DROP TRIGGER field_effect_events_no_update"
+        )
+        effects.repository._connection.execute(
+            "UPDATE field_effect_events SET document=? WHERE plan_id=? AND sequence=1",
+            ("{not-json", operation.plan.plan_id),
+        )
+        effects.repository._connection.commit()
+        with pytest.raises(FieldEffectError, match="^persistence$"):
+            reader.field_effect_activity_page(**query)
+    finally:
+        reader.close()
 
 
 def test_activity_page_fails_closed_for_corrupt_or_oversized_durable_rows(
@@ -3907,12 +3966,13 @@ def test_activity_projection_bounds_delete_journal_pending_writer_convoy(
     assert activity_result["sqlite_errorname"] == "SQLITE_BUSY"
 
 
-def test_activity_projection_retries_a_short_delete_journal_convoy(
+def _activity_read_after_short_delete_journal_convoy(
     effects: _EffectEnvironment,
-) -> None:
-    """A bounded busy retry returns the current Activity page after writer commit."""
-
-    plan = _plan(effects, suffix="f")
+    plan: FieldEffectOperation,
+    *,
+    method_name: str,
+    call: Callable[[SQLiteMetadataReportRepository], object],
+) -> object:
     reader_a = open_repository(
         effects.database_path,
         create=False,
@@ -3931,11 +3991,11 @@ def test_activity_projection_retries_a_short_delete_journal_convoy(
     writer_errors: list[BaseException] = []
     attempts = [0]
     projection = reader_c._field_effect_activity
-    original_page = projection._field_effect_activity_page_once
+    original = getattr(projection, method_name)
 
-    def counted_page(**query):
+    def counted(*arguments, **keywords):
         attempts[0] += 1
-        return original_page(**query)
+        return original(*arguments, **keywords)
 
     def pending_writer() -> None:
         connection = sqlite3.connect(effects.database_path, isolation_level=None)
@@ -3960,7 +4020,7 @@ def test_activity_projection_retries_a_short_delete_journal_convoy(
 
     writer = threading.Thread(target=pending_writer)
     release = threading.Thread(target=release_reader)
-    with patch.object(projection, "_field_effect_activity_page_once", counted_page):
+    with patch.object(projection, method_name, counted):
         try:
             assert reader_a._connection.execute("PRAGMA journal_mode").fetchone() == (
                 "delete",
@@ -3973,13 +4033,7 @@ def test_activity_projection_retries_a_short_delete_journal_convoy(
             assert writer_ready.wait(1)
             release.start()
             started = time.monotonic()
-            result = reader_c.field_effect_activity_page(
-                search=None,
-                event_type="all",
-                occurred_after=0,
-                page=1,
-                page_size=25,
-            )
+            result = call(reader_c)
             elapsed = time.monotonic() - started
         finally:
             if reader_a._connection.in_transaction:
@@ -3992,7 +4046,68 @@ def test_activity_projection_retries_a_short_delete_journal_convoy(
     assert writer_committed.is_set()
     assert attempts[0] >= 2
     assert elapsed < 1
+    return result
+
+
+def test_activity_projection_retries_a_short_delete_journal_convoy(
+    effects: _EffectEnvironment,
+) -> None:
+    """A bounded busy retry returns the current Activity page after writer commit."""
+
+    result = cast(
+        "dict[str, object]",
+        _activity_read_after_short_delete_journal_convoy(
+            effects,
+            _plan(effects, suffix="f"),
+            method_name="_field_effect_activity_page_once",
+            call=lambda reader: reader.field_effect_activity_page(
+                search=None,
+                event_type="all",
+                occurred_after=0,
+                page=1,
+                page_size=25,
+            ),
+        ),
+    )
     assert result["events"]
+
+
+def test_activity_backup_readiness_retries_a_short_delete_journal_convoy(
+    effects: _EffectEnvironment,
+) -> None:
+    """Contention is retried before Activity reports backup readiness false."""
+
+    assert (
+        _activity_read_after_short_delete_journal_convoy(
+            effects,
+            _plan(effects, suffix="0"),
+            method_name="_field_effect_backup_ready_once",
+            call=lambda reader: reader.field_effect_backup_ready(),
+        )
+        is True
+    )
+
+
+def test_activity_transitions_retry_a_short_delete_journal_convoy(
+    effects: _EffectEnvironment,
+) -> None:
+    """Event expansion applies the same bounded retry as the Activity page."""
+
+    plan = _plan(effects, suffix="b")
+    event_id = effects.repository._connection.execute(
+        "SELECT event_id FROM field_effect_events WHERE plan_id=? AND sequence=1",
+        (plan.plan.plan_id,),
+    ).fetchone()[0]
+    transitions = cast(
+        "tuple[dict[str, object], ...]",
+        _activity_read_after_short_delete_journal_convoy(
+            effects,
+            plan,
+            method_name="_field_effect_activity_transitions_once",
+            call=lambda reader: reader.field_effect_activity_transitions(event_id),
+        ),
+    )
+    assert [event["state"] for event in transitions] == ["planned"]
 
 
 def test_activity_projection_stamps_inside_snapshot_and_validates_a_cache_hit_once(
@@ -4014,13 +4129,13 @@ def test_activity_projection_stamps_inside_snapshot_and_validates_a_cache_hit_on
     revision_transactions: list[bool] = []
     page_calls = [0]
 
-    def observed_revision() -> tuple[int, int, int, int, int, str]:
+    def observed_revision() -> tuple[int, int]:
         revision_transactions.append(projection._connection.in_transaction)
         return original_revision()
 
     def counted_page(
         **query: object,
-    ) -> tuple[dict[str, object], tuple[int, int, int, int, int, str], int | None]:
+    ) -> tuple[dict[str, object], tuple[int, int], int | None]:
         page_calls[0] += 1
         return original_page(**query)
 

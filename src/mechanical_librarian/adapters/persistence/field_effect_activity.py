@@ -42,7 +42,9 @@ import sqlite3
 import time
 from collections import deque
 from collections.abc import Callable
+from contextlib import closing
 from copy import deepcopy
+from pathlib import Path
 from threading import RLock
 from typing import Any, TypeVar, cast
 
@@ -268,7 +270,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         self._activity_page_cache: dict[
             tuple[str | None, str, int, int],
             tuple[
-                tuple[int, int, int, int, int, str],
+                tuple[int, int],
                 int,
                 int | None,
                 int,
@@ -870,8 +872,35 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         except sqlite3.Error:
             return False
 
-    def field_effect_backup_ready(self) -> bool:
-        """Prove the exact-current durable store can form a consistent checkpoint."""
+    def _fresh_database_quick_check(self) -> tuple[object, ...] | None:
+        database = self._connection.execute("PRAGMA database_list").fetchone()
+        if (
+            database is None
+            or len(database) != 3
+            or database[1] != "main"
+            or type(database[2]) is not str
+        ):
+            raise sqlite3.DatabaseError("invalid main database identity")
+        if not database[2]:
+            return cast(
+                "tuple[object, ...] | None",
+                self._connection.execute("PRAGMA quick_check").fetchone(),
+            )
+        uri = f"{Path(database[2]).resolve().as_uri()}?mode=ro"
+        with closing(
+            sqlite3.connect(
+                uri,
+                uri=True,
+                isolation_level=None,
+                timeout=_ACTIVITY_PAGE_BUSY_TIMEOUT_MILLISECONDS / 1_000,
+            )
+        ) as verifier:
+            return cast(
+                "tuple[object, ...] | None",
+                verifier.execute("PRAGMA quick_check").fetchone(),
+            )
+
+    def _field_effect_backup_ready_once(self, *, fresh: bool) -> bool:
         try:
             with self._activity_page_cache_lock:
                 data_version = self._connection.execute(
@@ -886,15 +915,29 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     return False
                 revision = (data_version[0], self._connection.total_changes)
                 if (
-                    self._backup_ready_cache is not None
+                    not fresh
+                    and self._backup_ready_cache is not None
                     and self._backup_ready_cache[0] == revision
                 ):
                     return self._backup_ready_cache[1]
-                row = self._connection.execute("PRAGMA quick_check").fetchone()
+                row = (
+                    self._fresh_database_quick_check()
+                    if fresh
+                    else self._connection.execute("PRAGMA quick_check").fetchone()
+                )
                 ready = row == ("ok",) and not self._connection.in_transaction
                 self._backup_ready_cache = (revision, ready)
                 return ready
-        except sqlite3.Error:
+        except sqlite3.Error as error:
+            raise FieldEffectError("persistence") from error
+
+    def field_effect_backup_ready(self, *, fresh: bool = False) -> bool:
+        """Prove the exact-current durable store can form a consistent checkpoint."""
+        try:
+            return self._retry_activity_busy(
+                lambda: self._field_effect_backup_ready_once(fresh=fresh)
+            )
+        except FieldEffectError:
             return False
 
     def field_effect_activity_summary(self) -> dict[str, object]:
@@ -1748,31 +1791,16 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             )
         return projected_events, report_documents, reports
 
-    def _activity_projection_revision(self) -> tuple[int, int, int, int, int, str]:
-        """Return exact event high-watermarks and visible policy state."""
+    def _activity_projection_revision(self) -> tuple[int, int]:
+        """Return the complete local and cross-connection SQLite revision."""
         try:
-            row = self._connection.execute(
-                "SELECT (SELECT count(*) FROM field_effect_events),"
-                "(SELECT count(*) FROM human_decision_events),"
-                "(SELECT count(*) FROM automatic_decisions),"
-                "(SELECT count(*) FROM field_effect_no_changes),"
-                "(SELECT count(*) FROM cover_consideration_events),"
-                "(SELECT COALESCE(json_group_array(json_array(transition_id,updated_at,state,generation,from_policy_id,to_policy_id)),'[]') FROM ("
-                "SELECT transition_id,updated_at,state,generation,from_policy_id,to_policy_id "
-                "FROM metadata_policy_transitions ORDER BY transition_id))"
-            ).fetchone()
-            if (
-                row is None
-                or len(row) != 6
-                or any(type(value) is not int or value < 0 for value in row[:5])
-                or type(row[5]) is not str
-            ):
+            row = self._connection.execute("PRAGMA data_version").fetchone()
+            if row is None or len(row) != 1 or type(row[0]) is not int or row[0] < 0:
                 raise FieldEffectError("persistence")
-            # The first five sources are protected append-only ledgers. The
-            # transition row is mutable, so its fingerprint covers exactly
-            # the columns the Activity union projects. Field-effect state and
-            # waiting-order changes append an event in the same transaction.
-            return cast("tuple[int, int, int, int, int, str]", row)
+            # The connection-local change count and cross-connection data
+            # version invalidate every SQL mutation, including in-place
+            # document changes that preserve row counts and identifiers.
+            return row[0], self._connection.total_changes
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
 
@@ -1920,7 +1948,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         occurred_after: int,
         page: int,
         page_size: int,
-    ) -> tuple[dict[str, object], tuple[int, int, int, int, int, str], int | None]:
+    ) -> tuple[dict[str, object], tuple[int, int], int | None]:
         """Return one exact, bounded page from the durable owner activity ledgers."""
         if (
             (
@@ -2294,6 +2322,15 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             or limit not in {10, 20}
         ):
             raise FieldEffectError("invalid_activity_query")
+        return self._retry_activity_busy(
+            lambda: self._field_effect_activity_transitions_once(
+                event_id, after_sequence, limit
+            )
+        )
+
+    def _field_effect_activity_transitions_once(
+        self, event_id: str, after_sequence: int | None, limit: int
+    ) -> tuple[dict[str, object], ...]:
         transaction = self._transaction(
             "field_effect_activity_transitions", deferred=True
         )

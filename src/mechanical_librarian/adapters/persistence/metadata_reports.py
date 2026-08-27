@@ -676,8 +676,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def field_effect_dependencies_current(self, digests: tuple[str, ...]) -> bool:
         return self._field_effect_activity.field_effect_dependencies_current(digests)
 
-    def field_effect_backup_ready(self) -> bool:
-        return self._field_effect_activity.field_effect_backup_ready()
+    def field_effect_backup_ready(self, *, fresh: bool = False) -> bool:
+        return self._field_effect_activity.field_effect_backup_ready(fresh=fresh)
 
     def next_field_effect_plan_id(
         self,

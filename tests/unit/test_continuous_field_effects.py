@@ -239,7 +239,8 @@ class _PagedRepository:
             raise FieldEffectError("consent")
         return object()
 
-    def field_effect_backup_ready(self):
+    def field_effect_backup_ready(self, *, fresh=False):
+        del fresh
         return True
 
     def field_effect_activity_page(self, **_query):
@@ -416,7 +417,8 @@ def test_activity_projection_runs_inside_the_injected_read_snapshot() -> None:
     events: list[str] = []
 
     class Repository(_ActivityPagedRepository):
-        def field_effect_backup_ready(self):
+        def field_effect_backup_ready(self, *, fresh=False):
+            assert fresh is False
             events.append("backup")
             return True
 
@@ -1205,6 +1207,11 @@ def test_enable_grants_only_field_locally_eligible_destinations() -> None:
         def __init__(self):
             super().__init__([decision])
             self.grants = None
+            self.backup_checks = []
+
+        def field_effect_backup_ready(self, *, fresh=False):
+            self.backup_checks.append(fresh)
+            return True
 
         def grant_field_effect_consent_matrix(self, *arguments):
             self.grants = arguments
@@ -1228,6 +1235,7 @@ def test_enable_grants_only_field_locally_eligible_destinations() -> None:
     eligible = tuple(sorted(set(SUPPORTED_DESTINATIONS) - {"subtitle"}))
     service.enable((("alpha", eligible),))
     assert repository.grants is not None
+    assert repository.backup_checks == [True, False]
     assert "subtitle" not in repository.grants[1][0][1]
 
 
