@@ -268,6 +268,55 @@ def test_complete_ordered_authors_and_variant_veto_remain_identity_floor() -> No
     ).admitted
 
 
+@pytest.mark.parametrize(
+    ("local_title", "provider_title"),
+    (
+        ("Work:", "Work"),
+        ("Work;", "Work"),
+        ("Work-", "Work"),
+        (":Work", "Work"),
+        ("-Work", "Work"),
+    ),
+)
+def test_admission_preserves_title_punctuation_collisions(
+    local_title: str, provider_title: str
+) -> None:
+    assert not admit_provider_work_identity(
+        local_title=local_title,
+        local_authors=("Ada Example",),
+        provider_title=provider_title,
+        provider_authors=("Ada Example",),
+        provider_work_identity="work-1",
+    ).admitted
+
+
+def test_admission_preserves_author_and_filename_remainder_punctuation() -> None:
+    assert not admit_provider_work_identity(
+        local_title="Work",
+        local_authors=("Ada Example,",),
+        provider_title="Work",
+        provider_authors=("Ada Example",),
+        provider_work_identity="work-1",
+    ).admitted
+    assert not admit_provider_work_identity(
+        local_title="Ada Example - Work:",
+        local_authors=("Ada Example",),
+        provider_title="Work",
+        provider_authors=("Ada Example",),
+        provider_work_identity="work-1",
+    ).admitted
+
+
+def test_admission_retains_established_non_breaking_space_equality() -> None:
+    assert admit_provider_work_identity(
+        local_title="Plain\u00a0Work",
+        local_authors=("Ada\u00a0Example",),
+        provider_title="Plain Work",
+        provider_authors=("Ada Example",),
+        provider_work_identity="work-1",
+    ).admitted
+
+
 def test_replay_requires_one_exact_ladder_dispatch_or_its_narrowing_successor() -> None:
     local_title = "Ada_Example_-_Plain_Work"
     authors = ("Ada Example",)

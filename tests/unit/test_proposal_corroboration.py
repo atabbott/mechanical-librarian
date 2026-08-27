@@ -1303,6 +1303,60 @@ def test_work_lane_proposal_replay_rejects_false_dispatch_and_mixed_creators(
     assert not _target_backed_lookup_contains(baseline, mixed_source, mixed_candidate)
 
 
+def test_work_lane_replay_preserves_punctuation_and_nbsp_identity_floor(
+    work_lane: MetadataDiscoveryLane,
+) -> None:
+    candidate = _work_lane_candidate()
+    baseline_source = _work_lane_source(work_lane, candidate)
+    baseline = _work_lane_report((_work_lane_title(),), (baseline_source,))
+    punctuated = replace(
+        candidate,
+        claims=(
+            _claim(
+                "open-connection",
+                "edition",
+                ClaimKind.TITLE,
+                "Real Tigers:",
+                scope=ClaimScope.WORK,
+            ),
+            _work_lane_creator_claim(),
+        ),
+    )
+    punctuated_source = _work_lane_source(work_lane, punctuated)
+    with pytest.raises(ReportValueError, match="work identity lineage"):
+        _work_lane_report((_work_lane_title(),), (punctuated_source,))
+    object.__setattr__(baseline, "providers", (punctuated_source,))
+    assert not _target_backed_lookup_contains(baseline, punctuated_source, punctuated)
+
+    nbsp = replace(
+        candidate,
+        claims=(
+            _claim(
+                "open-connection",
+                "edition",
+                ClaimKind.TITLE,
+                "Real\u00a0Tigers",
+                scope=ClaimScope.WORK,
+            ),
+            _claim(
+                "open-connection",
+                "edition",
+                ClaimKind.CREATOR,
+                "Mick\u00a0Herron",
+                scope=ClaimScope.WORK,
+                role="author",
+            ),
+        ),
+    )
+    nbsp_source = _work_lane_source(work_lane, nbsp)
+    nbsp_report = _work_lane_report((_work_lane_title(),), (nbsp_source,))
+    replayed = MetadataReport.from_json(nbsp_report.to_json())
+    replayed_source = replayed.providers[0]
+    assert _target_backed_lookup_contains(
+        replayed, replayed_source, replayed_source.candidates[0]
+    )
+
+
 @pytest.mark.parametrize(
     ("local_claim", "forges_lane_identity"),
     (

@@ -272,6 +272,7 @@ _VARIANT = re.compile(
 _TYPOGRAPHIC_TRANSLATION = str.maketrans(
     {"‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-"}
 )
+_ADMISSION_TYPOGRAPHIC_TRANSLATION = str.maketrans({"\u00a0": " ", "–": "-", "—": "-"})
 
 
 def work_query_ladder(title: str, authors: tuple[str, ...]) -> tuple[WorkQuery, ...]:
@@ -526,7 +527,7 @@ def apply_work_title_transformation(
     ):
         raise ValueError("work title transformation input is invalid")
     if family is WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX:
-        return _filename_author_title_prefix(title, authors) or title
+        return _filename_author_title_prefix(title, authors, query=True) or title
     if family is WorkTitleTransformationFamily.FILENAME_UNDERSCORES:
         return _clean(title.replace("_", " "))
     if family is WorkTitleTransformationFamily.BRACKET_SOURCE_TAG:
@@ -570,7 +571,9 @@ def apply_work_title_transformation(
     raise RuntimeError("work title transformation table is incomplete")
 
 
-def _filename_author_title_prefix(value: str, authors: tuple[str, ...]) -> str | None:
+def _filename_author_title_prefix(
+    value: str, authors: tuple[str, ...], *, query: bool = False
+) -> str | None:
     if not authors:
         return None
     normalized = unicodedata.normalize("NFC", value)
@@ -582,12 +585,17 @@ def _filename_author_title_prefix(value: str, authors: tuple[str, ...]) -> str |
         return None
     prefix_tokens = _identity_tokens(match.group("prefix"))
     author_tokens = _identity_tokens(authors[0])
-    title = _clean(match.group("title").replace("_", " "))
-    return title if prefix_tokens == author_tokens and title else None
+    title = match.group("title").replace("_", " ")
+    if query:
+        title = _clean(title)
+    else:
+        title = _ASCII_SPACE.sub(" ", title)
+    return title if prefix_tokens == author_tokens and _comparison_text(title) else None
 
 
 def _comparison_text(value: str) -> str:
-    return _clean(unicodedata.normalize("NFC", value))
+    normalized = unicodedata.normalize("NFC", value).casefold()
+    return " ".join(part for part in _ASCII_SPACE.split(normalized) if part)
 
 
 def _normalized_query_text(value: str) -> str:
@@ -603,24 +611,35 @@ def _clean(value: str) -> str:
 def _closed_equal(left: str, right: str) -> bool:
     if left == right:
         return True
-    if _comparison_text(left).casefold() == _comparison_text(right).casefold():
+    if _comparison_text(left) == _comparison_text(right):
         return True
-    return _balanced_typographic(left) == _balanced_typographic(right)
+    left_typographic = _balanced_typographic(left)
+    right_typographic = _balanced_typographic(right)
+    return (
+        left_typographic is not None
+        and right_typographic is not None
+        and left_typographic == right_typographic
+    )
 
 
 def _balanced_typographic(value: str) -> str | None:
-    translated = _balanced_typographic_preserving_case(value)
-    return None if translated is None else _comparison_text(translated).casefold()
+    translated = _balanced_typographic_preserving_case(value, admission=True)
+    return None if translated is None else _comparison_text(translated)
 
 
-def _balanced_typographic_preserving_case(value: str) -> str | None:
+def _balanced_typographic_preserving_case(
+    value: str, *, admission: bool = False
+) -> str | None:
     pairs = {"‘": ("'", True), "’": ("'", False), "“": ('"', True), "”": ('"', False)}
     stack: list[str] = []
     result: list[str] = []
+    translation = (
+        _ADMISSION_TYPOGRAPHIC_TRANSLATION if admission else _TYPOGRAPHIC_TRANSLATION
+    )
     for character in value:
         paired = pairs.get(character)
         if paired is None:
-            result.append(character.translate(_TYPOGRAPHIC_TRANSLATION))
+            result.append(character.translate(translation))
             continue
         mark, opening = paired
         if opening:
@@ -633,7 +652,7 @@ def _balanced_typographic_preserving_case(value: str) -> str | None:
 
 def _identity_tokens(value: str) -> tuple[str, ...]:
     normalized = unicodedata.normalize("NFC", value).replace("_", " ")
-    balanced = _balanced_typographic_preserving_case(normalized)
+    balanced = _balanced_typographic_preserving_case(normalized, admission=True)
     return tuple(
         token.casefold()
         for token in _ASCII_SPACE.split((balanced or normalized).strip())
