@@ -851,20 +851,31 @@ class ReviewApplication:
         page: int = 1,
         page_size: int = 25,
     ) -> dict[str, object]:
-        application = self._activity_projection or self._continuous_application()
-        return application.activity(
-            search=search,
-            event_type=event_type,
-            range_days=range_days,
-            page=page,
-            page_size=page_size,
-        )
+        def project(application: ContinuousGuardedApplication) -> dict[str, object]:
+            return application.activity(
+                search=search,
+                event_type=event_type,
+                range_days=range_days,
+                page=page,
+                page_size=page_size,
+            )
+
+        if self._activity_projection is not None:
+            return project(self._activity_projection)
+        return self.serialized(lambda: project(self._continuous_application()))
 
     def activity_transitions(
         self, event_id: str, after_sequence: int | None = None
     ) -> dict[str, object]:
-        application = self._activity_projection or self._continuous_application()
-        return application.activity_transitions(event_id, after_sequence)
+        if self._activity_projection is not None:
+            return self._activity_projection.activity_transitions(
+                event_id, after_sequence
+            )
+        return self.serialized(
+            lambda: self._continuous_application().activity_transitions(
+                event_id, after_sequence
+            )
+        )
 
     def enable_activity(
         self, grants: tuple[tuple[str, tuple[str, ...]], ...]

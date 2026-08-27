@@ -683,10 +683,16 @@ def test_activity_page_cache_keeps_only_an_exact_current_reader_projection(
     try:
         first = reader.field_effect_activity_page(**query)
         reader._connection.set_trace_callback(statements.append)
-        second = reader.field_effect_activity_page(**query)
+        with patch.object(
+            reader._field_effect_activity,
+            "_activity_database_identity",
+            wraps=reader._field_effect_activity._activity_database_identity,
+        ) as identity:
+            second = reader.field_effect_activity_page(**query)
         reader._connection.set_trace_callback(None)
         assert second == first
         assert statements == ["PRAGMA data_version"]
+        assert identity.call_count == 1
 
         # A caller receives a copy: its owner-readable shaping cannot corrupt
         # the reader's retained immutable projection.
@@ -699,6 +705,90 @@ def test_activity_page_cache_keeps_only_an_exact_current_reader_projection(
     finally:
         reader._connection.set_trace_callback(None)
         reader.close()
+
+
+def test_activity_page_cache_rejects_out_of_band_event_byte_mutation(
+    effects: _EffectEnvironment,
+) -> None:
+    _plan(effects, suffix="f")
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    query = dict(search=None, event_type="all", occurred_after=0, page=1, page_size=25)
+    projection = reader._field_effect_activity
+    try:
+        reader.field_effect_activity_page(**query)
+        document = effects.repository._connection.execute(
+            "SELECT document FROM field_effect_events ORDER BY occurred_at,event_id LIMIT 1"
+        ).fetchone()[0]
+        encoded = document.encode("utf-8")
+        database = effects.database_path.read_bytes()
+        offset = database.find(encoded)
+        assert offset >= 0
+        assert database.find(encoded, offset + 1) == -1
+        revision = projection._activity_projection_revision()
+        identity = projection._activity_database_identity()
+
+        descriptor = os.open(effects.database_path, os.O_WRONLY)
+        try:
+            assert os.pwrite(descriptor, b"!", offset) == 1
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+        assert projection._activity_projection_revision() == revision
+        assert projection._activity_database_identity() != identity
+        with (
+            patch.object(
+                projection,
+                "_field_effect_activity_page_uncached",
+                side_effect=AssertionError(
+                    "hostile bytes must not reach the warm reader"
+                ),
+            ),
+            pytest.raises(FieldEffectError, match="^persistence$"),
+        ):
+            reader.field_effect_activity_page(**query)
+    finally:
+        reader.close()
+
+
+def test_activity_page_cache_refreshes_when_a_commit_races_its_file_sample(
+    effects: _EffectEnvironment,
+) -> None:
+    _plan(effects, suffix="a")
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    query = dict(search=None, event_type="all", occurred_after=0, page=1, page_size=25)
+    projection = reader._field_effect_activity
+    first = reader.field_effect_activity_page(**query)
+    original_identity = projection._activity_database_identity
+    committed = False
+
+    def commit_before_identity() -> tuple[int, int, int, int, int]:
+        nonlocal committed
+        if not committed:
+            committed = True
+            _plan(effects, suffix="b")
+        return original_identity()
+
+    try:
+        with patch.object(
+            projection, "_activity_database_identity", commit_before_identity
+        ):
+            refreshed = reader.field_effect_activity_page(**query)
+    finally:
+        reader.close()
+
+    assert committed is True
+    assert cast(int, refreshed["total"]) > cast(int, first["total"])
 
 
 def test_activity_page_cache_reuses_a_rolling_range_until_an_event_ages_out(
@@ -837,7 +927,7 @@ def test_activity_page_cache_declines_valid_reports_over_its_byte_budget(
 
     def large_page(**_query: object):
         projection_calls[0] += 1
-        return result, revision, None
+        return result, revision, None, projection._activity_database_identity()
 
     with patch.object(projection, "_field_effect_activity_page_uncached", large_page):
         try:
@@ -882,7 +972,12 @@ def test_activity_page_cache_declines_valid_reports_over_its_byte_budget(
     def bounded_page(**query: object):
         page_size = cast(int, query["page_size"])
         bounded_calls.append(page_size)
-        return page_results[page_size], revision, None
+        return (
+            page_results[page_size],
+            revision,
+            None,
+            projection._activity_database_identity(),
+        )
 
     with (
         patch.object(projection, "_field_effect_activity_page_uncached", bounded_page),
@@ -4135,7 +4230,9 @@ def test_activity_projection_stamps_inside_snapshot_and_validates_a_cache_hit_on
 
     def counted_page(
         **query: object,
-    ) -> tuple[dict[str, object], tuple[int, int], int | None]:
+    ) -> tuple[
+        dict[str, object], tuple[int, int], int | None, tuple[int, int, int, int, int]
+    ]:
         page_calls[0] += 1
         return original_page(**query)
 

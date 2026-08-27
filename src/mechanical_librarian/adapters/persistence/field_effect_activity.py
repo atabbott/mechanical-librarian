@@ -38,7 +38,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
+import stat
 import time
 from collections import deque
 from collections.abc import Callable
@@ -119,6 +121,7 @@ _ACTIVITY_PAGE_BUSY_RETRY_SECONDS = 0.75
 # more serialized report text than one maximum-size report document.
 _ACTIVITY_PAGE_CACHE_MAX_BYTES = MAX_REPORT_BYTES
 _ActivityRead = TypeVar("_ActivityRead")
+_ActivityDatabaseIdentity = tuple[int, int, int, int, int]
 
 _CORRECTIVE_KEEP_CURRENT_SQL = (
     "human.outcome='keep_current' AND EXISTS (SELECT 1 FROM review_cases review, "
@@ -275,8 +278,25 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 int | None,
                 int,
                 dict[str, object],
+                _ActivityDatabaseIdentity,
             ],
         ] = {}
+        database = next(
+            (
+                row
+                for row in connection.execute("PRAGMA database_list").fetchall()
+                if len(row) == 3 and row[1] == "main"
+            ),
+            None,
+        )
+        self._activity_database_path = (
+            None
+            if binding is not None
+            or database is None
+            or type(database[2]) is not str
+            or not database[2]
+            else Path(database[2])
+        )
         self._activity_page_cache_bytes = 0
         self._activity_page_cache_lock = RLock()
         self._backup_ready_cache: tuple[tuple[int, int], bool] | None = None
@@ -1804,6 +1824,28 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
 
+    def _activity_database_identity(self) -> _ActivityDatabaseIdentity:
+        """Return a fresh kernel identity for the database bytes."""
+        try:
+            information = (
+                os.fstat(self._binding.descriptor)
+                if self._binding is not None
+                else os.stat(self._activity_database_path, follow_symlinks=False)
+                if self._activity_database_path is not None
+                else None
+            )
+        except OSError as error:
+            raise FieldEffectError("persistence") from error
+        if information is None or not stat.S_ISREG(information.st_mode):
+            raise FieldEffectError("persistence")
+        return (
+            information.st_dev,
+            information.st_ino,
+            information.st_size,
+            information.st_mtime_ns,
+            information.st_ctime_ns,
+        )
+
     def configure_activity_page_reader(self) -> None:
         """Bound only this independently owned Activity reader's busy wait."""
 
@@ -1900,11 +1942,23 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 cached_cutoff, oldest_included = cached[1:3]
                 if (
                     cached[0] == current
+                    and cached[5] != self._activity_database_identity()
+                ):
+                    # A normal commit can land between the revision and file
+                    # samples. Recheck only this changed-file path: a newer SQL
+                    # revision is a cache miss, while unchanged counters prove
+                    # the bytes changed outside SQLite and must fail closed.
+                    refreshed = self._activity_projection_revision()
+                    if refreshed == current:
+                        raise FieldEffectError("persistence")
+                    current = refreshed
+                if (
+                    cached[0] == current
                     and occurred_after >= cached_cutoff
                     and (oldest_included is None or occurred_after <= oldest_included)
                 ):
                     return deepcopy(cached[4])
-            result, revision, oldest_included = (
+            result, revision, oldest_included, database_identity = (
                 self._field_effect_activity_page_uncached(
                     search=search,
                     event_type=event_type,
@@ -1936,6 +1990,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     oldest_included,
                     retained_bytes,
                     deepcopy(result),
+                    database_identity,
                 )
                 self._activity_page_cache_bytes += retained_bytes
             return result
@@ -1948,7 +2003,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         occurred_after: int,
         page: int,
         page_size: int,
-    ) -> tuple[dict[str, object], tuple[int, int], int | None]:
+    ) -> tuple[
+        dict[str, object],
+        tuple[int, int],
+        int | None,
+        _ActivityDatabaseIdentity,
+    ]:
         """Return one exact, bounded page from the durable owner activity ledgers."""
         if (
             (
@@ -1972,8 +2032,18 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         transaction = self._transaction("field_effect_activity_page", deferred=True)
         try:
             transaction.begin()
+            # Establish the SQLite snapshot before sampling the file identity.
+            # A normal writer cannot commit while the resulting SHARED lock is
+            # held, while an out-of-band byte write still changes the kernel
+            # identity and is refused below.
+            self._connection.execute("SELECT 1 FROM sqlite_schema LIMIT 1").fetchone()
+            database_identity = self._activity_database_identity()
         except sqlite3.Error as error:
+            transaction.rollback()
             raise FieldEffectError("persistence") from error
+        except Exception:
+            transaction.rollback()
+            raise
         # This is deliberately a read-only union over the existing immutable
         # ledgers.  It neither broadens write authority nor invents a second
         # audit store just for presentation.
@@ -2292,8 +2362,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "total": total,
             }
             revision = self._activity_projection_revision()
+            if database_identity != self._activity_database_identity():
+                raise FieldEffectError("persistence")
             transaction.commit()
-            return result, revision, oldest_included
+            return result, revision, oldest_included, database_identity
         except (
             json.JSONDecodeError,
             RecursionError,
