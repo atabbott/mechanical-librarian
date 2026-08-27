@@ -720,6 +720,12 @@ def test_merge_uses_one_timestamp_and_retains_bounded_evidence(retry: _Retry) ->
     diagnostic = FailureDiagnostic(
         FailureCategory.UNKNOWN, FailureComponent.PROVIDER, FailureStage.RESPONSE
     )
+    lane_diagnostic = FailureDiagnostic(
+        FailureCategory.LOOKUP_CONSTRUCTION,
+        FailureComponent.PROVIDER,
+        FailureStage.LOOKUP,
+        retryable=False,
+    )
     original = provider_observation(
         "catalogue",
         (
@@ -733,6 +739,7 @@ def test_merge_uses_one_timestamp_and_retains_bounded_evidence(retry: _Retry) ->
                 ProviderStatus.CANDIDATES,
                 (ProviderCandidate("old", "work", ()),),
                 "2026-08-14T12:00:00.000000Z",
+                diagnostics=(lane_diagnostic,),
             ),
         ),
         authority="open_library",

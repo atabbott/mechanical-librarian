@@ -9,6 +9,7 @@ from typing import cast
 
 import httpx
 import pytest
+from pytest import MonkeyPatch
 
 import mechanical_librarian.adapters.providers.hardcover_metadata as hardcover_metadata
 from mechanical_librarian.adapters.providers.hardcover_metadata import (
@@ -289,6 +290,100 @@ def test_hardcover_executes_every_family_and_work_lane_in_one_aggregate() -> Non
     assert {ProviderStatus.NO_MATCH} == {lane.status for lane in observation.lanes}
 
 
+@pytest.mark.parametrize(
+    ("payload", "status", "attempt_category", "diagnostic_category"),
+    (
+        (
+            {"errors": [{"message": "declared"}]},
+            ProviderStatus.UNAVAILABLE,
+            "provider_declared_error",
+            "provider_declared_error",
+        ),
+        (
+            {"data": {"editions": "invalid", "books": [], "tags": []}},
+            ProviderStatus.MALFORMED,
+            "response_malformed",
+            "malformed_over_bound_response",
+        ),
+    ),
+    ids=("query_rejection", "response_rejection"),
+)
+def test_hardcover_discovery_lane_keeps_query_and_response_rejections_distinct(
+    payload: dict[str, object],
+    status: ProviderStatus,
+    attempt_category: str,
+    diagnostic_category: str,
+) -> None:
+    plan = metadata_discovery_plan(TargetSnapshot("ebook", None, ()), (isbn_claim(),))
+    provider = HardcoverMetadataProvider(
+        "catalogue",
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200, headers={"content-type": "application/json"}, json=payload
+                )
+            )
+        ),
+        65_536,
+    )
+
+    observation = provider.observe(plan)
+
+    assert (status,) == tuple(lane.status for lane in observation.lanes)
+    assert (attempt_category,) == tuple(
+        record.category for record in provider.attempt_records
+    )
+    assert (diagnostic_category,) == tuple(
+        diagnostic.category.value for diagnostic in observation.lanes[0].diagnostics
+    )
+
+
+def test_hardcover_binds_rejection_diagnostics_to_each_discovery_lane() -> None:
+    second = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780140328721",
+        canonical="9780140328721",
+        excerpt="Print ISBN 9780140328721",
+        applicability="print",
+        checksum="valid_isbn_13",
+        applicability_basis="print",
+    )
+    plan = metadata_discovery_plan(
+        TargetSnapshot("ebook", None, ()), (isbn_claim(), second)
+    )
+    responses = iter(
+        (
+            {"errors": [{"message": "declared"}]},
+            {"data": {"editions": "invalid", "books": [], "tags": []}},
+        )
+    )
+    provider = HardcoverMetadataProvider(
+        "catalogue",
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json=next(responses),
+                )
+            )
+        ),
+        65_536,
+    )
+
+    observation = provider.observe(plan)
+
+    assert {
+        (lane.status.value, tuple(value.category.value for value in lane.diagnostics))
+        for lane in observation.lanes
+    } == {
+        ("unavailable", ("provider_declared_error",)),
+        ("malformed", ("malformed_over_bound_response",)),
+    }
+    assert observation.request_accounting.initial_dispatches == 2
+    assert observation.request_accounting.logical_requests == 2
+
+
 @pytest.mark.parametrize("oversized", (False, True), ids=("within_bound", "over_bound"))
 def test_hardcover_oversized_lane_stops_remaining_requests_at_exact_bound(
     oversized: bool,
@@ -332,9 +427,122 @@ def test_hardcover_oversized_lane_stops_remaining_requests_at_exact_bound(
         if oversized
         else {ProviderStatus.NO_MATCH}
     ) == {lane.status for lane in observation.lanes}
+    if oversized:
+        incomplete = next(
+            lane
+            for lane in observation.lanes
+            if lane.status is ProviderStatus.INCOMPLETE
+        )
+        assert [diagnostic.to_data() for diagnostic in incomplete.diagnostics] == [
+            {
+                "category": "malformed_over_bound_response",
+                "component": "provider",
+                "count": 1,
+                "current": None,
+                "retryable": False,
+                "stage": "response",
+            }
+        ]
 
 
-def test_hardcover_conflicting_lane_contributes_no_cover_descriptors() -> None:
+def test_hardcover_dispatch_count_skip_keeps_its_lookup_diagnostic(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    second = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780140328721",
+        canonical="9780140328721",
+        excerpt="Print ISBN 9780140328721",
+        applicability="print",
+        checksum="valid_isbn_13",
+        applicability_basis="print",
+    )
+    plan = metadata_discovery_plan(
+        TargetSnapshot("ebook", None, ()), (isbn_claim(), second)
+    )
+    monkeypatch.setattr(hardcover_metadata, "_MAX_ATTEMPTS_PER_OBSERVATION", 1)
+    observation = HardcoverMetadataProvider(
+        "catalogue",
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json=hardcover_envelope([], []),
+                )
+            )
+        ),
+        65_536,
+    ).observe(plan)
+
+    assert [ProviderStatus.NO_MATCH, ProviderStatus.INCOMPLETE] == [
+        lane.status for lane in observation.lanes
+    ]
+    incomplete = observation.lanes[1]
+    assert [diagnostic.to_data() for diagnostic in incomplete.diagnostics] == [
+        {
+            "category": "lookup_construction",
+            "component": "provider",
+            "count": 1,
+            "current": None,
+            "retryable": False,
+            "stage": "lookup",
+        }
+    ]
+
+
+def test_hardcover_deadline_skip_keeps_its_request_diagnostic() -> None:
+    second = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780140328721",
+        canonical="9780140328721",
+        excerpt="Print ISBN 9780140328721",
+        applicability="print",
+        checksum="valid_isbn_13",
+        applicability_basis="print",
+    )
+    plan = metadata_discovery_plan(
+        TargetSnapshot("ebook", None, ()), (isbn_claim(), second)
+    )
+    pacer_now = [0.0]
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        pacer_now[0] = 1.0
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json=hardcover_envelope([], []),
+        )
+
+    observation = HardcoverMetadataProvider(
+        "catalogue",
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        65_536,
+        pacer=hardcover_metadata.HardcoverPacer(
+            clock=lambda: pacer_now[0], sleep=lambda _: None
+        ),
+        clock=lambda: 0.0,
+    ).observe(plan, deadline=1.0)
+
+    assert [ProviderStatus.NO_MATCH, ProviderStatus.INCOMPLETE] == [
+        lane.status for lane in observation.lanes
+    ]
+    incomplete = observation.lanes[1]
+    assert [diagnostic.to_data() for diagnostic in incomplete.diagnostics] == [
+        {
+            "category": "timeout",
+            "component": "provider",
+            "count": 1,
+            "current": None,
+            "retryable": False,
+            "stage": "request",
+        }
+    ]
+
+
+def test_hardcover_conflicting_cover_lane_retains_candidates_without_descriptors() -> (
+    None
+):
     claims = (
         isbn_claim(),
         LocalClaim.create(
@@ -409,9 +617,17 @@ def test_hardcover_conflicting_lane_contributes_no_cover_descriptors() -> None:
 
     observation = provider.observe(plan)
 
-    assert {ProviderStatus.CANDIDATES, ProviderStatus.MALFORMED} == {
-        lane.status for lane in observation.lanes
-    }
+    assert {ProviderStatus.CANDIDATES} == {lane.status for lane in observation.lanes}
+    assert [record.category for record in provider.attempt_records] == [
+        "none",
+        "none",
+    ]
+    assert [record.outcome for record in provider.attempt_records] == [
+        "response_received",
+        "response_received",
+    ]
+    assert observation.request_accounting.initial_dispatches == 2
+    assert observation.request_accounting.logical_requests == 2
     assert {
         cover_source_id(CoverSourceKind.HARDCOVER, "catalogue:edition:1"),
         cover_source_id(CoverSourceKind.HARDCOVER, "catalogue:work:10:default"),

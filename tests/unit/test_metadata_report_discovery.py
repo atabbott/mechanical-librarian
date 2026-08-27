@@ -20,6 +20,7 @@ from mechanical_librarian.application.metadata_report import (
     GenerateMetadataReport,
     InspectionResult,
     MetadataDiscoveryLane,
+    MetadataDiscoveryPlan,
     MetadataLookup,
     MetadataProvider,
     ProviderBinding,
@@ -33,6 +34,12 @@ from mechanical_librarian.application.metadata_report import (
     qualify_provider_observation,
 )
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
+from mechanical_librarian.domain.failure_diagnostics import (
+    FailureCategory,
+    FailureComponent,
+    FailureDiagnostic,
+    FailureStage,
+)
 from mechanical_librarian.domain.metadata_report import (
     MAX_CANDIDATES,
     ClaimKind,
@@ -226,7 +233,19 @@ def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
         "catalogue",
         (
             ProviderLaneResult(isbn_lane, ProviderStatus.CANDIDATES, (candidate,)),
-            ProviderLaneResult(work_lane, ProviderStatus.CANDIDATES, (candidate,)),
+            ProviderLaneResult(
+                work_lane,
+                ProviderStatus.CANDIDATES,
+                (candidate,),
+                diagnostics=(
+                    FailureDiagnostic(
+                        FailureCategory.LOOKUP_CONSTRUCTION,
+                        FailureComponent.PROVIDER,
+                        FailureStage.LOOKUP,
+                        retryable=False,
+                    ),
+                ),
+            ),
         ),
     )
     assert 1 == len(observation.candidates)
@@ -248,7 +267,22 @@ def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
         providers=(observation,),
     )
     assert report == MetadataReport.from_json(report.to_json())
-    assert "metadata-report-v26" == report.schema_version
+    persisted_work_lane = next(
+        lane
+        for lane in report.providers[0].lanes
+        if lane.identity == work_lane.identity
+    )
+    assert [value.to_data() for value in persisted_work_lane.diagnostics] == [
+        {
+            "category": "lookup_construction",
+            "component": "provider",
+            "count": 1,
+            "current": None,
+            "retryable": False,
+            "stage": "lookup",
+        }
+    ]
+    assert "metadata-report-v27" == report.schema_version
     previous = report.to_data()
     previous["schema_version"] = "metadata-report-v22"
     with pytest.raises(ReportValueError):
@@ -256,7 +290,7 @@ def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
 
 
 @pytest.fixture(scope="module")
-def aggregate_lanes() -> tuple[MetadataDiscoveryLane, ...]:
+def aggregate_plan() -> MetadataDiscoveryPlan:
     claims = tuple(
         LocalClaim.create(
             kind=ClaimKind.ISBN,
@@ -274,7 +308,7 @@ def aggregate_lanes() -> tuple[MetadataDiscoveryLane, ...]:
             "9780439554930",
         )
     )
-    return metadata_discovery_plan(TargetSnapshot("ebook", None, ()), claims).lanes
+    return metadata_discovery_plan(TargetSnapshot("ebook", None, ()), claims)
 
 
 def _overflow_lane_results(
@@ -300,6 +334,14 @@ def _conflicting_lane_results(
             lanes[0],
             ProviderStatus.CANDIDATES,
             (ProviderCandidate("edition-shared", "work-one", ()),),
+            diagnostics=(
+                FailureDiagnostic(
+                    FailureCategory.PROVIDER_DECLARED_ERROR,
+                    FailureComponent.PROVIDER,
+                    FailureStage.RESPONSE,
+                    retryable=False,
+                ),
+            ),
         ),
         ProviderLaneResult(
             lanes[1],
@@ -325,13 +367,13 @@ def _conflicting_lane_results(
     ),
 )
 def test_aggregate_candidate_failures_preserve_independent_lane_statuses(
-    aggregate_lanes: tuple[MetadataDiscoveryLane, ...],
+    aggregate_plan: MetadataDiscoveryPlan,
     build: Callable[
         [tuple[MetadataDiscoveryLane, ...]], tuple[ProviderLaneResult, ...]
     ],
     expected: ProviderStatus,
 ) -> None:
-    lanes = aggregate_lanes
+    lanes = aggregate_plan.lanes
     results = build(lanes)
     observation = provider_observation("catalogue", results)
     replayed_order = provider_observation("catalogue", tuple(reversed(results)))
@@ -342,7 +384,46 @@ def test_aggregate_candidate_failures_preserve_independent_lane_statuses(
     assert expected == by_identity[lanes[1].identity]
     assert ProviderStatus.RATE_LIMITED == by_identity[lanes[2].identity]
     assert ProviderStatus.NO_MATCH == by_identity[lanes[3].identity]
+    malformed_diagnostic = {
+        "category": "malformed_over_bound_response",
+        "component": "provider",
+        "count": 1,
+        "current": None,
+        "retryable": False,
+        "stage": "response",
+    }
+    declared_diagnostic = {
+        "category": "provider_declared_error",
+        "component": "provider",
+        "count": 1,
+        "current": None,
+        "retryable": False,
+        "stage": "response",
+    }
+    by_identity_diagnostics = {
+        lane.identity: [value.to_data() for value in lane.diagnostics]
+        for lane in observation.lanes
+    }
+    if expected is ProviderStatus.MALFORMED:
+        assert [malformed_diagnostic, declared_diagnostic] == by_identity_diagnostics[
+            lanes[0].identity
+        ]
+        assert [malformed_diagnostic] == by_identity_diagnostics[lanes[1].identity]
+    else:
+        assert [] == by_identity_diagnostics[lanes[0].identity]
+        assert [] == by_identity_diagnostics[lanes[1].identity]
     assert observation.to_data() == replayed_order.to_data()
+    report = MetadataReport.create(
+        target=TargetFacts("primary", "ebooks", "item-1", default_target_fields(None)),
+        file=FileFacts(0, "a" * 64, "b" * 64),
+        local_claims=aggregate_plan.local_claims,
+        local_reasons=("no_opening_claims",),
+        providers=(observation,),
+    )
+    replayed = MetadataReport.from_json(report.to_json())
+    assert by_identity_diagnostics[lanes[0].identity] == [
+        value.to_data() for value in replayed.providers[0].lanes[0].diagnostics
+    ]
 
 
 def test_discovery_plan_reports_exact_family_overflow_without_subset() -> None:

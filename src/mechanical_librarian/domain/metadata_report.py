@@ -45,7 +45,7 @@ from mechanical_librarian.domain.failure_diagnostics import (
     diagnostics_are_canonical,
 )
 
-REPORT_SCHEMA = "metadata-report-v26"
+REPORT_SCHEMA = "metadata-report-v27"
 COMPARISON_VERSION = "closed-title-creator-publication-v4"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -1828,6 +1828,7 @@ class ProviderLaneObservation:
     input_references: tuple[str, ...] = ()
     matched_family: str | None = None
     candidates: tuple[ProviderLaneCandidate, ...] = ()
+    diagnostics: tuple[FailureDiagnostic, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -1862,6 +1863,13 @@ class ProviderLaneObservation:
             or tuple(value.reference for value in self.candidates)
             != tuple(sorted({value.reference for value in self.candidates}))
             or (self.status is ProviderStatus.CANDIDATES) != bool(self.candidates)
+            or not diagnostics_are_canonical(self.diagnostics)
+            or any(
+                value.component is not FailureComponent.PROVIDER
+                or _PROVIDER_DIAGNOSTIC_STAGES.get(value.category) is not value.stage
+                or value.current is not None
+                for value in self.diagnostics
+            )
         ):
             raise ReportValueError("provider lane candidates are invalid")
 
@@ -1873,6 +1881,7 @@ class ProviderLaneObservation:
             "kind": self.kind.value,
             "matched_family": self.matched_family,
             "status": self.status.value,
+            "diagnostics": [value.to_data() for value in self.diagnostics],
         }
 
 
@@ -4114,6 +4123,7 @@ def _provider_lane_from_data(value: object) -> ProviderLaneObservation:
         value,
         {
             "candidates",
+            "diagnostics",
             "identity",
             "input_references",
             "kind",
@@ -4130,6 +4140,10 @@ def _provider_lane_from_data(value: object) -> ProviderLaneObservation:
         tuple(
             _provider_lane_candidate_from_data(candidate)
             for candidate in _list(item["candidates"])
+        ),
+        tuple(
+            FailureDiagnostic.from_json(canonical_json(value))
+            for value in _list(item["diagnostics"])
         ),
     )
 

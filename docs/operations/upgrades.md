@@ -7,6 +7,10 @@ rebuild or delivers one explicit exact-predecessor adoption limited to
 reconstructible derived objects. This is not a general migration, import,
 conversion, compatibility, downgrade, or repair facility.
 
+`metadata-report-v26` cannot represent lane-bound provider diagnostics. It is
+rejected at bootstrap and requires a clean rebuild as `metadata-report-v27`;
+this increment provides no adoption or legacy fallback.
+
 The terminal preparation-failure codes in this increment change the
 exact-current review schema. The supplied compatibility paths are the closed
 owner-actionability plan and the exact owner-settings predecessor below.
