@@ -589,11 +589,13 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         limit: int,
         after: tuple[int, str] | None = None,
     ) -> tuple[str, ...]:
-        return self._pending_field_effect_decision_documents(limit, after, newest=False)
+        return self._pending_field_effect_decision_documents(limit, after, ordered=True)
 
     def pending_field_effect_activity_example_document(self) -> str | None:
-        """Select one newest exact-current pending decision for illustration."""
-        documents = self._pending_field_effect_decision_documents(1, None, newest=True)
+        """Select one exact-current pending decision for illustration."""
+        documents = self._pending_field_effect_decision_documents(
+            1, None, ordered=False
+        )
         return documents[0] if documents else None
 
     def _pending_field_effect_decision_documents(
@@ -601,7 +603,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         limit: int,
         after: tuple[int, str] | None,
         *,
-        newest: bool,
+        ordered: bool,
     ) -> tuple[str, ...]:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise FieldEffectError("invalid_limit")
@@ -666,11 +668,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "WHERE effect.decision_id=pending.decision_id AND "
                 "effect.state NOT IN ('superseded','abandoned')) AND NOT EXISTS (SELECT 1 FROM field_effect_no_changes no_change WHERE no_change.decision_id=pending.decision_id) "
                 + cursor
-                + "ORDER BY pending.occurred_at "
                 + (
-                    "DESC,pending.decision_id DESC "
-                    if newest
-                    else ",pending.decision_id "
+                    "ORDER BY pending.occurred_at,pending.decision_id "
+                    if ordered
+                    else ""
                 )
                 + "LIMIT ?",
                 (*parameters, limit),
