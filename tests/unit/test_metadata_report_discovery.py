@@ -239,9 +239,9 @@ def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
                 (candidate,),
                 diagnostics=(
                     FailureDiagnostic(
-                        FailureCategory.PROVIDER_DECLARED_ERROR,
+                        FailureCategory.LOOKUP_CONSTRUCTION,
                         FailureComponent.PROVIDER,
-                        FailureStage.RESPONSE,
+                        FailureStage.LOOKUP,
                         retryable=False,
                     ),
                 ),
@@ -274,12 +274,12 @@ def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
     )
     assert [value.to_data() for value in persisted_work_lane.diagnostics] == [
         {
-            "category": "provider_declared_error",
+            "category": "lookup_construction",
             "component": "provider",
             "count": 1,
             "current": None,
             "retryable": False,
-            "stage": "response",
+            "stage": "lookup",
         }
     ]
     assert "metadata-report-v27" == report.schema_version

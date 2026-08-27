@@ -9,6 +9,7 @@ from typing import cast
 
 import httpx
 import pytest
+from pytest import MonkeyPatch
 
 import mechanical_librarian.adapters.providers.hardcover_metadata as hardcover_metadata
 from mechanical_librarian.adapters.providers.hardcover_metadata import (
@@ -426,6 +427,117 @@ def test_hardcover_oversized_lane_stops_remaining_requests_at_exact_bound(
         if oversized
         else {ProviderStatus.NO_MATCH}
     ) == {lane.status for lane in observation.lanes}
+    if oversized:
+        incomplete = next(
+            lane
+            for lane in observation.lanes
+            if lane.status is ProviderStatus.INCOMPLETE
+        )
+        assert [diagnostic.to_data() for diagnostic in incomplete.diagnostics] == [
+            {
+                "category": "malformed_over_bound_response",
+                "component": "provider",
+                "count": 1,
+                "current": None,
+                "retryable": False,
+                "stage": "response",
+            }
+        ]
+
+
+def test_hardcover_dispatch_count_skip_keeps_its_lookup_diagnostic(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    second = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780140328721",
+        canonical="9780140328721",
+        excerpt="Print ISBN 9780140328721",
+        applicability="print",
+        checksum="valid_isbn_13",
+        applicability_basis="print",
+    )
+    plan = metadata_discovery_plan(
+        TargetSnapshot("ebook", None, ()), (isbn_claim(), second)
+    )
+    monkeypatch.setattr(hardcover_metadata, "_MAX_ATTEMPTS_PER_OBSERVATION", 1)
+    observation = HardcoverMetadataProvider(
+        "catalogue",
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json=hardcover_envelope([], []),
+                )
+            )
+        ),
+        65_536,
+    ).observe(plan)
+
+    assert [ProviderStatus.NO_MATCH, ProviderStatus.INCOMPLETE] == [
+        lane.status for lane in observation.lanes
+    ]
+    incomplete = observation.lanes[1]
+    assert [diagnostic.to_data() for diagnostic in incomplete.diagnostics] == [
+        {
+            "category": "lookup_construction",
+            "component": "provider",
+            "count": 1,
+            "current": None,
+            "retryable": False,
+            "stage": "lookup",
+        }
+    ]
+
+
+def test_hardcover_deadline_skip_keeps_its_request_diagnostic() -> None:
+    second = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780140328721",
+        canonical="9780140328721",
+        excerpt="Print ISBN 9780140328721",
+        applicability="print",
+        checksum="valid_isbn_13",
+        applicability_basis="print",
+    )
+    plan = metadata_discovery_plan(
+        TargetSnapshot("ebook", None, ()), (isbn_claim(), second)
+    )
+    pacer_now = [0.0]
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        pacer_now[0] = 1.0
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json=hardcover_envelope([], []),
+        )
+
+    observation = HardcoverMetadataProvider(
+        "catalogue",
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        65_536,
+        pacer=hardcover_metadata.HardcoverPacer(
+            clock=lambda: pacer_now[0], sleep=lambda _: None
+        ),
+        clock=lambda: 0.0,
+    ).observe(plan, deadline=1.0)
+
+    assert [ProviderStatus.NO_MATCH, ProviderStatus.INCOMPLETE] == [
+        lane.status for lane in observation.lanes
+    ]
+    incomplete = observation.lanes[1]
+    assert [diagnostic.to_data() for diagnostic in incomplete.diagnostics] == [
+        {
+            "category": "timeout",
+            "component": "provider",
+            "count": 1,
+            "current": None,
+            "retryable": False,
+            "stage": "request",
+        }
+    ]
 
 
 def test_hardcover_conflicting_cover_lane_retains_candidates_without_descriptors() -> (

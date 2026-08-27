@@ -294,6 +294,7 @@ class HardcoverMetadataProvider:
                     lane.matched_family,
                 )
                 attempts_before = len(self._attempt_records)
+                incomplete_causes_before = len(self._incomplete_causes)
                 physical, _replayed = ledger.resolve(
                     kind=lookup.kind.value,
                     matched_family=lookup.matched_family,
@@ -310,6 +311,9 @@ class HardcoverMetadataProvider:
                 diagnostics = provider_attempt_diagnostics(
                     tuple(self._attempt_records[attempts_before:]),
                     status=observation.status.value,
+                    incomplete_causes=tuple(
+                        self._incomplete_causes[incomplete_causes_before:]
+                    ),
                 )
                 results.append(
                     ProviderLaneResult(

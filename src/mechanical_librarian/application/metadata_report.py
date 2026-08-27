@@ -288,7 +288,12 @@ class ProviderLaneResult:
             or not diagnostics_are_canonical(self.diagnostics)
             or any(
                 value.component is not FailureComponent.PROVIDER
-                or value.stage not in {FailureStage.REQUEST, FailureStage.RESPONSE}
+                or value.stage
+                not in {
+                    FailureStage.LOOKUP,
+                    FailureStage.REQUEST,
+                    FailureStage.RESPONSE,
+                }
                 or value.current is not None
                 for value in self.diagnostics
             )
