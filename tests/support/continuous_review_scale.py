@@ -73,6 +73,7 @@ from mechanical_librarian.bootstrap.composition import (
     _compose_cover_considerations,
     _load_batch_credentials,
     compose_continuous_guarded_application,
+    compose_field_effect_activity_projection,
 )
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -275,6 +276,16 @@ class _InstalledRepositoryTopology:
             authority=self.web_state_owner.authority,
             cross_thread=True,
         )
+
+    def open_activity_projection(self):
+        repository = open_repository(
+            self._database,
+            create=False,
+            authority=self.web_state_owner.authority,
+            cross_thread=True,
+        )
+        repository.configure_activity_page_reader()
+        return repository
 
     def open_action(self):
         return open_repository(
@@ -631,44 +642,57 @@ def _start_deterministic_installed_server(
         {item.name for item in configuration.providers},
     )
     settings_projection = file_settings_projection(configuration, credentials)
-    application = compose_review_application(
-        state_owner=web_state_owner,
-        session_store=web_state_owner,
-        case_store=web_state_owner,
-        decision_store=web_state_owner,
-        library_store=web_state_owner,
-        policy_store=web_state_owner,
-        verify_password=load_owner_password_verifier(owner_hash),
-        clock=lambda: int(time.time()),
-        session_lifetime_seconds=review.session_lifetime_seconds,
-        graceful_shutdown_seconds=review.graceful_shutdown_seconds,
-        close_state_owner=True,
-        preparation=supervisor,
-        policy_libraries=tuple(
-            (library.name, cast("dict[str, object] | None", library.policy_override))
-            for library in configuration.libraries
-        ),
-        operational_timings=timing_store,
-        operational_support=support_bundle,
-        operational_timer=timing,
-        field_application=compose_continuous_guarded_application(
-            configuration,
-            web_state_owner,
-            database,
-            artifacts,
-            supervisor,
-            private_root,
-            recovery,
-        ),
-        cover_considerations=_compose_cover_considerations(
-            web_state_owner, artifacts, review
-        ),
-        settings=OwnerSettingsOperations(
-            FileOwnerSettingsRepository(
-                settings_projection.document, settings_projection.secrets
-            )
-        ),
-    )
+    activity_repository = topology.open_activity_projection()
+    try:
+        activity_projection = compose_field_effect_activity_projection(
+            configuration, activity_repository, recovery
+        )
+        application = compose_review_application(
+            state_owner=web_state_owner,
+            session_store=web_state_owner,
+            case_store=web_state_owner,
+            decision_store=web_state_owner,
+            library_store=web_state_owner,
+            policy_store=web_state_owner,
+            verify_password=load_owner_password_verifier(owner_hash),
+            clock=lambda: int(time.time()),
+            session_lifetime_seconds=review.session_lifetime_seconds,
+            graceful_shutdown_seconds=review.graceful_shutdown_seconds,
+            close_state_owner=True,
+            preparation=supervisor,
+            policy_libraries=tuple(
+                (
+                    library.name,
+                    cast("dict[str, object] | None", library.policy_override),
+                )
+                for library in configuration.libraries
+            ),
+            operational_timings=timing_store,
+            operational_support=support_bundle,
+            operational_timer=timing,
+            field_application=compose_continuous_guarded_application(
+                configuration,
+                web_state_owner,
+                database,
+                artifacts,
+                supervisor,
+                private_root,
+                recovery,
+            ),
+            activity_projection=activity_projection,
+            close_activity_projection=activity_repository.close,
+            cover_considerations=_compose_cover_considerations(
+                web_state_owner, artifacts, review
+            ),
+            settings=OwnerSettingsOperations(
+                FileOwnerSettingsRepository(
+                    settings_projection.document, settings_projection.secrets
+                )
+            ),
+        )
+    except BaseException:
+        activity_repository.close()
+        raise
     server = uvicorn.Server(
         uvicorn.Config(
             create_review_app(application, review),

@@ -296,10 +296,12 @@ requests outer-server termination rather than serving mismatched authority.
 
 The server receives a composed application boundary rather than a database or
 broad repository. Authentication, currentness, decisions, policy, preparation,
-Activity, guarded effects, recovery, and support execute as named application
-operations behind one serialization gate; SQLite remains the sole transaction
-owner. FastAPI retains only request bounds, exact Host/Origin enforcement,
-session/CSRF dependencies, response translation, and lifecycle delegation.
+guarded effects, recovery, and support execute as named application operations
+behind the owner-operation serialization gate. Activity executes as a named
+application operation through its dedicated reader connection and reader-local
+request gate; SQLite remains the sole transaction owner. FastAPI retains only
+request bounds, exact Host/Origin enforcement, session/CSRF dependencies,
+response translation, and lifecycle delegation.
 
 The authenticated Settings API shares that boundary. Its closed GET/PATCH
 documents are bounded to 32 connections/providers and 128 libraries, responses
@@ -337,7 +339,22 @@ rather than less -- its identities collapse to whole topics -- which is sound
 only because a frame carries nothing that could be lost by collapsing it.
 Resume is the browser's own `Last-Event-ID`, and an identity minted by a
 previous process is answered with a full resync rather than a position in this
-order.
+order. A hidden tab does not refetch from frames; on its next foreground
+transition it takes one ordinary snapshot read, so HTTP still supplies the
+current redacted state and no stale frame can manufacture a transition. An
+untouched visible tab defers Library and attention frames and takes only bounded
+preparation snapshots; pointer or keyboard input pays that deferred debt with
+the same one ordinary snapshot resync, while active input retains immediate
+coalesced invalidation.
+Activity keeps at most two reader-local pages, stamped inside the same SQLite
+snapshot from the five append-only ledgers and the exact owner-visible policy
+transition shape. Field-effect rows resolve their optional report through the
+immutable originating decision and review case, never through a later current
+report pointer; a cache hit serves only after one current stamp comparison. The
+dedicated cross-thread Activity reader serializes each complete Activity or
+transition request locally, so two requests cannot share or end one another's
+read transaction; it remains separate from the guarded background-operation
+gate.
 
 The generated API contract declares that opaque owner session as an API-key
 cookie on every protected operation and marks mutation CSRF and idempotency

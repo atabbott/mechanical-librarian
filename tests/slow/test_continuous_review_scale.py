@@ -11,6 +11,7 @@ from playwright.sync_api import (
     Browser,
     BrowserContext,
     Page,
+    Request,
     expect,
     sync_playwright,
 )
@@ -29,6 +30,53 @@ from tests.support.continuous_review_scale import (
 
 _FIXTURE_CURRENT_TITLE = "fiction-0000"
 _FIXTURE_PROPOSED_TITLE = "Exact evaluator candidate"
+_IDLE_PROBE_MILLISECONDS = 42 * 60 * 1_000
+_IDLE_DATA_PATHS = {
+    "/api/v1/attention",
+    "/api/v1/library",
+    "/api/v1/review-preparation",
+}
+_LIVE_REPLAY_SCRIPT = """
+(() => {
+  const sources = []
+  class ProbeEventSource {
+    constructor(url) {
+      this.url = String(url)
+      this.readyState = 1
+      this.onopen = null
+      this.onerror = null
+      this.listeners = new Map()
+      sources.push(this)
+      queueMicrotask(() => this.onopen?.(new Event('open')))
+    }
+    addEventListener(name, listener) {
+      const listeners = this.listeners.get(name) ?? []
+      listeners.push(listener)
+      this.listeners.set(name, listeners)
+    }
+    close() {
+      this.readyState = 2
+    }
+    emit(update) {
+      const event = new MessageEvent(update.topic, { data: JSON.stringify(update) })
+      for (const listener of this.listeners.get(update.topic) ?? []) {
+        if (typeof listener === 'function') listener(event)
+        else listener.handleEvent(event)
+      }
+    }
+  }
+  ProbeEventSource.CONNECTING = 0
+  ProbeEventSource.OPEN = 1
+  ProbeEventSource.CLOSED = 2
+  Object.defineProperty(globalThis, 'EventSource', {
+    configurable: true,
+    value: ProbeEventSource,
+  })
+  globalThis.__mlReplayFrame = (update) => {
+    for (const source of sources) if (source.readyState === 1) source.emit(update)
+  }
+})()
+"""
 
 
 class _WorkspaceProbe:
@@ -43,6 +91,74 @@ class _WorkspaceProbe:
         self._case_id: str | None = None
         self.errors: list[str] = []
         self.failures: list[int] = []
+        self.idle_request_evidence: dict[str, int] | None = None
+        self._record_idle_requests = False
+        self._idle_requests: list[str] = []
+        self._idle_inflight: set[Request] = set()
+
+    def _observe_request(self, request: Request) -> None:
+        path = urlparse(request.url).path
+        if self._record_idle_requests and path in _IDLE_DATA_PATHS:
+            self._idle_requests.append(path)
+            self._idle_inflight.add(request)
+
+    def _finish_request(self, request: Request) -> None:
+        self._idle_inflight.discard(request)
+
+    def _settle_idle_requests(self, page: Page) -> None:
+        deadline = time.monotonic() + 5
+        while self._idle_inflight:
+            page.evaluate("0")
+            if time.monotonic() >= deadline:
+                pytest.fail("installed idle request did not settle")
+            time.sleep(0.005)
+
+    def _replay_idle_baseline(self, page: Page) -> None:
+        """Replay the captured busy cadence through the exact installed browser."""
+
+        frames = sorted(
+            (
+                *(
+                    (
+                        ((index + 1) * _IDLE_PROBE_MILLISECONDS) // 99,
+                        "preparation",
+                    )
+                    for index in range(98)
+                ),
+                *(
+                    (((index + 1) * _IDLE_PROBE_MILLISECONDS) // 70, "library")
+                    for index in range(69)
+                ),
+            )
+        )
+        page.clock.install()
+        elapsed = 0
+        self._record_idle_requests = True
+        try:
+            for sequence, (at, topic) in enumerate(frames, start=1):
+                page.clock.run_for(max(0, at - elapsed))
+                elapsed = max(elapsed, at)
+                self._settle_idle_requests(page)
+                page.evaluate(
+                    "frame => globalThis.__mlReplayFrame(frame)",
+                    {"sequence": sequence, "subject": None, "topic": topic},
+                )
+                page.clock.run_for(200)
+                elapsed += 200
+                self._settle_idle_requests(page)
+            page.clock.run_for(max(0, _IDLE_PROBE_MILLISECONDS - elapsed))
+            self._settle_idle_requests(page)
+        finally:
+            self._record_idle_requests = False
+            page.clock.resume()
+
+        self.idle_request_evidence = {
+            path: self._idle_requests.count(path) for path in sorted(_IDLE_DATA_PATHS)
+        }
+        self.idle_request_evidence["total"] = len(self._idle_requests)
+        assert self.idle_request_evidence["total"] <= 237 // 10, (
+            self.idle_request_evidence
+        )
 
     def _activity_api_evidence(self, page: Page) -> dict[str, object]:
         """Read only bounded decision/activity facts through authenticated APIs."""
@@ -129,6 +245,7 @@ class _WorkspaceProbe:
                 ignore_https_errors=True, viewport={"width": 1280, "height": 800}
             )
             self._page = self._context.new_page()
+            self._page.add_init_script(_LIVE_REPLAY_SCRIPT)
             self._page.on("pageerror", lambda error: self.errors.append(str(error)))
             self._page.on(
                 "console",
@@ -146,6 +263,9 @@ class _WorkspaceProbe:
                     else None
                 ),
             )
+            self._page.on("request", self._observe_request)
+            self._page.on("requestfinished", self._finish_request)
+            self._page.on("requestfailed", self._finish_request)
             self._page.goto(f"{origin}/login")
             self._page.get_by_label("Password").fill("synthetic password")
             self._page.get_by_role("button", name="Sign in").click()
@@ -153,6 +273,8 @@ class _WorkspaceProbe:
 
         page = self._page
         page.goto(f"{origin}/library?lens=all")
+        if phase == "early":
+            self._replay_idle_baseline(page)
         if phase == "early":
             with page.expect_response(
                 lambda response: response.url.startswith(
@@ -289,6 +411,8 @@ def test_installed_pipeline_reconciles_two_thousand_then_restarts_completed_coho
             memory_ceiling_kib=524_288,
             phase_observer=workspace,
         )
+        assert workspace.idle_request_evidence is not None
+        assert workspace.idle_request_evidence["total"] <= 237 // 10
     finally:
         workspace.close()
 

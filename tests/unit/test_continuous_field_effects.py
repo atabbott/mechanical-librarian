@@ -214,6 +214,9 @@ class _PagedRepository:
             ]
         return tuple(value.to_json() for value in values[:limit])
 
+    def pending_field_effect_activity_example_document(self):
+        return self.decisions[-1].to_json() if self.decisions else None
+
     def pending_field_effect_decision_counts(self):
         counts: dict[tuple[str, str], int] = {}
         for value in self.decisions:
@@ -236,7 +239,8 @@ class _PagedRepository:
             raise FieldEffectError("consent")
         return object()
 
-    def field_effect_backup_ready(self):
+    def field_effect_backup_ready(self, *, fresh=False):
+        del fresh
         return True
 
     def field_effect_activity_page(self, **_query):
@@ -293,6 +297,18 @@ class _PagedRepository:
         )
         value = connection_value or destination_value
         return None if value is None else value[0]
+
+
+class _ActivityPagedRepository(_PagedRepository):
+    def field_effect_activity_data(self, _limit):
+        return {
+            "consented_destinations": [],
+            "consented_libraries": [],
+            "counts": {},
+            "events": [],
+            "paused": False,
+            "suspensions": [],
+        }
 
 
 class _HoldRepository(_Repository):
@@ -360,6 +376,168 @@ class _Authority:
             review_case_id=decision.review_case_id,
             source="persisted_review_case",
         )
+
+
+def test_activity_resolves_at_most_one_current_example() -> None:
+    decisions = _decisions(3)
+
+    class CountingAuthority(_Authority):
+        def __init__(self) -> None:
+            self.resolved: list[str] = []
+
+        def resolve(self, decision):
+            self.resolved.append(decision.decision_id)
+            return super().resolve(decision)
+
+    authority = CountingAuthority()
+    service = ContinuousGuardedApplication(
+        _ActivityPagedRepository(decisions),
+        {},
+        {},
+        authority,
+        (("primary", "alpha"), ("primary", "beta")),
+        lambda: 1,
+        lambda *_: None,
+        activity_only=True,
+    )
+
+    activity = service.activity()
+
+    assert authority.resolved == [decisions[-1].decision_id]
+    assert activity["example"] == {
+        "after": "After",
+        "before": "Before",
+        "destination": "title",
+        "library": "alpha",
+        "work_id": "work",
+    }
+
+
+def test_activity_projection_runs_inside_the_injected_read_snapshot() -> None:
+    events: list[str] = []
+
+    class Repository(_ActivityPagedRepository):
+        def field_effect_backup_ready(self, *, fresh=False):
+            assert fresh is False
+            events.append("backup")
+            return True
+
+        def field_effect_activity_page(self, **query):
+            events.append("page")
+            return super().field_effect_activity_page(**query)
+
+    def snapshot(call):
+        events.append("snapshot_enter")
+        result = call()
+        events.append("snapshot_exit")
+        return result
+
+    service = ContinuousGuardedApplication(
+        Repository([]),
+        {},
+        {},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
+        activity_only=True,
+        activity_snapshot=snapshot,
+    )
+
+    service.activity()
+
+    assert events == ["backup", "snapshot_enter", "page", "snapshot_exit"]
+
+
+def test_activity_reader_serializes_overlapping_requests() -> None:
+    first_snapshot_entered = threading.Event()
+    release_first_snapshot = threading.Event()
+    later_reader_access = threading.Event()
+    snapshot_guard = threading.Lock()
+    snapshot_calls = 0
+    errors: list[BaseException] = []
+
+    class Repository(_ActivityPagedRepository):
+        def field_effect_activity_transitions(self, event_id, after_sequence=None):
+            later_reader_access.set()
+            return ()
+
+    def snapshot(call):
+        nonlocal snapshot_calls
+        with snapshot_guard:
+            snapshot_calls += 1
+            call_number = snapshot_calls
+        if call_number == 1:
+            first_snapshot_entered.set()
+            assert release_first_snapshot.wait(1)
+        else:
+            later_reader_access.set()
+        return call()
+
+    service = ContinuousGuardedApplication(
+        Repository([]),
+        {},
+        {},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
+        activity_only=True,
+        activity_snapshot=snapshot,
+    )
+
+    def run(call) -> None:
+        try:
+            call()
+        except BaseException as error:
+            errors.append(error)
+
+    first = threading.Thread(target=lambda: run(service.activity))
+    second = threading.Thread(target=lambda: run(service.activity))
+    transitions = threading.Thread(
+        target=lambda: run(lambda: service.activity_transitions("event-1"))
+    )
+    first.start()
+    assert first_snapshot_entered.wait(1)
+    second.start()
+    transitions.start()
+
+    assert not later_reader_access.wait(0.05)
+    release_first_snapshot.set()
+    for thread in (first, second, transitions):
+        thread.join(1)
+
+    assert not errors
+    assert snapshot_calls == 2
+    assert later_reader_access.is_set()
+    assert not any(thread.is_alive() for thread in (first, second, transitions))
+
+
+def test_activity_example_binding_race_is_absent_but_storage_fault_propagates() -> None:
+    repository = _ActivityPagedRepository(_decisions(1))
+
+    def service(authority):
+        return ContinuousGuardedApplication(
+            repository,
+            {},
+            {},
+            authority,
+            (("primary", "alpha"),),
+            lambda: 1,
+            lambda *_: None,
+            activity_only=True,
+        )
+
+    class RaisingAuthority:
+        def __init__(self, code: str) -> None:
+            self.code = code
+
+        def resolve(self, _decision):
+            raise FieldEffectError(self.code)
+
+    assert service(RaisingAuthority("authority_binding")).activity()["example"] is None
+    with pytest.raises(FieldEffectError, match="^persistence$"):
+        service(RaisingAuthority("persistence")).activity()
 
 
 class _Planner:
@@ -1029,6 +1207,11 @@ def test_enable_grants_only_field_locally_eligible_destinations() -> None:
         def __init__(self):
             super().__init__([decision])
             self.grants = None
+            self.backup_checks = []
+
+        def field_effect_backup_ready(self, *, fresh=False):
+            self.backup_checks.append(fresh)
+            return True
 
         def grant_field_effect_consent_matrix(self, *arguments):
             self.grants = arguments
@@ -1052,6 +1235,7 @@ def test_enable_grants_only_field_locally_eligible_destinations() -> None:
     eligible = tuple(sorted(set(SUPPORTED_DESTINATIONS) - {"subtitle"}))
     service.enable((("alpha", eligible),))
     assert repository.grants is not None
+    assert repository.backup_checks == [True, False]
     assert "subtitle" not in repository.grants[1][0][1]
 
 
@@ -1295,12 +1479,39 @@ def test_activity_only_projection_uses_only_persisted_capability_state() -> None
     destinations = {
         value["destination"]: value["state"] for value in readiness[0]["destinations"]
     }
-    assert "not_ready" == readiness[0]["state"]
+    assert "partially_allowed" == readiness[0]["state"]
     assert "field_unavailable" == destinations["subtitle"]
-    assert "not_ready" == destinations["title"]
+    assert "allowed" == destinations["title"]
     assert {
         ("destination", "primary", "subtitle"): ("field_unavailable", 1)
     } == repository.suspensions
+
+
+def test_activity_only_projection_preserves_live_readiness_for_prepared_work() -> None:
+    repository = _ActivityPagedRepository([_decisions(1)[0]])
+    service = ContinuousGuardedApplication(
+        repository,
+        {},
+        {},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
+        activity_only=True,
+    )
+
+    activity = service.activity()
+
+    capability = activity["capabilities"][0]
+    projected = {
+        value["destination"]: value
+        for value in cast("list[dict[str, object]]", capability["destinations"])
+    }
+    assert capability["state"] == "allowed"
+    assert projected["title"]["state"] == "allowed"
+    assert projected["title"]["prepared"] == 1
+    assert projected["title"]["consented"] is False
+    assert activity["waiting"]["awaiting_permission"] == 1
 
 
 def test_activity_only_projection_rejects_capability_observers() -> None:

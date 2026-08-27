@@ -29,7 +29,7 @@ class _DependencyRepository(Protocol):
 class _BackupRepository(Protocol):
     """Persistence seam the durable backup readiness adapter reads."""
 
-    def field_effect_backup_ready(self) -> bool: ...
+    def field_effect_backup_ready(self, *, fresh: bool = False) -> bool: ...
 
 
 class PersistedEffectConsent:
@@ -63,7 +63,7 @@ class DurableBackupReadiness:
 
     def ready(self, plan: FieldEffectPlan) -> bool:
         del plan
-        return self._repository.field_effect_backup_ready()
+        return self._repository.field_effect_backup_ready(fresh=True)
 
 
 class PersistedForwardReevaluation:

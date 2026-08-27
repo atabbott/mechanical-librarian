@@ -4,11 +4,14 @@ import hashlib
 import json
 import os
 import sqlite3
+import sys
 import tempfile
 import threading
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -29,7 +32,13 @@ from mechanical_librarian.adapters.field_effect_fakes import (
     FakeTargetService,
     PrivateCoverRecoveryStore,
 )
-from mechanical_librarian.adapters.field_effect_runtime import PersistedEffectConsent
+from mechanical_librarian.adapters.field_effect_runtime import (
+    DurableBackupReadiness,
+    PersistedEffectConsent,
+)
+from mechanical_librarian.adapters.persistence.field_effect_activity import (
+    _ACTIVITY_PAGE_CACHE_MAX_BYTES,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
     SQLiteMetadataReportRepository,
@@ -62,12 +71,19 @@ from mechanical_librarian.domain.metadata_policy import (
     resolve_policy,
 )
 from mechanical_librarian.domain.metadata_report import (
+    MAX_DESCRIPTION_CHARACTERS,
     ClaimKind,
     ClaimScope,
+    FieldState,
     FileFacts,
     LocalClaim,
     MetadataReport,
+    ProviderCandidate,
+    ProviderClaim,
+    ProviderObservation,
+    ProviderStatus,
     TargetFacts,
+    comparison_links,
     default_target_fields,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
@@ -653,6 +669,604 @@ def test_activity_page_bounds_filters_and_clamps_the_append_only_ledger(
         )
 
 
+def test_activity_page_cache_keeps_only_an_exact_current_reader_projection(
+    effects: _EffectEnvironment,
+) -> None:
+    _plan(effects, suffix="a")
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    query = dict(search=None, event_type="all", occurred_after=0, page=1, page_size=25)
+    statements: list[str] = []
+    try:
+        first = reader.field_effect_activity_page(**query)
+        reader._connection.set_trace_callback(statements.append)
+        with patch.object(
+            reader._field_effect_activity,
+            "_activity_database_identity",
+            wraps=reader._field_effect_activity._activity_database_identity,
+        ) as identity:
+            second = reader.field_effect_activity_page(**query)
+        reader._connection.set_trace_callback(None)
+        assert second == first
+        assert statements == ["PRAGMA data_version"]
+        assert identity.call_count == 1
+
+        # A caller receives a copy: its owner-readable shaping cannot corrupt
+        # the reader's retained immutable projection.
+        second["events"].clear()
+        assert reader.field_effect_activity_page(**query) == first
+
+        _plan(effects, suffix="b")
+        refreshed = reader.field_effect_activity_page(**query)
+        assert cast(int, refreshed["total"]) > cast(int, first["total"])
+    finally:
+        reader._connection.set_trace_callback(None)
+        reader.close()
+
+
+def test_activity_page_cache_rejects_out_of_band_event_byte_mutation(
+    effects: _EffectEnvironment,
+) -> None:
+    _plan(effects, suffix="f")
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    query = dict(search=None, event_type="all", occurred_after=0, page=1, page_size=25)
+    projection = reader._field_effect_activity
+    try:
+        reader.field_effect_activity_page(**query)
+        document = effects.repository._connection.execute(
+            "SELECT document FROM field_effect_events ORDER BY occurred_at,event_id LIMIT 1"
+        ).fetchone()[0]
+        encoded = document.encode("utf-8")
+        database = effects.database_path.read_bytes()
+        offset = database.find(encoded)
+        assert offset >= 0
+        assert database.find(encoded, offset + 1) == -1
+        revision = projection._activity_projection_revision()
+        identity = projection._activity_database_identity()
+
+        descriptor = os.open(effects.database_path, os.O_WRONLY)
+        try:
+            assert os.pwrite(descriptor, b"!", offset) == 1
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+        assert projection._activity_projection_revision() == revision
+        assert projection._activity_database_identity() != identity
+        with (
+            patch.object(
+                projection,
+                "_field_effect_activity_page_uncached",
+                side_effect=AssertionError(
+                    "hostile bytes must not reach the warm reader"
+                ),
+            ),
+            pytest.raises(FieldEffectError, match="^persistence$"),
+        ):
+            reader.field_effect_activity_page(**query)
+    finally:
+        reader.close()
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="Linux authority bindings use hard-link aliases",
+)
+def test_activity_page_cache_ignores_authority_alias_link_churn(
+    effects: _EffectEnvironment,
+) -> None:
+    _plan(effects, suffix="a")
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    query = dict(search=None, event_type="all", occurred_after=0, page=1, page_size=25)
+    projection = reader._field_effect_activity
+    original_page = projection._field_effect_activity_page_uncached
+    page_calls = [0]
+
+    def counted_page(**values: object):
+        page_calls[0] += 1
+        return original_page(**values)
+
+    try:
+        with patch.object(
+            projection, "_field_effect_activity_page_uncached", counted_page
+        ):
+            first = reader.field_effect_activity_page(**query)
+            revision = projection._activity_projection_revision()
+            identity = projection._activity_database_identity()
+            before = os.stat(effects.database_path, follow_symlinks=False)
+
+            derived = open_repository(
+                effects.database_path,
+                create=False,
+                authority=effects.repository.authority,
+                cross_thread=True,
+            )
+            try:
+                assert (
+                    os.stat(effects.database_path, follow_symlinks=False).st_nlink
+                    == before.st_nlink + 1
+                )
+            finally:
+                derived.close()
+
+            after = os.stat(effects.database_path, follow_symlinks=False)
+            assert after.st_nlink == before.st_nlink
+            assert after.st_ctime_ns != before.st_ctime_ns
+            assert projection._activity_projection_revision() == revision
+            assert projection._activity_database_identity() == identity
+            assert reader.field_effect_activity_page(**query) == first
+        assert page_calls == [1]
+    finally:
+        reader.close()
+
+
+def test_activity_page_cache_refreshes_when_a_commit_races_its_file_sample(
+    effects: _EffectEnvironment,
+) -> None:
+    _plan(effects, suffix="a")
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    query = dict(search=None, event_type="all", occurred_after=0, page=1, page_size=25)
+    projection = reader._field_effect_activity
+    first = reader.field_effect_activity_page(**query)
+    original_identity = projection._activity_database_identity
+    committed = False
+
+    def commit_before_identity() -> tuple[int, int, int, int]:
+        nonlocal committed
+        if not committed:
+            committed = True
+            _plan(effects, suffix="b")
+        return original_identity()
+
+    try:
+        with patch.object(
+            projection, "_activity_database_identity", commit_before_identity
+        ):
+            refreshed = reader.field_effect_activity_page(**query)
+    finally:
+        reader.close()
+
+    assert committed is True
+    assert cast(int, refreshed["total"]) > cast(int, first["total"])
+
+
+def test_activity_page_cache_reuses_a_rolling_range_until_an_event_ages_out(
+    effects: _EffectEnvironment,
+) -> None:
+    _plan(effects, suffix="a")
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    projection = reader._field_effect_activity
+    original = projection._field_effect_activity_page_uncached
+    projection_calls = [0]
+
+    def counted_projection(**values):
+        projection_calls[0] += 1
+        return original(**values)
+
+    query = dict(search=None, event_type="review", page=1, page_size=25)
+    with patch.object(
+        projection, "_field_effect_activity_page_uncached", counted_projection
+    ):
+        try:
+            first = reader.field_effect_activity_page(occurred_after=0, **query)
+            oldest = min(
+                cast(int, event["occurred_at"])
+                for event in cast("list[dict[str, object]]", first["events"])
+            )
+            assert reader.field_effect_activity_page(occurred_after=1, **query) == first
+            expired = reader.field_effect_activity_page(
+                occurred_after=oldest + 1, **query
+            )
+        finally:
+            reader.close()
+
+    assert projection_calls == [2]
+    assert expired != first
+
+
+def test_activity_page_cache_declines_valid_reports_over_its_byte_budget(
+    effects: _EffectEnvironment,
+) -> None:
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    projection = reader._field_effect_activity
+
+    def large_report(index: int) -> MetadataReport:
+        local = LocalClaim.create(
+            kind=ClaimKind.TITLE,
+            observed="Large",
+            canonical="Large",
+            excerpt="Large",
+            applicability="not_applicable",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.WORK,
+        )
+        candidates = []
+        for candidate_index in range(5):
+            candidate = f"candidate-{index}-{candidate_index}"
+            bare = ProviderClaim.create(
+                provider="catalogue",
+                candidate=candidate,
+                kind=ClaimKind.DESCRIPTION,
+                value="d" * MAX_DESCRIPTION_CHARACTERS,
+                state=FieldState.VALID,
+                scope=ClaimScope.WORK,
+                applicability="not_applicable",
+                raw_order=0,
+            )
+            claim = ProviderClaim.create(
+                provider="catalogue",
+                candidate=candidate,
+                kind=bare.kind,
+                value=bare.value,
+                state=bare.state,
+                scope=bare.scope,
+                applicability=bare.applicability,
+                raw_order=bare.raw_order,
+                links=comparison_links(bare, (local,)),
+            )
+            candidates.append(ProviderCandidate(candidate, candidate, (claim,)))
+        return MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "books",
+                f"item-{index}",
+                default_target_fields("Large"),
+            ),
+            file=FileFacts(0, "a" * 64, f"{index:064d}"),
+            local_claims=(local,),
+            local_reasons=("opening_matter_title",),
+            providers=(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.CANDIDATES,
+                    (),
+                    tuple(candidates),
+                ),
+            ),
+        )
+
+    reports = [large_report(index) for index in range(25)]
+    documents = {report.report_id: report.to_json() for report in reports}
+    assert sum(len(value.encode("utf-8")) for value in documents.values()) > (
+        _ACTIVITY_PAGE_CACHE_MAX_BYTES
+    )
+    assert all(
+        MetadataReport.from_json(document) == report
+        for report, document in zip(reports, documents.values(), strict=True)
+    )
+    result: dict[str, object] = {
+        "current_waiting": None,
+        "events": [],
+        "page": 1,
+        "page_count": 1,
+        "page_size": 100,
+        "report_documents": documents,
+        "total": 0,
+    }
+    revision = (0, 0, 0, 0, 0, "")
+    projection_calls = [0]
+    reader.field_effect_activity_page(
+        search=None,
+        event_type="all",
+        occurred_after=0,
+        page=1,
+        page_size=25,
+    )
+
+    def large_page(**_query: object):
+        projection_calls[0] += 1
+        return result, revision, None, projection._activity_database_identity()
+
+    with patch.object(projection, "_field_effect_activity_page_uncached", large_page):
+        try:
+            query = dict(
+                search=None,
+                event_type="all",
+                occurred_after=0,
+                page=1,
+                page_size=100,
+            )
+            assert reader.field_effect_activity_page(**query) == result
+            assert reader.field_effect_activity_page(**query) == result
+        finally:
+            reader.close()
+
+    assert projection_calls == [2]
+    assert list(projection._activity_page_cache) == [(None, "all", 1, 25)]
+    assert projection._activity_page_cache_bytes == 0
+
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    projection = reader._field_effect_activity
+    first_documents = dict(list(documents.items())[:15])
+    second_documents = dict(list(documents.items())[15:])
+    first_bytes = sum(len(value.encode("utf-8")) for value in first_documents.values())
+    second_bytes = sum(
+        len(value.encode("utf-8")) for value in second_documents.values()
+    )
+    assert first_bytes <= _ACTIVITY_PAGE_CACHE_MAX_BYTES
+    assert second_bytes <= _ACTIVITY_PAGE_CACHE_MAX_BYTES
+    assert first_bytes + second_bytes > _ACTIVITY_PAGE_CACHE_MAX_BYTES
+    page_results = {
+        25: {**result, "page_size": 25, "report_documents": first_documents},
+        50: {**result, "page_size": 50, "report_documents": second_documents},
+    }
+    bounded_calls: list[int] = []
+
+    def bounded_page(**query: object):
+        page_size = cast(int, query["page_size"])
+        bounded_calls.append(page_size)
+        return (
+            page_results[page_size],
+            revision,
+            None,
+            projection._activity_database_identity(),
+        )
+
+    with (
+        patch.object(projection, "_field_effect_activity_page_uncached", bounded_page),
+        patch.object(
+            projection, "_activity_projection_revision", return_value=revision
+        ),
+    ):
+        try:
+            for page_size in (25, 25, 50, 25):
+                assert (
+                    reader.field_effect_activity_page(
+                        search=None,
+                        event_type="all",
+                        occurred_after=0,
+                        page=1,
+                        page_size=page_size,
+                    )
+                    == page_results[page_size]
+                )
+        finally:
+            reader.close()
+
+    assert bounded_calls == [25, 50, 25]
+    assert list(projection._activity_page_cache) == [(None, "all", 1, 25)]
+    assert projection._activity_page_cache_bytes == first_bytes
+
+
+def test_activity_example_selector_returns_one_current_published_candidate(
+    effects: _EffectEnvironment,
+) -> None:
+    from tests.unit.test_activity_end_to_end import _automatic_candidate_decision
+
+    _automatic_candidate_decision(effects)
+
+    document = effects.repository.pending_field_effect_activity_example_document()
+
+    assert document is not None
+    selected = AutomaticDecision.from_json(document)
+    snapshot = PersistedFieldEffectAuthority(effects.repository).resolve(selected)
+    assert snapshot.review_case_id == selected.review_case_id
+    assert snapshot.destination == selected.destination
+
+
+def test_activity_backup_readiness_rechecks_each_exact_database_revision(
+    effects: _EffectEnvironment,
+) -> None:
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    statements: list[str] = []
+    reader._connection.set_trace_callback(statements.append)
+    try:
+        assert reader.field_effect_backup_ready() is True
+        assert reader.field_effect_backup_ready() is True
+        assert statements.count("PRAGMA quick_check") == 1
+
+        effects.repository.set_field_effect_paused(True, effects.clock())
+        assert reader.field_effect_backup_ready() is True
+        assert statements.count("PRAGMA quick_check") == 2
+
+        reader.set_field_effect_paused(False, effects.clock())
+        assert reader.field_effect_backup_ready() is True
+        assert statements.count("PRAGMA quick_check") == 3
+    finally:
+        reader._connection.set_trace_callback(None)
+        reader.close()
+
+
+def test_write_preclaim_requires_fresh_backup_readiness(
+    effects: _EffectEnvironment,
+) -> None:
+    checks: list[bool] = []
+
+    class Repository:
+        def field_effect_backup_ready(self, *, fresh: bool = False) -> bool:
+            checks.append(fresh)
+            return True
+
+    assert DurableBackupReadiness(Repository()).ready(_plan(effects, suffix="0").plan)
+    assert checks == [True]
+
+
+def test_fresh_backup_readiness_rejects_corruption_after_a_cached_success(
+    effects: _EffectEnvironment,
+) -> None:
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    with effects.database_path.open("r+b") as database:
+        header = database.read(1)
+    try:
+        assert reader.field_effect_backup_ready() is True
+        with effects.database_path.open("r+b") as database:
+            database.write(b"X")
+        assert reader.field_effect_backup_ready() is True
+        assert reader.field_effect_backup_ready(fresh=True) is False
+    finally:
+        with effects.database_path.open("r+b") as database:
+            database.write(header)
+        reader.close()
+
+
+def test_activity_snapshot_holds_and_releases_one_exact_read_transaction(
+    effects: _EffectEnvironment,
+) -> None:
+    _plan(effects, suffix="5")
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    reader.configure_activity_page_reader()
+    statements: list[str] = []
+    reader._connection.set_trace_callback(statements.append)
+
+    def projection() -> dict[str, object]:
+        assert reader._connection.in_transaction
+        summary = reader.field_effect_activity_summary()
+        page = reader.field_effect_activity_page(
+            search=None,
+            event_type="all",
+            occurred_after=0,
+            page=1,
+            page_size=25,
+        )
+        return {"summary": summary, "page": page}
+
+    def fail_projection() -> dict[str, object]:
+        raise RuntimeError("projection failure")
+
+    try:
+        result = reader.field_effect_activity_snapshot(projection)
+        assert result["summary"]
+        assert result["page"]
+        assert not reader._connection.in_transaction
+
+        with pytest.raises(RuntimeError, match="projection failure"):
+            reader.field_effect_activity_snapshot(fail_projection)
+        assert not reader._connection.in_transaction
+    finally:
+        reader._connection.set_trace_callback(None)
+        reader.close()
+
+    assert statements.count("BEGIN") == 2
+    assert statements.count("ROLLBACK") == 2
+
+
+def test_activity_page_cache_invalidates_an_in_place_policy_transition_update(
+    effects: _EffectEnvironment,
+) -> None:
+    builtin = MetadataPolicyProfile.builtin()
+    replacement = MetadataPolicyProfile.create(
+        "Replacement", dict(builtin.options), dict(builtin.destinations)
+    )
+    effects.repository.create_metadata_policy_draft(replacement.canonical_json)
+    resolution = resolve_policy(replacement, "books")
+    effects.repository.activate_metadata_policy(
+        replacement.policy_id,
+        builtin.policy_id,
+        (("books", resolution.resolved_id, resolution.canonical_json),),
+        2,
+    )
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    query = dict(
+        search=None, event_type="policy", occurred_after=0, page=1, page_size=25
+    )
+    projection_calls = [0]
+    projection = reader._field_effect_activity
+    original = projection._field_effect_activity_page_uncached
+
+    def counted_projection(**values):
+        projection_calls[0] += 1
+        return original(**values)
+
+    with patch.object(
+        projection, "_field_effect_activity_page_uncached", counted_projection
+    ):
+        try:
+            first = reader.field_effect_activity_page(**query)
+            assert reader.field_effect_activity_page(**query) == first
+            effects.repository._connection.execute(
+                "UPDATE metadata_policy_transitions SET updated_at=updated_at+1"
+            )
+            effects.repository._connection.commit()
+            refreshed = reader.field_effect_activity_page(**query)
+        finally:
+            reader.close()
+
+    assert projection_calls == [2]
+    assert refreshed != first
+
+
+def test_activity_page_cache_revalidates_an_in_place_malformed_event(
+    effects: _EffectEnvironment,
+) -> None:
+    operation = _plan(effects, suffix="2")
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    query = dict(search=None, event_type="all", occurred_after=0, page=1, page_size=25)
+    try:
+        assert reader.field_effect_activity_page(**query)["events"]
+        effects.repository._connection.execute(
+            "DROP TRIGGER field_effect_events_no_update"
+        )
+        effects.repository._connection.execute(
+            "UPDATE field_effect_events SET document=? WHERE plan_id=? AND sequence=1",
+            ("{not-json", operation.plan.plan_id),
+        )
+        effects.repository._connection.commit()
+        with pytest.raises(FieldEffectError, match="^persistence$"):
+            reader.field_effect_activity_page(**query)
+    finally:
+        reader.close()
+
+
 def test_activity_page_fails_closed_for_corrupt_or_oversized_durable_rows(
     effects: _EffectEnvironment,
 ) -> None:
@@ -740,7 +1354,7 @@ def test_activity_summary_reads_no_legacy_events_or_report_documents(
     assert "from metadata_reports where report_id" not in sql
 
 
-def test_activity_page_rejects_a_selected_report_digest_mismatch(
+def test_activity_page_ignores_a_corrupt_later_current_report_for_field_event(
     effects: _EffectEnvironment,
 ) -> None:
     report = metadata_report("Readable work", "5", "6", item_id="book-1")
@@ -755,18 +1369,18 @@ def test_activity_page_rejects_a_selected_report_digest_mismatch(
     effects.repository._connection.execute("PRAGMA ignore_check_constraints=OFF")
     effects.repository._connection.commit()
 
-    with pytest.raises(FieldEffectError, match="^persistence$"):
-        effects.repository.field_effect_activity_page(
-            search=None,
-            event_type="all",
-            occurred_after=2_000_000,
-            page=1,
-            page_size=25,
-        )
+    page = effects.repository.field_effect_activity_page(
+        search=None,
+        event_type="all",
+        occurred_after=0,
+        page=1,
+        page_size=25,
+    )
+    assert any(event["destination"] == "title" for event in page["events"])
     assert not effects.repository._connection.in_transaction
 
 
-def test_activity_page_rejects_an_oversized_current_waiting_report(
+def test_activity_page_does_not_substitute_a_later_report_for_current_waiting(
     effects: _EffectEnvironment,
 ) -> None:
     report = metadata_report("Readable work", "7", "8", item_id="book-1")
@@ -782,14 +1396,14 @@ def test_activity_page_rejects_an_oversized_current_waiting_report(
     effects.repository._connection.execute("PRAGMA ignore_check_constraints=OFF")
     effects.repository._connection.commit()
 
-    with pytest.raises(FieldEffectError, match="^persistence$"):
-        effects.repository.field_effect_activity_page(
-            search=None,
-            event_type="all",
-            occurred_after=2_000_000,
-            page=1,
-            page_size=25,
-        )
+    page = effects.repository.field_effect_activity_page(
+        search=None,
+        event_type="all",
+        occurred_after=2_000_000,
+        page=1,
+        page_size=25,
+    )
+    assert page["current_waiting"]["work_label"] == "Recorded work"
     assert not effects.repository._connection.in_transaction
 
 
@@ -3368,6 +3982,383 @@ def test_web_field_effect_and_review_reads_share_one_repository_lock(
         assert library_entered.is_set()
         assert responses["status"].status_code == 200
         assert responses["library"].status_code == 200
+
+
+def test_activity_reader_uses_a_separate_connection_during_a_held_writer(
+    effects: _EffectEnvironment,
+) -> None:
+    """The Activity reader is not a second transaction on preparation's owner."""
+    _plan(effects, suffix="c")
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    writer_held = threading.Event()
+    release_writer = threading.Event()
+    completed = threading.Event()
+    result: dict[str, object] = {}
+
+    def hold_writer() -> None:
+        effects.repository._connection.execute("BEGIN IMMEDIATE")
+        writer_held.set()
+        assert release_writer.wait(2)
+        effects.repository._connection.rollback()
+
+    def read_activity() -> None:
+        result.update(
+            reader.field_effect_activity_page(
+                search=None,
+                event_type="all",
+                occurred_after=0,
+                page=1,
+                page_size=25,
+            )
+        )
+        completed.set()
+
+    writer = threading.Thread(target=hold_writer)
+    activity = threading.Thread(target=read_activity)
+    try:
+        writer.start()
+        assert writer_held.wait(1)
+        activity.start()
+        assert completed.wait(1)
+        assert reader._connection is not effects.repository._connection
+        assert result["events"]
+        assert not reader._connection.in_transaction
+    finally:
+        release_writer.set()
+        writer.join(2)
+        activity.join(2)
+        reader.close()
+    assert not writer.is_alive()
+    assert not activity.is_alive()
+
+
+def test_activity_projection_bounds_delete_journal_pending_writer_convoy(
+    effects: _EffectEnvironment,
+) -> None:
+    """A pending DELETE-journal writer fails Activity in under one second."""
+
+    plan = _plan(effects, suffix="e")
+    reader_a = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    reader_c = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    reader_c.configure_activity_page_reader()
+    writer_ready = threading.Event()
+    writer_committed = threading.Event()
+    writer_errors: list[BaseException] = []
+    activity_result: dict[str, object] = {}
+
+    def pending_writer() -> None:
+        connection = sqlite3.connect(effects.database_path, isolation_level=None)
+        try:
+            connection.execute("PRAGMA busy_timeout=8000")
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "UPDATE field_effects SET updated_at=updated_at WHERE plan_id=?",
+                (plan.plan.plan_id,),
+            )
+            writer_ready.set()
+            connection.commit()
+            writer_committed.set()
+        except BaseException as error:
+            writer_errors.append(error)
+        finally:
+            connection.close()
+
+    writer = threading.Thread(target=pending_writer)
+    try:
+        assert reader_a._connection.execute("PRAGMA journal_mode").fetchone() == (
+            "delete",
+        )
+        reader_a._connection.execute("BEGIN")
+        reader_a._connection.execute("SELECT 1 FROM field_effects LIMIT 1").fetchone()
+        writer.start()
+        assert writer_ready.wait(1)
+        started = time.monotonic()
+        with pytest.raises(FieldEffectError, match="^persistence$") as raised:
+            reader_c.field_effect_activity_page(
+                search=None,
+                event_type="all",
+                occurred_after=0,
+                page=1,
+                page_size=25,
+            )
+        elapsed = time.monotonic() - started
+        cause = raised.value.__cause__
+        assert isinstance(cause, sqlite3.OperationalError)
+        activity_result.update(
+            {
+                "elapsed": elapsed,
+                "sqlite_errorcode": cause.sqlite_errorcode,
+                "sqlite_errorname": cause.sqlite_errorname,
+            }
+        )
+    finally:
+        if reader_a._connection.in_transaction:
+            reader_a._connection.rollback()
+        writer.join(9)
+        reader_a.close()
+        reader_c.close()
+    assert writer_errors == []
+    assert writer_committed.is_set()
+    assert cast(float, activity_result["elapsed"]) < 1
+    assert activity_result["sqlite_errorcode"] == sqlite3.SQLITE_BUSY
+    assert activity_result["sqlite_errorname"] == "SQLITE_BUSY"
+
+
+def _activity_read_after_short_delete_journal_convoy(
+    effects: _EffectEnvironment,
+    plan: FieldEffectOperation,
+    *,
+    method_name: str,
+    call: Callable[[SQLiteMetadataReportRepository], object],
+) -> object:
+    reader_a = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    reader_c = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    reader_c.configure_activity_page_reader()
+    writer_ready = threading.Event()
+    writer_committed = threading.Event()
+    writer_errors: list[BaseException] = []
+    attempts = [0]
+    projection = reader_c._field_effect_activity
+    original = getattr(projection, method_name)
+
+    def counted(*arguments, **keywords):
+        attempts[0] += 1
+        return original(*arguments, **keywords)
+
+    def pending_writer() -> None:
+        connection = sqlite3.connect(effects.database_path, isolation_level=None)
+        try:
+            connection.execute("PRAGMA busy_timeout=8000")
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "UPDATE field_effects SET updated_at=updated_at WHERE plan_id=?",
+                (plan.plan.plan_id,),
+            )
+            writer_ready.set()
+            connection.commit()
+            writer_committed.set()
+        except BaseException as error:
+            writer_errors.append(error)
+        finally:
+            connection.close()
+
+    def release_reader() -> None:
+        time.sleep(0.2)
+        reader_a._connection.rollback()
+
+    writer = threading.Thread(target=pending_writer)
+    release = threading.Thread(target=release_reader)
+    with patch.object(projection, method_name, counted):
+        try:
+            assert reader_a._connection.execute("PRAGMA journal_mode").fetchone() == (
+                "delete",
+            )
+            reader_a._connection.execute("BEGIN")
+            reader_a._connection.execute(
+                "SELECT 1 FROM field_effects LIMIT 1"
+            ).fetchone()
+            writer.start()
+            assert writer_ready.wait(1)
+            release.start()
+            started = time.monotonic()
+            result = call(reader_c)
+            elapsed = time.monotonic() - started
+        finally:
+            if reader_a._connection.in_transaction:
+                reader_a._connection.rollback()
+            release.join(2)
+            writer.join(9)
+            reader_a.close()
+            reader_c.close()
+    assert writer_errors == []
+    assert writer_committed.is_set()
+    assert attempts[0] >= 2
+    assert elapsed < 1
+    return result
+
+
+def test_activity_projection_retries_a_short_delete_journal_convoy(
+    effects: _EffectEnvironment,
+) -> None:
+    """A bounded busy retry returns the current Activity page after writer commit."""
+
+    result = cast(
+        "dict[str, object]",
+        _activity_read_after_short_delete_journal_convoy(
+            effects,
+            _plan(effects, suffix="f"),
+            method_name="_field_effect_activity_page_once",
+            call=lambda reader: reader.field_effect_activity_page(
+                search=None,
+                event_type="all",
+                occurred_after=0,
+                page=1,
+                page_size=25,
+            ),
+        ),
+    )
+    assert result["events"]
+
+
+def test_activity_backup_readiness_retries_a_short_delete_journal_convoy(
+    effects: _EffectEnvironment,
+) -> None:
+    """Contention is retried before Activity reports backup readiness false."""
+
+    assert (
+        _activity_read_after_short_delete_journal_convoy(
+            effects,
+            _plan(effects, suffix="0"),
+            method_name="_field_effect_backup_ready_once",
+            call=lambda reader: reader.field_effect_backup_ready(),
+        )
+        is True
+    )
+
+
+def test_activity_transitions_retry_a_short_delete_journal_convoy(
+    effects: _EffectEnvironment,
+) -> None:
+    """Event expansion applies the same bounded retry as the Activity page."""
+
+    plan = _plan(effects, suffix="b")
+    event_id = effects.repository._connection.execute(
+        "SELECT event_id FROM field_effect_events WHERE plan_id=? AND sequence=1",
+        (plan.plan.plan_id,),
+    ).fetchone()[0]
+    transitions = cast(
+        "tuple[dict[str, object], ...]",
+        _activity_read_after_short_delete_journal_convoy(
+            effects,
+            plan,
+            method_name="_field_effect_activity_transitions_once",
+            call=lambda reader: reader.field_effect_activity_transitions(event_id),
+        ),
+    )
+    assert [event["state"] for event in transitions] == ["planned"]
+
+
+def test_activity_projection_stamps_inside_snapshot_and_validates_a_cache_hit_once(
+    effects: _EffectEnvironment,
+) -> None:
+    """A miss stamps its snapshot; a hit performs only one current check."""
+
+    _plan(effects, suffix="d")
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    reader.configure_activity_page_reader()
+    projection = reader._field_effect_activity
+    original_revision = projection._activity_projection_revision
+    original_page = projection._field_effect_activity_page_uncached
+    revision_transactions: list[bool] = []
+    page_calls = [0]
+
+    def observed_revision() -> tuple[int, int]:
+        revision_transactions.append(projection._connection.in_transaction)
+        return original_revision()
+
+    def counted_page(
+        **query: object,
+    ) -> tuple[
+        dict[str, object], tuple[int, int], int | None, tuple[int, int, int, int]
+    ]:
+        page_calls[0] += 1
+        return original_page(**query)
+
+    with (
+        patch.object(projection, "_activity_projection_revision", observed_revision),
+        patch.object(projection, "_field_effect_activity_page_uncached", counted_page),
+    ):
+        try:
+            result = reader.field_effect_activity_page(
+                search=None,
+                event_type="all",
+                occurred_after=0,
+                page=1,
+                page_size=25,
+            )
+            assert (
+                reader.field_effect_activity_page(
+                    search=None,
+                    event_type="all",
+                    occurred_after=0,
+                    page=1,
+                    page_size=25,
+                )
+                == result
+            )
+        finally:
+            reader.close()
+    assert result["events"]
+    assert page_calls == [1]
+    assert revision_transactions == [True, False]
+
+
+def test_activity_projection_never_retries_a_nonbusy_error(
+    effects: _EffectEnvironment,
+) -> None:
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    reader.configure_activity_page_reader()
+    attempts = [0]
+
+    def unavailable_page(**_query):
+        attempts[0] += 1
+        try:
+            raise sqlite3.OperationalError()
+        except sqlite3.OperationalError as error:
+            raise FieldEffectError("persistence") from error
+
+    with patch.object(
+        reader._field_effect_activity,
+        "_field_effect_activity_page_once",
+        unavailable_page,
+    ):
+        try:
+            with pytest.raises(FieldEffectError, match="^persistence$"):
+                reader.field_effect_activity_page(
+                    search=None,
+                    event_type="all",
+                    occurred_after=0,
+                    page=1,
+                    page_size=25,
+                )
+        finally:
+            reader.close()
+    assert attempts == [1]
 
 
 def test_no_change_identity_is_canonical_and_closed() -> None:

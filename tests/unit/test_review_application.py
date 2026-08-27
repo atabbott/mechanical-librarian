@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import sqlite3
 import threading
 from collections.abc import Callable
 from contextlib import contextmanager, nullcontext
@@ -326,6 +327,192 @@ def test_a_later_shutdown_failure_is_kept_on_the_one_that_propagates(
     assert getattr(raised.value, "__notes__", []) == [
         "further shutdown failure: RuntimeError('preparation lane did not stop')"
     ]
+
+
+def test_activity_projection_bypasses_the_owner_operation_gate(
+    repository: FakeReviewRepository,
+) -> None:
+    class ActivityProjection:
+        def activity(self, **_query: object) -> dict[str, object]:
+            assert not application._gate._is_owned()
+            return {"events": []}
+
+        def activity_transitions(
+            self, _event_id: str, _after_sequence: int | None = None
+        ) -> dict[str, object]:
+            assert not application._gate._is_owned()
+            return {"transitions": []}
+
+    application = compose_review_application(
+        state_owner=repository,
+        session_store=repository,
+        case_store=repository,
+        decision_store=repository,
+        library_store=repository,
+        policy_store=repository,
+        verify_password=lambda _: True,
+        clock=lambda: _NOW,
+        session_lifetime_seconds=600,
+        graceful_shutdown_seconds=30,
+        activity_projection=cast("ContinuousGuardedApplication", ActivityProjection()),
+    )
+
+    assert application.activity() == {"events": []}
+    assert application.activity_transitions("event-1") == {"transitions": []}
+
+
+@pytest.mark.parametrize(
+    "read",
+    (
+        lambda application: application.activity(),
+        lambda application: application.activity_transitions("event-1"),
+    ),
+    ids=("page", "transitions"),
+)
+def test_fallback_activity_serializes_a_worker_commit_past_its_read_snapshot(
+    repository: FakeReviewRepository,
+    read: Callable[[ReviewApplication], object],
+) -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    worker_committed = threading.Event()
+    connection = sqlite3.connect(
+        ":memory:", isolation_level=None, check_same_thread=False
+    )
+    connection.execute("CREATE TABLE state(value TEXT NOT NULL)")
+    connection.execute("INSERT INTO state VALUES('before')")
+
+    class SharedFieldApplication(ContinuousGuardedApplication):
+        def __init__(self) -> None:
+            self.serialize: Callable[[Callable[[], object]], object] = lambda call: (
+                call()
+            )
+
+        def attach_timing(self, _timing: object) -> None:
+            return None
+
+        def attach_serialization(
+            self, serialize: Callable[[Callable[[], object]], object]
+        ) -> None:
+            self.serialize = serialize
+
+        def attach_updates(self, _announce: object) -> None:
+            return None
+
+        def _read_snapshot(self) -> None:
+            connection.execute("BEGIN")
+            connection.execute("SELECT value FROM state").fetchone()
+            entered.set()
+            assert release.wait(1)
+            connection.rollback()
+
+        def activity(self, **_query: object) -> dict[str, object]:
+            self._read_snapshot()
+            return {"events": []}
+
+        def activity_transitions(
+            self, _event_id: str, _after_sequence: int | None = None
+        ) -> dict[str, object]:
+            self._read_snapshot()
+            return {"transitions": []}
+
+        def commit_worker_transition(self) -> None:
+            def commit() -> None:
+                if connection.in_transaction:
+                    connection.execute("SAVEPOINT worker")
+                    connection.execute("UPDATE state SET value='committed'")
+                    connection.execute("RELEASE SAVEPOINT worker")
+                else:
+                    connection.execute("BEGIN")
+                    connection.execute("UPDATE state SET value='committed'")
+                    connection.commit()
+                worker_committed.set()
+
+            self.serialize(commit)
+
+    field_application = SharedFieldApplication()
+    application = compose_review_application(
+        state_owner=repository,
+        session_store=repository,
+        case_store=repository,
+        decision_store=repository,
+        library_store=repository,
+        policy_store=repository,
+        verify_password=lambda _: True,
+        clock=lambda: _NOW,
+        session_lifetime_seconds=600,
+        graceful_shutdown_seconds=30,
+        field_application=field_application,
+    )
+    errors: list[BaseException] = []
+
+    def capture(call: Callable[[], object]) -> None:
+        try:
+            call()
+        except BaseException as error:
+            errors.append(error)
+
+    reader = threading.Thread(target=lambda: capture(lambda: read(application)))
+    worker = threading.Thread(
+        target=lambda: capture(field_application.commit_worker_transition)
+    )
+    try:
+        reader.start()
+        assert entered.wait(1)
+        worker.start()
+        assert not worker_committed.wait(0.05)
+        release.set()
+        reader.join(1)
+        worker.join(1)
+
+        assert not errors
+        assert not reader.is_alive()
+        assert not worker.is_alive()
+        assert worker_committed.is_set()
+        assert connection.execute("SELECT value FROM state").fetchone() == (
+            "committed",
+        )
+    finally:
+        release.set()
+        reader.join(1)
+        worker.join(1)
+        connection.close()
+
+
+def test_shutdown_closes_activity_projection_after_another_lane_fails(
+    repository: FakeReviewRepository,
+) -> None:
+    closed: list[str] = []
+
+    class FailingPreparation:
+        def attach_updates(self, _announce: object) -> None:
+            return None
+
+        def begin_drain(self) -> None:
+            raise RuntimeError("preparation lane did not stop")
+
+        def stop(self, _deadline: float | None = None) -> None:
+            return None
+
+    application = compose_review_application(
+        state_owner=repository,
+        session_store=repository,
+        case_store=repository,
+        decision_store=repository,
+        library_store=repository,
+        policy_store=repository,
+        verify_password=lambda _: True,
+        clock=lambda: _NOW,
+        session_lifetime_seconds=600,
+        graceful_shutdown_seconds=30,
+        preparation=cast("ReviewPreparationSupervisor", FailingPreparation()),
+        close_activity_projection=lambda: closed.append("activity-reader"),
+    )
+
+    with pytest.raises(RuntimeError, match="preparation lane did not stop"):
+        application.stop()
+
+    assert closed == ["activity-reader"]
 
 
 def test_published_preparation_work_wakes_the_guarded_scheduler(
