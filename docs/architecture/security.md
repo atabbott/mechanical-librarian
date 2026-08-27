@@ -250,11 +250,17 @@ The #447 review server adds one private owner-facing HTTP entry point and no
 target-service client. An unauthenticated network client can reach only bounded
 liveness, the login form/assets, and the fixed login failure envelope. Review
 case, evidence, current-case history, and OpenAPI data require an unexpired
-opaque session. The password is verified against one owner-only regular
-no-follow Argon2id hash file; the database stores only SHA-256 digests of fresh
-high-entropy session and CSRF tokens. Expired session rows are removed during
-login, logout records revocation, and failed logins use a durable five-attempt
+opaque session. Its fixed absolute lifetime is configured from five minutes to
+30 days and defaults to 30 days; activity never extends it. The password is
+verified against one owner-only regular no-follow Argon2id hash file; the
+database stores only a domain-separated HMAC-SHA-256 session lookup keyed by
+that exact encoded verifier and SHA-256 CSRF digests. Replacing the verifier
+therefore rejects earlier sessions before authorization. Expired session rows
+are removed during login, logout records revocation, and failed logins use a durable five-attempt
 per five-minute global throttle without retaining client addresses.
+Pre-0.18 sessions used an unbound digest, so upgrading to 0.18.0 rejects them
+once. This deliberate sign-in boundary avoids a legacy lookup fallback that
+could preserve authority after a verifier replacement.
 
 ADR-0058's empty-volume setup state adds no unauthenticated settings mutation.
 The first visitor may fetch only a bounded synchronizer nonce. Creating the
@@ -296,10 +302,12 @@ requests outer-server termination rather than serving mismatched authority.
 
 The server receives a composed application boundary rather than a database or
 broad repository. Authentication, currentness, decisions, policy, preparation,
-Activity, guarded effects, recovery, and support execute as named application
-operations behind one serialization gate; SQLite remains the sole transaction
-owner. FastAPI retains only request bounds, exact Host/Origin enforcement,
-session/CSRF dependencies, response translation, and lifecycle delegation.
+guarded effects, recovery, and support execute as named application operations
+behind the owner-operation serialization gate. Activity executes as a named
+application operation through its dedicated reader connection and reader-local
+request gate; SQLite remains the sole transaction owner. FastAPI retains only
+request bounds, exact Host/Origin enforcement, session/CSRF dependencies,
+response translation, and lifecycle delegation.
 
 The authenticated Settings API shares that boundary. Its closed GET/PATCH
 documents are bounded to 32 connections/providers and 128 libraries, responses
@@ -337,7 +345,22 @@ rather than less -- its identities collapse to whole topics -- which is sound
 only because a frame carries nothing that could be lost by collapsing it.
 Resume is the browser's own `Last-Event-ID`, and an identity minted by a
 previous process is answered with a full resync rather than a position in this
-order.
+order. A hidden tab does not refetch from frames; on its next foreground
+transition it takes one ordinary snapshot read, so HTTP still supplies the
+current redacted state and no stale frame can manufacture a transition. An
+untouched visible tab defers Library and attention frames and takes only bounded
+preparation snapshots; pointer or keyboard input pays that deferred debt with
+the same one ordinary snapshot resync, while active input retains immediate
+coalesced invalidation.
+Activity keeps at most two reader-local pages, stamped inside the same SQLite
+snapshot from the five append-only ledgers and the exact owner-visible policy
+transition shape. Field-effect rows resolve their optional report through the
+immutable originating decision and review case, never through a later current
+report pointer; a cache hit serves only after one current stamp comparison. The
+dedicated cross-thread Activity reader serializes each complete Activity or
+transition request locally, so two requests cannot share or end one another's
+read transaction; it remains separate from the guarded background-operation
+gate.
 
 The generated API contract declares that opaque owner session as an API-key
 cookie on every protected operation and marks mutation CSRF and idempotency
@@ -345,7 +368,9 @@ headers as required. Runtime failures retain separate, value-free meanings:
 invalid or expired sessions are unauthorized, CSRF mismatches are forbidden,
 absent case identifiers are not found, and repository outages are unavailable.
 Logout deletes the cookie only after durable revocation succeeds, so an outage
-cannot be presented as a completed logout.
+cannot be presented as a completed logout. Creation and deletion retain the
+same Path, HttpOnly, SameSite=Strict, and canonical-origin Secure attributes;
+the cookie carries only its opaque bearer token.
 
 The #448 library and attention responses join only exact-current report and
 case pointers. Pages contain at most 50 rows, cursors are bound to their lens
@@ -483,7 +508,7 @@ deadline, byte, and request-count authority. Attempt records are bounded and
 process-local. Provider adapters also count optional parser/schema rejections
 at their actual rejection points. The application canonically merges those
 counts once with the attempt categories and incomplete-outcome mapping for
-`metadata-report-v26`; provider, attempt ordinal, delay, elapsed time,
+`metadata-report-v27`; provider, attempt ordinal, delay, elapsed time,
 headers, bodies, and exception text are dropped. Application-created
 query-limit outcomes follow the same closed mapping and persist
 provider/lookup_construction/lookup without constructing or invoking a

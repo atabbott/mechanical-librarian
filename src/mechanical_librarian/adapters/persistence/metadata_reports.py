@@ -537,6 +537,16 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             limit, after
         )
 
+    def pending_field_effect_activity_example_document(self) -> str | None:
+        return (
+            self._field_effect_activity.pending_field_effect_activity_example_document()
+        )
+
+    def field_effect_activity_snapshot(
+        self, call: Callable[[], dict[str, object]]
+    ) -> dict[str, object]:
+        return self._field_effect_activity.field_effect_activity_snapshot(call)
+
     def pending_field_effect_decision_counts(self) -> tuple[dict[str, object], ...]:
         return self._field_effect_activity.pending_field_effect_decision_counts()
 
@@ -666,8 +676,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def field_effect_dependencies_current(self, digests: tuple[str, ...]) -> bool:
         return self._field_effect_activity.field_effect_dependencies_current(digests)
 
-    def field_effect_backup_ready(self) -> bool:
-        return self._field_effect_activity.field_effect_backup_ready()
+    def field_effect_backup_ready(self, *, fresh: bool = False) -> bool:
+        return self._field_effect_activity.field_effect_backup_ready(fresh=fresh)
 
     def next_field_effect_plan_id(
         self,
@@ -687,6 +697,11 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         return self._field_effect_activity.field_effect_activity_data(
             limit, include_events=include_events
         )
+
+    def configure_activity_page_reader(self) -> None:
+        """Bound the independently opened Activity projection reader only."""
+
+        self._field_effect_activity.configure_activity_page_reader()
 
     def field_effect_activity_page(
         self,

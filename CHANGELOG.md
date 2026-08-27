@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Keep valid Hardcover discovery candidates when optional cover descriptors
+  conflict across lanes; the conflicting cover remains fail-closed. Provider
+  lane diagnostics now persist their bounded rejection category; existing
+  pre-release `metadata-report-v26` state requires a clean rebuild. (#871)
+
+- Remember the owner login for up to 30 days with a fixed, server-enforced
+  expiry and verifier-bound session lookup. Logout and owner-verifier
+  replacement end remembered authority. (#862)
+- Upgrading to 0.18.0 signs out existing owners once: earlier sessions used an
+  unbound digest and cannot be retained while preserving verifier replacement
+  invalidation. Sign in again after the upgrade. (#862)
+
+- Keep Activity reads out of the guarded background-operation gate and derive
+  ordinary page totals from the same bounded activity projection as their rows.
+  Live updates stay immediate during owner input, bound preparation reads in an
+  untouched visible tab, remain quiet while hidden, and restore the server
+  snapshot once when the owner returns. (#853)
+
 - Keep deep Library and Attention pages reachable with the hardened 64 MiB
   temporary filesystem by sorting thin browse keys before loading page documents.
   Support exports retain only a bounded SQLite exception class if storage is

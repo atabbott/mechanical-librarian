@@ -405,8 +405,8 @@ def test_server_uses_validated_tls_before_opening_the_database() -> None:
                 return_value=review_application,
             ),
             patch(
-                "mechanical_librarian.bootstrap.composition.load_owner_password_verifier",
-                return_value=lambda _: False,
+                "mechanical_librarian.bootstrap.composition.load_owner_password_binding",
+                return_value=(lambda _: False, lambda _: "d" * 64),
             ),
             patch(
                 "mechanical_librarian.bootstrap.composition.create_review_pipeline",

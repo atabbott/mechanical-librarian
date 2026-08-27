@@ -142,7 +142,7 @@ application performs one complete semantic parse of each visible row before
 returning its DTO. New canonical writes retain their complete validation and
 commit their derived facts atomically.
 
-The `metadata-report-v26` document retains all 16 ordered Audiobookshelf target
+The `metadata-report-v27` document retains all 16 ordered Audiobookshelf target
 destinations and their missing, null, empty, unloaded, malformed, oversized, or
 value state in target currentness. It also retains the closed ordered local-field states,
 source capability
@@ -164,10 +164,9 @@ Within the exact current schema, a current-scope
 lookup follows the separate pointer offline, while an exact-ID lookup never
 changes a predecessor.
 
-Provider observations also retain aggregate-only failure diagnostics from
-adapter parser/schema classification and application attempt mapping. Their
-canonical merge is persisted once and replayed without inflation. Invalid
-optional values and raw process-local attempt records are not persisted.
+Provider observations retain aggregate-only diagnostics, while each discovery
+lane retains its own canonical provider diagnostics. Invalid optional values and
+raw process-local attempt records are not persisted.
 Deterministic shadow outcomes retain their existing canonical product
 contracts; no model request, result, process, attempt, or advice projection is
 stored.

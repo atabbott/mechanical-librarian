@@ -639,6 +639,8 @@ export class ReviewApiClient implements ReviewHttp {
   private readonly onSessionExpired: () => void
   private readonly onBuildMismatch: () => void
   private readonly buildIdentity: string | undefined
+  private sessionExpiryReported = false
+  private sessionExpiryNavigationScheduled = false
   constructor(private readonly options: HttpClientOptions) {
     this.fetch = options.fetch ?? globalThis.fetch.bind(globalThis)
     this.onSessionExpired = options.onSessionExpired ?? (() => window.location.assign('/login'))
@@ -891,7 +893,7 @@ export class ReviewApiClient implements ReviewHttp {
       try {
         await this.options.csrf.renew(init.signal ?? undefined)
       } catch (error) {
-        if (error instanceof SessionExpiredError) this.onSessionExpired()
+        if (error instanceof SessionExpiredError) this.reportSessionExpiry()
         throw error
       }
       throw new ApiError(403, 'csrf_renewed')
@@ -902,7 +904,7 @@ export class ReviewApiClient implements ReviewHttp {
       throw new BuildMismatchError()
     }
     if (response.status === 401) {
-      this.onSessionExpired()
+      this.reportSessionExpiry()
       throw new SessionExpiredError()
     }
     if (!response.ok) {
@@ -923,6 +925,16 @@ export class ReviewApiClient implements ReviewHttp {
     } catch {
       throw new ApiError(502, 'invalid_json_response')
     }
+  }
+
+  private reportSessionExpiry() {
+    if (this.sessionExpiryReported) return
+    this.sessionExpiryReported = true
+    if (this.sessionExpiryNavigationScheduled) return
+    this.sessionExpiryNavigationScheduled = true
+    // All callers still reject with SessionExpiredError. The next task lets
+    // their promise handlers attach before document navigation takes over.
+    window.setTimeout(() => this.onSessionExpired(), 0)
   }
 }
 

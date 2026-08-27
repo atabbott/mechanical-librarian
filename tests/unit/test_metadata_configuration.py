@@ -14,6 +14,7 @@ from mechanical_librarian.application.configuration import (
     ConfigurationError,
     MediaMountConfiguration,
     ProviderConnectionConfiguration,
+    ReviewWebConfiguration,
     TargetConnectionConfiguration,
 )
 from mechanical_librarian.application.metadata_report import CredentialError
@@ -111,6 +112,48 @@ def _review(root: Path) -> dict[str, object]:
         "tls_certificate_file": str(root / "review.crt"),
         "tls_private_key_file": str(root / "review.key"),
     }
+
+
+def test_owner_session_lifetime_defaults_to_thirty_days_and_rejects_noncanonical_values(
+    tmp_path: Path,
+) -> None:
+    configuration = ReviewWebConfiguration(
+        canonical_origin="https://review.example.invalid",
+        owner_password_hash_file=str(tmp_path / "owner.hash"),
+    )
+    assert configuration.session_lifetime_seconds == 2_592_000
+    for value in (299, 2_592_001, True, 2_592_000.0):
+        with pytest.raises(ConfigurationError):
+            ReviewWebConfiguration(
+                canonical_origin="https://review.example.invalid",
+                owner_password_hash_file=str(tmp_path / "owner.hash"),
+                session_lifetime_seconds=cast(int, value),
+            )
+
+    for value in (300, 2_592_000):
+        assert (
+            ReviewWebConfiguration(
+                canonical_origin="https://review.example.invalid",
+                owner_password_hash_file=str(tmp_path / "owner.hash"),
+                session_lifetime_seconds=value,
+            ).session_lifetime_seconds
+            == value
+        )
+        source = _source(tmp_path)
+        source["review"] = {**_review(tmp_path), "session_lifetime_seconds": value}
+        path = tmp_path / f"config-{value}.json"
+        path.write_text(json.dumps(source), encoding="utf-8")
+        loaded = load_configuration_file(path)
+        assert loaded.review is not None
+        assert loaded.review.session_lifetime_seconds == value
+
+    for value in (299, 2_592_001, True, 2_592_000.0):
+        source = _source(tmp_path)
+        source["review"] = {**_review(tmp_path), "session_lifetime_seconds": value}
+        path = tmp_path / "invalid-session-lifetime.json"
+        path.write_text(json.dumps(source), encoding="utf-8")
+        with pytest.raises(ConfigurationError):
+            load_configuration_file(path)
 
 
 def test_review_tls_paths_are_explicit_absolute_and_paired() -> None:

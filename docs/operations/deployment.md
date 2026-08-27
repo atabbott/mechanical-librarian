@@ -22,7 +22,15 @@ the host and nothing further. Exposing it to a LAN is an owner decision rather
 than a default: republish it as `8443:8443`, or on a chosen host address, only
 together with the canonical origin, certificate names, and network path that
 decision implies. Nothing but TLS and the owner password stands in front of that
-surface.
+surface. Owner sessions are persistent opaque cookies with a fixed absolute
+lifetime of up to 30 days (the default); choose a shorter
+`review.session_lifetime_seconds` value when the deployment requires it. A
+remembered browser session is still a bearer credential, so do not use it on an
+untrusted endpoint or transport.
+The 0.18.0 upgrade signs out existing owners once because remembered sessions
+are now bound to the exact owner verifier. Sign in again after upgrading;
+otherwise-valid sessions created on 0.18.0 continue across exact-current
+application and repository restarts until logout or absolute expiry.
 
 The container declares its own health. `HEALTHCHECK` runs the installed
 `mechanical-librarian-container-health` and the Compose `healthcheck` block runs

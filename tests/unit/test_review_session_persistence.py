@@ -31,6 +31,7 @@ from mechanical_librarian.application.review_pipeline import (
 )
 from mechanical_librarian.application.review_web import (
     InspectCurrentReviewCase,
+    OwnerSessionService,
     RecordHumanDecision,
     ReviewWebError,
 )
@@ -43,6 +44,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.interfaces.web.app import owner_password_binding
 from tests.support.review_cases import _report
 from tests.unit.review_app_fixture import (
     TEST_REACT_BUILD_IDENTITY,
@@ -775,6 +777,42 @@ def test_session_survives_exact_current_reopen_and_prior_schema_is_rejected() ->
             == "unauthorized"
         )
         reopened.close()
+
+
+def test_verifier_bound_session_survives_reopen_without_sliding_and_rejects_replacement(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "application.sqlite3"
+    verifier = PasswordHasher().hash("correct horse")
+    verify, digest = owner_password_binding(verifier)
+    tokens = iter(("s" * 32, "c" * 32))
+    repository = open_repository(path)
+    issued = OwnerSessionService(
+        repository, verify, digest, lambda: 100, 600, lambda _length: next(tokens)
+    ).login("correct horse")
+    repository.close()
+
+    reopened = open_repository(path, create=False)
+    resumed = OwnerSessionService(reopened, verify, digest, lambda: 699, 600)
+    assert resumed.authenticate(issued.session_token) == "owner"
+    assert resumed.issue_browser_csrf(issued.session_token)
+    assert resumed.authenticate(issued.session_token) == "owner"
+    assert reopened._connection.execute(
+        "SELECT expires_at FROM review_sessions"
+    ).fetchone() == (700,)
+    expired = OwnerSessionService(reopened, verify, digest, lambda: 700, 600)
+    with pytest.raises(ReviewWebError, match="unauthorized"):
+        expired.authenticate(issued.session_token)
+
+    _, replacement_digest = owner_password_binding(
+        PasswordHasher().hash("correct horse")
+    )
+    replaced = OwnerSessionService(
+        reopened, verify, replacement_digest, lambda: 699, 600
+    )
+    with pytest.raises(ReviewWebError, match="unauthorized"):
+        replaced.authenticate(issued.session_token)
+    reopened.close()
 
 
 def test_real_repository_serves_login_from_fastapi_worker_thread() -> None:

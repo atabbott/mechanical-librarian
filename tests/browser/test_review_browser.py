@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -51,7 +52,7 @@ from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.setup_state import SetupStateDocument
 from mechanical_librarian.interfaces.web.react_assets import ReactAssetLoader
 from mechanical_librarian.interfaces.web.setup import create_setup_app
-from tests.support.ports import ReservedPort
+from tests.support.ports import ReservedPort, bind_loopback
 from tests.support.proposal_evidence import _fields as _bibliographic_fields
 from tests.support.review_web_doubles import FakeActivityApplication
 from tests.unit.review_app_fixture import create_transport_test_app
@@ -431,6 +432,233 @@ def _verified_playwright_browser() -> None:
         file=sys.__stderr__,
         flush=True,
     )
+
+
+def test_remembered_owner_session_survives_profile_and_server_restart() -> None:
+    """Exercise the fixed, verifier-bound browser session through real restarts."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        database = root / "review.sqlite3"
+        profile = root / "persistent-profile"
+        hash_path = root / "owner.hash"
+        old_password = _PASSWORD
+        new_password = "replacement synthetic browser password"
+        hash_path.write_text(PasswordHasher().hash(old_password), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        now = [1_000]
+        errors: list[str] = []
+        # The real workspace asks for settings alongside its Library data.
+        # Seed the same synthetic complete configuration as `_server` so a
+        # lifecycle check never reads an expected setup failure as a session
+        # failure or browser-console error.
+        seed_repository = open_repository(database)
+        seed_repository.close()
+        with closing(sqlite3.connect(database)) as connection:
+            connection.execute(
+                "INSERT INTO owner_settings VALUES(1,?,?)",
+                (
+                    _DEFAULT_SETTINGS_DOCUMENT.revision,
+                    _canonical_json(_DEFAULT_SETTINGS_DOCUMENT.model_dump()),
+                ),
+            )
+            connection.executemany(
+                "INSERT INTO owner_setting_secrets(field_id,value) VALUES(?,?)",
+                [
+                    (f"connection.{item.name}.key", f"synthetic-{item.name}-secret")
+                    for item in _DEFAULT_SETTINGS_DOCUMENT.connections
+                ],
+            )
+            connection.commit()
+
+        def persisted_sessions() -> list[tuple[int, int]]:
+            with closing(sqlite3.connect(database)) as connection:
+                return cast(
+                    list[tuple[int, int]],
+                    connection.execute(
+                        "SELECT created_at, expires_at FROM review_sessions "
+                        "WHERE revoked_at IS NULL ORDER BY created_at"
+                    ).fetchall(),
+                )
+
+        def revocations() -> list[tuple[int]]:
+            with closing(sqlite3.connect(database)) as connection:
+                return cast(
+                    list[tuple[int]],
+                    connection.execute(
+                        "SELECT revoked_at FROM review_sessions "
+                        "WHERE revoked_at IS NOT NULL ORDER BY created_at"
+                    ).fetchall(),
+                )
+
+        def persistent_page(playwright) -> tuple[BrowserContext, Page]:
+            context = playwright.chromium.launch_persistent_context(
+                str(profile),
+                headless=True,
+                ignore_https_errors=True,
+                viewport={"width": 390, "height": 844},
+            )
+            page = context.pages[0] if context.pages else context.new_page()
+            page.route(
+                "**/favicon.ico", lambda route: route.fulfill(status=204, body="")
+            )
+            page.on("pageerror", lambda error: errors.append(str(error)))
+
+            def record_console_error(message) -> None:
+                # The two deliberate 401s below are the expiry and verifier
+                # replacement proofs. Chromium logs their transport status as
+                # console errors even though the workspace handles expiry by
+                # returning the owner to Login.
+                if message.type == "error" and "status of 401" not in message.text:
+                    errors.append(message.text)
+
+            page.on("console", record_console_error)
+            return context, page
+
+        @contextmanager
+        def running_server(port: int, listener: socket.socket) -> Iterator[str]:
+            repository = open_repository(database, create=True, cross_thread=True)
+            origin = f"https://127.0.0.1:{port}"
+            app = create_transport_test_app(
+                repository,
+                ReviewWebConfiguration(
+                    canonical_origin=origin,
+                    owner_password_hash_file=str(hash_path),
+                    session_lifetime_seconds=300,
+                ),
+                clock=lambda: now[0],
+                close_repository=True,
+                field_application=_BrowserActivityApplication(),
+                react_asset_loader=ReactAssetLoader(
+                    Path(os.environ["ML_REACT_ASSET_DIR"])
+                ),
+                settings=OwnerSettingsOperations(repository.owner_settings_store()),
+            )
+            server = uvicorn.Server(
+                uvicorn.Config(
+                    app,
+                    host="127.0.0.1",
+                    port=port,
+                    # A duplicate of this listener lets each application own
+                    # and close its server socket while the test keeps one
+                    # exact HTTPS origin reserved for the next generation.
+                    fd=listener.fileno(),
+                    log_level="error",
+                    access_log=False,
+                    ssl_certfile=str(certificate),
+                    ssl_keyfile=str(key),
+                    timeout_keep_alive=30,
+                )
+            )
+            thread = threading.Thread(target=server.run, daemon=True)
+            thread.start()
+            deadline = time.monotonic() + 10
+            while (
+                not server.started and thread.is_alive() and time.monotonic() < deadline
+            ):
+                time.sleep(0.01)
+            if not server.started:
+                raise RuntimeError("remembered-session server did not start")
+            try:
+                yield origin
+            finally:
+                server.should_exit = True
+                thread.join(timeout=5)
+                if thread.is_alive():
+                    server.force_exit = True
+                    thread.join(timeout=5)
+
+        listener = bind_loopback(0)
+        assert listener is not None
+        with sync_playwright() as playwright, closing(listener):
+            port = int(listener.getsockname()[1])
+            with running_server(port, listener) as origin:
+                context, page = persistent_page(playwright)
+                _login(page, origin)
+                expect(
+                    page.get_by_role("heading", name="Works", exact=True)
+                ).to_be_visible()
+                assert persisted_sessions() == [(1_000, 1_300)]
+                context.close()
+
+            now[0] = 1_100
+            with running_server(port, listener) as origin:
+                context, page = persistent_page(playwright)
+                page.goto(f"{origin}/library")
+                expect(
+                    page.get_by_role("heading", name="Works", exact=True)
+                ).to_be_visible()
+                page.reload()
+                expect(
+                    page.get_by_role("heading", name="Works", exact=True)
+                ).to_be_visible()
+                assert persisted_sessions() == [(1_000, 1_300)]
+                storage = page.evaluate(
+                    """async () => ({
+                      local: Object.entries(localStorage),
+                      session: Object.entries(sessionStorage),
+                      indexed: indexedDB.databases
+                        ? (await indexedDB.databases()).map((database) => database.name)
+                        : [],
+                    })"""
+                )
+                serialized_storage = json.dumps(storage).lower()
+                assert old_password not in serialized_storage
+                assert all(
+                    marker not in serialized_storage
+                    for marker in ("password", "credential", "ml_session")
+                )
+                page.get_by_role("button", name="Sign out").click()
+                page.wait_for_url(f"{origin}/login")
+                assert persisted_sessions() == []
+                assert revocations() == [(1_100,)]
+                _login(page, origin)
+                assert persisted_sessions() == [(1_100, 1_400)]
+                context.close()
+
+            now[0] = 1_200
+            with running_server(port, listener) as origin:
+                context, page = persistent_page(playwright)
+                page.goto(f"{origin}/library")
+                expect(
+                    page.get_by_role("heading", name="Works", exact=True)
+                ).to_be_visible()
+                assert persisted_sessions() == [(1_100, 1_400)]
+                policy = page.locator('a[href="/policy?section=identity"]')
+                expect(policy).to_be_attached()
+
+                def expire_policy_request(route) -> None:
+                    now[0] = 1_400
+                    route.continue_()
+
+                page.route("**/api/v1/metadata-policy/state", expire_policy_request)
+                policy.evaluate("(element) => element.click()")
+                expect(page).to_have_url(f"{origin}/login")
+                _login(page, origin)
+                assert persisted_sessions() == [(1_400, 1_700)]
+                context.close()
+
+            hash_path.write_text(PasswordHasher().hash(new_password), encoding="utf-8")
+            now[0] = 1_450
+            with running_server(port, listener) as origin:
+                context, page = persistent_page(playwright)
+                page.goto(f"{origin}/library")
+                page.wait_for_url(f"{origin}/login")
+                page.get_by_label("Password").fill(old_password)
+                page.get_by_role("button", name="Sign in").click()
+                expect(page.locator("#login-status")).to_have_text(
+                    "Sign in failed. Check the password and try again."
+                )
+                page.get_by_label("Password").fill(new_password)
+                page.get_by_role("button", name="Sign in").click()
+                page.wait_for_url(f"{origin}/library")
+                expect(
+                    page.get_by_role("heading", name="Works", exact=True)
+                ).to_be_visible()
+                context.close()
+
+        assert errors == []
 
 
 def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> None:

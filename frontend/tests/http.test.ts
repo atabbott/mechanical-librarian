@@ -452,6 +452,30 @@ describe('ReviewApiClient', () => {
     })
 
     await expect(client.getLibrary({ lens: 'needs_attention' })).rejects.toBeInstanceOf(SessionExpiredError)
+    await vi.waitFor(() => expect(expired).toHaveBeenCalledOnce())
+  })
+
+  it('schedules one expiry hand-off without waiting for another request', async () => {
+    const expired = vi.fn()
+    let releaseSlowResponse: (response: Response) => void = () => undefined
+    const slowResponse = new Promise<Response>((resolve) => {
+      releaseSlowResponse = resolve
+    })
+    const fetchMock = vi.fn<typeof fetch>()
+    fetchMock.mockImplementationOnce(async () => slowResponse)
+    fetchMock.mockResolvedValueOnce(Response.json({ error: { code: 'session' } }, { status: 401 }))
+    const client = new ReviewApiClient({
+      csrf,
+      fetch: fetchMock,
+      onSessionExpired: expired,
+    })
+
+    const slowRequest = client.getAutomaticSafety()
+    await expect(client.getLibrary({ lens: 'needs_attention' })).rejects.toBeInstanceOf(SessionExpiredError)
+    await vi.waitFor(() => expect(expired).toHaveBeenCalledOnce())
+    releaseSlowResponse(Response.json({ error: { code: 'session' } }, { status: 401 }))
+    await expect(slowRequest).rejects.toBeInstanceOf(SessionExpiredError)
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0))
     expect(expired).toHaveBeenCalledOnce()
   })
 
@@ -469,7 +493,7 @@ describe('ReviewApiClient', () => {
     })
 
     await expect(client.logout()).rejects.toBeInstanceOf(SessionExpiredError)
-    expect(expired).toHaveBeenCalledOnce()
+    await vi.waitFor(() => expect(expired).toHaveBeenCalledOnce())
   })
 
   it('blocks mutations without a current build identity before transport', async () => {

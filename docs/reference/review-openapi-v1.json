@@ -326,7 +326,7 @@
               "graceful_shutdown_seconds": 30,
               "library_polling_interval_seconds": 900,
               "reviewer_enabled": false,
-              "session_lifetime_seconds": 3600
+              "session_lifetime_seconds": 2592000
             }
           }
         },
@@ -512,8 +512,8 @@
             "type": "boolean"
           },
           "session_lifetime_seconds": {
-            "default": 3600,
-            "maximum": 86400.0,
+            "default": 2592000,
+            "maximum": 2592000.0,
             "minimum": 300.0,
             "title": "Session Lifetime Seconds",
             "type": "integer"

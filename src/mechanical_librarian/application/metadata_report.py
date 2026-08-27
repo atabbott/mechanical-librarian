@@ -28,6 +28,12 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceKind,
     CoverSourceState,
 )
+from mechanical_librarian.domain.failure_diagnostics import (
+    FailureCategory,
+    FailureComponent,
+    FailureStage,
+    diagnostics_are_canonical,
+)
 from mechanical_librarian.domain.metadata_report import (
     MAX_CANDIDATES,
     ClaimKind,
@@ -270,6 +276,7 @@ class ProviderLaneResult:
     candidates: tuple[ProviderCandidate, ...] = ()
     accessed_at: str | None = None
     edition_enrichment_overflow: EditionEnrichmentOverflow | None = None
+    diagnostics: tuple[FailureDiagnostic, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -278,6 +285,18 @@ class ProviderLaneResult:
             or type(self.candidates) is not tuple
             or any(type(value) is not ProviderCandidate for value in self.candidates)
             or (self.status is ProviderStatus.CANDIDATES) != bool(self.candidates)
+            or not diagnostics_are_canonical(self.diagnostics)
+            or any(
+                value.component is not FailureComponent.PROVIDER
+                or value.stage
+                not in {
+                    FailureStage.LOOKUP,
+                    FailureStage.REQUEST,
+                    FailureStage.RESPONSE,
+                }
+                or value.current is not None
+                for value in self.diagnostics
+            )
             or (
                 self.edition_enrichment_overflow is not None
                 and (
@@ -443,6 +462,21 @@ def provider_observation(
                     result.lane,
                     aggregate_failure,
                     accessed_at=result.accessed_at,
+                    diagnostics=(
+                        merge_provider_diagnostics(
+                            result.diagnostics,
+                            (
+                                FailureDiagnostic(
+                                    FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,
+                                    FailureComponent.PROVIDER,
+                                    FailureStage.RESPONSE,
+                                    retryable=False,
+                                ),
+                            ),
+                        )
+                        if aggregate_failure is ProviderStatus.MALFORMED
+                        else result.diagnostics
+                    ),
                 )
                 if result.status is ProviderStatus.CANDIDATES
                 else result
@@ -479,6 +513,7 @@ def provider_observation(
                 result.lane.input_references,
                 result.lane.matched_family,
                 lane_candidates,
+                result.diagnostics,
             )
         )
 

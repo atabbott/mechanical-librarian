@@ -56,7 +56,7 @@ const document: SettingsView['document'] = {
     graceful_shutdown_seconds: 30,
     library_polling_interval_seconds: 900,
     reviewer_enabled: false,
-    session_lifetime_seconds: 3600,
+    session_lifetime_seconds: 2_592_000,
   },
   cover_preferences: {
     avoid_promotional_text: false,

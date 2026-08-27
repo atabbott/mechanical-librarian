@@ -57,7 +57,7 @@ class ContinuousFieldEffectRepository(Protocol):
 
     def pending_field_effect_plan_ids(self, limit: int) -> tuple[str, ...]: ...
     def pending_field_effect_action_plan_ids(self, limit: int) -> tuple[str, ...]: ...
-    def field_effect_backup_ready(self) -> bool: ...
+    def field_effect_backup_ready(self, *, fresh: bool = False) -> bool: ...
     def pending_field_effect_decision_counts(self) -> tuple[dict[str, object], ...]: ...
     def grant_field_effect_consent_matrix(
         self,
@@ -90,6 +90,7 @@ class ContinuousFieldEffectRepository(Protocol):
     def pending_field_effect_decision_documents(
         self, limit: int, after: tuple[int, str] | None = None
     ) -> tuple[str, ...]: ...
+    def pending_field_effect_activity_example_document(self) -> str | None: ...
     def record_current_field_effect_no_change(
         self, decision: AutomaticDecision, occurred_at: int
     ) -> bool: ...
@@ -233,6 +234,10 @@ class ContinuousGuardedApplication:
             [], tuple[dict[str, int | str | None], ...]
         ]
         | None = None,
+        activity_snapshot: Callable[
+            [Callable[[], dict[str, object]]], dict[str, object]
+        ]
+        | None = None,
     ) -> None:
         if (
             (activity_only and (applications or capabilities))
@@ -264,6 +269,8 @@ class ContinuousGuardedApplication:
         self._scan_progress = scan_progress
         self._activity_only = activity_only
         self._provider_recovery_snapshot = provider_recovery_snapshot or (lambda: ())
+        self._activity_snapshot = activity_snapshot or (lambda call: call())
+        self._activity_reader_lock = threading.Lock()
         self._slot = threading.Lock()
         self._admission = threading.Event()
         self._wake = threading.Event()
@@ -489,7 +496,7 @@ class ContinuousGuardedApplication:
             for library, destinations in grants
         ):
             raise GuardedApplicationError("consent")
-        if not self._repository.field_effect_backup_ready():
+        if not self._repository.field_effect_backup_ready(fresh=True):
             raise GuardedApplicationError("backup")
         prepared = self._repository.pending_field_effect_decision_counts()
         prepared_libraries = {
@@ -848,6 +855,31 @@ class ContinuousGuardedApplication:
             or page_size not in {25, 50, 100}
         ):
             raise GuardedApplicationError("activity_query")
+        with self._activity_reader_lock:
+            backup_ready = self._repository.field_effect_backup_ready()
+            return self._activity_snapshot(
+                lambda: self._activity_projection(
+                    normalized_search=normalized_search,
+                    event_type=event_type,
+                    range_days=range_days,
+                    page=page,
+                    page_size=page_size,
+                    backup_ready=backup_ready,
+                )
+            )
+
+    def _activity_projection(
+        self,
+        *,
+        normalized_search: str | None,
+        event_type: str,
+        range_days: int,
+        page: int,
+        page_size: int,
+        backup_ready: bool,
+    ) -> dict[str, object]:
+        """Project Activity inside the repository's exact read boundary."""
+
         data = self._repository.field_effect_activity_summary()
         page_projection = self._repository.field_effect_activity_page(
             search=normalized_search,
@@ -966,7 +998,9 @@ class ContinuousGuardedApplication:
                 data.pop("consented_destinations", []),
             )
         }
-        documents = self._repository.pending_field_effect_decision_documents(100)
+        example_document = (
+            self._repository.pending_field_effect_activity_example_document()
+        )
         prepared_rows = self._repository.pending_field_effect_decision_counts()
         prepared_by_library: dict[str, dict[str, int]] = {
             library: {"automatic": 0, "human": 0, "total": 0}
@@ -990,27 +1024,23 @@ class ContinuousGuardedApplication:
             key = (library, prepared_destination)
             prepared_by_destination[key] = prepared_by_destination.get(key, 0) + count
         example: dict[str, object] | None = None
-        for document in documents:
-            decision = self._decision(document)
-            if example is None:
-                try:
-                    snapshot = self._authority.resolve(decision)
-                    example = {
-                        "after": project_decision_value(
-                            snapshot.destination, snapshot.decision_value
-                        ),
-                        "before": snapshot.pre_value,
-                        "destination": snapshot.destination,
-                        "library": snapshot.library,
-                        "work_id": snapshot.work_id,
-                    }
-                except (FieldEffectError, GuardedApplicationError, ValueError) as error:
-                    # A decision whose authority will not resolve is left out of
-                    # the illustration, which is a gap. A storage fault is not a
-                    # fact about the decision, and absorbing it would build a
-                    # confident projection on what could not be read.
-                    if getattr(error, "code", None) == "persistence":
-                        raise
+        if example_document is not None:
+            try:
+                snapshot = self._authority.resolve(self._decision(example_document))
+                example = {
+                    "after": project_decision_value(
+                        snapshot.destination, snapshot.decision_value
+                    ),
+                    "before": snapshot.pre_value,
+                    "destination": snapshot.destination,
+                    "library": snapshot.library,
+                    "work_id": snapshot.work_id,
+                }
+            except (FieldEffectError, GuardedApplicationError, ValueError) as error:
+                # A binding race removes the optional illustration. A storage
+                # fault cannot be represented as an absent prepared example.
+                if getattr(error, "code", None) == "persistence":
+                    raise
         enabled = []
         for connection, library in self._libraries:
             if any(
@@ -1066,7 +1096,7 @@ class ContinuousGuardedApplication:
             raise GuardedApplicationError("activity")
         return {
             **data,
-            "backup_ready": self._repository.field_effect_backup_ready(),
+            "backup_ready": backup_ready,
             "waiting": _waiting_reasons(
                 counts=cast("dict[str, int]", data.get("counts", {})),
                 prepared_by_destination=prepared_by_destination,
@@ -1105,9 +1135,10 @@ class ContinuousGuardedApplication:
     def activity_transitions(
         self, event_id: str, after_sequence: int | None = None
     ) -> dict[str, object]:
-        transitions = self._repository.field_effect_activity_transitions(
-            event_id, after_sequence
-        )
+        with self._activity_reader_lock:
+            transitions = self._repository.field_effect_activity_transitions(
+                event_id, after_sequence
+            )
         if len(transitions) > 21:
             raise GuardedApplicationError("activity")
         return {"events": list(transitions[:20]), "has_more": len(transitions) > 20}
@@ -1137,6 +1168,12 @@ class ContinuousGuardedApplication:
     ) -> list[dict[str, object]]:
         """Project least-authority readiness before consent can be granted."""
         if self._activity_only:
+            # The live field application persists every negative observation as
+            # a suspension and clears that suspension only after an allowed
+            # observation.  The dedicated reader therefore preserves that
+            # state by treating an unsuspended destination as allowed.  It
+            # grants no authority: ``enable`` force-probes the live capability
+            # again before consent can be committed.
             results: list[dict[str, object]] = []
             for connection, library in self._libraries:
                 if library not in libraries:
@@ -1148,7 +1185,7 @@ class ContinuousGuardedApplication:
                             self._repository.field_effect_capability_suspension(
                                 connection, destination
                             )
-                            or "not_ready",
+                            or "allowed",
                         )
                         for destination in sorted(SUPPORTED_DESTINATIONS)
                     )
@@ -1163,6 +1200,10 @@ class ContinuousGuardedApplication:
                                 state == "connection_unavailable"
                                 for _, state in destinations
                             )
+                            else "allowed"
+                            if all(state == "allowed" for _, state in destinations)
+                            else "partially_allowed"
+                            if any(state == "allowed" for _, state in destinations)
                             else "not_ready"
                         ),
                         "destinations": [

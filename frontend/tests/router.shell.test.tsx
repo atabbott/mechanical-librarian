@@ -92,11 +92,7 @@ describe('Application shell', () => {
     }
     renderRoute('/library?lens=all', http)
 
-    expect(
-      await screen.findByText(
-        'Preparation complete · 7 unique works checked.',
-      ),
-    ).toBeVisible()
+    expect(await screen.findByText('Preparation complete · 7 unique works checked.')).toBeVisible()
     expect(
       screen.getByText('Some work could not finish. Review the failures and recovery below.'),
     ).toBeVisible()
@@ -765,6 +761,131 @@ describe('Application shell', () => {
     expect(vi.mocked(http.getLibrary).mock.calls.at(-1)?.[0]).toEqual({ lens: 'all' })
     // And no navigation happened: a live update is a refetch, never a reload.
     expect(router.state.location.href).toBe(href)
+  })
+
+  it('bounds the captured active-preparation cadence and resyncs after foreground recovery', async () => {
+    vi.useFakeTimers()
+    try {
+      let visibility: DocumentVisibilityState = 'visible'
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => visibility,
+      })
+      const listeners = new Set<(update: LiveUpdate) => void>()
+      const stateListeners = new Set<(state: LiveStreamState) => void>()
+      let streamState: LiveStreamState = 'live'
+      const updates: LiveUpdateStream = {
+        get state() {
+          return streamState
+        },
+        subscribe(listener) {
+          listeners.add(listener)
+          return () => listeners.delete(listener)
+        },
+        observeState(listener) {
+          stateListeners.add(listener)
+          return () => stateListeners.delete(listener)
+        },
+        close: () => undefined,
+      }
+      const announce = (update: LiveUpdate) => {
+        for (const listener of [...listeners]) listener(update)
+      }
+      const active: PreparationView = {
+        schema_version: 'review-preparation-v1',
+        active: true,
+        actionable: false,
+        paused: false,
+        libraries: [],
+      }
+      const http: ReviewHttp = { ...createHttp(), getPreparation: vi.fn(async () => active) }
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      const router = createApplicationRouter(
+        http,
+        queryClient,
+        createMemoryHistory({ initialEntries: ['/library?lens=all'] }),
+        updates,
+      )
+      render(
+        <QueryClientProvider client={queryClient}>
+          <RouterProvider router={router} />
+        </QueryClientProvider>,
+      )
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1)
+      })
+      expect(screen.getByRole('heading', { level: 2, name: 'Works' })).toBeVisible()
+      const before = {
+        attention: vi.mocked(http.getAttention).mock.calls.length,
+        library: vi.mocked(http.getLibrary).mock.calls.length,
+        preparation: vi.mocked(http.getPreparation).mock.calls.length,
+      }
+
+      // Replay the fixed baseline's 98 preparation and 69 Library refresh
+      // causes uniformly rather than in their original bursts. Uniform spacing
+      // is the harder case for coalescing and would still cost the old bridge
+      // 236 requests during this untouched 42-minute foreground session.
+      const probeMilliseconds = 42 * 60 * 1_000
+      const frames = [
+        ...Array.from({ length: 98 }, (_, index) => ({
+          at: Math.floor(((index + 1) * probeMilliseconds) / 98),
+          topic: 'preparation' as const,
+        })),
+        ...Array.from({ length: 69 }, (_, index) => ({
+          at: Math.floor(((index + 1) * probeMilliseconds) / 69),
+          topic: 'library' as const,
+        })),
+      ].sort((left, right) => left.at - right.at)
+      for (const [index, frame] of frames.entries())
+        setTimeout(
+          () => announce({ sequence: index + 1, subject: null, topic: frame.topic }),
+          frame.at,
+        )
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(probeMilliseconds)
+      })
+      expect(vi.mocked(http.getAttention)).toHaveBeenCalledTimes(before.attention)
+      expect(vi.mocked(http.getLibrary)).toHaveBeenCalledTimes(before.library)
+      const afterIdle = {
+        attention: vi.mocked(http.getAttention).mock.calls.length,
+        library: vi.mocked(http.getLibrary).mock.calls.length,
+        preparation: vi.mocked(http.getPreparation).mock.calls.length,
+      }
+      const idleRequests =
+        afterIdle.attention -
+        before.attention +
+        (afterIdle.library - before.library) +
+        (afterIdle.preparation - before.preparation)
+      expect(idleRequests).toBeLessThanOrEqual(Math.floor(237 / 10))
+
+      visibility = 'hidden'
+      document.dispatchEvent(new Event('visibilitychange'))
+      announce({ sequence: 1, subject: null, topic: 'library' })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(200)
+      })
+      expect(vi.mocked(http.getLibrary)).toHaveBeenCalledTimes(afterIdle.library)
+
+      visibility = 'visible'
+      document.dispatchEvent(new Event('visibilitychange'))
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(200)
+      })
+      expect(vi.mocked(http.getAttention)).toHaveBeenCalledTimes(afterIdle.attention + 1)
+      expect(vi.mocked(http.getLibrary)).toHaveBeenCalledTimes(afterIdle.library + 1)
+      expect(vi.mocked(http.getPreparation)).toHaveBeenCalledTimes(afterIdle.preparation + 1)
+
+      await act(async () => {
+        streamState = 'degraded'
+        for (const listener of [...stateListeners]) listener(streamState)
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_600)
+      })
+      expect(vi.mocked(http.getPreparation)).toHaveBeenCalledTimes(afterIdle.preparation + 2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('says the stream is down only once it has stayed down', async () => {
