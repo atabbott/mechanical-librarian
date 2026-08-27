@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Ship the container on the exact Python and uv the public gate qualified, and
+  keep it there: every toolchain pin site must agree, the qualified
+  interpreter and resolver move as one Renovate group, and a half-landed
+  update is a red check instead of silent drift. (#911)
+
 - Report unittest-equivalent tier accounting for three pytest-native shapes:
   a function-scoped fixture failure is one error per case rather than one
   class-level error, `SkipTest` in `setUpClass` runs no tests and skips once,
