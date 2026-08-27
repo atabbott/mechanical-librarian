@@ -500,7 +500,9 @@ def test_remembered_owner_session_survives_profile_and_server_restart() -> None:
                 viewport={"width": 390, "height": 844},
             )
             page = context.pages[0] if context.pages else context.new_page()
-            page.route("**/favicon.ico", lambda route: route.fulfill(status=204, body=""))
+            page.route(
+                "**/favicon.ico", lambda route: route.fulfill(status=204, body="")
+            )
             page.on("pageerror", lambda error: errors.append(str(error)))
 
             def record_console_error(message) -> None:
@@ -528,7 +530,9 @@ def test_remembered_owner_session_survives_profile_and_server_restart() -> None:
                 clock=lambda: now[0],
                 close_repository=True,
                 field_application=_BrowserActivityApplication(),
-                react_asset_loader=ReactAssetLoader(Path(os.environ["ML_REACT_ASSET_DIR"])),
+                react_asset_loader=ReactAssetLoader(
+                    Path(os.environ["ML_REACT_ASSET_DIR"])
+                ),
                 settings=OwnerSettingsOperations(repository.owner_settings_store()),
             )
             server = uvicorn.Server(
@@ -551,9 +555,7 @@ def test_remembered_owner_session_survives_profile_and_server_restart() -> None:
             thread.start()
             deadline = time.monotonic() + 10
             while (
-                not server.started
-                and thread.is_alive()
-                and time.monotonic() < deadline
+                not server.started and thread.is_alive() and time.monotonic() < deadline
             ):
                 time.sleep(0.01)
             if not server.started:
@@ -574,7 +576,9 @@ def test_remembered_owner_session_survives_profile_and_server_restart() -> None:
             with running_server(port, listener) as origin:
                 context, page = persistent_page(playwright)
                 _login(page, origin)
-                expect(page.get_by_role("heading", name="Works", exact=True)).to_be_visible()
+                expect(
+                    page.get_by_role("heading", name="Works", exact=True)
+                ).to_be_visible()
                 assert persisted_sessions() == [(1_000, 1_300)]
                 context.close()
 
@@ -582,9 +586,13 @@ def test_remembered_owner_session_survives_profile_and_server_restart() -> None:
             with running_server(port, listener) as origin:
                 context, page = persistent_page(playwright)
                 page.goto(f"{origin}/library")
-                expect(page.get_by_role("heading", name="Works", exact=True)).to_be_visible()
+                expect(
+                    page.get_by_role("heading", name="Works", exact=True)
+                ).to_be_visible()
                 page.reload()
-                expect(page.get_by_role("heading", name="Works", exact=True)).to_be_visible()
+                expect(
+                    page.get_by_role("heading", name="Works", exact=True)
+                ).to_be_visible()
                 assert persisted_sessions() == [(1_000, 1_300)]
                 storage = page.evaluate(
                     """async () => ({
@@ -613,7 +621,9 @@ def test_remembered_owner_session_survives_profile_and_server_restart() -> None:
             with running_server(port, listener) as origin:
                 context, page = persistent_page(playwright)
                 page.goto(f"{origin}/library")
-                expect(page.get_by_role("heading", name="Works", exact=True)).to_be_visible()
+                expect(
+                    page.get_by_role("heading", name="Works", exact=True)
+                ).to_be_visible()
                 assert persisted_sessions() == [(1_100, 1_400)]
                 policy = page.locator('a[href="/policy?section=identity"]')
                 expect(policy).to_be_attached()
@@ -643,7 +653,9 @@ def test_remembered_owner_session_survives_profile_and_server_restart() -> None:
                 page.get_by_label("Password").fill(new_password)
                 page.get_by_role("button", name="Sign in").click()
                 page.wait_for_url(f"{origin}/library")
-                expect(page.get_by_role("heading", name="Works", exact=True)).to_be_visible()
+                expect(
+                    page.get_by_role("heading", name="Works", exact=True)
+                ).to_be_visible()
                 context.close()
 
         assert errors == []
