@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep Activity reads out of the guarded background-operation gate and derive
+  ordinary page totals from the same bounded activity projection as their rows.
+  Live updates now coalesce while foregrounded, remain quiet in hidden tabs,
+  and restore the server snapshot once when a tab returns. (#853)
+
 - Keep deep Library and Attention pages reachable with the hardened 64 MiB
   temporary filesystem by sorting thin browse keys before loading page documents.
   Support exports retain only a bounded SQLite exception class if storage is

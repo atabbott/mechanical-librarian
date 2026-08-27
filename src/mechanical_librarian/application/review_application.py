@@ -362,6 +362,8 @@ class ReviewApplication:
         operations: OperationalStatus | None,
         gate: RLock,
         updates: LiveUpdateChannel,
+        activity_projection: ContinuousGuardedApplication | None = None,
+        close_activity_projection: Callable[[], None] | None = None,
         cover_considerations: CoverConsiderationService | None = None,
         settings: OwnerSettingsOperations | None = None,
         settings_activation: (
@@ -395,6 +397,8 @@ class ReviewApplication:
         self._close_state_owner = close_state_owner
         self._preparation = preparation
         self._field_application = field_application
+        self._activity_projection = activity_projection
+        self._close_activity_projection = close_activity_projection
         self._operations = operations
         self._cover_considerations = cover_considerations
         self._settings = settings
@@ -591,6 +595,11 @@ class ReviewApplication:
         if self._preparation is not None:
             try:
                 self._preparation.stop(deadline)
+            except Exception as error:
+                failures.append(error)
+        if self._close_activity_projection is not None:
+            try:
+                self._close_activity_projection()
             except Exception as error:
                 failures.append(error)
         if failures:
@@ -842,24 +851,20 @@ class ReviewApplication:
         page: int = 1,
         page_size: int = 25,
     ) -> dict[str, object]:
-        application = self._continuous_application()
-        return self.serialized(
-            lambda: application.activity(
-                search=search,
-                event_type=event_type,
-                range_days=range_days,
-                page=page,
-                page_size=page_size,
-            )
+        application = self._activity_projection or self._continuous_application()
+        return application.activity(
+            search=search,
+            event_type=event_type,
+            range_days=range_days,
+            page=page,
+            page_size=page_size,
         )
 
     def activity_transitions(
         self, event_id: str, after_sequence: int | None = None
     ) -> dict[str, object]:
-        application = self._continuous_application()
-        return self.serialized(
-            lambda: application.activity_transitions(event_id, after_sequence)
-        )
+        application = self._activity_projection or self._continuous_application()
+        return application.activity_transitions(event_id, after_sequence)
 
     def enable_activity(
         self, grants: tuple[tuple[str, tuple[str, ...]], ...]
@@ -1203,6 +1208,8 @@ def compose_review_application(
     field_application: GuardedFieldApplication
     | ContinuousGuardedApplication
     | None = None,
+    activity_projection: ContinuousGuardedApplication | None = None,
+    close_activity_projection: Callable[[], None] | None = None,
     operational_timings: TimingRepository | None = None,
     operational_support: SupportExporter | None = None,
     operational_timer: StageTimer | None = None,
@@ -1279,6 +1286,8 @@ def compose_review_application(
         operations=operations,
         gate=gate,
         updates=updates,
+        activity_projection=activity_projection,
+        close_activity_projection=close_activity_projection,
         cover_considerations=cover_considerations,
         settings=settings,
         settings_activation=settings_activation,

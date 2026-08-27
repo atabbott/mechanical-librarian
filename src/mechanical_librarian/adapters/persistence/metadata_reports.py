@@ -688,6 +688,11 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             limit, include_events=include_events
         )
 
+    def configure_activity_page_reader(self) -> None:
+        """Bound the independently opened Activity projection reader only."""
+
+        self._field_effect_activity.configure_activity_page_reader()
+
     def field_effect_activity_page(
         self,
         *,

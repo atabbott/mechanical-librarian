@@ -328,6 +328,67 @@ def test_a_later_shutdown_failure_is_kept_on_the_one_that_propagates(
     ]
 
 
+def test_activity_projection_bypasses_the_owner_operation_gate(
+    repository: FakeReviewRepository,
+) -> None:
+    class ActivityProjection:
+        def activity(self, **_query: object) -> dict[str, object]:
+            assert not application._gate._is_owned()
+            return {"events": []}
+
+    application = compose_review_application(
+        state_owner=repository,
+        session_store=repository,
+        case_store=repository,
+        decision_store=repository,
+        library_store=repository,
+        policy_store=repository,
+        verify_password=lambda _: True,
+        clock=lambda: _NOW,
+        session_lifetime_seconds=600,
+        graceful_shutdown_seconds=30,
+        activity_projection=cast("ContinuousGuardedApplication", ActivityProjection()),
+    )
+
+    assert application.activity() == {"events": []}
+
+
+def test_shutdown_closes_activity_projection_after_another_lane_fails(
+    repository: FakeReviewRepository,
+) -> None:
+    closed: list[str] = []
+
+    class FailingPreparation:
+        def attach_updates(self, _announce: object) -> None:
+            return None
+
+        def begin_drain(self) -> None:
+            raise RuntimeError("preparation lane did not stop")
+
+        def stop(self, _deadline: float | None = None) -> None:
+            return None
+
+    application = compose_review_application(
+        state_owner=repository,
+        session_store=repository,
+        case_store=repository,
+        decision_store=repository,
+        library_store=repository,
+        policy_store=repository,
+        verify_password=lambda _: True,
+        clock=lambda: _NOW,
+        session_lifetime_seconds=600,
+        graceful_shutdown_seconds=30,
+        preparation=cast("ReviewPreparationSupervisor", FailingPreparation()),
+        close_activity_projection=lambda: closed.append("activity-reader"),
+    )
+
+    with pytest.raises(RuntimeError, match="preparation lane did not stop"):
+        application.stop()
+
+    assert closed == ["activity-reader"]
+
+
 def test_published_preparation_work_wakes_the_guarded_scheduler(
     repository: FakeReviewRepository,
 ) -> None:

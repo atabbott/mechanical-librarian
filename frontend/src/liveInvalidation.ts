@@ -47,6 +47,10 @@ export const invalidationKeys = (update: LiveUpdate): readonly (readonly unknown
 export interface LiveInvalidationOptions {
   readonly schedule?: (run: () => void, delay: number) => number
   readonly cancel?: (handle: number) => void
+  /** Test seam for the browser visibility boundary. */
+  readonly visible?: () => boolean
+  /** Test seam for the browser visibility listener. */
+  readonly observeVisibility?: (listener: () => void) => () => void
 }
 
 export const startLiveInvalidation = (
@@ -57,11 +61,26 @@ export const startLiveInvalidation = (
   const schedule =
     options.schedule ?? ((run, delay) => globalThis.setTimeout(run, delay) as unknown as number)
   const cancel = options.cancel ?? ((handle) => globalThis.clearTimeout(handle))
+  const visible =
+    options.visible ??
+    (() => typeof document === 'undefined' || document.visibilityState !== 'hidden')
+  const observeVisibility =
+    options.observeVisibility ??
+    ((listener) => {
+      if (typeof document === 'undefined') return () => undefined
+      document.addEventListener('visibilitychange', listener)
+      return () => document.removeEventListener('visibilitychange', listener)
+    })
   const pending = new Map<string, readonly unknown[]>()
   let handle: number | null = null
+  let wasVisible = visible()
 
   const flush = () => {
     handle = null
+    // A hidden browser does no catch-up work.  Its next foreground transition
+    // invalidates snapshot keys once, so frames cannot fabricate state or make
+    // an old counter look current.
+    if (!visible()) return
     const keys = [...pending.values()]
     pending.clear()
     // A read taken now is a read this tab no longer owes itself for an echo it
@@ -71,6 +90,7 @@ export const startLiveInvalidation = (
   }
 
   const unsubscribe = stream.subscribe((update) => {
+    if (!visible()) return
     // The one frame this tab does not act on: the echo of its own decision,
     // recognised by the position the server told it that decision caused. It is
     // settled when the owner leaves the case rather than discarded, so the row
@@ -80,9 +100,25 @@ export const startLiveInvalidation = (
     for (const key of invalidationKeys(update)) pending.set(JSON.stringify(key), key)
     handle ??= schedule(flush, coalesceMilliseconds)
   })
+  const stopObservingVisibility = observeVisibility(() => {
+    const isVisible = visible()
+    if (!isVisible) {
+      wasVisible = false
+      return
+    }
+    if (wasVisible) return
+    wasVisible = true
+    // HTTP remains the authority.  A foreground tab deliberately does not
+    // replay individual frames it missed; one coalesced snapshot read restores
+    // every mounted surface without creating a backwards transition.
+    for (const key of invalidationKeys({ sequence: 0, subject: null, topic: 'resync' }))
+      pending.set(JSON.stringify(key), key)
+    handle ??= schedule(flush, coalesceMilliseconds)
+  })
 
   return () => {
     unsubscribe()
+    stopObservingVisibility()
     if (handle !== null) cancel(handle)
     handle = null
   }

@@ -12,6 +12,7 @@ import pytest
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.configuration import ConfigurationError
 from mechanical_librarian.bootstrap.composition import (
+    open_field_effect_activity_projection,
     run_cover_review,
     run_provider_recovery_once,
     run_review_activity,
@@ -51,6 +52,32 @@ def test_activity_composition_calls_the_shared_query_only_projection() -> None:
     assert expected == actual
     compose.assert_called_once_with(configuration, repository)
     projection.activity.assert_called_once_with()
+    repository.close.assert_called_once_with()
+
+
+def test_independent_activity_reader_gets_the_bounded_busy_configuration() -> None:
+    repository = Mock()
+    projection = Mock()
+    configuration = Mock(review=object())
+
+    with (
+        patch(
+            "mechanical_librarian.bootstrap.composition.open_repository",
+            return_value=repository,
+        ),
+        patch(
+            "mechanical_librarian.bootstrap.composition.compose_field_effect_activity_projection",
+            return_value=projection,
+        ) as compose,
+    ):
+        actual, close = open_field_effect_activity_projection(
+            configuration, Path("/database.sqlite3"), object()
+        )
+
+    assert actual is projection
+    repository.configure_activity_page_reader.assert_called_once_with()
+    compose.assert_called_once_with(configuration, repository, None)
+    close()
     repository.close.assert_called_once_with()
 
 

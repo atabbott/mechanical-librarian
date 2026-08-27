@@ -337,7 +337,9 @@ rather than less -- its identities collapse to whole topics -- which is sound
 only because a frame carries nothing that could be lost by collapsing it.
 Resume is the browser's own `Last-Event-ID`, and an identity minted by a
 previous process is answered with a full resync rather than a position in this
-order.
+order. A hidden tab does not refetch from frames; on its next foreground
+transition it takes one ordinary snapshot read, so HTTP still supplies the
+current redacted state and no stale frame can manufacture a transition.
 
 The generated API contract declares that opaque owner session as an API-key
 cookie on every protected operation and marks mutation CSRF and idempotency

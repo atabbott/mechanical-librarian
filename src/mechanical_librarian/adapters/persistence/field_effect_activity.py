@@ -39,8 +39,11 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import time
 from collections import deque
 from collections.abc import Callable
+from copy import deepcopy
+from threading import RLock
 from typing import Any, cast
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
@@ -106,6 +109,9 @@ from mechanical_librarian.domain.shadow_outcome import (
     ShadowOutcomeError,
     ShadowOutcomeSet,
 )
+
+_ACTIVITY_PAGE_BUSY_TIMEOUT_MILLISECONDS = 150
+_ACTIVITY_PAGE_BUSY_RETRY_SECONDS = 0.75
 
 _CORRECTIVE_KEEP_CURRENT_SQL = (
     "human.outcome='keep_current' AND EXISTS (SELECT 1 FROM review_cases review, "
@@ -250,6 +256,16 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         self._field_effect_event_documents = field_effect_event_documents
         self._cover_policy_reference = current_cover_policy_reference
         self._cover_replay_reference = current_cover_replay_reference
+        # Activity's page is immutable at one SQLite data revision.  The
+        # bounded reader-local cache prevents repeated foreground refreshes
+        # from re-running its expensive union while preparation is between
+        # commits; it is not a shared cache or an event transport.
+        self._activity_page_cache: dict[
+            tuple[str | None, str, int, int, int],
+            tuple[tuple[int, int], dict[str, object]],
+        ] = {}
+        self._activity_page_cache_lock = RLock()
+        self._activity_page_busy_retry_seconds = 0.0
 
     @property
     def _current_cover_policy_reference(self) -> str | None:
@@ -1680,7 +1696,102 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             )
         return projected_events, report_documents, reports
 
+    def _activity_projection_revision(self) -> tuple[int, int]:
+        """Return the reader's exact-current durable Activity revision."""
+        try:
+            row = self._connection.execute("PRAGMA data_version").fetchone()
+            if row is None or type(row[0]) is not int:
+                raise FieldEffectError("persistence")
+            # ``data_version`` advances for every other connection's commit;
+            # ``total_changes`` also invalidates direct writes through this
+            # repository. Together they cover every durable source the page
+            # joins without relying on a partial ledger census.
+            return row[0], self._connection.total_changes
+        except sqlite3.Error as error:
+            raise FieldEffectError("persistence") from error
+
+    def configure_activity_page_reader(self) -> None:
+        """Bound only this independently owned Activity reader's busy wait."""
+
+        try:
+            self._connection.execute(
+                f"PRAGMA busy_timeout={_ACTIVITY_PAGE_BUSY_TIMEOUT_MILLISECONDS}"
+            )
+        except sqlite3.Error as error:
+            raise FieldEffectError("persistence") from error
+        self._activity_page_busy_retry_seconds = _ACTIVITY_PAGE_BUSY_RETRY_SECONDS
+
+    @staticmethod
+    def _retryable_activity_page_busy(error: FieldEffectError) -> bool:
+        cause = error.__cause__
+        return (
+            type(cause) is sqlite3.OperationalError
+            and getattr(cause, "sqlite_errorcode", None) == sqlite3.SQLITE_BUSY
+        )
+
     def field_effect_activity_page(
+        self,
+        *,
+        search: str | None,
+        event_type: str,
+        occurred_after: int,
+        page: int,
+        page_size: int,
+    ) -> dict[str, object]:
+        """Return a current bounded page, retrying only this reader's busy lock."""
+
+        deadline = time.monotonic() + self._activity_page_busy_retry_seconds
+        while True:
+            try:
+                return self._field_effect_activity_page_once(
+                    search=search,
+                    event_type=event_type,
+                    occurred_after=occurred_after,
+                    page=page,
+                    page_size=page_size,
+                )
+            except FieldEffectError as error:
+                if (
+                    self._activity_page_busy_retry_seconds == 0
+                    or not self._retryable_activity_page_busy(error)
+                    or time.monotonic() + _ACTIVITY_PAGE_BUSY_TIMEOUT_MILLISECONDS
+                    / 1_000
+                    > deadline
+                ):
+                    raise
+
+    def _field_effect_activity_page_once(
+        self,
+        *,
+        search: str | None,
+        event_type: str,
+        occurred_after: int,
+        page: int,
+        page_size: int,
+    ) -> dict[str, object]:
+        """Return a bounded page, reusing only an exact-current projection."""
+        key = (search, event_type, occurred_after, page, page_size)
+        with self._activity_page_cache_lock:
+            before = self._activity_projection_revision()
+            cached = self._activity_page_cache.get(key)
+            if cached is not None and cached[0] == before:
+                return deepcopy(cached[1])
+            result = self._field_effect_activity_page_uncached(
+                search=search,
+                event_type=event_type,
+                occurred_after=occurred_after,
+                page=page,
+                page_size=page_size,
+            )
+            # A commit racing the projection must never be stamped with a
+            # newer revision than the snapshot that produced it.
+            if self._activity_projection_revision() == before:
+                self._activity_page_cache[key] = (before, deepcopy(result))
+                if len(self._activity_page_cache) > 2:
+                    self._activity_page_cache.pop(next(iter(self._activity_page_cache)))
+            return result
+
+    def _field_effect_activity_page_uncached(
         self,
         *,
         search: str | None,
@@ -1853,21 +1964,49 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             )
 
             if search is None:
-                total = int(
-                    self._connection.execute(
-                        projection + "SELECT count(*) FROM activity_events" + predicate,
-                        parameters,
-                    ).fetchone()[0]
-                )
-                page_count = max(1, (total + page_size - 1) // page_size)
-                selected_page = min(page, page_count)
-                rows = self._connection.execute(
+                # The page total is a window over the same immutable ledger
+                # projection as the selected rows.  The former count-then-page
+                # shape evaluated the expensive union twice for every ordinary
+                # Activity refresh.  An out-of-range page is deliberately a
+                # rare fallback: only then do we need its total before we know
+                # the clamped offset.
+                page_rows = self._connection.execute(
                     projection
-                    + columns
+                    + columns.replace(
+                        " FROM activity_events",
+                        ",count(*) OVER () AS activity_total FROM activity_events",
+                    )
                     + predicate
                     + " ORDER BY occurred_at DESC,event_id DESC LIMIT ? OFFSET ?",
-                    (*parameters, page_size, (selected_page - 1) * page_size),
+                    (*parameters, page_size, (page - 1) * page_size),
                 ).fetchall()
+                if page_rows:
+                    total = int(page_rows[0][-1])
+                    rows = [row[:-1] for row in page_rows]
+                    page_count = max(1, (total + page_size - 1) // page_size)
+                    selected_page = page
+                else:
+                    total = int(
+                        self._connection.execute(
+                            projection
+                            + "SELECT count(*) FROM activity_events"
+                            + predicate,
+                            parameters,
+                        ).fetchone()[0]
+                    )
+                    page_count = max(1, (total + page_size - 1) // page_size)
+                    selected_page = min(page, page_count)
+                    rows = (
+                        []
+                        if total == 0
+                        else self._connection.execute(
+                            projection
+                            + columns
+                            + predicate
+                            + " ORDER BY occurred_at DESC,event_id DESC LIMIT ? OFFSET ?",
+                            (*parameters, page_size, (selected_page - 1) * page_size),
+                        ).fetchall()
+                    )
             else:
                 # Searching is allowed to scan the selected immutable corpus.
                 # It renders and validates each row below before deciding a

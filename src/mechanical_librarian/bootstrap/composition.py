@@ -647,6 +647,29 @@ def compose_field_effect_activity_projection(
     )
 
 
+def open_field_effect_activity_projection(
+    configuration: ApplicationConfiguration,
+    database_path: Path,
+    authority: object,
+    provider_recovery: SQLiteProviderRecoveryStore | None = None,
+) -> tuple[ContinuousGuardedApplication, Callable[[], None]]:
+    """Open the Activity reader independently of the state-owner connection."""
+    repository = open_repository(
+        database_path, create=False, authority=authority, cross_thread=True
+    )
+    try:
+        repository.configure_activity_page_reader()
+        return (
+            compose_field_effect_activity_projection(
+                configuration, repository, provider_recovery
+            ),
+            repository.close,
+        )
+    except BaseException:
+        repository.close()
+        raise
+
+
 class _IsolatedEpubInspector:
     def __init__(self, artifacts: CoverArtifactStore) -> None:
         self._artifacts = artifacts
@@ -2303,6 +2326,17 @@ def compose_store_runtime_generation(
             if configuration.libraries
             else None
         )
+        activity_projection = None
+        close_activity_projection = None
+        if field_application is not None:
+            activity_projection, close_activity_projection = (
+                open_field_effect_activity_projection(
+                    configuration,
+                    database_path,
+                    repository.authority,
+                    provider_recovery,
+                )
+            )
         support_bundle = SupportBundle(
             (
                 (
@@ -2327,38 +2361,45 @@ def compose_store_runtime_generation(
                 ),
             )
         )
-        review_application = compose_review_application(
-            state_owner=repository,
-            session_store=repository,
-            case_store=repository,
-            decision_store=repository,
-            library_store=repository,
-            policy_store=repository,
-            verify_password=owner_password_verifier(encoded_verifier),
-            clock=lambda: int(time.time()),
-            session_lifetime_seconds=review.session_lifetime_seconds,
-            graceful_shutdown_seconds=review.graceful_shutdown_seconds,
-            close_state_owner=True,
-            preparation=preparation,
-            policy_libraries=tuple(
-                (
-                    library.name,
-                    cast("dict[str, object] | None", library.policy_override),
-                )
-                for library in configuration.libraries
-            ),
-            operational_timings=timing_store,
-            operational_support=support_bundle,
-            operational_timer=timing,
-            field_application=field_application,
-            cover_considerations=_compose_cover_considerations(
-                repository, artifact_store_path, review
-            ),
-            settings=OwnerSettingsOperations(settings_store),
-            settings_activation=None if activation is None else activation.activate,
-            first_boot=first_boot,
-            acknowledge_first_boot=repository.acknowledge_first_boot_preparation,
-        )
+        try:
+            review_application = compose_review_application(
+                state_owner=repository,
+                session_store=repository,
+                case_store=repository,
+                decision_store=repository,
+                library_store=repository,
+                policy_store=repository,
+                verify_password=owner_password_verifier(encoded_verifier),
+                clock=lambda: int(time.time()),
+                session_lifetime_seconds=review.session_lifetime_seconds,
+                graceful_shutdown_seconds=review.graceful_shutdown_seconds,
+                close_state_owner=True,
+                preparation=preparation,
+                policy_libraries=tuple(
+                    (
+                        library.name,
+                        cast("dict[str, object] | None", library.policy_override),
+                    )
+                    for library in configuration.libraries
+                ),
+                operational_timings=timing_store,
+                operational_support=support_bundle,
+                operational_timer=timing,
+                field_application=field_application,
+                activity_projection=activity_projection,
+                close_activity_projection=close_activity_projection,
+                cover_considerations=_compose_cover_considerations(
+                    repository, artifact_store_path, review
+                ),
+                settings=OwnerSettingsOperations(settings_store),
+                settings_activation=None if activation is None else activation.activate,
+                first_boot=first_boot,
+                acknowledge_first_boot=repository.acknowledge_first_boot_preparation,
+            )
+        except BaseException:
+            if close_activity_projection is not None:
+                close_activity_projection()
+            raise
         return (
             RuntimeGeneration(
                 create_review_app(review_application, review),
@@ -2672,6 +2713,17 @@ def run_review_server(
                 if getattr(configuration, "libraries", ())
                 else None
             )
+            activity_projection = None
+            close_activity_projection = None
+            if field_application is not None:
+                activity_projection, close_activity_projection = (
+                    open_field_effect_activity_projection(
+                        configuration,
+                        database_path,
+                        repository.authority,
+                        provider_recovery,
+                    )
+                )
             support_bundle = SupportBundle(
                 (
                     (
@@ -2699,31 +2751,38 @@ def run_review_server(
             cover_considerations = _compose_cover_considerations(
                 repository, artifact_store_path, review
             )
-            review_application = compose_review_application(
-                state_owner=repository,
-                session_store=repository,
-                case_store=repository,
-                decision_store=repository,
-                library_store=repository,
-                policy_store=repository,
-                verify_password=verify_password,
-                clock=lambda: int(time.time()),
-                session_lifetime_seconds=review.session_lifetime_seconds,
-                graceful_shutdown_seconds=review.graceful_shutdown_seconds,
-                close_state_owner=True,
-                preparation=preparation,
-                policy_libraries=tuple(
-                    (library.name, library.policy_override)
-                    for library in getattr(configuration, "libraries", ())
-                ),
-                operational_timings=timing_store,
-                operational_support=support_bundle,
-                operational_timer=timing,
-                field_application=field_application,
-                cover_considerations=cover_considerations,
-                settings=settings,
-                first_boot=first_boot,
-            )
+            try:
+                review_application = compose_review_application(
+                    state_owner=repository,
+                    session_store=repository,
+                    case_store=repository,
+                    decision_store=repository,
+                    library_store=repository,
+                    policy_store=repository,
+                    verify_password=verify_password,
+                    clock=lambda: int(time.time()),
+                    session_lifetime_seconds=review.session_lifetime_seconds,
+                    graceful_shutdown_seconds=review.graceful_shutdown_seconds,
+                    close_state_owner=True,
+                    preparation=preparation,
+                    policy_libraries=tuple(
+                        (library.name, library.policy_override)
+                        for library in getattr(configuration, "libraries", ())
+                    ),
+                    operational_timings=timing_store,
+                    operational_support=support_bundle,
+                    operational_timer=timing,
+                    field_application=field_application,
+                    activity_projection=activity_projection,
+                    close_activity_projection=close_activity_projection,
+                    cover_considerations=cover_considerations,
+                    settings=settings,
+                    first_boot=first_boot,
+                )
+            except BaseException:
+                if close_activity_projection is not None:
+                    close_activity_projection()
+                raise
             app = create_review_app(review_application, review)
             runtime = RuntimeGeneration(
                 app,

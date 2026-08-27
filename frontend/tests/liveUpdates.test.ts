@@ -186,4 +186,52 @@ describe('live invalidation', () => {
     ])
     stop()
   })
+
+  it('does no hidden-tab work and takes one snapshot-authoritative foreground resync', () => {
+    const queryClient = new QueryClient()
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries').mockResolvedValue(undefined)
+    const timers: (() => void)[] = []
+    const listeners: ((update: LiveUpdate) => void)[] = []
+    let hidden = true
+    let visibilityListener: (() => void) | undefined
+    const stream = {
+      state: 'live' as const,
+      subscribe(listener: (update: LiveUpdate) => void) {
+        listeners.push(listener)
+        return () => undefined
+      },
+      observeState: () => () => undefined,
+      close: () => undefined,
+    }
+    const stop = startLiveInvalidation(stream, queryClient, {
+      schedule: (run) => {
+        timers.push(run)
+        return timers.length
+      },
+      cancel: () => undefined,
+      visible: () => !hidden,
+      observeVisibility: (listener) => {
+        visibilityListener = listener
+        return () => undefined
+      },
+    })
+
+    for (const listener of listeners) listener({ sequence: 4, subject: null, topic: 'library' })
+    expect(invalidate).not.toHaveBeenCalled()
+    expect(timers).toHaveLength(0)
+
+    hidden = false
+    visibilityListener?.()
+    visibilityListener?.()
+    expect(timers).toHaveLength(1)
+    timers[0]?.()
+    expect(invalidate.mock.calls.map(([argument]) => argument?.queryKey)).toEqual([
+      ['review-preparation'],
+      ['library'],
+      ['attention'],
+      ['activity'],
+      ['review-case'],
+    ])
+    stop()
+  })
 })
