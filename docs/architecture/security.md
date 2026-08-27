@@ -508,7 +508,7 @@ deadline, byte, and request-count authority. Attempt records are bounded and
 process-local. Provider adapters also count optional parser/schema rejections
 at their actual rejection points. The application canonically merges those
 counts once with the attempt categories and incomplete-outcome mapping for
-`metadata-report-v27`; provider, attempt ordinal, delay, elapsed time,
+`metadata-report-v28`; provider, attempt ordinal, delay, elapsed time,
 headers, bodies, and exception text are dropped. Application-created
 query-limit outcomes follow the same closed mapping and persist
 provider/lookup_construction/lookup without constructing or invoking a
@@ -516,6 +516,16 @@ provider. Missing, malformed, or exception-raising optional attempt records map
 to a bounded provider/unknown/response aggregate. Provider observations admit
 only sorted unique provider-component aggregates whose category and stage are
 one supported provider combination.
+
+Work-query shaping never rewrites retained evidence. The canonical report keeps
+only a closed dispatch lineage and, when the domain admits decoration-equivalent
+identity, the one closed family and side that proved it; rendered queries,
+shaped values, credentials, and responses are not retained. Only the exact
+first-author filename-prefix grammar has admission authority. Every other
+transformation is query-only and cannot grant candidate or write authority.
+All widening and narrowing requests remain inside the existing deadline,
+pacing, byte, dispatch-count, and retry-accounting boundaries; ISBN/ASIN
+dispatch is unchanged.
 
 The fixed Hardcover selections stay within three relationship levels. Typed
 taxonomy is joined from bounded sibling-root tag rows by exact provider IDs.

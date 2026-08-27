@@ -102,6 +102,73 @@ def _work_lookup() -> MetadataLookup:
     )
 
 
+def test_work_query_ladder_is_bounded_and_accounted_as_retries() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"docs": []},
+        )
+
+    lookup = MetadataLookup(
+        ProviderQueryKind.WORK,
+        (),
+        "Local work title: Subtitle",
+        ("Ada & Bea",),
+    )
+    observation = OpenLibraryMetadataProvider(
+        "open_library",
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        65_536,
+        pacer=OpenLibraryPacer(sleep=lambda _: None),
+    ).observe(lookup)
+
+    assert ProviderStatus.NO_MATCH is observation.status
+    assert 3 == len(requests)
+    assert "Local work title: Subtitle" == requests[0].url.params["title"]
+    assert "Local work title" == requests[1].url.params["title"]
+    assert "Ada and Bea" == requests[2].url.params["author"]
+    assert 1 == observation.request_accounting.initial_dispatches
+    assert 2 == observation.request_accounting.retry_dispatches
+
+
+def test_candidate_limit_gets_one_open_library_phrase_retry() -> None:
+    requests: list[httpx.Request] = []
+    docs = [
+        {
+            "key": f"/works/OL{index}W",
+            "author_name": ["Ada Example"],
+            "author_key": ["OL7A"],
+            "edition_key": [f"OL{index}M"],
+            "editions": {"docs": [{"key": f"/books/OL{index}M"}]},
+        }
+        for index in range(1, 4)
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"docs": docs if len(requests) == 1 else []},
+        )
+
+    observation = OpenLibraryMetadataProvider(
+        "open_library",
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        65_536,
+        pacer=OpenLibraryPacer(sleep=lambda _: None),
+    ).observe(_work_lookup())
+
+    assert ProviderStatus.NO_MATCH is observation.status
+    assert 2 == len(requests)
+    assert '"Local work title" author:"Ada Example"' == requests[1].url.params["q"]
+    assert 1 == observation.request_accounting.retry_dispatches
+
+
 def _title() -> LocalClaim:
     return LocalClaim.create(
         kind=ClaimKind.TITLE,

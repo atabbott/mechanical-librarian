@@ -57,6 +57,13 @@ from mechanical_librarian.domain.proposal_set import (
     evaluate_report,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.work_identity import (
+    WorkDispatchLineage,
+    WorkDispatchRung,
+    WorkTitleTransformationFamily,
+    WorkTitleTransformationLineage,
+    WorkTitleTransformationSide,
+)
 from tests.support.proposal_evidence import (
     _claim,
     _fields,
@@ -473,6 +480,68 @@ def _work_lane_report(
         local_reasons=("opening_matter_isbn",),
         providers=providers,
     )
+
+
+def test_proposal_replay_uses_persisted_provider_side_work_identity_lineage(
+    work_lane: MetadataDiscoveryLane,
+) -> None:
+    candidate = replace(
+        _work_lane_candidate(),
+        claims=(
+            _claim(
+                "open-connection",
+                "edition",
+                ClaimKind.TITLE,
+                "Mick_Herron_-_Real_Tigers",
+                scope=ClaimScope.WORK,
+            ),
+            _work_lane_creator_claim(),
+        ),
+    )
+    dispatch = WorkDispatchLineage(
+        WorkDispatchRung.NORMALIZED,
+        (WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,),
+    )
+    qualified = qualify_provider_observation(
+        ProviderObservation(
+            "open-connection",
+            ProviderStatus.CANDIDATES,
+            (),
+            (candidate,),
+            ProviderQueryKind.WORK,
+            "open_library",
+            dispatch_lineage=dispatch,
+        ),
+        MetadataLookup(
+            ProviderQueryKind.WORK,
+            (),
+            "Real Tigers",
+            ("Mick Herron",),
+        ),
+    )
+    observation = provider_observation(
+        "open-connection",
+        (
+            ProviderLaneResult(
+                work_lane,
+                qualified.status,
+                qualified.candidates,
+                dispatch_lineage=qualified.dispatch_lineage,
+                transformation_lineage=qualified.transformation_lineage,
+            ),
+        ),
+        authority="open_library",
+    )
+    report = _work_lane_report((_work_lane_title(),), (observation,))
+
+    replayed = MetadataReport.from_json(report.to_json())
+    retained = replayed.providers[0]
+    assert retained.lanes[0].transformation_lineage == WorkTitleTransformationLineage(
+        WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
+        WorkTitleTransformationSide.PROVIDER,
+    )
+    assert _target_backed_lookup_contains(replayed, retained, retained.candidates[0])
+    assert ProposalSet.from_json(evaluate_report(replayed).to_json())
 
 
 @pytest.fixture

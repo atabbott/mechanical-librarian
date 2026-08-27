@@ -58,6 +58,13 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     TargetFieldState,
 )
+from mechanical_librarian.domain.work_identity import (
+    WorkDispatchLineage,
+    WorkDispatchRung,
+    WorkTitleTransformationFamily,
+    WorkTitleTransformationLineage,
+    WorkTitleTransformationSide,
+)
 
 
 class _Target:
@@ -802,6 +809,48 @@ def test_retry_that_erases_retained_work_overflow_fails_closed(retry: _Retry) ->
     with pytest.raises(ProviderRetrySuccessorError, match="overflow"):
         retry.service(None)._merged(plan, original, (isbn,), replacement)
     assert before == original.to_data()
+
+
+def test_retry_successor_preserves_exact_work_dispatch_and_transformation_lineage(
+    retry: _Retry,
+) -> None:
+    plan, work, isbn, _overflow = _overflow_source(retry)
+    original = provider_observation(
+        "catalogue",
+        (
+            ProviderLaneResult(work, ProviderStatus.UNAVAILABLE),
+            ProviderLaneResult(isbn, ProviderStatus.NO_MATCH),
+        ),
+        authority="open_library",
+    )
+    dispatch = WorkDispatchLineage(
+        WorkDispatchRung.NORMALIZED,
+        (WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,),
+        True,
+    )
+    transformation = WorkTitleTransformationLineage(
+        WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
+        WorkTitleTransformationSide.LOCAL,
+    )
+    replacement = provider_observation(
+        "catalogue",
+        (
+            ProviderLaneResult(
+                work,
+                ProviderStatus.CANDIDATES,
+                (ProviderCandidate("new", "work", ()),),
+                dispatch_lineage=dispatch,
+                transformation_lineage=transformation,
+            ),
+        ),
+        authority="open_library",
+    )
+
+    merged = retry.service(None)._merged(plan, original, (work,), replacement)
+
+    recovered = next(lane for lane in merged.lanes if lane.identity == work.identity)
+    assert recovered.dispatch_lineage == dispatch
+    assert recovered.transformation_lineage == transformation
 
 
 def _overflow_source(retry: _Retry):

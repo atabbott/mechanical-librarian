@@ -33,12 +33,16 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderEvidenceKind,
     ProviderQueryKind,
     ProviderStatus,
+    TargetDestination,
     TargetFacts,
+    TargetField,
+    TargetFieldState,
     default_target_fields,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
+from mechanical_librarian.domain.work_identity import WorkDispatchRung
 
 
 def _isbn(value: str = "9780306406157") -> LocalClaim:
@@ -769,6 +773,167 @@ def test_work_query_requires_exact_complete_title_and_author_order() -> None:
         value.scope is ClaimScope.WORK or value is retained
         for value in observation.candidates[0].evidence
     )
+
+
+def test_work_query_ladder_stops_on_first_candidates_and_accounts_retry() -> None:
+    requests: list[httpx.Request] = []
+    volume = _volume()
+    volume["volumeInfo"]["title"] = "Example Book: A Subtitle"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json=(
+                {"totalItems": 0, "items": []}
+                if len(requests) == 1
+                else {"totalItems": 1, "items": [volume]}
+            ),
+        )
+
+    lookup = MetadataLookup(
+        ProviderQueryKind.WORK,
+        (),
+        "Example Book: A Subtitle (Book 2)",
+        ("Ada Example",),
+    )
+    provider = GoogleBooksMetadataProvider(
+        "google_books",
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        65_536,
+    )
+
+    observation = provider.observe(lookup)
+
+    assert ProviderStatus.CANDIDATES is observation.status
+    assert 2 == len(requests)
+    assert 'intitle:"Example Book: A Subtitle"' in requests[0].url.params["q"]
+    assert 'intitle:"Example Book"' in requests[1].url.params["q"]
+    assert 1 == observation.request_accounting.initial_dispatches
+    assert 1 == observation.request_accounting.retry_dispatches
+    assert (
+        observation.dispatch_lineage is not None
+        and observation.dispatch_lineage.rung is WorkDispatchRung.SUBTITLE_STRIPPED
+    )
+
+
+def test_widened_search_cannot_bypass_work_identity_qualification() -> None:
+    volume = _volume()
+    volume["volumeInfo"]["title"] = "Different Work"
+    lookup = MetadataLookup(
+        ProviderQueryKind.WORK,
+        (),
+        "Example Book: A Subtitle",
+        ("Ada Example",),
+    )
+    provider = GoogleBooksMetadataProvider(
+        "google_books",
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json={"totalItems": 1, "items": [volume]},
+                )
+            )
+        ),
+        65_536,
+    )
+
+    qualified = qualify_provider_observation(provider.observe(lookup), lookup)
+
+    assert ProviderStatus.NO_MATCH is qualified.status
+    assert not qualified.candidates
+
+
+def test_candidate_limit_gets_exactly_one_narrowing_retry() -> None:
+    requests: list[httpx.Request] = []
+    overflow = [_volume(f"volume_{index}") for index in range(6)]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json=(
+                {"totalItems": 6, "items": overflow}
+                if len(requests) == 1
+                else {"totalItems": 0, "items": []}
+            ),
+        )
+
+    lookup = MetadataLookup(
+        ProviderQueryKind.WORK,
+        (),
+        "Example Book",
+        ("Ada Example", "Bea Example"),
+    )
+    observation = GoogleBooksMetadataProvider(
+        "google_books",
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        65_536,
+    ).observe(lookup)
+
+    assert ProviderStatus.NO_MATCH is observation.status
+    assert 2 == len(requests)
+    assert (
+        'inauthor:"Ada Example" inauthor:"Bea Example"' in requests[0].url.params["q"]
+    )
+    assert 'inauthor:"Ada Example Bea Example"' in requests[1].url.params["q"]
+    assert 1 == observation.request_accounting.retry_dispatches
+
+
+def test_successful_lane_variant_survives_canonical_report_replay() -> None:
+    claim = _isbn()
+    lane = MetadataDiscoveryLane(
+        f"lane_{1:064x}",
+        ProviderQueryKind.WORK,
+        (claim.reference,),
+        title="Example Book",
+        authors=("Ada Example",),
+    )
+    provider = GoogleBooksMetadataProvider(
+        "google_books",
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json={"totalItems": 1, "items": [_volume()]},
+                )
+            )
+        ),
+        65_536,
+    )
+    observation = provider.observe(MetadataDiscoveryPlan((claim,), (lane,)))
+    report = MetadataReport.create(
+        target=TargetFacts(
+            "primary",
+            "ebooks",
+            "item-1",
+            tuple(
+                TargetField(
+                    TargetDestination.AUTHORS,
+                    TargetFieldState.VALUE,
+                    ("Ada Example",),
+                )
+                if field.destination is TargetDestination.AUTHORS
+                else field
+                for field in default_target_fields("Example Book")
+            ),
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64),
+        local_claims=(claim,),
+        local_reasons=("no_opening_claims",),
+        providers=(observation,),
+    )
+
+    replayed = MetadataReport.from_json(report.to_json())
+
+    lineage = replayed.providers[0].lanes[0].dispatch_lineage
+    assert lineage is not None
+    assert WorkDispatchRung.NORMALIZED is lineage.rung
 
 
 def test_exact_isbn_lane_promotes_standard_publication_date() -> None:

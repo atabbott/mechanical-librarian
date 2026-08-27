@@ -2,9 +2,18 @@
 
 **Canonical report**
 The exact compact, key-sorted UTF-8 JSON document validated by the closed
-`metadata-report-v27` model. It carries the closed ordered local-field results,
+`metadata-report-v28` model. It carries the closed ordered local-field results,
 source capabilities, bounded claim occurrence, and (when present) rear-spine
 provenance as well as the report's scope and evidence.
+
+**Work dispatch lineage**
+The closed base rung and ordered query-only transformations used for a work
+request, plus whether its single candidate-limit narrowing retry occurred. It
+records no query text and grants no evidence or write authority.
+
+**Work transformation lineage**
+The one admission-enabled decoration family and local or provider side that the
+domain used to establish decoration-equivalent work identity.
 
 **Current pointer**
 The separate mutable reference from one connection/library/item/file identity

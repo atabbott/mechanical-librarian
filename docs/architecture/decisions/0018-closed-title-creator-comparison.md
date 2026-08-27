@@ -18,7 +18,8 @@ and could increase downstream evidence authority.
 
 ## Decision
 
-`closed-title-creator-v3` is the only current comparison policy. It records a
+`closed-title-creator-publication-work-identity-v5` is the only current
+comparison policy. It records a
 truthful deterministic method on every agreement link:
 
 1. exact source bytes;
@@ -52,8 +53,26 @@ seam adds comparison links after the complete candidate is assembled.
 Construction and replay run the same finalizer and reject any non-canonical
 link or binding. `ComparisonMethod.NONE` is valid only for disagreement,
 incompatible, or not-comparable outcomes. The exact-current report and
-database schema advances to `metadata-report-v20`; ADR-0013 rejects v19 and all
-earlier state without migration or compatibility parsing.
+database schema originally advanced to `metadata-report-v20`.
+
+The #870 amendment adds one separate, domain-owned work-identity admission
+decision without broadening ordinary title agreement. Its closed transformation
+table distinguishes query-enabled from admission-enabled families. Only
+`filename_author_title_prefix` is admission-enabled: the complete prefix must
+equal the complete first ordered author and precede a non-empty title through
+one bounded filename separator. It permits no author inversion, initials
+expansion, token reordering, partial match, alternate-author choice, or fuzzy
+comparison. All other table rows are query-only.
+
+Admission retains both sides' original claims, requires the exact complete
+ordered authors and one provider-local work identity, and preserves every
+translation, adaptation, abridgement, and variant-marker veto. It records the
+exact transformation family and local/provider side; zero or multiple valid
+lineages reject. Dispatch lineage is independently retained and never creates
+equivalence. Initial qualification, overflow witnesses, persisted readback,
+retry successors, and ProposalSet replay invoke the same decision. The schema
+therefore advances to `metadata-report-v28`; ADR-0013 rejects v27 and every
+other predecessor during ordinary startup.
 
 ## Consequences
 
@@ -63,6 +82,7 @@ earlier state without migration or compatibility parsing.
 - Complete creator order and identity binding are validated once in the domain.
 - Provider rank, response order, aliases, and repeated queries cannot create
   another evidence source or silently widen downstream authority.
+- Provider-specific query grammar cannot define work-title equivalence.
 
 ### Negative
 
@@ -73,5 +93,5 @@ earlier state without migration or compatibility parsing.
 ### Neutral or deferred
 
 - No fuzzy matching, edit distance, token subsets, accent stripping, author
-  reordering, subtitle composition, adaptive query, manifestation selection,
+  reordering, subtitle admission, manifestation selection,
   reviewer decision, or production write is added.

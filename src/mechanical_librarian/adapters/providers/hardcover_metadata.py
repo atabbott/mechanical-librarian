@@ -87,6 +87,13 @@ from mechanical_librarian.domain.metadata_report import (
     normalize_title,
     provider_access_time,
 )
+from mechanical_librarian.domain.work_identity import (
+    WorkDispatchLineage,
+    WorkDispatchRung,
+    WorkQuery,
+    narrowing_work_query,
+    work_query_ladder,
+)
 
 HARDCOVER_URL = "https://api.hardcover.app/v1/graphql"
 HARDCOVER_SCHEMA_COMMIT = "1c5bdbd3244e02b03ccc658a792793e39cba17a8"
@@ -115,6 +122,9 @@ _WORK_QUERY = (
     f"tags:tags(where:{{taggings:{{book:{{title:{{_eq:$title}},contributions:{{author:{{name:{{_in:$authors}}}}}}}}}}}},order_by:{{id:asc}},limit:{_MAX_TAG_ROWS + 1})"
     "{id tag tag_category{id category}}}"
 )
+_WORK_NARROW_QUERY = _WORK_QUERY.replace(
+    "$authors:[String!]!", "$author:String!"
+).replace("_in:$authors", "_eq:$author")
 _QUERY = _ISBN_QUERY
 
 
@@ -323,6 +333,8 @@ class HardcoverMetadataProvider:
                         observation.accessed_at,
                         observation.edition_enrichment_overflow,
                         diagnostics,
+                        observation.dispatch_lineage,
+                        observation.transformation_lineage,
                     )
                 )
                 merged = merge_provider_cover_descriptors(
@@ -350,7 +362,47 @@ class HardcoverMetadataProvider:
         lookup: MetadataLookup,
         *,
         deadline: float | None,
+        _shaped: WorkQuery | None = None,
     ) -> ProviderObservation:
+        if lookup.kind is ProviderQueryKind.WORK and _shaped is None:
+            if lookup.title is None or not lookup.authors:
+                return ProviderObservation(
+                    self._name,
+                    ProviderStatus.INSUFFICIENT_INPUT,
+                    query_kind=lookup.kind,
+                )
+            last = ProviderObservation(
+                self._name,
+                ProviderStatus.NO_MATCH,
+                query_kind=lookup.kind,
+            )
+            for work_query in work_query_ladder(lookup.title, lookup.authors):
+                shaped_lookup = replace(
+                    lookup,
+                    title=work_query.title,
+                    authors=work_query.authors,
+                )
+                last = self._observe_lookup(
+                    shaped_lookup,
+                    deadline=deadline,
+                    _shaped=work_query,
+                )
+                if last.status is ProviderStatus.CANDIDATES:
+                    return last
+                if last.status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED:
+                    narrowed = narrowing_work_query(work_query)
+                    return self._observe_lookup(
+                        replace(
+                            lookup,
+                            title=narrowed.title,
+                            authors=narrowed.authors,
+                        ),
+                        deadline=deadline,
+                        _shaped=narrowed,
+                    )
+                if last.status is not ProviderStatus.NO_MATCH:
+                    return last
+            return last
         local_claims = lookup.local_claims
         usable = tuple(
             sorted(
@@ -398,12 +450,19 @@ class HardcoverMetadataProvider:
                 },
             }
         elif lookup.kind is ProviderQueryKind.WORK:
+            is_narrowed = (
+                _shaped is not None and _shaped.candidate_limit_narrowing_retry
+            )
             body = {
                 "operationName": "MetadataEvidenceByWork",
-                "query": _WORK_QUERY,
+                "query": _WORK_NARROW_QUERY if is_narrowed else _WORK_QUERY,
                 "variables": {
-                    "authors": list(lookup.authors),
                     "title": lookup.title,
+                    **(
+                        {"author": lookup.authors[0]}
+                        if is_narrowed
+                        else {"authors": list(lookup.authors)}
+                    ),
                 },
             }
         else:
@@ -427,10 +486,30 @@ class HardcoverMetadataProvider:
                 accessed_at=self._accessed_at,
                 diagnostics=self._schema_diagnostics(),
                 edition_enrichment_overflow=edition_enrichment_overflow,
+                dispatch_lineage=(
+                    WorkDispatchLineage.from_query(_shaped)
+                    if status
+                    in {
+                        ProviderStatus.CANDIDATES,
+                        ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+                    }
+                    and _shaped is not None
+                    else None
+                ),
             )
 
         try:
-            payload = self._request(body, deadline=deadline)
+            payload = self._request(
+                body,
+                deadline=deadline,
+                query_retry=(
+                    _shaped is not None
+                    and (
+                        _shaped.rung is not WorkDispatchRung.NORMALIZED
+                        or _shaped.candidate_limit_narrowing_retry
+                    )
+                ),
+            )
         except ProviderFailure as error:
             return result(error.status)
         try:
@@ -520,13 +599,21 @@ class HardcoverMetadataProvider:
             )
         )
 
-    def _request(self, body: dict[str, object], *, deadline: float | None) -> bytes:
+    def _request(
+        self,
+        body: dict[str, object],
+        *,
+        deadline: float | None,
+        query_retry: bool = False,
+    ) -> bytes:
         for retry_index in range(_MAX_ATTEMPTS_PER_QUERY):
             started = self._clock()
             attempts_before_dispatch = self._attempt_count
             try:
                 payload = self._request_once(
-                    body, deadline=deadline, is_retry=retry_index > 0
+                    body,
+                    deadline=deadline,
+                    is_retry=query_retry or retry_index > 0,
                 )
             except (asyncio.CancelledError, KeyboardInterrupt):
                 if self._attempt_count != attempts_before_dispatch:

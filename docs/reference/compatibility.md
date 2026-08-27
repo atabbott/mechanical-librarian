@@ -11,7 +11,7 @@ The current installed contract is intentionally narrow:
 - Python 3.13 or 3.14;
 - `config-v6` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v27` plus `proposal-set-v5` under
+  `metadata-report-v28` plus `proposal-set-v5` under
   `fixed-conservative-v12`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v6`,
   `shadow-decision-set-v1` under
@@ -28,8 +28,9 @@ The current installed contract is intentionally narrow:
   explicitly configured book libraries;
 - an explicitly selected EPUB on a mapped read-only mount; and
 - fixed Hardcover, Open Library, and Google Books metadata operations for
-  referenced enabled providers: at most eight exact ISBN-family lanes plus one exact
-  title-plus-complete-author work lane, with no partial egress on overflow;
+  referenced enabled providers: at most eight exact ISBN-family lanes plus one
+  title-plus-complete-author work lane with at most three deterministic widening
+  variants and one provider-grammar narrowing retry, with no partial egress on overflow;
   Hardcover selections use at most three relationship levels and reject
   provider-declared GraphQL errors before considering partial data; safely
   anchored records retain independently valid bounded optional fields and

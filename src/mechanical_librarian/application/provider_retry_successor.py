@@ -507,6 +507,8 @@ class GenerateProviderRetrySuccessor:
                 aggregate_accessed_at,
                 overflow,
                 observation.diagnostics,
+                observation.dispatch_lineage,
+                observation.transformation_lineage,
             )
 
         merged = provider_observation(

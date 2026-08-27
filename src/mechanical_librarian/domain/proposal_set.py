@@ -55,7 +55,12 @@ from mechanical_librarian.domain.metadata_report import (
     manifestation_publication_compatible,
     normalize_date_value,
     normalize_title,
+    provider_candidate_work_identity_admission,
     publication_date_is_voting,
+)
+from mechanical_librarian.domain.work_identity import (
+    WorkDispatchLineage,
+    WorkTitleTransformationLineage,
 )
 
 if TYPE_CHECKING:
@@ -1700,6 +1705,8 @@ def _target_backed_lookup_contains(
                     candidate,
                     expected_title,
                     expected_authors,
+                    lane.dispatch_lineage,
+                    lane.transformation_lineage,
                 )
                 and lane.identity
                 == _discovery_lane_identity(
@@ -1737,55 +1744,17 @@ def _candidate_replays_work_qualification(
     candidate: ProviderCandidate,
     expected_title: str,
     expected_authors: tuple[str, ...],
+    dispatch_lineage: WorkDispatchLineage | None,
+    transformation_lineage: WorkTitleTransformationLineage | None,
 ) -> bool:
     """Replay the closed WORK candidate test before granting lane authority."""
-    titles = tuple(
-        normalize_title(claim.value).casefold()
-        for claim in candidate.claims
-        if claim.scope is ClaimScope.WORK
-        and claim.kind is ClaimKind.TITLE
-        and claim.state is FieldState.VALID
-        and claim.value is not None
+    admission = provider_candidate_work_identity_admission(
+        candidate, expected_title, expected_authors
     )
-    creators = tuple(
-        claim
-        for claim in candidate.claims
-        if claim.scope is ClaimScope.WORK and claim.kind is ClaimKind.CREATOR
-    )
-    if (
-        titles != (expected_title.casefold(),)
-        or not creators
-        or any(
-            claim.state is not FieldState.VALID or claim.value is None
-            for claim in creators
-        )
-        or any(
-            claim.scope is ClaimScope.WORK
-            and claim.kind is ClaimKind.CONTRIBUTOR
-            and claim.role in {"abridger", "adapter", "translator"}
-            for claim in candidate.claims
-        )
-        or any(
-            _variant_marker(claim.value)
-            for claim in candidate.claims
-            if claim.kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE}
-            and claim.state is FieldState.VALID
-            and claim.value is not None
-        )
-    ):
-        return False
-    # The guard above returned False when any creator claim carried no value.
-    creator_names = tuple(
-        normalize_title(cast("str", claim.value)).casefold() for claim in creators
-    )
-    expected = tuple(value.casefold() for value in expected_authors)
-    if all(claim.role == "author" for claim in creators):
-        return creator_names == expected
-    if not all(claim.role is None for claim in creators):
-        return False
     return (
-        creator_names == expected
-        and complete_creator_identity_bindings(candidate, creators) is not None
+        admission.admitted
+        and admission.transformation == transformation_lineage
+        and (transformation_lineage is None or dispatch_lineage is not None)
     )
 
 

@@ -150,8 +150,8 @@ source order. Front and rear subtitle/publisher/imprint canonical values share
 NFC and whitespace normalization. Rear position does not increase authority.
 Provider comparisons link only claims with the same role; no publisher/imprint
 hierarchy is inferred. The exact-current persisted report and database
-discriminator is `metadata-report-v27`. Every earlier report discriminator,
-including immediate prior `metadata-report-v26`, remains offline and requires a clean current
+discriminator is `metadata-report-v28`. Every earlier report discriminator,
+including immediate prior `metadata-report-v27`, remains offline and requires a clean current
 database under ADR-0013.
 
 Google Books descriptions use one inert, bounded
@@ -257,18 +257,58 @@ complete ordered author list, one provider-local work identity, and no
 translation, adaptation, or uncertain abridgement marker. Competing works and
 same-title/different-author results are `no_match`.
 
+Work search shapes are deterministic and never alter retained target values,
+claims, or evidence. The domain owns this closed table; each row remains
+independent so later election work can consume the same grammar without
+inheriting query authority:
+
+| Family | Query rung | Admission |
+| --- | --- | --- |
+| filename underscores | normalized | query-only |
+| complete first-author filename prefix | normalized | enabled |
+| bracketed source or retailer tag | normalized | query-only |
+| labelled checksum-valid ISBN or bounded ASIN | normalized | query-only |
+| edition label | normalized | query-only |
+| parenthesized series name | normalized | query-only |
+| parenthesized bare number, excluding years | normalized | query-only |
+| parenthesized year | normalized | query-only |
+| trailing series or sequence marker | normalized | query-only |
+| order-inverted series prefix | normalized | query-only |
+| colon or spaced-dash subtitle segment | subtitle-stripped | query-only |
+| broad punctuation and ampersand folding | punctuation-folded | query-only |
+
+The admitted filename grammar requires the complete prefix token sequence to
+equal the complete first ordered author after NFC, balanced typographic, and
+ASCII-whitespace handling. Underscores may separate prefix tokens; one bounded
+filename separator and a non-empty title must follow. It permits no inversion,
+initial expansion, reordering, partial author, alternate author, or fuzzy match.
+The same domain decision applies during initial qualification, overflow-witness
+qualification, persisted readback, retry-successor merging, and ProposalSet
+replay. Zero or multiple admissible lineages fail closed.
+
+The work lane dispatches at most three distinct widening variants in that order:
+normalized, subtitle-stripped, then punctuation-folded. It stops immediately on
+`candidates`. A `candidate_limit_exceeded` result dispatches exactly one
+provider-specific narrowing retry and does not resume the widening ladder.
+
+| Provider | Normalized and widening grammar | Narrowing grammar |
+| --- | --- | --- |
+| Google Books | quoted `intitle` plus one quoted `inauthor` per author | quoted `intitle` plus one joined, quoted `inauthor` phrase |
+| Hardcover | GraphQL title equality plus author-name membership in the complete author set | GraphQL title equality plus primary-author equality |
+| Open Library | structured `title` and joined `author` search parameters | one quoted title phrase plus quoted author phrase in `q` |
+
 One observation coalesces semantically identical provider lookups only. Each
 logical discovery lane remains visible with its original provenance and replays
 the completed immutable provider result; no result survives the observation or
 adds request authority.
 
-Every referenced, enabled Hardcover connection makes one fixed credential-bearing
-GraphQL query per lane and at most 27 attempts. Every referenced, enabled Open
-Library connection makes at most nine exact Search queries, with at most two
-edition and two distinct work queries per lane, at most one retry per request,
-four retries per observation, and 49 aggregate attempts. Every referenced,
-enabled Google Books connection makes one fixed Volumes query per lane, at most
-five retries per query and 54 aggregate attempts. All lanes share one client,
+Every referenced, enabled Hardcover connection remains within 27 attempts.
+Every referenced, enabled Open Library connection keeps at most one transport
+retry per request, four transport retries per observation, and 49 aggregate
+attempts. Every referenced, enabled Google Books connection keeps at most five
+transport retries per query and 54 aggregate attempts. Query-ladder and
+narrowing dispatches count as retry dispatches inside those existing ceilings;
+they do not create a separate provider-spend budget. All lanes share one client,
 response-byte envelope, and 60-second aggregate deadline; Hardcover and Open
 Library use shared one-second request-start pacers. Google Books requests six
 rows to detect overflow while retaining no more than five candidates.
@@ -408,7 +448,10 @@ report; another occurrence or an invented sibling cannot satisfy that binding.
 
 Each child lane records its opaque identity, kind, matched ISBN family when
 applicable, exact triggering local references, typed status, and
-collision-free candidate references. The provider aggregate deduplicates the
+collision-free candidate references. A successful work lane additionally
+records the base rung, the ordered exact query transformations, whether its one
+candidate-limit narrowing retry occurred, and any admitted transformation
+family and side. Dispatched query text is never persisted. The provider aggregate deduplicates the
 same edition and records lanes that converge on one provider-local work.
 That convergence is correlation within one source, never another vote or an
 upgrade from work-scoped to edition-scoped authority.

@@ -44,9 +44,17 @@ from mechanical_librarian.domain.failure_diagnostics import (
     FailureStage,
     diagnostics_are_canonical,
 )
+from mechanical_librarian.domain.work_identity import (
+    WorkDispatchLineage,
+    WorkIdentityAdmission,
+    WorkTitleTransformationLineage,
+    admit_provider_work_identity,
+    work_dispatch_lineage_from_data,
+    work_title_transformation_lineage_from_data,
+)
 
-REPORT_SCHEMA = "metadata-report-v27"
-COMPARISON_VERSION = "closed-title-creator-publication-v4"
+REPORT_SCHEMA = "metadata-report-v28"
+COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v5"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
 MAX_REPORT_BYTES = 2_097_152
@@ -1829,6 +1837,8 @@ class ProviderLaneObservation:
     matched_family: str | None = None
     candidates: tuple[ProviderLaneCandidate, ...] = ()
     diagnostics: tuple[FailureDiagnostic, ...] = ()
+    dispatch_lineage: WorkDispatchLineage | None = None
+    transformation_lineage: WorkTitleTransformationLineage | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -1870,6 +1880,32 @@ class ProviderLaneObservation:
                 or value.current is not None
                 for value in self.diagnostics
             )
+            or (
+                self.dispatch_lineage is not None
+                and (
+                    type(self.dispatch_lineage) is not WorkDispatchLineage
+                    or self.kind is not ProviderQueryKind.WORK
+                    or self.status
+                    not in {
+                        ProviderStatus.CANDIDATES,
+                        ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+                    }
+                )
+            )
+            or (
+                self.transformation_lineage is not None
+                and (
+                    type(self.transformation_lineage)
+                    is not WorkTitleTransformationLineage
+                    or self.dispatch_lineage is None
+                    or self.kind is not ProviderQueryKind.WORK
+                    or self.status
+                    not in {
+                        ProviderStatus.CANDIDATES,
+                        ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+                    }
+                )
+            )
         ):
             raise ReportValueError("provider lane candidates are invalid")
 
@@ -1882,6 +1918,16 @@ class ProviderLaneObservation:
             "matched_family": self.matched_family,
             "status": self.status.value,
             "diagnostics": [value.to_data() for value in self.diagnostics],
+            "dispatch_lineage": (
+                None
+                if self.dispatch_lineage is None
+                else self.dispatch_lineage.to_data()
+            ),
+            "transformation_lineage": (
+                None
+                if self.transformation_lineage is None
+                else self.transformation_lineage.to_data()
+            ),
         }
 
 
@@ -1940,6 +1986,8 @@ class ProviderObservation:
     diagnostics: tuple[FailureDiagnostic, ...] = ()
     request_accounting: ProviderRequestAccounting = ProviderRequestAccounting()
     edition_enrichment_overflow: EditionEnrichmentOverflow | None = None
+    dispatch_lineage: WorkDispatchLineage | None = None
+    transformation_lineage: WorkTitleTransformationLineage | None = None
 
     def __post_init__(self) -> None:
         _name(self.provider, "provider")
@@ -1959,6 +2007,29 @@ class ProviderObservation:
             validate_provider_access_time(self.accessed_at)
         if type(self.request_accounting) is not ProviderRequestAccounting:
             raise ReportValueError("provider request accounting is invalid")
+        if self.dispatch_lineage is not None and (
+            type(self.dispatch_lineage) is not WorkDispatchLineage
+            or self.query_kind is not ProviderQueryKind.WORK
+            or self.status
+            not in {
+                ProviderStatus.CANDIDATES,
+                ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+            }
+            or self.lanes
+        ):
+            raise ReportValueError("provider work dispatch lineage is invalid")
+        if self.transformation_lineage is not None and (
+            type(self.transformation_lineage) is not WorkTitleTransformationLineage
+            or self.dispatch_lineage is None
+            or self.query_kind is not ProviderQueryKind.WORK
+            or self.status
+            not in {
+                ProviderStatus.CANDIDATES,
+                ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+            }
+            or self.lanes
+        ):
+            raise ReportValueError("provider work transformation lineage is invalid")
         if not diagnostics_are_canonical(self.diagnostics) or any(
             value.component is not FailureComponent.PROVIDER
             or _PROVIDER_DIAGNOSTIC_STAGES.get(value.category) is not value.stage
@@ -2151,7 +2222,84 @@ class ProviderObservation:
                 if self.edition_enrichment_overflow is None
                 else self.edition_enrichment_overflow.to_data()
             ),
+            "dispatch_lineage": (
+                None
+                if self.dispatch_lineage is None
+                else self.dispatch_lineage.to_data()
+            ),
+            "transformation_lineage": (
+                None
+                if self.transformation_lineage is None
+                else self.transformation_lineage.to_data()
+            ),
         }
+
+
+def provider_candidate_work_identity_admission(
+    candidate: ProviderCandidate,
+    local_title: str,
+    local_authors: tuple[str, ...],
+) -> WorkIdentityAdmission:
+    """Apply the closed WORK qualification floor to one retained candidate."""
+    titles = tuple(
+        claim.value
+        for claim in candidate.claims
+        if claim.scope is ClaimScope.WORK
+        and claim.kind is ClaimKind.TITLE
+        and claim.state is FieldState.VALID
+        and claim.value is not None
+    )
+    typed = tuple(
+        claim
+        for claim in candidate.claims
+        if claim.scope is ClaimScope.WORK
+        and claim.kind is ClaimKind.CREATOR
+        and claim.role == "author"
+    )
+    neutral = tuple(
+        claim
+        for claim in candidate.claims
+        if claim.scope is ClaimScope.WORK
+        and claim.kind is ClaimKind.CREATOR
+        and claim.role is None
+    )
+    creators = typed if typed else neutral
+    variant_excluded = any(
+        claim.scope is ClaimScope.WORK
+        and claim.kind is ClaimKind.CONTRIBUTOR
+        and claim.role in {"abridger", "adapter", "translator"}
+        for claim in candidate.claims
+    ) or any(
+        _has_title_variant_marker(claim.value, _typographic_text(claim.value))
+        for claim in candidate.claims
+        if claim.kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE}
+        and claim.state is FieldState.VALID
+        and claim.value is not None
+    )
+    if (
+        type(candidate) is not ProviderCandidate
+        or len(titles) != 1
+        or not creators
+        or any(
+            claim.state is not FieldState.VALID or claim.value is None
+            for claim in creators
+        )
+        or neutral
+        and complete_creator_identity_bindings(candidate, neutral) is None
+    ):
+        return WorkIdentityAdmission(False)
+    return admit_provider_work_identity(
+        local_title=local_title,
+        local_authors=local_authors,
+        provider_title=titles[0],
+        provider_authors=tuple(cast("str", claim.value) for claim in creators),
+        provider_work_identity=(
+            candidate.identity
+            if candidate.work_identity == "unresolved"
+            else candidate.work_identity
+        ),
+        variant_excluded=variant_excluded,
+    )
 
 
 def _target_backed_work_lookup(
@@ -2260,37 +2408,115 @@ class MetadataReport:
         names = tuple(value.provider for value in self.providers)
         if names != tuple(sorted(set(names))):
             raise ReportValueError("provider observations are not in canonical order")
+        target_title = self.target.current_title
+        target_authors_value = next(
+            (
+                target_field.value
+                for target_field in self.target.fields
+                if target_field.destination is TargetDestination.AUTHORS
+                and target_field.state is TargetFieldState.VALUE
+            ),
+            None,
+        )
+        target_authors = (
+            cast("tuple[str, ...]", target_authors_value)
+            if type(target_authors_value) is tuple
+            and all(type(value) is str for value in target_authors_value)
+            else ()
+        )
         for provider in self.providers:
             witness = provider.edition_enrichment_overflow
-            if witness is None:
-                continue
-            target_title = self.target.current_title
-            authors = next(
-                (
-                    field.value
-                    for field in self.target.fields
-                    if field.destination is TargetDestination.AUTHORS
-                    and field.state is TargetFieldState.VALUE
-                ),
-                None,
+            if witness is not None:
+                admission = admit_provider_work_identity(
+                    local_title=target_title or "",
+                    local_authors=target_authors,
+                    provider_title=witness.title,
+                    provider_authors=tuple(
+                        author.value or "" for author in witness.authors
+                    ),
+                    provider_work_identity=witness.work_identity,
+                    variant_excluded=_has_title_variant_marker(witness.title, None),
+                )
+                work_lanes = tuple(
+                    lane
+                    for lane in provider.lanes
+                    if lane.kind is ProviderQueryKind.WORK
+                    and lane.status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
+                )
+                lineage = (
+                    work_lanes[0].transformation_lineage
+                    if len(work_lanes) == 1
+                    else provider.transformation_lineage
+                )
+                dispatch = (
+                    work_lanes[0].dispatch_lineage
+                    if len(work_lanes) == 1
+                    else provider.dispatch_lineage
+                )
+                if (
+                    not admission.admitted
+                    or admission.transformation != lineage
+                    or lineage is not None
+                    and dispatch is None
+                ):
+                    raise ReportValueError(
+                        "edition overflow witness does not match target"
+                    )
+            candidates = {value.identity: value for value in provider.candidates}
+            work_lanes = tuple(
+                lane
+                for lane in provider.lanes
+                if lane.kind is ProviderQueryKind.WORK
+                and lane.status is ProviderStatus.CANDIDATES
             )
             if (
-                target_title is None
-                or type(authors) is not tuple
-                or normalize_title(witness.title).casefold()
-                != normalize_title(target_title).casefold()
-                or tuple(
-                    normalize_title(author.value or "").casefold()
-                    for author in witness.authors
-                    # An AUTHORS target field only ever holds a tuple of strings.
+                not work_lanes
+                and provider.query_kind is ProviderQueryKind.WORK
+                and (
+                    provider.dispatch_lineage is not None
+                    or provider.transformation_lineage is not None
                 )
-                != tuple(
-                    normalize_title(author).casefold()
-                    for author in cast("tuple[str, ...]", authors)
-                )
-                or _has_title_variant_marker(witness.title, None)
             ):
-                raise ReportValueError("edition overflow witness does not match target")
+                decisions = tuple(
+                    provider_candidate_work_identity_admission(
+                        candidate, target_title or "", target_authors
+                    )
+                    for candidate in provider.candidates
+                )
+                if any(not decision.admitted for decision in decisions) or any(
+                    decision.transformation != provider.transformation_lineage
+                    for decision in decisions
+                ):
+                    raise ReportValueError(
+                        "provider work identity lineage is inconsistent"
+                    )
+            for lane in work_lanes:
+                if (
+                    lane.dispatch_lineage is None
+                    and lane.transformation_lineage is None
+                ):
+                    continue
+                decisions = tuple(
+                    provider_candidate_work_identity_admission(
+                        candidates[value.edition_identity],
+                        target_title or "",
+                        target_authors,
+                    )
+                    for value in lane.candidates
+                )
+                if (
+                    not decisions
+                    or any(not decision.admitted for decision in decisions)
+                    or any(
+                        decision.transformation != lane.transformation_lineage
+                        for decision in decisions
+                    )
+                    or lane.transformation_lineage is not None
+                    and lane.dispatch_lineage is None
+                ):
+                    raise ReportValueError(
+                        "provider work identity lineage is inconsistent"
+                    )
         if (
             type(self.field_results) is not tuple
             or any(type(value) is not FieldResult for value in self.field_results)
@@ -4048,6 +4274,7 @@ def _provider_from_data(value: object) -> ProviderObservation:
             "candidates",
             "convergence",
             "diagnostics",
+            "dispatch_lineage",
             "edition_enrichment_overflow",
             "input_references",
             "lanes",
@@ -4055,6 +4282,7 @@ def _provider_from_data(value: object) -> ProviderObservation:
             "query_kind",
             "request_accounting",
             "status",
+            "transformation_lineage",
         },
     )
     candidates = tuple(
@@ -4083,6 +4311,18 @@ def _provider_from_data(value: object) -> ProviderObservation:
             if item["edition_enrichment_overflow"] is None
             else _edition_enrichment_overflow_from_data(
                 item["edition_enrichment_overflow"]
+            )
+        ),
+        (
+            None
+            if item["dispatch_lineage"] is None
+            else work_dispatch_lineage_from_data(item["dispatch_lineage"])
+        ),
+        (
+            None
+            if item["transformation_lineage"] is None
+            else work_title_transformation_lineage_from_data(
+                item["transformation_lineage"]
             )
         ),
     )
@@ -4128,7 +4368,9 @@ def _provider_lane_from_data(value: object) -> ProviderLaneObservation:
             "input_references",
             "kind",
             "matched_family",
+            "dispatch_lineage",
             "status",
+            "transformation_lineage",
         },
     )
     return ProviderLaneObservation(
@@ -4144,6 +4386,18 @@ def _provider_lane_from_data(value: object) -> ProviderLaneObservation:
         tuple(
             FailureDiagnostic.from_json(canonical_json(value))
             for value in _list(item["diagnostics"])
+        ),
+        (
+            None
+            if item["dispatch_lineage"] is None
+            else work_dispatch_lineage_from_data(item["dispatch_lineage"])
+        ),
+        (
+            None
+            if item["transformation_lineage"] is None
+            else work_title_transformation_lineage_from_data(
+                item["transformation_lineage"]
+            )
         ),
     )
 
@@ -4448,6 +4702,7 @@ __all__ = [
     "ProviderLaneCandidate",
     "ProviderLaneObservation",
     "ProviderObservation",
+    "provider_candidate_work_identity_admission",
     "ProviderQueryKind",
     "ProviderStatus",
     "REPORT_SCHEMA",

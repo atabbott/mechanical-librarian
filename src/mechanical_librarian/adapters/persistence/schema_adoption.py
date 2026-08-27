@@ -53,7 +53,7 @@ _DERIVED_TABLES = {
     "review_case_field_facts",
 }
 _TARGET_SCHEMA_OBJECTS_SHA256 = (
-    "5dd45532055ad54eb29f0ab24a191f1068eac2d625d26a7e9e21ed0640a5196e"
+    "5600d55d8f750351f13cf49251ba3f5064405cdf1af4241354e5b25d2ef8ae9b"
 )
 _PRE_HANDOVER_REVIEW_CONTROL_SQL = (
     "CREATE TABLE review_preparation_control ("
