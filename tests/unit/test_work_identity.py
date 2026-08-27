@@ -16,9 +16,12 @@ from mechanical_librarian.domain.work_identity import (
     WorkTitleTransformationLineage,
     WorkTitleTransformationSide,
     admit_provider_work_identity,
+    apply_work_title_transformation,
     narrowing_work_query,
+    replay_provider_work_identity_admission,
     work_dispatch_lineage_from_data,
     work_query_ladder,
+    work_title_has_variant_marker,
     work_title_transformation_lineage_from_data,
 )
 
@@ -118,6 +121,7 @@ def test_each_rule_shapes_one_bounded_query_rung(
     family: WorkTitleTransformationFamily,
     expected: str,
 ) -> None:
+    assert apply_work_title_transformation(family, title, authors) == expected
     ladder = work_query_ladder(title, authors)
 
     matching = [query for query in ladder if family in query.transformations]
@@ -237,6 +241,60 @@ def test_complete_ordered_authors_and_variant_veto_remain_identity_floor() -> No
         provider_authors=("Bea Example", "Ada Example"),
         provider_work_identity="work-1",
     ).admitted
+    assert work_title_has_variant_marker("Plain Work (Variant)")
+    assert not admit_provider_work_identity(
+        local_title="Plain Work",
+        local_authors=("Ada Example",),
+        provider_title="Plain Work (Variant)",
+        provider_authors=("Ada Example",),
+        provider_work_identity="work-1",
+    ).admitted
+
+
+def test_replay_requires_one_exact_ladder_dispatch_or_its_narrowing_successor() -> None:
+    local_title = "Ada_Example_-_Plain_Work"
+    authors = ("Ada Example",)
+    query = work_query_ladder(local_title, authors)[0]
+    exact = WorkDispatchLineage.from_query(query)
+
+    accepted = replay_provider_work_identity_admission(
+        local_title=local_title,
+        local_authors=authors,
+        provider_title="Plain Work",
+        provider_authors=authors,
+        provider_work_identity="work-1",
+        dispatch_lineage=exact,
+    )
+    narrowed = replay_provider_work_identity_admission(
+        local_title=local_title,
+        local_authors=authors,
+        provider_title="Plain Work",
+        provider_authors=authors,
+        provider_work_identity="work-1",
+        dispatch_lineage=WorkDispatchLineage.from_query(narrowing_work_query(query)),
+    )
+    absent = replay_provider_work_identity_admission(
+        local_title=local_title,
+        local_authors=authors,
+        provider_title="Plain Work",
+        provider_authors=authors,
+        provider_work_identity="work-1",
+        dispatch_lineage=None,
+    )
+    false = replay_provider_work_identity_admission(
+        local_title=local_title,
+        local_authors=authors,
+        provider_title="Plain Work",
+        provider_authors=authors,
+        provider_work_identity="work-1",
+        dispatch_lineage=WorkDispatchLineage(
+            WorkDispatchRung.NORMALIZED,
+            (WorkTitleTransformationFamily.BRACKET_SOURCE_TAG,),
+        ),
+    )
+
+    assert accepted.admitted and narrowed.admitted
+    assert not absent.admitted and not false.admitted
     assert not admit_provider_work_identity(
         local_title="Ada_Example_-_Plain_Work",
         local_authors=("Ada Example", "Bea Example"),

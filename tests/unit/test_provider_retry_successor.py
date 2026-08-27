@@ -47,10 +47,12 @@ from mechanical_librarian.domain.failure_diagnostics import (
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
+    FieldState,
     FileFacts,
     LocalClaim,
     MetadataReport,
     ProviderCandidate,
+    ProviderClaim,
     ProviderQueryKind,
     ProviderRequestAccounting,
     ProviderStatus,
@@ -64,6 +66,7 @@ from mechanical_librarian.domain.work_identity import (
     WorkTitleTransformationFamily,
     WorkTitleTransformationLineage,
     WorkTitleTransformationSide,
+    work_query_ladder,
 )
 
 
@@ -851,6 +854,103 @@ def test_retry_successor_preserves_exact_work_dispatch_and_transformation_lineag
     recovered = next(lane for lane in merged.lanes if lane.identity == work.identity)
     assert recovered.dispatch_lineage == dispatch
     assert recovered.transformation_lineage == transformation
+
+
+def test_retry_successor_rejects_mixed_work_creators_before_publication(
+    retry: _Retry,
+) -> None:
+    plan, work, isbn, _overflow = _overflow_source(retry)
+    fields = tuple(
+        replace(field, state=TargetFieldState.VALUE, value=("Ada Example",))
+        if field.destination is TargetDestination.AUTHORS
+        else field
+        for field in TargetSnapshot("ebook", "Current title", ()).fields
+    )
+    snapshot = TargetSnapshot(
+        "ebook", "Current title", retry.snapshot.files, fields=fields
+    )
+    original = provider_observation(
+        "catalogue",
+        (
+            ProviderLaneResult(work, ProviderStatus.UNAVAILABLE),
+            ProviderLaneResult(isbn, ProviderStatus.NO_MATCH),
+        ),
+        authority="open_library",
+    )
+    source = MetadataReport.create(
+        target=TargetFacts("primary", "ebooks", "item", fields),
+        file=retry.report.file,
+        local_claims=plan.local_claims,
+        local_reasons=("opening_matter_isbn",),
+        providers=(original,),
+    )
+    retry.snapshot = snapshot
+    retry.repository = _Repository(source)
+    claims = (
+        ProviderClaim.create(
+            provider="catalogue",
+            candidate="edition",
+            kind=ClaimKind.TITLE,
+            value="Current title",
+            state=FieldState.VALID,
+            scope=ClaimScope.WORK,
+            applicability="not_applicable",
+        ),
+        ProviderClaim.create(
+            provider="catalogue",
+            candidate="edition",
+            kind=ClaimKind.CREATOR,
+            value="Ada Example",
+            state=FieldState.VALID,
+            scope=ClaimScope.WORK,
+            applicability="not_applicable",
+            role="author",
+            raw_order=1,
+        ),
+        ProviderClaim.create(
+            provider="catalogue",
+            candidate="edition",
+            kind=ClaimKind.CREATOR,
+            value="Ada Example",
+            state=FieldState.VALID,
+            scope=ClaimScope.WORK,
+            applicability="not_applicable",
+            role=None,
+            raw_order=2,
+        ),
+    )
+    dispatch = WorkDispatchLineage.from_query(
+        work_query_ladder("Current title", ("Ada Example",))[0]
+    )
+    replacement = provider_observation(
+        "catalogue",
+        (
+            ProviderLaneResult(
+                work,
+                ProviderStatus.CANDIDATES,
+                (ProviderCandidate("edition", "work", claims),),
+                dispatch_lineage=dispatch,
+            ),
+        ),
+        authority="open_library",
+    )
+    provider = _Provider(replacement)
+    service = retry.service(
+        ConfiguredProviderRetry(
+            ProviderBinding("catalogue", True, lambda: provider, "open_library"),
+            "open_library",
+            2,
+        )
+    )
+
+    with pytest.raises(ProviderRetrySuccessorError, match="source is invalid"):
+        service.run(
+            source.report_id,
+            (work.identity,),
+            provider_name="catalogue",
+            adapter="open_library",
+            generation=2,
+        )
 
 
 def _overflow_source(retry: _Retry):

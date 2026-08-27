@@ -151,6 +151,7 @@ def title_claim() -> LocalClaim:
 
 def observe_contributions(
     contributions: list[dict[str, object]],
+    lookup: MetadataLookup | None = None,
 ) -> ProviderObservation:
     payload = hardcover_envelope(
         [
@@ -183,4 +184,4 @@ def observe_contributions(
             )
         ),
         65_536,
-    ).observe(isbn_lookup((isbn_claim(),)))
+    ).observe(lookup or isbn_lookup((isbn_claim(),)))

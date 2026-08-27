@@ -45,9 +45,9 @@ from mechanical_librarian.domain.metadata_report import (
     complete_creator_identity_bindings,
     default_target_fields,
 )
-from mechanical_librarian.domain.proposal_set import (
-    ProposalOutcome,
-    evaluate_report,
+from mechanical_librarian.domain.work_identity import (
+    WorkDispatchLineage,
+    work_query_ladder,
 )
 from tests.support.hardcover_evidence import (
     hardcover_envelope,
@@ -238,6 +238,9 @@ def test_mixed_discovery_retains_only_the_work_overflow_witness() -> None:
                 work,
                 ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
                 edition_enrichment_overflow=witness,
+                dispatch_lineage=WorkDispatchLineage.from_query(
+                    work_query_ladder("Current title", ("Ada Example",))[0]
+                ),
             ),
             ProviderLaneResult(isbn_lane, ProviderStatus.NO_MATCH),
         ),
@@ -701,7 +704,8 @@ def test_nullable_contribution_roles_preserve_neutral_identity_bound_creators() 
         "contribution": None,
         "author": {"id": 1, "name": "Synthetic Contributor"},
     }
-    observation = observe_contributions([contribution])
+    lookup = work_lookup("Synthetic title", ("Synthetic Contributor",))
+    observation = observe_contributions([contribution], lookup)
 
     assert ProviderStatus.CANDIDATES == observation.status
     creators = [
@@ -719,7 +723,7 @@ def test_nullable_contribution_roles_preserve_neutral_identity_bound_creators() 
     )
     qualified = qualify_provider_observation(
         observation,
-        work_lookup("Synthetic title", ("Synthetic Contributor",)),
+        lookup,
     )
     assert ProviderStatus.CANDIDATES == qualified.status
     assert (None,) == tuple(
@@ -744,6 +748,7 @@ def test_nullable_contribution_roles_preserve_neutral_identity_bound_creators() 
 
 def test_mixed_author_and_neutral_creators_reject_author_projection() -> None:
     """A complete mixed creator collection cannot donate its typed subset."""
+    lookup = work_lookup("Synthetic title", ("Synthetic One",))
     observation = observe_contributions(
         [
             {
@@ -756,49 +761,21 @@ def test_mixed_author_and_neutral_creators_reject_author_projection() -> None:
                 "contribution": None,
                 "author": {"id": 2, "name": "Synthetic Two"},
             },
-        ]
+        ],
+        lookup,
     )
 
     qualified = qualify_provider_observation(
         observation,
-        work_lookup("Synthetic title", ("Synthetic One",)),
+        lookup,
     )
-    assert ProviderStatus.CANDIDATES == qualified.status
-    candidate = qualified.candidates[0]
-    assert not any(
-        claim.scope is ClaimScope.WORK and claim.kind is ClaimKind.CREATOR
-        for claim in candidate.claims
-    )
-    assert () == candidate.identity_bindings
-    assert {"Synthetic title", "9780306406157"} == {
-        claim.value
-        for claim in candidate.claims
-        if claim.kind in {ClaimKind.TITLE, ClaimKind.ISBN}
-        and claim.state is FieldState.VALID
-    }
-    report = MetadataReport.create(
-        target=TargetFacts(
-            "primary",
-            "ebooks",
-            "item-1",
-            default_target_fields("Synthetic title"),
-        ),
-        file=FileFacts(0, "a" * 64, "b" * 64),
-        local_claims=(),
-        local_reasons=("no_opening_claims",),
-        providers=(qualified,),
-    )
-    authors = next(
-        result
-        for result in evaluate_report(report).results
-        if result.destination is TargetDestination.AUTHORS
-    )
-    assert ProposalOutcome.INELIGIBLE is authors.outcome
-    assert () == authors.alternatives
+    assert ProviderStatus.NO_MATCH == qualified.status
+    assert () == qualified.candidates
 
 
 def test_mixed_creator_candidate_with_different_typed_author_is_not_admitted() -> None:
     """Mixed roles do not bypass the exact typed-author work qualification."""
+    lookup = work_lookup("Synthetic title", ("Synthetic One", "Synthetic Two"))
     observation = observe_contributions(
         [
             {
@@ -811,7 +788,8 @@ def test_mixed_creator_candidate_with_different_typed_author_is_not_admitted() -
                 "contribution": None,
                 "author": {"id": 2, "name": "Synthetic Two"},
             },
-        ]
+        ],
+        lookup,
     )
 
     qualified = qualify_provider_observation(
@@ -823,6 +801,7 @@ def test_mixed_creator_candidate_with_different_typed_author_is_not_admitted() -
 
 
 def test_reused_neutral_creator_identity_binding_fails_qualification_locally() -> None:
+    lookup = work_lookup("Synthetic title", ("Synthetic One", "Synthetic Two"))
     observation = observe_contributions(
         [
             {
@@ -835,7 +814,8 @@ def test_reused_neutral_creator_identity_binding_fails_qualification_locally() -
                 "contribution": None,
                 "author": {"id": 1, "name": "Synthetic Two"},
             },
-        ]
+        ],
+        lookup,
     )
     candidate = observation.candidates[0]
     creators = tuple(
@@ -876,7 +856,7 @@ def test_reused_neutral_creator_identity_binding_fails_qualification_locally() -
 
     qualified = qualify_provider_observation(
         observation,
-        work_lookup("Synthetic title", ("Synthetic One", "Synthetic Two")),
+        lookup,
     )
     assert ProviderStatus.CANDIDATES == qualified.status
     assert ("hardcover-author-0000000001", "hardcover-author-0000000001") == tuple(
@@ -906,7 +886,7 @@ def test_reused_neutral_creator_identity_binding_fails_qualification_locally() -
     assert ProviderEvidenceKind.FIRST_PUBLICATION_DATE in {
         evidence.kind for evidence in qualified.candidates[0].evidence
     }
-    replayed = MetadataReport.from_json(
+    with pytest.raises(ReportValueError):
         MetadataReport.create(
             target=TargetFacts(
                 "primary",
@@ -918,25 +898,7 @@ def test_reused_neutral_creator_identity_binding_fails_qualification_locally() -
             local_claims=(),
             local_reasons=("no_opening_claims",),
             providers=(qualified,),
-        ).to_json()
-    )
-    replayed_claims = replayed.providers[0].candidates[0].claims
-    assert {"Synthetic title", "9780306406157"} == {
-        claim.value
-        for claim in replayed_claims
-        if claim.kind in {ClaimKind.TITLE, ClaimKind.ISBN}
-        and claim.state is FieldState.VALID
-    }
-    authors = next(
-        result
-        for result in evaluate_report(replayed).results
-        if result.destination is TargetDestination.AUTHORS
-    )
-    assert not any(
-        reference in {claim.reference for claim in creators}
-        for alternative in authors.alternatives
-        for reference in alternative.evidence_references
-    )
+        )
 
 
 @pytest.mark.parametrize(

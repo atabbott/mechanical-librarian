@@ -1749,32 +1749,9 @@ def _candidate_replays_work_qualification(
 ) -> bool:
     """Replay the closed WORK candidate test before granting lane authority."""
     admission = provider_candidate_work_identity_admission(
-        candidate, expected_title, expected_authors
+        candidate, expected_title, expected_authors, dispatch_lineage
     )
-    return (
-        admission.admitted
-        and admission.transformation == transformation_lineage
-        and (transformation_lineage is None or dispatch_lineage is not None)
-    )
-
-
-def _variant_marker(value: str) -> bool:
-    tokens = {
-        "".join(character for character in token if character.isalnum())
-        for token in normalize_title(value).casefold().split()
-    }
-    return bool(
-        tokens
-        & {
-            "abridgement",
-            "abridgment",
-            "abridged",
-            "adaptation",
-            "adapted",
-            "translation",
-            "translated",
-        }
-    )
+    return admission.admitted and admission.transformation == transformation_lineage
 
 
 def _creator_sets_match(

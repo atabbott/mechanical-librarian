@@ -146,6 +146,12 @@ def test_html_description_is_rendered_and_bound_to_versioned_evidence() -> None:
     info["description"] = (
         "<p>One &amp; <em>two</em></p><br/><span>Three</span><hr>2 &lt; 3"
     )
+    work_lookup = MetadataLookup(
+        ProviderQueryKind.WORK,
+        (),
+        title="Example Book",
+        authors=("Ada Example",),
+    )
     observation = GoogleBooksMetadataProvider(
         "google_books",
         httpx.Client(
@@ -158,7 +164,7 @@ def test_html_description_is_rendered_and_bound_to_versioned_evidence() -> None:
             )
         ),
         65_536,
-    ).observe(_lookup())
+    ).observe(work_lookup)
     candidate = observation.candidates[0]
     assert "One & two • Three • 2 < 3" == next(
         c.value for c in candidate.claims if c.kind is ClaimKind.DESCRIPTION
@@ -167,15 +173,7 @@ def test_html_description_is_rendered_and_bound_to_versioned_evidence() -> None:
         ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION,
         "google-books-html-visible-text-v1",
     ) in {(e.kind, e.value) for e in candidate.evidence}
-    qualified = qualify_provider_observation(
-        observation,
-        MetadataLookup(
-            ProviderQueryKind.WORK,
-            (),
-            title="Example Book",
-            authors=("Ada Example",),
-        ),
-    )
+    qualified = qualify_provider_observation(observation, work_lookup)
     assert ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION in {
         value.kind for value in qualified.candidates[0].evidence
     }

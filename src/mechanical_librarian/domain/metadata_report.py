@@ -48,8 +48,9 @@ from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     WorkIdentityAdmission,
     WorkTitleTransformationLineage,
-    admit_provider_work_identity,
+    replay_provider_work_identity_admission,
     work_dispatch_lineage_from_data,
+    work_title_has_variant_marker,
     work_title_transformation_lineage_from_data,
 )
 
@@ -2239,6 +2240,7 @@ def provider_candidate_work_identity_admission(
     candidate: ProviderCandidate,
     local_title: str,
     local_authors: tuple[str, ...],
+    dispatch_lineage: WorkDispatchLineage | None,
 ) -> WorkIdentityAdmission:
     """Apply the closed WORK qualification floor to one retained candidate."""
     titles = tuple(
@@ -2270,7 +2272,7 @@ def provider_candidate_work_identity_admission(
         and claim.role in {"abridger", "adapter", "translator"}
         for claim in candidate.claims
     ) or any(
-        _has_title_variant_marker(claim.value, _typographic_text(claim.value))
+        work_title_has_variant_marker(claim.value)
         for claim in candidate.claims
         if claim.kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE}
         and claim.state is FieldState.VALID
@@ -2280,6 +2282,8 @@ def provider_candidate_work_identity_admission(
         type(candidate) is not ProviderCandidate
         or len(titles) != 1
         or not creators
+        or bool(typed)
+        and bool(neutral)
         or any(
             claim.state is not FieldState.VALID or claim.value is None
             for claim in creators
@@ -2288,7 +2292,7 @@ def provider_candidate_work_identity_admission(
         and complete_creator_identity_bindings(candidate, neutral) is None
     ):
         return WorkIdentityAdmission(False)
-    return admit_provider_work_identity(
+    return replay_provider_work_identity_admission(
         local_title=local_title,
         local_authors=local_authors,
         provider_title=titles[0],
@@ -2298,6 +2302,7 @@ def provider_candidate_work_identity_admission(
             if candidate.work_identity == "unresolved"
             else candidate.work_identity
         ),
+        dispatch_lineage=dispatch_lineage,
         variant_excluded=variant_excluded,
     )
 
@@ -2427,16 +2432,6 @@ class MetadataReport:
         for provider in self.providers:
             witness = provider.edition_enrichment_overflow
             if witness is not None:
-                admission = admit_provider_work_identity(
-                    local_title=target_title or "",
-                    local_authors=target_authors,
-                    provider_title=witness.title,
-                    provider_authors=tuple(
-                        author.value or "" for author in witness.authors
-                    ),
-                    provider_work_identity=witness.work_identity,
-                    variant_excluded=_has_title_variant_marker(witness.title, None),
-                )
                 work_lanes = tuple(
                     lane
                     for lane in provider.lanes
@@ -2453,12 +2448,17 @@ class MetadataReport:
                     if len(work_lanes) == 1
                     else provider.dispatch_lineage
                 )
-                if (
-                    not admission.admitted
-                    or admission.transformation != lineage
-                    or lineage is not None
-                    and dispatch is None
-                ):
+                admission = replay_provider_work_identity_admission(
+                    local_title=target_title or "",
+                    local_authors=target_authors,
+                    provider_title=witness.title,
+                    provider_authors=tuple(
+                        author.value or "" for author in witness.authors
+                    ),
+                    provider_work_identity=witness.work_identity,
+                    dispatch_lineage=dispatch,
+                )
+                if not admission.admitted or admission.transformation != lineage:
                     raise ReportValueError(
                         "edition overflow witness does not match target"
                     )
@@ -2472,14 +2472,14 @@ class MetadataReport:
             if (
                 not work_lanes
                 and provider.query_kind is ProviderQueryKind.WORK
-                and (
-                    provider.dispatch_lineage is not None
-                    or provider.transformation_lineage is not None
-                )
+                and provider.status is ProviderStatus.CANDIDATES
             ):
                 decisions = tuple(
                     provider_candidate_work_identity_admission(
-                        candidate, target_title or "", target_authors
+                        candidate,
+                        target_title or "",
+                        target_authors,
+                        provider.dispatch_lineage,
                     )
                     for candidate in provider.candidates
                 )
@@ -2491,16 +2491,12 @@ class MetadataReport:
                         "provider work identity lineage is inconsistent"
                     )
             for lane in work_lanes:
-                if (
-                    lane.dispatch_lineage is None
-                    and lane.transformation_lineage is None
-                ):
-                    continue
                 decisions = tuple(
                     provider_candidate_work_identity_admission(
                         candidates[value.edition_identity],
                         target_title or "",
                         target_authors,
+                        lane.dispatch_lineage,
                     )
                     for value in lane.candidates
                 )
@@ -2511,8 +2507,6 @@ class MetadataReport:
                         decision.transformation != lane.transformation_lineage
                         for decision in decisions
                     )
-                    or lane.transformation_lineage is not None
-                    and lane.dispatch_lineage is None
                 ):
                     raise ReportValueError(
                         "provider work identity lineage is inconsistent"
@@ -3334,12 +3328,6 @@ _TYPOGRAPHIC_TRANSLATION = str.maketrans(
         "\u2014": "-",
     }
 )
-_TITLE_VARIANT_MARKER = re.compile(
-    r"(?:^|[\s(\[{:;,'\"\-\u2013\u2014\u2018-\u201d])"
-    r"(?:abridged|abridgement|abridgment|adapted|adaptation|translated|translation|variant)"
-    r"(?:$|[\s)\]}:;,'\",\-\u2013\u2014\u2018-\u201d])",
-    re.IGNORECASE,
-)
 _NAME_SUFFIX = re.compile(
     r"^(?:jr|sr|i{2,3}|iv|v|esq|mbe|obe|cbe|kbe|qc|kc|ph\.?d|m\.?d|dphil|dsc)$",
     re.IGNORECASE,
@@ -3837,8 +3825,8 @@ def _comparison_method(
     provider_typographic = _typographic_text(provider_value)
     local_typographic = _typographic_text(local_value)
     if kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE} and (
-        _has_title_variant_marker(provider_value, provider_typographic)
-        or _has_title_variant_marker(local_value, local_typographic)
+        work_title_has_variant_marker(provider_value)
+        or work_title_has_variant_marker(local_value)
     ):
         return ComparisonMethod.NONE
     provider_normalized = _comparison_text(provider_value)
@@ -3863,14 +3851,6 @@ def _comparison_method(
     ):
         return ComparisonMethod.CONSERVATIVE_COMMA_INVERSION
     return ComparisonMethod.NONE
-
-
-def _has_title_variant_marker(value: str, typographic: str | None) -> bool:
-    return (
-        _TITLE_VARIANT_MARKER.search(value) is not None
-        or typographic is not None
-        and _TITLE_VARIANT_MARKER.search(typographic) is not None
-    )
 
 
 def _comparison_text(value: str) -> str:

@@ -6,6 +6,7 @@ source-lexical timestamp voting matrix.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from typing import cast
 
 import pytest
@@ -81,12 +82,23 @@ from mechanical_librarian.domain.work_identity import (
     WorkTitleTransformationFamily,
     WorkTitleTransformationLineage,
     WorkTitleTransformationSide,
+    narrowing_work_query,
+    work_query_ladder,
 )
 from tests.support.metadata_report_doubles import (
     FakeInspector,
     FakeReportRepository,
     FakeTarget,
 )
+
+
+def _work_dispatch(
+    title: str, authors: tuple[str, ...], *, narrowed: bool = False
+) -> WorkDispatchLineage:
+    query = work_query_ladder(title, authors)[0]
+    return WorkDispatchLineage.from_query(
+        narrowing_work_query(query) if narrowed else query
+    )
 
 
 def test_lookup_prefers_one_isbn_family_and_otherwise_requires_complete_target_authors() -> (
@@ -237,7 +249,32 @@ def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
         tuple(sorted((isbn_13.reference, isbn_10.reference)))
         == isbn_lane.input_references
     )
-    candidate = ProviderCandidate("edition-1", "work-1", ())
+    candidate = ProviderCandidate(
+        "edition-1",
+        "work-1",
+        (
+            ProviderClaim.create(
+                provider="catalogue",
+                candidate="edition-1",
+                kind=ClaimKind.TITLE,
+                value="The Example",
+                state=FieldState.VALID,
+                scope=ClaimScope.WORK,
+                applicability="not_applicable",
+            ),
+            ProviderClaim.create(
+                provider="catalogue",
+                candidate="edition-1",
+                kind=ClaimKind.CREATOR,
+                value="Ada Author",
+                state=FieldState.VALID,
+                scope=ClaimScope.WORK,
+                applicability="not_applicable",
+                role="author",
+                raw_order=1,
+            ),
+        ),
+    )
     observation = provider_observation(
         "catalogue",
         (
@@ -254,6 +291,7 @@ def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
                         retryable=False,
                     ),
                 ),
+                dispatch_lineage=_work_dispatch("The Example", ("Ada Author",)),
             ),
         ),
     )
@@ -606,6 +644,7 @@ def test_work_lookup_admits_one_exact_work_and_strips_edition_authority() -> Non
             (),
             (candidate,),
             ProviderQueryKind.WORK,
+            dispatch_lineage=_work_dispatch("The Example", ("Ada Author",)),
         ),
         lookup,
     )
@@ -660,10 +699,7 @@ def test_work_lookup_admits_exact_primary_author_filename_prefix_and_persists_li
             ),
         ),
     )
-    dispatch = WorkDispatchLineage(
-        WorkDispatchRung.NORMALIZED,
-        (WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,),
-    )
+    dispatch = _work_dispatch("Ada_Author_-_The_Example", ("Ada Author",))
 
     qualified = qualify_provider_observation(
         ProviderObservation(
@@ -745,9 +781,110 @@ def test_work_lookup_rejects_missing_or_ambiguous_decoration_lineage() -> None:
         ),
         lookup,
     )
+    false_dispatch = qualify_provider_observation(
+        ProviderObservation(
+            "catalogue",
+            ProviderStatus.CANDIDATES,
+            (),
+            (candidate("edition-1", "The Example"),),
+            ProviderQueryKind.WORK,
+            dispatch_lineage=WorkDispatchLineage(
+                WorkDispatchRung.NORMALIZED,
+                (WorkTitleTransformationFamily.BRACKET_SOURCE_TAG,),
+            ),
+        ),
+        lookup,
+    )
+    exact_without_dispatch = qualify_provider_observation(
+        ProviderObservation(
+            "catalogue",
+            ProviderStatus.CANDIDATES,
+            (),
+            (candidate("edition-1", "The Example"),),
+            ProviderQueryKind.WORK,
+        ),
+        MetadataLookup(
+            ProviderQueryKind.WORK,
+            (),
+            "The Example",
+            ("Ada Author",),
+        ),
+    )
+    typed = candidate("edition-1", "The Example")
+    mixed = replace(
+        typed,
+        claims=(
+            *typed.claims,
+            ProviderClaim.create(
+                provider="catalogue",
+                candidate="edition-1",
+                kind=ClaimKind.CREATOR,
+                value="Ada Author",
+                state=FieldState.VALID,
+                scope=ClaimScope.WORK,
+                applicability="not_applicable",
+                role=None,
+                raw_order=2,
+            ),
+        ),
+    )
+    mixed_creators = qualify_provider_observation(
+        ProviderObservation(
+            "catalogue",
+            ProviderStatus.CANDIDATES,
+            (),
+            (mixed,),
+            ProviderQueryKind.WORK,
+            dispatch_lineage=_work_dispatch(
+                "Ada_Author_-_The_Example", ("Ada Author",)
+            ),
+        ),
+        lookup,
+    )
 
     assert missing.status is ProviderStatus.NO_MATCH
     assert ambiguous.status is ProviderStatus.NO_MATCH
+    assert false_dispatch.status is ProviderStatus.NO_MATCH
+    assert exact_without_dispatch.status is ProviderStatus.NO_MATCH
+    assert mixed_creators.status is ProviderStatus.NO_MATCH
+
+    with pytest.raises(ReportValueError, match="work identity lineage"):
+        MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "ebooks",
+                "item-1",
+                tuple(
+                    TargetField(
+                        TargetDestination.AUTHORS,
+                        TargetFieldState.VALUE,
+                        ("Ada Author",),
+                    )
+                    if field.destination is TargetDestination.AUTHORS
+                    else field
+                    for field in default_target_fields("Ada_Author_-_The_Example")
+                ),
+            ),
+            file=FileFacts(0, "b" * 64, "c" * 64),
+            local_claims=(),
+            local_reasons=("target_metadata",),
+            providers=(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.CANDIDATES,
+                    (),
+                    (mixed,),
+                    ProviderQueryKind.WORK,
+                    dispatch_lineage=_work_dispatch(
+                        "Ada_Author_-_The_Example", ("Ada Author",)
+                    ),
+                    transformation_lineage=WorkTitleTransformationLineage(
+                        WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
+                        WorkTitleTransformationSide.LOCAL,
+                    ),
+                ),
+            ),
+        )
 
 
 def test_edition_overflow_witness_uses_the_same_decoration_admission() -> None:
@@ -774,10 +911,8 @@ def test_edition_overflow_witness_uses_the_same_decoration_admission() -> None:
             ),
         ),
     )
-    dispatch = WorkDispatchLineage(
-        WorkDispatchRung.NORMALIZED,
-        (WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,),
-        True,
+    dispatch = _work_dispatch(
+        "Ada_Author_-_The_Example", ("Ada Author",), narrowed=True
     )
 
     qualified = qualify_provider_observation(
@@ -804,6 +939,31 @@ def test_edition_overflow_witness_uses_the_same_decoration_admission() -> None:
         WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
         WorkTitleTransformationSide.LOCAL,
     )
+
+    variant_witness = EditionEnrichmentOverflow(
+        witness.work_identity,
+        "The Example (Variant)",
+        witness.authors,
+        witness.identity_bindings,
+    )
+    rejected_variant = qualify_provider_observation(
+        ProviderObservation(
+            "catalogue",
+            ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+            (),
+            (),
+            ProviderQueryKind.WORK,
+            edition_enrichment_overflow=variant_witness,
+            dispatch_lineage=_work_dispatch("The Example (Variant)", ("Ada Author",)),
+        ),
+        MetadataLookup(
+            ProviderQueryKind.WORK,
+            (),
+            "The Example (Variant)",
+            ("Ada Author",),
+        ),
+    )
+    assert rejected_variant.edition_enrichment_overflow is None
 
 
 def test_generate_report_preserves_only_work_lane_date_explanations() -> None:
@@ -897,6 +1057,7 @@ def test_generate_report_preserves_only_work_lane_date_explanations() -> None:
                         ),
                     ),
                     query_kind=lane.kind,
+                    dispatch_lineage=_work_dispatch("The Example", ("Ada Author",)),
                 )
                 qualified = qualify_provider_observation(physical, lookup)
                 results.append(
@@ -904,6 +1065,8 @@ def test_generate_report_preserves_only_work_lane_date_explanations() -> None:
                         lane,
                         qualified.status,
                         qualified.candidates,
+                        dispatch_lineage=qualified.dispatch_lineage,
+                        transformation_lineage=qualified.transformation_lineage,
                     )
                 )
             return provider_observation(self.name, tuple(results))
@@ -1258,6 +1421,7 @@ def test_work_lookup_fails_closed_for_competing_work_or_variant_markers() -> Non
                 (),
                 candidates,
                 ProviderQueryKind.WORK,
+                dispatch_lineage=_work_dispatch("The Example", ("Ada Author",)),
             ),
             lookup,
         )
@@ -1367,6 +1531,9 @@ def test_work_lookup_requires_the_complete_canonical_author_order(
             (),
             (ProviderCandidate("edition-1", "work-1", claims),),
             ProviderQueryKind.WORK,
+            dispatch_lineage=_work_dispatch(
+                "The Example", ("Zed Author", "Ada Author")
+            ),
         ),
         lookup,
     )

@@ -266,7 +266,7 @@ _IDENTIFIER = re.compile(
 )
 _PUNCTUATION = re.compile(r"[^\w\s]", re.UNICODE)
 _VARIANT = re.compile(
-    r"\b(?:abridg(?:e?ment|ed)|adapt(?:ation|ed)|translat(?:ion|ed))\b",
+    r"\b(?:abridg(?:e?ment|ed)|adapt(?:ation|ed)|translat(?:ion|ed)|variant)\b",
     re.IGNORECASE,
 )
 _TYPOGRAPHIC_TRANSLATION = str.maketrans(
@@ -289,7 +289,9 @@ def work_query_ladder(title: str, authors: tuple[str, ...]) -> tuple[WorkQuery, 
     for rule in WORK_TITLE_TRANSFORMATION_RULES:
         if rule.rung is not WorkDispatchRung.NORMALIZED or not rule.query_enabled:
             continue
-        transformed = _query_transform(rule.family, shaped_title, shaped_authors)
+        transformed = apply_work_title_transformation(
+            rule.family, shaped_title, shaped_authors
+        )
         if transformed != shaped_title:
             shaped_title = transformed
             applied.append(rule.family)
@@ -301,7 +303,7 @@ def work_query_ladder(title: str, authors: tuple[str, ...]) -> tuple[WorkQuery, 
             tuple(applied),
         )
     ]
-    subtitle = _query_transform(
+    subtitle = apply_work_title_transformation(
         WorkTitleTransformationFamily.SUBTITLE_SEGMENT,
         shaped_title,
         shaped_authors,
@@ -317,7 +319,7 @@ def work_query_ladder(title: str, authors: tuple[str, ...]) -> tuple[WorkQuery, 
             subtitle_applied,
         )
     )
-    folded_title = _query_transform(
+    folded_title = apply_work_title_transformation(
         WorkTitleTransformationFamily.PUNCTUATION_AMPERSAND_FOLD,
         subtitle,
         shaped_authors,
@@ -411,8 +413,8 @@ def admit_provider_work_identity(
         or not provider_work_identity
         or type(variant_excluded) is not bool
         or variant_excluded
-        or _VARIANT.search(local_title) is not None
-        or _VARIANT.search(provider_title) is not None
+        or work_title_has_variant_marker(local_title)
+        or work_title_has_variant_marker(provider_title)
         or any(
             not _closed_equal(local, provider)
             for local, provider in zip(local_authors, provider_authors, strict=True)
@@ -443,6 +445,41 @@ def admit_provider_work_identity(
     return WorkIdentityAdmission(True, possible[0])
 
 
+def replay_provider_work_identity_admission(
+    *,
+    local_title: str,
+    local_authors: tuple[str, ...],
+    provider_title: str,
+    provider_authors: tuple[str, ...],
+    provider_work_identity: str,
+    dispatch_lineage: WorkDispatchLineage | None,
+    variant_excluded: bool = False,
+) -> WorkIdentityAdmission:
+    """Recompute admission only for a dispatch the exact local ladder can emit."""
+    admission = admit_provider_work_identity(
+        local_title=local_title,
+        local_authors=local_authors,
+        provider_title=provider_title,
+        provider_authors=provider_authors,
+        provider_work_identity=provider_work_identity,
+        variant_excluded=variant_excluded,
+    )
+    if not admission.admitted or dispatch_lineage is None:
+        return WorkIdentityAdmission(False)
+    queries = work_query_ladder(local_title, local_authors)
+    permitted = {WorkDispatchLineage.from_query(query) for query in queries} | {
+        WorkDispatchLineage.from_query(narrowing_work_query(query)) for query in queries
+    }
+    return admission if dispatch_lineage in permitted else WorkIdentityAdmission(False)
+
+
+def work_title_has_variant_marker(value: str) -> bool:
+    """Return whether the closed work-title variant vocabulary excludes a value."""
+    if type(value) is not str:
+        raise ValueError("work title is invalid")
+    return _VARIANT.search(value) is not None
+
+
 def work_dispatch_lineage_from_data(value: object) -> WorkDispatchLineage:
     if type(value) is not dict or set(value) != {
         "candidate_limit_narrowing_retry",
@@ -471,11 +508,19 @@ def work_title_transformation_lineage_from_data(
     )
 
 
-def _query_transform(
+def apply_work_title_transformation(
     family: WorkTitleTransformationFamily,
     title: str,
     authors: tuple[str, ...],
 ) -> str:
+    """Apply one row of the shared closed work-title transformation table."""
+    if (
+        type(family) is not WorkTitleTransformationFamily
+        or type(title) is not str
+        or type(authors) is not tuple
+        or any(type(value) is not str for value in authors)
+    ):
+        raise ValueError("work title transformation input is invalid")
     if family is WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX:
         return _filename_author_title_prefix(title, authors) or title
     if family is WorkTitleTransformationFamily.FILENAME_UNDERSCORES:
@@ -518,7 +563,7 @@ def _query_transform(
         return title
     if family is WorkTitleTransformationFamily.PUNCTUATION_AMPERSAND_FOLD:
         return _punctuation_fold(title)
-    return title
+    raise RuntimeError("work title transformation table is incomplete")
 
 
 def _filename_author_title_prefix(value: str, authors: tuple[str, ...]) -> str | None:
@@ -644,9 +689,12 @@ __all__ = [
     "WorkTitleTransformationLineage",
     "WorkTitleTransformationRule",
     "WorkTitleTransformationSide",
+    "apply_work_title_transformation",
     "admit_provider_work_identity",
     "narrowing_work_query",
+    "replay_provider_work_identity_admission",
     "work_dispatch_lineage_from_data",
     "work_query_ladder",
+    "work_title_has_variant_marker",
     "work_title_transformation_lineage_from_data",
 ]

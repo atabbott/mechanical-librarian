@@ -70,7 +70,8 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     WorkTitleTransformationLineage,
-    admit_provider_work_identity,
+    replay_provider_work_identity_admission,
+    work_title_has_variant_marker,
 )
 
 
@@ -889,17 +890,15 @@ def qualify_provider_observation(
         )
     if observation.edition_enrichment_overflow is not None:
         witness = observation.edition_enrichment_overflow
-        admission = admit_provider_work_identity(
+        admission = replay_provider_work_identity_admission(
             local_title=lookup.title or "",
             local_authors=lookup.authors,
             provider_title=witness.title,
             provider_authors=tuple(author.value or "" for author in witness.authors),
             provider_work_identity=witness.work_identity,
-            variant_excluded=_variant_marker(witness.title),
+            dispatch_lineage=observation.dispatch_lineage,
         )
-        qualified_witness = admission.admitted and (
-            admission.transformation is None or observation.dispatch_lineage is not None
-        )
+        qualified_witness = admission.admitted
         return ProviderObservation(
             observation.provider,
             ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
@@ -941,7 +940,10 @@ def qualify_provider_observation(
             else candidate.work_identity
         )
         admission = provider_candidate_work_identity_admission(
-            candidate, lookup.title or "", lookup.authors
+            candidate,
+            lookup.title or "",
+            lookup.authors,
+            observation.dispatch_lineage,
         )
         disqualifying_roles = {
             claim.role
@@ -951,7 +953,7 @@ def qualify_provider_observation(
             and claim.role in {"abridger", "adapter", "translator"}
         }
         variant_marker = any(
-            _variant_marker(claim.value)
+            work_title_has_variant_marker(claim.value)
             for claim in candidate.claims
             if claim.kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE}
             and claim.state is FieldState.VALID
@@ -959,15 +961,7 @@ def qualify_provider_observation(
         )
         if disqualifying_roles or variant_marker:
             blocked_work_identities.add(qualification_identity)
-        if (
-            admission.admitted
-            and (
-                admission.transformation is None
-                or observation.dispatch_lineage is not None
-            )
-            and not disqualifying_roles
-            and not variant_marker
-        ):
+        if admission.admitted and not disqualifying_roles and not variant_marker:
             qualified.setdefault(qualification_identity, []).append(
                 (candidate, admission.transformation)
             )
@@ -1146,25 +1140,6 @@ def _mixed_work_creator_roles(candidate: ProviderCandidate) -> bool:
         if claim.scope is ClaimScope.WORK and claim.kind is ClaimKind.CREATOR
     }
     return "author" in roles and len(roles) > 1
-
-
-def _variant_marker(value: str) -> bool:
-    tokens = {
-        "".join(character for character in token if character.isalnum())
-        for token in normalize_title(value).casefold().split()
-    }
-    return bool(
-        tokens
-        & {
-            "abridgement",
-            "abridgment",
-            "abridged",
-            "adaptation",
-            "adapted",
-            "translation",
-            "translated",
-        }
-    )
 
 
 class GenerateMetadataReport:
