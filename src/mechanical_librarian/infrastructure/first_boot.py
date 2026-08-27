@@ -52,7 +52,16 @@ def select_first_boot_mode(
             }
         except OSError as error:
             raise FirstBootError("first boot state is unavailable") from error
-        if private_entries <= {"review-sessions.sqlite"}:
+        # The rollback journal belongs to the session database, not to a
+        # completed runtime: a sign-in interrupted mid-write leaves one behind,
+        # and the next open rolls it back. Refusing it would turn a crash
+        # during setup into a boot that will not resume. Only `-journal` is
+        # admitted, because this store is `journal_mode=DELETE` and no WAL is
+        # adopted anywhere (ADR-0059).
+        if private_entries <= {
+            "review-sessions.sqlite",
+            "review-sessions.sqlite-journal",
+        }:
             setup_entries.discard("private")
     try:
         if complete_store():

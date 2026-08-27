@@ -63,9 +63,11 @@ operational stores. In particular:
   which is the documented recovery.
 - The first-boot classifier accepts a `private` directory beside the
   application database while classifying setup states, but only while it
-  contains nothing beyond the session database: setup's first sign-in
-  legitimately creates that file, while any other private content is runtime
-  state and keeps the volume failing closed as before.
+  contains nothing beyond the session database and its rollback journal:
+  setup's first sign-in legitimately creates that file, and an interrupted
+  sign-in legitimately leaves the journal the next open rolls back. Any other
+  private content is runtime state and keeps the volume failing closed as
+  before, `-wal` and `-shm` included, because no WAL is adopted anywhere.
 
 Under ADR-0013, the session database accepts absent state (created with the
 exact schema) or its exact current state, and rejects anything else clearly
