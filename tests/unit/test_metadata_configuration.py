@@ -127,7 +127,7 @@ def test_owner_session_lifetime_defaults_to_thirty_days_and_rejects_noncanonical
             ReviewWebConfiguration(
                 canonical_origin="https://review.example.invalid",
                 owner_password_hash_file=str(tmp_path / "owner.hash"),
-                session_lifetime_seconds=value,
+                session_lifetime_seconds=cast(int, value),
             )
 
     for value in (300, 2_592_000):
@@ -143,8 +143,9 @@ def test_owner_session_lifetime_defaults_to_thirty_days_and_rejects_noncanonical
         source["review"] = {**_review(tmp_path), "session_lifetime_seconds": value}
         path = tmp_path / f"config-{value}.json"
         path.write_text(json.dumps(source), encoding="utf-8")
-        assert load_configuration_file(path).review is not None
-        assert load_configuration_file(path).review.session_lifetime_seconds == value
+        loaded = load_configuration_file(path)
+        assert loaded.review is not None
+        assert loaded.review.session_lifetime_seconds == value
 
     for value in (299, 2_592_001, True, 2_592_000.0):
         source = _source(tmp_path)
