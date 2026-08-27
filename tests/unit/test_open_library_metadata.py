@@ -171,7 +171,7 @@ def test_filename_author_prefix_reaches_qualified_open_library_candidate() -> No
     lookup = MetadataLookup(
         ProviderQueryKind.WORK,
         (),
-        "Ada_Example_-_Plain_Work",
+        "Ada_Example_-_Plain Work",
         ("Ada Example",),
     )
     work = _work()

@@ -159,7 +159,7 @@ def test_ladder_deduplicates_and_narrowing_preserves_base_lineage() -> None:
 @pytest.mark.parametrize("separator", (" - ", "–", "—", " – ", " — ", ":"))
 def test_exact_primary_author_filename_prefix_admits_local_side(separator: str) -> None:
     decision = admit_provider_work_identity(
-        local_title=f"Ada_Example{separator}Plain_Work",
+        local_title=f"Ada_Example{separator}Plain Work",
         local_authors=("Ada Example",),
         provider_title="Plain Work",
         provider_authors=("Ada Example",),
@@ -177,7 +177,7 @@ def test_exact_primary_author_filename_prefix_admits_provider_side() -> None:
     decision = admit_provider_work_identity(
         local_title="Plain Work",
         local_authors=("Ada Example",),
-        provider_title="Ada_Example_-_Plain_Work",
+        provider_title="Ada_Example_-_Plain Work",
         provider_authors=("Ada Example",),
         provider_work_identity="work-1",
     )
@@ -277,6 +277,13 @@ def test_complete_ordered_authors_and_variant_veto_remain_identity_floor() -> No
         (":Work", "Work"),
         ("-Work", "Work"),
     ),
+    ids=(
+        "trailing_colon",
+        "trailing_semicolon",
+        "trailing_hyphen",
+        "leading_colon",
+        "leading_hyphen",
+    ),
 )
 def test_admission_preserves_title_punctuation_collisions(
     local_title: str, provider_title: str
@@ -299,6 +306,13 @@ def test_admission_preserves_author_and_filename_remainder_punctuation() -> None
         provider_work_identity="work-1",
     ).admitted
     assert not admit_provider_work_identity(
+        local_title="Ada Example - Plain_Work",
+        local_authors=("Ada Example",),
+        provider_title="Plain Work",
+        provider_authors=("Ada Example",),
+        provider_work_identity="work-1",
+    ).admitted
+    assert not admit_provider_work_identity(
         local_title="Ada Example - Work:",
         local_authors=("Ada Example",),
         provider_title="Work",
@@ -307,10 +321,13 @@ def test_admission_preserves_author_and_filename_remainder_punctuation() -> None
     ).admitted
 
 
-def test_admission_retains_established_non_breaking_space_equality() -> None:
+@pytest.mark.parametrize("separator", ("\u00a0", "\u2009", "\u202f", "\u3000"))
+def test_admission_retains_established_unicode_whitespace_equality(
+    separator: str,
+) -> None:
     assert admit_provider_work_identity(
-        local_title="Plain\u00a0Work",
-        local_authors=("Ada\u00a0Example",),
+        local_title=f"Plain{separator}Work",
+        local_authors=(f"Ada{separator}Example",),
         provider_title="Plain Work",
         provider_authors=("Ada Example",),
         provider_work_identity="work-1",
@@ -318,7 +335,7 @@ def test_admission_retains_established_non_breaking_space_equality() -> None:
 
 
 def test_replay_requires_one_exact_ladder_dispatch_or_its_narrowing_successor() -> None:
-    local_title = "Ada_Example_-_Plain_Work"
+    local_title = "Ada_Example_-_Plain Work"
     authors = ("Ada Example",)
     query = work_query_ladder(local_title, authors)[0]
     exact = WorkDispatchLineage.from_query(query)

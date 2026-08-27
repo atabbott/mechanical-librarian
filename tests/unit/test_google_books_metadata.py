@@ -808,7 +808,7 @@ def test_filename_author_prefix_reaches_qualified_google_books_candidate() -> No
     lookup = MetadataLookup(
         ProviderQueryKind.WORK,
         (),
-        "Ada_Example_-_Example_Book",
+        "Ada_Example_-_Example Book",
         ("Ada Example",),
     )
     observation = GoogleBooksMetadataProvider(

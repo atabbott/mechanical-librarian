@@ -585,17 +585,15 @@ def _filename_author_title_prefix(
         return None
     prefix_tokens = _identity_tokens(match.group("prefix"))
     author_tokens = _identity_tokens(authors[0])
-    title = match.group("title").replace("_", " ")
+    title = match.group("title")
     if query:
-        title = _clean(title)
-    else:
-        title = _ASCII_SPACE.sub(" ", title)
+        title = _clean(title.replace("_", " "))
     return title if prefix_tokens == author_tokens and _comparison_text(title) else None
 
 
 def _comparison_text(value: str) -> str:
     normalized = unicodedata.normalize("NFC", value).casefold()
-    return " ".join(part for part in _ASCII_SPACE.split(normalized) if part)
+    return " ".join(normalized.split())
 
 
 def _normalized_query_text(value: str) -> str:

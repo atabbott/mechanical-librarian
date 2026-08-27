@@ -124,7 +124,7 @@ def test_decoration_only_work_query_is_insufficient_without_request(title: str) 
 
 
 def test_filename_author_prefix_reaches_qualified_hardcover_candidate() -> None:
-    lookup = work_lookup("Ada_Example_-_Plain_Work")
+    lookup = work_lookup("Ada_Example_-_Plain Work")
     payload = hardcover_envelope(
         [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}],
         [

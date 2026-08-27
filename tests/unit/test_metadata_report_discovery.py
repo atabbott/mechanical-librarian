@@ -671,7 +671,7 @@ def test_work_lookup_admits_exact_primary_author_filename_prefix_and_persists_li
     lookup = MetadataLookup(
         ProviderQueryKind.WORK,
         (),
-        "Ada_Author_-_The_Example",
+        "Ada_Author_-_The Example",
         ("Ada Author",),
     )
     candidate = ProviderCandidate(
@@ -700,7 +700,7 @@ def test_work_lookup_admits_exact_primary_author_filename_prefix_and_persists_li
             ),
         ),
     )
-    dispatch = _work_dispatch("Ada_Author_-_The_Example", ("Ada Author",))
+    dispatch = _work_dispatch("Ada_Author_-_The Example", ("Ada Author",))
 
     qualified = qualify_provider_observation(
         ProviderObservation(
@@ -726,7 +726,7 @@ def test_work_lookup_rejects_missing_or_ambiguous_decoration_lineage() -> None:
     lookup = MetadataLookup(
         ProviderQueryKind.WORK,
         (),
-        "Ada_Author_-_The_Example",
+        "Ada_Author_-_The Example",
         ("Ada Author",),
     )
 
@@ -777,7 +777,7 @@ def test_work_lookup_rejects_missing_or_ambiguous_decoration_lineage() -> None:
             (),
             (
                 candidate("edition-1", "The Example"),
-                candidate("edition-2", "Ada_Author_-_The_Example"),
+                candidate("edition-2", "Ada_Author_-_The Example"),
             ),
             ProviderQueryKind.WORK,
             dispatch_lineage=WorkDispatchLineage(WorkDispatchRung.NORMALIZED),
@@ -839,7 +839,7 @@ def test_work_lookup_rejects_missing_or_ambiguous_decoration_lineage() -> None:
             (mixed,),
             ProviderQueryKind.WORK,
             dispatch_lineage=_work_dispatch(
-                "Ada_Author_-_The_Example", ("Ada Author",)
+                "Ada_Author_-_The Example", ("Ada Author",)
             ),
         ),
         lookup,
@@ -855,7 +855,7 @@ def test_work_lookup_rejects_missing_or_ambiguous_decoration_lineage() -> None:
             ),
             ProviderQueryKind.WORK,
             dispatch_lineage=_work_dispatch(
-                "Ada_Author_-_The_Example", ("Ada Author",)
+                "Ada_Author_-_The Example", ("Ada Author",)
             ),
         ),
         lookup,
@@ -880,10 +880,10 @@ def test_work_lookup_rejects_missing_or_ambiguous_decoration_lineage() -> None:
             )
             if field.destination is TargetDestination.AUTHORS
             else field
-            for field in default_target_fields("Ada_Author_-_The_Example")
+            for field in default_target_fields("Ada_Author_-_The Example")
         ),
     )
-    dispatch = _work_dispatch("Ada_Author_-_The_Example", ("Ada Author",))
+    dispatch = _work_dispatch("Ada_Author_-_The Example", ("Ada Author",))
     transformation = WorkTitleTransformationLineage(
         WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
         WorkTitleTransformationSide.LOCAL,
@@ -967,7 +967,7 @@ def test_work_lookup_rejects_missing_or_ambiguous_decoration_lineage() -> None:
                     (mixed,),
                     ProviderQueryKind.WORK,
                     dispatch_lineage=_work_dispatch(
-                        "Ada_Author_-_The_Example", ("Ada Author",)
+                        "Ada_Author_-_The Example", ("Ada Author",)
                     ),
                     transformation_lineage=WorkTitleTransformationLineage(
                         WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
@@ -1003,7 +1003,7 @@ def test_edition_overflow_witness_uses_the_same_decoration_admission() -> None:
         ),
     )
     dispatch = _work_dispatch(
-        "Ada_Author_-_The_Example", ("Ada Author",), narrowed=True
+        "Ada_Author_-_The Example", ("Ada Author",), narrowed=True
     )
 
     qualified = qualify_provider_observation(
@@ -1019,7 +1019,7 @@ def test_edition_overflow_witness_uses_the_same_decoration_admission() -> None:
         MetadataLookup(
             ProviderQueryKind.WORK,
             (),
-            "Ada_Author_-_The_Example",
+            "Ada_Author_-_The Example",
             ("Ada Author",),
         ),
     )

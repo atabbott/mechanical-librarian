@@ -74,6 +74,12 @@ retry successors, and ProposalSet replay invoke the same decision. The schema
 therefore advances to `metadata-report-v28`; ADR-0013 rejects v27 and every
 other predecessor during ordinary startup.
 
+The admission baseline retains the pre-amendment target-normalization floor:
+NFC, case folding, and collapse of all Unicode whitespace while preserving
+punctuation. Filename-prefix admission tokenizes underscores only inside the
+bounded author prefix; underscores in the remaining title are query-only and
+cannot create admission equivalence.
+
 ## Consequences
 
 ### Positive
