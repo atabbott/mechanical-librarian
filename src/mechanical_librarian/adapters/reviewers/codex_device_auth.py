@@ -286,16 +286,15 @@ class CodexDeviceAuthManager:
             )
             if not (returncode == 0 and output == b"Logged in using ChatGPT\n"):
                 raise CodexDeviceAuthError("permission")
-            # The cancellation decision and credential commit are one terminal
-            # transition. Cancellation wins before this lock; installation wins
-            # once this lock is held and publishes usable before releasing it.
-            with self._lock:
-                if self._cancelled:
-                    return
-                with self._lease_guard():
+            # Lease validity, cancellation, credential commit, and publication
+            # are one coordinator-then-manager terminal transition.
+            with self._lease_guard():
+                with self._lock:
+                    if self._cancelled:
+                        return
                     self._require_lease()
                     _install_auth(auth_path, self._auth_store)
-                self._state = CodexDeviceAuthState("usable")
+                    self._state = CodexDeviceAuthState("usable")
         except (OSError, subprocess.SubprocessError, CodexDeviceAuthError):
             with self._lock:
                 if not self._cancelled:

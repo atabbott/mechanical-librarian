@@ -2,7 +2,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 
 import { ApiError } from '../api/http'
-import type { ReviewHttp, ReviewerAccessView } from '../api/http'
+import type {
+  CodexDeviceAuthState,
+  ReviewHttp,
+  ReviewerAccessView,
+  ReviewerReason,
+} from '../api/http'
 
 type Action =
   | { kind: 'without'; revision: number }
@@ -33,13 +38,35 @@ const failureCopy: Readonly<Record<string, string>> = {
   reviewer_access_stale: 'Reviewer access changed in another session. Reload before trying again.',
 }
 
-const deviceFailureCopy: Readonly<Record<string, string>> = {
+const deviceFailureCopy: Readonly<Record<NonNullable<CodexDeviceAuthState['failure']>, string>> = {
   permission_or_profile:
     'The installed Codex sign-in could not be validated. Replace the sign-in and retry.',
   permission_or_process:
     'Codex refused or could not finish device sign-in. Restart the sign-in flow.',
   protocol_or_process: 'Codex returned an unexpected sign-in result. Restart the sign-in flow.',
   restart_interrupted: 'A prior sign-in was interrupted. Restart the sign-in flow.',
+}
+
+const codexReasonCopy: Readonly<Record<ReviewerReason, string>> = {
+  host_evidence_unavailable:
+    'Host memory evidence is unavailable. Fix the host or container memory reporting before using Codex.',
+  cgroup_limit_below_1_gib:
+    'The container memory limit is below 1 GiB. Increase it before using Codex.',
+  headroom_below_1_gib:
+    'Less than 1 GiB of memory headroom is available. Free memory or raise the container limit.',
+  permission_or_profile:
+    'The installed Codex sign-in could not be validated. Replace the sign-in and retry.',
+  permission_or_process: 'Codex could not complete sign-in. Restart the sign-in flow.',
+  protocol_or_process: 'Codex returned an unexpected result. Restart the sign-in flow.',
+  restart_interrupted: 'A prior sign-in was interrupted. Restart the sign-in flow.',
+  not_selected: 'Codex is not selected. Check the sign-in, then select it for cover observations.',
+  invalid_key: 'The configured reviewer credential is invalid. Replace it and retry.',
+  quota_exhausted: 'The configured reviewer has no remaining quota. Restore quota and retry.',
+  rate_limited: 'The configured reviewer is rate limited. Wait, then retry.',
+  model_unavailable: 'The configured reviewer model is unavailable. Choose another model.',
+  model_text_only: 'The configured reviewer model cannot inspect cover images.',
+  malformed_response: 'The configured reviewer returned an invalid response. Retry later.',
+  unreachable: 'The configured reviewer could not be reached. Check network access and retry.',
 }
 
 export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
@@ -160,6 +187,12 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
     !hostUnsupported && (view.codex.state === 'usable' || device?.state === 'usable')
   const codexManaged =
     view.mapping?.engine === 'codex' || codexUsable || view.codex.state === 'configured'
+  const codexReason =
+    !hostUnsupported && device?.failure
+      ? deviceFailureCopy[device.failure]
+      : view.codex.reason
+        ? codexReasonCopy[view.codex.reason]
+        : null
   const effectiveModel = model || (view.mapping?.engine === 'openrouter' ? view.mapping.model : '')
   const mutationFailure =
     mutation.error instanceof ApiError
@@ -190,7 +223,7 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
         <div>
           <h3>Codex device sign-in</h3>
           <p aria-live="polite">Status: {codexState.replaceAll('_', ' ')}</p>
-          {device?.failure ? <p role="alert">{deviceFailureCopy[device.failure]}</p> : null}
+          {codexReason ? <p role="alert">{codexReason}</p> : null}
           {view.codex.host_headroom_bytes !== null ? (
             <small>
               Available reviewer headroom: {view.codex.host_headroom_bytes.toLocaleString()} bytes
@@ -295,9 +328,6 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
             </>
           ) : (
             <>
-              {view.codex.reason ? (
-                <p role="alert">{view.codex.reason.replaceAll('_', ' ')}</p>
-              ) : null}
               <button
                 type="button"
                 disabled={mutation.isPending || hostUnsupported}

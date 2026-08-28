@@ -10,7 +10,7 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from pathlib import Path
-from threading import Event, Thread
+from threading import Event, Thread, current_thread
 from typing import Any, cast
 from unittest.mock import Mock
 
@@ -405,6 +405,93 @@ def test_cancel_between_status_validation_and_install_wins_without_install(
     assert not manager._thread.is_alive()
     assert manager.status().state == "cancelled"
     assert not (tmp_path / "profile" / "auth.json").exists()
+
+
+def test_terminal_install_uses_lease_before_manager_lock_and_handoff_completes(
+    tmp_path: Path,
+) -> None:
+    coordinator = _CodexAuthLeaseCoordinator()
+    validation_complete = Event()
+    release_validation = Event()
+    foreground_has_lease = Event()
+    release_foreground = Event()
+    terminal_waiting_for_lease = Event()
+    holder: dict[str, CodexDeviceAuthManager] = {}
+
+    def predecessor_factory(
+        lease_current: Callable[[], bool],
+        lease_guard: Callable[[], AbstractContextManager[None]],
+    ) -> CodexDeviceAuthManager:
+        @contextmanager
+        def ordered_guard() -> Iterator[None]:
+            if (
+                current_thread().name == "reviewer-device-auth"
+                and validation_complete.is_set()
+            ):
+                terminal_waiting_for_lease.set()
+            with lease_guard():
+                if current_thread().name == "foreground-status":
+                    foreground_has_lease.set()
+                    assert release_foreground.wait(timeout=2)
+                yield
+
+        manager = _manager(
+            tmp_path, lease_current=lease_current, lease_guard=ordered_guard
+        )
+        original_status = manager._status_command
+
+        def blocked_status(
+            prepared: CodexAuthCommand, deadline: float, *, flow_owned: bool
+        ) -> tuple[bytes, int]:
+            result = original_status(prepared, deadline, flow_owned=flow_owned)
+            validation_complete.set()
+            assert release_validation.wait(timeout=2)
+            return result
+
+        manager._status_command = blocked_status  # type: ignore[method-assign]
+        holder["manager"] = manager
+        return manager
+
+    predecessor = _LazyCodexAuth(predecessor_factory, coordinator)
+    successor = _LazyCodexAuth(
+        lambda lease, guard: _manager(tmp_path, lease_current=lease, lease_guard=guard),
+        coordinator,
+    )
+    predecessor.activate_lease()
+    predecessor.start()
+    assert validation_complete.wait(timeout=2)
+    manager = holder["manager"]
+    foreground_result: list[CodexDeviceAuthState] = []
+    foreground = Thread(
+        target=lambda: foreground_result.append(manager.status()),
+        name="foreground-status",
+        daemon=True,
+    )
+    foreground.start()
+    assert foreground_has_lease.wait(timeout=2)
+    release_validation.set()
+    assert terminal_waiting_for_lease.wait(timeout=2)
+    release_foreground.set()
+
+    foreground.join(timeout=2)
+    assert manager._thread is not None
+    manager._thread.join(timeout=2)
+    assert not foreground.is_alive()
+    assert not manager._thread.is_alive()
+    assert foreground_result == [CodexDeviceAuthState("validating")]
+    assert manager.status().state == "usable"
+
+    activated = Event()
+
+    def activate_successor() -> None:
+        successor.activate_lease()
+        activated.set()
+
+    handoff = Thread(target=activate_successor, daemon=True)
+    handoff.start()
+    handoff.join(timeout=2)
+    assert not handoff.is_alive()
+    assert activated.is_set()
 
 
 def test_cancel_owns_and_stops_spawned_validation_child(

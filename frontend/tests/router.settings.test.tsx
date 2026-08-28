@@ -679,14 +679,41 @@ describe('owner settings route', () => {
   })
 
   it.each([
-    ['ready', null, false],
-    ['failed', 'permission_or_profile', false],
-    ['expired', null, false],
-    ['interrupted', 'restart_interrupted', false],
-    ['host_unsupported', 'headroom_below_1_gib', true],
+    ['ready', null, false, null],
+    [
+      'failed',
+      'permission_or_profile',
+      false,
+      'The installed Codex sign-in could not be validated. Replace the sign-in and retry.',
+    ],
+    ['expired', null, false, null],
+    [
+      'interrupted',
+      'restart_interrupted',
+      false,
+      'A prior sign-in was interrupted. Restart the sign-in flow.',
+    ],
+    [
+      'host_unsupported',
+      'host_evidence_unavailable',
+      true,
+      'Host memory evidence is unavailable. Fix the host or container memory reporting before using Codex.',
+    ],
+    [
+      'host_unsupported',
+      'cgroup_limit_below_1_gib',
+      true,
+      'The container memory limit is below 1 GiB. Increase it before using Codex.',
+    ],
+    [
+      'host_unsupported',
+      'headroom_below_1_gib',
+      true,
+      'Less than 1 GiB of memory headroom is available. Free memory or raise the container limit.',
+    ],
   ] as const)(
     'keeps mapped unhealthy Codex state %s manageable',
-    async (state, reason, hostUnsupported) => {
+    async (state, reason, hostUnsupported, expectedReason) => {
       const user = userEvent.setup()
       const http = createHttp()
       http.getSettings = vi.fn(async () => view())
@@ -711,11 +738,82 @@ describe('owner settings route', () => {
       expect(
         screen.getByRole('button', { name: 'Use Codex for cover observations' }),
       ).toBeDisabled()
+      if (expectedReason) {
+        expect(screen.getAllByRole('alert')).toHaveLength(1)
+        expect(screen.getByRole('alert')).toHaveTextContent(expectedReason)
+      } else {
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      }
 
       await user.click(clear)
       expect(screen.getByRole('button', { name: 'Confirm clear Codex sign-in' })).toHaveFocus()
     },
   )
+
+  it('shows one newer device failure instead of the persisted Codex reason', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => ({
+      ...reviewerView,
+      mapping: { engine: 'codex' as const },
+      codex: {
+        ...reviewerView.codex,
+        state: 'interrupted' as const,
+        reason: 'restart_interrupted' as const,
+      },
+    }))
+    http.recheckCodex = vi.fn(async () => ({
+      state: 'failed' as const,
+      failure: 'permission_or_profile' as const,
+      verification_url: null,
+      user_code: null,
+      expires_in_seconds: null,
+    }))
+    renderRoute('/settings?group=reviewer', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Check existing Codex sign-in' }))
+
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'The installed Codex sign-in could not be validated. Replace the sign-in and retry.',
+    )
+    expect(screen.queryByText(/prior sign-in was interrupted/u)).not.toBeInTheDocument()
+  })
+
+  it('keeps current host failure copy ahead of an older cached device failure', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => ({
+      ...reviewerView,
+      mapping: { engine: 'codex' as const },
+      codex: {
+        ...reviewerView.codex,
+        state: 'host_unsupported' as const,
+        reason: 'headroom_below_1_gib' as const,
+      },
+    }))
+    const { queryClient } = renderRoute('/settings?group=reviewer', http)
+    await screen.findByText('Status: host unsupported')
+
+    act(() => {
+      queryClient.setQueryData(['reviewer-access', 'codex-device'], {
+        state: 'failed',
+        failure: 'permission_or_profile',
+        verification_url: null,
+        user_code: null,
+        expires_in_seconds: null,
+      })
+    })
+
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Less than 1 GiB of memory headroom is available. Free memory or raise the container limit.',
+    )
+    expect(
+      screen.queryByText(/installed Codex sign-in could not be validated/u),
+    ).not.toBeInTheDocument()
+  })
 
   it('evicts a checked usable device result after credential clear', async () => {
     const user = userEvent.setup()
