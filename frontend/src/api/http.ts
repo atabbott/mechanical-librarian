@@ -8,6 +8,42 @@ type CaseDetailDto = Schema<'_CaseDetailResponse'>
 export type SettingsView = Schema<'SettingsView'>
 export type SettingsWrite = Schema<'_SettingsWriteRequest'>
 export type AppearanceView = Schema<'_AppearanceResponse'>
+export interface ReviewerEngineStatus {
+  engine: 'codex' | 'openrouter'
+  state: string
+  reason: string | null
+  model: string | null
+  tier: string | null
+  host_headroom_bytes: number | null
+}
+export interface ReviewerAccessView {
+  schema_version: 'reviewer-access-view-v1'
+  revision: number
+  mapping: { engine: 'codex' } | { engine: 'openrouter'; model: string } | null
+  openrouter_key_configured: boolean
+  codex: ReviewerEngineStatus
+  openrouter: ReviewerEngineStatus
+  recommendations: readonly string[]
+  free_tier_caveat: string
+  data_use_caveat: string
+}
+export interface CodexDeviceAuthState {
+  state:
+    | 'ready'
+    | 'configured'
+    | 'starting'
+    | 'waiting'
+    | 'validating'
+    | 'usable'
+    | 'expired'
+    | 'cancelled'
+    | 'failed'
+    | 'interrupted'
+  verification_url: string | null
+  user_code: string | null
+  expires_in_seconds: number | null
+  failure: string | null
+}
 
 // These validators live at the DTO mapping boundary so the editor cannot
 // silently become stricter than the generated API contract. Their names make
@@ -244,6 +280,8 @@ export interface CoverConsiderationView {
     readonly preferMinimalComposition: boolean
   }
   policyReference: string
+  reviewerEngine?: 'codex' | 'openrouter' | null
+  reviewerModel?: string | null
   reviewerStatus: string
   reviewerUnavailableReason:
     | 'profile contract requires memory_bytes=1073741824'
@@ -547,6 +585,22 @@ export interface ReviewHttp {
   getAppearance(signal?: AbortSignal): Promise<AppearanceView>
   getSettings(signal?: AbortSignal): Promise<SettingsView>
   writeSettings(value: SettingsWrite, signal?: AbortSignal): Promise<SettingsView>
+  getReviewerAccess(signal?: AbortSignal): Promise<ReviewerAccessView>
+  refreshOpenRouter(signal?: AbortSignal): Promise<ReviewerAccessView>
+  configureOpenRouter(
+    value: { expected_revision: number; api_key: string; model: string },
+    signal?: AbortSignal,
+  ): Promise<ReviewerAccessView>
+  clearOpenRouter(expectedRevision: number, signal?: AbortSignal): Promise<ReviewerAccessView>
+  selectReviewer(
+    engine: 'codex' | null,
+    expectedRevision: number,
+    signal?: AbortSignal,
+  ): Promise<ReviewerAccessView>
+  startCodexDevice(signal?: AbortSignal): Promise<CodexDeviceAuthState>
+  getCodexDevice(signal?: AbortSignal): Promise<CodexDeviceAuthState>
+  cancelCodexDevice(signal?: AbortSignal): Promise<CodexDeviceAuthState>
+  clearCodex(expectedRevision: number, signal?: AbortSignal): Promise<ReviewerAccessView>
   getLibrary(search: LibrarySearch, signal?: AbortSignal): Promise<LibraryView>
   getAttention(search: AttentionSearch, signal?: AbortSignal): Promise<AttentionView>
   getCaseDetail(reviewCaseId: string, signal?: AbortSignal): Promise<CaseDetailView>
@@ -697,6 +751,66 @@ export class ReviewApiClient implements ReviewHttp {
   }
   async writeSettings(value: SettingsWrite, signal?: AbortSignal) {
     return mapSettings(await this.mutate('/api/v1/settings', value, signal, undefined, 'PATCH'))
+  }
+  async getReviewerAccess(signal?: AbortSignal) {
+    return mapReviewerAccess(await this.read('/api/v1/reviewer-access', signal))
+  }
+  async refreshOpenRouter(signal?: AbortSignal) {
+    return mapReviewerAccess(
+      await this.mutate('/api/v1/reviewer-access/openrouter/refresh', {}, signal),
+    )
+  }
+  async configureOpenRouter(
+    value: { expected_revision: number; api_key: string; model: string },
+    signal?: AbortSignal,
+  ) {
+    return mapReviewerAccess(
+      await this.mutate('/api/v1/reviewer-access/openrouter', value, signal, undefined, 'PUT'),
+    )
+  }
+  async clearOpenRouter(expectedRevision: number, signal?: AbortSignal) {
+    return mapReviewerAccess(
+      await this.mutate(
+        '/api/v1/reviewer-access/openrouter',
+        { expected_revision: expectedRevision },
+        signal,
+        undefined,
+        'DELETE',
+      ),
+    )
+  }
+  async selectReviewer(engine: 'codex' | null, expectedRevision: number, signal?: AbortSignal) {
+    return mapReviewerAccess(
+      await this.mutate(
+        '/api/v1/reviewer-access/selection',
+        { engine, expected_revision: expectedRevision },
+        signal,
+        undefined,
+        'PUT',
+      ),
+    )
+  }
+  async startCodexDevice(signal?: AbortSignal) {
+    return mapCodexDevice(await this.mutate('/api/v1/reviewer-access/codex/device', {}, signal))
+  }
+  async getCodexDevice(signal?: AbortSignal) {
+    return mapCodexDevice(await this.read('/api/v1/reviewer-access/codex/device', signal))
+  }
+  async cancelCodexDevice(signal?: AbortSignal) {
+    return mapCodexDevice(
+      await this.mutate('/api/v1/reviewer-access/codex/device/cancel', {}, signal),
+    )
+  }
+  async clearCodex(expectedRevision: number, signal?: AbortSignal) {
+    return mapReviewerAccess(
+      await this.mutate(
+        '/api/v1/reviewer-access/codex',
+        { expected_revision: expectedRevision },
+        signal,
+        undefined,
+        'DELETE',
+      ),
+    )
   }
   async getAttention(search: AttentionSearch, signal?: AbortSignal) {
     const p = new URLSearchParams()
@@ -966,6 +1080,44 @@ export class ReviewApiClient implements ReviewHttp {
 
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const mapReviewerAccess = (value: unknown): ReviewerAccessView => {
+  if (
+    !record(value) ||
+    value.schema_version !== 'reviewer-access-view-v1' ||
+    !Number.isInteger(value.revision) ||
+    typeof value.openrouter_key_configured !== 'boolean' ||
+    !record(value.codex) ||
+    value.codex.engine !== 'codex' ||
+    !record(value.openrouter) ||
+    value.openrouter.engine !== 'openrouter' ||
+    !Array.isArray(value.recommendations) ||
+    typeof value.free_tier_caveat !== 'string' ||
+    typeof value.data_use_caveat !== 'string'
+  )
+    throw new ApiError(502, 'invalid_reviewer_access_response')
+  return value as unknown as ReviewerAccessView
+}
+
+const mapCodexDevice = (value: unknown): CodexDeviceAuthState => {
+  if (
+    !record(value) ||
+    ![
+      'ready',
+      'configured',
+      'starting',
+      'waiting',
+      'validating',
+      'usable',
+      'expired',
+      'cancelled',
+      'failed',
+      'interrupted',
+    ].includes(String(value.state))
+  )
+    throw new ApiError(502, 'invalid_codex_device_response')
+  return value as unknown as CodexDeviceAuthState
+}
 const stringValue = (value: unknown, field: string) => {
   if (typeof value !== 'string') throw new ApiError(502, `invalid_${field}`)
   return value
@@ -997,7 +1149,7 @@ export const mapSettings = (value: unknown): SettingsView => {
     !record(value) ||
     (value.authority !== 'file' && value.authority !== 'store') ||
     !record(value.document) ||
-    value.document.schema_version !== 'owner-settings-v1' ||
+    value.document.schema_version !== 'owner-settings-v2' ||
     !Array.isArray(value.document.connections) ||
     !Array.isArray(value.document.providers) ||
     !Array.isArray(value.document.libraries) ||
@@ -2076,7 +2228,7 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
   if (value === null || value === undefined) return null
   if (
     !record(value) ||
-    value.schema_version !== 'cover-consideration-v2' ||
+    value.schema_version !== 'cover-consideration-v3' ||
     !Array.isArray(value.candidates) ||
     !Array.isArray(value.omissions) ||
     !record(value.incumbent) ||
@@ -2347,6 +2499,18 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
       preferMinimalComposition: preferences.prefer_minimal_composition,
     },
     policyReference: stringValue(value.policy_reference, 'cover_policy_reference'),
+    reviewerEngine:
+      value.reviewer_engine === null
+        ? null
+        : value.reviewer_engine === 'codex' || value.reviewer_engine === 'openrouter'
+          ? value.reviewer_engine
+          : (() => {
+              throw new ApiError(502, 'invalid_cover_reviewer_engine')
+            })(),
+    reviewerModel:
+      value.reviewer_model === null
+        ? null
+        : stringValue(value.reviewer_model, 'cover_reviewer_model'),
     reviewerStatus,
     reviewerUnavailableReason: reviewerUnavailableReason as
       | 'profile contract requires memory_bytes=1073741824'

@@ -20,7 +20,7 @@ class _Failure(Exception):
 class _Repository:
     def __init__(self) -> None:
         self.document = SetupStateDocument(
-            schema_version="setup-state-v1",
+            schema_version="setup-state-v2",
             revision=2,
             bootstrap_verifier_digest="0" * 64,
             completed_steps=["claim"],

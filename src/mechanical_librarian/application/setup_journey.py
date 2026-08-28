@@ -1,4 +1,4 @@
-"""Application operations for the closed six-step first-run ledger."""
+"""Application operations for the closed seven-step first-run ledger."""
 
 from __future__ import annotations
 
@@ -230,6 +230,27 @@ class SetupJourneyOperation:
             update={"revision": current.revision + 1}
         )
         return self._write(changed, current.revision)
+
+    def reviewer(
+        self, expected_revision: int, outcome: Literal["skipped", "configured"]
+    ) -> SetupStateDocument:
+        current = self._current(expected_revision, "reviewer")
+        successor = SetupStateDocument.model_validate(
+            {
+                **current.model_dump(),
+                "revision": current.revision + 1,
+                "completed_steps": [
+                    "claim",
+                    "connect",
+                    "providers",
+                    "libraries",
+                    "mounts",
+                    "reviewer",
+                ],
+                "reviewer_setup": outcome,
+            }
+        )
+        return self._write(successor, current.revision)
 
     def kick_off(self, expected_revision: int) -> None:
         current = self.validate_kick_off(expected_revision)

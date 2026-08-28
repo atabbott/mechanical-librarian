@@ -12,6 +12,7 @@ import stat
 import subprocess
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock, Thread
 
@@ -29,7 +30,17 @@ class CodexDeviceAuthError(RuntimeError):
     """Value-free device authentication failure."""
 
 
-CommandFactory = Callable[[Path, str], tuple[Sequence[str], Mapping[str, str]]]
+@dataclass(frozen=True, slots=True)
+class CodexAuthCommand:
+    command: Sequence[str]
+    environment: Mapping[str, str]
+    pass_fds: tuple[int, ...] = ()
+    close: Callable[[], None] = lambda: None
+
+
+CommandFactory = Callable[
+    [Path, str], CodexAuthCommand | tuple[Sequence[str], Mapping[str, str]]
+]
 PopenFactory = Callable[..., subprocess.Popen[bytes]]
 RunFactory = Callable[..., subprocess.CompletedProcess[bytes]]
 
@@ -124,16 +135,29 @@ class CodexDeviceAuthManager:
         try:
             _private_directory_descriptor(self._auth_store, create=False, close=True)
             _validated_auth(target)
-            command, environment = self._command_factory(self._auth_store, "status")
-            completed = self._run(
-                command,
-                env=dict(environment),
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=30,
-                check=False,
-            )
+            return CodexDeviceAuthState("configured")
+        except (OSError, CodexDeviceAuthError):
+            return CodexDeviceAuthState("failed", failure="permission_or_profile")
+
+    def recheck_credential_status(self) -> CodexDeviceAuthState:
+        current = self.current_credential_status()
+        if current.state != "configured":
+            return current
+        try:
+            prepared = _prepared(self._command_factory(self._auth_store, "status"))
+            try:
+                completed = self._run(
+                    prepared.command,
+                    env=dict(prepared.environment),
+                    pass_fds=prepared.pass_fds,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=30,
+                    check=False,
+                )
+            finally:
+                prepared.close()
         except (OSError, subprocess.SubprocessError, CodexDeviceAuthError):
             return CodexDeviceAuthState("failed", failure="permission_or_profile")
         if (
@@ -147,16 +171,18 @@ class CodexDeviceAuthManager:
     def _flow(self) -> None:
         parent = self._auth_store.parent
         staging: Path | None = None
+        prepared: CodexAuthCommand | None = None
         output = bytearray()
         try:
             _private_directory_descriptor(parent, create=True, close=True)
             staging = Path(tempfile.mkdtemp(prefix="reviewer-auth-", dir=parent))
             os.chmod(staging, 0o700)
             _private_directory_descriptor(staging, create=False, close=True)
-            command, environment = self._command_factory(staging, "start")
+            prepared = _prepared(self._command_factory(staging, "start"))
             process = self._popen(
-                command,
-                env=dict(environment),
+                prepared.command,
+                env=dict(prepared.environment),
+                pass_fds=prepared.pass_fds,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -199,13 +225,16 @@ class CodexDeviceAuthManager:
                 return
             if _issued_state(lines) is None:
                 raise CodexDeviceAuthError("protocol")
+            prepared.close()
+            prepared = None
             self._set_state(CodexDeviceAuthState("validating"))
             auth_path = staging / "auth.json"
             _validated_auth(auth_path)
-            command, environment = self._command_factory(staging, "status")
+            prepared = _prepared(self._command_factory(staging, "status"))
             completed = self._run(
-                command,
-                env=dict(environment),
+                prepared.command,
+                env=dict(prepared.environment),
+                pass_fds=prepared.pass_fds,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -230,6 +259,8 @@ class CodexDeviceAuthManager:
                         "failed", failure="protocol_or_process"
                     )
         finally:
+            if prepared is not None:
+                prepared.close()
             with self._lock:
                 self._process = None
             if staging is not None:
@@ -286,6 +317,15 @@ def _issued_state(lines: list[str]) -> CodexDeviceAuthState | None:
         user_code=code,
         expires_in_seconds=900,
     )
+
+
+def _prepared(
+    value: CodexAuthCommand | tuple[Sequence[str], Mapping[str, str]],
+) -> CodexAuthCommand:
+    if isinstance(value, CodexAuthCommand):
+        return value
+    command, environment = value
+    return CodexAuthCommand(command, environment)
 
 
 def _read_validated_auth(path: Path) -> tuple[dict[str, object], bytes]:
@@ -433,6 +473,7 @@ def _private_directory_descriptor(
 
 __all__ = [
     "CodexDeviceAuthError",
+    "CodexAuthCommand",
     "CodexDeviceAuthManager",
     "CodexDeviceAuthState",
 ]

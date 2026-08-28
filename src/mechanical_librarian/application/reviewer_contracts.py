@@ -15,6 +15,7 @@ from mechanical_librarian.domain.reviewer_access import (
 
 DeviceAuthStatus = Literal[
     "ready",
+    "configured",
     "starting",
     "waiting",
     "validating",

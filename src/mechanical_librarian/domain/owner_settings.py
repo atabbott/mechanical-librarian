@@ -155,7 +155,6 @@ class ServerSettings(_Closed):
     )
     graceful_shutdown_seconds: Annotated[StrictInt, Field(ge=1, le=300)] = 30
     diagnostic_timings_enabled: StrictBool = False
-    reviewer_enabled: StrictBool = False
 
 
 class CoverPreferenceSettings(_Closed):
@@ -165,7 +164,7 @@ class CoverPreferenceSettings(_Closed):
 
 
 class OwnerSettingsDocument(_Closed):
-    schema_version: Literal["owner-settings-v1"]
+    schema_version: Literal["owner-settings-v2"]
     revision: Annotated[StrictInt, Field(ge=1)]
     connections: Annotated[list[TargetSettings], Field(min_length=1, max_length=32)]
     providers: Annotated[list[ProviderSettings], Field(max_length=32)] = []
@@ -340,7 +339,6 @@ def store_field_metadata(document: OwnerSettingsDocument) -> tuple[SettingField,
         "server.library_polling_interval_seconds",
         "server.graceful_shutdown_seconds",
         "server.diagnostic_timings_enabled",
-        "server.reviewer_enabled",
     }
     fields = [
         SettingField(

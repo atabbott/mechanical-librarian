@@ -61,6 +61,9 @@ from mechanical_librarian.adapters.persistence.review_projections import (
 from mechanical_librarian.adapters.persistence.review_scans import (
     SQLiteReviewScanRepository,
 )
+from mechanical_librarian.adapters.persistence.reviewer_access import (
+    ReviewerAccessStore,
+)
 from mechanical_librarian.adapters.persistence.schema import (
     _create_schema,
     _provider_recovery_outbox_id,
@@ -202,6 +205,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             ),
         )
         self._owner_settings = OwnerSettingsStore(connection)
+        self._reviewer_access = ReviewerAccessStore(connection)
         self._review_scans = SQLiteReviewScanRepository(connection)
         self._field_effects = SQLiteFieldEffectRepository(
             connection,
@@ -1850,6 +1854,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
 
     def owner_settings_store(self) -> OwnerSettingsStore:
         return self._owner_settings
+
+    def reviewer_access_store(self) -> ReviewerAccessStore:
+        return self._reviewer_access
 
     def setup_state_store(self) -> SetupStateStore:
         """The setup-only composition is the sole caller of this incomplete-state port."""

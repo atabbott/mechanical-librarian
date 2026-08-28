@@ -38,6 +38,8 @@ _SETUP_ROW_TABLES = frozenset(
         "field_effect_control",
         "owner_setting_secrets",
         "owner_settings",
+        "reviewer_access",
+        "reviewer_access_secrets",
         "review_preparation_control",
     }
 )
@@ -54,10 +56,10 @@ class SetupStateStore(ConnectionScoped):
     def initialize(self, bootstrap_verifier: str | None = None) -> SetupStateDocument:
         """Create the verifier-free exact-current setup predecessor."""
         document = SetupStateDocument(
-            schema_version="setup-state-v1",
+            schema_version="setup-state-v2",
             revision=1,
-            # This closed member is retained solely to preserve setup-state-v1.
-            # It has no verifier, claim-code, or authentication meaning.
+            # This closed member has no verifier, claim-code, or authentication
+            # meaning; it binds only the exact empty-volume predecessor.
             bootstrap_verifier_digest=_UNCLAIMED_VERIFIER_DIGEST,
         )
         transaction = self._transaction("initialize_setup_state")

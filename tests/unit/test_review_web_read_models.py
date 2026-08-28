@@ -253,9 +253,11 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
         "policy_reference": "cover_policy_" + "2" * 64,
         "provider_fetching": False,
         "ready": False,
+        "reviewer_engine": None,
+        "reviewer_model": None,
         "reviewer_status": "unavailable",
         "reviewer_unavailable_reason": None,
-        "schema_version": "cover-consideration-v2",
+        "schema_version": "cover-consideration-v3",
         "supersedes_id": None,
         "target_fingerprint": case.target_fingerprint,
     }

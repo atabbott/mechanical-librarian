@@ -169,6 +169,33 @@ export const createHttp = (): ReviewHttp => ({
   writeSettings: vi.fn(async () => {
     throw new Error('not configured')
   }),
+  getReviewerAccess: vi.fn(async () => {
+    throw new Error('not configured')
+  }),
+  refreshOpenRouter: vi.fn(async () => {
+    throw new Error('not configured')
+  }),
+  configureOpenRouter: vi.fn(async () => {
+    throw new Error('not configured')
+  }),
+  clearOpenRouter: vi.fn(async () => {
+    throw new Error('not configured')
+  }),
+  selectReviewer: vi.fn(async () => {
+    throw new Error('not configured')
+  }),
+  startCodexDevice: vi.fn(async () => {
+    throw new Error('not configured')
+  }),
+  getCodexDevice: vi.fn(async () => {
+    throw new Error('not configured')
+  }),
+  cancelCodexDevice: vi.fn(async () => {
+    throw new Error('not configured')
+  }),
+  clearCodex: vi.fn(async () => {
+    throw new Error('not configured')
+  }),
   getLibrary: vi.fn(async () => library),
   getAttention: vi.fn(async () => ({ total: 0, items: [] })),
   getCaseDetail: vi.fn(async () => detail),

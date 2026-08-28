@@ -8,6 +8,9 @@ from threading import RLock
 from typing import TypeVar
 
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
+from mechanical_librarian.application.reviewer_access import (
+    ReviewerAccessRepositoryError,
+)
 from mechanical_librarian.domain.reviewer_access import ReviewerAccessDocument
 from mechanical_librarian.domain.validation import credential
 
@@ -15,7 +18,7 @@ _OPENROUTER_SECRET = "openrouter.api_key"
 _T = TypeVar("_T")
 
 
-class ReviewerAccessStoreError(RuntimeError):
+class ReviewerAccessStoreError(ReviewerAccessRepositoryError):
     """Value-free reviewer-access persistence failure."""
 
 

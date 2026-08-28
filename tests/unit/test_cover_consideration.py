@@ -15,12 +15,59 @@ from mechanical_librarian.application.cover_consideration import (
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.review_web import _needs_attention
+from mechanical_librarian.application.reviewer_contracts import ReviewerDispatch
 from tests.unit.test_cover_packets import (
     _observer_result,
     _preview,
     _report,
     _source,
 )
+
+
+def test_dynamic_dispatch_binds_engine_model_profile_schema_and_candidate(
+    case: _Case,
+) -> None:
+    profile = b"openrouter-profile"
+    dispatches: list[str] = []
+
+    def reviewer(*args: object) -> str:
+        dispatches.append("openrouter")
+        return _observer_result(
+            *cast(
+                "tuple[bytes, bytes, bytes, bytes, tuple[tuple[str, str, bytes], ...]]",
+                args,
+            )
+        )
+
+    service = CoverConsiderationService(
+        case.store,
+        read_preview=lambda artifact, _variant: case.payload_by_artifact[artifact],
+        read_preview_digest=lambda digest: case.payload_by_preview[digest],
+        clock=lambda: case.now,
+        reviewer_dispatch=lambda: ReviewerDispatch(
+            "openrouter", "example/vision", profile, cast("ReviewRunner", reviewer)
+        ),
+        reviewer_identity=lambda: ("openrouter", "example/vision", profile),
+    )
+    case_id = "review_case_" + "9" * 64
+    projected = service.ensure(case_id, case.report.to_json(), case.proposal)
+    persisted = json.loads(case.store.current[case_id])
+    observation = json.loads(cast("str", persisted["observation_document"]))
+
+    assert dispatches == ["openrouter"]
+    assert projected["reviewer_engine"] == "openrouter"
+    assert projected["reviewer_model"] == "example/vision"
+    assert persisted["reviewer_engine"] == "openrouter"
+    assert persisted["reviewer_model"] == "example/vision"
+    assert observation["observer_reference"] == cover_observation._observer_reference(
+        profile,
+        observation["instruction_sha256"],
+        observation["output_schema_sha256"],
+    )
+    assert observation["output_schema_sha256"]
+    assert {row["candidate_reference"] for row in observation["observations"]} == {
+        candidate["reference"] for candidate in persisted["candidates"]
+    }
 
 
 class _Store:
@@ -351,7 +398,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
         clock=lambda: case.now + 1,
     )
     assert model_free.replay_reference == (
-        "cover_replay_8e6805e92b29781b5936364958fb48490d79c0138536e665a95a36d6f709ddcf"
+        "cover_replay_b94cc38c5c0460bbca067ca80b60ac1932c6cc4673a905c8a028849f6b26b9be"
     )
     assert (
         model_free.ensure(case_id, case.report.to_json(), case.proposal)[
@@ -394,7 +441,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
     assert len(dispatches) == 1
     replayed_qualified = qualified()
     assert replayed_qualified.replay_reference == (
-        "cover_replay_c6e37ab43b5c83f1a1dcd14464ad711d4c7116acdf729b3e2ab5176e3e543cb9"
+        "cover_replay_e268af7741d289ea672710259d020db79ad95bd6eb71244f4e4ed05b63462ae5"
     )
     assert (
         replayed_qualified.ensure(
@@ -501,7 +548,7 @@ def test_stale_reviewer_binding_is_current_only_and_replays_exactly(
         "profile contract requires process_limit=32"
     )
     different_document = json.loads(case.store.current[case_id])
-    assert different_document["schema_version"] == "cover-consideration-v2"
+    assert different_document["schema_version"] == "cover-consideration-v3"
     assert different_document["reviewer_failure"] is None
     assert "reviewer_unavailable_reason" not in different_document
 

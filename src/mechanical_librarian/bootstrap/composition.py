@@ -66,7 +66,6 @@ from mechanical_librarian.adapters.persistence.provider_recovery import (
 from mechanical_librarian.adapters.persistence.review_sessions import (
     SQLiteReviewSessionRepository,
 )
-from mechanical_librarian.adapters.persistence.schema_adoption import adopt_schema
 from mechanical_librarian.adapters.private_recovery import (
     PrivateCoverRecoveryStore,
     require_private_directory,
@@ -89,11 +88,17 @@ from mechanical_librarian.adapters.providers.remote_cover import (
     RemoteCoverTimeout,
     fetch_remote_cover,
 )
+from mechanical_librarian.adapters.reviewers.codex_device_auth import (
+    CodexDeviceAuthManager,
+)
 from mechanical_librarian.adapters.reviewers.contained_reviewer import (
     ContainedReviewerProcessError,
     cover_reviewer_profile_contract_mismatch,
+    load_contained_reviewer_profile_bytes,
+    prepare_contained_device_auth_command,
     read_contained_reviewer_profile,
 )
+from mechanical_librarian.adapters.reviewers.openrouter import OpenRouterReviewer
 from mechanical_librarian.application.batch import (
     BatchError,
     BatchSelection,
@@ -113,6 +118,7 @@ from mechanical_librarian.application.configuration import (
     ConfigurationError,
     MediaMountConfiguration,
     ProviderConnectionConfiguration,
+    ReviewWebConfiguration,
 )
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
@@ -196,6 +202,12 @@ from mechanical_librarian.application.review_pipeline_stages import (
     ReviewPipelineStages,
 )
 from mechanical_librarian.application.review_web import OwnerSessionService
+from mechanical_librarian.application.reviewer_access import ReviewerAccessOperations
+from mechanical_librarian.application.reviewer_contracts import CodexDeviceAuthState
+from mechanical_librarian.application.reviewer_host import (
+    ReviewerHostStatus,
+    reviewer_host_status,
+)
 from mechanical_librarian.application.setup_connection import (
     SetupConnectionOperation,
     SetupConnectionVerification,
@@ -292,7 +304,6 @@ if TYPE_CHECKING:
     from mechanical_librarian.application.configuration import (
         ApplicationConfiguration,
         LibraryConfiguration,
-        ReviewWebConfiguration,
         TargetConnectionConfiguration,
     )
     from mechanical_librarian.application.field_effects import CapabilityObserver
@@ -2559,12 +2570,22 @@ def _compose_setup_runtime_generation(
             lambda: journey.kick_off(expected_revision),
         )
 
+    reviewer_access = _compose_reviewer_access(
+        repository,
+        ReviewWebConfiguration(
+            canonical_origin=bootstrap.canonical_origin,
+            owner_password_hash_file="/data/.owner-verifier-store",
+            cover_reviewer_profile_file=bootstrap.cover_reviewer_profile_file,
+        ),
+    )
+
     setup_app = create_setup_app(
         sessions,
         state,
         verifier,
         connection=connection,
         journey=journey,
+        reviewer_access=reviewer_access,
         canonical_origin=bootstrap.canonical_origin,
         activate=activate_setup,
     )
@@ -2825,8 +2846,13 @@ def run_review_server(
                     ),
                 )
             )
+            reviewer_access = _compose_reviewer_access(repository, review)
             cover_considerations = _compose_cover_considerations(
-                repository, artifact_store_path, review, provider_recovery
+                repository,
+                artifact_store_path,
+                review,
+                provider_recovery,
+                reviewer_access,
             )
             try:
                 review_application = compose_review_application(
@@ -2855,6 +2881,7 @@ def run_review_server(
                     close_activity_projection=close_activity_projection,
                     cover_considerations=cover_considerations,
                     settings=settings,
+                    reviewer_access=reviewer_access,
                     first_boot=first_boot,
                 )
             except BaseException:
@@ -2923,11 +2950,63 @@ def _store_first_preparation(
     )
 
 
+class _UnavailableCodexAuth:
+    def _state(self) -> CodexDeviceAuthState:
+        return CodexDeviceAuthState("failed", failure="permission_or_profile")
+
+    start = status = cancel = clear = current_credential_status = _state
+    recheck_credential_status = _state
+
+
+def _compose_reviewer_access(
+    repository: SQLiteMetadataReportRepository,
+    review: ReviewWebConfiguration,
+) -> ReviewerAccessOperations:
+    profile_payload = (
+        None
+        if review.cover_reviewer_profile_file is None
+        else read_contained_reviewer_profile(Path(review.cover_reviewer_profile_file))
+    )
+    if profile_payload is None:
+        codex_auth: _UnavailableCodexAuth | CodexDeviceAuthManager = (
+            _UnavailableCodexAuth()
+        )
+
+        def codex_host() -> ReviewerHostStatus:
+            return ReviewerHostStatus(False, "host_evidence_unavailable", None)
+
+        def codex_identity() -> tuple[str, bytes]:
+            raise RuntimeError("codex profile unavailable")
+
+    else:
+        profile = load_contained_reviewer_profile_bytes(profile_payload)
+        codex_auth = CodexDeviceAuthManager(
+            profile.auth_store_path,
+            lambda staging, action: prepare_contained_device_auth_command(
+                profile, staging, action
+            ),
+        )
+        codex_host = reviewer_host_status
+
+        def codex_identity() -> tuple[str, bytes]:
+            return profile.identity.model, profile_payload
+
+    return ReviewerAccessOperations(
+        repository.reviewer_access_store(),
+        codex_auth=codex_auth,
+        codex_host=codex_host,
+        codex_identity=codex_identity,
+        codex_binding=lambda: (*codex_identity(), run_cover_packet_reviewer),
+        openrouter_factory=lambda key, model: OpenRouterReviewer(key, model),
+    )
+
+
 def _compose_cover_considerations(
     repository: SQLiteMetadataReportRepository,
     artifact_store_path: Path,
     review: ReviewWebConfiguration,
     provider_recovery: SQLiteProviderRecoveryStore | None = None,
+    reviewer_access: ReviewerAccessOperations | None = None,
 ) -> CoverConsiderationService:
     artifacts: CoverArtifactStore | None = None
 
@@ -2941,7 +3020,7 @@ def _compose_cover_considerations(
     try:
         reviewer_profile = (
             None
-            if review.cover_reviewer_profile_file is None
+            if reviewer_access is not None or review.cover_reviewer_profile_file is None
             else read_contained_reviewer_profile(
                 Path(review.cover_reviewer_profile_file)
             )
@@ -2976,6 +3055,16 @@ def _compose_cover_considerations(
             None
             if reviewer_profile is None or reviewer_unavailable_reason is not None
             else run_cover_packet_reviewer
+        ),
+        reviewer_dispatch=(
+            None
+            if reviewer_access is None
+            else reviewer_access.dispatch_cover_observation
+        ),
+        reviewer_identity=(
+            None
+            if reviewer_access is None
+            else reviewer_access.current_cover_observation_identity
         ),
         reviewer_unavailable_reason=reviewer_unavailable_reason,
         bind_policy=bind_policy,
@@ -3212,7 +3301,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         cover_review_runner=run_cover_review,
         review_activity_runner=run_review_activity,
         provider_recovery_runner=run_provider_recovery_once,
-        schema_adoption_runner=adopt_schema,
     )
 
 

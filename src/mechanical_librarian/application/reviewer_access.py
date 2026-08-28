@@ -7,6 +7,7 @@ from typing import Literal, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, StrictStr
 
+from mechanical_librarian.application.cover_observation import Reviewer
 from mechanical_librarian.application.reviewer_contracts import (
     CodexDeviceAuthState,
     OpenRouterAccountStatus,
@@ -16,7 +17,6 @@ from mechanical_librarian.application.reviewer_contracts import (
     ReviewerStatusReason,
     openrouter_profile,
 )
-from mechanical_librarian.application.cover_observation import Reviewer
 from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
 from mechanical_librarian.domain.reviewer_access import (
     CodexTaskSelection,
@@ -25,10 +25,15 @@ from mechanical_librarian.domain.reviewer_access import (
     ReviewerEngine,
     ReviewerTaskSelection,
 )
+from mechanical_librarian.domain.validation import credential
 
 
 class ReviewerAccessApplicationError(RuntimeError):
     """Value-free owner-facing reviewer-access refusal."""
+
+
+class ReviewerAccessRepositoryError(RuntimeError):
+    """Value-free persistence contract failure."""
 
 
 class ReviewerAccessRepository(Protocol):
@@ -55,6 +60,8 @@ class CodexAuth(Protocol):
     def clear(self) -> CodexDeviceAuthState: ...
 
     def current_credential_status(self) -> CodexDeviceAuthState: ...
+
+    def recheck_credential_status(self) -> CodexDeviceAuthState: ...
 
 
 class OpenRouterClient(Protocol):
@@ -104,6 +111,7 @@ class ReviewerAccessView(_Closed):
 
 OpenRouterFactory = Callable[[str, str], OpenRouterClient]
 CodexBinding = Callable[[], tuple[str, bytes, Reviewer]]
+CodexIdentity = Callable[[], tuple[str, bytes]]
 
 
 class ReviewerAccessOperations:
@@ -115,6 +123,7 @@ class ReviewerAccessOperations:
         *,
         codex_auth: CodexAuth,
         codex_host: Callable[[], ReviewerHostStatus],
+        codex_identity: CodexIdentity | None = None,
         codex_binding: CodexBinding,
         openrouter_factory: OpenRouterFactory,
     ) -> None:
@@ -122,6 +131,7 @@ class ReviewerAccessOperations:
         self._codex_auth = codex_auth
         self._codex_host = codex_host
         self._codex_binding = codex_binding
+        self._codex_identity = codex_identity or (lambda: self._codex_binding()[:2])
         self._openrouter_factory = openrouter_factory
 
     def read(self) -> ReviewerAccessView:
@@ -156,7 +166,22 @@ class ReviewerAccessOperations:
         if document is None or configured is None:
             document, configured = self._repository.read()
         host = self._codex_host()
-        credential = self._codex_auth.current_credential_status()
+        flow = self._codex_auth.status()
+        credential = (
+            flow
+            if flow.state
+            in {
+                "starting",
+                "waiting",
+                "validating",
+                "usable",
+                "expired",
+                "cancelled",
+                "failed",
+                "interrupted",
+            }
+            else self._codex_auth.current_credential_status()
+        )
         codex = ReviewerEngineStatus(
             engine="codex",
             state=("host_unsupported" if not host.available else credential.state),
@@ -190,6 +215,8 @@ class ReviewerAccessOperations:
     def configure_openrouter(
         self, *, expected_revision: int, api_key: str, model: str
     ) -> ReviewerAccessView:
+        if not credential(api_key):
+            raise ValueError("invalid reviewer credential")
         account = self._probe_openrouter(api_key, model)
         replacement = ReviewerAccessDocument(
             schema_version="reviewer-access-v1",
@@ -208,7 +235,7 @@ class ReviewerAccessOperations:
 
     def select_codex(self, *, expected_revision: int) -> ReviewerAccessView:
         host = self._codex_host()
-        credential = self._codex_auth.current_credential_status()
+        credential = self._codex_auth.recheck_credential_status()
         if not host.available or credential.state != "usable":
             raise ReviewerAccessApplicationError("codex is unavailable")
         self._replace_selection(
@@ -264,7 +291,7 @@ class ReviewerAccessOperations:
         if isinstance(selection, CodexTaskSelection):
             if not self._codex_host().available:
                 raise ReviewerAccessApplicationError("codex host is unsupported")
-            if self._codex_auth.current_credential_status().state != "usable":
+            if self._codex_auth.recheck_credential_status().state != "usable":
                 raise ReviewerAccessApplicationError("codex credential is unavailable")
             model, profile, runner = self._codex_binding()
             return ReviewerDispatch("codex", model, profile, runner)
@@ -273,6 +300,19 @@ class ReviewerAccessOperations:
         return self._openrouter_dispatch(
             self._repository.openrouter_key(), selection.model
         )
+
+    def current_cover_observation_identity(self) -> tuple[str, str, bytes] | None:
+        """Return non-secret replay identity without constructing an engine."""
+        selection = self._repository.read()[0].cover_observation
+        if selection is None:
+            return None
+        if isinstance(selection, CodexTaskSelection):
+            try:
+                model, profile = self._codex_identity()
+            except RuntimeError:
+                return None
+            return "codex", model, profile
+        return "openrouter", selection.model, openrouter_profile(selection.model)
 
     def _replace_selection(
         self, expected_revision: int, selection: ReviewerTaskSelection | None
@@ -331,6 +371,7 @@ def _openrouter_failure_status(
 __all__ = [
     "ReviewerAccessApplicationError",
     "ReviewerAccessOperations",
+    "ReviewerAccessRepositoryError",
     "ReviewerAccessView",
     "ReviewerDispatch",
     "ReviewerEngineStatus",

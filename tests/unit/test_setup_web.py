@@ -71,7 +71,7 @@ class _State:
     def __init__(self, sessions: _Sessions | None = None) -> None:
         self.sessions = sessions
         self.document = SetupStateDocument(
-            schema_version="setup-state-v1",
+            schema_version="setup-state-v2",
             revision=1,
             bootstrap_verifier_digest="0" * 64,
         )
@@ -638,7 +638,7 @@ def test_duplicate_local_library_names_return_closed_validation_without_mutation
     assert state.document.next_step() == "libraries"
 
 
-def test_six_step_journey_closes_setup_routes_after_exact_kickoff_copy() -> None:
+def test_seven_step_journey_closes_setup_routes_after_exact_kickoff_copy() -> None:
     client, state, _connection = _client()
     login = _claim(client)
     headers = {
@@ -691,9 +691,14 @@ def test_six_step_journey_closes_setup_routes_after_exact_kickoff_copy() -> None
         },
         headers=headers,
     )
+    reviewer = client.post(
+        "/api/setup/reviewer",
+        json={"expected_revision": mounts.json()["revision"], "outcome": "skipped"},
+        headers=headers,
+    )
     kickoff = client.post(
         "/api/setup/kick-off",
-        json={"expected_revision": mounts.json()["revision"]},
+        json={"expected_revision": reviewer.json()["revision"]},
         headers=headers,
     )
 

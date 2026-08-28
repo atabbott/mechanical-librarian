@@ -859,7 +859,7 @@ def _case(case_id: str) -> dict[str, object]:
                     "ready": True,
                     "reviewer_status": reviewer_status,
                     "reviewer_unavailable_reason": None,
-                    "schema_version": "cover-consideration-v2",
+                    "schema_version": "cover-consideration-v3",
                     "supersedes_id": (
                         "cover-consideration-historical"
                         if reviewer_status == "failed"

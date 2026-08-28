@@ -14,6 +14,10 @@ _OPENROUTER_MODEL_ID = re.compile(
     r"[A-Za-z0-9][A-Za-z0-9._-]{0,190}"
     r"(?::[A-Za-z0-9][A-Za-z0-9._-]{0,31})?$"
 )
+OpenRouterModelId = Annotated[
+    StrictStr,
+    Field(min_length=3, max_length=256, pattern=_OPENROUTER_MODEL_ID.pattern),
+]
 
 
 class ReviewerAccessError(ValueError):
@@ -26,10 +30,7 @@ class _Closed(BaseModel):
 
 class OpenRouterTaskSelection(_Closed):
     engine: Literal["openrouter"]
-    model: Annotated[
-        StrictStr,
-        Field(min_length=3, max_length=256, pattern=_OPENROUTER_MODEL_ID.pattern),
-    ]
+    model: OpenRouterModelId
 
 
 class CodexTaskSelection(_Closed):
@@ -53,6 +54,7 @@ class ReviewerAccessDocument(_Closed):
 __all__ = [
     "CodexTaskSelection",
     "OpenRouterTaskSelection",
+    "OpenRouterModelId",
     "ReviewerAccessDocument",
     "ReviewerAccessError",
     "ReviewerEngine",

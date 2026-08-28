@@ -38,7 +38,7 @@ const setupState = (nextStep: string, overrides: Record<string, unknown> = {}) =
   next_step: nextStep,
   providers: [],
   revision: 3,
-  schema_version: 'setup-state-v1',
+  schema_version: 'setup-state-v2',
   ...overrides,
 })
 
@@ -412,7 +412,7 @@ describe('shipped first-run setup script', () => {
       expect(screen.queryByRole('button', { name: 'Change' })).toBeNull()
       expect(screen.queryAllByRole('button')).toHaveLength(0)
       const completedRows = ledger.querySelectorAll('.ledger-row')
-      expect(completedRows).toHaveLength(6)
+      expect(completedRows).toHaveLength(7)
       expect(
         [...completedRows].every((row) => row.querySelector('span')?.textContent === '✓'),
       ).toBe(true)

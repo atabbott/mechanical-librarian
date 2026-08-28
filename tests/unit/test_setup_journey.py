@@ -493,11 +493,12 @@ def test_kickoff_atomically_promotes_and_preserves_connection_secret() -> None:
         ],
     )
     state = journey.mounts(state.revision, {"books": "/library"})
+    state = journey.reviewer(state.revision, "skipped")
 
     journey.kick_off(state.revision)
 
     document = connection.execute("SELECT document FROM owner_settings").fetchone()[0]
-    assert '"schema_version":"owner-settings-v1"' in document
+    assert '"schema_version":"owner-settings-v2"' in document
     assert '"pending_restart":[]' in document
     assert connection.execute(
         "SELECT field_id,value FROM owner_setting_secrets ORDER BY field_id"

@@ -24,9 +24,6 @@ from pathlib import Path
 
 import pytest
 
-from mechanical_librarian.application.schema_adoption import (
-    SchemaAdoptionRecoveryRequired,
-)
 from mechanical_librarian.interfaces.cli import _port, main
 
 # Every command with the complete set of arguments its parser declares
@@ -60,15 +57,10 @@ _COMMANDS: dict[str, tuple[tuple[str, str], ...]] = {
         ("--catalogue", "/catalogue.sqlite3"),
         ("--artifacts", "/artifacts"),
     ),
-    "schema-adopt": (
-        ("--database", "/state.sqlite3"),
-        ("--backup", "/state.before.sqlite3"),
-    ),
 }
 
 _POSITIONALS: dict[str, tuple[str, ...]] = {
     "cover-review": ("show",),
-    "schema-adopt": ("review-owner-decision-actions-v1",),
 }
 
 # What each runner must receive for a complete invocation, including the two
@@ -99,11 +91,6 @@ _DELEGATED: dict[str, tuple[object, ...]] = {
         Path("/state.sqlite3"),
         Path("/catalogue.sqlite3"),
         Path("/artifacts"),
-    ),
-    "schema-adopt": (
-        Path("/state.sqlite3"),
-        Path("/state.before.sqlite3"),
-        "review-owner-decision-actions-v1",
     ),
 }
 
@@ -152,7 +139,6 @@ def _invoke(argv: list[str], calls: list[tuple[str, tuple[object, ...]]], errors
         cover_review_runner=record("cover-review"),
         review_activity_runner=record("review-activity"),
         provider_recovery_runner=record("provider-recovery"),
-        schema_adoption_runner=record("schema-adopt"),
         stdout=io.StringIO(),
         stderr=errors,
     )
@@ -199,21 +185,6 @@ def test_host_outside_the_closed_choice_set_is_refused() -> None:
     assert 2 == _invoke(argv, calls, errors)
     assert "Review server failed: invalid invocation.\n" == errors.getvalue()
     assert [] == calls
-
-
-def test_schema_adoption_postcommit_failure_requires_backup_recovery() -> None:
-    errors = io.StringIO()
-
-    def ambiguous(_database: Path, _backup: Path, _plan: str) -> dict[str, str]:
-        raise SchemaAdoptionRecoveryRequired
-
-    assert 1 == main(
-        _argv("schema-adopt"),
-        schema_adoption_runner=ambiguous,
-        stdout=io.StringIO(),
-        stderr=errors,
-    )
-    assert "Schema adoption requires backup recovery.\n" == errors.getvalue()
 
 
 # Named rather than left to pytest's generated ids. The tier runner reduces a

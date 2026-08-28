@@ -215,7 +215,7 @@ def test_provider_recovery_refuses_absent_review_configuration() -> None:
 
 
 def test_show_and_select_delegate_closed_values() -> None:
-    runner = Mock(return_value={"schema_version": "cover-consideration-v2"})
+    runner = Mock(return_value={"schema_version": "cover-consideration-v3"})
     output = io.StringIO()
     assert (
         main(
@@ -236,7 +236,7 @@ def test_show_and_select_delegate_closed_values() -> None:
         )
         == 0
     )
-    assert json.loads(output.getvalue())["schema_version"] == "cover-consideration-v2"
+    assert json.loads(output.getvalue())["schema_version"] == "cover-consideration-v3"
     runner.assert_called_once_with(
         Path("/config.json"),
         Path("/database.sqlite3"),

@@ -16,12 +16,15 @@ from mechanical_librarian.application.review_web import (
     OwnerSessionService,
     ReviewWebError,
 )
+from mechanical_librarian.application.reviewer_access import ReviewerAccessOperations
+from mechanical_librarian.application.reviewer_contracts import CodexDeviceAuthState
 from mechanical_librarian.application.setup_connection import SetupConnectionError
 from mechanical_librarian.application.setup_journey import (
     SetupJourneyError,
     SetupJourneyOperation,
 )
 from mechanical_librarian.domain.owner_settings import LibrarySettings, ProviderSettings
+from mechanical_librarian.domain.reviewer_access import OpenRouterModelId
 from mechanical_librarian.domain.setup_state import SetupStateDocument
 from mechanical_librarian.domain.validation import OWNER_SESSION_LIFETIME_DEFAULT
 from mechanical_librarian.interfaces.web.app import BodyLimitMiddleware
@@ -42,6 +45,11 @@ _SETUP_BODY_LIMITS = {
     "/api/setup/providers": 262_144,
     "/api/setup/libraries": 262_144,
     "/api/setup/mounts": 262_144,
+    "/api/setup/reviewer": 2_048,
+    "/api/setup/reviewer/openrouter": 16_384,
+    "/api/setup/reviewer/selection": 2_048,
+    "/api/setup/reviewer/codex/device": 2_048,
+    "/api/setup/reviewer/codex/device/cancel": 2_048,
     "/api/setup/change": 16_384,
     "/api/setup/kick-off": 16_384,
 }
@@ -137,7 +145,29 @@ class _MountsRequest(BaseModel):
 class _ChangeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     expected_revision: StrictInt = Field(ge=1)
-    step: Literal["connect", "providers", "libraries", "mounts"]
+    step: Literal["connect", "providers", "libraries", "mounts", "reviewer"]
+
+
+class _ReviewerRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    expected_revision: StrictInt = Field(ge=1)
+    outcome: Literal["skipped", "configured"]
+
+
+class _ReviewerRevisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    expected_revision: StrictInt = Field(ge=1)
+
+
+class _ReviewerSelectionRequest(_ReviewerRevisionRequest):
+    engine: Literal["codex"] | None
+
+
+class _OpenRouterWriteRequest(_ReviewerRevisionRequest):
+    api_key: StrictStr = Field(
+        min_length=1, max_length=2048, json_schema_extra={"writeOnly": True}
+    )
+    model: OpenRouterModelId
 
 
 class _KickOffRequest(BaseModel):
@@ -166,6 +196,7 @@ def create_setup_app(
     connection: SetupConnectionWriter | None = None,
     canonical_origin: str = "https://testserver",
     journey: SetupJourneyOperation | None = None,
+    reviewer_access: ReviewerAccessOperations | None = None,
     session_lifetime_seconds: int = OWNER_SESSION_LIFETIME_DEFAULT,
     activate: Callable[[int], None] | None = None,
     clock: Callable[[], int] = lambda: int(time.time()),
@@ -523,6 +554,109 @@ def create_setup_app(
             try:
                 return state_response(
                     journey.mounts(request.expected_revision, request.service_paths)
+                )
+            except SetupJourneyError as error:
+                raise journey_failure(error) from error
+
+        @app.get("/api/setup/reviewer-access")
+        def reviewer_access_state(
+            ml_session: str | None = Cookie(default=None),
+        ) -> object:
+            authorize_read(ml_session)
+            if reviewer_access is None:
+                raise HTTPException(503, {"error": "reviewer_access_unavailable"})
+            return reviewer_access.read()
+
+        def reviewer_authority() -> ReviewerAccessOperations:
+            if reviewer_access is None:
+                raise HTTPException(503, {"error": "reviewer_access_unavailable"})
+            return reviewer_access
+
+        @app.post("/api/setup/reviewer/openrouter")
+        def configure_openrouter(
+            request: _OpenRouterWriteRequest,
+            ml_session: str | None = Cookie(default=None),
+            x_csrf_token: str | None = Header(default=None),
+            origin: str | None = Header(default=None),
+        ) -> object:
+            authorize_mutation(ml_session, x_csrf_token, origin)
+            try:
+                return reviewer_authority().configure_openrouter(
+                    expected_revision=request.expected_revision,
+                    api_key=request.api_key,
+                    model=request.model,
+                )
+            except Exception as error:
+                raise HTTPException(
+                    409, {"error": "reviewer_access_refused"}
+                ) from error
+
+        @app.post("/api/setup/reviewer/selection")
+        def select_reviewer(
+            request: _ReviewerSelectionRequest,
+            ml_session: str | None = Cookie(default=None),
+            x_csrf_token: str | None = Header(default=None),
+            origin: str | None = Header(default=None),
+        ) -> object:
+            authorize_mutation(ml_session, x_csrf_token, origin)
+            operations = reviewer_authority()
+            try:
+                if request.engine == "codex":
+                    return operations.select_codex(
+                        expected_revision=request.expected_revision
+                    )
+                return operations.select_none(
+                    expected_revision=request.expected_revision
+                )
+            except Exception as error:
+                raise HTTPException(
+                    409, {"error": "reviewer_access_refused"}
+                ) from error
+
+        @app.post("/api/setup/reviewer/codex/device")
+        def start_codex_device(
+            ml_session: str | None = Cookie(default=None),
+            x_csrf_token: str | None = Header(default=None),
+            origin: str | None = Header(default=None),
+        ) -> CodexDeviceAuthState:
+            authorize_mutation(ml_session, x_csrf_token, origin)
+            try:
+                return reviewer_authority().start_codex()
+            except Exception as error:
+                raise HTTPException(
+                    409, {"error": "reviewer_access_refused"}
+                ) from error
+
+        @app.get("/api/setup/reviewer/codex/device")
+        def codex_device_status(
+            ml_session: str | None = Cookie(default=None),
+        ) -> CodexDeviceAuthState:
+            authorize_read(ml_session)
+            return reviewer_authority().codex_status()
+
+        @app.post("/api/setup/reviewer/codex/device/cancel")
+        def cancel_codex_device(
+            ml_session: str | None = Cookie(default=None),
+            x_csrf_token: str | None = Header(default=None),
+            origin: str | None = Header(default=None),
+        ) -> CodexDeviceAuthState:
+            authorize_mutation(ml_session, x_csrf_token, origin)
+            return reviewer_authority().cancel_codex()
+
+        @app.post("/api/setup/reviewer")
+        def reviewer(
+            request: _ReviewerRequest,
+            ml_session: str | None = Cookie(default=None),
+            x_csrf_token: str | None = Header(default=None),
+            origin: str | None = Header(default=None),
+        ) -> dict[str, object]:
+            authorize_mutation(ml_session, x_csrf_token, origin)
+            if request.outcome == "configured":
+                if reviewer_access is None or reviewer_access.read().mapping is None:
+                    raise HTTPException(409, {"error": "reviewer_unconfigured"})
+            try:
+                return state_response(
+                    journey.reviewer(request.expected_revision, request.outcome)
                 )
             except SetupJourneyError as error:
                 raise journey_failure(error) from error

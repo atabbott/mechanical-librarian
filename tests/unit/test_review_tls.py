@@ -417,6 +417,10 @@ def test_server_uses_validated_tls_before_opening_the_database() -> None:
                 side_effect=qualified_run,
             ),
         ):
+            repository.reviewer_access_store.return_value.read.return_value = (
+                SimpleNamespace(cover_observation=None),
+                False,
+            )
             run_review_server(
                 Path("/config.json"),
                 database,

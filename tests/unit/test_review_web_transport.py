@@ -99,7 +99,7 @@ def test_settings_file_authority_transport_is_private_and_locked(
 ) -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v1",
+            "schema_version": "owner-settings-v2",
             "revision": 1,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}
@@ -169,7 +169,7 @@ def test_settings_store_transport_redacts_secret_and_derives_effects(
 ) -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v1",
+            "schema_version": "owner-settings-v2",
             "revision": 1,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}
@@ -1522,6 +1522,15 @@ def test_openapi_is_deterministic_and_secret_free(
     }
     assert protected_operations == {
         ("get", "/api/v1/appearance"),
+        ("get", "/api/v1/reviewer-access"),
+        ("delete", "/api/v1/reviewer-access/codex"),
+        ("get", "/api/v1/reviewer-access/codex/device"),
+        ("post", "/api/v1/reviewer-access/codex/device"),
+        ("post", "/api/v1/reviewer-access/codex/device/cancel"),
+        ("delete", "/api/v1/reviewer-access/openrouter"),
+        ("put", "/api/v1/reviewer-access/openrouter"),
+        ("post", "/api/v1/reviewer-access/openrouter/refresh"),
+        ("put", "/api/v1/reviewer-access/selection"),
         ("get", "/api/v1/settings"),
         ("patch", "/api/v1/settings"),
         ("get", "/api/v1/activity"),
@@ -1786,6 +1795,10 @@ def test_composition_opens_the_single_database_for_worker_threads(
     from tests.support.tls import synthetic_tls_identity
 
     repository = Mock()
+    repository.reviewer_access_store.return_value.read.return_value = (
+        SimpleNamespace(cover_observation=None),
+        False,
+    )
     database = Path(web.temporary.name) / "application.sqlite3"
     certificate, private_key = synthetic_tls_identity(Path(web.temporary.name))
     configuration = ReviewWebConfiguration(

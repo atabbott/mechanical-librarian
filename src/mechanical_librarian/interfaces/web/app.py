@@ -54,6 +54,17 @@ from mechanical_librarian.application.review_application import (
     ReviewApplicationError,
 )
 from mechanical_librarian.application.review_web import ReviewWebError
+from mechanical_librarian.application.reviewer_access import (
+    ReviewerAccessApplicationError,
+    ReviewerAccessOperations,
+    ReviewerAccessRepositoryError,
+    ReviewerAccessView,
+)
+from mechanical_librarian.application.reviewer_contracts import (
+    CodexDeviceAuthState,
+    DeviceAuthFailure,
+    DeviceAuthStatus,
+)
 from mechanical_librarian.domain.field_effect import (
     SUPPORTED_DESTINATIONS,
     FieldEffectError,
@@ -65,6 +76,7 @@ from mechanical_librarian.domain.owner_settings import (
     SecretWrite,
     SettingsView,
 )
+from mechanical_librarian.domain.reviewer_access import OpenRouterModelId
 from mechanical_librarian.interfaces.web import live_stream, review_frontend
 from mechanical_librarian.interfaces.web.react_assets import (
     ReactAssetError,
@@ -159,6 +171,27 @@ class _SettingsWriteRequest(_ClosedModel):
 
 class _AppearanceResponse(_ClosedModel):
     reduced_motion: Literal["follow_system", "always_reduced"]
+
+
+class _ReviewerRevisionRequest(_ClosedModel):
+    expected_revision: StrictInt = Field(ge=1)
+
+
+class _ReviewerSelectionRequest(_ReviewerRevisionRequest):
+    engine: Literal["codex"] | None
+
+
+class _OpenRouterWriteRequest(_ReviewerRevisionRequest):
+    api_key: StrictStr = Field(min_length=1, max_length=2048)
+    model: OpenRouterModelId
+
+
+class _CodexDeviceAuthResponse(_ClosedModel):
+    state: DeviceAuthStatus
+    verification_url: StrictStr | None = None
+    user_code: StrictStr | None = None
+    expires_in_seconds: StrictInt | None = None
+    failure: DeviceAuthFailure | None = None
 
 
 class _SeriesValue(_ClosedModel):
@@ -345,9 +378,11 @@ class _CoverConsiderationResponse(_ClosedModel):
     policy_reference: str
     provider_fetching: bool
     ready: bool
+    reviewer_engine: Literal["codex", "openrouter"] | None
+    reviewer_model: str | None
     reviewer_status: str
     reviewer_unavailable_reason: str | None
-    schema_version: Literal["cover-consideration-v2"]
+    schema_version: Literal["cover-consideration-v3"]
     supersedes_id: str | None
     target_fingerprint: str
 
@@ -1450,6 +1485,7 @@ def create_review_app(
         app, application, configuration, authenticated_session_cookie
     )
     _register_settings_routes(app, application, authenticated_session_cookie)
+    _register_reviewer_access_routes(app, application, authenticated_session_cookie)
     _register_policy_routes(app, application, authenticated_session_cookie)
     _register_case_and_effect_routes(
         app, application, session_cookie, authenticated_session_cookie
@@ -1625,6 +1661,195 @@ def _register_settings_routes(
                 detail["managed_by_file"] = "/data/config.json"
             raise HTTPException(status, detail=detail) from None
         return cast(SettingsView, value)
+
+
+def _register_reviewer_access_routes(
+    app: FastAPI,
+    application: ReviewApplication,
+    authenticated_session_cookie: _SessionDependency,
+) -> None:
+    def authority() -> ReviewerAccessOperations:
+        value = application.reviewer_access
+        if value is None:
+            raise HTTPException(503, detail={"code": "reviewer_access_unavailable"})
+        return value
+
+    def problem(error: Exception) -> HTTPException:
+        if isinstance(error, ReviewerAccessRepositoryError):
+            status = 409 if str(error).endswith("stale") else 503
+            code = (
+                "reviewer_access_stale"
+                if status == 409
+                else "reviewer_access_unavailable"
+            )
+        elif isinstance(error, ReviewerAccessApplicationError):
+            status = 409
+            code = "reviewer_access_refused"
+        else:
+            status = 422
+            code = "reviewer_access_invalid"
+        return HTTPException(status, detail={"code": code})
+
+    @app.get(
+        "/api/v1/reviewer-access",
+        response_model=ReviewerAccessView,
+        responses={status: {"model": _ErrorResponse} for status in (401, 503)},
+    )
+    def reviewer_access(
+        ml_session: str = Depends(authenticated_session_cookie),
+    ) -> ReviewerAccessView:
+        _require_session(application, ml_session)
+        try:
+            return authority().read()
+        except (ReviewerAccessRepositoryError, ReviewerAccessApplicationError) as error:
+            raise problem(error) from None
+
+    @app.post(
+        "/api/v1/reviewer-access/openrouter/refresh",
+        response_model=ReviewerAccessView,
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)
+        },
+    )
+    def refresh_openrouter(
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> ReviewerAccessView:
+        _require_session(application, ml_session, x_csrf_token)
+        try:
+            return authority().refresh_openrouter()
+        except (ReviewerAccessRepositoryError, ReviewerAccessApplicationError) as error:
+            raise problem(error) from None
+
+    @app.put(
+        "/api/v1/reviewer-access/openrouter",
+        response_model=ReviewerAccessView,
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 409, 413, 422, 503)
+        },
+    )
+    def write_openrouter(
+        request: _OpenRouterWriteRequest,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> ReviewerAccessView:
+        _require_session(application, ml_session, x_csrf_token)
+        try:
+            return authority().configure_openrouter(
+                expected_revision=request.expected_revision,
+                api_key=request.api_key,
+                model=request.model,
+            )
+        except (
+            ValueError,
+            ReviewerAccessRepositoryError,
+            ReviewerAccessApplicationError,
+        ) as error:
+            raise problem(error) from None
+
+    @app.delete(
+        "/api/v1/reviewer-access/openrouter",
+        response_model=ReviewerAccessView,
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)
+        },
+    )
+    def clear_openrouter(
+        request: _ReviewerRevisionRequest,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> ReviewerAccessView:
+        _require_session(application, ml_session, x_csrf_token)
+        try:
+            return authority().clear_openrouter(
+                expected_revision=request.expected_revision
+            )
+        except (ReviewerAccessRepositoryError, ReviewerAccessApplicationError) as error:
+            raise problem(error) from None
+
+    @app.put(
+        "/api/v1/reviewer-access/selection",
+        response_model=ReviewerAccessView,
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)
+        },
+    )
+    def select_reviewer(
+        request: _ReviewerSelectionRequest,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> ReviewerAccessView:
+        _require_session(application, ml_session, x_csrf_token)
+        try:
+            operations = authority()
+            if request.engine == "codex":
+                return operations.select_codex(
+                    expected_revision=request.expected_revision
+                )
+            return operations.select_none(expected_revision=request.expected_revision)
+        except (ReviewerAccessRepositoryError, ReviewerAccessApplicationError) as error:
+            raise problem(error) from None
+
+    @app.post(
+        "/api/v1/reviewer-access/codex/device",
+        response_model=_CodexDeviceAuthResponse,
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)
+        },
+    )
+    def start_codex_device(
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> CodexDeviceAuthState:
+        _require_session(application, ml_session, x_csrf_token)
+        try:
+            return authority().start_codex()
+        except ReviewerAccessApplicationError as error:
+            raise problem(error) from None
+
+    @app.get(
+        "/api/v1/reviewer-access/codex/device",
+        response_model=_CodexDeviceAuthResponse,
+        responses={status: {"model": _ErrorResponse} for status in (401, 503)},
+    )
+    def codex_device_status(
+        ml_session: str = Depends(authenticated_session_cookie),
+    ) -> CodexDeviceAuthState:
+        _require_session(application, ml_session)
+        return authority().codex_status()
+
+    @app.post(
+        "/api/v1/reviewer-access/codex/device/cancel",
+        response_model=_CodexDeviceAuthResponse,
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)
+        },
+    )
+    def cancel_codex_device(
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> CodexDeviceAuthState:
+        _require_session(application, ml_session, x_csrf_token)
+        return authority().cancel_codex()
+
+    @app.delete(
+        "/api/v1/reviewer-access/codex",
+        response_model=ReviewerAccessView,
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)
+        },
+    )
+    def clear_codex(
+        request: _ReviewerRevisionRequest,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> ReviewerAccessView:
+        _require_session(application, ml_session, x_csrf_token)
+        try:
+            return authority().clear_codex(expected_revision=request.expected_revision)
+        except (ReviewerAccessRepositoryError, ReviewerAccessApplicationError) as error:
+            raise problem(error) from None
 
 
 def _register_session_and_operations_routes(

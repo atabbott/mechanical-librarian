@@ -454,6 +454,8 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("review_preparation_control",),
             ("review_preparation_scans",),
             ("review_preparation_work",),
+            ("reviewer_access",),
+            ("reviewer_access_secrets",),
             ("shadow_decision_outcomes",),
             ("shadow_outcome_field_facts",),
         ]

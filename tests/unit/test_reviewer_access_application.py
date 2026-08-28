@@ -12,11 +12,11 @@ from mechanical_librarian.adapters.reviewers.codex_device_auth import (
     CodexDeviceAuthState,
 )
 from mechanical_librarian.adapters.reviewers.openrouter import OpenRouterAccountStatus
-from mechanical_librarian.application.reviewer_contracts import OpenRouterReviewerError
 from mechanical_librarian.application.reviewer_access import (
     ReviewerAccessApplicationError,
     ReviewerAccessOperations,
 )
+from mechanical_librarian.application.reviewer_contracts import OpenRouterReviewerError
 from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
 
 
@@ -41,6 +41,10 @@ class _Auth:
         return CodexDeviceAuthState("ready")
 
     def current_credential_status(self):
+        self.current_calls += 1
+        return CodexDeviceAuthState(self.state)
+
+    def recheck_credential_status(self):
         self.current_calls += 1
         return CodexDeviceAuthState(self.state)
 

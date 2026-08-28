@@ -54,7 +54,7 @@ def test_bootstrap_is_strict_private_and_closed(tmp_path: Path) -> None:
 def test_store_projection_combines_only_deploy_bootstrap_and_store_authority() -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v1",
+            "schema_version": "owner-settings-v2",
             "revision": 1,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}
@@ -120,7 +120,7 @@ def test_store_projection_combines_only_deploy_bootstrap_and_store_authority() -
 def test_settings_projects_absent_fixed_provider_capabilities() -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v1",
+            "schema_version": "owner-settings-v2",
             "revision": 1,
             "connections": [{"name": "primary", "endpoint": "https://library.invalid"}],
             "libraries": [

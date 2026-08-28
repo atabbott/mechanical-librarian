@@ -49,6 +49,7 @@ from mechanical_librarian.application.review_web import (
     ReviewSessionStore,
     SessionTokens,
 )
+from mechanical_librarian.application.reviewer_access import ReviewerAccessOperations
 from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
 from mechanical_librarian.domain.field_effect import SUPPORTED_DESTINATIONS
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
@@ -366,6 +367,7 @@ class ReviewApplication:
         close_activity_projection: Callable[[], None] | None = None,
         cover_considerations: CoverConsiderationService | None = None,
         settings: OwnerSettingsOperations | None = None,
+        reviewer_access: ReviewerAccessOperations | None = None,
         settings_activation: (
             Callable[
                 [
@@ -402,6 +404,7 @@ class ReviewApplication:
         self._operations = operations
         self._cover_considerations = cover_considerations
         self._settings = settings
+        self._reviewer_access = reviewer_access
         self._settings_activation = settings_activation
         self._first_boot = first_boot
         self._acknowledge_first_boot = acknowledge_first_boot
@@ -429,6 +432,10 @@ class ReviewApplication:
     @property
     def settings_available(self) -> bool:
         return self._settings is not None
+
+    @property
+    def reviewer_access(self) -> ReviewerAccessOperations | None:
+        return self._reviewer_access
 
     def owner_settings(self) -> object:
         if self._settings is None:
@@ -1230,6 +1237,7 @@ def compose_review_application(
     operational_timer: StageTimer | None = None,
     cover_considerations: CoverConsiderationService | None = None,
     settings: OwnerSettingsOperations | None = None,
+    reviewer_access: ReviewerAccessOperations | None = None,
     settings_activation: (
         Callable[
             [
@@ -1309,6 +1317,7 @@ def compose_review_application(
         close_activity_projection=close_activity_projection,
         cover_considerations=cover_considerations,
         settings=settings,
+        reviewer_access=reviewer_access,
         settings_activation=settings_activation,
         first_boot=first_boot,
         acknowledge_first_boot=acknowledge_first_boot,

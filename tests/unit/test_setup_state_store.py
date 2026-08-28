@@ -195,12 +195,28 @@ def test_promotion_replaces_incomplete_state_with_normal_owner_authority() -> No
         completed_steps=["claim", "connect", "providers", "libraries", "mounts"],
         mounts=[{"library": "books", "state": "matched"}],
     )
-    store.write(state, 5, _BOOTSTRAP, {"connection.primary.key": "secret"})
+    state = store.write(state, 5, _BOOTSTRAP, {"connection.primary.key": "secret"})
+    store.write(
+        _next(
+            state,
+            completed_steps=[
+                "claim",
+                "connect",
+                "providers",
+                "libraries",
+                "mounts",
+                "reviewer",
+            ],
+            reviewer_setup="skipped",
+        ),
+        state.revision,
+        _BOOTSTRAP,
+    )
 
     store.promote(_BOOTSTRAP, _OWNER)
 
     encoded = connection.execute("SELECT document FROM owner_settings").fetchone()[0]
-    assert '"schema_version":"owner-settings-v1"' in encoded
+    assert '"schema_version":"owner-settings-v2"' in encoded
     assert connection.execute(
         "SELECT field_id,value FROM owner_setting_secrets ORDER BY field_id"
     ).fetchall() == [
@@ -251,9 +267,25 @@ def test_promotion_failpoint_retains_exact_resumable_state_and_retry_succeeds() 
         state.revision,
         _BOOTSTRAP,
     )
+    state = store.write(
+        _next(
+            state,
+            completed_steps=[
+                "claim",
+                "connect",
+                "providers",
+                "libraries",
+                "mounts",
+                "reviewer",
+            ],
+            reviewer_setup="skipped",
+        ),
+        state.revision,
+        _BOOTSTRAP,
+    )
     connection.execute(
         "CREATE TRIGGER fail_owner_promotion BEFORE UPDATE ON owner_settings "
-        "WHEN json_extract(NEW.document,'$.schema_version')='owner-settings-v1' "
+        "WHEN json_extract(NEW.document,'$.schema_version')='owner-settings-v2' "
         "BEGIN SELECT RAISE(ABORT,'failpoint'); END"
     )
 
@@ -295,7 +327,7 @@ def test_schema_admission_accepts_only_the_closed_incomplete_setup_document() ->
 def test_changing_a_recorded_step_removes_its_dependents() -> None:
     state = SetupStateDocument.model_validate(
         {
-            "schema_version": "setup-state-v1",
+            "schema_version": "setup-state-v2",
             "revision": 1,
             "bootstrap_verifier_digest": "0" * 64,
         }

@@ -16,11 +16,12 @@ import sys
 import tempfile
 import time
 from collections.abc import Callable
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import AbstractContextManager, ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import IO, Iterator, cast
 
+from mechanical_librarian.adapters.reviewers.codex_device_auth import CodexAuthCommand
 from mechanical_librarian.application.contained_reviewer_contract import (
     ContainedReviewerAttempt,
     ContainedReviewerError,
@@ -2184,6 +2185,42 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return result
 
 
+def prepare_contained_device_auth_command(
+    profile: ContainedReviewerProfile, staging: Path, action: str
+) -> CodexAuthCommand:
+    """Bind exact artifacts and one private CODEX_HOME for an auth child."""
+    if action not in {"start", "status"}:
+        raise ContainedReviewerProcessError("auth")
+    stack = ExitStack()
+    try:
+        staged = replace(profile, auth_store_path=staging)
+        reviewer = ContainedReviewerAdapter(staged)
+        reviewer._require_private_directory(staging)
+        codex = stack.enter_context(
+            _bound_artifact(staged.codex_path, staged.identity.executable_sha256)
+        )
+        sandbox = stack.enter_context(
+            _bound_artifact(staged.sandbox_path, staged.identity.sandbox_sha256)
+        )
+        reviewer._verify_sandbox(sandbox)
+        stack.enter_context(reviewer._auth_lock())
+        empty_config = stack.enter_context(reviewer._empty_auth_config())
+        reviewer._verify_codex(codex, sandbox)
+        command = reviewer._auth_command(codex, sandbox, empty_config)
+        command.extend(
+            ("login", "--device-auth") if action == "start" else ("login", "status")
+        )
+        return CodexAuthCommand(
+            command,
+            reviewer._auth_environment(),
+            (codex.descriptor, sandbox.descriptor, empty_config),
+            stack.close,
+        )
+    except BaseException:
+        stack.close()
+        raise
+
+
 __all__ = [
     "ContainedReviewerAdapter",
     "PROFILE_SCHEMA",
@@ -2191,4 +2228,5 @@ __all__ = [
     "ContainedReviewerProcessError",
     "load_contained_reviewer_profile",
     "load_contained_reviewer_profile_bytes",
+    "prepare_contained_device_auth_command",
 ]

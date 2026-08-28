@@ -5,8 +5,8 @@ import json
 import os
 import stat
 import subprocess
-from threading import Event
 from pathlib import Path
+from threading import Event
 from typing import Any
 
 import pytest
@@ -104,6 +104,15 @@ def test_issued_prompt_validates_status_and_installs_private_auth_atomically(
     assert stat.S_IMODE(installed.stat().st_mode) == 0o600
     assert stat.S_IMODE(installed.parent.stat().st_mode) == 0o700
     assert not list(tmp_path.glob("reviewer-auth-*"))
+
+
+def test_ordinary_credential_status_does_not_launch_cli(tmp_path: Path) -> None:
+    calls: list[str] = []
+    manager = _manager(tmp_path)
+    _finish(manager)
+    manager._run = lambda *_args, **_kwargs: calls.append("run")  # type: ignore[method-assign]
+    assert manager.current_credential_status().state == "configured"
+    assert calls == []
 
 
 def test_exact_timeout_is_expired_and_permission_failure_is_failed(

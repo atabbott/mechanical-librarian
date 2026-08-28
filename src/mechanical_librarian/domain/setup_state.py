@@ -21,13 +21,16 @@ from mechanical_librarian.domain.owner_settings import (
     ProviderSettings,
 )
 
-SetupStep = Literal["claim", "connect", "providers", "libraries", "mounts", "kick_off"]
+SetupStep = Literal[
+    "claim", "connect", "providers", "libraries", "mounts", "reviewer", "kick_off"
+]
 _RECORDED_STEPS: tuple[SetupStep, ...] = (
     "claim",
     "connect",
     "providers",
     "libraries",
     "mounts",
+    "reviewer",
 )
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
@@ -62,15 +65,16 @@ class SetupLibraryCandidate(_Closed):
 class SetupStateDocument(_Closed):
     """The only incomplete authority admitted before the owner is established."""
 
-    schema_version: Literal["setup-state-v1"]
+    schema_version: Literal["setup-state-v2"]
     revision: Annotated[StrictInt, Field(ge=1)]
     bootstrap_verifier_digest: StrictStr
-    completed_steps: list[SetupStep] = Field(default_factory=list, max_length=5)
+    completed_steps: list[SetupStep] = Field(default_factory=list, max_length=6)
     claimed: StrictBool = False
     connection: SetupConnection | None = None
     providers: list[ProviderSettings] = Field(default_factory=list, max_length=32)
     libraries: list[LibrarySettings] = Field(default_factory=list, max_length=128)
     mounts: list[SetupMountResult] = Field(default_factory=list, max_length=128)
+    reviewer_setup: Literal["skipped", "configured"] | None = None
 
     @model_validator(mode="after")
     def _validate_ledger(self) -> "SetupStateDocument":
@@ -95,6 +99,8 @@ class SetupStateDocument(_Closed):
             raise SetupStateError("setup state is unavailable")
         if "mounts" in self.completed_steps and not self.mounts:
             raise SetupStateError("setup state is unavailable")
+        if (self.reviewer_setup is not None) != ("reviewer" in self.completed_steps):
+            raise SetupStateError("setup state is unavailable")
         return self
 
     def next_step(self) -> SetupStep | None:
@@ -118,6 +124,8 @@ class SetupStateDocument(_Closed):
             values["libraries"] = []
         if index <= 4:
             values["mounts"] = []
+        if index <= 5:
+            values["reviewer_setup"] = None
         return SetupStateDocument.model_validate(values)
 
     def secret_fields(self) -> frozenset[str]:
@@ -151,7 +159,7 @@ class SetupStateDocument(_Closed):
             raise SetupStateError("setup state is incomplete")
         return OwnerSettingsDocument.model_validate(
             {
-                "schema_version": "owner-settings-v1",
+                "schema_version": "owner-settings-v2",
                 "revision": 1,
                 "connections": [self.connection.model_dump()],
                 "providers": [item.model_dump() for item in self.providers],

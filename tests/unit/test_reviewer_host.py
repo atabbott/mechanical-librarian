@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from mechanical_librarian.application.reviewer_host import reviewer_host_status

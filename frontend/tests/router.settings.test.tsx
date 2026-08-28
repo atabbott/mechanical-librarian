@@ -17,7 +17,7 @@ import type { SettingsView, SettingsWrite } from '../src/api/http'
 import { createHttp, renderRoute } from './fixtures'
 
 const document: SettingsView['document'] = {
-  schema_version: 'owner-settings-v1',
+  schema_version: 'owner-settings-v2',
   revision: 3,
   connections: [{ adapter: 'audiobookshelf', endpoint: 'https://library.invalid', name: 'home' }],
   providers: [
@@ -55,7 +55,6 @@ const document: SettingsView['document'] = {
     diagnostic_timings_enabled: false,
     graceful_shutdown_seconds: 30,
     library_polling_interval_seconds: 900,
-    reviewer_enabled: false,
     session_lifetime_seconds: 2_592_000,
   },
   cover_preferences: {

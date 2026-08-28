@@ -55,6 +55,7 @@ def test_document_admits_only_the_one_task_and_two_fixed_engines() -> None:
         "example/vision:",
         "example/vision:free:extra",
     ),
+    ids=lambda value: value.encode("utf-8").hex(),
 )
 def test_openrouter_selection_rejects_hostile_or_ambiguous_model_ids(
     model: str,

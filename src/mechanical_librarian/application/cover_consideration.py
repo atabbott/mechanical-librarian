@@ -47,6 +47,7 @@ from mechanical_librarian.application.cover_policy import (
 from mechanical_librarian.application.cover_policy import (
     SCHEMA_VERSION as POLICY_REPORT_SCHEMA_VERSION,
 )
+from mechanical_librarian.application.reviewer_contracts import ReviewerDispatch
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
     CoverSourceKind,
@@ -61,7 +62,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
 )
 
-SCHEMA_VERSION = "cover-consideration-v2"
+SCHEMA_VERSION = "cover-consideration-v3"
 _IDENTITY_ELIGIBLE = frozenset({"verified_manifestation_match", "verified_work_match"})
 
 
@@ -120,6 +121,9 @@ class _ReviewerEvidence:
     observation_document: str | None
     reviewer_status: str
     reviewer_failure: dict[str, object] | None
+    reviewer_engine: str | None = None
+    reviewer_model: str | None = None
+    reviewer_profile: bytes | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +162,8 @@ class CoverConsiderationService:
         policy: CoverPolicy = CoverPolicy(),
         reviewer_profile: bytes | None = None,
         reviewer: ReviewRunner | None = None,
+        reviewer_dispatch: Callable[[], ReviewerDispatch] | None = None,
+        reviewer_identity: Callable[[], tuple[str, str, bytes] | None] | None = None,
         reviewer_unavailable_reason: str | None = None,
         bind_policy: Callable[[str, str], None] | None = None,
         provider_fetching: Callable[[MetadataReport], bool] | None = None,
@@ -169,6 +175,8 @@ class CoverConsiderationService:
         self._policy = policy
         self._reviewer_profile = reviewer_profile
         self._reviewer = reviewer
+        self._reviewer_dispatch = reviewer_dispatch
+        self._reviewer_identity = reviewer_identity
         if not is_cover_profile_contract_reason(reviewer_unavailable_reason):
             raise ValueError("invalid reviewer unavailable reason")
         self._reviewer_unavailable_reason = reviewer_unavailable_reason
@@ -200,6 +208,9 @@ class CoverConsiderationService:
 
     @property
     def replay_reference(self) -> str:
+        dynamic_identity = (
+            None if self._reviewer_identity is None else self._reviewer_identity()
+        )
         value: dict[str, object] = {
             "policy": self._policy.document,
             "contracts": {
@@ -216,12 +227,17 @@ class CoverConsiderationService:
                 "taxonomy_reference": TAXONOMY_REFERENCE,
             },
             "profile_sha256": (
-                None
+                hashlib.sha256(dynamic_identity[2]).hexdigest()
+                if dynamic_identity is not None
+                else None
                 if self._reviewer_profile is None
                 else hashlib.sha256(self._reviewer_profile).hexdigest()
             ),
             "schema_version": SCHEMA_VERSION,
         }
+        if dynamic_identity is not None:
+            value["reviewer_engine"] = dynamic_identity[0]
+            value["reviewer_model"] = dynamic_identity[1]
         if self._reviewer_unavailable_reason is not None:
             value["reviewer_unavailable_reason"] = self._reviewer_unavailable_reason
         identity = canonical_packet_json(value)
@@ -317,9 +333,29 @@ class CoverConsiderationService:
         packet_payload: bytes,
         image_payloads: tuple[tuple[str, str, bytes], ...],
     ) -> _ReviewerEvidence:
-        if self._reviewer_profile is None or self._reviewer is None:
-            return _ReviewerEvidence(replay_digest, None, "unavailable", None)
+        engine: str | None = None
+        model: str | None = None
+        profile = self._reviewer_profile
         reviewer = self._reviewer
+        if self._reviewer_dispatch is not None:
+            try:
+                binding = self._reviewer_dispatch()
+                engine = binding.engine
+                model = binding.model
+                profile = binding.profile
+                reviewer = binding.runner
+            except Exception as error:
+                return _ReviewerEvidence(
+                    replay_digest,
+                    None,
+                    "unavailable",
+                    {
+                        "attempts": [],
+                        "code": str(getattr(error, "code", "unavailable")),
+                    },
+                )
+        if profile is None or reviewer is None:
+            return _ReviewerEvidence(replay_digest, None, "unavailable", None)
         dispatched = False
         observed = False
 
@@ -348,14 +384,20 @@ class CoverConsiderationService:
 
         try:
             observation_document = observe_cover_packet(
-                self._reviewer_profile,
+                profile,
                 packet_payload,
                 image_payloads,
                 dispatch,
                 observed=settle,
             ).document
             return _ReviewerEvidence(
-                replay_digest, observation_document, "completed", None
+                replay_digest,
+                observation_document,
+                "completed",
+                None,
+                engine,
+                model,
+                profile,
             )
         except Exception as error:
             if not dispatched or observed:
@@ -393,7 +435,9 @@ class CoverConsiderationService:
                 ],
                 "code": str(getattr(error, "code", "runtime")),
             }
-            return _ReviewerEvidence(replay_digest, None, "failed", failure)
+            return _ReviewerEvidence(
+                replay_digest, None, "failed", failure, engine, model, profile
+            )
 
     def ensure(
         self,
@@ -493,7 +537,7 @@ class CoverConsiderationService:
                 image_payloads,
                 observation_document,
                 self._policy,
-                profile_payload=self._reviewer_profile,
+                profile_payload=evidence.reviewer_profile,
                 read_preview=self._read_preview,
                 provider_fetching=provider_fetching,
             ).document
@@ -509,6 +553,7 @@ class CoverConsiderationService:
             observation_document = None
             reviewer_status = "unavailable"
             reviewer_failure = None
+            evidence = None
             identity_document = None
             policy_report_document = None
             packet_document = None
@@ -552,6 +597,8 @@ class CoverConsiderationService:
             "replay_reference": self.replay_reference,
             "review_case_id": review_case_id,
             "reviewer_failure": reviewer_failure,
+            "reviewer_engine": (None if evidence is None else evidence.reviewer_engine),
+            "reviewer_model": None if evidence is None else evidence.reviewer_model,
             "reviewer_status": reviewer_status,
             "schema_version": SCHEMA_VERSION,
             "supersedes_id": supersedes_id,
@@ -733,6 +780,8 @@ class CoverConsiderationService:
             "provider_fetching": value["provider_fetching"],
             "ready": policy is not None and policy["status"] == "recommended",
             "reviewer_status": value["reviewer_status"],
+            "reviewer_engine": value["reviewer_engine"],
+            "reviewer_model": value["reviewer_model"],
             "reviewer_unavailable_reason": (
                 self._reviewer_unavailable_reason
                 if current and value["reviewer_status"] == "unavailable"
