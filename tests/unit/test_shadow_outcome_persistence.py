@@ -2481,8 +2481,9 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
         assert (selection["decision_document"],) == (
             repository.pending_field_effect_decision_documents(1)[0],
         )
-        reopened_projection = open_repository(database)
-        library = BrowseReviewLibrary(reopened_projection).library(
+        repository.close()
+        repository = open_repository(database)
+        library = BrowseReviewLibrary(repository).library(
             lens="all", search=None, limit=50, cursor=None
         )
         projected_work = next(
@@ -2491,9 +2492,7 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
             if item["review_case_id"] == automatic.review_case_id
         )
         assert projected_work["detail_url"] == f"/review/{automatic.review_case_id}"
-        detail = InspectCurrentReviewCase(reopened_projection).run(
-            automatic.review_case_id
-        )
+        detail = InspectCurrentReviewCase(repository).run(automatic.review_case_id)
         projected_cover = next(
             field for field in detail["fields"] if field["destination"] == "cover"
         )
@@ -2515,7 +2514,6 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
         del malformed_cover["automatic_decision"]["supersedes_decision_id"]
         with pytest.raises(ValueError):
             _ReviewField.model_validate(malformed_cover)
-        reopened_projection.close()
         assert repository.field_effect_authority_source(automatic)[
             "decision_value"
         ] == {
@@ -2631,11 +2629,12 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
                 "SELECT count(*) FROM cover_selection_authorities"
             ).fetchone()[0]
         )
-        reopened_owner = open_repository(database)
+        repository.close()
+        repository = open_repository(database)
         reopened_covers = composition._compose_cover_considerations(
-            reopened_owner, root / "artifacts", _pipeline_configuration().review
+            repository, root / "artifacts", _pipeline_configuration().review
         )
-        reopened_web = InspectCurrentReviewCase(reopened_owner, reopened_covers)
+        reopened_web = InspectCurrentReviewCase(repository, reopened_covers)
         owner_detail = reopened_web.run(automatic.review_case_id)
         owner_cover = next(
             field for field in owner_detail["fields"] if field["destination"] == "cover"
@@ -2674,7 +2673,6 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
         del malformed_automatic["decision"]["supersedes_decision_id"]
         with pytest.raises(ValueError):
             _HistoryResponse.model_validate(malformed_history)
-        reopened_owner.close()
         repository.record_cover_consideration(
             consideration_document,
             review_case_id=automatic.review_case_id,
