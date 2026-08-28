@@ -18,6 +18,10 @@ from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.application.review_pipeline import (
     preparation_failure_reference,
 )
+from mechanical_librarian.domain.cover_automatic_decision import (
+    CoverAutomaticDecision,
+    parse_automatic_authority,
+)
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
@@ -43,6 +47,33 @@ class ReviewWebError(RuntimeError):
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(code)
+
+
+def _automatic_decision_projection(document: str) -> dict[str, object] | None:
+    """Project either closed automatic authority without leaking its bindings."""
+    raw = json.loads(document)
+    if type(raw) is not dict:
+        raise ValueError
+    if raw.get("schema_version") not in {
+        "automatic-decision-v1",
+        "cover-automatic-decision-v1",
+    }:
+        return None
+    decision = parse_automatic_authority(document)
+    projection: dict[str, object] = {
+        "candidate_id": decision.candidate_id,
+        "decision_id": decision.decision_id,
+        "destination": decision.destination,
+        "occurred_at": decision.occurred_at,
+        "outcome": decision.outcome,
+        "proposal_id": decision.proposal_id,
+        "review_case_id": decision.review_case_id,
+        "selected_value": None,
+        "target_fingerprint": decision.target_fingerprint,
+    }
+    if type(decision) is CoverAutomaticDecision:
+        projection["supersedes_decision_id"] = decision.supersedes_decision_id
+    return projection
 
 
 @dataclass(frozen=True, slots=True)
@@ -301,28 +332,12 @@ class InspectCurrentReviewCase:
             # per-field projection later looks one up and may find none.
             decision: HumanDecision | None
             for document in snapshot.decision_documents:
-                value = json.loads(document)
-                if type(value) is not dict:
-                    raise ReviewWebError("unavailable")
-                if value.get("origin") == "automatic_policy":
-                    # The durable authority document deliberately contains
-                    # qualification and replay bindings.  The review surface is
-                    # a closed read model, never that document by accident.
-                    automatic[str(value["destination"])] = {
-                        key: value[key]
-                        for key in (
-                            "decision_id",
-                            "destination",
-                            "occurred_at",
-                            "outcome",
-                            "proposal_id",
-                            "review_case_id",
-                            "target_fingerprint",
-                        )
-                    } | {"candidate_id": value.get("candidate_id")}
-                else:
+                projected = _automatic_decision_projection(document)
+                if projected is None:
                     decision = HumanDecision.from_json(document)
                     decisions[decision.destination] = decision
+                else:
+                    automatic[str(projected["destination"])] = projected
         except ReviewWebError:
             raise
         except Exception as error:
@@ -608,6 +623,13 @@ class InspectCurrentReviewCase:
         detail, _, snapshot = self._read(review_case_id, limit)
         decisions: dict[str, dict[str, object]] = {}
         for document in snapshot.decision_documents:
+            automatic = _automatic_decision_projection(document)
+            if automatic is not None:
+                decision_id = automatic["decision_id"]
+                destination = automatic["destination"]
+                if type(decision_id) is str and destination == "cover":
+                    decisions[decision_id] = automatic
+                continue
             try:
                 decision = HumanDecision.from_json(document)
             except HumanDecisionError:
@@ -623,9 +645,12 @@ class InspectCurrentReviewCase:
             automatic = field["automatic_decision"]
             current = field["current"]
             destination = field["destination"]
+            automatic_decision_id = (
+                automatic.get("decision_id") if type(automatic) is dict else None
+            )
             if (
                 type(automatic) is not dict
-                or type(automatic.get("decision_id")) is not str
+                or type(automatic_decision_id) is not str
                 or type(current) is not dict
                 or type(destination) is not str
             ):
@@ -651,7 +676,7 @@ class InspectCurrentReviewCase:
                 if automatic.get("outcome") == "keep_current"
                 else None
             )
-            automatic_values[automatic["decision_id"]] = (previous, selected)
+            automatic_values[automatic_decision_id] = (previous, selected)
         history_items = []
         for raw in snapshot.history:
             item = dict(raw)
@@ -1791,17 +1816,17 @@ def _library_item(
     decisions = set()
     automatic_outcomes: dict[str, str] = {}
     for document in decision_documents:
-        value = json.loads(document)
-        if type(value) is dict and value.get("origin") == "automatic_policy":
-            destination = str(value["destination"])
-            automatic_outcomes[destination] = str(value["outcome"])
-            if value.get("outcome") != "abstention":
-                decisions.add(destination)
-        else:
+        automatic = _automatic_decision_projection(document)
+        if automatic is None:
             decision = HumanDecision.from_json(document)
             assert case is not None
             decision.validate_for(case)
             decisions.add(decision.destination)
+        else:
+            destination = str(automatic["destination"])
+            automatic_outcomes[destination] = str(automatic["outcome"])
+            if automatic["outcome"] != "abstention":
+                decisions.add(destination)
     attention = (
         []
         if case is None

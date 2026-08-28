@@ -173,6 +173,55 @@ def test_identical_replay_reopens_and_explicit_retry_creates_successor(
     ]
 
 
+def test_active_fetching_blocks_readiness_and_quiescence_creates_successor(
+    case: _Case,
+) -> None:
+    fetching = True
+    service = CoverConsiderationService(
+        case.store,
+        read_preview=lambda artifact, _variant: case.payload_by_artifact[artifact],
+        read_preview_digest=lambda digest: case.payload_by_preview[digest],
+        clock=lambda: case.now,
+        provider_fetching=lambda _report: fetching,
+    )
+    case_id = "review_case_" + "q" * 64
+
+    active = service.ensure(case_id, case.report.to_json(), case.proposal)
+
+    assert active["provider_fetching"] is True
+    assert active["ready"] is False
+    assert active["policy"]["status"] == "abstained"
+    assert active["policy"]["recommended_candidate_reference"] is None
+    assert [candidate["deterministic_rank"] for candidate in active["candidates"]] == [
+        None,
+        1,
+    ]
+    incumbent = next(
+        candidate for candidate in active["candidates"] if candidate["incumbent"]
+    )
+    assert incumbent["match_state"] == "match_not_confirmed"
+    assert incumbent["selectable"] is False
+    assert incumbent["state"] == "excluded"
+
+    fetching = False
+    assert service.current(case_id) is None
+    quiescent = service.ensure(case_id, case.report.to_json(), case.proposal)
+
+    assert quiescent["supersedes_id"] == active["consideration_id"]
+    assert quiescent["provider_fetching"] is False
+    assert quiescent["ready"] is True
+    assert quiescent["policy"]["status"] == "recommended"
+    recommended = quiescent["policy"]["recommended_candidate_reference"]
+    assert (
+        next(
+            candidate
+            for candidate in quiescent["candidates"]
+            if candidate["deterministic_rank"] == 1
+        )["reference"]
+        == recommended
+    )
+
+
 def test_incumbent_duplicate_remains_bound_to_abs_original(case: _Case) -> None:
     payload = _preview(7)
     incumbent = _source(1, payload, incumbent=True)
@@ -302,7 +351,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
         clock=lambda: case.now + 1,
     )
     assert model_free.replay_reference == (
-        "cover_replay_a448a3132ed8c82b5f248650925a7ca71875dff24617246f8cb75151741d30da"
+        "cover_replay_44fa116db9d8d972c8cea4a62fa9cc5b9618c1c3456f5058fcb5c5e92c45c05d"
     )
     assert (
         model_free.ensure(case_id, case.report.to_json(), case.proposal)[
@@ -345,7 +394,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
     assert len(dispatches) == 1
     replayed_qualified = qualified()
     assert replayed_qualified.replay_reference == (
-        "cover_replay_b652a85e78c2a66e86410b1d413f88c54bd0bf84b4c330cf4f0d247a870e2e13"
+        "cover_replay_e4e0a09a9b260f7fe788500a45e77896c25f45d449e262090dac989745d69661"
     )
     assert (
         replayed_qualified.ensure(
@@ -415,7 +464,7 @@ def test_stale_reviewer_binding_is_current_only_and_replays_exactly(
         "profile contract requires process_limit=32"
     )
     different_document = json.loads(case.store.current[case_id])
-    assert different_document["schema_version"] == "cover-consideration-v1"
+    assert different_document["schema_version"] == "cover-consideration-v2"
     assert different_document["reviewer_failure"] is None
     assert "reviewer_unavailable_reason" not in different_document
 

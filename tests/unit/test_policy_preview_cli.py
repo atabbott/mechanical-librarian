@@ -79,7 +79,7 @@ def test_composed_preview_reaches_every_operation_it_exposes() -> None:
             assert {"preview_policy", "rich_qualification", "validate_policy"} == {
                 name for name in dir(application) if not name.startswith("_")
             }
-            assert 19 == len(application.rich_qualification(builtin))
+            assert 20 == len(application.rich_qualification(builtin))
             assert builtin == application.validate_policy(
                 builtin.name,
                 dict(builtin.options),
@@ -137,7 +137,7 @@ def test_composed_preview_uses_existing_database_without_mutation() -> None:
         before_entries = tuple(sorted(value.name for value in root.iterdir()))
         result = run_policy_preview(config, database, profile)
         assert "metadata-policy-preview-v1" == result["schema_version"]
-        assert 19 == len(result["rich_qualification"])
+        assert 20 == len(result["rich_qualification"])
         assert {
             "description_fill:safe_plain_text",
             "genres:fill_empty",
@@ -152,6 +152,7 @@ def test_composed_preview_uses_existing_database_without_mutation() -> None:
             "tags:fill_empty",
             "tags:add",
             "tags:replace",
+            "cover_order:fixed_source_order",
         } == {
             f"{item['field']}:{item['option']}"
             for item in result["rich_qualification"]

@@ -1084,6 +1084,29 @@ def test_new_library_preview_can_establish_next_generation_resolution(
     repository.close()
 
 
+def test_cover_automatic_profile_activates_through_the_application_boundary(
+    state_path: Path,
+) -> None:
+    repository = open_repository(state_path)
+    builtin = MetadataPolicyProfile.builtin()
+    destinations = dict(builtin.destinations)
+    destinations["cover_order"] = "automatic"
+    profile = MetadataPolicyProfile.create(
+        "Automatic confirmed covers", dict(builtin.options), destinations
+    )
+    repository.create_metadata_policy_draft(profile.canonical_json)
+
+    activation = PolicyNotebook(repository, ("ebooks",), {}).activate(
+        profile.policy_id, builtin.policy_id, 11
+    )
+
+    assert activation.transition is not None
+    persisted = repository.current_resolved_metadata_policy("ebooks")
+    assert persisted is not None
+    assert dict(persisted.destinations)["cover_order"] == "automatic"
+    repository.close()
+
+
 def test_generation_one_configured_override_binds_and_replays_through_admission(
     state_path: Path,
 ) -> None:

@@ -31,6 +31,7 @@ from mechanical_librarian.domain.automatic_decision import (
     F19A_QUALIFICATION_MANIFEST_SHA256,
     AutomaticDecision,
 )
+from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
 from mechanical_librarian.domain.field_effect import (
     EffectAuthority,
     EffectConsent,
@@ -291,7 +292,8 @@ def test_a_qualified_automatic_no_change_is_recorded_by_normal_scheduling(
 
     class UnexpectedAuthority:
         def resolve(
-            self, _decision: HumanDecision | AutomaticDecision
+            self,
+            _decision: HumanDecision | AutomaticDecision | CoverAutomaticDecision,
         ) -> AuthoritySnapshot:
             raise AssertionError("keep-current decision reached authority")
 

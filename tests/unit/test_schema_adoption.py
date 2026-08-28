@@ -106,7 +106,7 @@ def _predecessor(root: Path) -> Path:
     "plan",
     (OWNER_SETTINGS_V1, REVIEW_OWNER_DECISION_ACTIONS_V1),
 )
-def test_v28_report_schema_is_not_adoptable_without_mutation_or_backup(
+def test_v29_report_schema_is_not_adoptable_without_mutation_or_backup(
     tmp_path: Path, plan: str
 ) -> None:
     predecessor = (
@@ -117,7 +117,7 @@ def test_v28_report_schema_is_not_adoptable_without_mutation_or_backup(
     connection.execute("PRAGMA writable_schema=ON")
     connection.execute(
         "UPDATE sqlite_master SET sql=replace(sql,"
-        "'metadata-report-v29','metadata-report-v28') "
+        "'metadata-report-v30','metadata-report-v29') "
         "WHERE type='table' AND name='metadata_reports'"
     )
     connection.execute("PRAGMA writable_schema=OFF")

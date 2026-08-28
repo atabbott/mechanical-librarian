@@ -165,19 +165,20 @@ line-length = 88
 # nothing a contributor's editor, format-on-save, or pre-commit hook does --
 # each of which formats the single file it is holding, and would rewrite a
 # byte-frozen source. This makes the exclusion hold for every invocation.
-# It is scoped to exclusions: `ruff check` still lints those four files, which
+# It is scoped to exclusions: `ruff check` still lints these files, which
 # is what keeps their per-file ignores below meaningful rather than moot.
 force-exclude = true
 
 [tool.ruff.format]
-# The four sources named under `[tool.ruff.lint.per-file-ignores]` below are
-# byte-frozen by the F20 rich-metadata qualification manifest. The formatter
+# These sources are byte-frozen by the F20 rich-metadata or cover-election
+# qualification manifests. The formatter
 # rewrites bytes by definition, and `# fmt: off` is itself a byte, so the only
 # way to leave their digests intact is to keep the formatter out of them. This
 # exclusion retires with the same re-qualification those lint entries do.
 exclude = [
   "src/mechanical_librarian/adapters/library_services/audiobookshelf_field_effect.py",
   "src/mechanical_librarian/domain/automatic_decision.py",
+  "src/mechanical_librarian/domain/cover_qualification.py",
   "src/mechanical_librarian/domain/metadata_policy.py",
   "src/mechanical_librarian/domain/rich_metadata_preview.py",
 ]

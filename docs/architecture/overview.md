@@ -142,7 +142,7 @@ application performs one complete semantic parse of each visible row before
 returning its DTO. New canonical writes retain their complete validation and
 commit their derived facts atomically.
 
-The `metadata-report-v29` document retains all 16 ordered Audiobookshelf target
+The `metadata-report-v30` document retains all 16 ordered Audiobookshelf target
 destinations and their missing, null, empty, unloaded, malformed, oversized, or
 value state in target currentness. It also retains the closed ordered local-field states,
 source capability

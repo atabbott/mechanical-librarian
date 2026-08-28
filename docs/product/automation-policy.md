@@ -48,6 +48,25 @@ only and does not bypass effect consent or any guarded-write control.
 
 ## Availability before curation
 
+### Deterministic cover choice
+
+Cover recommendation is independent of the optional reviewer. Only confirmed
+same-edition and same-book candidates participate. Same edition ranks first;
+then portrait aspect sanity, pixel area, width, height, canonical packet/source
+precedence and an opaque stable reference form one total order. Observations can
+explain visual traits but cannot admit, exclude, rank, delay or authorize a
+cover.
+
+An owner choice and qualified Automatic use the same readiness rule: at least
+one confirmed candidate exists and no exact provider/report lane is actively
+fetching. Retry/backoff waiting is quiescent. Automatic is default-off and
+available only as an explicit opt-in after every frozen cover-election cohort
+passed its public aggregate-safe manifest with zero false admission or
+ordering/readiness disagreement. Standard consent, backup, currentness,
+recovery and read-back safeguards remain mandatory. A strictly better later
+candidate may supersede an automatic choice; a manual owner choice is final and
+ends that authority.
+
 Ingestion and consumption do not wait for metadata curation.
 
 1. The target-service adapter (Audiobookshelf first) discovers and exposes the

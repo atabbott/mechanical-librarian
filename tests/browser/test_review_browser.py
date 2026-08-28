@@ -1535,11 +1535,11 @@ _COVER_CONTAINMENT = """(selector) => {
 # Very tall, wide, portrait and square, all within the 320x480 preview
 # bound the cover packet enforces. Four ratios that no single frame can
 # satisfy is the point: containment has to hold for all of them at once.
-# The first two are the incumbent and the embedded candidate, which are
-# the pair #640's Library track shows without a provider identity, so the
-# widest ratio spread lands on the surface with the least room for it.
+# The first two are the incumbent and the embedded candidate. #864's prepared
+# Library comparison keeps those alongside every qualified replacement, so
+# the widest ratio spread lands together on the surface with the least room.
 _COVER_SHAPES = ((120, 480), (320, 140), (200, 300), (280, 280))
-_LIBRARY_SHAPES = _COVER_SHAPES[:2]
+_LIBRARY_SHAPES = _COVER_SHAPES
 
 
 def test_protected_cover_comparison_contains_every_image_without_cropping() -> None:

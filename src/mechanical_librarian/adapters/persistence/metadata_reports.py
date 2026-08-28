@@ -100,6 +100,7 @@ from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecisionError,
     AutomaticSafetyState,
 )
+from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
 from mechanical_librarian.domain.field_effect import (
     EffectAuthority,
     EffectConsent,
@@ -164,7 +165,14 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 lambda library: self.current_resolved_metadata_policy(library)
             ),
         )
-        self._cover_considerations = SQLiteCoverConsiderationRepository(connection)
+        self._cover_considerations = SQLiteCoverConsiderationRepository(
+            connection,
+            revoke_automatic=lambda decision_id, changed_at: (
+                self._revoke_field_effect_authority_in_transaction(
+                    decision_id, changed_at, required=False
+                )
+            ),
+        )
         self._reports = SQLiteReportRepository(
             connection,
             binding,
@@ -453,7 +461,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         self._current_cover_replay_reference = replay_reference
 
     def field_effect_authority_source(
-        self, decision: HumanDecision | AutomaticDecision
+        self, decision: HumanDecision | AutomaticDecision | CoverAutomaticDecision
     ) -> dict[str, object]:
         return self._field_effect_activity.field_effect_authority_source(decision)
 

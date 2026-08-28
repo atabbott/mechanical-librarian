@@ -24,6 +24,9 @@ from mechanical_librarian.adapters.field_effect_fakes import (
 )
 from mechanical_librarian.adapters.field_effect_runtime import PersistedEffectConsent
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
+from mechanical_librarian.adapters.persistence.cover_considerations import (
+    _strictly_better_cover_rank,
+)
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _automatic_decision_value,
     _validate_automatic_decision_authority,
@@ -62,6 +65,7 @@ from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecisionError,
     AutomaticSafetyState,
 )
+from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 from mechanical_librarian.domain.field_effect import (
     EffectAuthority,
@@ -71,7 +75,11 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectPlan,
     field_value_version,
 )
-from mechanical_librarian.domain.human_decision import HumanDecision, decision_actions
+from mechanical_librarian.domain.human_decision import (
+    HumanDecision,
+    HumanDecisionError,
+    decision_actions,
+)
 from mechanical_librarian.domain.metadata_policy import (
     DEFAULT_OPTIONS,
     OPTION_CATALOGUE,
@@ -92,6 +100,10 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase, ReviewTransition
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+from mechanical_librarian.interfaces.web.app import (
+    _HistoryResponse,
+    _ReviewField,
+)
 from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.proposal_evidence import (
     _claim,
@@ -361,11 +373,14 @@ def _human_title_decision(repository, case_id: str, occurred_at: int) -> HumanDe
     )
 
 
-def _qualified_cover_report(root: Path) -> tuple[MetadataReport, object]:
-    payloads = (_cover_preview(1), _cover_preview(2))
+def _qualified_cover_report(
+    root: Path, *, incumbent_index: int = 1, candidate_index: int = 2
+) -> tuple[MetadataReport, object]:
+    indexes = (incumbent_index, candidate_index)
+    payloads = tuple(_cover_preview(index) for index in indexes)
     sources = (
-        _cover_source(1, payloads[0], incumbent=True),
-        _cover_source(2, payloads[1], embedded=True),
+        _cover_source(incumbent_index, payloads[0], incumbent=True),
+        _cover_source(candidate_index, payloads[1], embedded=True),
     )
     base = _cover_report(sources)
     report = MetadataReport.create(
@@ -377,7 +392,7 @@ def _qualified_cover_report(root: Path) -> tuple[MetadataReport, object]:
         cover_sources=base.cover_sources,
     )
     artifacts = CoverArtifactStore(root / "artifacts")
-    for index, (source, payload) in enumerate(zip(sources, payloads, strict=True), 1):
+    for index, source, payload in zip(indexes, sources, payloads, strict=True):
         assert source.artifact is not None
         artifacts.stage(source.artifact, f"original-{index}".encode(), payload)
     return report, evaluate_report(report)
@@ -863,7 +878,7 @@ def test_atomic_cover_preparation_excludes_sibling_drift_and_rolls_back_every_po
                 "replay_digest": "e" * 64,
                 "report_id": report_id,
                 "review_case_id": review_case_id,
-                "schema_version": "cover-consideration-v1",
+                "schema_version": "cover-consideration-v2",
                 "supersedes_id": None,
             },
             separators=(",", ":"),
@@ -920,7 +935,7 @@ def test_manual_cover_predecessor_drift_rolls_back_and_releases_the_writer_lock(
                     "replay_digest": suffix * 64,
                     "report_id": report_id,
                     "review_case_id": review_case_id,
-                    "schema_version": "cover-consideration-v1",
+                    "schema_version": "cover-consideration-v2",
                     "supersedes_id": supersedes_id,
                 },
                 separators=(",", ":"),
@@ -2401,6 +2416,559 @@ def test_composed_projection_without_reviewer_persists_unavailable_before_f22() 
         ).fetchone()
         _assert_no_cover_effect_authority(repository)
         supervisor.stop()
+        repository.close()
+
+
+@pytest.mark.parametrize("effect_state", ("planned", "claimed", "applying"))
+def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
+    effect_state: str,
+) -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        database = root / "reports.sqlite"
+        repository = open_repository(database)
+        report, _ = _qualified_cover_report(root)
+        options = dict(DEFAULT_OPTIONS)
+        options["cover_order"] = "fixed_source_order"
+        destinations = {
+            category: "unsupported" if category == "explicit" else "ask"
+            for category in OPTION_CATALOGUE
+        }
+        destinations["cover_order"] = "automatic"
+        profile = MetadataPolicyProfile.create(
+            "Deterministic confirmed covers", options, destinations
+        )
+        resolved = resolve_policy(profile, report.target.library)
+        proposal = evaluate_report(
+            report, resolved.resolved_id, human_review_destinations(resolved)
+        )
+        repository.enter_shadow_preview(1)
+        repository.create_metadata_policy_draft(profile.canonical_json)
+        repository.activate_metadata_policy(
+            profile.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            2,
+        )
+        repository.activate_qualified_automatic(3)
+        recovery = composition.SQLiteProviderRecoveryStore.open(
+            root / "provider-recovery.sqlite"
+        )
+        supervisor = composition.create_review_pipeline(
+            _pipeline_configuration(),
+            database,
+            root / "catalogue.sqlite",
+            root / "artifacts",
+            database_authority=repository.authority,
+            provider_recovery=recovery,
+        )
+        with patch.object(composition, "run_cover_packet_reviewer") as dispatch:
+            pipeline = _run_qualified_cover_pipeline(
+                repository, root, report, proposal, supervisor
+            )
+            assert [True, True, True, True, True, False] == [
+                pipeline.run_next(1) for _ in range(6)
+            ]
+        dispatch.assert_not_called()
+        selection_rows = repository._connection.execute(
+            "SELECT selection.document FROM current_cover_selection_authorities current "
+            "JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id"
+        ).fetchall()
+        assert 1 == len(selection_rows)
+        selection = json.loads(selection_rows[0][0])
+        automatic = CoverAutomaticDecision.from_json(selection["decision_document"])
+        assert automatic.rank_key == tuple(selection["rank_key"])
+        assert (selection["decision_document"],) == (
+            repository.pending_field_effect_decision_documents(1)[0],
+        )
+        reopened_projection = open_repository(database)
+        library = BrowseReviewLibrary(reopened_projection).library(
+            lens="all", search=None, limit=50, cursor=None
+        )
+        projected_work = next(
+            item
+            for item in library["items"]
+            if item["review_case_id"] == automatic.review_case_id
+        )
+        assert projected_work["detail_url"] == f"/review/{automatic.review_case_id}"
+        detail = InspectCurrentReviewCase(reopened_projection).run(
+            automatic.review_case_id
+        )
+        projected_cover = next(
+            field for field in detail["fields"] if field["destination"] == "cover"
+        )
+        assert projected_cover["automatic_decision"] == {
+            "candidate_id": automatic.candidate_id,
+            "decision_id": automatic.decision_id,
+            "destination": "cover",
+            "occurred_at": automatic.occurred_at,
+            "outcome": "candidate",
+            "proposal_id": automatic.proposal_id,
+            "review_case_id": automatic.review_case_id,
+            "selected_value": {"kind": "cover", "value": automatic.artifact_id},
+            "supersedes_decision_id": None,
+            "target_fingerprint": automatic.target_fingerprint,
+        }
+        transport_cover = {**projected_cover, "effect_capability": "report_only"}
+        _ReviewField.model_validate(transport_cover)
+        malformed_cover = json.loads(json.dumps(transport_cover))
+        del malformed_cover["automatic_decision"]["supersedes_decision_id"]
+        with pytest.raises(ValueError):
+            _ReviewField.model_validate(malformed_cover)
+        reopened_projection.close()
+        assert repository.field_effect_authority_source(automatic)[
+            "decision_value"
+        ] == {
+            "kind": "cover",
+            "value": automatic.artifact_id,
+        }
+        activity = repository.field_effect_activity_page(
+            search=None,
+            event_type="metadata",
+            occurred_after=0,
+            page=1,
+            page_size=25,
+        )
+        automatic_event = next(
+            event
+            for event in activity["events"]
+            if event["event_id"] == automatic.decision_id
+        )
+        assert automatic_event["record"]["selected_value"] == {
+            "kind": "cover",
+            "value": automatic.artifact_id,
+        }
+
+        authority_adapter = PersistedFieldEffectAuthority(repository)
+        snapshot = authority_adapter.resolve(automatic)
+        repository.grant_field_effect_consents(
+            snapshot.connection,
+            (snapshot.library,),
+            (snapshot.destination,),
+            10,
+        )
+        target = FakeTargetService()
+        field_application = GuardedFieldApplication(
+            repository,
+            target,
+            FakeBackupReadiness(),
+            FakeCapabilityObserver("c" * 64),
+            authority_adapter,
+            FakeDependencyCurrentness(),
+            PersistedEffectConsent(repository),
+            SimpleNamespace(),
+            FakeForwardReevaluation(),
+            lambda: 10,
+        )
+        operation = field_application.plan(
+            automatic,
+            connection=snapshot.connection,
+            library=snapshot.library,
+            work_id=snapshot.work_id,
+            destination=snapshot.destination,
+            pre_value=snapshot.pre_value,
+            desired_value=snapshot.decision_value,
+            target_fingerprint=snapshot.target_fingerprint,
+            target_version=snapshot.target_version,
+            dependency_digests=snapshot.dependency_digests,
+            capability_digest="c" * 64,
+        )
+        assert operation is not None
+        if effect_state in {"claimed", "applying"}:
+            repository.claim_field_effect(
+                operation.plan.plan_id, "planned", "a" * 64, 10
+            )
+        if effect_state == "applying":
+            repository.transition_field_effect(
+                operation.plan.plan_id, "claimed", "applying", 10
+            )
+
+        consideration_document = repository.current_cover_consideration_document(
+            automatic.review_case_id
+        )
+        assert consideration_document is not None
+        consideration = json.loads(consideration_document)
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(automatic.review_case_id))["case"]
+        )
+        cover_proposal = next(
+            item for item in case.proposals if item["destination"] == "cover"
+        )
+        owner = HumanDecision.create(
+            case,
+            proposal_id=cover_proposal["proposal_id"],
+            target_fingerprint=case.target_fingerprint,
+            destination="cover",
+            actor="owner",
+            outcome="accept",
+            selected_value={"kind": "cover", "value": automatic.artifact_id},
+            idempotency_key="synthetic-owner-cover-final-0001",
+            occurred_at=11,
+        )
+        if effect_state != "planned":
+            with pytest.raises(HumanDecisionError, match="already_decided"):
+                repository.record_human_decision(
+                    owner, cover_consideration_id=consideration["consideration_id"]
+                )
+            supervisor.stop()
+            repository.close()
+            return
+        repository.record_human_decision(
+            owner, cover_consideration_id=consideration["consideration_id"]
+        )
+        assert not authority_adapter.current(operation.plan.authority)
+        assert repository.field_effect_manual_hold_context(
+            automatic.review_case_id, "cover"
+        ) == (snapshot.connection, snapshot.library)
+        current = repository._connection.execute(
+            "SELECT selection.kind FROM current_cover_selection_authorities current "
+            "JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id"
+        ).fetchone()
+        assert current == ("owner",)
+        assert (
+            2
+            == repository._connection.execute(
+                "SELECT count(*) FROM cover_selection_authorities"
+            ).fetchone()[0]
+        )
+        reopened_owner = open_repository(database)
+        reopened_covers = composition._compose_cover_considerations(
+            reopened_owner, root / "artifacts", _pipeline_configuration().review
+        )
+        reopened_web = InspectCurrentReviewCase(reopened_owner, reopened_covers)
+        owner_detail = reopened_web.run(automatic.review_case_id)
+        owner_cover = next(
+            field for field in owner_detail["fields"] if field["destination"] == "cover"
+        )
+        assert owner_cover["human_decision"]["decision_id"] == owner.decision_id
+        assert owner_cover["automatic_decision"]["decision_id"] == automatic.decision_id
+        history = reopened_web.history(automatic.review_case_id)
+        transport_history = _HistoryResponse.model_validate(history).model_dump(
+            mode="json"
+        )
+        automatic_history = next(
+            item
+            for item in transport_history["items"]
+            if type(item.get("decision")) is dict
+            and item["decision"].get("decision_id") == automatic.decision_id
+        )
+        assert automatic_history["decision"] == {
+            "candidate_id": automatic.candidate_id,
+            "decision_id": automatic.decision_id,
+            "destination": "cover",
+            "occurred_at": automatic.occurred_at,
+            "outcome": "candidate",
+            "proposal_id": automatic.proposal_id,
+            "review_case_id": automatic.review_case_id,
+            "selected_value": None,
+            "supersedes_decision_id": None,
+            "target_fingerprint": automatic.target_fingerprint,
+        }
+        malformed_history = json.loads(json.dumps(history))
+        malformed_automatic = next(
+            item
+            for item in malformed_history["items"]
+            if type(item.get("decision")) is dict
+            and item["decision"].get("decision_id") == automatic.decision_id
+        )
+        del malformed_automatic["decision"]["supersedes_decision_id"]
+        with pytest.raises(ValueError):
+            _HistoryResponse.model_validate(malformed_history)
+        reopened_owner.close()
+        repository.record_cover_consideration(
+            consideration_document,
+            review_case_id=automatic.review_case_id,
+            report_id=automatic.report_id,
+            replay_digest=consideration["replay_digest"],
+            supersedes_id=consideration["supersedes_id"],
+            occurred_at=12,
+        )
+        assert (
+            2
+            == repository._connection.execute(
+                "SELECT count(*) FROM cover_selection_authorities"
+            ).fetchone()[0]
+        )
+        pending = repository.pending_field_effect_decision_documents(1)
+        assert len(pending) == 1
+        assert HumanDecision.from_json(pending[0]).decision_id == owner.decision_id
+        for index, outcome in enumerate(("keep_current", "reject"), 2):
+            repository.record_human_decision(
+                HumanDecision.create(
+                    case,
+                    proposal_id=cover_proposal["proposal_id"],
+                    target_fingerprint=case.target_fingerprint,
+                    destination="cover",
+                    actor="owner",
+                    outcome=outcome,
+                    selected_value=None,
+                    idempotency_key=f"synthetic-owner-cover-final-000{index}",
+                    occurred_at=11 + index,
+                ),
+                cover_consideration_id=consideration["consideration_id"],
+            )
+        supervisor.stop()
+        repository.close()
+        reopened = open_repository(database)
+        assert reopened._connection.execute(
+            "SELECT count(*) FROM cover_selection_authorities"
+        ).fetchone() == (4,)
+        reopened.close()
+        hostile = sqlite3.connect(database)
+        hostile.execute("DROP TRIGGER cover_selection_authorities_no_update")
+        hostile.execute(
+            "UPDATE cover_selection_authorities SET occurred_at=occurred_at+1 "
+            "WHERE kind='automatic'"
+        )
+        hostile.commit()
+        hostile.close()
+        with pytest.raises(
+            MetadataReportError, match="database is unavailable or incompatible"
+        ):
+            open_repository(database)
+
+
+@pytest.mark.parametrize(
+    ("later_candidate_index", "owner_final", "expected_kind", "expected_rows"),
+    (
+        (3, False, "automatic", 2),
+        (2, False, "automatic", 1),
+        (3, True, "owner", 2),
+    ),
+)
+def test_later_cover_case_only_supersedes_automatic_with_a_strictly_better_rank(
+    later_candidate_index: int,
+    owner_final: bool,
+    expected_kind: str,
+    expected_rows: int,
+) -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        database = root / "reports.sqlite"
+        repository = open_repository(database)
+        first_report, _ = _qualified_cover_report(root)
+        options = dict(DEFAULT_OPTIONS)
+        options["cover_order"] = "fixed_source_order"
+        destinations = {
+            category: "unsupported" if category == "explicit" else "ask"
+            for category in OPTION_CATALOGUE
+        }
+        destinations["cover_order"] = "automatic"
+        profile = MetadataPolicyProfile.create(
+            "Deterministic confirmed covers", options, destinations
+        )
+        resolved = resolve_policy(profile, first_report.target.library)
+        first_proposal = evaluate_report(
+            first_report, resolved.resolved_id, human_review_destinations(resolved)
+        )
+        repository.enter_shadow_preview(1)
+        repository.create_metadata_policy_draft(profile.canonical_json)
+        repository.activate_metadata_policy(
+            profile.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            (
+                (
+                    first_report.target.library,
+                    resolved.resolved_id,
+                    resolved.canonical_json,
+                ),
+            ),
+            2,
+        )
+        repository.activate_qualified_automatic(3)
+        recovery = composition.SQLiteProviderRecoveryStore.open(
+            root / "provider-recovery.sqlite"
+        )
+        supervisor = composition.create_review_pipeline(
+            _pipeline_configuration(),
+            database,
+            root / "catalogue.sqlite",
+            root / "artifacts",
+            database_authority=repository.authority,
+            provider_recovery=recovery,
+        )
+        with patch.object(composition, "run_cover_packet_reviewer") as dispatch:
+            pipeline = _run_qualified_cover_pipeline(
+                repository, root, first_report, first_proposal, supervisor
+            )
+            assert [True, True, True, True, True, False] == [
+                pipeline.run_next(1) for _ in range(6)
+            ]
+        dispatch.assert_not_called()
+        prior_document = repository._connection.execute(
+            "SELECT selection.document FROM current_cover_selection_authorities current "
+            "JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id"
+        ).fetchone()
+        assert prior_document is not None
+        prior_selection = json.loads(prior_document[0])
+        prior = CoverAutomaticDecision.from_json(prior_selection["decision_document"])
+
+        owner_decision_id = None
+        if owner_final:
+            first_consideration = repository.current_cover_consideration_document(
+                prior.review_case_id
+            )
+            assert first_consideration is not None
+            first_case = ReviewCase.create_from_data(
+                json.loads(repository.get_review_case(prior.review_case_id))["case"]
+            )
+            cover_proposal = next(
+                item for item in first_case.proposals if item["destination"] == "cover"
+            )
+            owner = HumanDecision.create(
+                first_case,
+                proposal_id=cover_proposal["proposal_id"],
+                target_fingerprint=first_case.target_fingerprint,
+                destination="cover",
+                actor="owner",
+                outcome="accept",
+                selected_value={"kind": "cover", "value": prior.artifact_id},
+                idempotency_key="synthetic-owner-cover-later-final-0001",
+                occurred_at=11,
+            )
+            repository.record_human_decision(
+                owner,
+                cover_consideration_id=json.loads(first_consideration)[
+                    "consideration_id"
+                ],
+            )
+            owner_decision_id = owner.decision_id
+
+        later_report, _ = _qualified_cover_report(
+            root, incumbent_index=4, candidate_index=later_candidate_index
+        )
+        later_proposal = evaluate_report(
+            later_report, resolved.resolved_id, human_review_destinations(resolved)
+        )
+        repository.publish(
+            later_report, lambda: True, expected_current=first_report.report_id
+        )
+        repository.publish_proposal(later_proposal)
+        admission = json.loads(repository.admit_review_case(later_proposal))
+        later_case_id = admission["review_case_id"]
+        later_case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(later_case_id))["case"]
+        )
+        later_cover_proposal = next(
+            item for item in later_case.proposals if item["destination"] == "cover"
+        )
+        considerations = composition._compose_cover_considerations(
+            repository, root / "artifacts", _pipeline_configuration().review
+        )
+        considerations.ensure(
+            later_case_id,
+            later_report.to_json(),
+            {"proposal_id": later_cover_proposal["proposal_id"]},
+        )
+
+        current_document = repository._connection.execute(
+            "SELECT selection.document FROM current_cover_selection_authorities current "
+            "JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id"
+        ).fetchone()
+        assert current_document is not None
+        current = json.loads(current_document[0])
+        assert current["kind"] == expected_kind
+        assert repository._connection.execute(
+            "SELECT count(*) FROM cover_selection_authorities"
+        ).fetchone() == (expected_rows,)
+        pending = repository.pending_field_effect_decision_documents(1)
+
+        if owner_final:
+            assert pending == (current["decision_document"],)
+            assert current["decision_id"] == owner_decision_id
+        elif later_candidate_index == 3:
+            assert pending == (current["decision_document"],)
+            successor = CoverAutomaticDecision.from_json(current["decision_document"])
+            assert successor.review_case_id == later_case_id
+            assert successor.supersedes_decision_id == prior.decision_id
+            assert tuple(current["rank_key"]) < prior.rank_key
+            assert current["supersedes_selection_id"] == prior_selection["selection_id"]
+            automatic_history = next(
+                item
+                for item in InspectCurrentReviewCase(
+                    repository, considerations
+                ).history(later_case_id)["items"]
+                if type(item.get("decision")) is dict
+                and item["decision"].get("decision_id") == successor.decision_id
+            )
+            assert automatic_history["decision"]["supersedes_decision_id"] == (
+                prior.decision_id
+            )
+            with pytest.raises(FieldEffectError, match="authority_binding"):
+                repository.field_effect_authority_source(prior)
+        else:
+            assert pending == ()
+            assert current["decision_id"] == prior.decision_id
+
+        supervisor.stop()
+        repository.close()
+
+
+def test_cover_automatic_rank_comparison_is_complete_and_reference_stable() -> None:
+    earlier_reference = [0, 0, -960000, -800, -1200, 4, "cover_ref_a"]
+    later_reference = [0, 0, -960000, -800, -1200, 4, "cover_ref_b"]
+    assert _strictly_better_cover_rank(earlier_reference, later_reference)
+    assert not _strictly_better_cover_rank(later_reference, earlier_reference)
+    assert not _strictly_better_cover_rank(earlier_reference, earlier_reference)
+    assert not _strictly_better_cover_rank(earlier_reference[:-1], later_reference)
+
+
+def test_cover_automatic_admission_abstains_before_unready_authority() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        repository = open_repository(Path(temporary) / "reports.sqlite")
+        repository._cover_considerations._admit_automatic_cover(
+            json.dumps(
+                {
+                    "provider_fetching": True,
+                    "policy_report_document": "not-json",
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            1,
+        )
+        repository._cover_considerations._admit_automatic_cover(
+            json.dumps(
+                {
+                    "provider_fetching": False,
+                    "policy_report_document": "",
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            1,
+        )
+        repository._cover_considerations._admit_automatic_cover(
+            json.dumps(
+                {
+                    "candidates": [
+                        {
+                            "deterministic_citations": [],
+                            "deterministic_rank": None,
+                            "deterministic_rank_key": None,
+                            "incumbent": False,
+                            "reference": "cover_ref_unconfirmed",
+                            "selectable": False,
+                        }
+                    ],
+                    "policy_report_document": json.dumps(
+                        {
+                            "recommended_candidate_reference": "cover_ref_unconfirmed",
+                            "status": "recommended",
+                        },
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                    "provider_fetching": False,
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            1,
+        )
+        assert repository._connection.execute(
+            "SELECT count(*) FROM cover_selection_authorities"
+        ).fetchone() == (0,)
         repository.close()
 
 

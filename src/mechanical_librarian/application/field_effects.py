@@ -9,6 +9,7 @@ from typing import Callable, Literal, Protocol, cast
 
 from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
+from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
 from mechanical_librarian.domain.field_effect import (
     EffectAuthority,
     EffectConsent,
@@ -193,7 +194,7 @@ class CapabilityObserver(Protocol):
 
 class AuthorityCurrentness(Protocol):
     def resolve(
-        self, decision: HumanDecision | AutomaticDecision
+        self, decision: HumanDecision | AutomaticDecision | CoverAutomaticDecision
     ) -> AuthoritySnapshot: ...
     def current(self, authority: EffectAuthority) -> bool: ...
 
@@ -223,7 +224,7 @@ class ForwardReevaluation(Protocol):
 
 
 def authority_from_decision(
-    decision: HumanDecision | AutomaticDecision,
+    decision: HumanDecision | AutomaticDecision | CoverAutomaticDecision,
     *,
     allow_corrective_keep_current: bool = False,
 ) -> EffectAuthority | None:
@@ -243,18 +244,19 @@ def authority_from_decision(
             None,
             None,
         )
-    if type(decision) is AutomaticDecision:
-        if decision.outcome != "candidate":
+    if type(decision) in (AutomaticDecision, CoverAutomaticDecision):
+        automatic = cast(AutomaticDecision | CoverAutomaticDecision, decision)
+        if automatic.outcome != "candidate":
             return None
         return EffectAuthority(
-            decision.decision_id,
-            decision.review_case_id,
-            decision.target_fingerprint,
+            automatic.decision_id,
+            automatic.review_case_id,
+            automatic.target_fingerprint,
             "fake_service",
             "automatic_policy",
             "candidate",
-            decision.resolved_policy_id,
-            decision.qualification_manifest_sha256,
+            automatic.resolved_policy_id,
+            automatic.qualification_manifest_sha256,
         )
     raise GuardedApplicationError("unauthorized_origin")
 
@@ -317,7 +319,7 @@ class GuardedFieldApplication:
 
     def plan(
         self,
-        decision: HumanDecision | AutomaticDecision,
+        decision: HumanDecision | AutomaticDecision | CoverAutomaticDecision,
         *,
         connection: str,
         library: str,
@@ -523,6 +525,8 @@ class GuardedFieldApplication:
         operation = self._repository.transition_field_effect(
             plan.plan_id, "claimed", "applying", self._clock()
         )
+        if not self._authority.current(plan.authority):
+            return self._stale(operation, "authority")
         try:
             with self._timing.measure("apply", "target"):
                 result = self._target.apply(plan)

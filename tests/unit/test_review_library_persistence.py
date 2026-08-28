@@ -670,7 +670,7 @@ def test_cover_state_is_inside_the_current_case_read_snapshot() -> None:
                 "replay_digest": replay_digest,
                 "report_id": report.report_id,
                 "review_case_id": case_id,
-                "schema_version": "cover-consideration-v1",
+                "schema_version": "cover-consideration-v2",
                 "supersedes_id": None,
             },
             separators=(",", ":"),

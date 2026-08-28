@@ -189,7 +189,7 @@ class _DecisionProjection(_ClosedModel):
     target_fingerprint: str
 
 
-class _AutomaticDecisionProjection(_ClosedModel):
+class _AutomaticDecisionProjectionBase(_ClosedModel):
     candidate_id: str | None
     decision_id: str
     destination: str
@@ -199,6 +199,33 @@ class _AutomaticDecisionProjection(_ClosedModel):
     review_case_id: str
     selected_value: _ProposedValue | None
     target_fingerprint: str
+
+
+class _AutomaticDecisionProjection(_AutomaticDecisionProjectionBase):
+    destination: Literal[
+        "title",
+        "subtitle",
+        "authors",
+        "narrators",
+        "series",
+        "genres",
+        "publishedYear",
+        "publishedDate",
+        "publisher",
+        "description",
+        "isbn",
+        "asin",
+        "language",
+        "explicit",
+        "tags",
+    ]
+
+
+class _CoverAutomaticDecisionProjection(_AutomaticDecisionProjectionBase):
+    candidate_id: str
+    destination: Literal["cover"]
+    outcome: Literal["candidate"]
+    supersedes_decision_id: str | None
 
 
 class _AutomaticPauseRequest(_ClosedModel):
@@ -243,9 +270,13 @@ class _CoverObservation(_ClosedModel):
 
 class _CoverCandidate(_ClosedModel):
     artifact_id: str
+    deterministic_citations: list[str]
+    deterministic_rank: int | None
+    deterministic_rank_key: list[int | str] | None
     height: int
     identity: _CoverIdentity
     incumbent: bool
+    match_state: Literal["same_edition", "same_book", "match_not_confirmed"]
     observation: _CoverObservation | None
     original_sha256: str
     ordinal: int
@@ -302,9 +333,11 @@ class _CoverConsiderationResponse(_ClosedModel):
     policy: _CoverPolicyReport | None
     policy_preferences: _CoverPolicyPreferences
     policy_reference: str
+    provider_fetching: bool
+    ready: bool
     reviewer_status: str
     reviewer_unavailable_reason: str | None
-    schema_version: Literal["cover-consideration-v1"]
+    schema_version: Literal["cover-consideration-v2"]
     supersedes_id: str | None
     target_fingerprint: str
 
@@ -326,7 +359,9 @@ class _ReviewField(_ClosedModel):
     effect_capability: str
     human_decision: _DecisionProjection | None
     inventory_role: Literal["primary", "contextual"]
-    automatic_decision: _AutomaticDecisionProjection | None
+    automatic_decision: (
+        _AutomaticDecisionProjection | _CoverAutomaticDecisionProjection | None
+    )
     manual_hold: bool
     manual_required: bool
     needs_attention: bool
@@ -448,7 +483,7 @@ class _HistoryAutomaticItem(_ClosedModel):
 class _HistoryCoverItem(_ClosedModel):
     consideration_id: str
     consideration: _CoverConsiderationResponse
-    decision: _DecisionProjection | None
+    decision: _DecisionProjection | _CoverAutomaticDecisionProjection | None
     decision_id: str | None
     kind: Literal[
         "automatic_prepared",
@@ -899,6 +934,13 @@ class _ExplicitQualification(_RichQualificationBase):
     option: Literal["unsupported"]
 
 
+class _CoverQualification(_RichQualificationBase):
+    automatic_available: Literal[True]
+    disposition: Literal["pass"]
+    field: Literal["cover_order"]
+    option: Literal["fixed_source_order"]
+
+
 _RichQualification: TypeAlias = (
     _SubtitleFillQualification
     | _SubtitleSplitQualification
@@ -911,6 +953,7 @@ _RichQualification: TypeAlias = (
     | _IsbnQualification
     | _AsinQualification
     | _ExplicitQualification
+    | _CoverQualification
 )
 _RICH_QUALIFICATION_ADAPTER: TypeAdapter[_RichQualification] = TypeAdapter(
     _RichQualification

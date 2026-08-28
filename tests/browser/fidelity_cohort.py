@@ -37,6 +37,9 @@ LONG_DESCRIPTION = (
 _F20_CANDIDATE_SHA256 = (
     "770b56be2ce7ea9d1d809be189724e5f281a0dd8570af80d63429a5ab617ff99"
 )
+_COVER_CANDIDATE_SHA256 = (
+    "b91ae72a8c4e55c9bfe1d514c28210e22427b57a03082d2b5d1ae0b40df7c457"
+)
 _RICH_QUALIFICATION: tuple[dict[str, object], ...] = tuple(
     {
         "automatic_available": disposition == "passing_automatic",
@@ -66,6 +69,14 @@ _RICH_QUALIFICATION: tuple[dict[str, object], ...] = tuple(
         ("asin", "ebook_manifestation", "insufficient_coverage"),
         ("explicit", "unsupported", "passing_human_only"),
     )
+) + (
+    {
+        "automatic_available": True,
+        "candidate_sha256": _COVER_CANDIDATE_SHA256,
+        "disposition": "passing_automatic",
+        "field": "cover_order",
+        "option": "fixed_source_order",
+    },
 )
 
 
@@ -675,6 +686,20 @@ def _case(case_id: str) -> dict[str, object]:
                             [
                                 {
                                     "artifact_id": "cover-current-synthetic",
+                                    "deterministic_citations": [
+                                        "cover-ref-current",
+                                        "cover-packet-synthetic",
+                                    ],
+                                    "deterministic_rank": None,
+                                    "deterministic_rank_key": [
+                                        1,
+                                        0,
+                                        -960000,
+                                        -800,
+                                        -1200,
+                                        0,
+                                        "cover-ref-current",
+                                    ],
                                     "height": 1200,
                                     "identity": {
                                         "candidate_reference": "cover-ref-current",
@@ -684,16 +709,15 @@ def _case(case_id: str) -> dict[str, object]:
                                         "reasons": [],
                                     },
                                     "incumbent": True,
+                                    "match_state": "same_book",
                                     "observation": None,
                                     "original_sha256": "a" * 64,
                                     "ordinal": 0,
                                     "preview_sha256": "b" * 64,
                                     "reference": "cover-ref-current",
-                                    "selectable": case_id != "case-3",
+                                    "selectable": False,
                                     "source_kinds": ["synthetic"],
-                                    "state": "acceptable"
-                                    if case_id == "case-1"
-                                    else "available",
+                                    "state": "excluded",
                                     "width": 800,
                                 }
                             ]
@@ -702,6 +726,20 @@ def _case(case_id: str) -> dict[str, object]:
                         ),
                         {
                             "artifact_id": "cover-choice-synthetic",
+                            "deterministic_citations": [
+                                "cover-ref-choice",
+                                "cover-packet-synthetic",
+                            ],
+                            "deterministic_rank": 1,
+                            "deterministic_rank_key": [
+                                1,
+                                0,
+                                -960000,
+                                -800,
+                                -1200,
+                                0 if case_id == "case-3" else 1,
+                                "cover-ref-choice",
+                            ],
                             "height": 1200,
                             "identity": {
                                 "candidate_reference": "cover-ref-choice",
@@ -711,6 +749,7 @@ def _case(case_id: str) -> dict[str, object]:
                                 "reasons": [],
                             },
                             "incumbent": False,
+                            "match_state": "same_book",
                             "observation": None,
                             "original_sha256": "c" * 64,
                             "ordinal": 0 if case_id == "case-3" else 1,
@@ -718,11 +757,40 @@ def _case(case_id: str) -> dict[str, object]:
                             "reference": "cover-ref-choice",
                             "selectable": True,
                             "source_kinds": ["synthetic"],
-                            "state": "recommended"
-                            if reviewer_status == "completed"
-                            else "available",
+                            "state": "recommended",
                             "width": 800,
                         },
+                        *(
+                            [
+                                {
+                                    "artifact_id": "cover-unconfirmed-synthetic",
+                                    "deterministic_citations": [],
+                                    "deterministic_rank": None,
+                                    "deterministic_rank_key": None,
+                                    "height": 1000,
+                                    "identity": {
+                                        "candidate_reference": "cover-ref-unconfirmed",
+                                        "evidence_references": [],
+                                        "outcome": "unknown",
+                                        "preview_reference": "cover-preview-unconfirmed",
+                                        "reasons": ["insufficient_identity_evidence"],
+                                    },
+                                    "incumbent": False,
+                                    "match_state": "match_not_confirmed",
+                                    "observation": None,
+                                    "original_sha256": "1" * 64,
+                                    "ordinal": 2,
+                                    "preview_sha256": "2" * 64,
+                                    "reference": "cover-ref-unconfirmed",
+                                    "selectable": False,
+                                    "source_kinds": ["synthetic"],
+                                    "state": "excluded",
+                                    "width": 700,
+                                }
+                            ]
+                            if case_id == "case-1"
+                            else []
+                        ),
                     ],
                     "consideration_id": "cover-consideration-" + reviewer_status,
                     "choice_contexts": [
@@ -755,12 +823,8 @@ def _case(case_id: str) -> dict[str, object]:
                             ],
                             "limitations": [],
                             "rationale": "This retained cover candidate is selectable for owner review.",
-                            "recommendation": "recommended"
-                            if reviewer_status == "completed"
-                            else "no_recommendation",
-                            "recommendation_reason": "Authoritative cover policy recommends this retained cover."
-                            if reviewer_status == "completed"
-                            else "No recommendation retained.",
+                            "recommendation": "recommended",
+                            "recommendation_reason": "Deterministic confirmed-cover policy recommends this retained cover.",
                         },
                     ],
                     "current": True,
@@ -771,38 +835,19 @@ def _case(case_id: str) -> dict[str, object]:
                         "state": "unavailable" if case_id == "case-3" else "available",
                     },
                     "omissions": [],
-                    "policy": (
-                        {
-                            "acceptable_candidate_references": [
-                                "cover-ref-current",
-                                "cover-ref-choice",
-                            ],
-                            "cover_packet_reference": "cover-packet-synthetic",
-                            "identity_classifier_reference": "cover-identity-synthetic",
-                            "identity_report_sha256": "e" * 64,
-                            "observation_report_sha256": None,
-                            "observation_taxonomy_reference": "cover-taxonomy-synthetic",
-                            "policy_reference": "cover-policy-synthetic",
-                            "reasons": ["policy_satisfied"],
-                            "recommended_candidate_reference": "cover-ref-choice",
-                            "schema_version": "cover-policy-report-v1",
-                            "status": "recommended",
-                        }
-                        if reviewer_status == "completed"
-                        else {
-                            "acceptable_candidate_references": [],
-                            "cover_packet_reference": "cover-packet-synthetic",
-                            "identity_classifier_reference": "cover-identity-synthetic",
-                            "identity_report_sha256": "e" * 64,
-                            "observation_report_sha256": None,
-                            "observation_taxonomy_reference": "cover-taxonomy-synthetic",
-                            "policy_reference": "cover-policy-synthetic",
-                            "reasons": [],
-                            "recommended_candidate_reference": None,
-                            "schema_version": "cover-policy-report-v1",
-                            "status": "abstained",
-                        }
-                    ),
+                    "policy": {
+                        "acceptable_candidate_references": ["cover-ref-choice"],
+                        "cover_packet_reference": "cover-packet-synthetic",
+                        "identity_classifier_reference": "cover-identity-synthetic",
+                        "identity_report_sha256": "e" * 64,
+                        "observation_report_sha256": None,
+                        "observation_taxonomy_reference": "cover-taxonomy-synthetic",
+                        "policy_reference": "cover-policy-synthetic",
+                        "reasons": ["policy_satisfied"],
+                        "recommended_candidate_reference": "cover-ref-choice",
+                        "schema_version": "cover-policy-report-v1",
+                        "status": "recommended",
+                    },
                     "policy_preferences": {
                         "avoid_promotional_text": False,
                         "avoid_tie_in_branding": False,
@@ -810,9 +855,11 @@ def _case(case_id: str) -> dict[str, object]:
                         "schema_version": "cover-policy-v1",
                     },
                     "policy_reference": "cover-policy-synthetic",
+                    "provider_fetching": False,
+                    "ready": True,
                     "reviewer_status": reviewer_status,
                     "reviewer_unavailable_reason": None,
-                    "schema_version": "cover-consideration-v1",
+                    "schema_version": "cover-consideration-v2",
                     "supersedes_id": (
                         "cover-consideration-historical"
                         if reviewer_status == "failed"

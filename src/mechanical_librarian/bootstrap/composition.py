@@ -2786,7 +2786,7 @@ def run_review_server(
                 )
             )
             cover_considerations = _compose_cover_considerations(
-                repository, artifact_store_path, review
+                repository, artifact_store_path, review, provider_recovery
             )
             try:
                 review_application = compose_review_application(
@@ -2879,6 +2879,7 @@ def _compose_cover_considerations(
     repository: SQLiteMetadataReportRepository,
     artifact_store_path: Path,
     review: ReviewWebConfiguration,
+    provider_recovery: SQLiteProviderRecoveryStore | None = None,
 ) -> CoverConsiderationService:
     artifacts: CoverArtifactStore | None = None
 
@@ -2930,6 +2931,16 @@ def _compose_cover_considerations(
         ),
         reviewer_unavailable_reason=reviewer_unavailable_reason,
         bind_policy=bind_policy,
+        provider_fetching=(
+            None
+            if provider_recovery is None
+            else lambda report: provider_recovery.cover_fetching(
+                target_connection=report.target.connection,
+                library=report.target.library,
+                item=report.target.item,
+                source_report_id=report.report_id,
+            )
+        ),
     )
     service.update_policy(policy)
     return service

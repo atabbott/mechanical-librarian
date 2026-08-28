@@ -8,6 +8,7 @@ import tempfile
 import threading
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -665,7 +666,13 @@ def test_terminal_wait_uses_count_deadline_and_safe_aggregate_timeout(
     run._expected_total = 2
     run._server_thread = _JoiningThread([])
     values = iter((0.0, 0.0, 2.0, 2.0))
-    monkeypatch.setattr(continuous_review_scale.time, "monotonic", lambda: next(values))
+    # Replace this qualification module's clock reference, not the process-wide
+    # stdlib module that live worker threads also use during the complete tier.
+    monkeypatch.setattr(
+        continuous_review_scale,
+        "time",
+        SimpleNamespace(monotonic=lambda: next(values), sleep=lambda _: None),
+    )
     monkeypatch.setattr(
         continuous_review_scale, "_MINIMUM_INSTALLED_RECONCILIATION_WORKS_PER_SECOND", 1
     )

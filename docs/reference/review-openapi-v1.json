@@ -1668,6 +1668,23 @@
             "type": "string"
           },
           "destination": {
+            "enum": [
+              "title",
+              "subtitle",
+              "authors",
+              "narrators",
+              "series",
+              "genres",
+              "publishedYear",
+              "publishedDate",
+              "publisher",
+              "description",
+              "isbn",
+              "asin",
+              "language",
+              "explicit",
+              "tags"
+            ],
             "title": "Destination",
             "type": "string"
           },
@@ -1976,12 +1993,125 @@
         "title": "_ChoiceEvidence",
         "type": "object"
       },
+      "_CoverAutomaticDecisionProjection": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_id": {
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "decision_id": {
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "destination": {
+            "const": "cover",
+            "title": "Destination",
+            "type": "string"
+          },
+          "occurred_at": {
+            "title": "Occurred At",
+            "type": "integer"
+          },
+          "outcome": {
+            "const": "candidate",
+            "title": "Outcome",
+            "type": "string"
+          },
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "review_case_id": {
+            "title": "Review Case Id",
+            "type": "string"
+          },
+          "selected_value": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_ProposedValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "supersedes_decision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supersedes Decision Id"
+          },
+          "target_fingerprint": {
+            "title": "Target Fingerprint",
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "decision_id",
+          "destination",
+          "occurred_at",
+          "outcome",
+          "proposal_id",
+          "review_case_id",
+          "selected_value",
+          "target_fingerprint",
+          "supersedes_decision_id"
+        ],
+        "title": "_CoverAutomaticDecisionProjection",
+        "type": "object"
+      },
       "_CoverCandidate": {
         "additionalProperties": false,
         "properties": {
           "artifact_id": {
             "title": "Artifact Id",
             "type": "string"
+          },
+          "deterministic_citations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Deterministic Citations",
+            "type": "array"
+          },
+          "deterministic_rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deterministic Rank"
+          },
+          "deterministic_rank_key": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deterministic Rank Key"
           },
           "height": {
             "title": "Height",
@@ -1993,6 +2123,15 @@
           "incumbent": {
             "title": "Incumbent",
             "type": "boolean"
+          },
+          "match_state": {
+            "enum": [
+              "same_edition",
+              "same_book",
+              "match_not_confirmed"
+            ],
+            "title": "Match State",
+            "type": "string"
           },
           "observation": {
             "anyOf": [
@@ -2046,9 +2185,13 @@
         },
         "required": [
           "artifact_id",
+          "deterministic_citations",
+          "deterministic_rank",
+          "deterministic_rank_key",
           "height",
           "identity",
           "incumbent",
+          "match_state",
           "observation",
           "original_sha256",
           "ordinal",
@@ -2116,6 +2259,14 @@
             "title": "Policy Reference",
             "type": "string"
           },
+          "provider_fetching": {
+            "title": "Provider Fetching",
+            "type": "boolean"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
           "reviewer_status": {
             "title": "Reviewer Status",
             "type": "string"
@@ -2132,7 +2283,7 @@
             "title": "Reviewer Unavailable Reason"
           },
           "schema_version": {
-            "const": "cover-consideration-v1",
+            "const": "cover-consideration-v2",
             "title": "Schema Version",
             "type": "string"
           },
@@ -2162,6 +2313,8 @@
           "policy",
           "policy_preferences",
           "policy_reference",
+          "provider_fetching",
+          "ready",
           "reviewer_status",
           "reviewer_unavailable_reason",
           "schema_version",
@@ -2450,6 +2603,45 @@
           "status"
         ],
         "title": "_CoverPolicyReport",
+        "type": "object"
+      },
+      "_CoverQualification": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic_available": {
+            "const": true,
+            "title": "Automatic Available",
+            "type": "boolean"
+          },
+          "candidate_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "disposition": {
+            "const": "pass",
+            "title": "Disposition",
+            "type": "string"
+          },
+          "field": {
+            "const": "cover_order",
+            "title": "Field",
+            "type": "string"
+          },
+          "option": {
+            "const": "fixed_source_order",
+            "title": "Option",
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidate_sha256",
+          "automatic_available",
+          "disposition",
+          "field",
+          "option"
+        ],
+        "title": "_CoverQualification",
         "type": "object"
       },
       "_DecisionAcknowledgement": {
@@ -3043,9 +3235,13 @@
                 "$ref": "#/components/schemas/_DecisionProjection"
               },
               {
+                "$ref": "#/components/schemas/_CoverAutomaticDecisionProjection"
+              },
+              {
                 "type": "null"
               }
-            ]
+            ],
+            "title": "Decision"
           },
           "decision_id": {
             "anyOf": [
@@ -4027,6 +4223,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/_ExplicitQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_CoverQualification"
                 }
               ]
             },
@@ -4134,6 +4333,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/_ExplicitQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_CoverQualification"
                 }
               ]
             },
@@ -4639,9 +4841,13 @@
                 "$ref": "#/components/schemas/_AutomaticDecisionProjection"
               },
               {
+                "$ref": "#/components/schemas/_CoverAutomaticDecisionProjection"
+              },
+              {
                 "type": "null"
               }
-            ]
+            ],
+            "title": "Automatic Decision"
           },
           "choice_contexts": {
             "items": {
