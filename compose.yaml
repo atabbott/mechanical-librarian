@@ -4,6 +4,9 @@ services:
       context: .
     image: mechanical-librarian:local
     user: "65532:65532"
+    # Reap descendants that outlive a nested reviewer PID namespace. The
+    # application still owns graceful shutdown and direct-child verification.
+    init: true
     read_only: true
     cap_drop:
       - ALL
@@ -26,7 +29,8 @@ services:
     # Measured, not assumed. A seeded container of this image, driven through 25
     # rounds of authenticated login plus the Library, Attention, Policy and
     # Activity documents and their asset bundle, reported a `memory.peak` of
-    # 167.8MiB and a `pids.peak` of 11 from its own cgroup.
+    # 167.8MiB and a `pids.peak` of 11 from its own cgroup. The init process
+    # above adds one deployed pid.
     #
     # The serving process is only part of the budget: `review_pipeline.py` runs
     # two preparation lanes, and each may hold one evidence child, which
@@ -37,7 +41,7 @@ services:
     # ceiling rather than an invitation to swap.
     mem_limit: 1g
     memswap_limit: 1g
-    # 11 measured; the same two lanes add a child process, its watcher thread
+    # 12 deployed; the same two lanes add a child process, its watcher thread
     # and the parent's drain reader each, which reasons to roughly 25 under
     # concurrent preparation. That preparation path is the one a review server
     # with no library attached cannot exercise, so this sits about 5x above the

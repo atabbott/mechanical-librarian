@@ -488,6 +488,7 @@ def _qualify_first_run(
             [
                 "docker",
                 "create",
+                "--init",
                 "--name",
                 review,
                 "--label",
@@ -1007,6 +1008,7 @@ def main() -> None:
             [
                 "docker",
                 "create",
+                "--init",
                 "--name",
                 container,
                 "--label",

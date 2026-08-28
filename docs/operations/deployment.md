@@ -50,10 +50,18 @@ Compose also bounds the blast radius of a runaway container with `mem_limit`,
 this image, and `compose.yaml` records that measurement beside the setting so a
 later reader can tell it from a guess.
 
-The contained reviewer sets its Linux `RLIMIT_NPROC` at fork time to the
-current real-uid task count plus its fixed profile headroom. This keeps the
-reviewer's allowance stable while the application is busy; `pids_limit` remains
-defence in depth for the whole container, not reviewer scheduling authority.
+Compose also enables Docker's minimal init process. Nested reviewer PID
+namespaces can orphan short-lived descendants after the sandbox exits; init
+reaps those descendants without making the application a global child reaper
+or changing its ownership of graceful shutdown and direct-child verification.
+Direct `docker run` reproductions of the supported application container must
+therefore include `--init`.
+
+The contained reviewer applies its exact profile `RLIMIT_NPROC` only after
+Bubblewrap has entered the reviewer's private user namespace. The fixed limit
+therefore bounds that review without being consumed by application threads or
+same-uid sibling containers. `pids_limit` remains defence in depth for the
+whole container, not reviewer scheduling authority.
 
 Both healthchecks set a start interval, which needs Docker Engine 25 or newer
 and Compose v2.20 or newer. That is the newest runtime either file requires;

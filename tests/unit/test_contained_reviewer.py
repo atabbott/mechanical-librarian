@@ -942,7 +942,11 @@ def test_sealed_image_copy_resists_callback_and_same_uid_mutation() -> None:
                 f"hashlib.sha256(payload).hexdigest()!='{image.digest}')",
             ]
 
+            child_pid = -1
+
             def attack_after_fork(_pid: int, _pgid: int, _token: str) -> None:
+                nonlocal child_pid
+                child_pid = _pid
                 attacker = os.open(image.invocation_path, os.O_WRONLY)
                 try:
                     with pytest.raises(OSError):
@@ -952,7 +956,20 @@ def test_sealed_image_copy_resists_callback_and_same_uid_mutation() -> None:
                 finally:
                     os.close(attacker)
 
-            with patch.object(reviewer, "_limit_child"):
+            with (
+                patch.object(reviewer, "_limit_child"),
+                patch.object(
+                    adapter,
+                    "_sandbox_command_with_budget_fds",
+                    side_effect=lambda value, *_: value,
+                ),
+                patch.object(
+                    adapter,
+                    "_read_sandbox_child_pid",
+                    side_effect=lambda *_: child_pid,
+                ),
+                patch.object(adapter, "_apply_namespaced_process_limit"),
+            ):
                 returncode = reviewer._run_gated(
                     command,
                     executable,
@@ -1100,7 +1117,15 @@ def test_gated_timeout_and_cancel_kill_the_captured_process_identity(
         killed: list[tuple[int, int, str]] = []
         with (
             patch.object(
-                adapter.os, "pipe", side_effect=[(20, 21), (22, 23), (24, 25)]
+                adapter.os,
+                "pipe",
+                side_effect=[
+                    (20, 21),
+                    (22, 23),
+                    (24, 25),
+                    (26, 27),
+                    (28, 29),
+                ],
             ),
             patch.object(adapter.os, "fork", return_value=4321),
             patch.object(adapter.os, "close"),
@@ -1108,6 +1133,8 @@ def test_gated_timeout_and_cancel_kill_the_captured_process_identity(
             patch.object(adapter.os, "write"),
             patch.object(adapter, "_process_start_token", return_value="9876"),
             patch.object(adapter, "_safe_start_token", return_value="9876"),
+            patch.object(adapter, "_read_sandbox_child_pid", return_value=5678),
+            patch.object(adapter, "_apply_namespaced_process_limit"),
             patch.object(adapter, "_wait_for_exit", side_effect=failure),
             patch.object(
                 adapter,
@@ -1117,7 +1144,7 @@ def test_gated_timeout_and_cancel_kill_the_captured_process_identity(
         ):
             with pytest.raises(Exception, match=code):
                 reviewer._run_gated(
-                    [],
+                    ["/sandbox"],
                     artifact,
                     artifact,
                     1,
@@ -1129,82 +1156,224 @@ def test_gated_timeout_and_cancel_kill_the_captured_process_identity(
         assert killed == [(4321, 4321, "9876")]
 
 
-def test_busy_uid_baseline_leaves_the_fixed_reviewer_headroom() -> None:
+def test_outer_child_limits_defer_nproc_until_after_user_namespace() -> None:
     with tempfile.TemporaryDirectory() as temporary:
         reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
-        with (
-            patch.object(adapter, "_linux_uid_task_count", return_value=19),
-            patch.object(adapter.resource, "setrlimit") as limit,
-        ):
+        with patch.object(adapter.resource, "setrlimit") as limit:
             reviewer._limit_child()
-    assert limit.call_args_list[2].args == (
-        adapter.resource.RLIMIT_NPROC,
-        (51, 51),
-    )
+    assert [call.args[0] for call in limit.call_args_list] == [
+        adapter.resource.RLIMIT_AS,
+        adapter.resource.RLIMIT_FSIZE,
+        adapter.resource.RLIMIT_NOFILE,
+    ]
 
 
-def test_consecutive_reviewer_limits_follow_the_current_uid_baseline() -> None:
+def test_budget_command_holds_bwrap_before_its_pid_one_fork() -> None:
+    command = ["/sandbox", "--unshare-user", "/runtime/codex", "exec"]
+    assert adapter._sandbox_command_with_budget_fds(command, 26, 29) == [
+        "/sandbox",
+        "--block-fd",
+        "26",
+        "--info-fd",
+        "29",
+        "--unshare-user",
+        "/runtime/codex",
+        "exec",
+    ]
+    assert command == ["/sandbox", "--unshare-user", "/runtime/codex", "exec"]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (b"", b"not-json", b"{}", b'{"child-pid":true}', b'{"child-pid":1}'),
+)
+def test_sandbox_child_identity_rejects_malformed_or_unsafe_info(
+    payload: bytes,
+) -> None:
+    read_descriptor, write_descriptor = os.pipe()
+    try:
+        os.write(write_descriptor, payload)
+        os.close(write_descriptor)
+        write_descriptor = -1
+        with pytest.raises(adapter.ContainedReviewerProcessError, match="spawn"):
+            adapter._read_sandbox_child_pid(
+                read_descriptor,
+                time.monotonic() + 1,
+            )
+    finally:
+        os.close(read_descriptor)
+        if write_descriptor >= 0:
+            os.close(write_descriptor)
+
+
+def test_sandbox_child_identity_rejects_oversized_info() -> None:
+    read_descriptor, write_descriptor = os.pipe()
+    try:
+        os.write(write_descriptor, b"x" * (adapter.MAX_SANDBOX_INFO_BYTES + 1))
+        os.close(write_descriptor)
+        write_descriptor = -1
+        with pytest.raises(adapter.ContainedReviewerProcessError, match="spawn"):
+            adapter._read_sandbox_child_pid(
+                read_descriptor,
+                time.monotonic() + 1,
+            )
+    finally:
+        os.close(read_descriptor)
+        if write_descriptor >= 0:
+            os.close(write_descriptor)
+
+
+def test_sandbox_child_identity_obeys_the_parent_deadline() -> None:
+    read_descriptor, write_descriptor = os.pipe()
+    try:
+        with pytest.raises(TimeoutError):
+            adapter._read_sandbox_child_pid(read_descriptor, time.monotonic())
+    finally:
+        os.close(read_descriptor)
+        os.close(write_descriptor)
+
+
+def test_gated_late_sandbox_child_identity_is_a_spawn_failure() -> None:
     with tempfile.TemporaryDirectory() as temporary:
         reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
+        artifact = adapter._BoundArtifact(10, "/proc/self/fd/10")
+        killed: list[tuple[int, int, str]] = []
         with (
-            patch.object(adapter, "_linux_uid_task_count", side_effect=(19, 27)),
-            patch.object(adapter.resource, "setrlimit") as limit,
+            patch.object(
+                adapter.os,
+                "pipe",
+                side_effect=[
+                    (20, 21),
+                    (22, 23),
+                    (24, 25),
+                    (26, 27),
+                    (28, 29),
+                ],
+            ),
+            patch.object(adapter.os, "fork", return_value=4321),
+            patch.object(adapter.os, "close"),
+            patch.object(adapter.os, "read", return_value=b"R"),
+            patch.object(adapter.os, "write"),
+            patch.object(adapter, "_process_start_token", return_value="9876"),
+            patch.object(adapter, "_safe_start_token", return_value="9876"),
+            patch.object(
+                adapter,
+                "_read_sandbox_child_pid",
+                side_effect=TimeoutError,
+            ),
+            patch.object(
+                adapter,
+                "_kill_and_prove_dead",
+                side_effect=lambda pid, pgid, token: killed.append((pid, pgid, token)),
+            ),
         ):
-            reviewer._limit_child()
-            reviewer._limit_child()
-    assert [
-        call.args[1]
-        for call in limit.call_args_list
-        if call.args[0] == adapter.resource.RLIMIT_NPROC
-    ] == [(51, 51), (59, 59)]
+            with pytest.raises(
+                adapter.ContainedReviewerProcessError,
+                match="spawn",
+            ):
+                reviewer._run_gated(
+                    ["/sandbox"],
+                    artifact,
+                    artifact,
+                    1,
+                    2,
+                    3,
+                    lambda *_: None,
+                    credential_descriptor=4,
+                )
+    assert killed == [(4321, 4321, "9876")]
 
 
-def test_proc_task_count_skips_vanished_tasks_and_refuses_hostile_status() -> None:
+def test_invalid_budget_command_closes_every_allocated_descriptor() -> None:
     with tempfile.TemporaryDirectory() as temporary:
-        proc = Path(temporary)
-        current = proc / "101"
-        current.mkdir()
-        (current / "status").write_text(
-            f"Name:\ttest\nUid:\t{os.getuid()} {os.getuid()} {os.getuid()} {os.getuid()}\n",
-            encoding="ascii",
-        )
-        tasks = current / "task"
-        tasks.mkdir()
-        (tasks / "101").mkdir()
-        (tasks / "102").mkdir()
-        vanished = proc / "102"
-        vanished.mkdir()
-        (vanished / "status").write_text(
-            f"Name:\tvanished\nUid:\t{os.getuid()} {os.getuid()} {os.getuid()} {os.getuid()}\n",
-            encoding="ascii",
-        )
-        with patch.object(adapter, "_PROC_ROOT", proc):
-            assert adapter._linux_uid_task_count() == 2
-        (current / "status").write_text("Uid:\tnot-a-uid\n", encoding="ascii")
-        with patch.object(adapter, "_PROC_ROOT", proc):
+        reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
+        artifact = adapter._BoundArtifact(10, "/proc/self/fd/10")
+        descriptors = list(range(20, 30))
+        with (
+            patch.object(
+                adapter.os,
+                "pipe",
+                side_effect=[
+                    (20, 21),
+                    (22, 23),
+                    (24, 25),
+                    (26, 27),
+                    (28, 29),
+                ],
+            ),
+            patch.object(adapter, "_close_descriptors") as close_descriptors,
+        ):
             with pytest.raises(adapter.ContainedReviewerProcessError, match="spawn"):
-                adapter._linux_uid_task_count()
+                reviewer._run_gated(
+                    [],
+                    artifact,
+                    artifact,
+                    1,
+                    2,
+                    3,
+                    lambda *_: None,
+                    credential_descriptor=4,
+                )
+    close_descriptors.assert_called_once_with(descriptors)
 
 
-def test_proc_task_count_fails_closed_above_its_bounded_scan_limit() -> None:
+def test_gated_applies_exact_process_limit_to_namespaced_bwrap_child() -> None:
     with tempfile.TemporaryDirectory() as temporary:
-        proc = Path(temporary)
-        current = proc / "101"
-        current.mkdir()
-        (current / "status").write_text(
-            f"Uid:\t{os.getuid()} {os.getuid()} {os.getuid()} {os.getuid()}\n",
-            encoding="ascii",
-        )
-        tasks = current / "task"
-        tasks.mkdir()
-        (tasks / "101").mkdir()
-        (tasks / "102").mkdir()
+        reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
+        artifact = adapter._BoundArtifact(10, "/proc/self/fd/10")
+        limit = reviewer._profile.identity.process_limit
         with (
-            patch.object(adapter, "_PROC_ROOT", proc),
-            patch.object(adapter, "MAX_UID_TASKS", 1),
-            pytest.raises(adapter.ContainedReviewerProcessError, match="spawn"),
+            patch.object(
+                adapter.os,
+                "pipe",
+                side_effect=[
+                    (20, 21),
+                    (22, 23),
+                    (24, 25),
+                    (26, 27),
+                    (28, 29),
+                ],
+            ),
+            patch.object(adapter.os, "fork", return_value=4321),
+            patch.object(adapter.os, "close"),
+            patch.object(adapter.os, "read", return_value=b"R"),
+            patch.object(adapter.os, "write") as write,
+            patch.object(adapter, "_process_start_token", return_value="9876"),
+            patch.object(adapter, "_read_sandbox_child_pid", return_value=5678),
+            patch.object(adapter, "_apply_namespaced_process_limit") as apply_limit,
+            patch.object(adapter, "_wait_for_exit", return_value=0),
+            patch.object(adapter, "_child_spawn_failed", return_value=False),
+            patch.object(adapter, "_reap_process_group"),
         ):
-            adapter._linux_uid_task_count()
+            assert (
+                reviewer._run_gated(
+                    ["/sandbox", "--unshare-user", "/runtime/codex"],
+                    artifact,
+                    artifact,
+                    1,
+                    2,
+                    3,
+                    lambda *_: None,
+                    credential_descriptor=4,
+                )
+                == 0
+            )
+    apply_limit.assert_called_once_with(5678, 4321, limit)
+    assert write.call_args_list[-1].args == (27, b"G")
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux prlimit proof")
+def test_namespaced_process_limit_is_applied_to_the_reported_group_member() -> None:
+    with (
+        patch.object(adapter.os, "getpgid", return_value=4321),
+        patch.object(adapter.resource, "prlimit") as apply_limit,
+    ):
+        adapter._apply_namespaced_process_limit(5678, 4321, 32)
+    apply_limit.assert_called_once_with(
+        5678,
+        adapter.resource.RLIMIT_NPROC,
+        (32, 32),
+    )
 
 
 def test_gated_fork_and_resource_failures_are_typed_spawn_failures() -> None:
@@ -1213,7 +1382,15 @@ def test_gated_fork_and_resource_failures_are_typed_spawn_failures() -> None:
         artifact = adapter._BoundArtifact(10, "/proc/self/fd/10")
         with (
             patch.object(
-                adapter.os, "pipe", side_effect=[(20, 21), (22, 23), (24, 25)]
+                adapter.os,
+                "pipe",
+                side_effect=[
+                    (20, 21),
+                    (22, 23),
+                    (24, 25),
+                    (26, 27),
+                    (28, 29),
+                ],
             ),
             patch.object(adapter.os, "fork", side_effect=OSError("full")),
             patch.object(adapter.os, "close"),
@@ -1235,7 +1412,15 @@ def test_gated_fork_and_resource_failures_are_typed_spawn_failures() -> None:
 
         with (
             patch.object(
-                adapter.os, "pipe", side_effect=[(20, 21), (22, 23), (24, 25)]
+                adapter.os,
+                "pipe",
+                side_effect=[
+                    (20, 21),
+                    (22, 23),
+                    (24, 25),
+                    (26, 27),
+                    (28, 29),
+                ],
             ),
             patch.object(adapter.os, "fork", return_value=4321),
             patch.object(adapter.os, "close"),
@@ -1260,14 +1445,18 @@ def test_gated_fork_and_resource_failures_are_typed_spawn_failures() -> None:
         assert caught.value.code == "spawn"
 
 
-@pytest.mark.parametrize("allocated", (0, 1, 2), ids=("first", "second", "third"))
+@pytest.mark.parametrize(
+    "allocated",
+    (0, 1, 2, 3, 4),
+    ids=("first", "second", "third", "fourth", "fifth"),
+)
 def test_gated_pipe_allocation_failure_closes_every_acquired_descriptor(
     allocated: int,
 ) -> None:
     with tempfile.TemporaryDirectory() as temporary:
         reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
         artifact = adapter._BoundArtifact(10, "/proc/self/fd/10")
-        pairs = ((20, 21), (22, 23), (24, 25))
+        pairs = ((20, 21), (22, 23), (24, 25), (26, 27), (28, 29))
         closed: list[int] = []
         with (
             patch.object(
@@ -1348,7 +1537,26 @@ def test_actual_child_exec_nonzero_remains_a_normal_returncode() -> None:
         artifact = adapter._BoundArtifact(
             executable.fileno(), f"/proc/self/fd/{executable.fileno()}"
         )
-        with patch.object(reviewer, "_limit_child"):
+        child_pid = -1
+
+        def dispatched(pid: int, _pgid: int, _token: str) -> None:
+            nonlocal child_pid
+            child_pid = pid
+
+        with (
+            patch.object(reviewer, "_limit_child"),
+            patch.object(
+                adapter,
+                "_sandbox_command_with_budget_fds",
+                side_effect=lambda value, *_: value,
+            ),
+            patch.object(
+                adapter,
+                "_read_sandbox_child_pid",
+                side_effect=lambda *_: child_pid,
+            ),
+            patch.object(adapter, "_apply_namespaced_process_limit"),
+        ):
             returncode = reviewer._run_gated(
                 [artifact.invocation_path, "-c", "raise SystemExit(17)"],
                 artifact,
@@ -1356,7 +1564,7 @@ def test_actual_child_exec_nonzero_remains_a_normal_returncode() -> None:
                 stdin.fileno(),
                 stdout.fileno(),
                 stderr.fileno(),
-                lambda *_: None,
+                dispatched,
                 credential_descriptor=credential.fileno(),
             )
     assert returncode == 17
@@ -1398,10 +1606,12 @@ def test_cleanup_kills_group_and_proves_process_death() -> None:
     with (
         patch.object(adapter.os, "killpg") as kill,
         patch.object(adapter, "_wait_for_exit", return_value=0),
+        patch.object(adapter, "_reap_process_group") as reap,
         patch.object(adapter, "_process_identity_alive", return_value=False) as alive,
     ):
         adapter._kill_and_prove_dead(12, 12, "34")
     kill.assert_called_once_with(12, adapter.signal.SIGKILL)
+    reap.assert_called_once_with(12, 5)
     alive.assert_called_once_with(12, 12, "34")
 
 

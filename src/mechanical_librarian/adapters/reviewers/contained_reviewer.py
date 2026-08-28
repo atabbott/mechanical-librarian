@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import resource
+import select
 import shutil
 import signal
 import stat
@@ -36,9 +37,7 @@ from mechanical_librarian.application.contained_reviewer_contract import (
 PROFILE_SCHEMA = "contained-reviewer-profile-v1"
 MAX_PROFILE_BYTES = 65_536
 MAX_FAILURE_SIGNAL_BYTES = 65_536
-MAX_UID_TASKS = 65_536
-MAX_PROC_STATUS_BYTES = 8_192
-_PROC_ROOT = Path("/proc")
+MAX_SANDBOX_INFO_BYTES = 4_096
 _LIVE_SCHEMA_REJECTION_PREFIX = (
     "Invalid schema for response_format 'codex_output_schema': "
 )
@@ -1183,7 +1182,7 @@ class ContainedReviewerAdapter:
     ) -> int:
         descriptors: list[int] = []
         try:
-            for _ in range(3):
+            for _ in range(5):
                 descriptors.extend(os.pipe())
         except OSError as error:
             _close_descriptors(descriptors)
@@ -1195,7 +1194,20 @@ class ContainedReviewerAdapter:
             ready_write,
             failure_read,
             failure_write,
+            budget_read,
+            budget_write,
+            info_read,
+            info_write,
         ) = descriptors
+        try:
+            command = _sandbox_command_with_budget_fds(
+                command,
+                budget_read,
+                info_write,
+            )
+        except Exception:
+            _close_descriptors(descriptors)
+            raise
         try:
             pid = os.fork()
         except OSError as error:
@@ -1206,6 +1218,8 @@ class ContainedReviewerAdapter:
                 os.close(release_write)
                 os.close(ready_read)
                 os.close(failure_read)
+                os.close(budget_write)
+                os.close(info_read)
                 os.setsid()
                 os.write(ready_write, b"R")
                 os.close(ready_write)
@@ -1220,6 +1234,8 @@ class ContainedReviewerAdapter:
                     os.set_inheritable(codex.descriptor, True)
                     os.set_inheritable(sandbox.descriptor, True)
                     os.set_inheritable(credential_descriptor, True)
+                    os.set_inheritable(budget_read, True)
+                    os.set_inheritable(info_write, True)
                     for image in sealed_images:
                         os.set_inheritable(image.descriptor, True)
                     self._limit_child()
@@ -1232,7 +1248,11 @@ class ContainedReviewerAdapter:
         os.close(release_read)
         os.close(ready_write)
         os.close(failure_write)
+        os.close(budget_read)
+        os.close(info_write)
         released = False
+        budget_released = False
+        finished = False
         try:
             if os.read(ready_read, 1) != b"R":
                 raise ContainedReviewerProcessError("runtime")
@@ -1251,32 +1271,60 @@ class ContainedReviewerAdapter:
             released = True
             os.close(release_write)
             release_write = -1
-            returncode = _wait_for_exit(pid, self._profile.identity.timeout_seconds)
+            deadline = time.monotonic() + self._profile.identity.timeout_seconds
+            try:
+                sandbox_pid = _read_sandbox_child_pid(info_read, deadline)
+            except TimeoutError as error:
+                raise ContainedReviewerProcessError("spawn") from error
+            _apply_namespaced_process_limit(
+                sandbox_pid,
+                pgid,
+                self._profile.identity.process_limit,
+            )
+            try:
+                os.write(budget_write, b"G")
+            except OSError as error:
+                raise ContainedReviewerProcessError("spawn") from error
+            budget_released = True
+            os.close(budget_write)
+            budget_write = -1
+            returncode = _wait_for_exit(pid, max(0.0, deadline - time.monotonic()))
+            _reap_process_group(pgid, 5)
+            finished = True
             if _child_spawn_failed(failure_read):
                 raise ContainedReviewerProcessError("spawn")
             return returncode
         except TimeoutError as error:
             _kill_and_prove_dead(pid, pid, _safe_start_token(pid))
+            finished = True
             raise ContainedReviewerProcessError("timeout") from error
         except KeyboardInterrupt as error:
             _kill_and_prove_dead(pid, pid, _safe_start_token(pid))
+            finished = True
             raise ContainedReviewerProcessError("cancel") from error
         finally:
             os.close(ready_read)
             os.close(failure_read)
+            os.close(info_read)
             if release_write >= 0:
                 os.close(release_write)
+            if budget_write >= 0:
+                if released and not finished:
+                    _kill_and_prove_dead(pid, pid, _safe_start_token(pid))
+                    finished = True
+                os.close(budget_write)
             if not released:
                 try:
                     _wait_for_exit(pid, 5)
                 except TimeoutError:
                     _kill_and_prove_dead(pid, pid, _safe_start_token(pid))
+                else:
+                    _reap_process_group(pid, 5)
+            elif budget_released and not finished:
+                _kill_and_prove_dead(pid, pid, _safe_start_token(pid))
 
     def _limit_child(self) -> None:
         try:
-            process_budget = (
-                _linux_uid_task_count() + self._profile.identity.process_limit
-            )
             resource.setrlimit(
                 resource.RLIMIT_AS,
                 (
@@ -1287,10 +1335,6 @@ class ContainedReviewerAdapter:
             resource.setrlimit(
                 resource.RLIMIT_FSIZE,
                 (self._profile.identity.file_bytes, self._profile.identity.file_bytes),
-            )
-            resource.setrlimit(
-                resource.RLIMIT_NPROC,
-                (process_budget, process_budget),
             )
             resource.setrlimit(
                 resource.RLIMIT_NOFILE,
@@ -1316,6 +1360,12 @@ def _process_identity_alive(pid: int, pgid: int, start_token: str) -> bool:
             return True
     except (OSError, ContainedReviewerProcessError):
         pass
+    return _process_group_alive(pgid)
+
+
+def _process_group_alive(pgid: int) -> bool:
+    if type(pgid) is not int or pgid < 2:
+        raise ContainedReviewerProcessError("runtime")
     try:
         names = os.listdir("/proc")
     except OSError as error:
@@ -1517,56 +1567,76 @@ def _safe_start_token(pid: int) -> str:
         return "0"
 
 
-def _linux_uid_task_count() -> int:
-    """Count this real uid's Linux tasks from bounded procfs records."""
-    uid = os.getuid()
-    total = 0
-    try:
-        with os.scandir(_PROC_ROOT) as processes:
-            for process in processes:
-                if not process.name.isascii() or not process.name.isdigit():
-                    continue
-                process_path = _PROC_ROOT / process.name
-                try:
-                    if _proc_real_uid(process_path / "status") != uid:
-                        continue
-                    with os.scandir(process_path / "task") as tasks:
-                        for task in tasks:
-                            if not task.name.isascii() or not task.name.isdigit():
-                                continue
-                            total += 1
-                            if total > MAX_UID_TASKS:
-                                raise ValueError("too many uid tasks")
-                except FileNotFoundError:
-                    continue
-    except (OSError, UnicodeError, ValueError) as error:
-        raise ContainedReviewerProcessError("spawn") from error
-    return total
+def _sandbox_command_with_budget_fds(
+    command: list[str], budget_descriptor: int, info_descriptor: int
+) -> list[str]:
+    if (
+        type(command) is not list
+        or not command
+        or any(type(value) is not str for value in command)
+        or type(budget_descriptor) is not int
+        or budget_descriptor < 0
+        or type(info_descriptor) is not int
+        or info_descriptor < 0
+    ):
+        raise ContainedReviewerProcessError("spawn")
+    return [
+        command[0],
+        "--block-fd",
+        str(budget_descriptor),
+        "--info-fd",
+        str(info_descriptor),
+        *command[1:],
+    ]
 
 
-def _proc_real_uid(path: Path) -> int:
-    descriptor = -1
-    try:
-        descriptor = os.open(
-            path,
-            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
-        )
-        payload = os.read(descriptor, MAX_PROC_STATUS_BYTES + 1)
-    finally:
-        if descriptor >= 0:
-            os.close(descriptor)
-    if len(payload) > MAX_PROC_STATUS_BYTES:
-        raise ValueError("oversized proc status")
-    for line in payload.decode("ascii", errors="strict").splitlines():
-        if not line.startswith("Uid:\t"):
-            continue
-        values = line.removeprefix("Uid:\t").split()
-        if len(values) != 4 or any(
-            not value.isascii() or not value.isdigit() for value in values
-        ):
+def _read_sandbox_child_pid(descriptor: int, deadline: float) -> int:
+    payload = bytearray()
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError
+        try:
+            readable, _, _ = select.select((descriptor,), (), (), remaining)
+            if not readable:
+                raise TimeoutError
+            chunk = os.read(
+                descriptor,
+                MAX_SANDBOX_INFO_BYTES + 1 - len(payload),
+            )
+        except OSError as error:
+            raise ContainedReviewerProcessError("spawn") from error
+        if not chunk:
             break
-        return int(values[0], 10)
-    raise ValueError("invalid proc status")
+        payload.extend(chunk)
+        if len(payload) > MAX_SANDBOX_INFO_BYTES:
+            raise ContainedReviewerProcessError("spawn")
+    try:
+        document = json.loads(payload)
+        sandbox_pid = document["child-pid"]
+    except (KeyError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ContainedReviewerProcessError("spawn") from error
+    if type(document) is not dict or type(sandbox_pid) is not int or sandbox_pid < 2:
+        raise ContainedReviewerProcessError("spawn")
+    return sandbox_pid
+
+
+def _apply_namespaced_process_limit(pid: int, pgid: int, limit: int) -> None:
+    if (
+        type(pid) is not int
+        or pid < 2
+        or type(pgid) is not int
+        or pgid < 2
+        or type(limit) is not int
+        or limit < 1
+    ):
+        raise ContainedReviewerProcessError("spawn")
+    try:
+        if os.getpgid(pid) != pgid:
+            raise ProcessLookupError
+        resource.prlimit(pid, resource.RLIMIT_NPROC, (limit, limit))
+    except (OSError, ValueError) as error:
+        raise ContainedReviewerProcessError("spawn") from error
 
 
 def _child_spawn_failed(descriptor: int) -> bool:
@@ -1576,7 +1646,7 @@ def _child_spawn_failed(descriptor: int) -> bool:
         raise ContainedReviewerProcessError("runtime") from error
 
 
-def _wait_for_exit(pid: int, timeout_seconds: int) -> int:
+def _wait_for_exit(pid: int, timeout_seconds: float) -> int:
     deadline = time.monotonic() + timeout_seconds
     while True:
         try:
@@ -1603,8 +1673,26 @@ def _kill_and_prove_dead(pid: int, pgid: int, start_token: str) -> None:
         _wait_for_exit(pid, 5)
     except TimeoutError as error:
         raise ContainedReviewerProcessError("runtime") from error
+    _reap_process_group(pgid, 5)
     if _process_identity_alive(pid, pgid, start_token):
         raise ContainedReviewerProcessError("runtime")
+
+
+def _reap_process_group(pgid: int, timeout_seconds: float) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        while True:
+            try:
+                waited, _status = os.waitpid(-pgid, os.WNOHANG)
+            except ChildProcessError:
+                break
+            if waited == 0:
+                break
+        if not _process_group_alive(pgid):
+            return
+        if time.monotonic() >= deadline:
+            raise ContainedReviewerProcessError("runtime")
+        time.sleep(0.01)
 
 
 def _diagnostic(stdout_file: IO[bytes], stderr_file: IO[bytes]) -> tuple[int, str]:

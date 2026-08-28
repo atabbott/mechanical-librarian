@@ -58,9 +58,10 @@
   Support exports retain only a bounded SQLite exception class if storage is
   unavailable. (#878)
 
-- Keep repeated contained cover reviews within their fixed process headroom and
-  reap a killed direct child before the next attempt. A closed `spawn` failure
-  now distinguishes unavailable reviewer task capacity from a runtime failure. (#866)
+- Keep repeated contained cover reviews within the exact process limit of their
+  private user namespace, independent of application or sibling-container task
+  counts. The supported container reaps successful and killed sandbox
+  descendants before they can degrade later work. (#866)
 
 - Reject stale contained-reviewer resource profiles at startup with a bounded
   manual-comparison reason, instead of allowing every cover review to fail.
