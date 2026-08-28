@@ -126,7 +126,9 @@ class SQLiteReviewSessionRepository:
                 path,
                 descriptor,
                 cross_thread=True,
-                allow_rollback_journal=True,
+                # Only an admitted existing database can own a rollback journal;
+                # a new database must reject every orphan sidecar.
+                allow_rollback_journal=created_identity is None,
             )
             if connection.execute("PRAGMA journal_mode").fetchone() != ("delete",):
                 raise MetadataReportError(

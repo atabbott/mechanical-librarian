@@ -61,7 +61,10 @@ def select_first_boot_mode(
         if private_entries <= {
             "review-sessions.sqlite",
             "review-sessions.sqlite-journal",
-        }:
+        } and (
+            "review-sessions.sqlite-journal" not in private_entries
+            or "review-sessions.sqlite" in private_entries
+        ):
             setup_entries.discard("private")
     try:
         if complete_store():

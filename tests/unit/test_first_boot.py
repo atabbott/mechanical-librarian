@@ -71,6 +71,20 @@ def test_interrupted_session_write_still_resumes_setup(tmp_path: Path) -> None:
     assert _select(tmp_path, resume=True) is FirstBootMode.RESUME_SETUP
 
 
+def test_orphan_session_journal_fails_closed(tmp_path: Path) -> None:
+    """A rollback journal is resumable only beside its database."""
+    (tmp_path / "application.sqlite3").touch()
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    journal = private / "review-sessions.sqlite-journal"
+    journal.touch()
+
+    with pytest.raises(FirstBootError):
+        _select(tmp_path, resume=True)
+
+    assert journal.exists()
+
+
 def test_session_write_ahead_sidecars_still_fail_closed(tmp_path: Path) -> None:
     """No WAL is adopted anywhere, so a `-wal` sidecar is not this store's."""
     (tmp_path / "application.sqlite3").touch()

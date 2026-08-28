@@ -800,6 +800,21 @@ def test_existing_empty_session_database_is_rejected_without_mutation(
     assert path.read_bytes() == b""
 
 
+@pytest.mark.parametrize("suffix", ("-journal", "-wal", "-shm"))
+def test_orphan_session_sidecar_is_rejected_without_mutation(
+    tmp_path: Path, suffix: str
+) -> None:
+    path = tmp_path / "review-sessions.sqlite"
+    sidecar = Path(f"{path}{suffix}")
+    sidecar.write_bytes(b"retained partial session state")
+    before = {value.name: value.read_bytes() for value in tmp_path.iterdir()}
+
+    with pytest.raises(MetadataReportError):
+        SQLiteReviewSessionRepository.open(path)
+
+    assert {value.name: value.read_bytes() for value in tmp_path.iterdir()} == before
+
+
 def test_wal_session_database_is_rejected_without_mutation(tmp_path: Path) -> None:
     path = tmp_path / "review-sessions.sqlite"
     repository = SQLiteReviewSessionRepository.open(path)
