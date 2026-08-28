@@ -260,12 +260,22 @@ class _CoverIdentity(_ClosedModel):
 
 class _CoverObservation(_ClosedModel):
     candidate_reference: str
-    composition: str
-    medium: str
+    composition: Literal["dense", "minimal", "unknown"]
+    cover_text_language: Literal[
+        "english", "non_english", "multiple", "no_visible_title", "unknown"
+    ]
+    explicit_imagery: Literal["absent", "suggestive", "explicit", "unknown"]
+    format_branding: Literal["absent", "text_edition", "audiobook", "unknown"]
+    medium: Literal["illustrated", "mixed", "photographic", "typographic", "unknown"]
+    overlay_marking: Literal["absent", "present", "unknown"]
+    placeholder: Literal["absent", "present", "unknown"]
     preview_sha256: str
     preview_variant: str
-    promotional_text: str
-    tie_in_branding: str
+    promotional_text: Literal["absent", "present", "unknown"]
+    reproduction: Literal["clean", "degraded", "unknown"]
+    series_styling: Literal["standalone", "series_branded", "omnibus_or_set", "unknown"]
+    thumbnail_legibility: Literal["legible", "illegible", "unknown"]
+    tie_in_branding: Literal["absent", "present", "unknown"]
 
 
 class _CoverCandidate(_ClosedModel):

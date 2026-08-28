@@ -25,7 +25,14 @@ from .cover_identity import (
 from .cover_observation import (
     INSTRUCTION,
     LEGACY_INSTRUCTION_SHA256,
+    LEGACY_OUTPUT_SCHEMA_VERSION,
     LEGACY_SCHEMA_VERSION,
+    LEGACY_TAXONOMY,
+    LEGACY_TAXONOMY_REFERENCE,
+    OUTPUT_SCHEMA_VERSION,
+    PREVIOUS_INSTRUCTION_SHA256,
+    PREVIOUS_SCHEMA_VERSION,
+    TAXONOMY,
     TAXONOMY_REFERENCE,
     _observer_reference,
     _output_schema,
@@ -137,16 +144,18 @@ def adjudicate_cover_policy(
         value["candidate_reference"]: value
         for value in cast("list[dict[str, object]]", identity["candidates"])
     }
+    observation_taxonomy_reference = TAXONOMY_REFERENCE
     if observation_document is not None:
         # Reviewer observations remain advisory, but an admitted document must
         # still satisfy the exact packet/profile binding before it is retained.
-        _observation_rows(
+        observation = _observation_rows(
             observation_document,
             packet["packet_reference"],
             candidates,
             references,
             profile_payload,
         )
+        observation_taxonomy_reference = cast("str", observation["taxonomy_reference"])
     election = elect_confirmed_covers(
         tuple(
             CoverElectionCandidate(
@@ -180,6 +189,7 @@ def adjudicate_cover_policy(
         policy,
         identity_document,
         observation_document,
+        observation_taxonomy_reference,
         acceptable,
         None
         if election.recommendation is None
@@ -270,18 +280,38 @@ def _observation_rows(
 ) -> dict[str, object]:
     value = _load_object(document, "cover observation")
     schema_version = value.get("schema_version")
-    expected_instruction = (
-        LEGACY_INSTRUCTION_SHA256
-        if schema_version == LEGACY_SCHEMA_VERSION
-        else hashlib.sha256(INSTRUCTION.encode("utf-8")).hexdigest()
-    )
+    if type(schema_version) is not str:
+        raise ValueError("cover observation report is invalid")
+    legacy = schema_version in {LEGACY_SCHEMA_VERSION, PREVIOUS_SCHEMA_VERSION}
+    taxonomy = LEGACY_TAXONOMY if legacy else TAXONOMY
+    taxonomy_reference = LEGACY_TAXONOMY_REFERENCE if legacy else TAXONOMY_REFERENCE
+    expected_instruction = {
+        LEGACY_SCHEMA_VERSION: LEGACY_INSTRUCTION_SHA256,
+        PREVIOUS_SCHEMA_VERSION: PREVIOUS_INSTRUCTION_SHA256,
+        OBSERVATION_SCHEMA_VERSION: hashlib.sha256(
+            INSTRUCTION.encode("utf-8")
+        ).hexdigest(),
+    }.get(schema_version)
     expected_schema = hashlib.sha256(
-        _output_schema(references).encode("utf-8")
+        _output_schema(
+            references,
+            taxonomy=taxonomy,
+            schema_version=(
+                LEGACY_OUTPUT_SCHEMA_VERSION if legacy else OUTPUT_SCHEMA_VERSION
+            ),
+        ).encode("utf-8")
     ).hexdigest()
+    taxonomy_names = tuple(name for name, _values in taxonomy)
+    taxonomy_values = {name: frozenset(dict(values)) for name, values in taxonomy}
+    if expected_instruction is None:
+        raise ValueError("cover observation report is invalid")
     if type(profile_payload) is not bytes:
         raise ValueError("cover observation profile is invalid")
     expected_observer = _observer_reference(
-        profile_payload, expected_instruction, expected_schema
+        profile_payload,
+        expected_instruction,
+        expected_schema,
+        taxonomy_reference,
     )
     valid_shape = (
         schema_version == LEGACY_SCHEMA_VERSION
@@ -296,7 +326,7 @@ def _observation_rows(
             "taxonomy_reference",
         }
     ) or (
-        schema_version == OBSERVATION_SCHEMA_VERSION
+        schema_version in {PREVIOUS_SCHEMA_VERSION, OBSERVATION_SCHEMA_VERSION}
         and set(value)
         == {
             "attempt_evidence",
@@ -313,9 +343,13 @@ def _observation_rows(
     if (
         not valid_shape
         or value["schema_version"]
-        not in {LEGACY_SCHEMA_VERSION, OBSERVATION_SCHEMA_VERSION}
+        not in {
+            LEGACY_SCHEMA_VERSION,
+            PREVIOUS_SCHEMA_VERSION,
+            OBSERVATION_SCHEMA_VERSION,
+        }
         or value["cover_packet_reference"] != packet_reference
-        or value["taxonomy_reference"] != TAXONOMY_REFERENCE
+        or value["taxonomy_reference"] != taxonomy_reference
         or value["observer_reference"] != expected_observer
         or value["instruction_sha256"] != expected_instruction
         or value["output_schema_sha256"] != expected_schema
@@ -330,12 +364,9 @@ def _observation_rows(
             or set(row)
             != {
                 "candidate_reference",
-                "composition",
-                "medium",
                 "preview_sha256",
                 "preview_variant",
-                "promotional_text",
-                "tie_in_branding",
+                *taxonomy_names,
             }
             or _required_reference(row["candidate_reference"]) not in references
         ):
@@ -344,11 +375,7 @@ def _observation_rows(
         if (
             row["preview_sha256"] != candidate["preview_sha256"]
             or row["preview_variant"] != candidate["preview_variant"]
-            or row["composition"] not in {"dense", "minimal", "unknown"}
-            or row["medium"]
-            not in {"illustrated", "mixed", "photographic", "typographic", "unknown"}
-            or row["promotional_text"] not in {"absent", "present", "unknown"}
-            or row["tie_in_branding"] not in {"absent", "present", "unknown"}
+            or any(row[name] not in taxonomy_values[name] for name in taxonomy_names)
         ):
             raise ValueError("cover observation report is invalid")
         admitted.append(row)
@@ -392,6 +419,7 @@ def _report(
     policy: CoverPolicy,
     identity_document: str,
     observation_document: str | None,
+    observation_taxonomy_reference: str,
     acceptable: tuple[str, ...],
     recommendation: str | None,
     reasons: tuple[str, ...],
@@ -411,7 +439,7 @@ def _report(
             if observation_document is not None
             else None
         ),
-        "observation_taxonomy_reference": TAXONOMY_REFERENCE,
+        "observation_taxonomy_reference": observation_taxonomy_reference,
         "policy_reference": policy.reference,
         "reasons": list(reasons),
         "recommended_candidate_reference": recommendation,

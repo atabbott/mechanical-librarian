@@ -585,6 +585,7 @@ class CoverConsiderationService:
         observation_rows = (
             {}
             if observation is None
+            or observation.get("schema_version") != OBSERVATION_SCHEMA_VERSION
             else {
                 row["candidate_reference"]: row for row in observation["observations"]
             }

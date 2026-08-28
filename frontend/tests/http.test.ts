@@ -27,6 +27,7 @@ const csrf = {
 describe('ReviewApiClient', () => {
   it('fails closed on cover candidate, policy, incumbent, and recommendation relationship contradictions', () => {
     const context = (alternative_id: string | null, selection: 'current' | 'proposed', recommendation: 'recommended' | 'no_recommendation' = 'no_recommendation') => ({ alternative_id, selection, recommendation, recommendation_reason: recommendation === 'recommended' ? 'Authoritative policy recommendation.' : 'No recommendation retained.', rationale: 'Retained cover choice.', limitations: [], evidence: [] })
+    const observation = (overrides: Record<string, unknown> = {}) => ({ candidate_reference: 'candidate-1', composition: 'minimal', cover_text_language: 'english', explicit_imagery: 'absent', format_branding: 'absent', medium: 'illustrated', overlay_marking: 'absent', placeholder: 'absent', preview_sha256: 'b'.repeat(64), preview_variant: 'cover-preview-v1', promotional_text: 'absent', reproduction: 'clean', series_styling: 'standalone', thumbnail_legibility: 'legible', tie_in_branding: 'absent', ...overrides })
     const candidate = (overrides: Record<string, unknown> = {}) => ({ artifact_id: 'artifact-1', deterministic_citations: ['citation-1'], deterministic_rank: 1, deterministic_rank_key: [1, 0, -10000, -100, -100, 0, 'candidate-1'], height: 100, identity: { outcome: 'verified_work_match' }, incumbent: false, match_state: 'same_book', observation: null, original_sha256: 'a'.repeat(64), ordinal: 0, preview_sha256: 'b'.repeat(64), reference: 'candidate-1', selectable: true, source_kinds: [], state: 'acceptable', width: 100, ...overrides })
     const policy = (overrides: Record<string, unknown> = {}) => ({ status: 'abstained', recommended_candidate_reference: null, acceptable_candidate_references: ['candidate-1'], ...overrides })
     const payload = (overrides: Record<string, unknown> = {}) => ({ schema_version: 'cover-consideration-v2', consideration_id: 'consideration', current: true, candidates: [candidate()], choice_contexts: [context(null, 'current'), context('candidate-1', 'proposed')], incumbent: { state: 'absent', reference: null }, omissions: [], policy: policy(), policy_preferences: { avoid_promotional_text: false, avoid_tie_in_branding: false, prefer_minimal_composition: false }, policy_reference: 'policy', provider_fetching: true, ready: false, reviewer_status: 'completed', reviewer_unavailable_reason: null, supersedes_id: null, target_fingerprint: 'fingerprint', ...overrides })
@@ -35,6 +36,7 @@ describe('ReviewApiClient', () => {
     expect(mapCoverConsideration(payload({ candidates: [], choice_contexts: [context(null, 'current')], policy: null }))).not.toBeNull()
     expect(mapCoverConsideration(payload({ candidates: [candidate({ state: 'recommended' })], policy: policy({ status: 'recommended', recommended_candidate_reference: 'candidate-1', acceptable_candidate_references: ['candidate-1'] }), provider_fetching: false, ready: true, choice_contexts: [context(null, 'current'), context('candidate-1', 'proposed', 'recommended')] }))?.choiceContexts[1]?.recommendation).toBe('recommended')
     expect(mapCoverConsideration(payload({ incumbent: { state: 'unavailable', reference: null } }))?.incumbent.state).toBe('unavailable')
+    expect(mapCoverConsideration(payload({ candidates: [candidate({ observation: observation() })] }))?.candidates[0]?.observation?.reproduction).toBe('clean')
     const invalid: readonly [string, Record<string, unknown>][] = [
       ['policy-null-candidates', { policy: null }],
       ['nonnull-policy-zero-candidates', { candidates: [], choice_contexts: [context(null, 'current')] }],
@@ -64,6 +66,11 @@ describe('ReviewApiClient', () => {
       ['acceptable-unknown', { candidates: [candidate({ state: 'recommended' })], policy: policy({ status: 'recommended', recommended_candidate_reference: 'candidate-1', acceptable_candidate_references: ['candidate-1', 'ghost'] }), choice_contexts: [context(null, 'current'), context('candidate-1', 'proposed', 'recommended')] }],
       ['multiple-incumbents', { candidates: [candidate({ incumbent: true }), candidate({ incumbent: true, reference: 'candidate-2', artifact_id: 'artifact-2', ordinal: 1 })], incumbent: { state: 'available', reference: 'candidate-1' }, choice_contexts: [context(null, 'current')] }],
       ['stray-recommendation-context', { choice_contexts: [context(null, 'current', 'recommended'), context('candidate-1', 'proposed')] }],
+      ['hostile-observation-value', { candidates: [candidate({ observation: observation({ reproduction: '/private/hostile-value' }) })] }],
+      ['missing-observation-dimension', { candidates: [candidate({ observation: (() => { const value = observation(); delete (value as Partial<typeof value>).placeholder; return value })() })] }],
+      ['extra-observation-dimension', { candidates: [candidate({ observation: observation({ invented: 'clean' }) })] }],
+      ['misbound-observation-reference', { candidates: [candidate({ observation: observation({ candidate_reference: 'candidate-2' }) })] }],
+      ['misbound-observation-preview', { candidates: [candidate({ observation: observation({ preview_sha256: 'c'.repeat(64) }) })] }],
     ]
     for (const [label, overrides] of invalid) expect(() => mapCoverConsideration(payload(overrides)), label).toThrow(ApiError)
   })

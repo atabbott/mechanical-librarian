@@ -2,6 +2,8 @@
 
 Status: Accepted
 
+Amended: 2026-08-28 by #865
+
 ## Context
 
 ADR-0045 proves that exact report-bound cover previews can reach one isolated,
@@ -68,6 +70,58 @@ or tune the contract.
 
 All code and private evidence remain in the source workbench and ignored
 owner-private storage. Installed artifacts contain none of this capability.
+
+## Runtime amendment: defect and preference evidence
+
+Later slices moved the same closed observer behind the installed contained-
+reviewer boundary. #865 therefore supersedes only the original repository-only
+runtime exclusion above; the authority separation, exact bindings, hostile-
+evidence posture, and aggregate-only private qualification remain unchanged.
+
+The observation report advances to `cover-observation-report-v3` and the
+reviewer response to `cover-observer-output-v2`. Exact v1 and v2 reports remain
+admissible only against their original four-field taxonomy, instruction,
+schema, profile, and observer identities. The changed replay identity makes a
+new current consideration use v3 without rewriting an earlier report.
+
+Four high-signal defect checks are added:
+
+| Property | Closed values | Observable meaning |
+| --- | --- | --- |
+| Placeholder | `absent`, `present`, `unknown` | A generic no-cover tile or publisher template placeholder is visibly present or absent. |
+| Reproduction | `clean`, `degraded`, `unknown` | Degradation means visible curl, moire, skew, a page edge, heavy compression, or obvious upscaling at the normalized preview. |
+| Overlay or marking | `absent`, `present`, `unknown` | A watermark, look-inside badge, price sticker, or library stamp visibly overlays the design. |
+| Format branding | `absent`, `text_edition`, `audiobook`, `unknown` | The visible format marking is retained rather than turned into a target-relative verdict, so a future audiobook surface can apply the inverse interpretation without changing the observation. |
+
+Four secondary preference dimensions are added:
+
+| Property | Closed values | Observable meaning |
+| --- | --- | --- |
+| Explicit imagery | `absent`, `suggestive`, `explicit`, `unknown` | The supplied preview shows no, implied, or explicit sexualized or graphically violent detail. |
+| Cover-text language | `english`, `non_english`, `multiple`, `no_visible_title`, `unknown` | A deliberately coarse visible-title-language observation; it never transcribes title text or establishes edition identity. |
+| Series styling | `standalone`, `series_branded`, `omnibus_or_set`, `unknown` | The design visibly presents one work, a series identity, or an omnibus/set. |
+| Thumbnail legibility | `legible`, `illegible`, `unknown` | Whether the title remains distinguishable at the normalized 320 by 480 preview, never what the title says. |
+
+All twelve dimensions remain advice. The deterministic identity classifier,
+confirmed-candidate set, election order, recommendation, and automatic gate do
+not read the eight new fields. A later policy must qualify and authorize one
+dimension separately before it can exclude or rank anything.
+
+The candidate surface shows defect checks before the quieter style/advisory
+details. A missing row is labelled as unavailable reviewer evidence, never as
+an all-clear; only a complete row with every defect check explicitly clean can
+say that no visual defect was flagged. Source provenance remains available
+through the existing evidence disclosure.
+
+The v3 instruction is 3,953 bytes inside the fixed 4,096-byte contract. Its
+SHA-256 is
+`7bc0c116253a1015f6c6863622affb8f9d422ac93807f70c67c3b2b1d34b8c5b`.
+The taxonomy reference is
+`cover_taxonomy_2d0840acea1a8fadc096cf3f66749e3e089b69fb56e583b3f00c6124154ea081`.
+For the pinned two-reference boundary fixture, the canonical output schema is
+1,811 bytes and has SHA-256
+`19218f63770004a1255b60838fde7ba8bf4451f675a6d68f52a4dfb35966e18b`;
+each live report persists its own candidate-bound schema digest.
 
 ## Validation
 

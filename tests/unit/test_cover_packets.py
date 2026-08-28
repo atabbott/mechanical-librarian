@@ -83,7 +83,12 @@ from mechanical_librarian.application.cover_identity import (  # noqa: E402
 from mechanical_librarian.application.cover_observation import (  # noqa: E402
     INSTRUCTION,
     LEGACY_INSTRUCTION_SHA256,
+    LEGACY_OUTPUT_SCHEMA_VERSION,
+    LEGACY_TAXONOMY,
+    LEGACY_TAXONOMY_REFERENCE,
     OUTPUT_SCHEMA_VERSION,
+    PREVIOUS_INSTRUCTION_SHA256,
+    PREVIOUS_SCHEMA_VERSION,
     TAXONOMY,
     TAXONOMY_DOCUMENT,
     TAXONOMY_REFERENCE,
@@ -403,10 +408,12 @@ def _observer_result(
         instruction.decode(), packet.decode(), schema.decode(), images
     )
     candidates = json.loads(packet)["candidates"]
+    defaults = {name: values[0][0] for name, values in TAXONOMY}
     result: dict[str, object] = {
         "observations": [
             {
                 "candidate_reference": value["reference"],
+                **defaults,
                 "composition": "minimal" if index % 2 else "dense",
                 "medium": "illustrated" if index % 2 else "photographic",
                 "promotional_text": "absent",
@@ -1807,14 +1814,10 @@ def test_every_closed_value_is_admitted_without_policy_projection() -> None:
     def all_values(value: dict[str, object]) -> None:
         observations = value["observations"]
         assert isinstance(observations, list)
-        media = ("photographic", "illustrated", "typographic", "mixed", "unknown")
-        for index, observation in enumerate(observations):
-            observation["medium"] = media[index]
-            observation["composition"] = ("minimal", "dense", "unknown")[index % 3]
-            observation["promotional_text"] = ("present", "absent", "unknown")[
-                index % 3
-            ]
-            observation["tie_in_branding"] = ("absent", "unknown", "present")[index % 3]
+        for name, values in TAXONOMY:
+            labels = tuple(label for label, _definition in values)
+            for index, observation in enumerate(observations):
+                observation[name] = labels[index % len(labels)]
 
     report = observe_cover_packet(
         b"synthetic-profile",
@@ -1823,25 +1826,33 @@ def test_every_closed_value_is_admitted_without_policy_projection() -> None:
         lambda *args: _observer_result(*args, mutate=all_values),
     )
     observations = json.loads(report.document)["observations"]
-    assert {value["medium"] for value in observations} == {
-        "photographic",
-        "illustrated",
-        "typographic",
-        "mixed",
-        "unknown",
-    }
+    for name, values in TAXONOMY:
+        assert {value[name] for value in observations} == {
+            label for label, _definition in values
+        }
     assert all(
         set(value)
         == {
             "candidate_reference",
-            "composition",
-            "medium",
             "preview_sha256",
             "preview_variant",
-            "promotional_text",
-            "tie_in_branding",
+            *(name for name, _values in TAXONOMY),
         }
         for value in observations
+    )
+
+
+def test_expanded_prompt_and_schema_are_pinned_inside_the_profile_contract() -> None:
+    references = ("cover_ref_" + "a" * 64, "cover_ref_" + "b" * 64)
+    schema = _output_schema(references)
+
+    assert len(INSTRUCTION.encode()) == 3953
+    assert hashlib.sha256(INSTRUCTION.encode()).hexdigest() == (
+        "7bc0c116253a1015f6c6863622affb8f9d422ac93807f70c67c3b2b1d34b8c5b"
+    )
+    assert len(schema.encode()) == 1811
+    assert hashlib.sha256(schema.encode()).hexdigest() == (
+        "19218f63770004a1255b60838fde7ba8bf4451f675a6d68f52a4dfb35966e18b"
     )
 
 
@@ -1861,8 +1872,7 @@ def test_closed_observations_bind_every_exact_preview_and_hide_source_values() -
 
     assert TAXONOMY_DOCUMENT in instructions[0]
     assert (
-        "a single dominant image or figure with a simple supporting layout is minimal"
-        in instructions[0]
+        "a dominant image with a simple supporting layout is minimal" in instructions[0]
     )
     assert isinstance(TAXONOMY, tuple) and all(
         isinstance(values, tuple) and all(isinstance(item, tuple) for item in values)
@@ -1883,6 +1893,13 @@ def test_closed_observations_bind_every_exact_preview_and_hide_source_values() -
         assert observation["preview_sha256"] == candidate["preview_sha256"]
         assert observation["preview_variant"] == candidate["preview_variant"]
         assert observation["composition"] in {"minimal", "dense", "unknown"}
+        assert observation["placeholder"] in {"absent", "present", "unknown"}
+        assert observation["reproduction"] in {"clean", "degraded", "unknown"}
+        assert observation["thumbnail_legibility"] in {
+            "legible",
+            "illegible",
+            "unknown",
+        }
     assert "Synthetic title" not in report.document
     assert "source-" not in report.document
     assert re.search(r"^cover_observer_[0-9a-f]{64}$", value["observer_reference"])
@@ -1939,6 +1956,38 @@ def test_invented_duplicate_hostile_and_unbound_results_fail_closed(
             packet.document.encode(),
             images,
             observer,
+        )
+
+
+@pytest.mark.parametrize(
+    "dimension",
+    (
+        "placeholder",
+        "reproduction",
+        "overlay_marking",
+        "format_branding",
+        "explicit_imagery",
+        "cover_text_language",
+        "series_styling",
+        "thumbnail_legibility",
+    ),
+)
+def test_new_observation_dimensions_reject_values_outside_the_vocabulary(
+    dimension: str,
+) -> None:
+    packet, images = _packet_case()
+
+    def hostile(value: dict[str, object]) -> None:
+        observations = value["observations"]
+        assert isinstance(observations, list)
+        observations[0][dimension] = "/private/hostile-value"
+
+    with pytest.raises(ValueError, match="output"):
+        observe_cover_packet(
+            b"synthetic-profile",
+            packet.document.encode(),
+            images,
+            _mutating_observer(hostile),
         )
 
 
@@ -2984,12 +3033,9 @@ def _policy_documents(count: int = 3):
         "observations": [
             {
                 "candidate_reference": candidate["reference"],
-                "composition": "dense",
-                "medium": "illustrated",
+                **{name: values[0][0] for name, values in TAXONOMY},
                 "preview_sha256": candidate["preview_sha256"],
                 "preview_variant": candidate["preview_variant"],
-                "promotional_text": "absent",
-                "tie_in_branding": "absent",
             }
             for candidate in candidates
         ],
@@ -3071,6 +3117,38 @@ def test_closed_policy_is_content_bound_and_plain_policy_uses_packet_order() -> 
         CoverPolicy(avoid_promotional_text=1)
 
 
+@pytest.mark.parametrize(
+    ("dimension", "value"),
+    (
+        ("placeholder", "present"),
+        ("reproduction", "degraded"),
+        ("overlay_marking", "present"),
+        ("format_branding", "audiobook"),
+        ("explicit_imagery", "explicit"),
+        ("cover_text_language", "non_english"),
+        ("series_styling", "omnibus_or_set"),
+        ("thumbnail_legibility", "illegible"),
+    ),
+)
+def test_new_observation_dimensions_cannot_change_policy(
+    dimension: str, value: str
+) -> None:
+    baseline = _adjudicate()
+    changed = _adjudicate(
+        observation_mutation=lambda document: document["observations"][0].update(
+            {dimension: value}
+        )
+    )
+
+    for name in (
+        "acceptable_candidate_references",
+        "recommended_candidate_reference",
+        "reasons",
+        "status",
+    ):
+        assert changed[name] == baseline[name]
+
+
 def test_active_provider_fetching_retains_ranked_candidates_but_abstains() -> None:
     report = _adjudicate(provider_fetching=True)
 
@@ -3080,24 +3158,62 @@ def test_active_provider_fetching_retains_ranked_candidates_but_abstains() -> No
     assert report["reasons"] == ["provider_fetching"]
 
 
-def test_legacy_v1_observation_remains_admitted_but_v2_requires_attempt_evidence() -> (
-    None
-):
+def _use_legacy_observation(value: dict[str, object], schema_version: str) -> None:
+    observations = value["observations"]
+    assert isinstance(observations, list)
+    names = tuple(name for name, _values in LEGACY_TAXONOMY)
+    for row in observations:
+        assert isinstance(row, dict)
+        for name in tuple(row):
+            if name not in {
+                "candidate_reference",
+                "preview_sha256",
+                "preview_variant",
+                *names,
+            }:
+                row.pop(name)
+    references = tuple(row["candidate_reference"] for row in observations)
+    schema_document = _output_schema(
+        references,
+        taxonomy=LEGACY_TAXONOMY,
+        schema_version=LEGACY_OUTPUT_SCHEMA_VERSION,
+    )
+    schema_sha256 = hashlib.sha256(schema_document.encode()).hexdigest()
+    instruction_sha256 = (
+        LEGACY_INSTRUCTION_SHA256
+        if schema_version == "cover-observation-report-v1"
+        else PREVIOUS_INSTRUCTION_SHA256
+    )
+    if schema_version == "cover-observation-report-v1":
+        value.pop("attempt_evidence")
+    value.update(
+        instruction_sha256=instruction_sha256,
+        observer_reference=_observer_reference(
+            b'{"profile":"synthetic"}',
+            instruction_sha256,
+            schema_sha256,
+            LEGACY_TAXONOMY_REFERENCE,
+        ),
+        output_schema_sha256=schema_sha256,
+        schema_version=schema_version,
+        taxonomy_reference=LEGACY_TAXONOMY_REFERENCE,
+    )
+
+
+@pytest.mark.parametrize(
+    "schema_version", ("cover-observation-report-v1", PREVIOUS_SCHEMA_VERSION)
+)
+def test_legacy_observation_versions_remain_admitted(schema_version: str) -> None:
     legacy = _adjudicate(
-        observation_mutation=lambda value: (
-            value.pop("attempt_evidence"),
-            value.update(
-                instruction_sha256=LEGACY_INSTRUCTION_SHA256,
-                observer_reference=_observer_reference(
-                    b'{"profile":"synthetic"}',
-                    LEGACY_INSTRUCTION_SHA256,
-                    value["output_schema_sha256"],
-                ),
-                schema_version="cover-observation-report-v1",
-            ),
+        observation_mutation=lambda value: _use_legacy_observation(
+            value, schema_version
         )
     )
     assert legacy["status"] == "recommended"
+    assert legacy["observation_taxonomy_reference"] == LEGACY_TAXONOMY_REFERENCE
+
+
+def test_observation_versions_and_attempt_evidence_fail_closed() -> None:
     with pytest.raises(ValueError):
         _adjudicate(profile_payload=b'{"profile":"different"}')
     with pytest.raises(ValueError):

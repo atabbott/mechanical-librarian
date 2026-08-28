@@ -2403,11 +2403,72 @@
             "type": "string"
           },
           "composition": {
+            "enum": [
+              "dense",
+              "minimal",
+              "unknown"
+            ],
             "title": "Composition",
             "type": "string"
           },
+          "cover_text_language": {
+            "enum": [
+              "english",
+              "non_english",
+              "multiple",
+              "no_visible_title",
+              "unknown"
+            ],
+            "title": "Cover Text Language",
+            "type": "string"
+          },
+          "explicit_imagery": {
+            "enum": [
+              "absent",
+              "suggestive",
+              "explicit",
+              "unknown"
+            ],
+            "title": "Explicit Imagery",
+            "type": "string"
+          },
+          "format_branding": {
+            "enum": [
+              "absent",
+              "text_edition",
+              "audiobook",
+              "unknown"
+            ],
+            "title": "Format Branding",
+            "type": "string"
+          },
           "medium": {
+            "enum": [
+              "illustrated",
+              "mixed",
+              "photographic",
+              "typographic",
+              "unknown"
+            ],
             "title": "Medium",
+            "type": "string"
+          },
+          "overlay_marking": {
+            "enum": [
+              "absent",
+              "present",
+              "unknown"
+            ],
+            "title": "Overlay Marking",
+            "type": "string"
+          },
+          "placeholder": {
+            "enum": [
+              "absent",
+              "present",
+              "unknown"
+            ],
+            "title": "Placeholder",
             "type": "string"
           },
           "preview_sha256": {
@@ -2419,10 +2480,48 @@
             "type": "string"
           },
           "promotional_text": {
+            "enum": [
+              "absent",
+              "present",
+              "unknown"
+            ],
             "title": "Promotional Text",
             "type": "string"
           },
+          "reproduction": {
+            "enum": [
+              "clean",
+              "degraded",
+              "unknown"
+            ],
+            "title": "Reproduction",
+            "type": "string"
+          },
+          "series_styling": {
+            "enum": [
+              "standalone",
+              "series_branded",
+              "omnibus_or_set",
+              "unknown"
+            ],
+            "title": "Series Styling",
+            "type": "string"
+          },
+          "thumbnail_legibility": {
+            "enum": [
+              "legible",
+              "illegible",
+              "unknown"
+            ],
+            "title": "Thumbnail Legibility",
+            "type": "string"
+          },
           "tie_in_branding": {
+            "enum": [
+              "absent",
+              "present",
+              "unknown"
+            ],
             "title": "Tie In Branding",
             "type": "string"
           }
@@ -2430,10 +2529,18 @@
         "required": [
           "candidate_reference",
           "composition",
+          "cover_text_language",
+          "explicit_imagery",
+          "format_branding",
           "medium",
+          "overlay_marking",
+          "placeholder",
           "preview_sha256",
           "preview_variant",
           "promotional_text",
+          "reproduction",
+          "series_styling",
+          "thumbnail_legibility",
           "tie_in_branding"
         ],
         "title": "_CoverObservation",

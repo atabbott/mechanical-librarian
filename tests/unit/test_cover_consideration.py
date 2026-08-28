@@ -351,7 +351,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
         clock=lambda: case.now + 1,
     )
     assert model_free.replay_reference == (
-        "cover_replay_44fa116db9d8d972c8cea4a62fa9cc5b9618c1c3456f5058fcb5c5e92c45c05d"
+        "cover_replay_8e6805e92b29781b5936364958fb48490d79c0138536e665a95a36d6f709ddcf"
     )
     assert (
         model_free.ensure(case_id, case.report.to_json(), case.proposal)[
@@ -394,7 +394,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
     assert len(dispatches) == 1
     replayed_qualified = qualified()
     assert replayed_qualified.replay_reference == (
-        "cover_replay_e4e0a09a9b260f7fe788500a45e77896c25f45d449e262090dac989745d69661"
+        "cover_replay_c6e37ab43b5c83f1a1dcd14464ad711d4c7116acdf729b3e2ab5176e3e543cb9"
     )
     assert (
         replayed_qualified.ensure(
@@ -403,6 +403,43 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
         == first_qualified["consideration_id"]
     )
     assert len(dispatches) == 1
+
+
+def test_legacy_observations_never_project_as_complete_current_visual_checks(
+    case: _Case,
+) -> None:
+    def reviewer(*args: object) -> str:
+        return _observer_result(
+            *cast(
+                "tuple[bytes, bytes, bytes, bytes, tuple[tuple[str, str, bytes], ...]]",
+                args,
+            )
+        )
+
+    service = CoverConsiderationService(
+        case.store,
+        read_preview=lambda artifact, _variant: case.payload_by_artifact[artifact],
+        read_preview_digest=lambda digest: case.payload_by_preview[digest],
+        clock=lambda: case.now,
+        reviewer_profile=b"qualified-profile",
+        reviewer=cast("ReviewRunner", reviewer),
+    )
+    case_id = "review_case_" + "k" * 64
+    service.ensure(case_id, case.report.to_json(), case.proposal)
+    persisted = json.loads(case.store.current[case_id])
+    observation = json.loads(cast("str", persisted["observation_document"]))
+    observation["schema_version"] = cover_observation.PREVIOUS_SCHEMA_VERSION
+
+    candidates = service._candidates(
+        case.report,
+        cast("str", persisted["packet_document"]),
+        cast("str", persisted["identity_document"]),
+        json.dumps(observation),
+        cast("str", persisted["policy_report_document"]),
+    )
+
+    assert candidates
+    assert all(candidate["observation"] is None for candidate in candidates)
 
 
 def test_stale_reviewer_binding_is_current_only_and_replays_exactly(

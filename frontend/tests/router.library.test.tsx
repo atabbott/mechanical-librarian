@@ -793,6 +793,23 @@ describe('Library route', () => {
     const base = detail.fields[0]
     if (!base) throw new Error('cover fixture requires a field')
     const reference = (index: number) => `cover_transport_ref_${String(index).repeat(64)}`
+    const observation = (index: number) => ({
+      candidateReference: reference(index),
+      composition: 'minimal' as const,
+      coverTextLanguage: 'english' as const,
+      explicitImagery: 'absent' as const,
+      formatBranding: 'absent' as const,
+      medium: 'illustrated' as const,
+      overlayMarking: 'absent' as const,
+      placeholder: 'absent' as const,
+      previewSha256: String(index).repeat(64),
+      previewVariant: 'cover-preview-v1',
+      promotionalText: 'absent' as const,
+      reproduction: 'clean' as const,
+      seriesStyling: 'standalone' as const,
+      thumbnailLegibility: 'legible' as const,
+      tieInBranding: 'absent' as const,
+    })
     const candidate = (index: number, incumbent = false) => ({
       artifactId: `cover_${String(index).repeat(64)}`,
       deterministicCitations: [`citation-${String(index)}`],
@@ -802,7 +819,7 @@ describe('Library route', () => {
       identity: { outcome: 'verified_work_match' },
       incumbent,
       matchState: 'same_book' as const,
-      observation: null,
+      observation: observation(index),
       originalSha256: String(index).repeat(64),
       ordinal: index,
       previewSha256: String(index).repeat(64),
@@ -866,10 +883,10 @@ describe('Library route', () => {
           selectable: false,
           identity: { outcome: 'unknown', reasons: ['insufficient_identity_evidence'] },
           observation: {
-            composition: 'dense',
-            medium: 'photographic',
-            promotional_text: 'absent',
-            tie_in_branding: 'absent',
+            ...observation(5),
+            composition: 'dense' as const,
+            formatBranding: 'audiobook' as const,
+            medium: 'photographic' as const,
           },
         },
         {
@@ -880,10 +897,13 @@ describe('Library route', () => {
           selectable: false,
           identity: { outcome: 'conflict', reasons: ['identity_conflict'] },
           observation: {
-            composition: 'dense',
-            medium: 'photographic',
-            promotional_text: 'present',
-            tie_in_branding: 'absent',
+            ...observation(6),
+            composition: 'dense' as const,
+            formatBranding: 'text_edition' as const,
+            medium: 'photographic' as const,
+            overlayMarking: 'present' as const,
+            promotionalText: 'present' as const,
+            reproduction: 'degraded' as const,
           },
         },
       ],
@@ -919,7 +939,11 @@ describe('Library route', () => {
     }
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [coverField] })),
+      getCaseDetail: vi.fn(async () => ({
+        ...detail,
+        target: { ...detail.target, mediaKind: 'epub' },
+        fields: [coverField],
+      })),
     }
     renderRoute('/library?lens=all&preview=case-1&field=cover', http)
 
@@ -930,6 +954,29 @@ describe('Library route', () => {
       ),
     ).toBeVisible()
     expect(within(comparison).queryByText(/Recommended/u)).not.toBeInTheDocument()
+    const cleanChecks = within(comparison).getByLabelText('Current cover visual checks')
+    expect(within(cleanChecks).getByText('No visual defects flagged')).toBeVisible()
+    await user.click(within(cleanChecks).getByText('Visual observation details'))
+    const defectHeading = within(cleanChecks).getByText('Defect checks')
+    const preferenceHeading = within(cleanChecks).getByText('Style and advisory notes')
+    expect(
+      defectHeading.compareDocumentPosition(preferenceHeading) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(within(cleanChecks).getByText('Small-preview title')).toBeVisible()
+    const singleFlagChecks = within(comparison).getByLabelText('Alternative 4 cover visual checks')
+    const singleFlagSummary = singleFlagChecks.querySelector<HTMLElement>('.cover-defect-summary')
+    if (!singleFlagSummary) throw new Error('single-flag cover summary is missing')
+    expect(within(singleFlagSummary).getByText('1 visual issue flagged')).toBeVisible()
+    expect(within(singleFlagSummary).getByText('Audiobook branding')).toBeVisible()
+    const flaggedChecks = within(comparison).getByLabelText('Alternative 5 cover visual checks')
+    const flaggedSummary = flaggedChecks.querySelector<HTMLElement>('.cover-defect-summary')
+    if (!flaggedSummary) throw new Error('flagged cover summary is missing')
+    expect(within(flaggedSummary).getByText('2 visual issues flagged')).toBeVisible()
+    expect(within(flaggedSummary).getByText('Overlay or marking')).toBeVisible()
+    expect(within(flaggedSummary).getByText('Degraded reproduction')).toBeVisible()
+    expect(within(flaggedSummary).queryByText('Text-edition branding')).not.toBeInTheDocument()
+    await user.click(within(flaggedChecks).getByText('Visual observation details'))
+    expect(within(flaggedChecks).getByText('Text-edition branding')).toBeVisible()
     await user.click(within(comparison).getByText('Reasons retained'))
     expect(within(comparison).getByText('Preview unavailable')).toBeVisible()
     expect(
@@ -942,120 +989,130 @@ describe('Library route', () => {
   })
 
   it.each([
-    ['memory_bytes', 'profile contract requires memory_bytes=1073741824'],
-    ['process_limit', 'profile contract requires process_limit=32'],
+    ['memory_bytes mismatch', 'profile contract requires memory_bytes=1073741824', 'unavailable'],
+    ['process_limit mismatch', 'profile contract requires process_limit=32', 'unavailable'],
+    ['reviewer failure', null, 'failed'],
   ] as const)(
-    'keeps manual cover decisions usable for a %s reviewer-contract mismatch',
-    async (_field, reviewerUnavailableReason) => {
-    const user = userEvent.setup()
-    const base = detail.fields[0]
-    if (!base) throw new Error('cover fixture requires a field')
-    const consideration = {
-      id: `cover_consideration_${'u'.repeat(64)}`,
-      choiceContexts: [
-        {
-          alternativeId: null,
-          selection: 'current',
-          evidence: [
-            {
-              source: 'Local library record',
-              role: 'local_presence',
-              observation: 'Current cover preview is unavailable; local presence is retained.',
-            },
-          ],
-          limitations: ['preview_unavailable'],
-          rationale: 'Keep the retained local cover.',
-          recommendation: 'no_recommendation',
-          recommendationReason: 'No recommendation retained.',
+    'keeps manual cover decisions usable for a %s',
+    async (_state, reviewerUnavailableReason, reviewerStatus) => {
+      const user = userEvent.setup()
+      const base = detail.fields[0]
+      if (!base) throw new Error('cover fixture requires a field')
+      const consideration = {
+        id: `cover_consideration_${'u'.repeat(64)}`,
+        choiceContexts: [
+          {
+            alternativeId: null,
+            selection: 'current',
+            evidence: [
+              {
+                source: 'Local library record',
+                role: 'local_presence',
+                observation: 'Current cover preview is unavailable; local presence is retained.',
+              },
+            ],
+            limitations: ['preview_unavailable'],
+            rationale: 'Keep the retained local cover.',
+            recommendation: 'no_recommendation',
+            recommendationReason: 'No recommendation retained.',
+          },
+          {
+            alternativeId: `cover_transport_ref_${'a'.repeat(64)}`,
+            selection: 'proposed',
+            evidence: [],
+            limitations: [],
+            rationale: 'Selectable retained cover.',
+            recommendation: 'no_recommendation',
+            recommendationReason: 'No recommendation retained.',
+          },
+        ],
+        current: true,
+        candidates: [
+          {
+            artifactId: `cover_${'a'.repeat(64)}`,
+            deterministicCitations: ['citation-a'],
+            deterministicRank: 1,
+            deterministicRankKey: [1, 0, -960000, -800, -1200, 1, `cover_transport_ref_${'a'.repeat(64)}`],
+            height: 1200,
+            identity: { outcome: 'verified_work_match' },
+            incumbent: false,
+            matchState: 'same_book' as const,
+            observation: null,
+            originalSha256: 'a'.repeat(64),
+            ordinal: 1,
+            previewSha256: 'a'.repeat(64),
+            reference: `cover_transport_ref_${'a'.repeat(64)}`,
+            selectable: true,
+            sourceKinds: ['provider'],
+            state: 'acceptable',
+            width: 800,
+          },
+        ],
+        incumbent: {
+          reference: `cover_transport_ref_${'b'.repeat(64)}`,
+          state: 'unavailable' as const,
         },
-        {
-          alternativeId: `cover_transport_ref_${'a'.repeat(64)}`,
-          selection: 'proposed',
-          evidence: [],
-          limitations: [],
-          rationale: 'Selectable retained cover.',
-          recommendation: 'no_recommendation',
-          recommendationReason: 'No recommendation retained.',
+        omissions: [],
+        policy: null,
+        policyPreferences: {
+          avoidPromotionalText: false,
+          avoidTieInBranding: false,
+          preferMinimalComposition: false,
         },
-      ],
-      current: true,
-      candidates: [
-        {
-          artifactId: `cover_${'a'.repeat(64)}`,
-          deterministicCitations: ['citation-a'],
-          deterministicRank: 1,
-          deterministicRankKey: [1, 0, -960000, -800, -1200, 1, `cover_transport_ref_${'a'.repeat(64)}`],
-          height: 1200,
-          identity: { outcome: 'verified_work_match' },
-          incumbent: false,
-          matchState: 'same_book' as const,
-          observation: null,
-          originalSha256: 'a'.repeat(64),
-          ordinal: 1,
-          previewSha256: 'a'.repeat(64),
-          reference: `cover_transport_ref_${'a'.repeat(64)}`,
-          selectable: true,
-          sourceKinds: ['provider'],
-          state: 'acceptable',
-          width: 800,
-        },
-      ],
-      incumbent: {
-        reference: `cover_transport_ref_${'b'.repeat(64)}`,
-        state: 'unavailable' as const,
-      },
-      omissions: [],
-      policy: null,
-      policyPreferences: {
-        avoidPromotionalText: false,
-        avoidTieInBranding: false,
-        preferMinimalComposition: false,
-      },
-      policyReference: `cover_policy_${'u'.repeat(64)}`,
-      providerFetching: false,
-      ready: false,
-      reviewerStatus: 'unavailable',
-      reviewerUnavailableReason,
-      targetFingerprint: 'fingerprint-cover',
-    } as const
-    const coverField = {
-      ...base,
-      destination: 'cover',
-      proposedValues: [{ kind: 'cover', value: `cover_${'a'.repeat(64)}` }],
-      coverConsideration: consideration,
-    }
-    renderRoute('/library?lens=all&preview=case-1&field=cover', {
-      ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [coverField] })),
-    })
+        policyReference: `cover_policy_${'u'.repeat(64)}`,
+        providerFetching: false,
+        ready: false,
+        reviewerStatus,
+        reviewerUnavailableReason,
+        targetFingerprint: 'fingerprint-cover',
+      } as const
+      const coverField = {
+        ...base,
+        destination: 'cover',
+        proposedValues: [{ kind: 'cover', value: `cover_${'a'.repeat(64)}` }],
+        coverConsideration: consideration,
+      }
+      renderRoute('/library?lens=all&preview=case-1&field=cover', {
+        ...createHttp(),
+        getCaseDetail: vi.fn(async () => ({ ...detail, fields: [coverField] })),
+      })
 
-    expect(await screen.findByRole('button', { name: /Current cover.*Unavailable/u })).toBeVisible()
-    expect(
-      screen.getByText(
-        reviewerUnavailableReason === 'profile contract requires memory_bytes=1073741824'
-          ? /must set memory_bytes to 1073741824/u
-          : /must set process_limit to 32/u,
-      ),
-    ).toBeVisible()
-    expect(screen.getByText(/Regenerate the profile for the current contract/u)).toHaveClass(
-      'reviewer-unavailable-detail',
-    )
-    const evidence = screen.getByRole('button', { name: 'Evidence for Current cover' })
-    await user.click(evidence)
-    expect(screen.getByRole('button', { name: 'Evidence for Current cover' })).toHaveAttribute(
-      'aria-expanded',
-      'true',
-    )
-    expect(screen.getByRole('button', { name: 'Evidence for Current cover' })).toHaveTextContent(
-      'Hide evidence',
-    )
-    expect(screen.getByText('Local presence')).toBeVisible()
-    expect(screen.getByText('Preview unavailable')).toBeVisible()
-    expect(screen.getByRole('button', { name: /Current cover.*Unavailable/u })).toHaveAttribute(
-      'aria-pressed',
-      'false',
-    )
-    expect(screen.getByText('Choices').nextElementSibling).toHaveTextContent('2')
+      expect(
+        await screen.findByRole('button', { name: /Current cover.*Unavailable/u }),
+      ).toBeVisible()
+      expect(screen.getByText('Visual checks unavailable')).toBeVisible()
+      expect(screen.queryByText('No visual defects flagged')).not.toBeInTheDocument()
+      if (reviewerUnavailableReason === null) {
+        expect(screen.getByRole('button', { name: 'Retry advisory review' })).toBeVisible()
+        expect(screen.queryByText(/Regenerate the profile for the current contract/u)).toBeNull()
+      } else {
+        expect(
+          screen.getByText(
+            reviewerUnavailableReason === 'profile contract requires memory_bytes=1073741824'
+              ? /must set memory_bytes to 1073741824/u
+              : /must set process_limit to 32/u,
+          ),
+        ).toBeVisible()
+        expect(screen.getByText(/Regenerate the profile for the current contract/u)).toHaveClass(
+          'reviewer-unavailable-detail',
+        )
+      }
+      const evidence = screen.getByRole('button', { name: 'Evidence for Current cover' })
+      await user.click(evidence)
+      expect(screen.getByRole('button', { name: 'Evidence for Current cover' })).toHaveAttribute(
+        'aria-expanded',
+        'true',
+      )
+      expect(screen.getByRole('button', { name: 'Evidence for Current cover' })).toHaveTextContent(
+        'Hide evidence',
+      )
+      expect(screen.getByText('Local presence')).toBeVisible()
+      expect(screen.getByText('Preview unavailable')).toBeVisible()
+      expect(screen.getByRole('button', { name: /Current cover.*Unavailable/u })).toHaveAttribute(
+        'aria-pressed',
+        'false',
+      )
+      expect(screen.getByText('Choices').nextElementSibling).toHaveTextContent('2')
     },
   )
 
