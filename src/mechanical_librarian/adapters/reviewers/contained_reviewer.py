@@ -958,17 +958,15 @@ class ContainedReviewerAdapter:
                     str(seccomp_descriptor),
                     "/runtime/seccomp.bpf",
                 )
-                completed = subprocess.run(
+                completed = _run_owned_command(
                     _resource_command(command),
                     env={},
-                    capture_output=True,
                     pass_fds=(
                         codex.descriptor,
                         sandbox.descriptor,
                         seccomp_descriptor,
                     ),
                     timeout=min(self._profile.identity.timeout_seconds, 30),
-                    check=False,
                 )
         except (OSError, subprocess.SubprocessError, ReviewerResourceError) as error:
             raise ContainedReviewerProcessError("setup") from error
@@ -1165,18 +1163,15 @@ class ContainedReviewerAdapter:
         if credential_descriptor is not None:
             pass_fds = (*pass_fds, credential_descriptor)
         try:
-            return subprocess.run(
+            return _run_owned_command(
                 _resource_command(command),
                 env=self._auth_environment(),
-                stdin=None,
-                stdout=None if interactive else subprocess.PIPE,
-                stderr=None if interactive else subprocess.PIPE,
                 pass_fds=pass_fds,
                 timeout=min(
                     self._profile.identity.timeout_seconds,
                     timeout or self._profile.identity.timeout_seconds,
                 ),
-                check=False,
+                interactive=interactive,
             )
         except subprocess.TimeoutExpired as error:
             raise ContainedReviewerProcessError("timeout") from error
@@ -1716,7 +1711,7 @@ def _bound_artifact(path: Path, expected_digest: str) -> Iterator[_BoundArtifact
         information = os.fstat(descriptor)
         if (
             not stat.S_ISREG(information.st_mode)
-            or information.st_uid != os.geteuid()
+            or information.st_uid not in {0, os.geteuid()}
             or information.st_mode & 0o022
             or not information.st_mode & stat.S_IXUSR
         ):
@@ -2302,6 +2297,56 @@ def _auth_config() -> tuple[str, ...]:
 
 def _resource_command(command: list[str]) -> tuple[str, ...]:
     return (sys.executable, "-m", _RESOURCE_EXEC_MODULE, *command)
+
+
+def _run_owned_command(
+    command: tuple[str, ...],
+    *,
+    env: dict[str, str],
+    pass_fds: tuple[int, ...],
+    timeout: int,
+    interactive: bool = False,
+) -> subprocess.CompletedProcess[bytes]:
+    """Run one admitted command in a distinct group and prove its whole tree gone."""
+    with (
+        tempfile.TemporaryFile() as stdout_file,
+        tempfile.TemporaryFile() as stderr_file,
+    ):
+        process = subprocess.Popen(
+            command,
+            env=env,
+            stdin=None,
+            stdout=None if interactive else stdout_file,
+            stderr=None if interactive else stderr_file,
+            pass_fds=pass_fds,
+            start_new_session=True,
+        )
+        token = _process_start_token(process.pid)
+        try:
+            returncode = process.wait(timeout=timeout)
+            try:
+                _reap_process_group(process.pid, 0.1)
+            except ContainedReviewerProcessError:
+                _kill_and_prove_dead(process.pid, process.pid, token)
+                raise
+        except subprocess.TimeoutExpired:
+            _kill_and_prove_dead(process.pid, process.pid, token)
+            raise
+        except KeyboardInterrupt:
+            _kill_and_prove_dead(process.pid, process.pid, token)
+            raise
+        if interactive:
+            return subprocess.CompletedProcess(command, returncode, b"", b"")
+        stdout_file.seek(0)
+        stderr_file.seek(0)
+        stdout = stdout_file.read(_MAX_SANDBOX_INFO_BYTES + 1)
+        stderr = stderr_file.read(_MAX_SANDBOX_INFO_BYTES + 1)
+        if (
+            len(stdout) > _MAX_SANDBOX_INFO_BYTES
+            or len(stderr) > _MAX_SANDBOX_INFO_BYTES
+        ):
+            raise ContainedReviewerProcessError("runtime")
+        return subprocess.CompletedProcess(command, returncode, stdout, stderr)
 
 
 def _unique_output_object(pairs: list[tuple[str, object]]) -> dict[str, object]:

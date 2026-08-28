@@ -13,6 +13,7 @@ import struct
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import cast
 
 from mechanical_librarian.application.contained_reviewer_contract import (
@@ -25,15 +26,28 @@ CODEX_MEMORY_BYTES = (
     COVER_MEMORY_BYTES - BROKER_MEMORY_BYTES - (2 * SUPERVISOR_MEMORY_BYTES)
 )
 MAX_SANDBOX_INFO_BYTES = 4_096
-_SANDBOX_INFO_FIELDS = frozenset(
-    {
-        "child-pid",
-        "cgroup-namespace",
-        "ipc-namespace",
-        "mnt-namespace",
-        "pid-namespace",
-        "uts-namespace",
-    }
+_SANDBOX_INFO_FIELDS = (
+    frozenset(
+        {
+            "child-pid",
+            "cgroup-namespace",
+            "ipc-namespace",
+            "mnt-namespace",
+            "pid-namespace",
+            "uts-namespace",
+        }
+    ),
+    frozenset(
+        {
+            "child-pid",
+            "cgroup-namespace",
+            "ipc-namespace",
+            "mnt-namespace",
+            "net-namespace",
+            "pid-namespace",
+            "uts-namespace",
+        }
+    ),
 )
 
 _BPF_LD_W_ABS = 0x20
@@ -53,6 +67,42 @@ _INSTRUCTION = struct.Struct("<HBBI")
 
 class ReviewerResourceError(RuntimeError):
     """A value-free failure to establish the contained resource boundary."""
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessIdentity:
+    """One Linux process identity, stable across PID reuse."""
+
+    pid: int
+    process_group: int
+    start_time: str
+
+
+def capture_process_identity(pid: int) -> ProcessIdentity:
+    """Capture one bounded exact Linux PID/group/start identity."""
+    if type(pid) is not int or pid < 1:
+        raise ReviewerResourceError("invalid reviewer resource identity")
+    descriptor = -1
+    try:
+        descriptor = os.open(f"/proc/{pid}/stat", os.O_RDONLY | os.O_CLOEXEC)
+        payload = os.read(descriptor, MAX_SANDBOX_INFO_BYTES + 1)
+    except OSError as error:
+        raise ReviewerResourceError("reviewer resource identity unavailable") from error
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    if len(payload) > MAX_SANDBOX_INFO_BYTES:
+        raise ReviewerResourceError("reviewer resource identity unavailable")
+    try:
+        text = payload.decode("ascii")
+        tail = text[text.rindex(")") + 2 :].split()
+        process_group = int(tail[2])
+        start_time = tail[19]
+    except (UnicodeDecodeError, ValueError, IndexError) as error:
+        raise ReviewerResourceError("reviewer resource identity unavailable") from error
+    if process_group < 1 or not start_time.isascii() or not start_time.isdigit():
+        raise ReviewerResourceError("reviewer resource identity unavailable")
+    return ProcessIdentity(pid, process_group, start_time)
 
 
 def no_process_seccomp_program(machine: str) -> bytes:
@@ -163,7 +213,7 @@ def read_sandbox_child_pid(descriptor: int, deadline: float) -> int:
         sandbox_pid = document["child-pid"]
     except (KeyError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ReviewerResourceError("sandbox identity unavailable") from error
-    if type(document) is not dict or set(document) != _SANDBOX_INFO_FIELDS:
+    if type(document) is not dict or frozenset(document) not in _SANDBOX_INFO_FIELDS:
         raise ReviewerResourceError("sandbox identity unavailable")
     if any(
         type(document[field]) is not int or document[field] < 1 for field in document
@@ -175,65 +225,72 @@ def read_sandbox_child_pid(descriptor: int, deadline: float) -> int:
 
 
 def apply_aggregate_budget(
-    payload_pid: int,
-    supervisor_pid: int,
-    process_group: int,
+    broker: ProcessIdentity,
+    supervisor: ProcessIdentity,
+    sandbox: ProcessIdentity,
     process_limit: int,
-    *,
-    broker_pid: int | None = None,
 ) -> None:
     """Split the fixed 1 GiB ceiling across every permitted address space."""
-    values = (payload_pid, supervisor_pid, process_group, process_limit)
+    identities = (broker, supervisor, sandbox)
     if (
-        any(type(value) is not int for value in values)
-        or min(payload_pid, supervisor_pid) < 2
-        or process_group < 1
-        or len({payload_pid, supervisor_pid, broker_pid}) != 3
+        any(type(value) is not ProcessIdentity for value in identities)
+        or any(
+            type(value.pid) is not int
+            or value.pid < 1
+            or type(value.process_group) is not int
+            or value.process_group < 1
+            or type(value.start_time) is not str
+            or not value.start_time
+            or not value.start_time.isascii()
+            or not value.start_time.isdigit()
+            for value in identities
+        )
+        or len({value.pid for value in identities}) != 3
+        or len({value.process_group for value in identities}) != 1
+        or broker.process_group != broker.pid
         or process_limit < 1
-        or (broker_pid is not None and (type(broker_pid) is not int or broker_pid < 1))
     ):
         raise ReviewerResourceError("invalid reviewer resource identity")
-    payload_budget = (
-        CODEX_MEMORY_BYTES
-        if broker_pid is not None
-        else (COVER_MEMORY_BYTES - SUPERVISOR_MEMORY_BYTES)
-    )
     try:
-        for pid in (payload_pid, supervisor_pid):
-            if os.getpgid(pid) != process_group:
-                raise ProcessLookupError
-        if broker_pid is not None and os.getpgid(broker_pid) != process_group:
-            raise ProcessLookupError
-        payload_limit = (payload_budget, payload_budget)
-        if broker_pid is not None:
-            payload_limit = (SUPERVISOR_MEMORY_BYTES, payload_budget)
-        resource.prlimit(payload_pid, resource.RLIMIT_AS, payload_limit)
+        _require_current_identities(identities)
         resource.prlimit(
-            payload_pid,
+            sandbox.pid,
+            resource.RLIMIT_AS,
+            (SUPERVISOR_MEMORY_BYTES, CODEX_MEMORY_BYTES),
+        )
+        resource.prlimit(
+            sandbox.pid,
             resource.RLIMIT_NPROC,
             (process_limit, process_limit),
         )
         resource.prlimit(
-            supervisor_pid,
+            supervisor.pid,
             resource.RLIMIT_AS,
             (SUPERVISOR_MEMORY_BYTES, SUPERVISOR_MEMORY_BYTES),
         )
-        if broker_pid is not None:
-            resource.prlimit(
-                broker_pid,
-                resource.RLIMIT_AS,
-                (BROKER_MEMORY_BYTES, BROKER_MEMORY_BYTES),
-            )
+        resource.prlimit(
+            broker.pid,
+            resource.RLIMIT_AS,
+            (BROKER_MEMORY_BYTES, BROKER_MEMORY_BYTES),
+        )
+        _require_current_identities(identities)
     except (OSError, ValueError) as error:
         raise ReviewerResourceError("reviewer resource admission failed") from error
+
+
+def _require_current_identities(identities: tuple[ProcessIdentity, ...]) -> None:
+    if any(capture_process_identity(value.pid) != value for value in identities):
+        raise ReviewerResourceError("reviewer resource identity changed")
 
 
 __all__ = [
     "BROKER_MEMORY_BYTES",
     "CODEX_MEMORY_BYTES",
+    "ProcessIdentity",
     "ReviewerResourceError",
     "SUPERVISOR_MEMORY_BYTES",
     "apply_aggregate_budget",
+    "capture_process_identity",
     "no_process_seccomp_descriptor",
     "no_process_seccomp_program",
     "read_sandbox_child_pid",

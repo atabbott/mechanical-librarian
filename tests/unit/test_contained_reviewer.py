@@ -331,7 +331,7 @@ def test_codex_version_and_auth_commands_expose_only_synthetic_proc_exe() -> Non
         codex = adapter._BoundArtifact(10, "/proc/self/fd/10")
         sandbox = adapter._BoundArtifact(11, "/proc/self/fd/11")
         completed = subprocess.CompletedProcess((), 0, stdout=b"codex 1\n", stderr=b"")
-        with patch.object(adapter.subprocess, "run", return_value=completed) as run:
+        with patch.object(adapter, "_run_owned_command", return_value=completed) as run:
             reviewer._verify_codex(codex, sandbox)
         version_command = run.call_args.args[0][3:]
         auth_command = reviewer._auth_command(codex, sandbox, 12, 90)
@@ -344,6 +344,29 @@ def test_codex_version_and_auth_commands_expose_only_synthetic_proc_exe() -> Non
         ]
     assert "--unshare-net" in version_command
     assert "--unshare-net" not in auth_command
+
+
+def test_bound_artifact_accepts_root_owned_immutable_install(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        artifact = Path(temporary) / "artifact"
+        artifact.write_bytes(b"pinned")
+        artifact.chmod(0o555)
+        actual = artifact.stat()
+        with monkeypatch.context() as context:
+            context.setattr(
+                adapter.os,
+                "fstat",
+                lambda descriptor: SimpleNamespace(
+                    st_mode=actual.st_mode,
+                    st_uid=0,
+                ),
+            )
+            with adapter._bound_artifact(
+                artifact, hashlib.sha256(b"pinned").hexdigest()
+            ) as bound:
+                assert bound.descriptor >= 0
 
 
 def test_profile_load_is_canonical_private_and_does_not_touch_artifacts() -> None:
@@ -606,9 +629,20 @@ def test_timeout_and_cancel_are_typed_without_process_output(error, code) -> Non
     with tempfile.TemporaryDirectory() as temporary:
         reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
         artifact = adapter._BoundArtifact(10, "/proc/self/fd/10")
-        with patch.object(adapter.subprocess, "run", side_effect=error):
+        with patch.object(adapter, "_run_owned_command", side_effect=error):
             with pytest.raises(Exception, match=code):
                 reviewer._run_auth([], artifact, artifact, 11, 90)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux process groups")
+def test_owned_command_uses_distinct_group_and_reaps_lingering_tree() -> None:
+    command = (
+        sys.executable,
+        "-c",
+        "import subprocess,sys; subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)']); print('done')",
+    )
+    with pytest.raises(Exception, match="runtime"):
+        adapter._run_owned_command(command, env={}, pass_fds=(), timeout=2)
 
 
 def test_fake_process_invocation_records_dispatch_before_output_and_cleans_job() -> (
@@ -1224,14 +1258,30 @@ def test_gated_dispatches_one_broker_identity_and_waits_for_its_exit() -> None:
 
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux prlimit proof")
 def test_namespaced_process_limit_is_applied_to_the_reported_group_member() -> None:
+    identities = {
+        4321: resource_budget.ProcessIdentity(4321, 4321, "1"),
+        4322: resource_budget.ProcessIdentity(4322, 4321, "2"),
+        5678: resource_budget.ProcessIdentity(5678, 4321, "3"),
+    }
     with (
-        patch.object(resource_budget.os, "getpgid", return_value=4321),
+        patch.object(
+            resource_budget,
+            "capture_process_identity",
+            side_effect=lambda pid: identities[pid],
+        ),
         patch.object(resource_budget.resource, "prlimit") as apply_limit,
     ):
-        resource_budget.apply_aggregate_budget(5678, 4321, 4321, 32)
+        resource_budget.apply_aggregate_budget(
+            identities[4321], identities[4322], identities[5678], 32
+        )
     assert apply_limit.call_args_list == [
-        call(5678, resource_budget.resource.RLIMIT_AS, (1_006_632_960,) * 2),
+        call(
+            5678,
+            resource_budget.resource.RLIMIT_AS,
+            (67_108_864, 872_415_232),
+        ),
         call(5678, resource_budget.resource.RLIMIT_NPROC, (32, 32)),
+        call(4322, resource_budget.resource.RLIMIT_AS, (67_108_864,) * 2),
         call(4321, resource_budget.resource.RLIMIT_AS, (67_108_864,) * 2),
     ]
 

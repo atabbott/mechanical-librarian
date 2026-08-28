@@ -6,6 +6,7 @@ import resource
 import pytest
 
 from mechanical_librarian.adapters.reviewers import resource_exec
+from mechanical_librarian.adapters.reviewers.resource_budget import ProcessIdentity
 
 
 def test_resource_exec_applies_fixed_limits_and_preserves_exact_argv(
@@ -13,7 +14,7 @@ def test_resource_exec_applies_fixed_limits_and_preserves_exact_argv(
 ) -> None:
     installed: list[tuple[int, tuple[int, int]]] = []
     spawned: list[tuple[tuple[str, ...], object, tuple[int, ...]]] = []
-    budgets: list[tuple[int, int, int, int, int | None]] = []
+    budgets: list[tuple[object, object, object, int]] = []
     writes: list[tuple[int, bytes]] = []
 
     class Process:
@@ -46,16 +47,21 @@ def test_resource_exec_applies_fixed_limits_and_preserves_exact_argv(
     monkeypatch.setattr(
         resource_exec.os, "write", lambda fd, value: writes.append((fd, value))
     )
-    monkeypatch.setattr(resource_exec.os, "getpgrp", lambda: 100)
     monkeypatch.setattr(resource_exec.os, "getpid", lambda: 100)
+    identities = {
+        pid: ProcessIdentity(pid, 100, str(pid * 10)) for pid in (100, 101, 102)
+    }
+    monkeypatch.setattr(
+        resource_exec, "capture_process_identity", lambda pid: identities[pid]
+    )
     monkeypatch.setattr(resource_exec, "_inheritable_descriptors", lambda *_: (10, 13))
     monkeypatch.setattr(resource_exec.subprocess, "Popen", popen)
     monkeypatch.setattr(resource_exec, "read_sandbox_child_pid", lambda *_: 102)
     monkeypatch.setattr(
         resource_exec,
         "apply_aggregate_budget",
-        lambda payload, supervisor, group, limit, *, broker_pid=None: budgets.append(
-            (payload, supervisor, group, limit, broker_pid)
+        lambda broker, supervisor, sandbox, limit: budgets.append(
+            (broker, supervisor, sandbox, limit)
         ),
     )
 
@@ -81,7 +87,7 @@ def test_resource_exec_applies_fixed_limits_and_preserves_exact_argv(
             (10, 13),
         )
     ]
-    assert budgets == [(102, 101, 100, 32, 100)]
+    assert budgets == [(identities[100], identities[101], identities[102], 32)]
     assert writes == [(11, b"G")]
 
 
@@ -91,3 +97,45 @@ def test_resource_exec_rejects_missing_or_empty_argv(
 ) -> None:
     with pytest.raises(SystemExit, match="64"):
         resource_exec.main(arguments)
+
+
+def test_resource_exec_does_not_release_changed_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Process:
+        pid = 101
+
+        @staticmethod
+        def poll() -> int:
+            return 1
+
+    monkeypatch.setattr(resource, "getrlimit", lambda _limit: (64, 64))
+    monkeypatch.setattr(resource, "setrlimit", lambda *_args: None)
+    monkeypatch.setattr(resource_exec.os, "pipe", lambda: (10, 11))
+    monkeypatch.setattr(resource_exec.os, "close", lambda _descriptor: None)
+    writes: list[bytes] = []
+    monkeypatch.setattr(
+        resource_exec.os, "write", lambda _fd, value: writes.append(value)
+    )
+    monkeypatch.setattr(resource_exec.os, "getpid", lambda: 100)
+    monkeypatch.setattr(resource_exec, "_inheritable_descriptors", lambda *_: ())
+    monkeypatch.setattr(
+        resource_exec.subprocess, "Popen", lambda *_args, **_kwargs: Process()
+    )
+    monkeypatch.setattr(resource_exec, "read_sandbox_child_pid", lambda *_: 102)
+    monkeypatch.setattr(
+        resource_exec,
+        "capture_process_identity",
+        lambda pid: ProcessIdentity(pid, 100, str(pid)),
+    )
+    monkeypatch.setattr(
+        resource_exec,
+        "apply_aggregate_budget",
+        lambda *_args: (_ for _ in ()).throw(
+            resource_exec.ReviewerResourceError("identity changed")
+        ),
+    )
+
+    with pytest.raises(SystemExit, match="126"):
+        resource_exec.main(("/usr/bin/bwrap",))
+    assert writes == []

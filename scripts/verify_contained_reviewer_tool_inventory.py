@@ -20,6 +20,30 @@ from mechanical_librarian.adapters.reviewers.contained_reviewer import (
 from mechanical_librarian.application.contained_reviewer_contract import COVER_MODEL
 
 _MAX_REQUEST_BYTES = 1_048_576
+_VERSION_TIMEOUT_SECONDS = 10
+
+
+def _probe_version(codex: Path, version_home: str) -> str:
+    """Return the exact bounded version without exposing child diagnostics."""
+    try:
+        completed = subprocess.run(
+            (str(codex), "--version"),
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=_VERSION_TIMEOUT_SECONDS,
+            env={
+                "CODEX_HOME": version_home,
+                "HOME": version_home,
+                "LANG": "C.UTF-8",
+                "PATH": os.defpath,
+            },
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise RuntimeError("contained Codex version probe failed") from error
+    if completed.returncode != 0:
+        raise RuntimeError("contained Codex version probe failed")
+    return completed.stdout.strip()
 
 
 def main(arguments: list[str] | None = None) -> int:
@@ -28,19 +52,8 @@ def main(arguments: list[str] | None = None) -> int:
         raise SystemExit("usage: verify_contained_reviewer_tool_inventory.py CODEX")
     codex = Path(values[0])
     with tempfile.TemporaryDirectory(prefix="reviewer-version-proof-") as version_home:
-        version = subprocess.run(
-            (str(codex), "--version"),
-            capture_output=True,
-            check=True,
-            text=True,
-            env={
-                "CODEX_HOME": version_home,
-                "HOME": version_home,
-                "LANG": "C.UTF-8",
-                "PATH": os.defpath,
-            },
-        )
-    if version.stdout.strip() != "codex-cli 0.147.0":
+        version = _probe_version(codex, version_home)
+    if version != "codex-cli 0.147.0":
         raise RuntimeError("unexpected contained Codex version")
 
     request: list[dict[str, object]] = []

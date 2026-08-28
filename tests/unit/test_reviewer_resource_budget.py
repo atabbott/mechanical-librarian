@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import fcntl
+import json
 import os
 import resource
 import struct
 import sys
+import time
 
 import pytest
 
@@ -62,11 +64,40 @@ def test_seccomp_program_allows_threads_and_denies_new_processes(
     assert _evaluate(program, arch=0, syscall=0) == _KILL
 
 
-def test_aggregate_budget_sums_to_one_gib_with_and_without_broker(
+@pytest.mark.parametrize("network", (False, True))
+def test_sandbox_identity_accepts_only_shipped_namespace_documents(
+    monkeypatch: pytest.MonkeyPatch, network: bool
+) -> None:
+    document = {
+        "child-pid": 102,
+        "cgroup-namespace": 1,
+        "ipc-namespace": 2,
+        "mnt-namespace": 3,
+        "pid-namespace": 4,
+        "uts-namespace": 5,
+    }
+    if network:
+        document["net-namespace"] = 6
+    payload = json.dumps(document).encode("ascii")
+    reads = iter((payload, b""))
+    monkeypatch.setattr(
+        resource_budget.select, "select", lambda *_args: ((10,), (), ())
+    )
+    monkeypatch.setattr(resource_budget.os, "read", lambda *_args: next(reads))
+    assert resource_budget.read_sandbox_child_pid(10, time.monotonic() + 1) == 102
+
+
+def test_aggregate_budget_sums_to_one_gib_for_exact_brokered_tree(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     applied: list[tuple[int, int, tuple[int, int]]] = []
-    monkeypatch.setattr(resource_budget.os, "getpgid", lambda _pid: 100)
+    identities = {
+        pid: resource_budget.ProcessIdentity(pid, 100, str(pid * 10))
+        for pid in (100, 101, 102)
+    }
+    monkeypatch.setattr(
+        resource_budget, "capture_process_identity", lambda pid: identities[pid]
+    )
     monkeypatch.setattr(
         resource_budget.resource,
         "prlimit",
@@ -74,13 +105,9 @@ def test_aggregate_budget_sums_to_one_gib_with_and_without_broker(
         raising=False,
     )
 
-    resource_budget.apply_aggregate_budget(102, 101, 100, 32)
-    direct = [value[0] for _pid, limit, value in applied if limit == resource.RLIMIT_AS]
-    assert sum(direct) == COVER_MEMORY_BYTES
-    assert (102, resource.RLIMIT_NPROC, (32, 32)) in applied
-
-    applied.clear()
-    resource_budget.apply_aggregate_budget(102, 101, 100, 32, broker_pid=100)
+    resource_budget.apply_aggregate_budget(
+        identities[100], identities[101], identities[102], 32
+    )
     brokered = [value for _pid, limit, value in applied if limit == resource.RLIMIT_AS]
     assert brokered == [
         (resource_budget.SUPERVISOR_MEMORY_BYTES, resource_budget.CODEX_MEMORY_BYTES),
@@ -98,6 +125,67 @@ def test_aggregate_budget_sums_to_one_gib_with_and_without_broker(
         101,
         100,
     ]
+
+
+def test_aggregate_budget_rejects_identity_change_before_release(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    broker = resource_budget.ProcessIdentity(100, 100, "1000")
+    supervisor = resource_budget.ProcessIdentity(101, 100, "1010")
+    sandbox = resource_budget.ProcessIdentity(102, 100, "1020")
+    observations = iter(
+        (
+            broker,
+            supervisor,
+            sandbox,
+            broker,
+            supervisor,
+            resource_budget.ProcessIdentity(102, 100, "9999"),
+        )
+    )
+    monkeypatch.setattr(
+        resource_budget, "capture_process_identity", lambda _pid: next(observations)
+    )
+    monkeypatch.setattr(
+        resource_budget.resource, "prlimit", lambda *_args: None, raising=False
+    )
+
+    with pytest.raises(resource_budget.ReviewerResourceError, match="identity"):
+        resource_budget.apply_aggregate_budget(broker, supervisor, sandbox, 32)
+
+
+def test_process_identity_capture_rejects_unknown_and_malformed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        resource_budget.os,
+        "open",
+        lambda *_args: (_ for _ in ()).throw(FileNotFoundError()),
+    )
+    with pytest.raises(resource_budget.ReviewerResourceError, match="unavailable"):
+        resource_budget.capture_process_identity(100)
+
+    monkeypatch.setattr(resource_budget.os, "open", lambda *_args: 10)
+    monkeypatch.setattr(resource_budget.os, "close", lambda _descriptor: None)
+    monkeypatch.setattr(resource_budget.os, "read", lambda *_args: b"malformed")
+    with pytest.raises(resource_budget.ReviewerResourceError, match="unavailable"):
+        resource_budget.capture_process_identity(100)
+
+
+@pytest.mark.parametrize(
+    "identity",
+    (
+        resource_budget.ProcessIdentity(0, 100, "1"),
+        resource_budget.ProcessIdentity(100, 0, "1"),
+        resource_budget.ProcessIdentity(100, 100, ""),
+    ),
+)
+def test_aggregate_budget_rejects_malformed_identity(
+    identity: resource_budget.ProcessIdentity,
+) -> None:
+    valid = resource_budget.ProcessIdentity(101, 100, "2")
+    with pytest.raises(resource_budget.ReviewerResourceError, match="identity"):
+        resource_budget.apply_aggregate_budget(identity, valid, valid, 32)
 
 
 @pytest.mark.skipif(

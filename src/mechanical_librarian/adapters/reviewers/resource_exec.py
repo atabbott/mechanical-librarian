@@ -12,6 +12,7 @@ from collections.abc import Sequence
 from mechanical_librarian.adapters.reviewers.resource_budget import (
     ReviewerResourceError,
     apply_aggregate_budget,
+    capture_process_identity,
     read_sandbox_child_pid,
 )
 from mechanical_librarian.application.contained_reviewer_contract import (
@@ -51,13 +52,12 @@ def main(arguments: Sequence[str] | None = None) -> None:
         budget_read = -1
         os.close(info_write)
         info_write = -1
-        payload_pid = read_sandbox_child_pid(info_read, time.monotonic() + 30)
+        sandbox_pid = read_sandbox_child_pid(info_read, time.monotonic() + 30)
         apply_aggregate_budget(
-            payload_pid,
-            process.pid,
-            os.getpgrp(),
+            capture_process_identity(os.getpid()),
+            capture_process_identity(process.pid),
+            capture_process_identity(sandbox_pid),
             COVER_PROCESS_LIMIT,
-            broker_pid=os.getpid(),
         )
         os.write(budget_write, b"G")
         os.close(budget_write)
