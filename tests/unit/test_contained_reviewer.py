@@ -1468,26 +1468,31 @@ def test_killed_direct_child_is_reaped_without_a_zombie() -> None:
 
 
 def test_cleanup_kills_group_and_proves_process_death() -> None:
+    identity = adapter.process_groups.ReviewerProcessGroup(12, 12, "34")
     with (
-        patch.object(adapter, "_require_signal_identity", return_value=True) as safe,
+        patch.object(
+            adapter.process_groups, "require_signal_identity", return_value=True
+        ) as safe,
         patch.object(adapter.os, "killpg") as kill,
-        patch.object(adapter, "_wait_for_exit", return_value=0),
-        patch.object(adapter, "_reap_process_group") as reap,
-        patch.object(adapter, "_process_identity_alive", return_value=False) as alive,
+        patch.object(adapter.process_groups, "wait_for_exit", return_value=0),
+        patch.object(adapter.process_groups, "reap_process_group") as reap,
+        patch.object(
+            adapter.process_groups, "process_identity_alive", return_value=False
+        ) as alive,
     ):
         adapter._kill_and_prove_dead(12, 12, "34")
-    kill.assert_called_once_with(12, adapter.signal.SIGKILL)
-    safe.assert_called_once_with(12, 12, "34")
+    kill.assert_called_once_with(12, signal.SIGKILL)
+    safe.assert_called_once_with(identity)
     reap.assert_called_once_with(12, 5)
-    alive.assert_called_once_with(12, 12, "34")
+    alive.assert_called_once_with(identity)
 
 
 def test_cleanup_refuses_reused_live_group_before_signal() -> None:
     with (
         patch.object(
-            adapter,
-            "_require_signal_identity",
-            side_effect=adapter.ContainedReviewerProcessError("runtime"),
+            adapter.process_groups,
+            "require_signal_identity",
+            side_effect=adapter.process_groups.ReviewerProcessGroupError("runtime"),
         ),
         patch.object(adapter.os, "killpg") as kill,
         pytest.raises(adapter.ContainedReviewerProcessError, match="runtime"),

@@ -8,7 +8,6 @@ import json
 import os
 import resource
 import shutil
-import signal
 import stat
 import subprocess
 import sys
@@ -20,6 +19,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import IO, Iterator, cast
 
+from mechanical_librarian.adapters.reviewers import process_group as process_groups
 from mechanical_librarian.adapters.reviewers.codex_device_auth import CodexAuthCommand
 from mechanical_librarian.adapters.reviewers.resource_budget import (
     MAX_SANDBOX_INFO_BYTES as _MAX_SANDBOX_INFO_BYTES,
@@ -1540,42 +1540,19 @@ class ContainedReviewerAdapter:
 
 
 def _process_identity_alive(pid: int, pgid: int, start_token: str) -> bool:
-    if (
-        type(pid) is not int
-        or type(pgid) is not int
-        or pid < 2
-        or pgid < 2
-        or type(start_token) is not str
-        or not start_token.isascii()
-        or not start_token.isdigit()
-    ):
-        raise ContainedReviewerProcessError("runtime")
     try:
-        if os.getpgid(pid) == pgid and _process_start_token(pid) == start_token:
-            return True
-    except (OSError, ContainedReviewerProcessError):
-        pass
-    return _process_group_alive(pgid)
+        return process_groups.process_identity_alive(
+            process_groups.ReviewerProcessGroup(pid, pgid, start_token)
+        )
+    except process_groups.ReviewerProcessGroupError as error:
+        raise ContainedReviewerProcessError("runtime") from error
 
 
 def _process_group_alive(pgid: int) -> bool:
-    if type(pgid) is not int or pgid < 2:
-        raise ContainedReviewerProcessError("runtime")
     try:
-        names = os.listdir("/proc")
-    except OSError as error:
+        return process_groups.process_group_alive(pgid)
+    except process_groups.ReviewerProcessGroupError as error:
         raise ContainedReviewerProcessError("runtime") from error
-    for name in names:
-        if not name.isascii() or not name.isdigit():
-            continue
-        try:
-            raw = Path("/proc", name, "stat").read_text(encoding="ascii")
-            _, member_group = _proc_identity(raw)
-        except (OSError, UnicodeError, ValueError):
-            continue
-        if member_group == pgid:
-            return True
-    return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -1737,22 +1714,13 @@ def _bound_artifact(path: Path, expected_digest: str) -> Iterator[_BoundArtifact
 
 def _process_start_token(pid: int) -> str:
     try:
-        token, _ = _proc_identity(Path(f"/proc/{pid}/stat").read_text(encoding="ascii"))
-    except (OSError, UnicodeError, ValueError) as error:
+        return process_groups.capture_process_group_token(pid)
+    except process_groups.ReviewerProcessGroupError as error:
         raise ContainedReviewerProcessError("runtime") from error
-    return token
 
 
 def _proc_identity(raw: str) -> tuple[str, int]:
-    try:
-        tail = raw[raw.rindex(")") + 2 :].split()
-        process_group = int(tail[2], 10)
-        start_token = tail[19]
-    except (IndexError, ValueError) as error:
-        raise ValueError("invalid proc stat") from error
-    if not start_token.isascii() or not start_token.isdigit() or process_group < 1:
-        raise ValueError("invalid proc stat")
-    return start_token, process_group
+    return process_groups.parse_proc_identity(raw)
 
 
 def _safe_start_token(pid: int) -> str:
@@ -1770,84 +1738,32 @@ def _child_spawn_failed(descriptor: int) -> bool:
 
 
 def _wait_for_exit(pid: int, timeout_seconds: float) -> int:
-    deadline = time.monotonic() + timeout_seconds
-    while True:
-        try:
-            waited, status = os.waitpid(pid, os.WNOHANG)
-        except ChildProcessError:
-            return 0
-        if waited == pid:
-            if os.WIFEXITED(status):
-                return os.WEXITSTATUS(status)
-            if os.WIFSIGNALED(status):
-                return 128 + os.WTERMSIG(status)
-            return 126
-        if time.monotonic() >= deadline:
-            raise TimeoutError
-        time.sleep(0.01)
+    return process_groups.wait_for_exit(pid, timeout_seconds)
 
 
 def _kill_and_prove_dead(pid: int, pgid: int, start_token: str) -> None:
-    if _require_signal_identity(pid, pgid, start_token):
-        try:
-            os.killpg(pgid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        except OSError as error:
-            raise ContainedReviewerProcessError("runtime") from error
     try:
-        _wait_for_exit(pid, 5)
-    except TimeoutError as error:
+        process_groups.kill_process_group(
+            process_groups.ReviewerProcessGroup(pid, pgid, start_token)
+        )
+    except process_groups.ReviewerProcessGroupError as error:
         raise ContainedReviewerProcessError("runtime") from error
-    _reap_process_group(pgid, 5)
-    if _process_identity_alive(pid, pgid, start_token):
-        raise ContainedReviewerProcessError("runtime")
 
 
 def _require_signal_identity(pid: int, pgid: int, start_token: str) -> bool:
-    """Reject a reused live leader before signalling its reserved process group."""
-    if (
-        type(pid) is not int
-        or type(pgid) is not int
-        or pid < 2
-        or pgid < 2
-        or type(start_token) is not str
-        or not start_token.isascii()
-        or not start_token.isdigit()
-    ):
-        raise ContainedReviewerProcessError("runtime")
     try:
-        raw = Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
-    except FileNotFoundError:
-        # A surviving member reserves the captured, separate-session PGID after
-        # its leader exits; an empty group needs no signal and may be reused.
-        return _process_group_alive(pgid)
-    except (OSError, UnicodeError) as error:
+        return process_groups.require_signal_identity(
+            process_groups.ReviewerProcessGroup(pid, pgid, start_token)
+        )
+    except process_groups.ReviewerProcessGroupError as error:
         raise ContainedReviewerProcessError("runtime") from error
-    try:
-        actual_token, actual_group = _proc_identity(raw)
-    except ValueError as error:
-        raise ContainedReviewerProcessError("runtime") from error
-    if actual_token != start_token or actual_group != pgid:
-        raise ContainedReviewerProcessError("runtime")
-    return True
 
 
 def _reap_process_group(pgid: int, timeout_seconds: float) -> None:
-    deadline = time.monotonic() + timeout_seconds
-    while True:
-        while True:
-            try:
-                waited, _status = os.waitpid(-pgid, os.WNOHANG)
-            except ChildProcessError:
-                break
-            if waited == 0:
-                break
-        if not _process_group_alive(pgid):
-            return
-        if time.monotonic() >= deadline:
-            raise ContainedReviewerProcessError("runtime")
-        time.sleep(0.01)
+    try:
+        process_groups.reap_process_group(pgid, timeout_seconds)
+    except process_groups.ReviewerProcessGroupError as error:
+        raise ContainedReviewerProcessError("runtime") from error
 
 
 def _diagnostic(stdout_file: IO[bytes], stderr_file: IO[bytes]) -> tuple[int, str]:
@@ -2386,23 +2302,10 @@ def _run_owned_command(
 
 
 def _kill_spawned_process_group(process: subprocess.Popen[bytes]) -> None:
-    """Clean a just-spawned new session before its start token is available."""
-    pid = process.pid
     try:
-        # Popen still owns the unreaped child PID here, so this lookup cannot
-        # resolve to a reused process even if the child has already exited.
-        if os.getpgid(pid) != pid:
-            raise ContainedReviewerProcessError("runtime")
-        os.killpg(pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    except OSError as error:
+        process_groups.kill_spawned_process_group(process)
+    except process_groups.ReviewerProcessGroupError as error:
         raise ContainedReviewerProcessError("runtime") from error
-    try:
-        process.wait(timeout=5)
-    except subprocess.TimeoutExpired as error:
-        raise ContainedReviewerProcessError("runtime") from error
-    _reap_process_group(pid, 5)
 
 
 def _unique_output_object(pairs: list[tuple[str, object]]) -> dict[str, object]:

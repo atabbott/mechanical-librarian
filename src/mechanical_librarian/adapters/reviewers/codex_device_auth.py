@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock, Thread
 
+from mechanical_librarian.adapters.reviewers import process_group as process_groups
 from mechanical_librarian.application.reviewer_contracts import CodexDeviceAuthState
 
 _DEVICE_URL = "https://auth.openai.com/codex/device"
@@ -30,6 +31,8 @@ _MAX_OUTPUT_BYTES = 16_384
 _MAX_AUTH_BYTES = 65_536
 _DEVICE_DEADLINE_SECONDS = 900
 _SHUTDOWN_GRACE_SECONDS = 5
+_MAX_STAGING_ENTRIES = 4096
+_MAX_STAGING_DEPTH = 16
 _RESOURCE_EXEC_MODULE = "mechanical_librarian.adapters.reviewers.resource_exec"
 
 
@@ -49,6 +52,12 @@ CommandFactory = Callable[
     [Path, str], CodexAuthCommand | tuple[Sequence[str], Mapping[str, str]]
 ]
 PopenFactory = Callable[..., subprocess.Popen[bytes]]
+CaptureProcessGroup = Callable[
+    [subprocess.Popen[bytes]], process_groups.ReviewerProcessGroup
+]
+ProcessGroupAction = Callable[
+    [subprocess.Popen[bytes], process_groups.ReviewerProcessGroup], None
+]
 
 
 class CodexDeviceAuthManager:
@@ -63,6 +72,13 @@ class CodexDeviceAuthManager:
         lease_current: Callable[[], bool] = lambda: True,
         lease_guard: Callable[[], AbstractContextManager[None]] = nullcontext,
         activity_guard: Callable[[], AbstractContextManager[None]] = nullcontext,
+        capture_process_group: CaptureProcessGroup = process_groups.capture_process_group,
+        finish_process_group: ProcessGroupAction = lambda _process, identity: (
+            process_groups.finish_process_group(identity)
+        ),
+        terminate_process_group: ProcessGroupAction = lambda _process, identity: (
+            process_groups.terminate_process_group(identity)
+        ),
     ) -> None:
         self._auth_store = auth_store
         self._command_factory = command_factory
@@ -70,14 +86,19 @@ class CodexDeviceAuthManager:
         self._lease_current = lease_current
         self._lease_guard = lease_guard
         self._activity_guard = activity_guard
+        self._capture_process_group = capture_process_group
+        self._finish_process_group = finish_process_group
+        self._terminate_process_group = terminate_process_group
         self._lock = Lock()
         self._process: subprocess.Popen[bytes] | None = None
+        self._process_group: process_groups.ReviewerProcessGroup | None = None
         self._thread: Thread | None = None
         self._cancelled = False
         self._spawning = False
         self._installing = False
         self._state = CodexDeviceAuthState("ready")
         self._recovered = False
+        self._trust_failed = False
 
     def _require_lease(self) -> None:
         if not self._lease_current():
@@ -92,10 +113,13 @@ class CodexDeviceAuthManager:
             with self._lock:
                 self._state = recovered
                 self._recovered = True
+                self._trust_failed = recovered.state == "failed"
 
     def start(self) -> CodexDeviceAuthState:
         self._prepare_store()
         with self._lock:
+            if self._trust_failed:
+                return self._state
             if self._thread is not None and self._thread.is_alive():
                 return self._state
             self._cancelled = False
@@ -120,6 +144,8 @@ class CodexDeviceAuthManager:
 
     def cancel(self) -> CodexDeviceAuthState:
         with self._lock:
+            if self._trust_failed:
+                return self._state
             if self._installing:
                 return self._state
             if self._state.state == "usable" and (
@@ -127,10 +153,20 @@ class CodexDeviceAuthManager:
             ):
                 return self._state
             process = self._process
+            process_group = self._process_group
             self._cancelled = True
             self._state = CodexDeviceAuthState("cancelled")
         if process is not None:
-            _stop_process(process)
+            if process_group is None:
+                raise CodexDeviceAuthError("process")
+            try:
+                self._stop_owned_process(process, process_group)
+            except CodexDeviceAuthError:
+                with self._lock:
+                    self._state = CodexDeviceAuthState(
+                        "failed", failure="protocol_or_process"
+                    )
+                raise
         return CodexDeviceAuthState("cancelled")
 
     def close(self) -> None:
@@ -144,6 +180,9 @@ class CodexDeviceAuthManager:
 
     def clear(self) -> CodexDeviceAuthState:
         self._prepare_store()
+        with self._lock:
+            if self._trust_failed:
+                raise CodexDeviceAuthError("staging")
         self.close()
         with self._activity_guard(), self._lease_guard():
             self._require_lease()
@@ -172,6 +211,8 @@ class CodexDeviceAuthManager:
         with self._lease_guard():
             self._prepare_store()
             with self._lock:
+                if self._trust_failed:
+                    return self._state
                 if self._thread is not None and self._thread.is_alive():
                     return self._state
             target = self._auth_store / "auth.json"
@@ -236,6 +277,30 @@ class CodexDeviceAuthManager:
         # activity boundary without hiding which operation owns the lock.
         with self._activity_guard():
             self._run_flow()
+            while True:
+                with self._lock:
+                    process = self._process
+                    process_group = self._process_group
+                if process is None and process_group is None:
+                    return
+                if process is None or process_group is None:
+                    with self._lock:
+                        self._state = CodexDeviceAuthState(
+                            "failed", failure="protocol_or_process"
+                        )
+                    time.sleep(0.05)
+                    continue
+                try:
+                    self._stop_owned_process(process, process_group)
+                except CodexDeviceAuthError:
+                    with self._lock:
+                        self._state = CodexDeviceAuthState(
+                            "failed", failure="protocol_or_process"
+                        )
+                    time.sleep(0.05)
+                    continue
+                self._release(process, process_group)
+                return
 
     def _run_flow(self) -> None:
         deadline = time.monotonic() + _DEVICE_DEADLINE_SECONDS
@@ -243,6 +308,7 @@ class CodexDeviceAuthManager:
         staging: Path | None = None
         prepared: CodexAuthCommand | None = None
         process: subprocess.Popen[bytes] | None = None
+        process_group: process_groups.ReviewerProcessGroup | None = None
         try:
             with self._lease_guard():
                 self._require_lease()
@@ -254,30 +320,35 @@ class CodexDeviceAuthManager:
                 os.chmod(staging, 0o700)
                 _private_directory_descriptor(staging, create=False, close=True)
                 prepared = _prepared(self._command_factory(staging, "start"))
-            process = self._spawn(prepared, flow_owned=True)
+            process, process_group = self._spawn(prepared, flow_owned=True)
             with self._lock:
                 cancelled = self._cancelled
             if cancelled:
-                _stop_process(process)
+                self._stop_owned_process(process, process_group)
                 return
             if process.stdout is None:
                 raise CodexDeviceAuthError("process")
+            output_process = process
+            output_process_group = process_group
             lines = _bounded_output_lines(
-                process,
-                process.stdout,
+                output_process,
+                output_process.stdout,
                 deadline=deadline,
                 on_lines=lambda value: self._publish_issued(value),
+                stop_process=lambda: self._stop_owned_process(
+                    output_process, output_process_group
+                ),
             )
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                _stop_process(process)
+                self._stop_owned_process(process, process_group)
                 lines.append(_TIMEOUT_LINE)
                 returncode = -signal.SIGKILL
             else:
                 try:
                     returncode = process.wait(timeout=remaining)
                 except subprocess.TimeoutExpired:
-                    _stop_process(process)
+                    self._stop_owned_process(process, process_group)
                     lines.append(_TIMEOUT_LINE)
                     returncode = -signal.SIGKILL
             with self._lock:
@@ -295,8 +366,10 @@ class CodexDeviceAuthManager:
                 return
             if _issued_state(lines) is None:
                 raise CodexDeviceAuthError("protocol")
-            self._release(process)
+            self._finish_owned_process(process, process_group)
+            self._release(process, process_group)
             process = None
+            process_group = None
             prepared.close()
             prepared = None
             self._set_state(CodexDeviceAuthState("validating"))
@@ -318,12 +391,14 @@ class CodexDeviceAuthManager:
                     self._installing = True
                 try:
                     _install_auth(auth_path, self._auth_store)
+                    _remove_staging(staging)
+                    staging = None
+                    self._require_lease()
+                    with self._lock:
+                        self._state = CodexDeviceAuthState("usable")
                 finally:
                     with self._lock:
                         self._installing = False
-                self._require_lease()
-                with self._lock:
-                    self._state = CodexDeviceAuthState("usable")
         except (OSError, subprocess.SubprocessError, CodexDeviceAuthError):
             with self._lock:
                 if not self._cancelled:
@@ -333,18 +408,29 @@ class CodexDeviceAuthManager:
         finally:
             if prepared is not None:
                 prepared.close()
-            if process is not None and process.poll() is None:
+            if process is not None and process_group is not None:
                 try:
-                    _stop_process(process)
+                    self._stop_owned_process(process, process_group)
                 except CodexDeviceAuthError:
-                    pass
-            self._release(process)
+                    with self._lock:
+                        self._state = CodexDeviceAuthState(
+                            "failed", failure="protocol_or_process"
+                        )
+                else:
+                    self._release(process, process_group)
             if staging is not None:
-                shutil.rmtree(staging, ignore_errors=True)
+                try:
+                    _remove_staging(staging)
+                except (OSError, CodexDeviceAuthError):
+                    with self._lock:
+                        self._trust_failed = True
+                        self._state = CodexDeviceAuthState(
+                            "failed", failure="protocol_or_process"
+                        )
 
     def _spawn(
         self, prepared: CodexAuthCommand, *, flow_owned: bool
-    ) -> subprocess.Popen[bytes]:
+    ) -> tuple[subprocess.Popen[bytes], process_groups.ReviewerProcessGroup]:
         with self._lease_guard():
             self._require_lease()
             with self._lock:
@@ -371,29 +457,86 @@ class CodexDeviceAuthManager:
                 with self._lock:
                     self._spawning = False
                 raise
+            try:
+                process_group = self._capture_process_group(process)
+            except process_groups.ReviewerProcessGroupError as error:
+                try:
+                    process_groups.kill_spawned_process_group(process)
+                except process_groups.ReviewerProcessGroupError as cleanup_error:
+                    raise CodexDeviceAuthError("process") from cleanup_error
+                finally:
+                    with self._lock:
+                        self._spawning = False
+                raise CodexDeviceAuthError("process") from error
+            except BaseException:
+                try:
+                    process_groups.kill_spawned_process_group(process)
+                finally:
+                    with self._lock:
+                        self._spawning = False
+                raise
             with self._lock:
                 self._spawning = False
                 self._process = process
+                self._process_group = process_group
                 cancelled = self._cancelled
         if cancelled:
-            _stop_process(process)
-            self._release(process)
+            self._stop_owned_process(process, process_group)
+            self._release(process, process_group)
             raise CodexDeviceAuthError("cancelled")
-        return process
+        return process, process_group
 
-    def _release(self, process: subprocess.Popen[bytes] | None) -> None:
+    def _release(
+        self,
+        process: subprocess.Popen[bytes] | None,
+        process_group: process_groups.ReviewerProcessGroup | None,
+    ) -> None:
         with self._lock:
-            if self._process is process:
+            if self._process is process and self._process_group == process_group:
                 self._process = None
+                self._process_group = None
 
     def _status_command(
         self, prepared: CodexAuthCommand, deadline: float, *, flow_owned: bool
     ) -> tuple[bytes, int]:
-        process = self._spawn(prepared, flow_owned=flow_owned)
+        process, process_group = self._spawn(prepared, flow_owned=flow_owned)
         try:
-            return _bounded_status(process, prepared, deadline)
+            result = _bounded_status(
+                process,
+                prepared,
+                deadline,
+                stop_process=lambda: self._stop_owned_process(process, process_group),
+            )
+            self._finish_owned_process(process, process_group)
+            return result
         finally:
-            self._release(process)
+            if self._process is process:
+                try:
+                    self._stop_owned_process(process, process_group)
+                except CodexDeviceAuthError:
+                    raise
+                else:
+                    self._release(process, process_group)
+
+    def _stop_owned_process(
+        self,
+        process: subprocess.Popen[bytes],
+        identity: process_groups.ReviewerProcessGroup,
+    ) -> None:
+        try:
+            self._terminate_process_group(process, identity)
+        except process_groups.ReviewerProcessGroupError as error:
+            raise CodexDeviceAuthError("process") from error
+
+    def _finish_owned_process(
+        self,
+        process: subprocess.Popen[bytes],
+        identity: process_groups.ReviewerProcessGroup,
+    ) -> None:
+        try:
+            self._finish_process_group(process, identity)
+        except process_groups.ReviewerProcessGroupError as error:
+            raise CodexDeviceAuthError("process") from error
 
     def _publish_issued(self, lines: list[str]) -> None:
         issued = _issued_state(lines)
@@ -455,28 +598,78 @@ def _issued_state(lines: list[str]) -> CodexDeviceAuthState | None:
     )
 
 
-def _stop_process(process: subprocess.Popen[bytes]) -> None:
-    if process.poll() is not None:
-        return
+def _remove_staging(path: Path) -> None:
+    """Remove only the exact private staging tree with bounded no-follow descent."""
+    if not path.name.startswith("reviewer-auth-") or path.name in {
+        "reviewer-auth-",
+        ".",
+        "..",
+    }:
+        raise CodexDeviceAuthError("staging")
+    parent = _private_directory_descriptor(path.parent, create=False)
+    staging = -1
     try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
+        staging = os.open(
+            path.name,
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=parent,
+        )
+        information = os.fstat(staging)
+        if (
+            not stat.S_ISDIR(information.st_mode)
+            or information.st_uid != os.geteuid()
+            or stat.S_IMODE(information.st_mode) != 0o700
+        ):
+            raise CodexDeviceAuthError("staging")
+        _remove_staging_contents(staging, depth=0, remaining=[_MAX_STAGING_ENTRIES])
+        os.close(staging)
+        staging = -1
+        os.rmdir(path.name, dir_fd=parent)
+        os.fsync(parent)
+    finally:
+        if staging >= 0:
+            os.close(staging)
+        os.close(parent)
+
+
+def _remove_staging_contents(
+    directory: int, *, depth: int, remaining: list[int]
+) -> None:
+    if depth > _MAX_STAGING_DEPTH:
+        raise CodexDeviceAuthError("staging")
+    for name in sorted(os.listdir(directory)):
+        remaining[0] -= 1
+        if remaining[0] < 0:
+            raise CodexDeviceAuthError("staging")
+        information = os.stat(name, dir_fd=directory, follow_symlinks=False)
+        if stat.S_ISDIR(information.st_mode):
+            child = os.open(
+                name,
+                os.O_RDONLY
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=directory,
+            )
+            try:
+                _remove_staging_contents(child, depth=depth + 1, remaining=remaining)
+            finally:
+                os.close(child)
+            os.rmdir(name, dir_fd=directory)
+        else:
+            os.unlink(name, dir_fd=directory)
+
+
+def _stop_process(
+    process: subprocess.Popen[bytes], identity: process_groups.ReviewerProcessGroup
+) -> None:
     try:
-        process.wait(timeout=_SHUTDOWN_GRACE_SECONDS)
-        return
-    except subprocess.TimeoutExpired:
-        pass
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    try:
-        process.wait(timeout=_SHUTDOWN_GRACE_SECONDS)
-    except subprocess.TimeoutExpired as error:
+        process_groups.terminate_process_group(identity)
+    except process_groups.ReviewerProcessGroupError as error:
         raise CodexDeviceAuthError("process") from error
-    if process.poll() is None:
-        raise CodexDeviceAuthError("process")
 
 
 def _resource_command(command: Sequence[str]) -> tuple[str, ...]:
@@ -484,11 +677,15 @@ def _resource_command(command: Sequence[str]) -> tuple[str, ...]:
 
 
 def _bounded_status(
-    process: subprocess.Popen[bytes], prepared: CodexAuthCommand, deadline: float
+    process: subprocess.Popen[bytes],
+    prepared: CodexAuthCommand,
+    deadline: float,
+    *,
+    stop_process: Callable[[], None],
 ) -> tuple[bytes, int]:
     """Run one status command with bounded merged output and one deadline."""
     if process.stdout is None:
-        _stop_process(process)
+        stop_process()
         raise CodexDeviceAuthError("process")
     output = bytearray()
     try:
@@ -503,7 +700,7 @@ def _bounded_status(
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                _stop_process(process)
+                stop_process()
                 raise subprocess.TimeoutExpired(prepared.command, 0)
             if selector is not None:
                 if not selector.select(timeout=min(0.25, remaining)):
@@ -521,16 +718,16 @@ def _bounded_status(
                 break
             output.extend(chunk)
             if len(output) > _MAX_OUTPUT_BYTES:
-                _stop_process(process)
+                stop_process()
                 raise CodexDeviceAuthError("protocol")
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            _stop_process(process)
+            stop_process()
             raise subprocess.TimeoutExpired(prepared.command, 0)
         try:
             return bytes(output), process.wait(timeout=remaining)
         except subprocess.TimeoutExpired:
-            _stop_process(process)
+            stop_process()
             raise
     finally:
         if selector is not None:
@@ -543,6 +740,7 @@ def _bounded_output_lines(
     *,
     deadline: float,
     on_lines: Callable[[list[str]], None],
+    stop_process: Callable[[], None],
 ) -> list[str]:
     """Read bounded chunks without permitting an unbounded pipe line allocation."""
     output = bytearray()
@@ -559,7 +757,7 @@ def _bounded_output_lines(
     try:
         while True:
             if time.monotonic() >= deadline:
-                _stop_process(process)
+                stop_process()
                 return [*lines, _TIMEOUT_LINE]
             if selector is not None:
                 if not selector.select(timeout=min(0.25, deadline - time.monotonic())):

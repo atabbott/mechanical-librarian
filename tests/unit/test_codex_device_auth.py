@@ -16,6 +16,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from mechanical_librarian.adapters.reviewers import process_group as process_groups
 from mechanical_librarian.adapters.reviewers.codex_device_auth import (
     CodexAuthCommand,
     CodexDeviceAuthError,
@@ -96,6 +97,30 @@ def _manager(
     lease_guard: Callable[[], AbstractContextManager[None]] = nullcontext,
     activity_guard: Callable[[], AbstractContextManager[None]] = nullcontext,
 ) -> CodexDeviceAuthManager:
+    def capture(
+        process: subprocess.Popen[bytes],
+    ) -> process_groups.ReviewerProcessGroup:
+        return process_groups.ReviewerProcessGroup(process.pid, process.pid, "1")
+
+    def finish(
+        _process: subprocess.Popen[bytes],
+        _identity: process_groups.ReviewerProcessGroup,
+    ) -> None:
+        return
+
+    def terminate(
+        process: subprocess.Popen[bytes],
+        identity: process_groups.ReviewerProcessGroup,
+    ) -> None:
+        if process.poll() is not None:
+            return
+        os.killpg(identity.pgid, signal.SIGTERM)
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            os.killpg(identity.pgid, signal.SIGKILL)
+            process.wait(timeout=5)
+
     def command(staging: Path, action: str):
         return ([action, str(staging)], {"CODEX_HOME": str(staging)})
 
@@ -120,6 +145,9 @@ def _manager(
         lease_current=lease_current,
         lease_guard=lease_guard,
         activity_guard=activity_guard,
+        capture_process_group=capture,
+        finish_process_group=finish,
+        terminate_process_group=terminate,
     )
 
 
@@ -223,6 +251,151 @@ def test_exact_timeout_is_expired_and_permission_failure_is_failed(
     assert failed.status().failure == "permission_or_process"
 
 
+def test_staging_removal_refusal_after_install_never_publishes_usable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = _manager(tmp_path)
+    original_unlink = os.unlink
+
+    def refuse_auth(path: str, *, dir_fd: int | None = None) -> None:
+        if path == "auth.json" and dir_fd is not None:
+            raise OSError("synthetic staging removal refusal")
+        original_unlink(path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "unlink", refuse_auth)
+    _finish(manager)
+
+    assert manager.status() == CodexDeviceAuthState(
+        "failed", failure="protocol_or_process"
+    )
+    assert (tmp_path / "profile" / "auth.json").exists()
+    assert any(path.name.startswith("reviewer-auth-") for path in tmp_path.iterdir())
+    manager._popen = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        AssertionError("trust failure must not spawn")
+    )
+    assert manager.current_credential_status().state == "failed"
+    assert manager.recheck_credential_status().state == "failed"
+    assert manager.start().state == "failed"
+    with pytest.raises(CodexDeviceAuthError, match="staging"):
+        manager.clear()
+
+
+def test_staging_removal_refusal_after_validation_failure_remains_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = _manager(
+        tmp_path,
+        status=subprocess.CompletedProcess(("status",), 1, b"", b""),
+    )
+    original_unlink = os.unlink
+
+    def refuse_auth(path: str, *, dir_fd: int | None = None) -> None:
+        if path == "auth.json" and dir_fd is not None:
+            raise OSError("synthetic staging removal refusal")
+        original_unlink(path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "unlink", refuse_auth)
+
+    _finish(manager)
+
+    assert manager.status() == CodexDeviceAuthState(
+        "failed", failure="protocol_or_process"
+    )
+    assert not (tmp_path / "profile" / "auth.json").exists()
+    assert any(path.name.startswith("reviewer-auth-") for path in tmp_path.iterdir())
+
+
+def test_flow_retains_activity_and_process_until_cleanup_is_proven(
+    tmp_path: Path,
+) -> None:
+    entered = Event()
+    exited = Event()
+    cleanup_blocked = Event()
+    allow_cleanup = Event()
+
+    @contextmanager
+    def activity() -> Iterator[None]:
+        entered.set()
+        try:
+            yield
+        finally:
+            exited.set()
+
+    manager = _manager(tmp_path, output=b"malformed\n", activity_guard=activity)
+    original = manager._terminate_process_group
+
+    def blocked_cleanup(
+        process: subprocess.Popen[bytes],
+        identity: process_groups.ReviewerProcessGroup,
+    ) -> None:
+        cleanup_blocked.set()
+        if not allow_cleanup.is_set():
+            raise process_groups.ReviewerProcessGroupError("runtime")
+        original(process, identity)
+
+    manager._terminate_process_group = blocked_cleanup
+    manager.start()
+    assert entered.wait(timeout=2)
+    assert cleanup_blocked.wait(timeout=2)
+    assert not exited.is_set()
+    assert manager._process is not None
+    assert manager.status().state == "failed"
+
+    allow_cleanup.set()
+    assert manager._thread is not None
+    manager._thread.join(timeout=2)
+    assert not manager._thread.is_alive()
+    assert exited.is_set()
+    assert manager._process is None
+
+
+def test_manager_identity_capture_failure_reaps_before_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = _manager(tmp_path)
+    reaped: list[int] = []
+    manager._capture_process_group = lambda _process: (_ for _ in ()).throw(
+        process_groups.ReviewerProcessGroupError("runtime")
+    )
+    monkeypatch.setattr(
+        process_groups,
+        "kill_spawned_process_group",
+        lambda process: reaped.append(process.pid),
+    )
+
+    _finish(manager)
+
+    assert reaped == [123456789]
+    assert manager.status() == CodexDeviceAuthState(
+        "failed", failure="protocol_or_process"
+    )
+    assert manager._process is None
+
+
+def test_cancel_cleanup_failure_is_failed_and_retains_exact_owner(
+    tmp_path: Path,
+) -> None:
+    manager = _manager(tmp_path)
+    assert manager.status().state == "ready"
+    process = _Process(b"", 0)
+    process.returncode = None  # type: ignore[assignment]
+    identity = process_groups.ReviewerProcessGroup(process.pid, process.pid, "1")
+    manager._process = process  # type: ignore[assignment]
+    manager._process_group = identity
+    manager._terminate_process_group = lambda _process, _identity: (
+        _ for _ in ()
+    ).throw(process_groups.ReviewerProcessGroupError("runtime"))
+
+    with pytest.raises(CodexDeviceAuthError, match="process"):
+        manager.cancel()
+
+    assert manager.status() == CodexDeviceAuthState(
+        "failed", failure="protocol_or_process"
+    )
+    assert cast("object", manager._process) is process
+    assert manager._process_group == identity
+
+
 @pytest.mark.parametrize(
     "output",
     (
@@ -320,6 +493,7 @@ def test_status_deadline_stops_child_before_read(
             cast("subprocess.Popen[bytes]", process),
             prepared,
             time.monotonic() - 1,
+            stop_process=lambda: setattr(process, "returncode", -15),
         )
     assert process.poll() == -15
 
@@ -350,6 +524,9 @@ def test_cancel_targets_only_the_exact_active_process(
     process = _Process(b"", 0)
     process.returncode = None  # type: ignore[assignment]
     manager._process = process  # type: ignore[assignment]
+    manager._process_group = process_groups.ReviewerProcessGroup(
+        process.pid, process.pid, "1"
+    )
     killed: list[tuple[int, int]] = []
     monkeypatch.setattr(os, "killpg", lambda pid, sig: killed.append((pid, sig)))
     assert manager.cancel().state == "cancelled"
@@ -361,22 +538,61 @@ def test_shutdown_escalates_sigterm_resistant_child_and_proves_death(
 ) -> None:
     process = _Process(b"", 0)
     process.returncode = None  # type: ignore[assignment]
-    waits = 0
-
-    def wait(timeout: float | None = None) -> int:
-        nonlocal waits
-        waits += 1
-        if waits == 1:
-            raise subprocess.TimeoutExpired(("device",), timeout or 0)
-        process.returncode = -9
-        return -9
-
-    monkeypatch.setattr(process, "wait", wait)
     killed: list[int] = []
-    monkeypatch.setattr(os, "killpg", lambda _pid, sig: killed.append(sig))
-    _stop_process(cast("subprocess.Popen[bytes]", process))
+
+    def kill_group(_pid: int, sent: int) -> None:
+        killed.append(sent)
+        if sent == signal.SIGKILL:
+            process.returncode = -signal.SIGKILL
+
+    monkeypatch.setattr(os, "killpg", kill_group)
+    identity = process_groups.ReviewerProcessGroup(process.pid, process.pid, "1")
+    monkeypatch.setattr(process_groups, "require_signal_identity", lambda _value: True)
+    reaps = 0
+
+    def reap(_pgid: int, _timeout: float) -> None:
+        nonlocal reaps
+        reaps += 1
+        if reaps == 1:
+            raise process_groups.ReviewerProcessGroupError("runtime")
+
+    monkeypatch.setattr(process_groups, "reap_process_group", reap)
+    monkeypatch.setattr(process_groups, "wait_for_exit", lambda _pid, _timeout: 0)
+    monkeypatch.setattr(process_groups, "process_identity_alive", lambda _value: False)
+    _stop_process(cast("subprocess.Popen[bytes]", process), identity)
     assert killed == [signal.SIGTERM, signal.SIGKILL]
     assert process.poll() == -9
+
+
+def test_shutdown_does_not_release_when_broker_exits_before_its_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = _Process(b"", 0)
+    process.returncode = None  # type: ignore[assignment]
+    signals: list[int] = []
+
+    def kill_group(_pid: int, sent: int) -> None:
+        signals.append(sent)
+        if sent == signal.SIGTERM:
+            process.returncode = -signal.SIGTERM
+
+    monkeypatch.setattr(os, "killpg", kill_group)
+    identity = process_groups.ReviewerProcessGroup(process.pid, process.pid, "1")
+    monkeypatch.setattr(process_groups, "require_signal_identity", lambda _value: True)
+    reaps = 0
+
+    def reap(_pgid: int, _timeout: float) -> None:
+        nonlocal reaps
+        reaps += 1
+        if reaps == 1:
+            raise process_groups.ReviewerProcessGroupError("runtime")
+
+    monkeypatch.setattr(process_groups, "reap_process_group", reap)
+    monkeypatch.setattr(process_groups, "wait_for_exit", lambda _pid, _timeout: 0)
+    monkeypatch.setattr(process_groups, "process_identity_alive", lambda _value: False)
+    _stop_process(cast("subprocess.Popen[bytes]", process), identity)
+
+    assert signals == [signal.SIGTERM, signal.SIGKILL]
 
 
 def test_eof_from_still_running_child_uses_bounded_wait_then_kill(

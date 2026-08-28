@@ -29,7 +29,9 @@ _RUNNER = r"""
 import hashlib, json, os, subprocess, sys, tempfile, threading, time
 from contextlib import ExitStack
 from pathlib import Path
+from mechanical_librarian.adapters.reviewers import codex_device_auth as auth_module
 from mechanical_librarian.adapters.reviewers import contained_reviewer as reviewer_module
+from mechanical_librarian.adapters.reviewers.codex_device_auth import CodexAuthCommand, CodexDeviceAuthManager
 from mechanical_librarian.adapters.reviewers.contained_reviewer import ContainedReviewerAdapter, ContainedReviewerProfile, _bound_artifact, _resource_command, _run_owned_command, _sealed_model_catalog_descriptor, no_process_seccomp_descriptor, prepare_contained_device_auth_command
 from mechanical_librarian.application.contained_reviewer_contract import ContainedReviewerIdentity
 from mechanical_librarian.bootstrap.composition import _CodexAuthLeaseCoordinator
@@ -58,6 +60,24 @@ def descendants(root):
 
 def identity(pid):
     raw = Path(f'/proc/{pid}/stat').read_text(); tail = raw[raw.rindex(')') + 2:].split(); return [pid, int(tail[2]), tail[19]]
+
+def sleeping_auth_command(profile, home, action):
+    prepared = prepare_contained_device_auth_command(profile, home, action)
+    command = list(prepared.command); payload_index = command.index('/runtime/codex', command.index('/runtime/seccomp_exec.py'))
+    if action == 'start':
+        script = "import time; print('Open this URL in your browser'); print('https://auth.openai.com/codex/device'); print('Enter this one-time code (expires in 15 minutes)'); print('ABCD-EFGH', flush=True); time.sleep(30)"
+    else:
+        script = "import time; time.sleep(30)"
+    command[payload_index:] = ['/runtime/python', '-c', script]
+    return CodexAuthCommand(command, prepared.environment, prepared.pass_fds, prepared.close)
+
+def wait_for_device(manager, states, timeout=8):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        state = manager.status()
+        if state.state in states: return state
+        time.sleep(.01)
+    raise RuntimeError('device manager state timeout')
 
 def exercise():
     global inside, maximum
@@ -117,6 +137,25 @@ def exercise():
                         finally: reviewer_module.subprocess.Popen = saved
                     finally: prepared.close()
                     if set(descendants(os.getpid())) != before: raise RuntimeError('cancelled tree survived')
+                    stage = 'manager-cancel'
+                    cancel_manager = CodexDeviceAuthManager(root/'manager-cancel'/'profile', lambda home, action: sleeping_auth_command(profile, home, action), popen=recording_popen)
+                    cancel_manager.start(); wait_for_device(cancel_manager, {'issued', 'waiting'}); cancel_manager.cancel(); cancel_manager.close()
+                    manager_cancel_reaped = set(descendants(os.getpid())) == before
+                    if not manager_cancel_reaped: raise RuntimeError('device manager cancel tree survived')
+                    stage = 'manager-timeout'; saved_deadline = auth_module._DEVICE_DEADLINE_SECONDS; auth_module._DEVICE_DEADLINE_SECONDS = 1
+                    try:
+                        timeout_manager = CodexDeviceAuthManager(root/'manager-timeout'/'profile', lambda home, action: sleeping_auth_command(profile, home, action), popen=recording_popen)
+                        timeout_manager.start(); wait_for_device(timeout_manager, {'expired'}); timeout_manager.close()
+                    finally: auth_module._DEVICE_DEADLINE_SECONDS = saved_deadline
+                    manager_timeout_reaped = set(descendants(os.getpid())) == before
+                    if not manager_timeout_reaped: raise RuntimeError('device manager timeout tree survived')
+                    stage = 'manager-handoff'
+                    predecessor = CodexDeviceAuthManager(root/'manager-handoff'/'profile', lambda home, action: sleeping_auth_command(profile, home, action), popen=recording_popen)
+                    predecessor.start(); wait_for_device(predecessor, {'issued', 'waiting'}); predecessor.close()
+                    successor = CodexDeviceAuthManager(root/'manager-handoff'/'profile', lambda home, action: sleeping_auth_command(profile, home, action), popen=recording_popen)
+                    successor.clear(); successor.close()
+                    manager_handoff_reaped = set(descendants(os.getpid())) == before
+                    if not manager_handoff_reaped: raise RuntimeError('device manager handoff tree survived')
                     stage = 'review'; job = jobs/'job'; provider = job/'provider'; job.mkdir(mode=0o700); provider.mkdir(mode=0o700)
                     credential = job/'auth.json'; credential.write_text('{}'); credential.chmod(0o600); result = job/'result.json'
                     stdin = stack.enter_context(open(os.devnull, 'rb')); stdout = stack.enter_context(tempfile.TemporaryFile()); stderr = stack.enter_context(tempfile.TemporaryFile())
@@ -143,7 +182,7 @@ def exercise():
                     finally: os.close(credential_fd)
                     captured['thread'].join(timeout=6); stdout.seek(0); document = json.loads(stdout.readline()); ids = captured['ids']; pgids = {value[1] for value in ids}
                     if returncode != 0 or len(ids) != 4 or len(pgids) != 1 or ids[0] != captured['broker'] or set(descendants(os.getpid())) != before: raise RuntimeError('owned reviewer tree proof failed')
-                    document.update({'limits': captured['limits'], 'lineage': ids, 'one_group': True}); runs.append(document)
+                    document.update({'limits': captured['limits'], 'lineage': ids, 'one_group': True, 'manager_cancel_reaped': manager_cancel_reaped, 'manager_timeout_reaped': manager_timeout_reaped, 'manager_handoff_reaped': manager_handoff_reaped}); runs.append(document)
             finally:
                 with lock: inside -= 1
     except BaseException as error: errors.append(stage + ':' + type(error).__name__ + ':' + str(error))
@@ -208,6 +247,9 @@ def main() -> int:
         and document["identity_failure_reaped"] is True
         and document["timeout_reaped"] is True
         and document["cancel_reaped"] is True
+        and document["manager_cancel_reaped"] is True
+        and document["manager_timeout_reaped"] is True
+        and document["manager_handoff_reaped"] is True
         and document["runs"] == 2
         and document["limits"] == expected_limits
         and document["payload_as"] == expected_limits[-1]
