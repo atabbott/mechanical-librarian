@@ -176,7 +176,7 @@ def _compose_review_client(
     # one connection, and it asserts nothing about sessions outliving a
     # restart, so binding it to a path would only add a filesystem the caller
     # does not otherwise need.
-    session_store = SQLiteReviewSessionRepository.open(Path(":memory:"))
+    session_store = SQLiteReviewSessionRepository.open_ephemeral()
     application = compose_review_application(
         state_owner=repository,
         session_store=session_store,

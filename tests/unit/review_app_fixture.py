@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 import hashlib
-import sqlite3
 import time
 from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
 
 from mechanical_librarian.adapters.persistence.review_sessions import (
-    _REVIEW_LOGIN_FAILURES_SQL,
-    _REVIEW_SESSIONS_SQL,
     SQLiteReviewSessionRepository,
 )
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
@@ -123,12 +120,7 @@ def create_transport_test_app(
         if hasattr(repository, "begin_login"):
             session_store = repository
         else:
-            session_connection = sqlite3.connect(
-                ":memory:", isolation_level=None, check_same_thread=False
-            )
-            session_connection.execute(_REVIEW_SESSIONS_SQL)
-            session_connection.execute(_REVIEW_LOGIN_FAILURES_SQL)
-            session_store = SQLiteReviewSessionRepository(session_connection)
+            session_store = SQLiteReviewSessionRepository.open_ephemeral()
     application = compose_review_application(
         state_owner=repository,
         session_store=session_store,

@@ -72,6 +72,16 @@ class SQLiteReviewSessionRepository:
         self._lock = lock if lock is not None else threading.RLock()
 
     @classmethod
+    def open_ephemeral(cls) -> SQLiteReviewSessionRepository:
+        """Open the process-local store used by owned test and qualification runs."""
+        connection = sqlite3.connect(
+            ":memory:", isolation_level=None, check_same_thread=False
+        )
+        connection.execute(_REVIEW_SESSIONS_SQL)
+        connection.execute(_REVIEW_LOGIN_FAILURES_SQL)
+        return cls(connection)
+
+    @classmethod
     def open(cls, path: Path) -> SQLiteReviewSessionRepository:
         """Open or create the exact-current session database at ``path``.
 
