@@ -73,6 +73,7 @@ from mechanical_librarian.adapters.private_recovery import (
 )
 from mechanical_librarian.adapters.providers.google_books_metadata import (
     GoogleBooksMetadataProvider,
+    GoogleBooksPacer,
 )
 from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HardcoverMetadataProvider,
@@ -1201,6 +1202,7 @@ def run_metadata_report_loaded(
     credentials: dict[str, str] | None = None,
     repository_identity: tuple[int, int] | None = None,
     artifact_identity: tuple[int, int] | None = None,
+    google_books_pacer: GoogleBooksPacer | None = None,
     open_library_pacer: OpenLibraryPacer | None = None,
     hardcover_pacer: HardcoverPacer | None = None,
     review_action: PipelineAction | None = None,
@@ -1239,6 +1241,11 @@ def run_metadata_report_loaded(
         maximum_bytes=configuration.limits.target_response_bytes,
         timeout_seconds=configuration.limits.timeout_seconds,
     )
+    if google_books_pacer is None and any(
+        provider.enabled and provider.adapter == "google_books"
+        for provider in provider_configs
+    ):
+        google_books_pacer = GoogleBooksPacer()
     if open_library_pacer is None and any(
         provider.enabled and provider.adapter == "open_library"
         for provider in provider_configs
@@ -1272,6 +1279,7 @@ def run_metadata_report_loaded(
                     configuration.limits.provider_response_bytes,
                     configuration.limits.timeout_seconds,
                     api_key=api_key,
+                    pacer=google_books_pacer,
                 )
             elif value.adapter == "hardcover":
                 if value.secret_file is None and credentials is None:
@@ -1541,6 +1549,14 @@ def create_review_pipeline(
         maximum_bytes=configuration.limits.target_response_bytes,
         timeout_seconds=configuration.limits.timeout_seconds,
     )
+    google_books_pacer = (
+        GoogleBooksPacer()
+        if any(
+            provider.enabled and provider.adapter == "google_books"
+            for provider in configuration.providers
+        )
+        else None
+    )
     open_library_pacer = (
         OpenLibraryPacer()
         if any(
@@ -1619,6 +1635,7 @@ def create_review_pipeline(
                     configuration.limits.provider_response_bytes,
                     configuration.limits.timeout_seconds,
                     api_key=api_key,
+                    pacer=google_books_pacer,
                 )
             if value.adapter == "hardcover" and (
                 value.secret_file is not None or credentials is not None
@@ -1753,6 +1770,7 @@ def create_review_pipeline(
             action.item_id or "",
             0,
             expected_file_identity=action.file_identity,
+            google_books_pacer=google_books_pacer,
             open_library_pacer=open_library_pacer,
             hardcover_pacer=hardcover_pacer,
             review_action=action,
@@ -1807,6 +1825,7 @@ def create_review_pipeline(
             artifact_store_path,
             # Callers reject an absent review configuration before composing.
             cast("ReviewWebConfiguration", configuration.review),
+            provider_recovery=provider_recovery,
         )
 
     stages = ReviewPipelineStages(
@@ -2139,6 +2158,9 @@ def run_batch(
     credentials = _load_batch_credentials(
         configuration, selected_connections, selected_provider_names
     )
+    google_books_pacer = (
+        GoogleBooksPacer() if "google_books" in actual_adapters else None
+    )
     open_library_pacer = (
         OpenLibraryPacer() if "open_library" in actual_adapters else None
     )
@@ -2166,6 +2188,7 @@ def run_batch(
             credentials=credentials,
             repository_identity=repository_identity,
             artifact_identity=artifact_identity,
+            google_books_pacer=google_books_pacer,
             open_library_pacer=open_library_pacer,
             hardcover_pacer=hardcover_pacer,
         )
@@ -2803,7 +2826,7 @@ def run_review_server(
                 )
             )
             cover_considerations = _compose_cover_considerations(
-                repository, artifact_store_path, review
+                repository, artifact_store_path, review, provider_recovery
             )
             try:
                 review_application = compose_review_application(
@@ -2904,6 +2927,7 @@ def _compose_cover_considerations(
     repository: SQLiteMetadataReportRepository,
     artifact_store_path: Path,
     review: ReviewWebConfiguration,
+    provider_recovery: SQLiteProviderRecoveryStore | None = None,
 ) -> CoverConsiderationService:
     artifacts: CoverArtifactStore | None = None
 
@@ -2955,6 +2979,16 @@ def _compose_cover_considerations(
         ),
         reviewer_unavailable_reason=reviewer_unavailable_reason,
         bind_policy=bind_policy,
+        provider_fetching=(
+            None
+            if provider_recovery is None
+            else lambda report: provider_recovery.cover_fetching(
+                target_connection=report.target.connection,
+                library=report.target.library,
+                item=report.target.item,
+                source_report_id=report.report_id,
+            )
+        ),
     )
     service.update_policy(policy)
     return service

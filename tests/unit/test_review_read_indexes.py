@@ -351,7 +351,7 @@ def _representative_database(path: Path, works: int = _WORKS) -> sqlite3.Connect
                 "report_id": case.report_id,
                 "replay_digest": replay_digest,
                 "review_case_id": case.review_case_id,
-                "schema_version": "cover-consideration-v1",
+                "schema_version": "cover-consideration-v2",
                 "supersedes_id": None,
             },
             separators=(",", ":"),

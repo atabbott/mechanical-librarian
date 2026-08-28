@@ -57,7 +57,7 @@ def select_first_boot_mode(
         # and the next open rolls it back. Refusing it would turn a crash
         # during setup into a boot that will not resume. Only `-journal` is
         # admitted, because this store is `journal_mode=DELETE` and no WAL is
-        # adopted anywhere (ADR-0059).
+        # adopted anywhere (ADR-0060).
         if private_entries <= {
             "review-sessions.sqlite",
             "review-sessions.sqlite-journal",

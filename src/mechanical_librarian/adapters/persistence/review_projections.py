@@ -33,6 +33,9 @@ from contextlib import contextmanager
 from typing import Iterator, cast
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
+from mechanical_librarian.adapters.persistence.decisions import (
+    _automatic_decision_documents,
+)
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.review_sql import (
     _CURRENT_REVIEW_FROM_SQL,
@@ -48,10 +51,6 @@ from mechanical_librarian.application.review_web import (
     CurrentReviewCaseSnapshot,
     ReviewAttentionSnapshot,
     ReviewLibrarySnapshot,
-)
-from mechanical_librarian.domain.automatic_decision import (
-    AutomaticDecision,
-    AutomaticDecisionError,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
 from mechanical_librarian.domain.metadata_report import (
@@ -372,25 +371,10 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 ) != row[:10]:
                     raise MetadataReportError("review library is unavailable")
                 documents.append(decision.to_json())
-            automatic_rows = self._connection.execute(
-                "SELECT decision_id,destination,idempotency_digest,occurred_at,document "
-                "FROM automatic_decisions WHERE review_case_id=? "
-                "ORDER BY occurred_at,decision_id",
-                (review_case_id,),
-            ).fetchall()
-            for row in automatic_rows:
-                if len(row) != 5 or type(row[4]) is not str:
-                    raise MetadataReportError("review library is unavailable")
-                automatic_decision = AutomaticDecision.from_json(row[4])
-                if (
-                    automatic_decision.decision_id,
-                    automatic_decision.destination,
-                    automatic_decision.idempotency_digest,
-                    automatic_decision.occurred_at,
-                ) != row[:4] or automatic_decision.review_case_id != review_case_id:
-                    raise MetadataReportError("review library is unavailable")
-                documents.append(automatic_decision.to_json())
-        except (HumanDecisionError, AutomaticDecisionError, TypeError) as error:
+            documents.extend(
+                _automatic_decision_documents(self._connection, review_case_id)
+            )
+        except (HumanDecisionError, TypeError) as error:
             raise MetadataReportError("review library is unavailable") from error
         return tuple(documents)
 
@@ -446,12 +430,19 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             "SELECT DISTINCT recorded.destination FROM ("
             "SELECT destination,decision_id FROM automatic_decisions WHERE review_case_id=? "
             "UNION ALL "
+            "SELECT 'cover',selection.decision_id FROM current_review_case_lineages lineage "
+            "JOIN current_cover_selection_authorities current ON "
+            "current.connection_name=lineage.connection_name AND "
+            "current.library_name=lineage.library_name AND current.item_id=lineage.item_id "
+            "JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id "
+            "WHERE lineage.review_case_id=? AND selection.kind='automatic' "
+            "UNION ALL "
             "SELECT destination,decision_id FROM human_decisions WHERE review_case_id=?"
             ") recorded JOIN field_effects effect ON effect.decision_id=recorded.decision_id "
             "WHERE effect.state IN ('claimed','applying','reconciling') OR "
             "(effect.state='verified' AND recorded.destination='cover') "
             "ORDER BY recorded.destination",
-            (review_case_id, review_case_id),
+            (review_case_id, review_case_id, review_case_id),
         ).fetchall()
         if any(type(row[0]) is not str for row in rows):
             raise MetadataReportError("review attention is unavailable")

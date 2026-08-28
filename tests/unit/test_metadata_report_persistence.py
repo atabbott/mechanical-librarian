@@ -193,7 +193,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "current report schema with stale proposal policy",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v27",
+                "metadata-report-v30",
                 "fixed-conservative-v6",
             ),
         ),
@@ -275,10 +275,24 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             ),
         ),
         (
-            "previous proposal policy v3",
+            "immediate previous v27",
             lambda connection: create_prior_schema(
                 connection,
                 "metadata-report-v27",
+            ),
+        ),
+        (
+            "immediate previous v28",
+            lambda connection: create_prior_schema(
+                connection,
+                "metadata-report-v28",
+            ),
+        ),
+        (
+            "previous proposal policy v3",
+            lambda connection: create_prior_schema(
+                connection,
+                "metadata-report-v30",
                 "fixed-conservative-v3",
             ),
         ),
@@ -286,7 +300,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "previous proposal policy v4",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v27",
+                "metadata-report-v30",
                 "fixed-conservative-v4",
             ),
         ),
@@ -294,7 +308,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "previous proposal policy v5",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v27",
+                "metadata-report-v30",
                 "fixed-conservative-v5",
             ),
         ),
@@ -302,7 +316,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "immediate previous proposal policy v7",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v27",
+                "metadata-report-v30",
                 "fixed-conservative-v7",
             ),
         ),
@@ -402,7 +416,9 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("automatic_safety_state",),
             ("cover_consideration_events",),
             ("cover_considerations",),
+            ("cover_selection_authorities",),
             ("current_cover_considerations",),
+            ("current_cover_selection_authorities",),
             ("current_metadata_report_lineages",),
             ("current_metadata_reports",),
             ("current_review_case_lineages",),
@@ -442,7 +458,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("shadow_outcome_field_facts",),
         ]
         assert len(rows) == 2
-        assert schema_version == ("metadata-report-v27",)
+        assert schema_version == ("metadata-report-v30",)
         assert current == (second.report_id,)
 
         reopened = open_repository(path)

@@ -5,7 +5,7 @@ is an architectural inventory, not a second schema definition: the executable
 definition and open-time exact-object validation remain in
 [`schema.py`](../../src/mechanical_librarian/adapters/persistence/schema.py).
 
-#912 (ADR-0059) later moved the two security/session tables —
+#912 (ADR-0060) later moved the two security/session tables —
 `review_sessions` and `review_login_failures` — out of the application
 database into the dedicated session database
 `private/review-sessions.sqlite`, so owner sign-in never queues behind a
@@ -429,7 +429,7 @@ same-transaction, reconstructible read projection; no cluster is `redundant`.
 | sessions / login failures | Required | authentication command | command scope | bounded state | — | — | — |
 
 The sessions / login-failures cluster remains one aggregate, and #912 moved
-it whole into `private/review-sessions.sqlite` under ADR-0059; its invariants
+it whole into `private/review-sessions.sqlite` under ADR-0060; its invariants
 above are unchanged, now proven against the session database.
 
 ## #800 and #802 assessment

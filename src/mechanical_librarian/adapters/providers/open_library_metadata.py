@@ -6,7 +6,6 @@ import asyncio
 import json
 import random
 import re
-import threading
 import time
 from collections.abc import Callable
 from contextlib import nullcontext
@@ -21,6 +20,7 @@ from mechanical_librarian.adapters.providers.retry_safety import (
     ProviderFailure,
     ProviderIncompleteCause,
     ProviderIncompleteCauseRecord,
+    ProviderRequestPacer,
     _DiscoveryRequestLedger,
     bounded_attempt_elapsed,
     bounded_retry_after,
@@ -80,6 +80,13 @@ from mechanical_librarian.domain.metadata_report import (
     normalize_date_value,
     normalize_title,
     provider_access_time,
+)
+from mechanical_librarian.domain.work_identity import (
+    WorkDispatchLineage,
+    WorkDispatchRung,
+    WorkQuery,
+    narrowing_work_query,
+    work_query_ladder,
 )
 
 OPEN_LIBRARY_ORIGIN = "https://openlibrary.org"
@@ -152,34 +159,7 @@ class _CoverId:
     terminal_state: CoverSourceState | None = None
 
 
-class OpenLibraryPacer:
-    """Keep request starts at least one second apart for one adapter run."""
-
-    def __init__(
-        self,
-        *,
-        clock: Callable[[], float] = time.monotonic,
-        sleep: Callable[[float], None] = time.sleep,
-    ) -> None:
-        self._clock = clock
-        self._sleep = sleep
-        self._last_started: float | None = None
-        self._lock = threading.Lock()
-
-    def wait(self, deadline: float | None = None) -> bool:
-        with self._lock:
-            now = self._clock()
-            if self._last_started is not None:
-                delay = max(0.0, self._last_started + 1.0 - now)
-                if deadline is not None and now + delay >= deadline:
-                    return False
-                if delay:
-                    self._sleep(delay)
-                    now = self._clock()
-            if deadline is not None and now >= deadline:
-                return False
-            self._last_started = now
-            return True
+OpenLibraryPacer = ProviderRequestPacer
 
 
 class OpenLibraryMetadataProvider:
@@ -345,6 +325,8 @@ class OpenLibraryMetadataProvider:
                         observation.status,
                         observation.candidates,
                         observation.accessed_at,
+                        dispatch_lineage=observation.dispatch_lineage,
+                        transformation_lineage=observation.transformation_lineage,
                     )
                 )
                 merged = merge_provider_cover_descriptors(
@@ -378,7 +360,54 @@ class OpenLibraryMetadataProvider:
         lookup: MetadataLookup,
         *,
         deadline: float | None,
+        _shaped: WorkQuery | None = None,
     ) -> ProviderObservation:
+        if lookup.kind is ProviderQueryKind.WORK and _shaped is None:
+            if lookup.title is None or not lookup.authors:
+                return ProviderObservation(
+                    self._name,
+                    ProviderStatus.INSUFFICIENT_INPUT,
+                    query_kind=lookup.kind,
+                )
+            last = ProviderObservation(
+                self._name,
+                ProviderStatus.NO_MATCH,
+                query_kind=lookup.kind,
+            )
+            work_queries = work_query_ladder(lookup.title, lookup.authors)
+            if not work_queries:
+                return ProviderObservation(
+                    self._name,
+                    ProviderStatus.INSUFFICIENT_INPUT,
+                    query_kind=lookup.kind,
+                )
+            for work_query in work_queries:
+                shaped_lookup = replace(
+                    lookup,
+                    title=work_query.title,
+                    authors=work_query.authors,
+                )
+                last = self._observe_lookup(
+                    shaped_lookup,
+                    deadline=deadline,
+                    _shaped=work_query,
+                )
+                if last.status is ProviderStatus.CANDIDATES:
+                    return last
+                if last.status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED:
+                    narrowed = narrowing_work_query(work_query)
+                    return self._observe_lookup(
+                        replace(
+                            lookup,
+                            title=narrowed.title,
+                            authors=narrowed.authors,
+                        ),
+                        deadline=deadline,
+                        _shaped=narrowed,
+                    )
+                if last.status is not ProviderStatus.NO_MATCH:
+                    return last
+            return last
         local_claims = lookup.local_claims
         usable = tuple(
             sorted(
@@ -447,6 +476,11 @@ class OpenLibraryMetadataProvider:
                 lookup.kind,
                 accessed_at=self._accessed_at,
                 diagnostics=self._schema_diagnostics(),
+                dispatch_lineage=(
+                    WorkDispatchLineage.from_query(_shaped)
+                    if status is ProviderStatus.CANDIDATES and _shaped is not None
+                    else None
+                ),
             )
 
         try:
@@ -468,15 +502,36 @@ class OpenLibraryMetadataProvider:
                         for edition, work in _admitted_candidates(search, family or "")
                     )
                 else:
+                    is_narrowed = (
+                        _shaped is not None and _shaped.candidate_limit_narrowing_retry
+                    )
                     search = self._request(
                         OPEN_LIBRARY_SEARCH_URL,
                         params={
-                            "title": lookup.title or "",
-                            "author": " ".join(lookup.authors),
+                            **(
+                                {
+                                    "q": (
+                                        f'"{lookup.title or ""}" '
+                                        f'author:"{" ".join(lookup.authors)}"'
+                                    )
+                                }
+                                if is_narrowed
+                                else {
+                                    "title": lookup.title or "",
+                                    "author": " ".join(lookup.authors),
+                                }
+                            ),
                             "fields": _WORK_SEARCH_PROJECTION,
                             "limit": str(_MAX_SEARCH_ROWS),
                         },
                         deadline=deadline,
+                        query_retry=(
+                            _shaped is not None
+                            and (
+                                _shaped.rung is not WorkDispatchRung.NORMALIZED
+                                or _shaped.candidate_limit_narrowing_retry
+                            )
+                        ),
                     )
                     admitted = _admitted_work_candidates(search)
                 if len(admitted) > 2:
@@ -628,6 +683,7 @@ class OpenLibraryMetadataProvider:
         *,
         params: dict[str, str] | None = None,
         deadline: float | None,
+        query_retry: bool = False,
     ) -> dict[str, Any]:
         for retry_index in range(_MAX_ATTEMPTS_PER_REQUEST):
             started = self._clock()
@@ -637,7 +693,7 @@ class OpenLibraryMetadataProvider:
                     url,
                     params=params,
                     deadline=deadline,
-                    is_retry=retry_index > 0,
+                    is_retry=query_retry or retry_index > 0,
                 )
             except (asyncio.CancelledError, KeyboardInterrupt):
                 if self._attempt_count != attempts_before_dispatch:
@@ -1523,6 +1579,8 @@ def _canonical_discovery_results(
             ),
             result.accessed_at,
             diagnostics=result.diagnostics,
+            dispatch_lineage=result.dispatch_lineage,
+            transformation_lineage=result.transformation_lineage,
         )
         for result in results
     )

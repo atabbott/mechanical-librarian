@@ -17,6 +17,10 @@ from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
 )
+from mechanical_librarian.domain.cover_automatic_decision import (
+    CoverAutomaticDecision,
+    parse_automatic_authority,
+)
 from mechanical_librarian.domain.field_effect import (
     FIELD_EFFECT_FAILURES,
     TERMINAL_STATES,
@@ -320,6 +324,61 @@ def _automatic_decision_value(
     return value
 
 
+def _cover_automatic_decision_value(
+    decision: CoverAutomaticDecision,
+    case: ReviewCase,
+    report: MetadataReport,
+    proposal_set: ProposalSet,
+    consideration_document: str,
+) -> object:
+    """Bind qualified cover authority to its exact current consideration."""
+    try:
+        consideration = json.loads(consideration_document)
+        candidate = next(
+            row
+            for row in consideration["candidates"]
+            if row["reference"] == decision.candidate_reference
+        )
+        proposal = next(
+            result
+            for result in proposal_set.results
+            if result.destination.value == "cover"
+        )
+        alternative = next(
+            row
+            for row in proposal.alternatives
+            if row.alternative_id == decision.candidate_id
+        )
+    except (KeyError, StopIteration, TypeError, json.JSONDecodeError) as error:
+        raise FieldEffectError("authority_binding") from error
+    if (
+        decision.review_case_id != case.review_case_id
+        or decision.report_id != case.report_id
+        or decision.proposal_set_id != case.proposal_set_id
+        or decision.target_fingerprint != case.target_fingerprint
+        or report.report_id != case.report_id
+        or report.target.fingerprint != case.target_fingerprint
+        or hashlib.sha256(consideration_document.encode()).hexdigest()
+        != decision.consideration_digest
+        or consideration.get("consideration_id") != decision.consideration_id
+        or consideration.get("replay_digest") != decision.replay_digest
+        or consideration.get("policy_reference") != decision.policy_reference
+        or consideration.get("provider_fetching") is not False
+        or json.loads(consideration["policy_report_document"]).get("status")
+        != "recommended"
+        or candidate.get("artifact_id") != decision.artifact_id
+        or candidate.get("selectable") is not True
+        or candidate.get("incumbent") is not False
+        or candidate.get("deterministic_rank") != 1
+        or tuple(candidate.get("deterministic_rank_key", ())) != decision.rank_key
+        or tuple(sorted(set(candidate.get("deterministic_citations", ()))))
+        != decision.citation_ids
+        or alternative.value.value != decision.artifact_id
+    ):
+        raise FieldEffectError("authority_binding")
+    return {"kind": "cover", "value": decision.artifact_id}
+
+
 def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
     """Fail closed on any non-canonical field-effect envelope or row mismatch."""
     try:
@@ -341,8 +400,10 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
             if row[9] != record.origin or row[11] != record.event_id:
                 raise FieldEffectError("persistence")
             decision_row = connection.execute(
-                "SELECT document FROM automatic_decisions WHERE decision_id=?",
-                (record.decision_id,),
+                "SELECT document FROM automatic_decisions WHERE decision_id=? "
+                "UNION ALL SELECT json_extract(document,'$.decision_document') "
+                "FROM cover_selection_authorities WHERE kind='automatic' AND decision_id=?",
+                (record.decision_id, record.decision_id),
             ).fetchone()
             case_row = connection.execute(
                 "SELECT document FROM review_cases WHERE review_case_id=?",
@@ -354,7 +415,7 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
             ).fetchone()
             if decision_row is None or case_row is None or report_row is None:
                 raise FieldEffectError("persistence")
-            decision = AutomaticDecision.from_json(decision_row[0])
+            decision = parse_automatic_authority(decision_row[0])
             case = ReviewCase.from_json(case_row[0])
             report = MetadataReport.from_json(report_row[0])
             proposal_row = connection.execute(
@@ -371,10 +432,16 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                     decision.resolved_policy_id,
                 ),
             ).fetchone()
-            if proposal_row is None or outcome_row is None:
+            if proposal_row is None or (
+                type(decision) is AutomaticDecision and outcome_row is None
+            ):
                 raise FieldEffectError("persistence")
             proposal_set = ProposalSet.from_json(proposal_row[0])
-            source_outcome = ShadowOutcomeSet.from_json(outcome_row[0])
+            source_outcome = (
+                None
+                if type(decision) is CoverAutomaticDecision
+                else ShadowOutcomeSet.from_json(outcome_row[0])
+            )
             if (
                 decision.destination != record.destination
                 or decision.target_fingerprint != record.target_fingerprint
@@ -412,9 +479,28 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
             }:
                 raise FieldEffectError("persistence")
             pre_value = target.get("value") if target["state"] == "value" else None
-            value = _automatic_decision_value(
-                decision, case, report, proposal_set, source_outcome
-            )
+            if type(decision) is CoverAutomaticDecision:
+                consideration_row = connection.execute(
+                    "SELECT consideration.document FROM current_cover_considerations current "
+                    "JOIN cover_considerations consideration ON consideration.consideration_id=current.consideration_id "
+                    "WHERE current.review_case_id=? AND current.consideration_id=?",
+                    (decision.review_case_id, decision.consideration_id),
+                ).fetchone()
+                if consideration_row is None:
+                    raise FieldEffectError("persistence")
+                value = _cover_automatic_decision_value(
+                    decision, case, report, proposal_set, consideration_row[0]
+                )
+            else:
+                if source_outcome is None:
+                    raise FieldEffectError("persistence")
+                value = _automatic_decision_value(
+                    cast(AutomaticDecision, decision),
+                    case,
+                    report,
+                    proposal_set,
+                    source_outcome,
+                )
             if decision.outcome == "keep_current":
                 if value is not None:
                     raise FieldEffectError("persistence")

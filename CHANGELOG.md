@@ -8,6 +8,12 @@
   tables, and `review-session-decoupling-v1` adopts the exact retained
   predecessor offline without a rebuild. (#912)
 
+- Recommend the best confirmed cover deterministically without requiring the
+  optional reviewer, and keep unconfirmed matches out of selection. Active
+  provider fetching delays choice; retry waiting does not. A qualified
+  default-off Automatic option is available after all frozen cohorts passed.
+  Existing pre-release v29 state requires a clean rebuild. (#864)
+
 - Ship the container on the exact Python and uv the public gate qualified, and
   keep it there: every toolchain pin site must agree, the qualified
   interpreter and resolver move as one Renovate group, and a half-landed
@@ -18,6 +24,16 @@
   class-level error, `SkipTest` in `setUpClass` runs no tests and skips once,
   and a `load_tests` case pytest cannot collect is run instead of dropped.
   (#701)
+
+- Shape work-only provider searches with a bounded query ladder and one
+  provider-specific narrowing retry while retaining exact dispatch lineage.
+  Query decoration never creates work identity; the reviewed admission subset
+  is empty. Pre-release v27 state requires a clean rebuild. (#870)
+
+- Pace Google Books, Hardcover, and Open Library request starts across
+  foreground and recovery work. Exact burst throttling now waits briefly,
+  daily exhaustion resumes at reset, and either deferral spends no recovery
+  attempt. Pre-release v28 state requires a clean rebuild. (#876)
 
 - Keep valid Hardcover discovery candidates when optional cover descriptors
   conflict across lanes; the conflicting cover remains fail-closed. Provider

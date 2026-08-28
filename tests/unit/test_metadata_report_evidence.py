@@ -38,7 +38,6 @@ from mechanical_librarian.application.metadata_report import (
     ReportRepository,
     TargetFile,
     TargetSnapshot,
-    _variant_marker,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
@@ -89,6 +88,7 @@ from mechanical_librarian.domain.metadata_report import (
     normalize_title,
     provider_access_time,
 )
+from mechanical_librarian.domain.work_identity import work_title_has_variant_marker
 from tests.support.metadata_report_doubles import (
     FakeInspector,
     FakeReportRepository,
@@ -905,8 +905,8 @@ def test_rejected_cover_state_round_trips_in_serialized_report() -> None:
 def test_variant_marker_fails_closed_for_abridgement_nouns_and_preserves_token_boundaries(
     field, value, unmarked
 ) -> None:
-    assert _variant_marker(value)
-    assert not _variant_marker(unmarked)
+    assert work_title_has_variant_marker(value)
+    assert not work_title_has_variant_marker(unmarked)
 
 
 def test_closed_claim_vocabulary_is_exact() -> None:

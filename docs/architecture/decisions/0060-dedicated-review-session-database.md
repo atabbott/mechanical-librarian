@@ -1,4 +1,4 @@
-# ADR-0059: Move review-session state to a dedicated session database
+# ADR-0060: Move review-session state to a dedicated session database
 
 - Status: proposed
 - Date: 2026-08-27

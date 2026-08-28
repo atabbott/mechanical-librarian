@@ -14,6 +14,7 @@ from typing import Protocol, cast
 from uuid import uuid4
 
 from mechanical_librarian.domain.provider_recovery import (
+    RECOVERY_FAILURES,
     ProviderRecovery,
     ProviderRecoveryJob,
 )
@@ -259,13 +260,7 @@ class ScopedProviderRecoveryRunner:
                             blocked_targets=blocked,
                         )
                         continue
-                    if failure not in {
-                        "transient",
-                        "rate_limited",
-                        "authentication",
-                        "authorization",
-                        "configuration",
-                    }:
+                    if failure not in RECOVERY_FAILURES:
                         self._store.complete_exhausted_scope(
                             job=canary,
                             token=token,
@@ -355,13 +350,7 @@ class ScopedProviderRecoveryRunner:
                         token=token,
                         now=current,
                     )
-                elif failure in {
-                    "transient",
-                    "rate_limited",
-                    "authentication",
-                    "authorization",
-                    "configuration",
-                }:
+                elif failure in RECOVERY_FAILURES:
                     self._store.interrupt_fanout(
                         job=member,
                         token=token,

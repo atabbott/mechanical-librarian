@@ -78,7 +78,7 @@ def test_unknown_removed_and_automatic_options_fail_or_remain_unqualified() -> N
         resolve_policy(
             profile, "library", {"options": {}, "destinations": {"explicit": "ask"}}
         )
-    unavailable = {"tags", "cover_order", "asin"}
+    unavailable = {"tags", "asin"}
     automatic = resolve_policy(
         profile,
         "library",

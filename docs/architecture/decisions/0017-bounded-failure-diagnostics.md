@@ -97,6 +97,20 @@ development state is rejected before mutation and has no migration, import, or
 conversion path. Proposal, packet, request, and result bytes do not contain
 these diagnostics and their discriminators do not change.
 
+## Amendment: recovery pacing distinctions (2026-08-27)
+
+Add `burst_throttle` and `daily_quota_exhausted` to the closed provider
+diagnostic categories. The application derives both only from exact
+adapter-owned authority and applies the same mapping to initial observations
+and retry successors. Unknown, missing, malformed, or contradictory authority
+continues to map to `quota_rate_limit`; raw reasons and rate-limit headers are
+never persisted.
+
+The report discriminator advances to `metadata-report-v29`. Version 28 cannot
+represent the two distinctions and requires a clean rebuild under ADR-0013;
+there is no adoption or legacy fallback. Provider status, candidate admission,
+proposal, packet, reviewer, and target-write authority remain unchanged.
+
 ## Consequences
 
 ### Positive

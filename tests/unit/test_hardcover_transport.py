@@ -607,6 +607,96 @@ def test_hardcover_429_retries_only_valid_retry_after_and_graphql_never() -> Non
     assert "terminal" == graphql.attempt_records[0].outcome
 
 
+@pytest.mark.parametrize(
+    ("headers", "category", "delay"),
+    (
+        (
+            {"ratelimit": '"free";r=0;t=30, "daily";r=4999;t=80000'},
+            "burst_throttled",
+            30.0,
+        ),
+        (
+            {"ratelimit": '"free";r=9;t=1, "daily";r=0;t=70000'},
+            "quota_exhausted",
+            70_000.0,
+        ),
+        (
+            {
+                "x-ratelimit-remaining": "0",
+                "x-ratelimit-reset": "1030",
+                "x-ratelimit-daily-remaining": "4999",
+                "x-ratelimit-daily-reset": "80000",
+            },
+            "burst_throttled",
+            30.0,
+        ),
+        (
+            {
+                "x-ratelimit-remaining": "9",
+                "x-ratelimit-reset": "1030",
+                "x-ratelimit-daily-remaining": "0",
+                "x-ratelimit-daily-reset": "71000",
+            },
+            "quota_exhausted",
+            70_000.0,
+        ),
+    ),
+)
+def test_hardcover_authoritative_rate_headers_record_exact_evidence(
+    headers: dict[str, str], category: str, delay: float
+) -> None:
+    provider = HardcoverMetadataProvider(
+        "catalogue",
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(429, headers=headers)
+            )
+        ),
+        65_536,
+        clock=lambda: 0.0,
+        wall_clock=lambda: 1000.0,
+        sleep=lambda _: pytest.fail("classified throttling must leave the lane"),
+    )
+    observation = provider.observe(isbn_lookup((isbn_claim(),)), deadline=1.0)
+    assert ProviderStatus.RATE_LIMITED == observation.status
+    assert category == provider.attempt_records[-1].category
+    assert delay == provider.attempt_records[-1].delay_seconds
+
+
+@pytest.mark.parametrize(
+    "headers",
+    (
+        {"ratelimit": '"free";r=0;t=30'},
+        {"ratelimit": '"free";r=4;t=30, "daily";r=4999;t=80000'},
+        {"ratelimit": '"free";r=0;t=30;x=1, "daily";r=4999;t=80000'},
+        {
+            "x-ratelimit-remaining": "0",
+            "x-ratelimit-daily-remaining": "4999",
+        },
+    ),
+)
+def test_hardcover_ambiguous_rate_headers_remain_generic(
+    headers: dict[str, str],
+) -> None:
+    provider = HardcoverMetadataProvider(
+        "catalogue",
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(429, headers=headers)
+            )
+        ),
+        65_536,
+        clock=lambda: 0.0,
+        wall_clock=lambda: 1000.0,
+        sleep=lambda _: pytest.fail("ambiguous throttling must not retry"),
+    )
+    assert (
+        ProviderStatus.RATE_LIMITED
+        == provider.observe(isbn_lookup((isbn_claim(),)), deadline=1.0).status
+    )
+    assert "http_429" == provider.attempt_records[-1].category
+
+
 def test_hardcover_pacer_shares_one_second_dispatch_starts() -> None:
     now = [0.0]
     delays: list[float] = []

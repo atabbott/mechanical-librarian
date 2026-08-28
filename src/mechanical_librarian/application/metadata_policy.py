@@ -9,9 +9,10 @@ from typing import TYPE_CHECKING, Protocol
 
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_cases import ReviewCaseError
-from mechanical_librarian.domain.automatic_decision import (
-    QUALIFIED_POLICY_OPTIONS,
-    AutomaticSafetyState,
+from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
+from mechanical_librarian.domain.cover_qualification_policy import (
+    COVER_AWARE_QUALIFIED_POLICY_OPTIONS,
+    COVER_ELECTION_QUALIFICATION_MANIFEST_SHA256,
 )
 from mechanical_librarian.domain.metadata_policy import (
     OPTION_CATALOGUE,
@@ -482,10 +483,18 @@ def require_named_libraries(libraries: tuple[str, ...]) -> tuple[str, ...]:
 
 
 def rich_qualification(profile: MetadataPolicyProfile) -> tuple[dict[str, object], ...]:
-    """Expose only the fixed public F20 terminal dispositions."""
+    """Expose the fixed public rich-field and cover terminal dispositions."""
     if type(profile) is not MetadataPolicyProfile:
         raise MetadataPolicyApplicationError("policy validation is invalid")
-    return public_summary()
+    return public_summary() + (
+        {
+            "automatic_available": True,
+            "candidate_sha256": COVER_ELECTION_QUALIFICATION_MANIFEST_SHA256,
+            "disposition": "pass",
+            "field": "cover_order",
+            "option": "fixed_source_order",
+        },
+    )
 
 
 def require_qualified_automatic(
@@ -505,7 +514,7 @@ def require_qualified_automatic(
         if field in F20_RICH_FIELDS and dict(profile.destinations)[field] == "automatic"
     }
     if (
-        requested and not requested.issubset(QUALIFIED_POLICY_OPTIONS)
+        requested and not requested.issubset(COVER_AWARE_QUALIFIED_POLICY_OPTIONS)
     ) or not rich_requested.issubset(F20_PASSING_AUTOMATIC_OPTIONS):
         raise MetadataPolicyApplicationError("policy automatic unqualified")
     return profile
@@ -813,7 +822,7 @@ class PolicyNotebook:
                 for category, destination in resolved.destinations
                 if destination == "automatic"
             }
-            if not requested.issubset(QUALIFIED_POLICY_OPTIONS):
+            if not requested.issubset(COVER_AWARE_QUALIFIED_POLICY_OPTIONS):
                 raise MetadataPolicyApplicationError("policy automatic unqualified")
             transition = self._repository.activate_metadata_policy(
                 policy_id, expected_active_policy_id, resolutions, activated_at

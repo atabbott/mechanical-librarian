@@ -63,8 +63,15 @@ from mechanical_librarian.domain.metadata_report import (
     derive_field_results,
     isbn_family,
     normalize_title,
+    provider_candidate_set_work_identity_admission,
     provider_lane_candidate_reference,
     validate_provider_access_time,
+)
+from mechanical_librarian.domain.work_identity import (
+    WorkDispatchLineage,
+    WorkTitleTransformationLineage,
+    replay_provider_work_identity_admission,
+    work_query_ladder,
 )
 
 
@@ -189,6 +196,7 @@ class MetadataLookup:
 
 
 MAX_ISBN_DISCOVERY_LANES = 8
+MAX_PROVIDER_DISCOVERY_QUERIES = 9
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,6 +240,17 @@ class MetadataDiscoveryLane:
             raise MetadataReportError("provider discovery lane is invalid")
 
 
+def _metadata_discovery_query_count(
+    lanes: tuple[MetadataDiscoveryLane, ...],
+) -> int:
+    return sum(
+        len(work_query_ladder(lane.title, lane.authors))
+        if lane.kind is ProviderQueryKind.WORK and lane.title is not None
+        else 1
+        for lane in lanes
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class MetadataDiscoveryPlan:
     local_claims: tuple[LocalClaim, ...]
@@ -245,6 +264,8 @@ class MetadataDiscoveryPlan:
             or type(self.lanes) is not tuple
             or any(type(value) is not MetadataDiscoveryLane for value in self.lanes)
             or len(self.lanes) > MAX_ISBN_DISCOVERY_LANES + 1
+            or _metadata_discovery_query_count(self.lanes)
+            > MAX_PROVIDER_DISCOVERY_QUERIES
             or tuple(value.identity for value in self.lanes)
             != tuple(sorted({value.identity for value in self.lanes}))
             or type(self.overflow) is not bool
@@ -277,6 +298,8 @@ class ProviderLaneResult:
     accessed_at: str | None = None
     edition_enrichment_overflow: EditionEnrichmentOverflow | None = None
     diagnostics: tuple[FailureDiagnostic, ...] = ()
+    dispatch_lineage: WorkDispatchLineage | None = None
+    transformation_lineage: WorkTitleTransformationLineage | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -296,6 +319,27 @@ class ProviderLaneResult:
                 }
                 or value.current is not None
                 for value in self.diagnostics
+            )
+            or (
+                self.dispatch_lineage is not None
+                and (
+                    type(self.dispatch_lineage) is not WorkDispatchLineage
+                    or self.lane.kind is not ProviderQueryKind.WORK
+                    or self.status
+                    not in {
+                        ProviderStatus.CANDIDATES,
+                        ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+                    }
+                )
+            )
+            or (
+                self.transformation_lineage is not None
+                and (
+                    type(self.transformation_lineage)
+                    is not WorkTitleTransformationLineage
+                    or self.dispatch_lineage is None
+                    or self.lane.kind is not ProviderQueryKind.WORK
+                )
             )
             or (
                 self.edition_enrichment_overflow is not None
@@ -401,9 +445,10 @@ def metadata_discovery_plan(
                     authors=normalized_authors,
                 )
             )
-    return MetadataDiscoveryPlan(
-        local_claims, tuple(sorted(lanes, key=lambda value: value.identity))
-    )
+    ordered_lanes = tuple(sorted(lanes, key=lambda value: value.identity))
+    if _metadata_discovery_query_count(ordered_lanes) > MAX_PROVIDER_DISCOVERY_QUERIES:
+        return MetadataDiscoveryPlan(local_claims, (), True)
+    return MetadataDiscoveryPlan(local_claims, ordered_lanes)
 
 
 def provider_observation(
@@ -514,6 +559,8 @@ def provider_observation(
                 result.lane.matched_family,
                 lane_candidates,
                 result.diagnostics,
+                result.dispatch_lineage,
+                result.transformation_lineage,
             )
         )
 
@@ -858,18 +905,15 @@ def qualify_provider_observation(
         )
     if observation.edition_enrichment_overflow is not None:
         witness = observation.edition_enrichment_overflow
-        expected_authors = tuple(
-            normalize_title(value).casefold() for value in lookup.authors
+        admission = replay_provider_work_identity_admission(
+            local_title=lookup.title or "",
+            local_authors=lookup.authors,
+            provider_title=witness.title,
+            provider_authors=tuple(author.value or "" for author in witness.authors),
+            provider_work_identity=witness.work_identity,
+            dispatch_lineage=observation.dispatch_lineage,
         )
-        actual_authors = tuple(
-            normalize_title(author.value or "").casefold() for author in witness.authors
-        )
-        qualified_witness = (
-            normalize_title(witness.title).casefold()
-            == normalize_title(lookup.title or "").casefold()
-            and actual_authors == expected_authors
-            and not _variant_marker(witness.title)
-        )
+        qualified_witness = admission.admitted
         return ProviderObservation(
             observation.provider,
             ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
@@ -881,6 +925,12 @@ def qualify_provider_observation(
             diagnostics=observation.diagnostics,
             request_accounting=observation.request_accounting,
             edition_enrichment_overflow=witness if qualified_witness else None,
+            dispatch_lineage=(
+                observation.dispatch_lineage if qualified_witness else None
+            ),
+            transformation_lineage=(
+                admission.transformation if qualified_witness else None
+            ),
         )
     if observation.status is not ProviderStatus.CANDIDATES:
         return ProviderObservation(
@@ -892,79 +942,15 @@ def qualify_provider_observation(
             observation.authority,
             accessed_at=observation.accessed_at,
             diagnostics=observation.diagnostics,
+            request_accounting=observation.request_accounting,
         )
-    expected_title = normalize_title(lookup.title or "").casefold()
-    expected_authors = tuple(
-        normalize_title(value).casefold() for value in lookup.authors
+    set_admission = provider_candidate_set_work_identity_admission(
+        observation.candidates,
+        lookup.title or "",
+        lookup.authors,
+        observation.dispatch_lineage,
     )
-    qualified: dict[str, list[ProviderCandidate]] = {}
-    blocked_work_identities: set[str] = set()
-    for candidate in observation.candidates:
-        qualification_identity = (
-            candidate.identity
-            if candidate.work_identity == "unresolved"
-            else candidate.work_identity
-        )
-        titles = tuple(
-            normalize_title(claim.value).casefold()
-            for claim in candidate.claims
-            if claim.scope is ClaimScope.WORK
-            and claim.kind is ClaimKind.TITLE
-            and claim.state is FieldState.VALID
-            and claim.value is not None
-        )
-        authors = tuple(
-            normalize_title(claim.value).casefold()
-            for claim in candidate.claims
-            if claim.scope is ClaimScope.WORK
-            and claim.kind is ClaimKind.CREATOR
-            and claim.role == "author"
-            and claim.state is FieldState.VALID
-            and claim.value is not None
-        )
-        untyped_creators = _complete_work_creators(candidate, None)
-        neutral_bindings = complete_creator_identity_bindings(
-            candidate,
-            tuple(
-                claim
-                for claim in candidate.claims
-                if claim.scope is ClaimScope.WORK
-                and claim.kind is ClaimKind.CREATOR
-                and claim.role is None
-            ),
-        )
-        disqualifying_roles = {
-            claim.role
-            for claim in candidate.claims
-            if claim.scope is ClaimScope.WORK
-            and claim.kind is ClaimKind.CONTRIBUTOR
-            and claim.role in {"abridger", "adapter", "translator"}
-        }
-        variant_marker = any(
-            _variant_marker(claim.value)
-            for claim in candidate.claims
-            if claim.kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE}
-            and claim.state is FieldState.VALID
-            and claim.value is not None
-        )
-        if disqualifying_roles or variant_marker:
-            blocked_work_identities.add(qualification_identity)
-        if (
-            titles == (expected_title,)
-            and (
-                (len(authors) == len(expected_authors) and authors == expected_authors)
-                or (
-                    untyped_creators == expected_authors
-                    and neutral_bindings is not None
-                )
-            )
-            and not disqualifying_roles
-            and not variant_marker
-        ):
-            qualified.setdefault(qualification_identity, []).append(candidate)
-    for identity in blocked_work_identities:
-        qualified.pop(identity, None)
-    if len(qualified) != 1:
+    if not set_admission.admitted:
         return ProviderObservation(
             observation.provider,
             ProviderStatus.NO_MATCH,
@@ -973,8 +959,11 @@ def qualify_provider_observation(
             ProviderQueryKind.WORK,
             observation.authority,
             accessed_at=observation.accessed_at,
+            diagnostics=observation.diagnostics,
+            request_accounting=observation.request_accounting,
         )
-    candidate = min(next(iter(qualified.values())), key=lambda value: value.identity)
+    candidate = min(set_admission.candidates, key=lambda value: value.identity)
+    transformation_lineage = set_admission.transformation
     neutral_creators = tuple(
         claim
         for claim in candidate.claims
@@ -1084,6 +1073,9 @@ def qualify_provider_observation(
         observation.authority,
         accessed_at=observation.accessed_at,
         diagnostics=observation.diagnostics,
+        request_accounting=observation.request_accounting,
+        dispatch_lineage=observation.dispatch_lineage,
+        transformation_lineage=transformation_lineage,
     )
 
 
@@ -1124,25 +1116,6 @@ def _mixed_work_creator_roles(candidate: ProviderCandidate) -> bool:
         if claim.scope is ClaimScope.WORK and claim.kind is ClaimKind.CREATOR
     }
     return "author" in roles and len(roles) > 1
-
-
-def _variant_marker(value: str) -> bool:
-    tokens = {
-        "".join(character for character in token if character.isalnum())
-        for token in normalize_title(value).casefold().split()
-    }
-    return bool(
-        tokens
-        & {
-            "abridgement",
-            "abridgment",
-            "abridged",
-            "adaptation",
-            "adapted",
-            "translation",
-            "translated",
-        }
-    )
 
 
 class GenerateMetadataReport:

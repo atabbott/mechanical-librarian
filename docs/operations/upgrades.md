@@ -7,6 +7,22 @@ rebuild or delivers one explicit exact-predecessor adoption limited to
 reconstructible derived objects. This is not a general migration, import,
 conversion, compatibility, downgrade, or repair facility.
 
+`metadata-report-v29` cannot carry the deterministic readiness, rank and
+citation contract of `cover-consideration-v2`. It is rejected at bootstrap and
+requires a clean rebuild as `metadata-report-v30`; this increment provides no
+adoption or legacy fallback.
+
+`metadata-report-v28` cannot distinguish burst throttling from exhausted daily
+quota in its persisted provider diagnostics. It is rejected at bootstrap and
+requires a clean rebuild as `metadata-report-v29`; that increment provides no
+adoption or legacy fallback.
+
+`metadata-report-v27` cannot represent exact work dispatch and transformation
+lineages, and its retained downstream decisions cannot be reconstructed without
+crossing canonical owner-decision state. It is rejected at bootstrap and
+requires a clean rebuild as `metadata-report-v28`; this increment provides no
+adoption or legacy fallback.
+
 `metadata-report-v26` cannot represent lane-bound provider diagnostics. It is
 rejected at bootstrap and requires a clean rebuild as `metadata-report-v27`;
 this increment provides no adoption or legacy fallback.
@@ -41,7 +57,7 @@ plan for that immediate predecessor.
 
 ## Offline review-session decoupling adoption
 
-#912 (ADR-0059) moved `review_sessions` and `review_login_failures` into the
+#912 (ADR-0060) moved `review_sessions` and `review_login_failures` into the
 dedicated session database `private/review-sessions.sqlite`, which ordinary
 startup creates on its own. `review-session-decoupling-v1` accepts only the
 exact immediately preceding schema and drops those two application-database

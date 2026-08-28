@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import random
 import re
 import time
 from dataclasses import replace
+from datetime import datetime, timedelta
+from datetime import time as datetime_time
 from decimal import Decimal
 from html.parser import HTMLParser
-from typing import Any, Callable
+from typing import Any, Callable, cast
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -19,6 +23,7 @@ from mechanical_librarian.adapters.providers.retry_safety import (
     ProviderFailure,
     ProviderIncompleteCause,
     ProviderIncompleteCauseRecord,
+    ProviderRequestPacer,
     _DiscoveryRequestLedger,
     bounded_attempt_elapsed,
     bounded_retry_after,
@@ -64,6 +69,13 @@ from mechanical_librarian.domain.metadata_report import (
     normalize_title,
     provider_access_time,
 )
+from mechanical_librarian.domain.work_identity import (
+    WorkDispatchLineage,
+    WorkDispatchRung,
+    WorkQuery,
+    narrowing_work_query,
+    work_query_ladder,
+)
 
 GOOGLE_BOOKS_URL = "https://www.googleapis.com/books/v1/volumes"
 _VOLUME_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -73,6 +85,8 @@ _MAX_VALUES = 8
 _MAX_AGGREGATE_RESPONSE_BYTES = 2_097_152
 _MAX_ATTEMPTS_PER_QUERY = 6
 _MAX_ATTEMPTS_PER_OBSERVATION = 54
+_BURST_WINDOW_SECONDS = 100
+_PACIFIC = ZoneInfo("America/Los_Angeles")
 GOOGLE_BOOKS_HTML_VISIBLE_TEXT_VERSION = "google-books-html-visible-text-v1"
 _DESCRIPTION_OVERSIZED = object()
 _FIELDS = (
@@ -93,6 +107,7 @@ class GoogleBooksMetadataProvider:
         timeout_seconds: float = 5.0,
         *,
         api_key: str | None = None,
+        pacer: ProviderRequestPacer | None = None,
         clock: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], float] = time.time,
         sleep: Callable[[float], None] = time.sleep,
@@ -121,6 +136,7 @@ class GoogleBooksMetadataProvider:
         )
         self._timeout_seconds = float(timeout_seconds)
         self._api_key = api_key
+        self._pacer = pacer
         self._clock = clock
         self._wall_clock = wall_clock
         self._sleep = sleep
@@ -230,6 +246,8 @@ class GoogleBooksMetadataProvider:
                         observation.status,
                         observation.candidates,
                         observation.accessed_at,
+                        dispatch_lineage=observation.dispatch_lineage,
+                        transformation_lineage=observation.transformation_lineage,
                     )
                 )
         finally:
@@ -282,12 +300,33 @@ class GoogleBooksMetadataProvider:
         ):
             family = None
             references = ()
-            query = " ".join(
-                [f'intitle:"{lookup.title}"']
-                + [f'inauthor:"{author}"' for author in lookup.authors]
-            )
+            work_queries = work_query_ladder(lookup.title, lookup.authors)
+            if not work_queries:
+                return self._result(lookup, ProviderStatus.INSUFFICIENT_INPUT)
         else:
             return self._result(lookup, ProviderStatus.INSUFFICIENT_INPUT)
+        if lookup.kind is ProviderQueryKind.WORK:
+            last = self._result(lookup, ProviderStatus.NO_MATCH)
+            for work_query in work_queries:
+                last = self._observe_work_query(
+                    lookup,
+                    work_query,
+                    local_claims,
+                    deadline=deadline,
+                )
+                if last.status is ProviderStatus.CANDIDATES:
+                    return last
+                if last.status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED:
+                    return self._observe_work_query(
+                        lookup,
+                        narrowing_work_query(work_query),
+                        local_claims,
+                        deadline=deadline,
+                        query_retry=True,
+                    )
+                if last.status is not ProviderStatus.NO_MATCH:
+                    return last
+            return last
         try:
             payload = self._request(query, deadline=deadline)
             candidates = _candidates(
@@ -323,6 +362,53 @@ class GoogleBooksMetadataProvider:
             references=references,
         )
 
+    def _observe_work_query(
+        self,
+        lookup: MetadataLookup,
+        work_query: WorkQuery,
+        local_claims: tuple[LocalClaim, ...],
+        *,
+        deadline: float | None,
+        query_retry: bool = False,
+    ) -> ProviderObservation:
+        query = _google_books_work_query(work_query)
+        try:
+            payload = self._request(
+                query,
+                deadline=deadline,
+                query_retry=query_retry
+                or work_query.rung is not WorkDispatchRung.NORMALIZED
+                or work_query.candidate_limit_narrowing_retry,
+            )
+            candidates = _candidates(
+                self._name,
+                payload,
+                local_claims,
+                requested_family=None,
+                schema_rejections=lambda count: self._reject_schema_members(count),
+            )
+        except ProviderFailure as error:
+            return self._result(lookup, error.status)
+        except (
+            EvidenceValueError,
+            KeyError,
+            TypeError,
+            ValueError,
+            UnicodeError,
+            RecursionError,
+        ):
+            return self._result(lookup, ProviderStatus.MALFORMED)
+        if len(candidates) > _MAX_RESULTS:
+            return self._result(lookup, ProviderStatus.CANDIDATE_LIMIT_EXCEEDED)
+        if not candidates:
+            return self._result(lookup, ProviderStatus.NO_MATCH)
+        return self._result(
+            lookup,
+            ProviderStatus.CANDIDATES,
+            candidates,
+            dispatch_lineage=WorkDispatchLineage.from_query(work_query),
+        )
+
     def _reject_schema_members(self, count: int = 1) -> None:
         if count <= 0:
             return
@@ -350,6 +436,7 @@ class GoogleBooksMetadataProvider:
         candidates: tuple[ProviderCandidate, ...] = (),
         *,
         references: tuple[str, ...] = (),
+        dispatch_lineage: WorkDispatchLineage | None = None,
     ) -> ProviderObservation:
         return ProviderObservation(
             self._name,
@@ -360,15 +447,24 @@ class GoogleBooksMetadataProvider:
             "google_books",
             accessed_at=self._accessed_at,
             diagnostics=self._schema_diagnostics(),
+            dispatch_lineage=dispatch_lineage,
         )
 
-    def _request(self, query: str, *, deadline: float | None) -> dict[str, Any]:
+    def _request(
+        self,
+        query: str,
+        *,
+        deadline: float | None,
+        query_retry: bool = False,
+    ) -> dict[str, Any]:
         for retry_index in range(_MAX_ATTEMPTS_PER_QUERY):
             started = self._clock()
             attempts_before_dispatch = self._attempt_count
             try:
                 value = self._request_once(
-                    query, deadline=deadline, is_retry=retry_index > 0
+                    query,
+                    deadline=deadline,
+                    is_retry=query_retry or retry_index > 0,
                 )
             except (asyncio.CancelledError, KeyboardInterrupt):
                 if self._attempt_count != attempts_before_dispatch:
@@ -450,13 +546,15 @@ class GoogleBooksMetadataProvider:
     ) -> dict[str, Any]:
         if self._remaining_response_bytes <= 0:
             raise self._incomplete(ProviderIncompleteCause.AGGREGATE_BYTES)
+        if self._attempt_count >= _MAX_ATTEMPTS_PER_OBSERVATION:
+            raise self._incomplete(ProviderIncompleteCause.DISPATCH_COUNT)
+        if self._pacer is not None and not self._pacer.wait(deadline):
+            raise self._incomplete(ProviderIncompleteCause.DEADLINE)
         remaining = self._timeout_seconds
         if deadline is not None:
             remaining = min(remaining, deadline - self._clock())
         if remaining <= 0:
             raise self._incomplete(ProviderIncompleteCause.DEADLINE)
-        if self._attempt_count >= _MAX_ATTEMPTS_PER_OBSERVATION:
-            raise self._incomplete(ProviderIncompleteCause.DISPATCH_COUNT)
         params = {
             "fields": _FIELDS,
             "maxResults": str(_MAX_RETURNED_RESULTS),
@@ -509,7 +607,11 @@ class GoogleBooksMetadataProvider:
                         ),
                     )
                 if response.status_code != 200:
-                    raise ProviderFailure(_error_status(response.status_code, payload))
+                    raise _provider_error(
+                        response.status_code,
+                        payload,
+                        now=self._wall_clock(),
+                    )
                 if (
                     response.headers.get("content-type", "")
                     .split(";", 1)[0]
@@ -1075,33 +1177,53 @@ def _decode(payload: bytes) -> object:
     )
 
 
-def _error_status(status_code: int, payload: bytes) -> ProviderStatus:
+def _provider_error(status_code: int, payload: bytes, *, now: float) -> ProviderFailure:
     if status_code == 401:
-        return ProviderStatus.AUTHENTICATION
-    if status_code == 429:
-        return ProviderStatus.RATE_LIMITED
-    try:
-        value = _decode(payload)
-        reasons = {
-            item.get("reason")
-            for item in value.get("error", {}).get("errors", [])  # type: ignore[attr-defined]  # reason: the decoded payload is deliberately duck-typed here; a non-mapping body raises AttributeError, which this try block already catches.
-            if type(item) is dict
-        }
-    except (AttributeError, TypeError, ValueError, UnicodeError, RecursionError):
-        reasons = set()
-    if reasons & {
+        return ProviderFailure(ProviderStatus.AUTHENTICATION, category="http_401")
+    reasons = _error_reasons(payload)
+    daily = reasons & {"dailyLimitExceeded", "dailyLimitExceededUnreg"}
+    burst = reasons & {"rateLimitExceeded", "userRateLimitExceeded"}
+    if daily and not burst and reasons <= daily:
+        local = datetime.fromtimestamp(now, tz=_PACIFIC)
+        reset = datetime.combine(
+            local.date() + timedelta(days=1), datetime_time.min, tzinfo=_PACIFIC
+        )
+        return ProviderFailure(
+            ProviderStatus.RATE_LIMITED,
+            category="quota_exhausted",
+            retry_after=max(1, math.ceil(reset.timestamp() - now)),
+        )
+    if burst and not daily and reasons <= burst:
+        return ProviderFailure(
+            ProviderStatus.RATE_LIMITED,
+            category="burst_throttled",
+            retry_after=_BURST_WINDOW_SECONDS,
+        )
+    if status_code == 429 or reasons & {
         "dailyLimitExceeded",
         "dailyLimitExceededUnreg",
         "rateLimitExceeded",
         "userRateLimitExceeded",
         "quotaExceeded",
     }:
-        return ProviderStatus.RATE_LIMITED
+        return ProviderFailure(ProviderStatus.RATE_LIMITED, category="http_429")
     if reasons & {"keyInvalid", "ipRefererBlocked"}:
-        return ProviderStatus.AUTHENTICATION
+        return ProviderFailure(ProviderStatus.AUTHENTICATION, category="http_403")
     if status_code == 403:
-        return ProviderStatus.AUTHORIZATION
-    return ProviderStatus.UNAVAILABLE
+        return ProviderFailure(ProviderStatus.AUTHORIZATION, category="http_403")
+    return ProviderFailure(ProviderStatus.UNAVAILABLE, category=f"http_{status_code}")
+
+
+def _error_reasons(payload: bytes) -> frozenset[str]:
+    try:
+        value = _decode(payload)
+        return frozenset(
+            cast(str, item.get("reason"))
+            for item in value.get("error", {}).get("errors", [])  # type: ignore[attr-defined]  # reason: the decoded payload is deliberately duck-typed here; a non-mapping body raises AttributeError, which this try block already catches.
+            if type(item) is dict and type(item.get("reason")) is str
+        )
+    except (AttributeError, TypeError, ValueError, UnicodeError, RecursionError):
+        return frozenset()
 
 
 def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -1117,4 +1239,18 @@ def _reject_number(_: str) -> float:
     raise ValueError("provider number is invalid")
 
 
-__all__ = ["GOOGLE_BOOKS_URL", "GoogleBooksMetadataProvider"]
+def _google_books_work_query(value: WorkQuery) -> str:
+    """Render the documented Google Books q grammar without changing identity."""
+    title = value.title.replace('"', " ")
+    authors = tuple(author.replace('"', " ") for author in value.authors)
+    if value.candidate_limit_narrowing_retry:
+        return f'intitle:"{title}" inauthor:"{" ".join(authors)}"'
+    return " ".join(
+        [f'intitle:"{title}"'] + [f'inauthor:"{author}"' for author in authors]
+    )
+
+
+GoogleBooksPacer = ProviderRequestPacer
+
+
+__all__ = ["GOOGLE_BOOKS_URL", "GoogleBooksMetadataProvider", "GoogleBooksPacer"]

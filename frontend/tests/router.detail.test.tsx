@@ -83,7 +83,8 @@ describe('Library review ownership', () => {
         { category: 'automatic', destination: 'genres', outcome: 'ignore', previousValue: { kind: 'list', value: ['Preserved genre'] }, selectedValue: null },
         { category: 'automatic', destination: 'tags', outcome: 'ignore', previousValue: null, selectedValue: null },
         { category: 'preview', dispositions: [{ count: 3, outcome: 'would_accept' }] },
-        { category: 'cover', candidateCount: 2, outcome: 'selected', ownerOutcome: 'accept', policyReasons: ['credible_source'], policyStatus: 'recommended', reviewerStatus: 'complete' },
+        { category: 'cover', candidateCount: 2, outcome: 'selected', ownerOutcome: 'accept', policyReasons: ['credible_source'], policyStatus: 'recommended', reviewerStatus: 'complete', supersedesAutomatic: false },
+        { automaticOutcome: 'candidate', category: 'cover', candidateCount: 3, outcome: 'automatic_prepared', policyReasons: [], reviewerStatus: 'complete', supersedesAutomatic: true },
         { category: 'transition', outcome: 'admitted', reason: '<script>actionable</script>' },
       ],
     }))
@@ -149,6 +150,8 @@ describe('Library review ownership', () => {
     expect(ignored).not.toHaveTextContent('Previous')
     expect(ignored).not.toHaveTextContent('New')
     expect(screen.getByText(/Visual review complete across 2 candidates/u)).toBeVisible()
+    expect(screen.getByText('Automatic policy selected this cover.')).toBeVisible()
+    expect(screen.getByText('This strictly better confirmed cover replaced the earlier automatic choice.')).toBeVisible()
     expect(screen.getByText('This read-only preview recorded no decision authority.')).toBeVisible()
     expect(screen.getByText('This work entered the review queue.')).toBeVisible()
     expect(document.body).not.toHaveTextContent('<script>actionable</script>')
@@ -303,7 +306,7 @@ describe('Library review ownership', () => {
         schema_version: 'review-decision-v1' as const,
         actor: 'owner' as const,
         decision_id: 'decision-1',
-        destination: field.destination,
+        destination: 'title' as const,
         occurred_at: 1,
         outcome: 'accept' as const,
         proposal_id: field.proposalId,
@@ -401,7 +404,7 @@ describe('Library review ownership', () => {
       automaticDecision: {
         candidate_id: null,
         decision_id: 'automatic-1',
-        destination: field.destination,
+        destination: 'title' as const,
         occurred_at: 1,
         outcome: 'keep_current' as const,
         proposal_id: field.proposalId,

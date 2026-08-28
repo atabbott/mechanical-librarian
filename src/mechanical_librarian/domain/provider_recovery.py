@@ -92,10 +92,25 @@ class ProviderRecoveryJob:
             raise ProviderRecoveryError("provider recovery job is invalid")
 
 
-_TRANSIENT = {"transient", "rate_limited"}
-_DORMANT = {"authentication", "authorization", "configuration"}
+TRANSIENT_RECOVERY_FAILURES = frozenset({"transient", "rate_limited"})
+DORMANT_RECOVERY_FAILURES = frozenset(
+    {"authentication", "authorization", "configuration"}
+)
+DEFERRED_RECOVERY_FAILURES = frozenset({"burst_throttled", "quota_exhausted"})
+RECOVERY_FAILURES = (
+    TRANSIENT_RECOVERY_FAILURES | DORMANT_RECOVERY_FAILURES | DEFERRED_RECOVERY_FAILURES
+)
 _BACKOFF = (7_200, 14_400, 28_800, 57_600, 86_400)
+MAX_RECOVERY_DELAY = 90_000
 MAX_TIMESTAMP = 8_640_000_000_000
+
+
+def _valid_failure_delay(failure: str, retry_after: object) -> bool:
+    return (
+        type(retry_after) is int
+        and 1 <= retry_after <= MAX_RECOVERY_DELAY
+        and (failure == "quota_exhausted" or retry_after <= 86_400)
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,19 +176,27 @@ class ProviderRecovery:
         if (
             type(now) is not int
             or not 0 <= now <= MAX_TIMESTAMP
-            or failure not in _TRANSIENT | _DORMANT
+            or failure not in RECOVERY_FAILURES
         ):
             raise ProviderRecoveryError("provider recovery failure is invalid")
-        if failure in _DORMANT:
+        if failure in DORMANT_RECOVERY_FAILURES:
             return cls(connection, adapter, scope, generation, "dormant", 0, None)
-        if retry_after is not None and (
-            type(retry_after) is not int or not 1 <= retry_after <= 86_400
-        ):
+        if failure in DEFERRED_RECOVERY_FAILURES and retry_after is None:
+            raise ProviderRecoveryError("provider retry delay is invalid")
+        if retry_after is not None and not _valid_failure_delay(failure, retry_after):
             raise ProviderRecoveryError("provider retry delay is invalid")
         deadline = now + (retry_after or _BACKOFF[0])
         if deadline > MAX_TIMESTAMP:
             raise ProviderRecoveryError("provider recovery failure is invalid")
-        return cls(connection, adapter, scope, generation, "waiting", 1, deadline)
+        return cls(
+            connection,
+            adapter,
+            scope,
+            generation,
+            "waiting",
+            0 if failure in DEFERRED_RECOVERY_FAILURES else 1,
+            deadline,
+        )
 
     def retry(self, *, now: int, retry_after: int | None = None) -> "ProviderRecovery":
         if (
@@ -200,6 +223,49 @@ class ProviderRecovery:
             deadline,
         )
 
+    def defer(self, *, now: int, retry_after: int) -> "ProviderRecovery":
+        if (
+            self.state != "waiting"
+            or type(now) is not int
+            or not 0 <= now <= MAX_TIMESTAMP
+            or type(retry_after) is not int
+            or not 1 <= retry_after <= MAX_RECOVERY_DELAY
+        ):
+            raise ProviderRecoveryError("provider recovery deferral is invalid")
+        deadline = now + retry_after
+        if deadline > MAX_TIMESTAMP:
+            raise ProviderRecoveryError("provider recovery deferral is invalid")
+        return ProviderRecovery(
+            self.connection,
+            self.adapter,
+            self.scope,
+            self.generation,
+            "waiting",
+            self.attempt,
+            deadline,
+        )
+
+    def after_failure(
+        self, *, failure: str, now: int, retry_after: int | None
+    ) -> "ProviderRecovery":
+        if failure not in RECOVERY_FAILURES:
+            raise ProviderRecoveryError("provider recovery failure is invalid")
+        if failure in DORMANT_RECOVERY_FAILURES:
+            return ProviderRecovery.failed(
+                connection=self.connection,
+                adapter=self.adapter,
+                scope=self.scope,
+                generation=self.generation,
+                failure=failure,
+                now=now,
+                retry_after=retry_after,
+            )
+        if failure in DEFERRED_RECOVERY_FAILURES:
+            if retry_after is None or not _valid_failure_delay(failure, retry_after):
+                raise ProviderRecoveryError("provider retry delay is invalid")
+            return self.defer(now=now, retry_after=retry_after)
+        return self.retry(now=now, retry_after=retry_after)
+
     def with_generation(self, generation: int, *, now: int = 0) -> "ProviderRecovery":
         if (
             type(generation) is not int
@@ -224,8 +290,13 @@ class ProviderRecovery:
 
 
 __all__ = [
+    "DEFERRED_RECOVERY_FAILURES",
+    "DORMANT_RECOVERY_FAILURES",
+    "MAX_RECOVERY_DELAY",
     "MAX_TIMESTAMP",
     "ProviderRecovery",
     "ProviderRecoveryError",
     "ProviderRecoveryJob",
+    "RECOVERY_FAILURES",
+    "TRANSIENT_RECOVERY_FAILURES",
 ]

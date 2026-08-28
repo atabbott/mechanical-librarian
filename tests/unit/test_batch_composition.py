@@ -505,3 +505,61 @@ def test_foreground_report_shares_one_hardcover_pacer():
             binding.factory()
     pacer.assert_called_once_with()
     assert [shared, shared] == constructed
+
+
+def test_foreground_report_shares_one_google_books_pacer():
+    config = ApplicationConfiguration(
+        (
+            TargetConnectionConfiguration(
+                "primary", "https://example.invalid", "/target"
+            ),
+        ),
+        (
+            LibraryConfiguration(
+                "books", "primary", "library", "book", "media", ("first", "second")
+            ),
+        ),
+        (MediaMountConfiguration("media", "/media", "/books", True),),
+        (
+            ProviderConnectionConfiguration("first", True, False, None, "google_books"),
+            ProviderConnectionConfiguration(
+                "second", True, False, None, "google_books"
+            ),
+        ),
+    )
+    shared = object()
+    constructed = []
+    service = unittest.mock.Mock()
+    service.run.return_value = "report"
+    with (
+        patch.object(composition, "CoverArtifactStore"),
+        patch.object(composition, "AudiobookshelfItemReader"),
+        patch.object(composition, "GoogleBooksPacer", return_value=shared) as pacer,
+        patch.object(
+            composition, "google_books_client", side_effect=(object(), object())
+        ),
+        patch.object(
+            composition,
+            "GoogleBooksMetadataProvider",
+            side_effect=lambda *args, **kwargs: (
+                constructed.append(kwargs["pacer"]) or object()  # type: ignore[func-returns-value]  # reason: the `append(...) or value` recorder idiom is deliberate
+            ),
+        ),
+        patch.object(
+            composition, "GenerateMetadataReport", return_value=service
+        ) as generate,
+    ):
+        assert "report" == composition.run_metadata_report_loaded(
+            config,
+            Path("/reports"),
+            Path("/artifacts"),
+            "primary",
+            "books",
+            "item",
+            0,
+        )
+        bindings = generate.call_args.kwargs["providers"]
+        for binding in bindings:
+            binding.factory()
+    pacer.assert_called_once_with()
+    assert [shared, shared] == constructed

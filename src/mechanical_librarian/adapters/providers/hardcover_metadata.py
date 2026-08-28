@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import random
-import threading
 import time
 import unicodedata
 from dataclasses import replace
@@ -20,6 +20,7 @@ from mechanical_librarian.adapters.providers.retry_safety import (
     ProviderFailure,
     ProviderIncompleteCause,
     ProviderIncompleteCauseRecord,
+    ProviderRequestPacer,
     _DiscoveryRequestLedger,
     bounded_attempt_elapsed,
     bounded_retry_after,
@@ -87,6 +88,13 @@ from mechanical_librarian.domain.metadata_report import (
     normalize_title,
     provider_access_time,
 )
+from mechanical_librarian.domain.work_identity import (
+    WorkDispatchLineage,
+    WorkDispatchRung,
+    WorkQuery,
+    narrowing_work_query,
+    work_query_ladder,
+)
 
 HARDCOVER_URL = "https://api.hardcover.app/v1/graphql"
 HARDCOVER_SCHEMA_COMMIT = "1c5bdbd3244e02b03ccc658a792793e39cba17a8"
@@ -115,6 +123,9 @@ _WORK_QUERY = (
     f"tags:tags(where:{{taggings:{{book:{{title:{{_eq:$title}},contributions:{{author:{{name:{{_in:$authors}}}}}}}}}}}},order_by:{{id:asc}},limit:{_MAX_TAG_ROWS + 1})"
     "{id tag tag_category{id category}}}"
 )
+_WORK_NARROW_QUERY = _WORK_QUERY.replace(
+    "$authors:[String!]!", "$author:String!"
+).replace("_in:$authors", "_eq:$author")
 _QUERY = _ISBN_QUERY
 
 
@@ -128,37 +139,7 @@ class _OptionalRejections:
         self.count = min(MAX_DIAGNOSTIC_COUNT, self.count + 1)
 
 
-class HardcoverPacer:
-    """Share Hardcover's one-request-per-second start rate."""
-
-    def __init__(
-        self,
-        *,
-        clock: Callable[[], float] = time.monotonic,
-        sleep: Callable[[float], None] = time.sleep,
-    ) -> None:
-        self._clock = clock
-        self._sleep = sleep
-        self._last_start: float | None = None
-        self._lock = threading.Lock()
-
-    def wait(self, *, deadline: float | None) -> bool:
-        with self._lock:
-            now = self._clock()
-            delay = (
-                0.0
-                if self._last_start is None
-                else max(0.0, 1.0 - (now - self._last_start))
-            )
-            if deadline is not None and now + delay >= deadline:
-                return False
-            if delay:
-                self._sleep(delay)
-            now = self._clock()
-            if deadline is not None and now >= deadline:
-                return False
-            self._last_start = now
-            return True
+HardcoverPacer = ProviderRequestPacer
 
 
 class HardcoverMetadataProvider:
@@ -323,6 +304,8 @@ class HardcoverMetadataProvider:
                         observation.accessed_at,
                         observation.edition_enrichment_overflow,
                         diagnostics,
+                        observation.dispatch_lineage,
+                        observation.transformation_lineage,
                     )
                 )
                 merged = merge_provider_cover_descriptors(
@@ -350,7 +333,54 @@ class HardcoverMetadataProvider:
         lookup: MetadataLookup,
         *,
         deadline: float | None,
+        _shaped: WorkQuery | None = None,
     ) -> ProviderObservation:
+        if lookup.kind is ProviderQueryKind.WORK and _shaped is None:
+            if lookup.title is None or not lookup.authors:
+                return ProviderObservation(
+                    self._name,
+                    ProviderStatus.INSUFFICIENT_INPUT,
+                    query_kind=lookup.kind,
+                )
+            last = ProviderObservation(
+                self._name,
+                ProviderStatus.NO_MATCH,
+                query_kind=lookup.kind,
+            )
+            work_queries = work_query_ladder(lookup.title, lookup.authors)
+            if not work_queries:
+                return ProviderObservation(
+                    self._name,
+                    ProviderStatus.INSUFFICIENT_INPUT,
+                    query_kind=lookup.kind,
+                )
+            for work_query in work_queries:
+                shaped_lookup = replace(
+                    lookup,
+                    title=work_query.title,
+                    authors=work_query.authors,
+                )
+                last = self._observe_lookup(
+                    shaped_lookup,
+                    deadline=deadline,
+                    _shaped=work_query,
+                )
+                if last.status is ProviderStatus.CANDIDATES:
+                    return last
+                if last.status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED:
+                    narrowed = narrowing_work_query(work_query)
+                    return self._observe_lookup(
+                        replace(
+                            lookup,
+                            title=narrowed.title,
+                            authors=narrowed.authors,
+                        ),
+                        deadline=deadline,
+                        _shaped=narrowed,
+                    )
+                if last.status is not ProviderStatus.NO_MATCH:
+                    return last
+            return last
         local_claims = lookup.local_claims
         usable = tuple(
             sorted(
@@ -398,12 +428,19 @@ class HardcoverMetadataProvider:
                 },
             }
         elif lookup.kind is ProviderQueryKind.WORK:
+            is_narrowed = (
+                _shaped is not None and _shaped.candidate_limit_narrowing_retry
+            )
             body = {
                 "operationName": "MetadataEvidenceByWork",
-                "query": _WORK_QUERY,
+                "query": _WORK_NARROW_QUERY if is_narrowed else _WORK_QUERY,
                 "variables": {
-                    "authors": list(lookup.authors),
                     "title": lookup.title,
+                    **(
+                        {"author": lookup.authors[0]}
+                        if is_narrowed
+                        else {"authors": list(lookup.authors)}
+                    ),
                 },
             }
         else:
@@ -427,10 +464,30 @@ class HardcoverMetadataProvider:
                 accessed_at=self._accessed_at,
                 diagnostics=self._schema_diagnostics(),
                 edition_enrichment_overflow=edition_enrichment_overflow,
+                dispatch_lineage=(
+                    WorkDispatchLineage.from_query(_shaped)
+                    if status
+                    in {
+                        ProviderStatus.CANDIDATES,
+                        ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+                    }
+                    and _shaped is not None
+                    else None
+                ),
             )
 
         try:
-            payload = self._request(body, deadline=deadline)
+            payload = self._request(
+                body,
+                deadline=deadline,
+                query_retry=(
+                    _shaped is not None
+                    and (
+                        _shaped.rung is not WorkDispatchRung.NORMALIZED
+                        or _shaped.candidate_limit_narrowing_retry
+                    )
+                ),
+            )
         except ProviderFailure as error:
             return result(error.status)
         try:
@@ -520,13 +577,21 @@ class HardcoverMetadataProvider:
             )
         )
 
-    def _request(self, body: dict[str, object], *, deadline: float | None) -> bytes:
+    def _request(
+        self,
+        body: dict[str, object],
+        *,
+        deadline: float | None,
+        query_retry: bool = False,
+    ) -> bytes:
         for retry_index in range(_MAX_ATTEMPTS_PER_QUERY):
             started = self._clock()
             attempts_before_dispatch = self._attempt_count
             try:
                 payload = self._request_once(
-                    body, deadline=deadline, is_retry=retry_index > 0
+                    body,
+                    deadline=deadline,
+                    is_retry=query_retry or retry_index > 0,
                 )
             except (asyncio.CancelledError, KeyboardInterrupt):
                 if self._attempt_count != attempts_before_dispatch:
@@ -674,11 +739,17 @@ class HardcoverMetadataProvider:
                         category="http_403",
                     )
                 if response.status_code == 429:
+                    throttle = _hardcover_throttle(
+                        response.headers, now=self._wall_clock()
+                    )
+                    category, delay = (
+                        ("http_429", retry_after) if throttle is None else throttle
+                    )
                     raise ProviderFailure(
                         ProviderStatus.RATE_LIMITED,
-                        category="http_429",
-                        retryable=retry_after is not None,
-                        retry_after=retry_after,
+                        category=category,
+                        retryable=delay is not None,
+                        retry_after=delay,
                     )
                 if response.status_code in {500, 502, 503, 504}:
                     raise ProviderFailure(
@@ -720,11 +791,11 @@ class HardcoverMetadataProvider:
         except ProviderFailure:
             raise
         except httpx.HTTPError as error:
-            category = transient_transport_failure(error)
-            if category is not None:
+            transport_category = transient_transport_failure(error)
+            if transport_category is not None:
                 raise ProviderFailure(
                     ProviderStatus.UNAVAILABLE,
-                    category=category,
+                    category=transport_category,
                     retryable=True,
                 ) from None
             raise ProviderFailure(ProviderStatus.UNAVAILABLE) from None
@@ -789,6 +860,91 @@ class HardcoverMetadataProvider:
             elapsed_seconds=prior.elapsed_seconds,
             outcome="terminal",
         )
+
+
+def _hardcover_throttle(
+    headers: httpx.Headers, *, now: float
+) -> tuple[str, int] | None:
+    standing = headers.get("ratelimit")
+    if standing is not None:
+        entries = _rate_limit_standing(standing)
+        if entries is None or set(entries) != {"daily", "rate"}:
+            return None
+        daily = entries["daily"]
+        rate = entries["rate"]
+        if daily["r"] == 0 and 1 <= daily["t"] <= 86_400:
+            return "quota_exhausted", daily["t"]
+        if daily["r"] > 0 and rate["r"] == 0 and 1 <= rate["t"] <= 60:
+            return "burst_throttled", rate["t"]
+        return None
+    daily_remaining = _decimal_header(headers.get("x-ratelimit-daily-remaining"))
+    rate_remaining = _decimal_header(headers.get("x-ratelimit-remaining"))
+    if daily_remaining is None or rate_remaining is None:
+        return None
+    if daily_remaining == 0:
+        delay = _reset_delay(headers.get("x-ratelimit-daily-reset"), now=now)
+        return (
+            ("quota_exhausted", delay)
+            if delay is not None and delay <= 86_400
+            else None
+        )
+    if rate_remaining == 0:
+        delay = _reset_delay(headers.get("x-ratelimit-reset"), now=now)
+        return ("burst_throttled", delay) if delay is not None and delay <= 60 else None
+    return None
+
+
+def _rate_limit_standing(value: str) -> dict[str, dict[str, int]] | None:
+    if type(value) is not str or not 1 <= len(value) <= 512:
+        return None
+    result: dict[str, dict[str, int]] = {}
+    for index, raw_entry in enumerate(value.split(",")):
+        parts = tuple(part.strip() for part in raw_entry.split(";"))
+        if (
+            len(parts) != 3
+            or len(parts[0]) < 3
+            or parts[0][0] != '"'
+            or parts[0][-1] != '"'
+        ):
+            return None
+        label = parts[0][1:-1]
+        attributes: dict[str, int] = {}
+        for part in parts[1:]:
+            key, separator, raw = part.partition("=")
+            parsed = _decimal_header(raw)
+            if separator != "=" or key not in {"r", "t"} or parsed is None:
+                return None
+            attributes[key] = parsed
+        if set(attributes) != {"r", "t"}:
+            return None
+        key = "daily" if label == "daily" else "rate" if index == 0 else ""
+        if not key or key in result:
+            return None
+        result[key] = attributes
+    return result
+
+
+def _decimal_header(value: str | None) -> int | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    if not 1 <= len(stripped) <= 16 or not stripped.isascii() or not stripped.isdigit():
+        return None
+    parsed = int(stripped)
+    return parsed if parsed <= 2_147_483_647 else None
+
+
+def _reset_delay(value: str | None, *, now: float) -> int | None:
+    reset = _decimal_header(value)
+    if (
+        reset is None
+        or type(now) not in {int, float}
+        or isinstance(now, bool)
+        or not math.isfinite(now)
+        or reset <= now
+    ):
+        return None
+    return math.ceil(reset - now)
 
 
 def _body(

@@ -17,6 +17,8 @@ class FailureCategory(str, Enum):
     PROVIDER_DECLARED_ERROR = "provider_declared_error"
     HTTP_NON_SUCCESS = "http_non_success"
     QUOTA_RATE_LIMIT = "quota_rate_limit"
+    BURST_THROTTLE = "burst_throttle"
+    DAILY_QUOTA_EXHAUSTED = "daily_quota_exhausted"
     EMPTY_NO_MATCH = "empty_no_match"
     MALFORMED_OVER_BOUND_RESPONSE = "malformed_over_bound_response"
     SCHEMA_CONSTRUCTION = "schema_construction"

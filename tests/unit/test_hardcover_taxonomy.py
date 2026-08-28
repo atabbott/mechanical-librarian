@@ -31,8 +31,15 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
+    TargetDestination,
     TargetFacts,
+    TargetField,
+    TargetFieldState,
     default_target_fields,
+)
+from mechanical_librarian.domain.work_identity import (
+    WorkDispatchRung,
+    WorkTitleTransformationFamily,
 )
 from tests.support.hardcover_evidence import (
     hardcover_envelope,
@@ -40,6 +47,165 @@ from tests.support.hardcover_evidence import (
     isbn_lookup,
     work_lookup,
 )
+
+
+def test_work_query_ladder_and_narrowing_use_closed_graphql_grammars() -> None:
+    requests: list[dict[str, object]] = []
+    matching = hardcover_envelope(
+        [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}],
+        [
+            {
+                "id": 1,
+                "title": "Current title: Subtitle",
+                "contributions": [
+                    {
+                        "id": 1,
+                        "contribution": "Author",
+                        "author": {"id": 7, "name": "Ada Example"},
+                    }
+                ],
+            }
+        ],
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json=(hardcover_envelope([], []) if len(requests) == 1 else matching),
+        )
+
+    provider = HardcoverMetadataProvider(
+        "catalogue",
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        65_536,
+    )
+    observation = provider.observe(work_lookup("Current title: Subtitle (Book 2)"))
+
+    assert ProviderStatus.CANDIDATES is observation.status
+    assert [
+        {"authors": ["Ada Example"], "title": "Current title: Subtitle"},
+        {"authors": ["Ada Example"], "title": "Current title"},
+    ] == [request["variables"] for request in requests]
+    assert (
+        observation.dispatch_lineage is not None
+        and observation.dispatch_lineage.rung is WorkDispatchRung.SUBTITLE_STRIPPED
+    )
+    assert 1 == observation.request_accounting.initial_dispatches
+    assert 1 == observation.request_accounting.retry_dispatches
+
+
+@pytest.mark.parametrize(
+    "title",
+    ("[retail]", "(1)", "(2010)", "ISBN 9780306406157", "2nd Edition", "Book 2"),
+)
+def test_decoration_only_work_query_is_insufficient_without_request(title: str) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(500)
+
+    observation = HardcoverMetadataProvider(
+        "catalogue",
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        65_536,
+    ).observe(work_lookup(title))
+
+    assert ProviderStatus.INSUFFICIENT_INPUT is observation.status
+    assert [] == requests
+    assert (0, 0) == (
+        observation.request_accounting.initial_dispatches,
+        observation.request_accounting.retry_dispatches,
+    )
+
+
+def test_filename_author_prefix_shapes_hardcover_query_but_never_admits() -> None:
+    lookup = work_lookup("Ada_Example_-_Plain Work")
+    payload = hardcover_envelope(
+        [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}],
+        [
+            {
+                "id": 1,
+                "title": "Plain Work",
+                "contributions": [
+                    {
+                        "id": 1,
+                        "contribution": "Author",
+                        "author": {"id": 7, "name": "Ada Example"},
+                    }
+                ],
+            }
+        ],
+    )
+    observation = HardcoverMetadataProvider(
+        "catalogue",
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json=payload,
+                )
+            )
+        ),
+        65_536,
+    ).observe(lookup)
+    qualified = qualify_provider_observation(observation, lookup)
+
+    assert ProviderStatus.CANDIDATES is observation.status
+    assert observation.dispatch_lineage is not None
+    assert WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX in (
+        observation.dispatch_lineage.transformations
+    )
+    assert ProviderStatus.NO_MATCH is qualified.status
+    assert qualified.transformation_lineage is None
+
+
+def test_hardcover_candidate_limit_retries_with_primary_author_equality() -> None:
+    requests: list[dict[str, object]] = []
+    overflow = hardcover_envelope(
+        [
+            {"id": index, "book_id": index, "isbn_10": None, "isbn_13": None}
+            for index in range(1, 7)
+        ],
+        [
+            {
+                "id": index,
+                "title": "Current title",
+                "contributions": [
+                    {
+                        "id": index,
+                        "contribution": "Author",
+                        "author": {"id": 7, "name": "Ada Example"},
+                    }
+                ],
+            }
+            for index in range(1, 7)
+        ],
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json=overflow if len(requests) == 1 else hardcover_envelope([], []),
+        )
+
+    observation = HardcoverMetadataProvider(
+        "catalogue",
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        65_536,
+    ).observe(work_lookup(authors=("Ada Example", "Bea Example")))
+
+    assert ProviderStatus.NO_MATCH is observation.status
+    assert 2 == len(requests)
+    assert {"author": "Ada Example", "title": "Current title"} == requests[1][
+        "variables"
+    ]
+    assert "_eq:$author" in cast("str", requests[1]["query"])
 
 
 def test_work_lookup_retains_typed_taxonomy_and_first_publication() -> None:
@@ -151,21 +317,29 @@ def test_work_lookup_retains_typed_taxonomy_and_first_publication() -> None:
     ] == [
         (value.taxonomy_type, value.value, value.source_ordinal) for value in taxonomy
     ]
-    replayed = MetadataReport.from_json(
-        MetadataReport.create(
-            target=TargetFacts(
-                "primary",
-                "ebooks",
-                "item-1",
-                default_target_fields("Current title"),
+    report = MetadataReport.create(
+        target=TargetFacts(
+            "primary",
+            "ebooks",
+            "item-1",
+            tuple(
+                TargetField(
+                    TargetDestination.AUTHORS,
+                    TargetFieldState.VALUE,
+                    ("Ada Example",),
+                )
+                if field.destination is TargetDestination.AUTHORS
+                else field
+                for field in default_target_fields("Current title")
             ),
-            file=FileFacts(0, "a" * 64, "b" * 64),
-            local_claims=(),
-            local_reasons=("no_opening_claims",),
-            providers=(observation,),
-        ).to_json()
-    ).providers[0]
-    assert observation == replayed
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64),
+        local_claims=(),
+        local_reasons=("no_opening_claims",),
+        providers=(observation,),
+    )
+    replayed = MetadataReport.from_json(report.to_json()).providers[0]
+    assert report.providers[0] == replayed
     publication = next(
         value
         for value in observation.candidates[0].evidence

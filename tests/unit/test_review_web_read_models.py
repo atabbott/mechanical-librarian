@@ -40,6 +40,10 @@ from mechanical_librarian.application.review_web import (
     _provider_comparison_notices,
     _provider_label,
 )
+from mechanical_librarian.domain.automatic_decision import (
+    F19A_QUALIFICATION_MANIFEST_SHA256,
+    AutomaticDecision,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -185,6 +189,17 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
         "candidates": [
             {
                 "artifact_id": "cover_" + "c" * 64,
+                "deterministic_citations": [candidate_reference],
+                "deterministic_rank": None,
+                "deterministic_rank_key": [
+                    1,
+                    0,
+                    -960000,
+                    -800,
+                    -1200,
+                    0,
+                    candidate_reference,
+                ],
                 "height": 1200,
                 "identity": {
                     "candidate_reference": candidate_reference,
@@ -194,12 +209,13 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
                     "reasons": [],
                 },
                 "incumbent": True,
+                "match_state": "same_book",
                 "observation": None,
                 "original_sha256": "e" * 64,
                 "ordinal": 0,
                 "preview_sha256": "f" * 64,
                 "reference": candidate_reference,
-                "selectable": True,
+                "selectable": False,
                 "source_kinds": ["abs"],
                 "state": "available",
                 "transport_sha256": "1" * 64,
@@ -235,9 +251,11 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
             "schema_version": "cover-policy-v1",
         },
         "policy_reference": "cover_policy_" + "2" * 64,
+        "provider_fetching": False,
+        "ready": False,
         "reviewer_status": "unavailable",
         "reviewer_unavailable_reason": None,
-        "schema_version": "cover-consideration-v1",
+        "schema_version": "cover-consideration-v2",
         "supersedes_id": None,
         "target_fingerprint": case.target_fingerprint,
     }
@@ -922,30 +940,27 @@ def test_automatic_detail_uses_a_closed_projection_without_human_commit(
     # Durable automatic documents carry authority bindings that must never
     # cross the authenticated case read model.
     web.login()
-    web.repository.decisions["title"] = json.dumps(
-        {
-            "origin": "automatic_policy",
-            "schema_version": "automatic-decision-v1",
-            "decision_id": "automatic_decision_" + "a" * 64,
-            "review_case_id": web.case.review_case_id,
-            "proposal_id": web.case.proposals[0]["proposal_id"],
-            "destination": "title",
-            "outcome": "candidate",
-            "candidate_id": web.case.proposals[0]["result"]["alternatives"][0][
-                "alternative_id"
-            ],
-            "occurred_at": 7,
-            "target_fingerprint": web.case.target_fingerprint,
-            "report_id": "report_" + "b" * 64,
-            "proposal_set_id": "proposal_set_" + "c" * 64,
-            "policy_category": "title_layout",
-            "policy_option": "preserve",
-            "qualification_manifest_sha256": "d" * 64,
-            "idempotency_digest": "e" * 64,
-        },
-        separators=(",", ":"),
-        sort_keys=True,
+    candidate_id = web.case.proposals[0]["result"]["alternatives"][0]["alternative_id"]
+    authority = AutomaticDecision.create(
+        review_case_id=web.case.review_case_id,
+        report_id=web.repository.report.report_id,
+        proposal_set_id=web.case.proposal_set_id,
+        proposal_id=web.case.proposals[0]["proposal_id"],
+        target_fingerprint=web.case.target_fingerprint,
+        destination="title",
+        outcome="candidate",
+        candidate_id=candidate_id,
+        resolved_policy_id="resolved_policy_" + "0" * 64,
+        policy_generation=1,
+        rule_id="shadow_rule_" + "1" * 64,
+        policy_category="title_layout",
+        policy_option="preserve",
+        qualification_manifest_sha256=F19A_QUALIFICATION_MANIFEST_SHA256,
+        source_outcome_id="shadow_outcome_" + "3" * 64,
+        bundle_id="automatic_bundle_" + "4" * 64,
+        occurred_at=7,
     )
+    web.repository.decisions["title"] = authority.to_json()
     detail = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}")
     assert 200 == detail.status_code
     field = next(
@@ -985,12 +1000,15 @@ def test_automatic_detail_uses_a_closed_projection_without_human_commit(
         == recommended[0]["alternative_id"]
     )
     assert "qualification_manifest_sha256" not in field["automatic_decision"]
-    ignored = json.loads(web.repository.decisions["title"])
-    ignored["outcome"] = "ignore"
-    ignored["candidate_id"] = None
-    web.repository.decisions["title"] = json.dumps(
-        ignored, separators=(",", ":"), sort_keys=True
+    ignored = AutomaticDecision.create(
+        **{
+            **authority._core(),
+            "outcome": "ignore",
+            "candidate_id": None,
+        },
+        occurred_at=8,
     )
+    web.repository.decisions["title"] = ignored.to_json()
     ignored_detail = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}")
     assert 200 == ignored_detail.status_code
     ignored_field = next(

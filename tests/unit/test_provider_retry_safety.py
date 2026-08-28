@@ -8,11 +8,36 @@ import httpx
 import pytest
 
 from mechanical_librarian.adapters.providers.retry_safety import (
+    ProviderRequestPacer,
     _DiscoveryRequestLedger,
     bounded_attempt_elapsed,
     bounded_retry_after,
     transient_transport_failure,
 )
+
+
+def test_shared_pacer_spaces_starts_and_refuses_a_deadline_boundary() -> None:
+    now = [10.0]
+    sleeps: list[float] = []
+
+    def sleep(delay: float) -> None:
+        sleeps.append(delay)
+        now[0] += delay
+
+    pacer = ProviderRequestPacer(
+        minimum_interval_seconds=1.0, clock=lambda: now[0], sleep=sleep
+    )
+    assert pacer.wait()
+    assert pacer.wait()
+    assert [1.0] == sleeps
+    assert not pacer.wait(deadline=12.0)
+    assert [1.0] == sleeps
+
+
+@pytest.mark.parametrize("interval", (0, -1, True, float("inf")))
+def test_shared_pacer_rejects_noncanonical_intervals(interval: object) -> None:
+    with pytest.raises(ValueError, match="pacing"):
+        ProviderRequestPacer(interval)  # type: ignore[arg-type]
 
 
 def _caused(error: httpx.HTTPError, cause: BaseException) -> httpx.HTTPError:

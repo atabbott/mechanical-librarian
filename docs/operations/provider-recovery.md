@@ -9,9 +9,23 @@ Each exact lease is renewed between the bounded target/provider operation and
 the proposal, admission, and projection stages. A manual invocation therefore
 cannot reclaim work merely because the composed path has passed the initial
 five-minute lease horizon.
-Transient and rate-limited failures wait for either a strict 1–86,400 second
-`Retry-After` delay or 2, 4, 8, 16, then 24 hours. Authentication,
+The application applies one closed recovery rule to both the initial report and
+every retry successor. Exact provider evidence distinguishes burst throttling
+from exhausted daily quota. Burst throttling waits only for the provider's
+bounded burst window; exhausted quota waits until the provider's documented
+daily reset. Missing, malformed, contradictory, or unknown rate-limit evidence
+stays the conservative generic rate-limited case and uses a strict bounded
+`Retry-After` or the 2, 4, 8, 16, then 24 hour ladder. Authentication,
 authorization, and configuration failures are dormant.
+
+Google Books recognizes only the closed API reason vocabulary: burst reasons
+wait at most 100 seconds, while daily-limit reasons resume at the next Pacific
+midnight. Hardcover recognizes either its exact current `RateLimit` response
+grammar or its exact legacy remaining/reset pair. A depleted
+burst bucket waits at most 60 seconds; a depleted daily bucket resumes at the
+next UTC midnight. Header values themselves are never persisted. A deferred
+burst or daily-quota result consumes neither a recovery-health attempt nor the
+job's three-attempt execution allowance.
 
 After correcting a dormant condition, increment the positive
 `provider_recovery_generation` in the `config-v6` file and restart the
@@ -33,8 +47,8 @@ recovery path rebuilds only retry-eligible provider lanes and publishes an immut
 successor through the ordinary proposal, admission, shadow projection, and
 atomic review-package cutover. The predecessor package remains visible until
 that cutover. A no-match is a successful terminal result. A shared
-provider failure creates no successor and no sibling fanout; it waits for
-Retry-After when supplied, otherwise uses bounded backoff. Stale package,
+provider failure creates no successor and no sibling fanout; it waits under
+the same closed recovery rule as the initial report. Stale package,
 request, deadline, cancellation, and target/media checks close safely without
 replaying a sibling. Recovery never writes target metadata.
 One stale member is retired without retiring current siblings. A restart after
@@ -66,6 +80,11 @@ dormant configuration/authentication, and exhausted phases with scope counts
 or, during fanout, work counts and any next eligible timestamp. It has no retry
 control and never exposes connection identifiers,
 provider payloads, or credentials.
+
+Google Books, Hardcover, and Open Library each use one shared one-second
+request-start pacer across foreground and recovery work inside a composed run.
+This serializes starts for one provider without holding a SQLite transaction or
+creating a separate request budget.
 
 The owner may run `mechanical-librarian provider-recovery` with the same
 configuration, database, catalogue, and artifact paths used by the server. It

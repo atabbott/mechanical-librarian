@@ -62,7 +62,7 @@ context and consequences rather than reproducing code.
 | [0046](0046-observe-report-bound-covers.md) | accepted | Observe report-bound covers with a small closed vocabulary |
 | [0047](0047-adjudicate-closed-cover-policy.md) | accepted; source-only activation provision superseded by 0049 | Adjudicate closed cover policy deterministically |
 | [0048](0048-compile-rich-metadata-policy-preview.md) | accepted | Compile closed rich-metadata policy previews |
-| [0049](0049-owner-confirmed-cover-considerations.md) | accepted | Activate owner-confirmed cover considerations |
+| [0049](0049-owner-confirmed-cover-considerations.md) | accepted; reviewer-dependent recommendation and manual-only authority superseded by 0059 | Activate owner-confirmed cover considerations |
 | [0050](0050-bound-installed-owner-assistance.md) | accepted | Bound installed owner-assistance commands and cover observation |
 | [0051](0051-atomic-current-review-packages.md) | accepted | Publish review packages after projection |
 | [0052](0052-record-automatic-no-change.md) | accepted | Record automatic no-change outcomes |
@@ -72,7 +72,8 @@ context and consequences rather than reproducing code.
 | [0056](0056-edition-overflow-work-witness.md) | accepted | Retain a work-only witness for bounded edition overflow |
 | [0057](0057-sustain-explicit-sqlite-aggregate-topology.md) | accepted | Sustain the explicit SQLite aggregate topology |
 | [0058](0058-settings-authority-and-first-boot.md) | accepted | Make settings-store authority explicit after first boot |
-| [0059](0059-dedicated-review-session-database.md) | accepted | Move review-session state to a dedicated session database |
+| [0059](0059-deterministic-cover-election.md) | accepted | Separate deterministic cover election from reviewer advice |
+| [0060](0060-dedicated-review-session-database.md) | accepted | Move review-session state to a dedicated session database |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

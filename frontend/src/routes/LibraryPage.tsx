@@ -520,7 +520,9 @@ function RecordedOutcome({
     >
       <p>
         <strong>
-          {field.automaticDecision ? 'Resolved automatically' : completionOutcome(field)}
+          {field.humanDecision === null && field.automaticDecision !== null
+            ? 'Resolved automatically'
+            : completionOutcome(field)}
         </strong>
       </p>
       <dl>
@@ -620,12 +622,7 @@ function LibraryCoverChoicesContent({
         ) : null}
       </section>
     )
-  const candidates = consideration.candidates.filter(
-    (candidate) => candidate.selectable || candidate.incumbent,
-  )
-  const excluded = consideration.candidates.filter(
-    (candidate) => !candidate.selectable && !candidate.incumbent,
-  )
+  const candidates = consideration.candidates
   const expanded = candidates.length > 3
   const incumbent = candidates.find((candidate) => candidate.incumbent)
   const alternatives = candidates.filter((candidate) => !candidate.incumbent)
@@ -646,32 +643,15 @@ function LibraryCoverChoicesContent({
         .slice(0, 2)
     : []
   const excludedReason = (candidate: (typeof candidates)[number]) =>
-    consideration.policyPreferences.avoidPromotionalText &&
-    candidate.observation?.promotional_text === 'present'
-      ? 'Promotional text excluded by policy'
-      : consideration.policyPreferences.avoidTieInBranding &&
-          candidate.observation?.tie_in_branding === 'present'
-        ? 'Tie in branding excluded by policy'
-        : typeof candidate.identity.outcome === 'string' &&
-            !['plausible_match', 'verified_work_match', 'verified_manifestation_match'].includes(
-              candidate.identity.outcome,
-            )
-          ? `${fieldLabel(candidate.identity.outcome)}${
-              Array.isArray(candidate.identity.reasons)
-                ? ` · ${candidate.identity.reasons
-                    .filter((reason): reason is string => typeof reason === 'string')
-                    .slice(0, 2)
-                    .map(fieldLabel)
-                    .join(', ')}`
-                : ''
-            }`
-          : candidate.observation === null
-            ? 'Visual observation unavailable'
-            : policyStatus !== null && !acceptableReferences.includes(candidate.reference)
-              ? policyReasons.length
-                ? policyReasons.map(fieldLabel).join(', ')
-                : fieldLabel(policyStatus)
-              : fieldLabel(candidate.state)
+    candidate.matchState === 'match_not_confirmed'
+      ? "Match not confirmed · We couldn't confirm that this cover belongs to this book or edition."
+      : candidate.observation === null
+        ? 'Reviewer observations unavailable; deterministic match evidence is retained.'
+        : policyStatus !== null && !acceptableReferences.includes(candidate.reference)
+          ? policyReasons.length
+            ? policyReasons.map(fieldLabel).join(', ')
+            : fieldLabel(policyStatus)
+          : fieldLabel(candidate.state)
   const card = (candidate: (typeof candidates)[number], index: number) => {
     const alternative = candidates.slice(0, index + 1).filter((item) => !item.incumbent).length
     const source = cover.imageSource(consideration.id, candidate.reference)
@@ -680,6 +660,7 @@ function LibraryCoverChoicesContent({
       ? null
       : { kind: 'cover', value: candidate.artifactId }
     const selected = choiceSelected(field, progress, outcome, value)
+    const actionableCandidate = candidate.incumbent || candidate.selectable
     if ((candidate.incumbent && !keeps) || (!candidate.incumbent && !accepts)) return null
     const context = candidate.incumbent
       ? currentContext
@@ -691,15 +672,17 @@ function LibraryCoverChoicesContent({
     const open = expandedEvidence.has(evidenceKey)
     return (
       <article
-        className={`cover-choice${open ? ' is-evidence-open' : ''}`}
+        className={`cover-choice${open ? ' is-evidence-open' : ''}${actionableCandidate ? '' : ' is-unconfirmed'}`}
         key={candidate.reference}
       >
         <button
           type="button"
-          aria-pressed={selected}
+          aria-pressed={actionableCandidate ? selected : false}
           className={`library-cover-card${candidate.incumbent ? ' is-current' : ''}${context?.recommendation === 'recommended' ? ' is-recommended' : ''}${selected ? ' is-selected' : ''}`}
-          disabled={disabled}
-          onClick={() => choose(outcome, value)}
+          disabled={disabled || !actionableCandidate}
+          onClick={() => {
+            if (actionableCandidate) choose(outcome, value)
+          }}
         >
           <span className="library-cover-image">
             {cover.imageFailed(candidate.reference) ? (
@@ -719,15 +702,23 @@ function LibraryCoverChoicesContent({
               {label}
               {context?.recommendation === 'recommended' ? ' · Recommended' : ''}
             </small>
-            <strong>{fieldLabel(candidate.state)}</strong>
+            <strong>
+              {candidate.matchState === 'same_edition'
+                ? 'Same edition'
+                : candidate.matchState === 'same_book'
+                  ? 'Same book'
+                  : 'Match not confirmed'}
+            </strong>
             <em>
               {context?.rationale ??
                 `${String(candidate.width)} × ${String(candidate.height)} · ${candidate.sourceKinds.map(fieldLabel).join(', ')}`}
             </em>
             <span className="choice-recommendation">
-              {context?.recommendation === 'recommended'
-                ? context.recommendationReason
-                : 'No recommendation retained'}
+              {!actionableCandidate
+                ? excludedReason(candidate)
+                : context?.recommendation === 'recommended'
+                  ? context.recommendationReason
+                  : 'No recommendation retained'}
             </span>
             {selected && progress?.phase === 'recording' ? <b>Recording…</b> : null}
           </span>
@@ -761,7 +752,7 @@ function LibraryCoverChoicesContent({
     consideration.reviewerStatus === 'completed'
       ? 'Advisory visual review complete'
       : reviewerUnavailable
-        ? 'Manual comparison available'
+        ? 'Deterministic confirmed choice remains available'
         : 'Manual cover comparison'
   const reviewerDetail = reviewerUnavailableDetail(consideration.reviewerUnavailableReason)
   return (
@@ -770,13 +761,29 @@ function LibraryCoverChoicesContent({
       aria-label="Choose a cover"
     >
       <header>
-        <strong>{reviewerLabel}</strong>
+        <strong>
+          {consideration.ready
+            ? 'Recommended cover ready'
+            : consideration.providerFetching
+              ? 'Waiting for active cover searches'
+              : 'No confirmed cover recommendation'}
+        </strong>
         <small>
           {coverContexts.some((context) => context.recommendation === 'recommended')
-            ? 'One candidate is recommended as advice only.'
-            : 'Recommendation is unavailable; comparison remains manual.'}
+            ? 'The technically best confirmed match is ready for your decision.'
+            : consideration.providerFetching
+              ? 'Confirmed matches remain visible; the shared decision gate opens when fetching pauses.'
+              : 'Only confirmed matches can be recommended.'}
         </small>
       </header>
+      <p className="reviewer-unavailable-detail">{reviewerLabel}</p>
+      {field.humanDecision ? (
+        <p className="reviewer-unavailable-detail">Owner choice is final for this work.</p>
+      ) : field.automaticDecision ? (
+        <p className="reviewer-unavailable-detail">
+          Automatically selected. Only a strictly better confirmed cover can update this choice.
+        </p>
+      ) : null}
       {reviewerDetail ? <p className="reviewer-unavailable-detail">{reviewerDetail}</p> : null}
       <p className="cover-track-hint">
         Every cover is shown whole in one row. Scroll the row, or tab between covers, to compare
@@ -805,7 +812,7 @@ function LibraryCoverChoicesContent({
           </aside>
           <div className="library-cover-gallery">
             <header>
-              <strong>Eligible alternatives</strong>
+              <strong>Retrieved alternatives</strong>
               <small>{String(alternatives.length)} available</small>
             </header>
             <div>
@@ -868,16 +875,12 @@ function LibraryCoverChoicesContent({
           ) : null}
         </article>
       ) : null}
-      {excluded.length || consideration.omissions.length ? (
+      {consideration.omissions.length ? (
         <details className="library-cover-excluded">
           <summary>
-            {String(excluded.length + consideration.omissions.length)} excluded or unavailable
-            candidate{excluded.length + consideration.omissions.length === 1 ? '' : 's'}{' '}
-            <small>Reasons retained</small>
+            {String(consideration.omissions.length)} unavailable candidate
+            {consideration.omissions.length === 1 ? '' : 's'} <small>Reasons retained</small>
           </summary>
-          {excluded.map((candidate) => (
-            <p key={candidate.reference}>{excludedReason(candidate)}</p>
-          ))}
           {consideration.omissions.map((omission, index) => (
             <p key={String(index)}>
               {typeof omission.reason === 'string'
@@ -1986,8 +1989,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                     <dt>Resolved automatically</dt>
                     <dd>
                       {String(
-                        detail.data.fields.filter((field) => field.automaticDecision !== null)
-                          .length,
+                        detail.data.fields.filter(
+                          (field) =>
+                            field.humanDecision === null && field.automaticDecision !== null,
+                        ).length,
                       )}
                     </dd>
                   </div>

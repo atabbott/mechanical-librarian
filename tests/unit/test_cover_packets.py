@@ -2250,7 +2250,9 @@ def _typed_discovery_identity_case(
             if lane_kind is ProviderQueryKind.ISBN or unrelated_isbn_mapping
             else None
         )
-        work_candidate = candidate if lane_kind is ProviderQueryKind.WORK else None
+        # A successful WORK lane requires complete target-author authority and
+        # replayable dispatch lineage. This fixture only tests ISBN mapping.
+        work_candidate = None
 
         def lane(
             identity: str,
@@ -2357,7 +2359,7 @@ def test_typed_discovery_creator_evidence_uses_any_agreement_over_pairwise_noise
 @pytest.mark.parametrize(
     ("lane_kind", "unrelated_isbn_mapping", "expected"),
     (
-        (ProviderQueryKind.WORK, False, "unknown"),
+        (ProviderQueryKind.WORK, False, "plausible_match"),
         (ProviderQueryKind.ISBN, False, "plausible_match"),
         (ProviderQueryKind.WORK, True, "unknown"),
         (None, False, "plausible_match"),
@@ -3020,6 +3022,7 @@ def _adjudicate(
     observation_mutation: object | None = None,
     observation_available: bool = True,
     profile_payload: bytes = b'{"profile":"synthetic"}',
+    provider_fetching: bool = False,
 ) -> dict[str, Any]:
     (
         report_document,
@@ -3048,6 +3051,7 @@ def _adjudicate(
             policy,
             profile_payload=(profile_payload if observation_available else None),
             read_preview=read_preview,
+            provider_fetching=provider_fetching,
         )
     return json.loads(result.document)
 
@@ -3059,12 +3063,21 @@ def test_closed_policy_is_content_bound_and_plain_policy_uses_packet_order() -> 
         report["recommended_candidate_reference"]
         == report["acceptable_candidate_references"][0]
     )
-    assert report["reasons"] == ["policy_satisfied"]
+    assert report["reasons"] == ["deterministic_confirmed_order"]
     assert report["schema_version"] == "cover-policy-report-v1"
     assert report["observation_taxonomy_reference"] == TAXONOMY_REFERENCE
     assert CoverPolicy().reference != CoverPolicy(avoid_promotional_text=True).reference
     with pytest.raises(ValueError):
         CoverPolicy(avoid_promotional_text=1)
+
+
+def test_active_provider_fetching_retains_ranked_candidates_but_abstains() -> None:
+    report = _adjudicate(provider_fetching=True)
+
+    assert report["status"] == "abstained"
+    assert report["recommended_candidate_reference"] is None
+    assert len(report["acceptable_candidate_references"]) == 3
+    assert report["reasons"] == ["provider_fetching"]
 
 
 def test_legacy_v1_observation_remains_admitted_but_v2_requires_attempt_evidence() -> (
@@ -3113,55 +3126,37 @@ def test_legacy_v1_observation_remains_admitted_but_v2_requires_attempt_evidence
 
 
 @pytest.mark.parametrize(
-    ("name", "policy", "mutation", "status", "reason", "acceptable"),
+    ("name", "policy", "mutation"),
     (
         (
             "promotional present",
             CoverPolicy(avoid_promotional_text=True),
             lambda value: value["observations"][0].update(promotional_text="present"),
-            "recommended",
-            "promotional_text_excluded",
-            2,
         ),
         (
             "promotional unknown",
             CoverPolicy(avoid_promotional_text=True),
             lambda value: value["observations"][0].update(promotional_text="unknown"),
-            "abstained",
-            "observations_ambiguous",
-            0,
         ),
         (
             "tie-in present",
             CoverPolicy(avoid_tie_in_branding=True),
             lambda value: value["observations"][0].update(tie_in_branding="present"),
-            "recommended",
-            "tie_in_branding_excluded",
-            2,
         ),
         (
             "tie-in unknown",
             CoverPolicy(avoid_tie_in_branding=True),
             lambda value: value["observations"][0].update(tie_in_branding="unknown"),
-            "abstained",
-            "observations_ambiguous",
-            0,
         ),
         (
             "minimal preferred",
             CoverPolicy(prefer_minimal_composition=True),
             lambda value: value["observations"][2].update(composition="minimal"),
-            "recommended",
-            "preferred_minimal",
-            3,
         ),
         (
             "composition unknown",
             CoverPolicy(prefer_minimal_composition=True),
             lambda value: value["observations"][0].update(composition="unknown"),
-            "abstained",
-            "observations_ambiguous",
-            0,
         ),
     ),
     ids=(
@@ -3173,18 +3168,14 @@ def test_legacy_v1_observation_remains_admitted_but_v2_requires_attempt_evidence
         "composition_unknown",
     ),
 )
-def test_each_closed_policy_value_filters_prefers_or_abstains(
-    name: str, policy, mutation, status: str, reason: str, acceptable: int
+def test_each_closed_policy_value_is_advisory_to_deterministic_authority(
+    name: str, policy, mutation
 ) -> None:
     report = _adjudicate(policy, observation_mutation=mutation)
-    assert report["status"] == status
-    assert reason in report["reasons"]
-    assert len(report["acceptable_candidate_references"]) == acceptable
-    if name == "minimal preferred":
-        assert (
-            report["recommended_candidate_reference"]
-            == report["acceptable_candidate_references"][2]
-        )
+    assert report["status"] == "recommended"
+    assert report["reasons"] == ["deterministic_confirmed_order"]
+    assert len(report["acceptable_candidate_references"]) == 3
+    assert name
 
 
 def test_identity_and_empty_policy_sets_fail_closed() -> None:
@@ -3194,14 +3185,14 @@ def test_identity_and_empty_policy_sets_fail_closed() -> None:
         )
     )
     assert len(conflict["acceptable_candidate_references"]) == 2
-    assert "conflict_excluded" in conflict["reasons"]
+    assert conflict["reasons"] == ["deterministic_confirmed_order"]
 
     unknown_excluded = _adjudicate(
         identity_mutation=lambda value: value["candidates"][0].update(outcome="unknown")
     )
     assert unknown_excluded["status"] == "recommended"
     assert len(unknown_excluded["acceptable_candidate_references"]) == 2
-    assert "identity_unknown_excluded" in unknown_excluded["reasons"]
+    assert unknown_excluded["reasons"] == ["deterministic_confirmed_order"]
 
     none_known = _adjudicate(
         identity_mutation=lambda value: [
@@ -3209,10 +3200,7 @@ def test_identity_and_empty_policy_sets_fail_closed() -> None:
         ]
     )
     assert none_known["status"] == "abstained"
-    assert none_known["reasons"] == [
-        "identity_unknown_excluded",
-        "no_eligible_candidates",
-    ]
+    assert none_known["reasons"] == ["no_confirmed_candidates"]
 
     mixed_exclusions = _adjudicate(
         identity_mutation=lambda value: (
@@ -3222,8 +3210,7 @@ def test_identity_and_empty_policy_sets_fail_closed() -> None:
     )
     assert mixed_exclusions["status"] == "recommended"
     assert len(mixed_exclusions["acceptable_candidate_references"]) == 1
-    assert "conflict_excluded" in mixed_exclusions["reasons"]
-    assert "identity_unknown_excluded" in mixed_exclusions["reasons"]
+    assert mixed_exclusions["reasons"] == ["deterministic_confirmed_order"]
 
     none_eligible = _adjudicate(
         identity_mutation=lambda value: [
@@ -3231,7 +3218,7 @@ def test_identity_and_empty_policy_sets_fail_closed() -> None:
         ]
     )
     assert none_eligible["status"] == "abstained"
-    assert "no_eligible_candidates" in none_eligible["reasons"]
+    assert none_eligible["reasons"] == ["no_confirmed_candidates"]
 
     none_acceptable = _adjudicate(
         CoverPolicy(avoid_promotional_text=True),
@@ -3240,13 +3227,13 @@ def test_identity_and_empty_policy_sets_fail_closed() -> None:
             for observation in value["observations"]
         ],
     )
-    assert none_acceptable["status"] == "abstained"
-    assert "no_policy_compatible_candidate" in none_acceptable["reasons"]
+    assert none_acceptable["status"] == "recommended"
+    assert none_acceptable["reasons"] == ["deterministic_confirmed_order"]
 
 
 @pytest.mark.parametrize("tie_in", ("absent", "present", "unknown"))
 @pytest.mark.parametrize("promotional", ("absent", "present", "unknown"))
-def test_combined_avoid_policy_resolves_exclusion_before_ambiguity(
+def test_combined_advisory_policy_never_changes_deterministic_authority(
     promotional: str, tie_in: str
 ) -> None:
     policy = CoverPolicy(
@@ -3260,24 +3247,20 @@ def test_combined_avoid_policy_resolves_exclusion_before_ambiguity(
             tie_in_branding=tie_in,
         ),
     )
-    if "present" in {promotional, tie_in}:
-        assert report["status"] == "recommended"
-        assert len(report["acceptable_candidate_references"]) == 2
-    elif "unknown" in {promotional, tie_in}:
-        assert report["status"] == "abstained"
-        assert report["reasons"] == ["observations_ambiguous"]
-    else:
-        assert report["status"] == "recommended"
-        assert len(report["acceptable_candidate_references"]) == 3
+    assert report["status"] == "recommended"
+    assert len(report["acceptable_candidate_references"]) == 3
+    assert report["reasons"] == ["deterministic_confirmed_order"]
 
 
-def test_unavailable_real_observations_have_one_typed_abstention() -> None:
+def test_unavailable_real_observations_leave_deterministic_authority_available() -> (
+    None
+):
     report = _adjudicate(observation_available=False)
-    assert report["status"] == "abstained"
-    assert report["reasons"] == ["observations_unavailable"]
-    assert report["acceptable_candidate_references"] == []
+    assert report["status"] == "recommended"
+    assert report["reasons"] == ["deterministic_confirmed_order"]
+    assert len(report["acceptable_candidate_references"]) == 3
     assert report["observation_report_sha256"] is None
-    assert report["recommended_candidate_reference"] is None
+    assert report["recommended_candidate_reference"] is not None
 
 
 def test_identity_is_recomputed_from_exact_report_evidence() -> None:
@@ -3302,7 +3285,7 @@ def test_identity_is_recomputed_from_exact_report_evidence() -> None:
         ).document
     )
     assert report["status"] == "abstained"
-    assert report["reasons"] == ["identity_unknown_excluded", "no_eligible_candidates"]
+    assert report["reasons"] == ["no_confirmed_candidates"]
 
 
 @pytest.mark.parametrize(

@@ -15,19 +15,259 @@ import hashlib
 import json
 import sqlite3
 from collections.abc import Callable
+from typing import cast
 
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
 from mechanical_librarian.domain.field_effect import FieldEffectOperation
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
 )
+from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
+from mechanical_librarian.domain.metadata_report import TargetDestination
+from mechanical_librarian.domain.proposal_set import ProposalSet
+from mechanical_librarian.domain.review_case import ReviewCase
+
+
+def _strictly_better_cover_rank(candidate: object, prior: object) -> bool:
+    """Compare complete frozen rank vectors across persisted considerations."""
+    for value in (candidate, prior):
+        if (
+            type(value) is not list
+            or len(value) != 7
+            or any(type(component) is not int for component in value[:6])
+            or type(value[6]) is not str
+        ):
+            return False
+    candidate_values = cast(list[object], candidate)
+    prior_values = cast(list[object], prior)
+    candidate_key = cast(
+        tuple[int, int, int, int, int, int, str], tuple(candidate_values)
+    )
+    prior_key = cast(tuple[int, int, int, int, int, int, str], tuple(prior_values))
+    return candidate_key < prior_key
 
 
 class SQLiteCoverConsiderationRepository(ConnectionScoped):
     """Persist, read and retire the cover considerations of one review case."""
+
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        revoke_automatic: Callable[[str, int], object] | None = None,
+    ) -> None:
+        super().__init__(connection)
+        self._revoke_automatic = revoke_automatic or (lambda _decision, _at: None)
+
+    def _admit_automatic_cover(self, document: str, occurred_at: int) -> None:
+        value = json.loads(document)
+        if value.get("provider_fetching") is not False:
+            return
+        policy_report_document = value.get("policy_report_document")
+        if type(policy_report_document) is not str or not policy_report_document:
+            return
+        try:
+            policy_report = json.loads(policy_report_document)
+        except json.JSONDecodeError:
+            return
+        if policy_report.get("status") != "recommended":
+            return
+        reference = policy_report.get("recommended_candidate_reference")
+        candidate = next(
+            (
+                row
+                for row in value.get("candidates", ())
+                if type(row) is dict and row.get("reference") == reference
+            ),
+            None,
+        )
+        if (
+            candidate is None
+            or candidate.get("incumbent") is not False
+            or candidate.get("selectable") is not True
+            or candidate.get("deterministic_rank") != 1
+            or not candidate.get("deterministic_citations")
+            or type(candidate.get("deterministic_rank_key")) is not list
+        ):
+            return
+        case_row = self._connection.execute(
+            "SELECT document FROM review_cases WHERE review_case_id=?",
+            (value["review_case_id"],),
+        ).fetchone()
+        if case_row is None:
+            return
+        case = ReviewCase.from_json(case_row[0])
+        target = case.target
+        connection_name, library_name, item_id = (
+            target.get("connection"),
+            target.get("library"),
+            target.get("item"),
+        )
+        if not all(
+            type(item) is str and item
+            for item in (connection_name, library_name, item_id)
+        ):
+            return
+        state = self._connection.execute(
+            "SELECT s.generation,s.posture,r.document FROM metadata_policy_state s "
+            "JOIN metadata_policy_resolutions r ON r.generation=s.generation "
+            "AND r.library_name=? WHERE s.singleton=1",
+            (library_name,),
+        ).fetchone()
+        if state is None or state[1] != "automatic":
+            return
+        resolved = ResolvedMetadataPolicy.from_data(json.loads(state[2]))
+        if (
+            dict(resolved.destinations).get("cover_order") != "automatic"
+            or dict(resolved.options).get("cover_order") != "fixed_source_order"
+        ):
+            return
+        safety = self._connection.execute(
+            "SELECT paused,global_suspension,category_suspensions_document "
+            "FROM automatic_safety_state WHERE singleton=1"
+        ).fetchone()
+        if (
+            safety is None
+            or safety[0]
+            or safety[1] is not None
+            or "cover_order" in dict(json.loads(safety[2]))
+        ):
+            return
+        proposal_row = self._connection.execute(
+            "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
+            (case.proposal_set_id,),
+        ).fetchone()
+        if proposal_row is None:
+            return
+        proposal = ProposalSet.from_json(proposal_row[0])
+        cover = next(
+            (
+                result
+                for result in proposal.results
+                if result.destination is TargetDestination.COVER
+            ),
+            None,
+        )
+        if cover is None:
+            return
+        alternative = next(
+            (
+                item
+                for item in cover.alternatives
+                if item.value.value == candidate["artifact_id"]
+            ),
+            None,
+        )
+        proposal_id = next(
+            (
+                item.get("proposal_id")
+                for item in case.proposals
+                if item.get("destination") == "cover"
+            ),
+            None,
+        )
+        if alternative is None or proposal_id != value["proposal_id"]:
+            return
+        current = self._connection.execute(
+            "SELECT selection.document FROM current_cover_selection_authorities current "
+            "JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id "
+            "WHERE current.connection_name=? AND current.library_name=? AND current.item_id=?",
+            (connection_name, library_name, item_id),
+        ).fetchone()
+        prior = None if current is None else json.loads(current[0])
+        if prior is not None and (
+            prior["kind"] == "owner"
+            or not _strictly_better_cover_rank(
+                candidate["deterministic_rank_key"], prior.get("rank_key")
+            )
+        ):
+            return
+        supersedes = None if prior is None else prior["decision_id"]
+        decision = CoverAutomaticDecision.create(
+            review_case_id=case.review_case_id,
+            report_id=case.report_id,
+            proposal_set_id=case.proposal_set_id,
+            proposal_id=str(proposal_id),
+            target_fingerprint=case.target_fingerprint,
+            candidate_id=alternative.alternative_id,
+            resolved_policy_id=resolved.resolved_id,
+            policy_generation=state[0],
+            consideration_id=value["consideration_id"],
+            consideration_digest=hashlib.sha256(document.encode()).hexdigest(),
+            replay_digest=value["replay_digest"],
+            policy_reference=value["policy_reference"],
+            candidate_reference=candidate["reference"],
+            artifact_id=candidate["artifact_id"],
+            rank_key=tuple(candidate["deterministic_rank_key"]),
+            citation_ids=tuple(sorted(set(candidate["deterministic_citations"]))),
+            supersedes_decision_id=supersedes,
+            occurred_at=occurred_at,
+        )
+        existing = self._connection.execute(
+            "SELECT document FROM cover_selection_authorities WHERE decision_id=?",
+            (decision.decision_id,),
+        ).fetchone()
+        if existing is not None:
+            try:
+                existing_document = json.loads(existing[0])
+            except json.JSONDecodeError as error:
+                raise MetadataReportError(
+                    "cover automatic authority disagrees"
+                ) from error
+            if existing_document.get("decision_document") != decision.to_json():
+                raise MetadataReportError("cover automatic authority disagrees")
+            return
+        if supersedes is not None:
+            self._revoke_automatic(supersedes, occurred_at)
+        selection_id = (
+            "cover_selection_" + hashlib.sha256(decision.to_json().encode()).hexdigest()
+        )
+        selection = _canonical_json(
+            {
+                "candidate_artifact_id": decision.artifact_id,
+                "consideration_id": decision.consideration_id,
+                "decision_document": decision.to_json(),
+                "decision_id": decision.decision_id,
+                "kind": "automatic",
+                "rank_key": list(decision.rank_key),
+                "schema_version": "cover-selection-authority-v1",
+                "selection_id": selection_id,
+                "supersedes_selection_id": None
+                if prior is None
+                else prior["selection_id"],
+            }
+        )
+        self._connection.execute(
+            "INSERT INTO cover_selection_authorities(selection_id,connection_name,library_name,item_id,kind,decision_id,consideration_id,supersedes_selection_id,occurred_at,document) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (
+                selection_id,
+                connection_name,
+                library_name,
+                item_id,
+                "automatic",
+                decision.decision_id,
+                decision.consideration_id,
+                None if prior is None else prior["selection_id"],
+                occurred_at,
+                selection,
+            ),
+        )
+        self._connection.execute(
+            "INSERT INTO current_cover_selection_authorities(connection_name,library_name,item_id,selection_id) VALUES(?,?,?,?) "
+            "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET selection_id=excluded.selection_id",
+            (connection_name, library_name, item_id, selection_id),
+        )
+        self._record_cover_consideration_event(
+            decision.consideration_id,
+            decision.review_case_id,
+            "selected",
+            occurred_at,
+            decision.decision_id,
+        )
 
     def _retire_stale_cover_consideration(
         self,
@@ -188,7 +428,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             value = json.loads(document)
             if (
                 type(value) is not dict
-                or value.get("schema_version") != "cover-consideration-v1"
+                or value.get("schema_version") != "cover-consideration-v2"
                 or value.get("review_case_id") != review_case_id
                 or value.get("report_id") != report_id
                 or value.get("replay_digest") != replay_digest
@@ -211,6 +451,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             if existing is not None:
                 if existing != (document,):
                     raise MetadataReportError("cover consideration disagrees")
+                self._admit_automatic_cover(document, occurred_at)
                 transaction.commit()
                 return document
             current = self._connection.execute(
@@ -245,6 +486,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             self._record_cover_consideration_event(
                 consideration_id, review_case_id, preparation_kind, occurred_at
             )
+            self._admit_automatic_cover(document, occurred_at)
             transaction.commit()
         except sqlite3.Error as error:
             transaction.rollback()
@@ -318,9 +560,10 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
                 raise HumanDecisionError("idempotency_conflict")
             return
         row = self._connection.execute(
-            "SELECT consideration.document FROM current_cover_considerations current "
+            "SELECT consideration.document,review.document FROM current_cover_considerations current "
             "JOIN cover_considerations consideration "
             "ON consideration.consideration_id=current.consideration_id "
+            "JOIN review_cases review ON review.review_case_id=current.review_case_id "
             "WHERE current.review_case_id=? AND current.consideration_id=?",
             (decision.review_case_id, consideration_id),
         ).fetchone()
@@ -328,11 +571,13 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             raise HumanDecisionError("stale")
         try:
             consideration = json.loads(row[0])
+            case = ReviewCase.from_json(row[1])
             if (
                 consideration["proposal_id"] != decision.proposal_id
                 or consideration["target_fingerprint"] != decision.target_fingerprint
             ):
                 raise HumanDecisionError("stale")
+            selected = None
             if decision.outcome == "accept":
                 selected = next(
                     (
@@ -349,10 +594,82 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
                     or selected["selectable"] is not True
                 ):
                     raise HumanDecisionError("invalid_choice")
+            elif decision.outcome == "keep_current":
+                selected = next(
+                    (
+                        candidate
+                        for candidate in consideration["candidates"]
+                        if candidate["incumbent"] is True
+                    ),
+                    None,
+                )
+                if selected is None or decision.selected_value is not None:
+                    raise HumanDecisionError("invalid_choice")
             elif decision.selected_value is not None:
                 raise HumanDecisionError("invalid_choice")
         except (KeyError, TypeError, json.JSONDecodeError) as error:
             raise MetadataReportError("cover consideration is unavailable") from error
+        target = case.target
+        connection_name, library_name, item_id = (
+            target.get("connection"),
+            target.get("library"),
+            target.get("item"),
+        )
+        if not all(
+            type(item) is str and item
+            for item in (connection_name, library_name, item_id)
+        ):
+            raise MetadataReportError("cover consideration is unavailable")
+        current = self._connection.execute(
+            "SELECT selection.document FROM current_cover_selection_authorities current "
+            "JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id "
+            "WHERE current.connection_name=? AND current.library_name=? AND current.item_id=?",
+            (connection_name, library_name, item_id),
+        ).fetchone()
+        prior = None if current is None else json.loads(current[0])
+        selection_id = (
+            "cover_selection_"
+            + hashlib.sha256(decision.to_json().encode("utf-8")).hexdigest()
+        )
+        selection_document = _canonical_json(
+            {
+                "candidate_artifact_id": (
+                    None if selected is None else selected["artifact_id"]
+                ),
+                "consideration_id": consideration_id,
+                "decision_document": decision.to_json(),
+                "decision_id": decision.decision_id,
+                "kind": "owner",
+                "rank_key": (
+                    None if selected is None else selected["deterministic_rank_key"]
+                ),
+                "schema_version": "cover-selection-authority-v1",
+                "selection_id": selection_id,
+                "supersedes_selection_id": (
+                    None if prior is None else prior["selection_id"]
+                ),
+            }
+        )
+        self._connection.execute(
+            "INSERT INTO cover_selection_authorities(selection_id,connection_name,library_name,item_id,kind,decision_id,consideration_id,supersedes_selection_id,occurred_at,document) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (
+                selection_id,
+                connection_name,
+                library_name,
+                item_id,
+                "owner",
+                decision.decision_id,
+                consideration_id,
+                None if prior is None else prior["selection_id"],
+                decision.occurred_at,
+                selection_document,
+            ),
+        )
+        self._connection.execute(
+            "INSERT INTO current_cover_selection_authorities(connection_name,library_name,item_id,selection_id) VALUES(?,?,?,?) "
+            "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET selection_id=excluded.selection_id",
+            (connection_name, library_name, item_id, selection_id),
+        )
         self._record_cover_consideration_event(
             consideration_id,
             decision.review_case_id,

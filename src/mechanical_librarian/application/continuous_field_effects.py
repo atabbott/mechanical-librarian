@@ -17,6 +17,10 @@ from mechanical_librarian.application.field_effects import (
 from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.domain.activity_records import readable_activity_event
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
+from mechanical_librarian.domain.cover_automatic_decision import (
+    CoverAutomaticDecision,
+    parse_automatic_authority,
+)
 from mechanical_librarian.domain.field_effect import (
     SUPPORTED_DESTINATIONS,
     EffectConsent,
@@ -461,7 +465,9 @@ class ContinuousGuardedApplication:
             self._schedule_cursor = None
 
     def _advance_schedule_cursor(
-        self, decision: AutomaticDecision | HumanDecision, generation: int
+        self,
+        decision: AutomaticDecision | CoverAutomaticDecision | HumanDecision,
+        generation: int,
     ) -> None:
         with self._schedule_lock:
             if generation == self._schedule_generation:
@@ -1476,7 +1482,9 @@ class ContinuousGuardedApplication:
         return application
 
     @staticmethod
-    def _decision(document: str) -> HumanDecision | AutomaticDecision:
+    def _decision(
+        document: str,
+    ) -> HumanDecision | AutomaticDecision | CoverAutomaticDecision:
         raw = json.loads(document)
         if type(raw) is not dict:
             raise FieldEffectError("authority_binding")
@@ -1484,4 +1492,6 @@ class ContinuousGuardedApplication:
             return HumanDecision.from_json(document)
         if raw.get("schema_version") == "automatic-decision-v1":
             return AutomaticDecision.from_json(document)
+        if raw.get("schema_version") == "cover-automatic-decision-v1":
+            return parse_automatic_authority(document)
         raise FieldEffectError("authority_binding")

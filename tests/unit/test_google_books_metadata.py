@@ -33,12 +33,19 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderEvidenceKind,
     ProviderQueryKind,
     ProviderStatus,
+    TargetDestination,
     TargetFacts,
+    TargetField,
+    TargetFieldState,
     default_target_fields,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
+from mechanical_librarian.domain.work_identity import (
+    WorkDispatchRung,
+    WorkTitleTransformationFamily,
+)
 
 
 def _isbn(value: str = "9780306406157") -> LocalClaim:
@@ -142,6 +149,12 @@ def test_html_description_is_rendered_and_bound_to_versioned_evidence() -> None:
     info["description"] = (
         "<p>One &amp; <em>two</em></p><br/><span>Three</span><hr>2 &lt; 3"
     )
+    work_lookup = MetadataLookup(
+        ProviderQueryKind.WORK,
+        (),
+        title="Example Book",
+        authors=("Ada Example",),
+    )
     observation = GoogleBooksMetadataProvider(
         "google_books",
         httpx.Client(
@@ -154,7 +167,7 @@ def test_html_description_is_rendered_and_bound_to_versioned_evidence() -> None:
             )
         ),
         65_536,
-    ).observe(_lookup())
+    ).observe(work_lookup)
     candidate = observation.candidates[0]
     assert "One & two • Three • 2 < 3" == next(
         c.value for c in candidate.claims if c.kind is ClaimKind.DESCRIPTION
@@ -163,15 +176,7 @@ def test_html_description_is_rendered_and_bound_to_versioned_evidence() -> None:
         ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION,
         "google-books-html-visible-text-v1",
     ) in {(e.kind, e.value) for e in candidate.evidence}
-    qualified = qualify_provider_observation(
-        observation,
-        MetadataLookup(
-            ProviderQueryKind.WORK,
-            (),
-            title="Example Book",
-            authors=("Ada Example",),
-        ),
-    )
+    qualified = qualify_provider_observation(observation, work_lookup)
     assert ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION in {
         value.kind for value in qualified.candidates[0].evidence
     }
@@ -771,6 +776,224 @@ def test_work_query_requires_exact_complete_title_and_author_order() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "title",
+    ("[retail]", "(1)", "(2010)", "ISBN 9780306406157", "2nd Edition", "Book 2"),
+)
+def test_decoration_only_work_query_is_insufficient_without_request(title: str) -> None:
+    requests: list[httpx.Request] = []
+    lookup = MetadataLookup(ProviderQueryKind.WORK, (), title, ("Ada Example",))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(500)
+
+    observation = GoogleBooksMetadataProvider(
+        "google_books",
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        65_536,
+    ).observe(lookup)
+
+    assert ProviderStatus.INSUFFICIENT_INPUT is observation.status
+    assert [] == requests
+    assert (0, 0) == (
+        observation.request_accounting.initial_dispatches,
+        observation.request_accounting.retry_dispatches,
+    )
+
+
+def test_filename_author_prefix_shapes_google_books_query_but_never_admits() -> None:
+    lookup = MetadataLookup(
+        ProviderQueryKind.WORK,
+        (),
+        "Ada_Example_-_Example Book",
+        ("Ada Example",),
+    )
+    observation = GoogleBooksMetadataProvider(
+        "google_books",
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json={"totalItems": 1, "items": [_volume()]},
+                )
+            )
+        ),
+        65_536,
+    ).observe(lookup)
+    qualified = qualify_provider_observation(observation, lookup)
+
+    assert ProviderStatus.CANDIDATES is observation.status
+    assert observation.dispatch_lineage is not None
+    assert WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX in (
+        observation.dispatch_lineage.transformations
+    )
+    assert ProviderStatus.NO_MATCH is qualified.status
+    assert qualified.transformation_lineage is None
+
+
+def test_work_query_ladder_stops_on_first_candidates_and_accounts_retry() -> None:
+    requests: list[httpx.Request] = []
+    volume = _volume()
+    volume["volumeInfo"]["title"] = "Example Book: A Subtitle"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json=(
+                {"totalItems": 0, "items": []}
+                if len(requests) == 1
+                else {"totalItems": 1, "items": [volume]}
+            ),
+        )
+
+    lookup = MetadataLookup(
+        ProviderQueryKind.WORK,
+        (),
+        "Example Book: A Subtitle (Book 2)",
+        ("Ada Example",),
+    )
+    provider = GoogleBooksMetadataProvider(
+        "google_books",
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        65_536,
+    )
+
+    observation = provider.observe(lookup)
+
+    assert ProviderStatus.CANDIDATES is observation.status
+    assert 2 == len(requests)
+    assert 'intitle:"Example Book: A Subtitle"' in requests[0].url.params["q"]
+    assert 'intitle:"Example Book"' in requests[1].url.params["q"]
+    assert 1 == observation.request_accounting.initial_dispatches
+    assert 1 == observation.request_accounting.retry_dispatches
+    assert (
+        observation.dispatch_lineage is not None
+        and observation.dispatch_lineage.rung is WorkDispatchRung.SUBTITLE_STRIPPED
+    )
+
+
+def test_widened_search_cannot_bypass_work_identity_qualification() -> None:
+    volume = _volume()
+    volume["volumeInfo"]["title"] = "Different Work"
+    lookup = MetadataLookup(
+        ProviderQueryKind.WORK,
+        (),
+        "Example Book: A Subtitle",
+        ("Ada Example",),
+    )
+    provider = GoogleBooksMetadataProvider(
+        "google_books",
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json={"totalItems": 1, "items": [volume]},
+                )
+            )
+        ),
+        65_536,
+    )
+
+    qualified = qualify_provider_observation(provider.observe(lookup), lookup)
+
+    assert ProviderStatus.NO_MATCH is qualified.status
+    assert not qualified.candidates
+
+
+def test_candidate_limit_gets_exactly_one_narrowing_retry() -> None:
+    requests: list[httpx.Request] = []
+    overflow = [_volume(f"volume_{index}") for index in range(6)]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json=(
+                {"totalItems": 6, "items": overflow}
+                if len(requests) == 1
+                else {"totalItems": 0, "items": []}
+            ),
+        )
+
+    lookup = MetadataLookup(
+        ProviderQueryKind.WORK,
+        (),
+        "Example Book",
+        ("Ada Example", "Bea Example"),
+    )
+    observation = GoogleBooksMetadataProvider(
+        "google_books",
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        65_536,
+    ).observe(lookup)
+
+    assert ProviderStatus.NO_MATCH is observation.status
+    assert 2 == len(requests)
+    assert (
+        'inauthor:"Ada Example" inauthor:"Bea Example"' in requests[0].url.params["q"]
+    )
+    assert 'inauthor:"Ada Example Bea Example"' in requests[1].url.params["q"]
+    assert 1 == observation.request_accounting.retry_dispatches
+
+
+def test_successful_lane_variant_survives_canonical_report_replay() -> None:
+    claim = _isbn()
+    lane = MetadataDiscoveryLane(
+        f"lane_{1:064x}",
+        ProviderQueryKind.WORK,
+        (claim.reference,),
+        title="Example Book",
+        authors=("Ada Example",),
+    )
+    provider = GoogleBooksMetadataProvider(
+        "google_books",
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json={"totalItems": 1, "items": [_volume()]},
+                )
+            )
+        ),
+        65_536,
+    )
+    observation = provider.observe(MetadataDiscoveryPlan((claim,), (lane,)))
+    report = MetadataReport.create(
+        target=TargetFacts(
+            "primary",
+            "ebooks",
+            "item-1",
+            tuple(
+                TargetField(
+                    TargetDestination.AUTHORS,
+                    TargetFieldState.VALUE,
+                    ("Ada Example",),
+                )
+                if field.destination is TargetDestination.AUTHORS
+                else field
+                for field in default_target_fields("Example Book")
+            ),
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64),
+        local_claims=(claim,),
+        local_reasons=("no_opening_claims",),
+        providers=(observation,),
+    )
+
+    replayed = MetadataReport.from_json(report.to_json())
+
+    lineage = replayed.providers[0].lanes[0].dispatch_lineage
+    assert lineage is not None
+    assert WorkDispatchRung.NORMALIZED is lineage.rung
+
+
 def test_exact_isbn_lane_promotes_standard_publication_date() -> None:
     volume = _volume()
     volume["volumeInfo"]["publishedDate"] = "2026-04-03"
@@ -909,6 +1132,80 @@ def test_declared_quota_and_http_errors_are_typed() -> None:
             jitter=lambda: 0.0,
         ).observe(_lookup())
         assert expected == observation.status
+
+
+@pytest.mark.parametrize(
+    ("status_code", "reasons", "category", "delay"),
+    (
+        (403, ("dailyLimitExceeded",), "quota_exhausted", None),
+        (403, ("dailyLimitExceededUnreg",), "quota_exhausted", None),
+        (403, ("rateLimitExceeded",), "burst_throttled", 100.0),
+        (403, ("userRateLimitExceeded",), "burst_throttled", 100.0),
+        (429, ("quotaExceeded",), "http_429", None),
+        (429, (), "http_429", None),
+        (
+            429,
+            ("dailyLimitExceeded", "rateLimitExceeded"),
+            "http_429",
+            None,
+        ),
+    ),
+)
+def test_google_rate_limit_grammar_is_closed_and_records_exact_evidence(
+    status_code: int,
+    reasons: tuple[str, ...],
+    category: str,
+    delay: float | None,
+) -> None:
+    provider = GoogleBooksMetadataProvider(
+        "google_books",
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(
+                    status_code,
+                    headers={"content-type": "application/json"},
+                    json={
+                        "error": {"errors": [{"reason": value} for value in reasons]}
+                    },
+                )
+            )
+        ),
+        65_536,
+        clock=lambda: 0.0,
+        wall_clock=lambda: 1_787_875_200.0,
+        sleep=lambda _: pytest.fail("classified throttling must leave the lane"),
+    )
+    observation = provider.observe(_lookup(), deadline=50.0)
+    assert ProviderStatus.RATE_LIMITED == observation.status
+    record = provider.attempt_records[-1]
+    assert category == record.category
+    if category == "quota_exhausted":
+        assert record.delay_seconds is not None
+        assert 1 <= record.delay_seconds <= 90_000
+    else:
+        assert delay == record.delay_seconds
+
+
+def test_google_authentication_status_outranks_untrusted_quota_reason() -> None:
+    provider = GoogleBooksMetadataProvider(
+        "google_books",
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(
+                    401,
+                    headers={"content-type": "application/json"},
+                    json={"error": {"errors": [{"reason": "dailyLimitExceeded"}]}},
+                )
+            )
+        ),
+        65_536,
+        clock=lambda: 0.0,
+        wall_clock=lambda: 1_787_875_200.0,
+        sleep=lambda _: pytest.fail("authentication must remain terminal"),
+    )
+    observation = provider.observe(_lookup(), deadline=50.0)
+    assert ProviderStatus.AUTHENTICATION == observation.status
+    assert "http_401" == provider.attempt_records[-1].category
 
 
 def test_invalid_scalar_claims_are_field_local_and_keep_valid_evidence() -> None:

@@ -57,6 +57,12 @@ from mechanical_librarian.domain.proposal_set import (
     evaluate_report,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.work_identity import (
+    WorkDispatchLineage,
+    WorkDispatchRung,
+    WorkTitleTransformationFamily,
+    work_query_ladder,
+)
 from tests.support.proposal_evidence import (
     _claim,
     _fields,
@@ -68,6 +74,10 @@ from tests.support.proposal_evidence import (
     _report,
     _result,
 )
+
+
+def _work_dispatch(title: str, authors: tuple[str, ...]) -> WorkDispatchLineage:
+    return WorkDispatchLineage.from_query(work_query_ladder(title, authors)[0])
 
 
 def _closed_matrix_candidate(
@@ -146,7 +156,7 @@ def _closed_matrix_has_pair(
                 ProviderStatus.CANDIDATES,
                 (),
                 (neutral,),
-                query_kind,
+                ProviderQueryKind.DISCOVERY,
                 "hardcover",
             ),
             ProviderObservation(
@@ -154,7 +164,7 @@ def _closed_matrix_has_pair(
                 ProviderStatus.CANDIDATES,
                 (),
                 (author,),
-                ProviderQueryKind.WORK,
+                ProviderQueryKind.DISCOVERY,
                 "open_library",
             ),
         ),
@@ -457,7 +467,14 @@ def _work_lane_source(
 ) -> ProviderObservation:
     return provider_observation(
         provider,
-        (ProviderLaneResult(lane, ProviderStatus.CANDIDATES, (candidate,)),),
+        (
+            ProviderLaneResult(
+                lane,
+                ProviderStatus.CANDIDATES,
+                (candidate,),
+                dispatch_lineage=_work_dispatch("Real Tigers", ("Mick Herron",)),
+            ),
+        ),
         authority=authority,
     )
 
@@ -473,6 +490,62 @@ def _work_lane_report(
         local_reasons=("opening_matter_isbn",),
         providers=providers,
     )
+
+
+def test_proposal_replay_uses_exact_work_identity_with_persisted_dispatch(
+    work_lane: MetadataDiscoveryLane,
+) -> None:
+    candidate = replace(
+        _work_lane_candidate(),
+        claims=(
+            _claim(
+                "open-connection",
+                "edition",
+                ClaimKind.TITLE,
+                "Real Tigers",
+                scope=ClaimScope.WORK,
+            ),
+            _work_lane_creator_claim(),
+        ),
+    )
+    dispatch = _work_dispatch("Real Tigers", ("Mick Herron",))
+    qualified = qualify_provider_observation(
+        ProviderObservation(
+            "open-connection",
+            ProviderStatus.CANDIDATES,
+            (),
+            (candidate,),
+            ProviderQueryKind.WORK,
+            "open_library",
+            dispatch_lineage=dispatch,
+        ),
+        MetadataLookup(
+            ProviderQueryKind.WORK,
+            (),
+            "Real Tigers",
+            ("Mick Herron",),
+        ),
+    )
+    observation = provider_observation(
+        "open-connection",
+        (
+            ProviderLaneResult(
+                work_lane,
+                qualified.status,
+                qualified.candidates,
+                dispatch_lineage=qualified.dispatch_lineage,
+                transformation_lineage=qualified.transformation_lineage,
+            ),
+        ),
+        authority="open_library",
+    )
+    report = _work_lane_report((_work_lane_title(),), (observation,))
+
+    replayed = MetadataReport.from_json(report.to_json())
+    retained = replayed.providers[0]
+    assert retained.lanes[0].transformation_lineage is None
+    assert _target_backed_lookup_contains(replayed, retained, retained.candidates[0])
+    assert ProposalSet.from_json(evaluate_report(replayed).to_json())
 
 
 @pytest.fixture
@@ -528,7 +601,19 @@ def test_unqualified_work_lookup_cannot_corroborate_authors() -> None:
         "Real Tigers",
         ("Mick Herron",),
     )
-    author_source = qualify_provider_observation(report.providers[1], lookup)
+    author_candidate = report.providers[1].candidates[0]
+    author_source = qualify_provider_observation(
+        ProviderObservation(
+            report.providers[1].provider,
+            ProviderStatus.CANDIDATES,
+            (),
+            (author_candidate,),
+            ProviderQueryKind.WORK,
+            report.providers[1].authority,
+            dispatch_lineage=_work_dispatch("Real Tigers", ("Mick Herron",)),
+        ),
+        lookup,
+    )
     mismatched_candidate = replace(
         report.providers[0].candidates[0],
         claims=(
@@ -557,12 +642,21 @@ def test_unqualified_work_lookup_cannot_corroborate_authors() -> None:
             ProviderStatus.CANDIDATES,
             (),
             (mismatched_candidate,),
+            ProviderQueryKind.WORK,
             authority="hardcover",
+            dispatch_lineage=_work_dispatch("Real Tigers", ("Mick Herron",)),
         ),
         lookup,
     )
     assert ProviderStatus.CANDIDATES == author_source.status
     assert ProviderStatus.NO_MATCH == mismatched.status
+    author_evidence = ProviderObservation(
+        author_source.provider,
+        author_source.status,
+        candidates=author_source.candidates,
+        query_kind=ProviderQueryKind.DISCOVERY,
+        authority=author_source.authority,
+    )
     rejected = _result(
         evaluate_report(
             _report(
@@ -573,7 +667,7 @@ def test_unqualified_work_lookup_cannot_corroborate_authors() -> None:
                         TargetDestination.AUTHORS, TargetFieldState.MISSING
                     ),
                 ),
-                providers=(mismatched, author_source),
+                providers=(mismatched, author_evidence),
             )
         ),
         TargetDestination.AUTHORS,
@@ -629,7 +723,7 @@ def test_untyped_creator_alone_is_ineligible() -> None:
                 ProviderStatus.CANDIDATES,
                 (),
                 (untyped_only,),
-                ProviderQueryKind.WORK,
+                ProviderQueryKind.DISCOVERY,
                 "hardcover",
             ),
         ),
@@ -653,13 +747,20 @@ def test_mixed_discovery_rejects_lane_shapes_without_target_evidence() -> None:
         kind: ProviderQueryKind,
         candidate: ProviderCandidate,
     ) -> ProviderLaneObservation:
+        status = (
+            ProviderStatus.NO_MATCH
+            if kind is ProviderQueryKind.WORK
+            else ProviderStatus.CANDIDATES
+        )
         return ProviderLaneObservation(
             identity,
             kind,
-            ProviderStatus.CANDIDATES,
+            status,
             (local.reference,),
             "9780306406157" if kind is ProviderQueryKind.ISBN else None,
-            (
+            ()
+            if status is ProviderStatus.NO_MATCH
+            else (
                 ProviderLaneCandidate(
                     provider_lane_candidate_reference(
                         provider,
@@ -1100,6 +1201,189 @@ def test_work_lane_target_binding_admits_the_planned_candidate(
     assert _target_backed_lookup_contains(baseline, source, candidate)
 
 
+def test_work_lane_proposal_replay_rejects_sibling_work_identity_ambiguity(
+    work_lane: MetadataDiscoveryLane,
+) -> None:
+    first = _work_lane_candidate()
+    second = ProviderCandidate(
+        "edition-2",
+        "work",
+        (
+            _claim(
+                "open-connection",
+                "edition-2",
+                ClaimKind.TITLE,
+                "Real Tigers",
+                scope=ClaimScope.WORK,
+            ),
+            _claim(
+                "open-connection",
+                "edition-2",
+                ClaimKind.CREATOR,
+                "Mick Herron",
+                scope=ClaimScope.WORK,
+                role="author",
+            ),
+        ),
+    )
+    same_work_source = provider_observation(
+        "open-connection",
+        (
+            ProviderLaneResult(
+                work_lane,
+                ProviderStatus.CANDIDATES,
+                (first, second),
+                dispatch_lineage=_work_dispatch("Real Tigers", ("Mick Herron",)),
+            ),
+        ),
+        authority="open_library",
+    )
+    report = _work_lane_report((_work_lane_title(),), (same_work_source,))
+    assert _target_backed_lookup_contains(report, same_work_source, first)
+    assert _target_backed_lookup_contains(report, same_work_source, second)
+
+    ambiguous_second = replace(second, work_identity="work-2")
+    ambiguous_source = provider_observation(
+        "open-connection",
+        (
+            ProviderLaneResult(
+                work_lane,
+                ProviderStatus.CANDIDATES,
+                (first, ambiguous_second),
+                dispatch_lineage=_work_dispatch("Real Tigers", ("Mick Herron",)),
+            ),
+        ),
+        authority="open_library",
+    )
+    object.__setattr__(report, "providers", (ambiguous_source,))
+    assert not _target_backed_lookup_contains(report, ambiguous_source, first)
+    assert not _target_backed_lookup_contains(
+        report, ambiguous_source, ambiguous_second
+    )
+
+
+def test_work_lane_proposal_replay_rejects_false_dispatch_and_mixed_creators(
+    work_lane: MetadataDiscoveryLane,
+) -> None:
+    candidate = _work_lane_candidate()
+    source = _work_lane_source(work_lane, candidate)
+    baseline = _work_lane_report((_work_lane_title(),), (source,))
+    false_dispatch = replace(
+        source,
+        lanes=(
+            replace(
+                source.lanes[0],
+                dispatch_lineage=WorkDispatchLineage(
+                    WorkDispatchRung.NORMALIZED,
+                    (WorkTitleTransformationFamily.BRACKET_SOURCE_TAG,),
+                ),
+            ),
+        ),
+    )
+    object.__setattr__(baseline, "providers", (false_dispatch,))
+    assert not _target_backed_lookup_contains(baseline, false_dispatch, candidate)
+
+    neutral = _claim(
+        "open-connection",
+        "edition",
+        ClaimKind.CREATOR,
+        "Mick Herron",
+        scope=ClaimScope.WORK,
+        role=None,
+        order=2,
+    )
+    mixed_candidate = replace(candidate, claims=(*candidate.claims, neutral))
+    mixed_source = replace(source, candidates=(mixed_candidate,))
+    object.__setattr__(baseline, "providers", (mixed_source,))
+    assert not _target_backed_lookup_contains(baseline, mixed_source, mixed_candidate)
+
+
+def test_work_lane_replay_preserves_punctuation_underscore_and_whitespace_floor(
+    work_lane: MetadataDiscoveryLane,
+) -> None:
+    candidate = _work_lane_candidate()
+    baseline_source = _work_lane_source(work_lane, candidate)
+    baseline = _work_lane_report((_work_lane_title(),), (baseline_source,))
+    punctuated = replace(
+        candidate,
+        claims=(
+            _claim(
+                "open-connection",
+                "edition",
+                ClaimKind.TITLE,
+                "Real Tigers:",
+                scope=ClaimScope.WORK,
+            ),
+            _work_lane_creator_claim(),
+        ),
+    )
+    punctuated_source = _work_lane_source(work_lane, punctuated)
+    with pytest.raises(ReportValueError, match="work identity lineage"):
+        _work_lane_report((_work_lane_title(),), (punctuated_source,))
+    object.__setattr__(baseline, "providers", (punctuated_source,))
+    assert not _target_backed_lookup_contains(baseline, punctuated_source, punctuated)
+
+    decorated_candidate = replace(
+        candidate,
+        claims=(
+            _claim(
+                "open-connection",
+                "edition",
+                ClaimKind.TITLE,
+                "Mick_Herron_-_Real Tigers",
+                scope=ClaimScope.WORK,
+            ),
+            _work_lane_creator_claim(),
+        ),
+    )
+    decorated_source = provider_observation(
+        "open-connection",
+        (
+            ProviderLaneResult(
+                work_lane,
+                ProviderStatus.CANDIDATES,
+                (decorated_candidate,),
+                dispatch_lineage=_work_dispatch("Real Tigers", ("Mick Herron",)),
+            ),
+        ),
+        authority="open_library",
+    )
+    with pytest.raises(ReportValueError, match="work identity lineage"):
+        _work_lane_report((_work_lane_title(),), (decorated_source,))
+    object.__setattr__(baseline, "providers", (decorated_source,))
+    assert not _target_backed_lookup_contains(
+        baseline, decorated_source, decorated_candidate
+    )
+
+    unicode_whitespace = replace(
+        candidate,
+        claims=(
+            _claim(
+                "open-connection",
+                "edition",
+                ClaimKind.TITLE,
+                "Real\u2009Tigers",
+                scope=ClaimScope.WORK,
+            ),
+            _claim(
+                "open-connection",
+                "edition",
+                ClaimKind.CREATOR,
+                "Mick\u2009Herron",
+                scope=ClaimScope.WORK,
+                role="author",
+            ),
+        ),
+    )
+    unicode_source = _work_lane_source(work_lane, unicode_whitespace)
+    unicode_report = _work_lane_report((_work_lane_title(),), (unicode_source,))
+    replayed = MetadataReport.from_json(unicode_report.to_json())
+    replayed_source = replayed.providers[0]
+    assert _target_backed_lookup_contains(
+        replayed, replayed_source, replayed_source.candidates[0]
+    )
+
+
 @pytest.mark.parametrize(
     ("local_claim", "forges_lane_identity"),
     (
@@ -1179,14 +1463,8 @@ def test_work_lane_corroboration_rejects_a_mismatched_candidate(
     rejected_candidate: ProviderCandidate,
 ) -> None:
     rejected_source = _work_lane_source(work_lane, rejected_candidate)
-    replayed = MetadataReport.from_json(
-        _work_lane_report((_work_lane_title(),), (rejected_source,)).to_json()
-    )
-    assert not _target_backed_lookup_contains(
-        replayed,
-        replayed.providers[0],
-        rejected_candidate,
-    )
+    with pytest.raises(ReportValueError, match="work identity lineage"):
+        _work_lane_report((_work_lane_title(),), (rejected_source,))
 
 
 def test_two_mismatched_candidates_do_not_corroborate_each_other(
@@ -1213,25 +1491,19 @@ def test_two_mismatched_candidates_do_not_corroborate_each_other(
             ),
         ),
     )
-    both_wrong = _work_lane_report(
-        (_work_lane_title(),),
-        (
-            _work_lane_source(
-                work_lane,
-                second_wrong_title_candidate,
-                "hardcover-connection",
-                "hardcover",
+    with pytest.raises(ReportValueError, match="work identity lineage"):
+        _work_lane_report(
+            (_work_lane_title(),),
+            (
+                _work_lane_source(
+                    work_lane,
+                    second_wrong_title_candidate,
+                    "hardcover-connection",
+                    "hardcover",
+                ),
+                _work_lane_source(work_lane, _wrong_authors_candidate()),
             ),
-            _work_lane_source(work_lane, _wrong_authors_candidate()),
-        ),
-    )
-    assert (
-        "explicit_author_corroborates_untyped_creator"
-        not in _result(
-            evaluate_report(both_wrong),
-            TargetDestination.AUTHORS,
-        ).reasons
-    )
+        )
 
 
 def test_reused_creator_identity_binding_fails_closed_for_corroboration() -> None:
@@ -1322,7 +1594,7 @@ def test_reused_creator_identity_binding_fails_closed_for_corroboration() -> Non
                         ProviderStatus.CANDIDATES,
                         (),
                         (malformed,),
-                        ProviderQueryKind.WORK,
+                        ProviderQueryKind.DISCOVERY,
                         "hardcover",
                     ),
                     ProviderObservation(
@@ -1330,7 +1602,7 @@ def test_reused_creator_identity_binding_fails_closed_for_corroboration() -> Non
                         ProviderStatus.CANDIDATES,
                         (),
                         (author,),
-                        ProviderQueryKind.WORK,
+                        ProviderQueryKind.DISCOVERY,
                         "open_library",
                     ),
                 ),
@@ -1498,7 +1770,7 @@ def test_case_detail_projects_complete_creator_corroboration_by_authority() -> N
         ProviderStatus.CANDIDATES,
         (),
         (neutral_candidate,),
-        ProviderQueryKind.WORK,
+        ProviderQueryKind.DISCOVERY,
         "open_library",
     )
     same_authority_report = MetadataReport.create(

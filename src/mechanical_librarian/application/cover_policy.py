@@ -9,6 +9,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import cast
 
+from mechanical_librarian.domain.deterministic_cover_election import (
+    CoverElectionCandidate,
+    elect_confirmed_covers,
+)
+
 from .cover_identity import (
     CLASSIFIER_REFERENCE,
     _preview_reference,
@@ -99,8 +104,13 @@ def adjudicate_cover_policy(
     *,
     profile_payload: bytes | None = None,
     read_preview: Callable[[str, str], bytes],
+    provider_fetching: bool = False,
 ) -> CoverPolicyReport:
-    """Return one exact recommendation or a closed abstention."""
+    """Return an identity-confirmed technical recommendation.
+
+    Observations remain bound diagnostic evidence, but cannot change the
+    confirmation, readiness, or order that this policy reports.
+    """
     if type(policy) is not CoverPolicy:
         raise ValueError("cover policy is invalid")
     identity_document = classify_cover_identity(
@@ -123,125 +133,64 @@ def adjudicate_cover_policy(
         references,
     )
     classifier_reference = identity["classifier_reference"]
-    if observation_document is None:
-        return _report(
-            packet["packet_reference"],
-            classifier_reference,
-            policy,
-            identity_document,
-            None,
-            (),
-            None,
-            ("observations_unavailable",),
-        )
-
-    observations = _observation_rows(
-        observation_document,
-        packet["packet_reference"],
-        candidates,
-        references,
-        profile_payload,
-    )
-    # ``_identity_rows`` rejects the document unless "candidates" is a list of
-    # exactly-shaped mappings, one per admitted packet candidate.
     identity_by_reference = {
-        value["candidate_reference"]: value["outcome"]
+        value["candidate_reference"]: value
         for value in cast("list[dict[str, object]]", identity["candidates"])
     }
-    reasons: set[str] = set()
-    eligible = []
-    for reference in references:
-        identity_outcome = identity_by_reference[reference]
-        if identity_outcome == "conflict":
-            reasons.add("conflict_excluded")
-        elif identity_outcome == "unknown":
-            reasons.add("identity_unknown_excluded")
-        else:
-            eligible.append(reference)
-    if not eligible:
-        reasons.add("no_eligible_candidates")
-        return _report(
-            packet["packet_reference"],
-            classifier_reference,
-            policy,
-            identity_document,
+    if observation_document is not None:
+        # Reviewer observations remain advisory, but an admitted document must
+        # still satisfy the exact packet/profile binding before it is retained.
+        _observation_rows(
             observation_document,
-            (),
-            None,
-            tuple(sorted(reasons)),
-        )
-
-    # ``_observation_rows`` applies the same admission to "observations".
-    by_reference = {
-        value["candidate_reference"]: value
-        for value in cast("list[dict[str, object]]", observations["observations"])
-    }
-    ambiguous = False
-    acceptable: list[str] = []
-    for reference in eligible:
-        value = by_reference[reference]
-        excluded = False
-        if policy.avoid_promotional_text and value["promotional_text"] == "present":
-            reasons.add("promotional_text_excluded")
-            excluded = True
-        if policy.avoid_tie_in_branding and value["tie_in_branding"] == "present":
-            reasons.add("tie_in_branding_excluded")
-            excluded = True
-        if excluded:
-            continue
-        if (
-            policy.avoid_promotional_text and value["promotional_text"] == "unknown"
-        ) or (policy.avoid_tie_in_branding and value["tie_in_branding"] == "unknown"):
-            ambiguous = True
-        acceptable.append(reference)
-    if policy.prefer_minimal_composition and any(
-        by_reference[reference]["composition"] == "unknown" for reference in acceptable
-    ):
-        ambiguous = True
-    if ambiguous:
-        return _report(
             packet["packet_reference"],
-            classifier_reference,
-            policy,
-            identity_document,
-            observation_document,
-            (),
-            None,
-            ("observations_ambiguous",),
+            candidates,
+            references,
+            profile_payload,
         )
-    if not acceptable:
-        reasons.add("no_policy_compatible_candidate")
-        return _report(
-            packet["packet_reference"],
-            classifier_reference,
-            policy,
-            identity_document,
-            observation_document,
-            (),
-            None,
-            tuple(sorted(reasons)),
-        )
-
-    preferred = acceptable
-    if policy.prefer_minimal_composition:
-        minimal = [
-            reference
-            for reference in acceptable
-            if by_reference[reference]["composition"] == "minimal"
-        ]
-        if minimal:
-            preferred = minimal
-            reasons.add("preferred_minimal")
-    reasons.add("policy_satisfied")
+    election = elect_confirmed_covers(
+        tuple(
+            CoverElectionCandidate(
+                reference=reference,
+                identity=cast("str", identity_by_reference[reference]["outcome"]),
+                identity_citations=tuple(
+                    cast(
+                        "list[str]",
+                        identity_by_reference[reference]["evidence_references"],
+                    )
+                ),
+                source_citations=tuple(
+                    cast("str", binding["reference"])
+                    for binding in candidates[index]["source_bindings"]
+                ),
+                incumbent=cast("bool", candidates[index]["incumbent"]),
+                width=cast("int", candidates[index]["width"]),
+                height=cast("int", candidates[index]["height"]),
+                packet_ordinal=index,
+            )
+            for index, reference in enumerate(references)
+            if identity_by_reference[reference]["outcome"]
+            in {"verified_manifestation_match", "verified_work_match"}
+        ),
+        provider_fetching=provider_fetching,
+    )
+    acceptable = tuple(item.candidate.reference for item in election.ranked)
     return _report(
         packet["packet_reference"],
         classifier_reference,
         policy,
         identity_document,
         observation_document,
-        tuple(acceptable),
-        preferred[0],
-        tuple(sorted(reasons)),
+        acceptable,
+        None
+        if election.recommendation is None
+        else election.recommendation.candidate.reference,
+        (
+            ("provider_fetching",)
+            if acceptable and provider_fetching
+            else ("deterministic_confirmed_order",)
+            if acceptable
+            else ("no_confirmed_candidates",)
+        ),
     )
 
 

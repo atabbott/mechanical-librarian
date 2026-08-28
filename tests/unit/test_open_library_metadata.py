@@ -53,6 +53,9 @@ from mechanical_librarian.domain.metadata_report import (
     default_target_fields,
     isbn_family,
 )
+from mechanical_librarian.domain.work_identity import (
+    WorkTitleTransformationFamily,
+)
 from mechanical_librarian.infrastructure.security.credentials import (
     open_library_client,
 )
@@ -100,6 +103,150 @@ def _work_lookup() -> MetadataLookup:
         "Local work title",
         ("Ada Example",),
     )
+
+
+def test_work_query_ladder_is_bounded_and_accounted_as_retries() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"docs": []},
+        )
+
+    lookup = MetadataLookup(
+        ProviderQueryKind.WORK,
+        (),
+        "Local work title: Subtitle",
+        ("Ada & Bea",),
+    )
+    observation = OpenLibraryMetadataProvider(
+        "open_library",
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        65_536,
+        pacer=OpenLibraryPacer(sleep=lambda _: None),
+    ).observe(lookup)
+
+    assert ProviderStatus.NO_MATCH is observation.status
+    assert 3 == len(requests)
+    assert "Local work title: Subtitle" == requests[0].url.params["title"]
+    assert "Local work title" == requests[1].url.params["title"]
+    assert "Ada and Bea" == requests[2].url.params["author"]
+    assert 1 == observation.request_accounting.initial_dispatches
+    assert 2 == observation.request_accounting.retry_dispatches
+
+
+@pytest.mark.parametrize(
+    "title",
+    ("[retail]", "(1)", "(2010)", "ISBN 9780306406157", "2nd Edition", "Book 2"),
+)
+def test_decoration_only_work_query_is_insufficient_without_request(title: str) -> None:
+    requests: list[httpx.Request] = []
+    lookup = MetadataLookup(ProviderQueryKind.WORK, (), title, ("Ada Example",))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(500)
+
+    observation = OpenLibraryMetadataProvider(
+        "open_library",
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        65_536,
+        pacer=OpenLibraryPacer(sleep=lambda _: None),
+    ).observe(lookup)
+
+    assert ProviderStatus.INSUFFICIENT_INPUT is observation.status
+    assert [] == requests
+    assert (0, 0) == (
+        observation.request_accounting.initial_dispatches,
+        observation.request_accounting.retry_dispatches,
+    )
+
+
+def test_filename_author_prefix_shapes_open_library_query_but_never_admits() -> None:
+    lookup = MetadataLookup(
+        ProviderQueryKind.WORK,
+        (),
+        "Ada_Example_-_Plain Work",
+        ("Ada Example",),
+    )
+    work = _work()
+    work["title"] = "Plain Work"
+    values = {
+        "/search.json": {
+            "docs": [
+                {
+                    "key": "/works/OL5W",
+                    "title": "Plain Work",
+                    "author_name": ["Ada Example"],
+                    "author_key": ["OL7A"],
+                    "edition_key": ["OL1M"],
+                    "editions": {"docs": [{"key": "/books/OL1M"}]},
+                }
+            ]
+        },
+        "/books/OL1M.json": _edition("/books/OL1M"),
+        "/works/OL5W.json": work,
+    }
+    observation = OpenLibraryMetadataProvider(
+        "open_library",
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json=values[request.url.path],
+                )
+            )
+        ),
+        65_536,
+        pacer=OpenLibraryPacer(sleep=lambda _: None),
+    ).observe(lookup)
+    qualified = qualify_provider_observation(observation, lookup)
+
+    assert ProviderStatus.CANDIDATES is observation.status
+    assert observation.dispatch_lineage is not None
+    assert WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX in (
+        observation.dispatch_lineage.transformations
+    )
+    assert ProviderStatus.NO_MATCH is qualified.status
+    assert qualified.transformation_lineage is None
+
+
+def test_candidate_limit_gets_one_open_library_phrase_retry() -> None:
+    requests: list[httpx.Request] = []
+    docs = [
+        {
+            "key": f"/works/OL{index}W",
+            "author_name": ["Ada Example"],
+            "author_key": ["OL7A"],
+            "edition_key": [f"OL{index}M"],
+            "editions": {"docs": [{"key": f"/books/OL{index}M"}]},
+        }
+        for index in range(1, 4)
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"docs": docs if len(requests) == 1 else []},
+        )
+
+    observation = OpenLibraryMetadataProvider(
+        "open_library",
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        65_536,
+        pacer=OpenLibraryPacer(sleep=lambda _: None),
+    ).observe(_work_lookup())
+
+    assert ProviderStatus.NO_MATCH is observation.status
+    assert 2 == len(requests)
+    assert '"Local work title" author:"Ada Example"' == requests[1].url.params["q"]
+    assert 1 == observation.request_accounting.retry_dispatches
 
 
 def _title() -> LocalClaim:

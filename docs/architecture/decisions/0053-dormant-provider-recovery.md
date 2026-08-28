@@ -56,6 +56,25 @@ absent; unrelated SQLite objects are preserved, while partial or mismatched
 recovery objects fail closed. Its one shared connection serializes every query
 and transaction across worker threads and closes after the supervisor drains.
 
+## Amendment: quota-aware recovery pacing (2026-08-27)
+
+The application now owns one closed recovery classifier used by both initial
+report qualification and retry successors. Google Books accepts only its exact
+closed API reason vocabulary; Hardcover accepts only its exact current
+`RateLimit` response grammar or exact legacy remaining/reset pair.
+Exact burst evidence produces a bounded short wait. Exact daily exhaustion
+waits until the provider's documented reset boundary: Pacific midnight for
+Google Books and UTC midnight for Hardcover. Missing, malformed,
+contradictory, or unknown evidence remains generic rate limiting and cannot
+claim either distinction.
+
+Google Books, Hardcover, and Open Library each receive one shared one-second
+request-start pacer across foreground and recovery work inside a composed run.
+A burst- or daily-quota-deferred failure neither increments recovery health nor
+spends a job execution attempt. This amendment changes no recovery-database
+shape. The two new persisted report diagnostics are governed by ADR-0017 and
+require the `metadata-report-v29` clean rebuild under ADR-0013.
+
 ## Consequences
 
 ### Positive
