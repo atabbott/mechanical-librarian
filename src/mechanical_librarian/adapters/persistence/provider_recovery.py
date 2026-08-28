@@ -10,7 +10,9 @@ from pathlib import Path
 from typing import cast
 
 from mechanical_librarian.domain.provider_recovery import (
+    DEFERRED_RECOVERY_FAILURES,
     MAX_TIMESTAMP,
+    RECOVERY_FAILURES,
     ProviderRecovery,
     ProviderRecoveryError,
     ProviderRecoveryJob,
@@ -335,14 +337,7 @@ class SQLiteProviderRecoveryStore:
             or not 1 <= len(token) <= 128
             or type(now) is not int
             or not 0 <= now <= MAX_TIMESTAMP
-            or failure
-            not in {
-                "transient",
-                "rate_limited",
-                "authentication",
-                "authorization",
-                "configuration",
-            }
+            or failure not in RECOVERY_FAILURES
         ):
             raise ProviderRecoveryStoreError("provider recovery claim is invalid")
         try:
@@ -612,18 +607,10 @@ class SQLiteProviderRecoveryStore:
                 recovery.attempt,
                 now,
             )
-            successor = (
-                ProviderRecovery.failed(
-                    connection=recovery.connection,
-                    adapter=recovery.adapter,
-                    scope=recovery.scope,
-                    generation=recovery.generation,
-                    failure=failure,
-                    now=now,
-                    retry_after=retry_after,
-                )
-                if failure in {"authentication", "authorization", "configuration"}
-                else base.retry(now=now, retry_after=retry_after)
+            successor = base.after_failure(
+                failure=failure,
+                now=now,
+                retry_after=retry_after,
             )
             _append_checking(self._connection, recovery, now)
             self._connection.execute(
@@ -741,15 +728,10 @@ class SQLiteProviderRecoveryStore:
         generation: int,
         failure: str,
         now: int,
+        retry_after: int | None = None,
     ) -> None:
         """Atomically fold one terminal F22 observation into closed health."""
-        if failure not in {
-            "transient",
-            "rate_limited",
-            "authentication",
-            "authorization",
-            "configuration",
-        }:
+        if failure not in RECOVERY_FAILURES:
             raise ProviderRecoveryStoreError("provider recovery observation is invalid")
         try:
             observed = ProviderRecovery.failed(
@@ -759,9 +741,12 @@ class SQLiteProviderRecoveryStore:
                 generation=generation,
                 failure=failure,
                 now=now,
+                retry_after=retry_after,
             )
             with self._lock:
-                self._observe_failure(observed, now)
+                self._observe_failure(
+                    observed, now, deferred=failure in DEFERRED_RECOVERY_FAILURES
+                )
                 return
         except ProviderRecoveryStoreError:
             raise
@@ -770,7 +755,9 @@ class SQLiteProviderRecoveryStore:
                 "provider recovery persistence is unavailable"
             ) from error
 
-    def _observe_failure(self, observed: ProviderRecovery, now: int) -> None:
+    def _observe_failure(
+        self, observed: ProviderRecovery, now: int, *, deferred: bool
+    ) -> None:
         with self._rollback_on_failure(ProviderRecoveryError):
             self._connection.execute("BEGIN IMMEDIATE")
             current = self._connection.execute(
@@ -782,8 +769,9 @@ class SQLiteProviderRecoveryStore:
                     "provider recovery generation is stale"
                 )
             # A checking lease is completed only by complete().  Within one
-            # generation, checking and dormant take precedence; dormant
-            # observations otherwise replace a waiting observation once.
+            # generation, checking and dormant take precedence.  The latest
+            # authoritative deferral replaces a waiting deadline while keeping
+            # its recovery attempt; ambiguous observations remain idempotent.
             successor = observed
             if current is not None:
                 if current[0] < observed.generation:
@@ -794,8 +782,23 @@ class SQLiteProviderRecoveryStore:
                     self._connection.execute("COMMIT")
                     return
                 if observed.state == "waiting" and current[1] == "waiting":
-                    self._connection.execute("COMMIT")
-                    return
+                    if not deferred:
+                        self._connection.execute("COMMIT")
+                        return
+                    deadline = observed.next_eligible_at
+                    if deadline is None:
+                        raise ProviderRecoveryStoreError(
+                            "provider recovery observation is invalid"
+                        )
+                    successor = ProviderRecovery(
+                        observed.connection,
+                        observed.adapter,
+                        observed.scope,
+                        observed.generation,
+                        "waiting",
+                        current[2],
+                        current[3],
+                    ).defer(now=now, retry_after=deadline - now)
             self._connection.execute(
                 "INSERT INTO provider_recovery_members(connection,adapter,scope) VALUES(?,?,?) ON CONFLICT DO NOTHING",
                 (observed.connection, observed.adapter, observed.scope),
@@ -1543,13 +1546,7 @@ class SQLiteProviderRecoveryStore:
         retry_after: int | None,
     ) -> ProviderRecovery:
         """Requeue the canary and back off its scope in one transaction."""
-        if failure not in {
-            "transient",
-            "rate_limited",
-            "authentication",
-            "authorization",
-            "configuration",
-        }:
+        if failure not in RECOVERY_FAILURES:
             raise ProviderRecoveryStoreError("provider recovery claim is invalid")
         with self._rollback_on_failure(ProviderRecoveryError):
             with self._lock:
@@ -1568,10 +1565,11 @@ class SQLiteProviderRecoveryStore:
                 ):
                     raise ProviderRecoveryStoreError("provider recovery claim is owned")
                 changed = self._connection.execute(
-                    "UPDATE provider_recovery_jobs SET state='queued',claim_token=NULL,claim_expires_at=NULL "
+                    "UPDATE provider_recovery_jobs SET state='queued',attempt=attempt-?,claim_token=NULL,claim_expires_at=NULL "
                     "WHERE connection=? AND adapter=? AND scope=? AND generation=? AND member_id=? "
                     "AND state='running' AND claim_token=? AND claim_expires_at>?",
                     (
+                        1 if failure in DEFERRED_RECOVERY_FAILURES else 0,
                         job.connection,
                         job.adapter,
                         job.scope,
@@ -1592,18 +1590,10 @@ class SQLiteProviderRecoveryStore:
                     recovery.attempt,
                     now,
                 )
-                successor = (
-                    ProviderRecovery.failed(
-                        connection=recovery.connection,
-                        adapter=recovery.adapter,
-                        scope=recovery.scope,
-                        generation=recovery.generation,
-                        failure=failure,
-                        now=now,
-                        retry_after=retry_after,
-                    )
-                    if failure in {"authentication", "authorization", "configuration"}
-                    else base.retry(now=now, retry_after=retry_after)
+                successor = base.after_failure(
+                    failure=failure,
+                    now=now,
+                    retry_after=retry_after,
                 )
                 _append_checking(self._connection, recovery, now)
                 self._connection.execute(
@@ -1814,13 +1804,7 @@ class SQLiteProviderRecoveryStore:
         retry_after: int | None,
     ) -> ProviderRecovery:
         """Stop sibling egress when provider health fails again."""
-        if failure not in {
-            "transient",
-            "rate_limited",
-            "authentication",
-            "authorization",
-            "configuration",
-        }:
+        if failure not in RECOVERY_FAILURES:
             raise ProviderRecoveryStoreError("provider recovery claim is invalid")
         with self._rollback_on_failure(ProviderRecoveryError):
             with self._lock:
@@ -1845,10 +1829,11 @@ class SQLiteProviderRecoveryStore:
                     )
                 if (
                     self._connection.execute(
-                        "UPDATE provider_recovery_jobs SET state='queued',claim_token=NULL,claim_expires_at=NULL "
+                        "UPDATE provider_recovery_jobs SET state='queued',attempt=attempt-?,claim_token=NULL,claim_expires_at=NULL "
                         "WHERE connection=? AND adapter=? AND scope=? AND generation=? AND member_id=? "
                         "AND state='running' AND claim_token=? AND claim_expires_at>?",
                         (
+                            1 if failure in DEFERRED_RECOVERY_FAILURES else 0,
                             job.connection,
                             job.adapter,
                             job.scope,
@@ -1870,18 +1855,10 @@ class SQLiteProviderRecoveryStore:
                     recovery.attempt,
                     now,
                 )
-                successor = (
-                    ProviderRecovery.failed(
-                        connection=recovery.connection,
-                        adapter=recovery.adapter,
-                        scope=recovery.scope,
-                        generation=recovery.generation,
-                        failure=failure,
-                        now=now,
-                        retry_after=retry_after,
-                    )
-                    if failure in {"authentication", "authorization", "configuration"}
-                    else base.retry(now=now, retry_after=retry_after)
+                successor = base.after_failure(
+                    failure=failure,
+                    now=now,
+                    retry_after=retry_after,
                 )
                 self._connection.execute(
                     "UPDATE provider_recovery_health SET state=?,attempt=?,next_eligible_at=?,"

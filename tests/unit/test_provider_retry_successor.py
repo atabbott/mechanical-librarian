@@ -648,8 +648,8 @@ def test_malformed_aggregate_with_clean_lane_leaves_predecessor_current(
         (ProviderStatus.AUTHENTICATION, "authentication"),
         (ProviderStatus.AUTHORIZATION, "authorization"),
         (ProviderStatus.RATE_LIMITED, "rate_limited"),
-        (ProviderStatus.UNAVAILABLE, "unavailable"),
-        (ProviderStatus.INCOMPLETE, "incomplete"),
+        (ProviderStatus.UNAVAILABLE, "transient"),
+        (ProviderStatus.INCOMPLETE, "transient"),
     ),
     ids=(
         "authentication",
@@ -715,6 +715,95 @@ def test_validated_final_retry_after_is_carried_by_shared_failure(
             (retry.failed.identity,),
             provider_name="catalogue",
             adapter="open_library",
+            generation=2,
+        )
+    assert ("rate_limited", 37) == (
+        raised.value.failure,
+        raised.value.retry_after,
+    )
+
+
+def test_retry_observation_uses_the_same_exact_burst_rule_as_initial_report(
+    retry: _Retry,
+) -> None:
+    original = replace(retry.report.providers[0], authority="google_books")
+    source = MetadataReport.create(
+        target=retry.report.target,
+        file=retry.report.file,
+        local_claims=retry.report.local_claims,
+        local_reasons=retry.report.local_reasons,
+        providers=(original,),
+    )
+    retry.repository = _Repository(source)
+    record = ProviderAttemptRecord(
+        "catalogue", 1, "burst_throttled", 100.0, 0.1, "terminal"
+    )
+    provider = _Provider(
+        provider_observation(
+            "catalogue",
+            (ProviderLaneResult(retry.failed, ProviderStatus.RATE_LIMITED),),
+            authority="google_books",
+        ),
+        (record,),
+    )
+    service = retry.service(
+        ConfiguredProviderRetry(
+            ProviderBinding("catalogue", True, lambda: provider, "google_books"),
+            "google_books",
+            2,
+        )
+    )
+    with pytest.raises(ProviderRetrySharedFailure) as raised:
+        service.run(
+            source.report_id,
+            (retry.failed.identity,),
+            provider_name="catalogue",
+            adapter="google_books",
+            generation=2,
+        )
+    assert ("burst_throttled", 100) == (
+        raised.value.failure,
+        raised.value.retry_after,
+    )
+
+
+def test_retry_observation_keeps_specific_plus_generic_rate_limit_ambiguous(
+    retry: _Retry,
+) -> None:
+    original = replace(retry.report.providers[0], authority="google_books")
+    source = MetadataReport.create(
+        target=retry.report.target,
+        file=retry.report.file,
+        local_claims=retry.report.local_claims,
+        local_reasons=retry.report.local_reasons,
+        providers=(original,),
+    )
+    retry.repository = _Repository(source)
+    records = (
+        ProviderAttemptRecord("catalogue", 1, "burst_throttled", 100.0, 0.1, "retry"),
+        ProviderAttemptRecord("catalogue", 2, "http_429", 37.0, 0.1, "terminal"),
+    )
+    provider = _Provider(
+        provider_observation(
+            "catalogue",
+            (ProviderLaneResult(retry.failed, ProviderStatus.RATE_LIMITED),),
+            authority="google_books",
+        ),
+        records,
+    )
+    service = retry.service(
+        ConfiguredProviderRetry(
+            ProviderBinding("catalogue", True, lambda: provider, "google_books"),
+            "google_books",
+            2,
+        )
+    )
+    with pytest.raises(ProviderRetrySharedFailure) as raised:
+        service.run(
+            source.report_id,
+            (retry.failed.identity,),
+            provider_name="catalogue",
+            adapter="google_books",
             generation=2,
         )
     assert ("rate_limited", 37) == (

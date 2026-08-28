@@ -150,9 +150,9 @@ source order. Front and rear subtitle/publisher/imprint canonical values share
 NFC and whitespace normalization. Rear position does not increase authority.
 Provider comparisons link only claims with the same role; no publisher/imprint
 hierarchy is inferred. The exact-current persisted report and database
-discriminator is `metadata-report-v28`. Every earlier report discriminator,
-including immediate prior `metadata-report-v27`, remains offline and requires a clean current
-database under ADR-0013.
+discriminator is `metadata-report-v29`. Every earlier report discriminator,
+including immediate prior `metadata-report-v28`, remains offline and requires a
+clean current database under ADR-0013.
 
 Google Books descriptions use one inert, bounded
 `google-books-html-visible-text-v1` projection. Its report-bound transformation
@@ -307,8 +307,9 @@ attempts. Every referenced, enabled Google Books connection keeps at most five
 transport retries per query and 54 aggregate attempts. Query-ladder and
 narrowing dispatches count as retry dispatches inside those existing ceilings;
 they do not create a separate provider-spend budget. All lanes share one client,
-response-byte envelope, and 60-second aggregate deadline; Hardcover and Open
-Library use shared one-second request-start pacers. Google Books requests six
+response-byte envelope, and 60-second aggregate deadline; Google Books,
+Hardcover, and Open Library use shared one-second request-start pacers across
+foreground and recovery work. Google Books requests six
 rows to detect overflow while retaining no more than five candidates.
 Credential-free and API-key modes have identical evidence
 semantics; the optional key is read only by the controller and appears in no

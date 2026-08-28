@@ -18,6 +18,11 @@
   Query decoration never creates work identity; the reviewed admission subset
   is empty. Pre-release v27 state requires a clean rebuild. (#870)
 
+- Pace Google Books, Hardcover, and Open Library request starts across
+  foreground and recovery work. Exact burst throttling now waits briefly,
+  daily exhaustion resumes at reset, and either deferral spends no recovery
+  attempt. Pre-release v28 state requires a clean rebuild. (#876)
+
 - Keep valid Hardcover discovery candidates when optional cover descriptors
   conflict across lanes; the conflicting cover remains fail-closed. Provider
   lane diagnostics now persist their bounded rejection category; existing

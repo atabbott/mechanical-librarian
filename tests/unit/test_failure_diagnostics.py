@@ -110,9 +110,11 @@ _EXPECTED_PROVIDER_MAPPINGS: dict[
 def test_category_vocabulary_is_exact_and_closed() -> None:
     assert {
         "authentication",
+        "burst_throttle",
         "cancellation",
         "citation_membership",
         "currentness",
+        "daily_quota_exhausted",
         "empty_no_match",
         "http_non_success",
         "identity",
@@ -130,6 +132,15 @@ def test_category_vocabulary_is_exact_and_closed() -> None:
         "transport",
         "unknown",
     } == {value.value for value in FailureCategory}
+
+
+def test_specific_rate_limit_evidence_does_not_gain_a_generic_duplicate() -> None:
+    diagnostics = provider_attempt_diagnostics(
+        (_Attempt("burst_throttled", "terminal"),), status="rate_limited"
+    )
+    assert [FailureCategory.BURST_THROTTLE] == [
+        diagnostic.category for diagnostic in diagnostics
+    ]
 
 
 def test_closed_diagnostic_round_trips_only_bounded_fields() -> None:

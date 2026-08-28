@@ -6,7 +6,6 @@ import asyncio
 import json
 import random
 import re
-import threading
 import time
 from collections.abc import Callable
 from contextlib import nullcontext
@@ -21,6 +20,7 @@ from mechanical_librarian.adapters.providers.retry_safety import (
     ProviderFailure,
     ProviderIncompleteCause,
     ProviderIncompleteCauseRecord,
+    ProviderRequestPacer,
     _DiscoveryRequestLedger,
     bounded_attempt_elapsed,
     bounded_retry_after,
@@ -159,34 +159,7 @@ class _CoverId:
     terminal_state: CoverSourceState | None = None
 
 
-class OpenLibraryPacer:
-    """Keep request starts at least one second apart for one adapter run."""
-
-    def __init__(
-        self,
-        *,
-        clock: Callable[[], float] = time.monotonic,
-        sleep: Callable[[float], None] = time.sleep,
-    ) -> None:
-        self._clock = clock
-        self._sleep = sleep
-        self._last_started: float | None = None
-        self._lock = threading.Lock()
-
-    def wait(self, deadline: float | None = None) -> bool:
-        with self._lock:
-            now = self._clock()
-            if self._last_started is not None:
-                delay = max(0.0, self._last_started + 1.0 - now)
-                if deadline is not None and now + delay >= deadline:
-                    return False
-                if delay:
-                    self._sleep(delay)
-                    now = self._clock()
-            if deadline is not None and now >= deadline:
-                return False
-            self._last_started = now
-            return True
+OpenLibraryPacer = ProviderRequestPacer
 
 
 class OpenLibraryMetadataProvider:

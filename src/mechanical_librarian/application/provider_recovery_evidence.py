@@ -17,6 +17,9 @@ from mechanical_librarian.application.metadata_report import (
     CurrentnessError,
     TargetNotFoundError,
 )
+from mechanical_librarian.application.provider_recovery_policy import (
+    provider_recovery_decision,
+)
 from mechanical_librarian.application.provider_retry_successor import (
     ProviderRetryDisabled,
     ProviderRetrySharedFailure,
@@ -56,6 +59,7 @@ class ProviderFailureObserver(Protocol):
         generation: int,
         failure: str,
         now: int,
+        retry_after: int | None = None,
     ) -> None: ...
 
 
@@ -110,28 +114,10 @@ def record_provider_recovery_observations(
     now: int,
 ) -> None:
     """Persist only terminal F22 provider classifications; never retry them."""
-    failures = {
-        ProviderStatus.AUTHENTICATION: "authentication",
-        ProviderStatus.AUTHORIZATION: "authorization",
-        ProviderStatus.RATE_LIMITED: "rate_limited",
-        ProviderStatus.UNAVAILABLE: "transient",
-        ProviderStatus.INCOMPLETE: "transient",
-    }
     for observation in report.providers:
-        statuses = (observation.status, *(lane.status for lane in observation.lanes))
-        terminal = tuple(failures[status] for status in statuses if status in failures)
-        failure = next(
-            (
-                value
-                for value in terminal
-                if value in {"authentication", "authorization", "configuration"}
-            ),
-            None,
-        ) or next(
-            (value for value in terminal if value in {"rate_limited", "transient"}),
-            None,
-        )
-        if failure is not None:
+        decision = provider_recovery_decision(observation, now=now)
+        if decision is not None:
+            failure, retry_after = decision
             adapter = adapters.get(observation.provider)
             if adapter is None:
                 raise ReviewPipelineError("configuration")
@@ -142,6 +128,7 @@ def record_provider_recovery_observations(
                 generation=generation,
                 failure=failure,
                 now=now,
+                retry_after=retry_after,
             )
 
 

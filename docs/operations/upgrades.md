@@ -7,6 +7,11 @@ rebuild or delivers one explicit exact-predecessor adoption limited to
 reconstructible derived objects. This is not a general migration, import,
 conversion, compatibility, downgrade, or repair facility.
 
+`metadata-report-v28` cannot distinguish burst throttling from exhausted daily
+quota in its persisted provider diagnostics. It is rejected at bootstrap and
+requires a clean rebuild as `metadata-report-v29`; this increment provides no
+adoption or legacy fallback.
+
 `metadata-report-v27` cannot represent exact work dispatch and transformation
 lineages, and its retained downstream decisions cannot be reconstructed without
 crossing canonical owner-decision state. It is rejected at bootstrap and

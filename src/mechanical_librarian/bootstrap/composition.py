@@ -70,6 +70,7 @@ from mechanical_librarian.adapters.private_recovery import (
 )
 from mechanical_librarian.adapters.providers.google_books_metadata import (
     GoogleBooksMetadataProvider,
+    GoogleBooksPacer,
 )
 from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HardcoverMetadataProvider,
@@ -1198,6 +1199,7 @@ def run_metadata_report_loaded(
     credentials: dict[str, str] | None = None,
     repository_identity: tuple[int, int] | None = None,
     artifact_identity: tuple[int, int] | None = None,
+    google_books_pacer: GoogleBooksPacer | None = None,
     open_library_pacer: OpenLibraryPacer | None = None,
     hardcover_pacer: HardcoverPacer | None = None,
     review_action: PipelineAction | None = None,
@@ -1236,6 +1238,11 @@ def run_metadata_report_loaded(
         maximum_bytes=configuration.limits.target_response_bytes,
         timeout_seconds=configuration.limits.timeout_seconds,
     )
+    if google_books_pacer is None and any(
+        provider.enabled and provider.adapter == "google_books"
+        for provider in provider_configs
+    ):
+        google_books_pacer = GoogleBooksPacer()
     if open_library_pacer is None and any(
         provider.enabled and provider.adapter == "open_library"
         for provider in provider_configs
@@ -1269,6 +1276,7 @@ def run_metadata_report_loaded(
                     configuration.limits.provider_response_bytes,
                     configuration.limits.timeout_seconds,
                     api_key=api_key,
+                    pacer=google_books_pacer,
                 )
             elif value.adapter == "hardcover":
                 if value.secret_file is None and credentials is None:
@@ -1538,6 +1546,14 @@ def create_review_pipeline(
         maximum_bytes=configuration.limits.target_response_bytes,
         timeout_seconds=configuration.limits.timeout_seconds,
     )
+    google_books_pacer = (
+        GoogleBooksPacer()
+        if any(
+            provider.enabled and provider.adapter == "google_books"
+            for provider in configuration.providers
+        )
+        else None
+    )
     open_library_pacer = (
         OpenLibraryPacer()
         if any(
@@ -1616,6 +1632,7 @@ def create_review_pipeline(
                     configuration.limits.provider_response_bytes,
                     configuration.limits.timeout_seconds,
                     api_key=api_key,
+                    pacer=google_books_pacer,
                 )
             if value.adapter == "hardcover" and (
                 value.secret_file is not None or credentials is not None
@@ -1750,6 +1767,7 @@ def create_review_pipeline(
             action.item_id or "",
             0,
             expected_file_identity=action.file_identity,
+            google_books_pacer=google_books_pacer,
             open_library_pacer=open_library_pacer,
             hardcover_pacer=hardcover_pacer,
             review_action=action,
@@ -2124,6 +2142,9 @@ def run_batch(
     credentials = _load_batch_credentials(
         configuration, selected_connections, selected_provider_names
     )
+    google_books_pacer = (
+        GoogleBooksPacer() if "google_books" in actual_adapters else None
+    )
     open_library_pacer = (
         OpenLibraryPacer() if "open_library" in actual_adapters else None
     )
@@ -2151,6 +2172,7 @@ def run_batch(
             credentials=credentials,
             repository_identity=repository_identity,
             artifact_identity=artifact_identity,
+            google_books_pacer=google_books_pacer,
             open_library_pacer=open_library_pacer,
             hardcover_pacer=hardcover_pacer,
         )

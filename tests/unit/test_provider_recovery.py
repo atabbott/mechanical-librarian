@@ -579,6 +579,46 @@ def test_activation_runner_failure_has_zero_fanout_and_schedules_backoff() -> No
         store.close()
 
 
+def test_burst_throttle_defers_canary_without_spending_health_or_job_attempt() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+        store.record(
+            ProviderRecovery.failed(
+                connection="google",
+                adapter="google_books",
+                scope="books",
+                generation=1,
+                failure="burst_throttled",
+                now=0,
+                retry_after=1,
+            ),
+            occurred_at=0,
+        )
+
+        def retry(*_args):
+            raise RuntimeError("burst throttled")
+
+        runner = ScopedProviderRecoveryRunner(
+            store=store,
+            generation=1,
+            retry=retry,
+            classify_failure=lambda _: ("burst_throttled", 100),
+        )
+        runner.enqueue((_job("canary"), _job("sibling")), enqueued_at=0)
+        assert "waiting" == runner.run_one(now=1, token="owner").state
+        current = store.snapshot()[0]
+        assert ("waiting", 0, 101) == (
+            current.state,
+            current.attempt,
+            current.next_eligible_at,
+        )
+        jobs = store._connection.execute(
+            "SELECT state,attempt FROM provider_recovery_jobs ORDER BY member_id"
+        ).fetchall()
+        assert [("queued", 0), ("queued", 0)] == jobs
+        store.close()
+
+
 def test_target_hold_canary_restores_exact_health_job_and_event_snapshot() -> None:
     with tempfile.TemporaryDirectory() as directory:
         store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
@@ -1130,6 +1170,53 @@ def test_shared_failure_during_fanout_stops_uncontacted_siblings_and_reopens_sco
             "sibling-a": "queued",
             "sibling-b": "queued",
         } == states
+        store.close()
+
+
+def test_burst_throttle_during_fanout_defers_without_spending_attempts() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+        store.record(
+            ProviderRecovery.failed(
+                connection="google",
+                adapter="google_books",
+                scope="books",
+                generation=1,
+                failure="transient",
+                now=0,
+                retry_after=1,
+            ),
+            occurred_at=0,
+        )
+
+        def retry(_, member, __):
+            if member.member_id == "sibling-a":
+                raise RuntimeError("burst throttled")
+
+        runner = ScopedProviderRecoveryRunner(
+            store=store,
+            generation=1,
+            retry=retry,
+            classify_failure=lambda _: ("burst_throttled", 100),
+        )
+        runner.enqueue(
+            (_job("canary"), _job("sibling-a"), _job("sibling-b")), enqueued_at=0
+        )
+        assert "waiting" == runner.run_one(now=1, token="owner").state
+        health = store.snapshot()[0]
+        assert ("waiting", 1, 101) == (
+            health.state,
+            health.attempt,
+            health.next_eligible_at,
+        )
+        jobs = store._connection.execute(
+            "SELECT member_id,state,attempt FROM provider_recovery_jobs ORDER BY member_id"
+        ).fetchall()
+        assert [
+            ("canary", "complete", 1),
+            ("sibling-a", "queued", 0),
+            ("sibling-b", "queued", 0),
+        ] == jobs
         store.close()
 
 
@@ -1800,6 +1887,53 @@ def test_health_observation_is_idempotent_and_never_completes_a_claim() -> None:
                 "SELECT count(*) FROM provider_recovery_events"
             ).fetchone()[0]
         )
+        store.close()
+
+
+@pytest.mark.parametrize(
+    ("first_failure", "first_delay", "second_failure", "second_delay"),
+    (
+        ("burst_throttled", 100, "quota_exhausted", 90_000),
+        ("quota_exhausted", 90_000, "burst_throttled", 100),
+    ),
+    ids=("burst_then_quota", "quota_then_burst"),
+)
+def test_latest_authoritative_deferral_replaces_waiting_deadline(
+    first_failure: str,
+    first_delay: int,
+    second_failure: str,
+    second_delay: int,
+) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+        kwargs = {
+            "connection": "primary",
+            "adapter": "hardcover",
+            "scope": "books",
+            "generation": 1,
+        }
+        store.observe_failure(
+            **kwargs,
+            failure=first_failure,
+            now=10,
+            retry_after=first_delay,
+        )
+        store.observe_failure(
+            **kwargs,
+            failure=second_failure,
+            now=20,
+            retry_after=second_delay,
+        )
+        assert [("waiting", 0, 20 + second_delay)] == store._connection.execute(
+            "SELECT state,attempt,next_eligible_at FROM provider_recovery_health"
+        ).fetchall()
+        assert [
+            ("waiting", 0, 10 + first_delay, 10),
+            ("waiting", 0, 20 + second_delay, 20),
+        ] == store._connection.execute(
+            "SELECT state,attempt,next_eligible_at,occurred_at "
+            "FROM provider_recovery_events ORDER BY sequence"
+        ).fetchall()
         store.close()
 
 

@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import random
 import re
 import time
 from dataclasses import replace
+from datetime import datetime, timedelta
+from datetime import time as datetime_time
 from decimal import Decimal
 from html.parser import HTMLParser
-from typing import Any, Callable
+from typing import Any, Callable, cast
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -19,6 +23,7 @@ from mechanical_librarian.adapters.providers.retry_safety import (
     ProviderFailure,
     ProviderIncompleteCause,
     ProviderIncompleteCauseRecord,
+    ProviderRequestPacer,
     _DiscoveryRequestLedger,
     bounded_attempt_elapsed,
     bounded_retry_after,
@@ -80,6 +85,8 @@ _MAX_VALUES = 8
 _MAX_AGGREGATE_RESPONSE_BYTES = 2_097_152
 _MAX_ATTEMPTS_PER_QUERY = 6
 _MAX_ATTEMPTS_PER_OBSERVATION = 54
+_BURST_WINDOW_SECONDS = 100
+_PACIFIC = ZoneInfo("America/Los_Angeles")
 GOOGLE_BOOKS_HTML_VISIBLE_TEXT_VERSION = "google-books-html-visible-text-v1"
 _DESCRIPTION_OVERSIZED = object()
 _FIELDS = (
@@ -100,6 +107,7 @@ class GoogleBooksMetadataProvider:
         timeout_seconds: float = 5.0,
         *,
         api_key: str | None = None,
+        pacer: ProviderRequestPacer | None = None,
         clock: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], float] = time.time,
         sleep: Callable[[float], None] = time.sleep,
@@ -128,6 +136,7 @@ class GoogleBooksMetadataProvider:
         )
         self._timeout_seconds = float(timeout_seconds)
         self._api_key = api_key
+        self._pacer = pacer
         self._clock = clock
         self._wall_clock = wall_clock
         self._sleep = sleep
@@ -537,13 +546,15 @@ class GoogleBooksMetadataProvider:
     ) -> dict[str, Any]:
         if self._remaining_response_bytes <= 0:
             raise self._incomplete(ProviderIncompleteCause.AGGREGATE_BYTES)
+        if self._attempt_count >= _MAX_ATTEMPTS_PER_OBSERVATION:
+            raise self._incomplete(ProviderIncompleteCause.DISPATCH_COUNT)
+        if self._pacer is not None and not self._pacer.wait(deadline):
+            raise self._incomplete(ProviderIncompleteCause.DEADLINE)
         remaining = self._timeout_seconds
         if deadline is not None:
             remaining = min(remaining, deadline - self._clock())
         if remaining <= 0:
             raise self._incomplete(ProviderIncompleteCause.DEADLINE)
-        if self._attempt_count >= _MAX_ATTEMPTS_PER_OBSERVATION:
-            raise self._incomplete(ProviderIncompleteCause.DISPATCH_COUNT)
         params = {
             "fields": _FIELDS,
             "maxResults": str(_MAX_RETURNED_RESULTS),
@@ -596,7 +607,11 @@ class GoogleBooksMetadataProvider:
                         ),
                     )
                 if response.status_code != 200:
-                    raise ProviderFailure(_error_status(response.status_code, payload))
+                    raise _provider_error(
+                        response.status_code,
+                        payload,
+                        now=self._wall_clock(),
+                    )
                 if (
                     response.headers.get("content-type", "")
                     .split(";", 1)[0]
@@ -1162,33 +1177,53 @@ def _decode(payload: bytes) -> object:
     )
 
 
-def _error_status(status_code: int, payload: bytes) -> ProviderStatus:
+def _provider_error(status_code: int, payload: bytes, *, now: float) -> ProviderFailure:
     if status_code == 401:
-        return ProviderStatus.AUTHENTICATION
-    if status_code == 429:
-        return ProviderStatus.RATE_LIMITED
-    try:
-        value = _decode(payload)
-        reasons = {
-            item.get("reason")
-            for item in value.get("error", {}).get("errors", [])  # type: ignore[attr-defined]  # reason: the decoded payload is deliberately duck-typed here; a non-mapping body raises AttributeError, which this try block already catches.
-            if type(item) is dict
-        }
-    except (AttributeError, TypeError, ValueError, UnicodeError, RecursionError):
-        reasons = set()
-    if reasons & {
+        return ProviderFailure(ProviderStatus.AUTHENTICATION, category="http_401")
+    reasons = _error_reasons(payload)
+    daily = reasons & {"dailyLimitExceeded", "dailyLimitExceededUnreg"}
+    burst = reasons & {"rateLimitExceeded", "userRateLimitExceeded"}
+    if daily and not burst and reasons <= daily:
+        local = datetime.fromtimestamp(now, tz=_PACIFIC)
+        reset = datetime.combine(
+            local.date() + timedelta(days=1), datetime_time.min, tzinfo=_PACIFIC
+        )
+        return ProviderFailure(
+            ProviderStatus.RATE_LIMITED,
+            category="quota_exhausted",
+            retry_after=max(1, math.ceil(reset.timestamp() - now)),
+        )
+    if burst and not daily and reasons <= burst:
+        return ProviderFailure(
+            ProviderStatus.RATE_LIMITED,
+            category="burst_throttled",
+            retry_after=_BURST_WINDOW_SECONDS,
+        )
+    if status_code == 429 or reasons & {
         "dailyLimitExceeded",
         "dailyLimitExceededUnreg",
         "rateLimitExceeded",
         "userRateLimitExceeded",
         "quotaExceeded",
     }:
-        return ProviderStatus.RATE_LIMITED
+        return ProviderFailure(ProviderStatus.RATE_LIMITED, category="http_429")
     if reasons & {"keyInvalid", "ipRefererBlocked"}:
-        return ProviderStatus.AUTHENTICATION
+        return ProviderFailure(ProviderStatus.AUTHENTICATION, category="http_403")
     if status_code == 403:
-        return ProviderStatus.AUTHORIZATION
-    return ProviderStatus.UNAVAILABLE
+        return ProviderFailure(ProviderStatus.AUTHORIZATION, category="http_403")
+    return ProviderFailure(ProviderStatus.UNAVAILABLE, category=f"http_{status_code}")
+
+
+def _error_reasons(payload: bytes) -> frozenset[str]:
+    try:
+        value = _decode(payload)
+        return frozenset(
+            cast(str, item.get("reason"))
+            for item in value.get("error", {}).get("errors", [])  # type: ignore[attr-defined]  # reason: the decoded payload is deliberately duck-typed here; a non-mapping body raises AttributeError, which this try block already catches.
+            if type(item) is dict and type(item.get("reason")) is str
+        )
+    except (AttributeError, TypeError, ValueError, UnicodeError, RecursionError):
+        return frozenset()
 
 
 def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -1215,4 +1250,7 @@ def _google_books_work_query(value: WorkQuery) -> str:
     )
 
 
-__all__ = ["GOOGLE_BOOKS_URL", "GoogleBooksMetadataProvider"]
+GoogleBooksPacer = ProviderRequestPacer
+
+
+__all__ = ["GOOGLE_BOOKS_URL", "GoogleBooksMetadataProvider", "GoogleBooksPacer"]

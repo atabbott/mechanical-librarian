@@ -155,6 +155,17 @@ def provider_attempt_diagnostics(
     if (
         required is not None
         and (required[0] is not FailureCategory.UNKNOWN or not counts)
+        and not (
+            status == "rate_limited"
+            and any(
+                category
+                in {
+                    FailureCategory.BURST_THROTTLE,
+                    FailureCategory.DAILY_QUOTA_EXHAUSTED,
+                }
+                for category, _, _ in counts
+            )
+        )
         and not any(category is required[0] for category, _, _ in counts)
     ):
         counts[required] = 1
@@ -224,6 +235,10 @@ def _provider_attempt_category(
         return FailureCategory.TRANSPORT, FailureStage.REQUEST
     if category in {"http_401", "http_403"}:
         return FailureCategory.AUTHENTICATION, FailureStage.RESPONSE
+    if category == "burst_throttled":
+        return FailureCategory.BURST_THROTTLE, FailureStage.RESPONSE
+    if category == "quota_exhausted":
+        return FailureCategory.DAILY_QUOTA_EXHAUSTED, FailureStage.RESPONSE
     if category == "http_429":
         return FailureCategory.QUOTA_RATE_LIMIT, FailureStage.RESPONSE
     if category.startswith("http_"):
