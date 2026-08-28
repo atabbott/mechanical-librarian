@@ -2979,7 +2979,12 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                         "No model recommendation is qualified by delivered real-cover evidence yet."
                     )
                 ).to_be_visible()
-                expect(page.get_by_text("headroom below 1 gib")).to_be_visible()
+                expect(
+                    page.get_by_text(
+                        "Less than 1 GiB of memory headroom is available. "
+                        "Free memory or raise the container limit."
+                    )
+                ).to_be_visible()
                 compact_group.select_option("server")
                 diagnostic_checkbox = page.get_by_role(
                     "checkbox", name="Record diagnostic timings"
