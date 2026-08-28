@@ -101,6 +101,7 @@ def test_container_entrypoint_initializes_only_absent_exact_current_stores() -> 
             patch.object(container, "DATABASE", root / "application.sqlite3"),
             patch.object(container, "CATALOGUE", root / "catalogue.sqlite3"),
             patch.object(container, "ARTIFACTS", root / "artifacts"),
+            patch.object(container.signal, "signal") as install_signal,
             patch.object(
                 container,
                 "run_review_server",
@@ -129,7 +130,19 @@ def test_container_entrypoint_initializes_only_absent_exact_current_stores() -> 
                 8443,
                 first_boot_mode=FirstBootMode.RESUME_SETUP,
             )
+            assert all(
+                installed.args
+                == (container.signal.SIGTERM, container._exit_on_container_stop)
+                for installed in install_signal.call_args_list
+            )
+            assert install_signal.call_count == 2
         assert root.stat().st_mode & 0o777 == 0o700
+
+
+def test_container_stop_handler_exits_successfully() -> None:
+    with pytest.raises(SystemExit) as raised:
+        container._exit_on_container_stop(container.signal.SIGTERM, None)
+    assert raised.value.code == 0
 
 
 def test_container_definition_keeps_one_non_root_process_volume_and_port() -> None:
@@ -144,10 +157,19 @@ def test_container_definition_keeps_one_non_root_process_volume_and_port() -> No
     assert "uv sync --frozen --no-dev --no-editable" in dockerfile
     assert dockerfile.count("EXPOSE ") == 1
     assert "read_only: true" in compose
+    assert "init: true" in compose
     assert "cap_drop:" in compose
     assert compose.count("8443:8443") == 1
     assert compose.count("mechanical-librarian-data:/data") == 1
     assert "stop_grace_period: 610s" in compose
+
+
+def test_container_lifecycle_qualifies_both_init_backed_application_runs() -> None:
+    root = Path(__file__).parents[2]
+    qualifier = (root / "scripts/qualify_container_lifecycle.py").read_text(
+        encoding="utf-8"
+    )
+    assert qualifier.count('"--init",') == 2
 
 
 def test_status_is_not_ready_until_exact_current_snapshot_opens_and_drains() -> None:

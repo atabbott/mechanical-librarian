@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import signal
 import stat
 from pathlib import Path
 
@@ -22,7 +23,13 @@ HOST = "0.0.0.0"
 PORT = 8443
 
 
+def _exit_on_container_stop(_signal_number: int, _frame: object) -> None:
+    """Turn Uvicorn's post-shutdown SIGTERM replay into a clean container exit."""
+    raise SystemExit(0)
+
+
 def main() -> None:
+    signal.signal(signal.SIGTERM, _exit_on_container_stop)
     information = DATA.lstat()
     if not stat.S_ISDIR(information.st_mode) or information.st_uid != os.geteuid():
         raise RuntimeError("container data volume is unavailable")
