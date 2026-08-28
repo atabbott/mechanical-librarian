@@ -6,7 +6,6 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, model_validator
 
-
 ReviewerTask = Literal["cover_observation"]
 ReviewerEngine = Literal["codex", "openrouter"]
 

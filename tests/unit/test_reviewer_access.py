@@ -3,7 +3,10 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from mechanical_librarian.domain.reviewer_access import OpenRouterTaskSelection, ReviewerAccessDocument
+from mechanical_librarian.domain.reviewer_access import (
+    OpenRouterTaskSelection,
+    ReviewerAccessDocument,
+)
 
 
 def test_document_admits_only_the_one_task_and_two_fixed_engines() -> None:
@@ -21,7 +24,10 @@ def test_document_admits_only_the_one_task_and_two_fixed_engines() -> None:
             {
                 "schema_version": "reviewer-access-v1",
                 "revision": 1,
-                "description_advice": {"engine": "openrouter", "model": "example/vision"},
+                "description_advice": {
+                    "engine": "openrouter",
+                    "model": "example/vision",
+                },
             }
         )
     with pytest.raises(ValidationError):
