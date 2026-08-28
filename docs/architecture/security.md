@@ -50,14 +50,15 @@ deletion, repair, import, schema-migration, or backward-compatibility authority.
 An existing database must match the installed increment's exact current schema
 before any writable connection or mutation.
 
-The offline `schema-adopt review-owner-decision-actions-v1` command is the one
-pre-release exception to exact-current startup. It rejects a live-build target
-that differs from its literal plan target before path access, then validates
-one literal predecessor and target schema contract against the bound database.
-It rebuilds only the derived review field facts under exclusive,
-owner-only backup-protected authority. It receives no configuration,
-credentials, network, provider, reviewer, media, target, decision, canonical
-row-write, import, repair, or arbitrary-SQL authority.
+The named offline `schema-adopt` commands are the pre-release exceptions to
+exact-current startup. Each rejects a live-build target that differs from its
+literal plan target before path access, then validates one literal predecessor
+and target schema contract against the bound database. Plans may rebuild only
+their declared reconstructible derived objects or discard the dedicated
+session store's expendable digests and bounded throttle timestamps under
+exclusive, owner-only backup-protected authority. They receive no
+configuration, credentials, network, provider, reviewer, media, target,
+decision, canonical-row write, import, repair, or arbitrary-SQL authority.
 
 Foreground batch manifests are private immutable operator artifacts. Preview and
 read bind bounded regular no-follow descriptors under a private parent, validate
@@ -256,12 +257,19 @@ liveness, the login form/assets, and the fixed login failure envelope. Review
 case, evidence, current-case history, and OpenAPI data require an unexpired
 opaque session. Its fixed absolute lifetime is configured from five minutes to
 30 days and defaults to 30 days; activity never extends it. The password is
-verified against one owner-only regular no-follow Argon2id hash file; the
-database stores only a domain-separated HMAC-SHA-256 session lookup keyed by
-that exact encoded verifier and SHA-256 CSRF digests. Replacing the verifier
-therefore rejects earlier sessions before authorization. Expired session rows
-are removed during login, logout records revocation, and failed logins use a durable five-attempt
-per five-minute global throttle without retaining client addresses.
+verified against either one owner-only regular no-follow Argon2id hash file or
+the exact owner verifier inside the settings store. The dedicated owner-only
+`private/review-sessions.sqlite` stores only a domain-separated HMAC-SHA-256
+session lookup keyed by that exact encoded verifier, SHA-256 CSRF digests,
+expiry/revocation facts, and bounded throttle timestamps. It has its own
+connection and lock, so session writes never borrow application-database write
+authority. Replacing the verifier therefore rejects earlier sessions before
+authorization. Expired session rows are removed during login, logout records
+revocation, and failed logins use a durable five-attempt per five-minute global
+throttle without retaining client addresses. The store admits only absence or
+its exact schema and integrity; incompatible or corrupt state fails closed
+without repair. Its clean rebuild deletes only session authority and throttle
+history, requiring every browser to sign in again.
 Pre-0.18 sessions used an unbound digest, so upgrading to 0.18.0 rejects them
 once. This deliberate sign-in boundary avoids a legacy lookup fallback that
 could preserve authority after a verifier replacement.
@@ -269,11 +277,14 @@ could preserve authority after a verifier replacement.
 ADR-0058's empty-volume setup state adds no unauthenticated settings mutation.
 The first visitor may fetch only a bounded synchronizer nonce. Creating the
 owner password requires the exact configured Origin plus the same nonce in a
-host-only cookie and request header; one SQLite transaction stores the Argon2id
-verifier and an ordinary session, so concurrent first-owner attempts have one winner and no
-partial state. Every later wizard read or mutation uses that ordinary session,
-with CSRF and Origin checks for mutations. Resume verifies the owner password
-against the store verifier. Startup admits only the exact seeded predecessor or
+host-only cookie and request header. One application-database transaction
+claims ownership and stores the Argon2id verifier, so concurrent first-owner
+attempts have one winner. Ordinary session issuance follows that commit in the
+dedicated session database; failure returns unavailable while retaining the
+claim, and resubmitting the password retries ordinary login. Every later wizard
+read or mutation uses that ordinary session, with CSRF and Origin checks for
+mutations. Resume verifies the owner password against the store verifier.
+Startup admits only the exact seeded predecessor or
 valid current incomplete setup; older incompatible incomplete setup requires a
 clean rebuild and arbitrary nonempty, malformed, or store-mode state fails
 closed. Kickoff commits authority, permanently closes setup routes, and swaps to

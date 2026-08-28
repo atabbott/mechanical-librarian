@@ -24,6 +24,7 @@ from mechanical_librarian.interfaces.web.setup_frontend import SETUP_JS
 class _Sessions:
     def __init__(self) -> None:
         self.failures = 0
+        self.fail_create = False
         self.records: dict[str, tuple[str, int]] = {}
 
     def begin_login(self, _now: int, _window: int, maximum: int) -> bool:
@@ -35,6 +36,8 @@ class _Sessions:
     def create_review_session(
         self, token: str, csrf: str, _now: int, expires: int
     ) -> None:
+        if self.fail_create:
+            raise RuntimeError("synthetic session persistence failure")
         self.records[token] = (csrf, expires)
         self.failures = 0
 
@@ -291,6 +294,29 @@ def test_wrong_setup_password_is_rate_limited() -> None:
     assert (
         client.post("/api/setup/session", json={"password": "wrong"}).status_code == 429
     )
+
+
+def test_session_failure_after_owner_claim_is_retryable_unavailability() -> None:
+    client, state, _connection = _client()
+    assert state.sessions is not None
+    state.sessions.fail_create = True
+
+    failed = _claim(client)
+
+    assert failed.status_code == 503
+    assert failed.json() == {"detail": {"error": "persistence"}}
+    assert state.document.claimed
+    assert state.document.revision == 2
+    assert state.sessions.records == {}
+
+    state.sessions.fail_create = False
+    retried = client.post(
+        "/api/setup/session",
+        json={"password": "correct horse battery staple"},
+    )
+
+    assert retried.status_code == 200
+    assert "ml_session=" in retried.headers["set-cookie"]
 
 
 @pytest.mark.parametrize(

@@ -1,6 +1,6 @@
 # ADR-0060: Move review-session state to a dedicated session database
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-08-27
 - Owners: project maintainers
 - Supersedes: the `review_sessions` / `review_login_failures` placement in

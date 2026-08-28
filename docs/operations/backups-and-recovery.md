@@ -45,6 +45,15 @@ reports remain secret-free in both modes. Contained-reviewer profiles,
 executable paths, and authentication belong only to explicitly retained private
 workbench state, never runtime backups.
 
+The session database accepts only an absent file or its exact current schema;
+corruption or any foreign schema stops startup without mutating the file. To
+recover, stop the container, retain the rejected file if it is needed for
+diagnosis, remove it from the configured session-database path, and restart.
+The runtime creates a fresh exact schema. This signs out every browser and
+forgets at most five minutes of failed-login throttle history; it does not
+alter the application database or any library state. Do not edit session rows
+or schema in place.
+
 Do not use the Settings API, its short configured indicators, or a public
 support artifact as a credential export. Recovery of store mode requires the
 complete protected database and matching deploy-side bootstrap/TLS material;

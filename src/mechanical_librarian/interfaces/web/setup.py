@@ -296,7 +296,13 @@ def create_setup_app(
         try:
             tokens = sessions.login(request.password)
         except ReviewWebError as error:
-            status = 429 if error.code == "throttled" else 401
+            status = (
+                429
+                if error.code == "throttled"
+                else 401
+                if error.code == "invalid_credentials"
+                else 503
+            )
             raise HTTPException(status, {"error": error.code}) from error
         response.set_cookie(
             "ml_session",
