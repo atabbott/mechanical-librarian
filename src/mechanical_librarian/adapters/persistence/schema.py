@@ -1131,6 +1131,8 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
     """Require append-only cover authority rows to equal their canonical facts."""
     try:
         selections: dict[str, tuple[str, str, str, dict[str, object]]] = {}
+        selection_decision_ids: dict[str, str] = {}
+        automatic_supersessions: dict[str, str | None] = {}
         for row in connection.execute(
             "SELECT selection_id,connection_name,library_name,item_id,kind,decision_id,"
             "consideration_id,supersedes_selection_id,occurred_at,document "
@@ -1260,6 +1262,11 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
             ):
                 raise ValueError
             selections[row[0]] = (row[1], row[2], row[3], document)
+            selection_decision_ids[row[0]] = row[5]
+            if row[4] == "automatic":
+                automatic_supersessions[row[0]] = (
+                    automatic_decision.supersedes_decision_id
+                )
         for selection_id, (
             connection_name,
             library_name,
@@ -1272,6 +1279,15 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
                 or selections[predecessor][:3]
                 != (connection_name, library_name, item_id)
                 or predecessor == selection_id
+            ):
+                raise ValueError
+            expected_predecessor_decision_id = (
+                None if predecessor is None else selection_decision_ids[predecessor]
+            )
+            if (
+                selection_id in automatic_supersessions
+                and automatic_supersessions[selection_id]
+                != expected_predecessor_decision_id
             ):
                 raise ValueError
         for row in connection.execute(

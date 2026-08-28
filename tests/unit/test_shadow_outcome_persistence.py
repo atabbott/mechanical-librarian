@@ -2393,7 +2393,12 @@ def test_composed_projection_without_reviewer_persists_unavailable_before_f22() 
             database_authority=repository.authority,
             provider_recovery=recovery,
         )
-        with patch.object(composition, "run_cover_packet_reviewer") as dispatch:
+        with (
+            patch.object(
+                recovery, "cover_fetching", wraps=recovery.cover_fetching
+            ) as cover_fetching,
+            patch.object(composition, "run_cover_packet_reviewer") as dispatch,
+        ):
             pipeline = _run_qualified_cover_pipeline(
                 repository, root, report, proposal, supervisor
             )
@@ -2407,6 +2412,12 @@ def test_composed_projection_without_reviewer_persists_unavailable_before_f22() 
         assert document is not None
         assert "unavailable" == json.loads(document)["reviewer_status"]
         dispatch.assert_not_called()
+        cover_fetching.assert_called_with(
+            target_connection="primary",
+            library="ebooks",
+            item="item-1",
+            source_report_id=report.report_id,
+        )
         considerations = composition._compose_cover_considerations(
             repository, root / "artifacts", _pipeline_configuration().review
         )
@@ -2480,6 +2491,15 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
         assert automatic.rank_key == tuple(selection["rank_key"])
         assert (selection["decision_document"],) == (
             repository.pending_field_effect_decision_documents(1)[0],
+        )
+        assert repository.pending_field_effect_decision_counts() == (
+            {
+                "connection": "primary",
+                "library": "ebooks",
+                "origin": "automatic",
+                "destination": "cover",
+                "count": 1,
+            },
         )
         repository.close()
         repository = open_repository(database)
@@ -2712,6 +2732,41 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
             "SELECT count(*) FROM cover_selection_authorities"
         ).fetchone() == (4,)
         reopened.close()
+        lineage_database = root / "lineage.sqlite"
+        source = sqlite3.connect(database)
+        destination = sqlite3.connect(lineage_database)
+        source.backup(destination)
+        source.close()
+        destination.close()
+        hostile = sqlite3.connect(lineage_database)
+        hostile.execute("DROP TRIGGER cover_selection_authorities_no_update")
+        automatic_row = hostile.execute(
+            "SELECT selection_id,document FROM cover_selection_authorities "
+            "WHERE kind='automatic'"
+        ).fetchone()
+        owner_row = hostile.execute(
+            "SELECT selection_id FROM cover_selection_authorities "
+            "WHERE kind='owner' ORDER BY occurred_at DESC LIMIT 1"
+        ).fetchone()
+        assert automatic_row is not None
+        assert owner_row is not None
+        authority_document = json.loads(automatic_row[1])
+        authority_document["supersedes_selection_id"] = owner_row[0]
+        hostile.execute(
+            "UPDATE cover_selection_authorities SET supersedes_selection_id=?,document=? "
+            "WHERE selection_id=?",
+            (
+                owner_row[0],
+                json.dumps(authority_document, sort_keys=True, separators=(",", ":")),
+                automatic_row[0],
+            ),
+        )
+        hostile.commit()
+        hostile.close()
+        with pytest.raises(
+            MetadataReportError, match="database is unavailable or incompatible"
+        ):
+            open_repository(lineage_database)
         hostile = sqlite3.connect(database)
         hostile.execute("DROP TRIGGER cover_selection_authorities_no_update")
         hostile.execute(
@@ -2900,6 +2955,24 @@ def test_later_cover_case_only_supersedes_automatic_with_a_strictly_better_rank(
 
         supervisor.stop()
         repository.close()
+        if later_candidate_index == 3 and not owner_final:
+            reopened = open_repository(database)
+            reopened_document = reopened._connection.execute(
+                "SELECT selection.document FROM current_cover_selection_authorities current "
+                "JOIN cover_selection_authorities selection "
+                "ON selection.selection_id=current.selection_id"
+            ).fetchone()
+            assert reopened_document is not None
+            reopened_selection = json.loads(reopened_document[0])
+            reopened_successor = CoverAutomaticDecision.from_json(
+                reopened_selection["decision_document"]
+            )
+            assert reopened_successor.supersedes_decision_id == prior.decision_id
+            assert (
+                reopened_selection["supersedes_selection_id"]
+                == prior_selection["selection_id"]
+            )
+            reopened.close()
 
 
 def test_cover_automatic_rank_comparison_is_complete_and_reference_stable() -> None:

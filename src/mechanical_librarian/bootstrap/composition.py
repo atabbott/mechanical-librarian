@@ -1822,6 +1822,7 @@ def create_review_pipeline(
             artifact_store_path,
             # Callers reject an absent review configuration before composing.
             cast("ReviewWebConfiguration", configuration.review),
+            provider_recovery=provider_recovery,
         )
 
     stages = ReviewPipelineStages(
