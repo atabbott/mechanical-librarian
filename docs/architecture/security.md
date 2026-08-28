@@ -503,7 +503,7 @@ not dispatchable until the owner explicitly selects Codex again.
 The outer container retains its non-root user, read-only root, dropped
 capabilities, no-new-privileges, PID ceiling, and memory ceiling while its
 checked-in seccomp profile admits Bubblewrap's two exact namespace-clone flag
-sets, exact `CLONE_NEWUSER` lock-down, and mount-namespace construction. The
+sets and mount-namespace construction. The
 profile remains deny-by-default and does not admit an arbitrary clone flag set;
 the kernel rejects the mount calls before entry to the admitted user namespace.
 The nested PID namespace mounts no procfs, because hardened container runtimes
@@ -511,9 +511,23 @@ may reject a new proc mount and binding the outer procfs would expose sibling
 processes. A synthetic `/proc/self/exe` symlink resolves only to the sealed
 `/runtime/codex` binding required by the pinned CLI.
 
-The Codex observation invocation disables shell, unified execution, agents,
+An immutable architecture-specific seccomp program installed after namespace
+construction denies `unshare`, `setns`, process-creating `fork`, `vfork`,
+`clone3`, and non-thread `clone` calls while permitting `CLONE_THREAD`.
+The nested filesystem binds only the six required device nodes and does not use
+Bubblewrap's devpts-producing `--dev` option, so setup needs no second user
+namespace.
+Authentication, credential recheck, and observation share one activity gate.
+Their broker, outer Bubblewrap supervisor, namespace PID 1, and sole Codex
+payload have respective 64, 64, 64, and 832 MiB address-space ceilings, exactly
+the contained profile's 1 GiB contract.
+
+The Codex observation invocation binds a sealed local model catalogue that has
+no apply-patch or code-mode selector, so remote model metadata cannot add those
+tools. It disables shell, unified execution, agents,
 apps, plugins, browser/computer use, hooks, web search, and every other optional
-model tool named by its strict pinned configuration. Because no model-callable
+model tool named by its strict pinned configuration, including view-image,
+plan, and owner-input. Because no model-callable
 process tool remains, the CLI uses internal `danger-full-access` mode inside
 the outer Bubblewrap sandbox rather than attempting a second Bubblewrap layer.
 The label describes only the skipped inner CLI sandbox: the process still sees

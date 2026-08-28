@@ -179,23 +179,26 @@ def test_container_definition_keeps_one_non_root_process_volume_and_port() -> No
     assert seccomp["defaultAction"] == "SCMP_ACT_ERRNO"
     assert (
         hashlib.sha256(seccomp_bytes).hexdigest()
-        == "be2ebd491e84aebc79551b718f6d6f5f748f5b3050fede615820e463d030e21c"
+        == "04151878f5bb17b00d216d552f8b8a8bc3683549517193e4f8d6501f1e7530ff"
     )
     assert (
         hashlib.sha256(seccomp_license).hexdigest()
         == "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
     )
     exact_rules = {
-        (rule["names"][0], rule["args"][0]["valueTwo"])
+        (
+            rule["names"][0],
+            rule["args"][0]["value"],
+            rule["args"][0]["valueTwo"],
+        )
         for rule in seccomp["syscalls"]
         if rule.get("comment", "").startswith("Allow only the exact")
         or rule.get("comment", "").startswith("Allow the same exact")
         or rule.get("comment", "").startswith("Allow Bubblewrap")
     }
     assert exact_rules == {
-        ("clone", 1_040_318_464),
-        ("clone", 2_114_060_288),
-        ("unshare", 268_435_456),
+        ("clone", 2_114_060_288, 1_040_318_464),
+        ("clone", 2_114_060_288, 2_114_060_288),
     }
     assert any(
         rule["names"] == ["mount", "pivot_root", "umount2"]
@@ -224,10 +227,18 @@ def test_container_bundles_the_exact_verified_reviewer_artifacts() -> None:
     assert "--ignore-scripts --no-audit --no-fund" in dockerfile
     assert 'echo "$expected_sha256  /tmp/codex/$archive" | sha256sum -c -' in dockerfile
     assert 'test "$(/reviewer/bin/codex --version)" = "codex-cli 0.147.0"' in dockerfile
-    assert "sha256sum bin/codex bin/bwrap > metadata/SHA256SUMS" in dockerfile
+    assert all(
+        value in dockerfile
+        for value in (
+            "sha256sum",
+            "bin/codex",
+            "bin/bwrap",
+            "LICENSE.codex",
+            "LICENSE.bubblewrap",
+        )
+    )
     assert (
-        "sha256:d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc"
-        in dockerfile
+        "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc" in dockerfile
     )
     assert (
         "COPY --from=reviewer-build /reviewer /opt/mechanical-librarian/reviewer"

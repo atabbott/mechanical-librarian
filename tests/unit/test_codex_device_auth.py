@@ -12,7 +12,7 @@ from contextlib import AbstractContextManager, contextmanager, nullcontext
 from pathlib import Path
 from threading import Event, Thread, current_thread
 from typing import Any, cast
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -94,6 +94,7 @@ def _manager(
     status: subprocess.CompletedProcess[bytes] | None = None,
     lease_current: Callable[[], bool] = lambda: True,
     lease_guard: Callable[[], AbstractContextManager[None]] = nullcontext,
+    activity_guard: Callable[[], AbstractContextManager[None]] = nullcontext,
 ) -> CodexDeviceAuthManager:
     def command(staging: Path, action: str):
         return ([action, str(staging)], {"CODEX_HOME": str(staging)})
@@ -118,7 +119,48 @@ def _manager(
         popen=popen,
         lease_current=lease_current,
         lease_guard=lease_guard,
+        activity_guard=activity_guard,
     )
+
+
+def test_device_flow_owns_one_whole_activity_guard(tmp_path: Path) -> None:
+    events: list[str] = []
+
+    @contextmanager
+    def activity() -> Iterator[None]:
+        events.append("entered")
+        try:
+            yield
+        finally:
+            events.append("exited")
+
+    manager = _manager(tmp_path, activity_guard=activity)
+    with patch.object(manager, "_run_flow", side_effect=lambda: events.append("flow")):
+        manager._flow()
+    assert events == ["entered", "flow", "exited"]
+
+
+def test_clear_and_recheck_own_the_activity_guard(tmp_path: Path) -> None:
+    events: list[str] = []
+
+    @contextmanager
+    def activity() -> Iterator[None]:
+        events.append("entered")
+        try:
+            yield
+        finally:
+            events.append("exited")
+
+    manager = _manager(tmp_path, activity_guard=activity)
+    _finish(manager)
+    events.clear()
+
+    assert manager.recheck_credential_status().state == "usable"
+    assert events == ["entered", "exited"]
+    events.clear()
+
+    assert manager.clear().state == "ready"
+    assert events == ["entered", "exited"]
 
 
 def _finish(manager: CodexDeviceAuthManager) -> None:

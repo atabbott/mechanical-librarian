@@ -62,16 +62,20 @@ class CodexDeviceAuthManager:
         popen: PopenFactory = subprocess.Popen,
         lease_current: Callable[[], bool] = lambda: True,
         lease_guard: Callable[[], AbstractContextManager[None]] = nullcontext,
+        activity_guard: Callable[[], AbstractContextManager[None]] = nullcontext,
     ) -> None:
         self._auth_store = auth_store
         self._command_factory = command_factory
         self._popen = popen
         self._lease_current = lease_current
         self._lease_guard = lease_guard
+        self._activity_guard = activity_guard
         self._lock = Lock()
         self._process: subprocess.Popen[bytes] | None = None
         self._thread: Thread | None = None
         self._cancelled = False
+        self._spawning = False
+        self._installing = False
         self._state = CodexDeviceAuthState("ready")
         self._recovered = False
 
@@ -82,26 +86,24 @@ class CodexDeviceAuthManager:
     def _prepare_store(self) -> None:
         with self._lease_guard():
             self._require_lease()
+            if self._recovered:
+                return
+            recovered = self._recover_interrupted_staging()
             with self._lock:
-                if self._recovered:
-                    return
-                self._state = self._recover_interrupted_staging()
+                self._state = recovered
                 self._recovered = True
 
     def start(self) -> CodexDeviceAuthState:
-        with self._lease_guard():
-            self._prepare_store()
-            with self._lock:
-                if self._thread is not None and self._thread.is_alive():
-                    return self._state
-                self._cancelled = False
-                self._state = CodexDeviceAuthState("starting")
-                thread = Thread(
-                    target=self._flow, name="reviewer-device-auth", daemon=True
-                )
-                self._thread = thread
-                thread.start()
+        self._prepare_store()
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
                 return self._state
+            self._cancelled = False
+            self._state = CodexDeviceAuthState("starting")
+            thread = Thread(target=self._flow, name="reviewer-device-auth", daemon=True)
+            self._thread = thread
+        thread.start()
+        return CodexDeviceAuthState("starting")
 
     def status(self) -> CodexDeviceAuthState:
         self._prepare_store()
@@ -118,6 +120,8 @@ class CodexDeviceAuthManager:
 
     def cancel(self) -> CodexDeviceAuthState:
         with self._lock:
+            if self._installing:
+                return self._state
             if self._state.state == "usable" and (
                 self._process is None or self._process.poll() is not None
             ):
@@ -141,7 +145,7 @@ class CodexDeviceAuthManager:
     def clear(self) -> CodexDeviceAuthState:
         self._prepare_store()
         self.close()
-        with self._lease_guard():
+        with self._activity_guard(), self._lease_guard():
             self._require_lease()
             directory = -1
             try:
@@ -192,30 +196,48 @@ class CodexDeviceAuthManager:
                 return CodexDeviceAuthState("failed", failure="permission_or_profile")
 
     def recheck_credential_status(self) -> CodexDeviceAuthState:
+        self._prepare_store()
         with self._lease_guard():
-            self._prepare_store()
+            with self._lock:
+                if self._thread is not None and self._thread.is_alive():
+                    return self._state
+        current = self.current_credential_status()
+        if current.state != "configured":
+            return current
+        with self._activity_guard(), self._lease_guard():
+            self._require_lease()
             with self._lock:
                 if self._thread is not None and self._thread.is_alive():
                     return self._state
             current = self.current_credential_status()
             if current.state != "configured":
                 return current
+            return self._recheck_configured_credential_status()
+
+    def _recheck_configured_credential_status(self) -> CodexDeviceAuthState:
+        """Keep the process-bearing recheck directly bounded by the activity gate."""
+        try:
+            prepared = _prepared(self._command_factory(self._auth_store, "status"))
             try:
-                prepared = _prepared(self._command_factory(self._auth_store, "status"))
-                try:
-                    output, returncode = self._status_command(
-                        prepared, time.monotonic() + 30, flow_owned=False
-                    )
-                finally:
-                    prepared.close()
-            except (OSError, subprocess.SubprocessError, CodexDeviceAuthError):
-                return CodexDeviceAuthState("failed", failure="permission_or_profile")
-            if returncode == 0 and output == b"Logged in using ChatGPT\n":
-                self._require_lease()
-                return CodexDeviceAuthState("usable")
+                output, returncode = self._status_command(
+                    prepared, time.monotonic() + 30, flow_owned=False
+                )
+            finally:
+                prepared.close()
+        except (OSError, subprocess.SubprocessError, CodexDeviceAuthError):
             return CodexDeviceAuthState("failed", failure="permission_or_profile")
+        if returncode == 0 and output == b"Logged in using ChatGPT\n":
+            self._require_lease()
+            return CodexDeviceAuthState("usable")
+        return CodexDeviceAuthState("failed", failure="permission_or_profile")
 
     def _flow(self) -> None:
+        # The small wrapper makes the whole long-lived device flow one testable
+        # activity boundary without hiding which operation owns the lock.
+        with self._activity_guard():
+            self._run_flow()
+
+    def _run_flow(self) -> None:
         deadline = time.monotonic() + _DEVICE_DEADLINE_SECONDS
         parent = self._auth_store.parent
         staging: Path | None = None
@@ -286,14 +308,21 @@ class CodexDeviceAuthManager:
             )
             if not (returncode == 0 and output == b"Logged in using ChatGPT\n"):
                 raise CodexDeviceAuthError("permission")
-            # Lease validity, cancellation, credential commit, and publication
-            # are one coordinator-then-manager terminal transition.
+            # Cancellation wins until this short terminal reservation. Once it
+            # is reserved, installation wins and no manager lock covers I/O.
             with self._lease_guard():
+                self._require_lease()
                 with self._lock:
                     if self._cancelled:
                         return
-                    self._require_lease()
+                    self._installing = True
+                try:
                     _install_auth(auth_path, self._auth_store)
+                finally:
+                    with self._lock:
+                        self._installing = False
+                self._require_lease()
+                with self._lock:
                     self._state = CodexDeviceAuthState("usable")
         except (OSError, subprocess.SubprocessError, CodexDeviceAuthError):
             with self._lock:
@@ -319,7 +348,7 @@ class CodexDeviceAuthManager:
         with self._lease_guard():
             self._require_lease()
             with self._lock:
-                if self._process is not None:
+                if self._process is not None or self._spawning:
                     raise CodexDeviceAuthError("process")
                 if (
                     not flow_owned
@@ -327,6 +356,8 @@ class CodexDeviceAuthManager:
                     and self._thread.is_alive()
                 ):
                     raise CodexDeviceAuthError("process")
+                self._spawning = True
+            try:
                 process = self._popen(
                     _resource_command(prepared.command),
                     env=dict(prepared.environment),
@@ -336,6 +367,12 @@ class CodexDeviceAuthManager:
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
                 )
+            except BaseException:
+                with self._lock:
+                    self._spawning = False
+                raise
+            with self._lock:
+                self._spawning = False
                 self._process = process
                 cancelled = self._cancelled
         if cancelled:

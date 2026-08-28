@@ -3027,6 +3027,21 @@ class _LazyCodexAuth:
         lease = self._lease
         return lease is not None and self._coordinator.current(self, lease)
 
+    def bind(self, loader: Callable[[], tuple[str, bytes]]) -> tuple[str, bytes]:
+        """Capture immutable review identity under the current short lease."""
+        if not self._lease_current():
+            self.activate_lease()
+        lease = cast("int", self._lease)
+        with self._coordinator.guard(self, lease):
+            return loader()
+
+    @contextmanager
+    def review_admission(self) -> Iterator[None]:
+        """Revalidate the captured generation after taking global activity."""
+        lease = cast("int", self._lease)
+        with self._coordinator.guard(self, lease):
+            yield
+
     def _get(self) -> CodexDeviceAuthManager:
         if not self._lease_current():
             self.activate_lease()
@@ -3089,6 +3104,7 @@ class _CodexAuthLeaseCoordinator:
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._transition = Lock()
+        self._activity = Lock()
         self._owner: _LazyCodexAuth | None = None
         self._lease = 0
 
@@ -3100,20 +3116,35 @@ class _CodexAuthLeaseCoordinator:
                 predecessor = self._owner
                 if predecessor is not None:
                     predecessor._mark_retired()
-                self._owner = None
-                self._lease += 1
             if predecessor is not None:
-                predecessor._drain()
-            with self._lock:
-                if self._owner is not None:
-                    raise CodexDeviceAuthError("lease")
-                self._lease += 1
-                self._owner = owner
-                return self._lease
+                try:
+                    predecessor._drain()
+                except Exception:
+                    with self._lock:
+                        if self._owner is predecessor:
+                            self._owner = None
+                            self._lease += 1
+                    raise
+            # A device flow can be pre-cancelled without this gate. A review
+            # cannot, so handoff waits for its complete broker tree to reap
+            # before changing lease authority.
+            with self._activity:
+                with self._lock:
+                    if self._owner not in {None, predecessor}:
+                        raise CodexDeviceAuthError("lease")
+                    self._lease += 1
+                    self._owner = owner
+                    return self._lease
 
     def current(self, owner: _LazyCodexAuth, lease: int) -> bool:
         with self._lock:
             return self._owner is owner and self._lease == lease
+
+    @contextmanager
+    def activity(self) -> Iterator[None]:
+        """Admit exactly one Codex auth, recheck, or review process tree."""
+        with self._activity:
+            yield
 
     @contextmanager
     def guard(self, owner: _LazyCodexAuth, lease: int) -> Iterator[None]:
@@ -3123,7 +3154,7 @@ class _CodexAuthLeaseCoordinator:
             yield
 
     def release(self, owner: _LazyCodexAuth) -> None:
-        with self._lock:
+        with self._transition, self._activity, self._lock:
             if self._owner is owner:
                 self._owner = None
                 self._lease += 1
@@ -3134,10 +3165,12 @@ class _CodexAuthLeaseCoordinator:
                 owner = self._owner
                 if owner is not None:
                     owner._mark_retired()
-                self._owner = None
-                self._lease += 1
             if owner is not None:
                 owner._drain()
+            with self._activity, self._lock:
+                if self._owner is owner:
+                    self._owner = None
+                    self._lease += 1
 
 
 def _compose_reviewer_access(
@@ -3146,6 +3179,7 @@ def _compose_reviewer_access(
     coordinator: _CodexAuthLeaseCoordinator | None = None,
 ) -> ReviewerAccessOperations:
     codex_auth: CodexAuth
+    codex_reviewer = run_cover_packet_reviewer
     profile_file = review.cover_reviewer_profile_file
     if profile_file is None:
         codex_auth = _UnavailableCodexAuth()
@@ -3157,6 +3191,7 @@ def _compose_reviewer_access(
             raise RuntimeError("codex profile unavailable")
 
     else:
+        active_coordinator = coordinator or _CodexAuthLeaseCoordinator()
 
         def load_profile() -> tuple[bytes, ContainedReviewerProfile]:
             payload = read_contained_reviewer_profile(Path(profile_file))
@@ -3174,23 +3209,56 @@ def _compose_reviewer_access(
                 ),
                 lease_current=lease_current,
                 lease_guard=lease_guard,
+                activity_guard=active_coordinator.activity,
             )
 
-        codex_auth = _LazyCodexAuth(
-            manager, coordinator or _CodexAuthLeaseCoordinator()
-        )
+        lazy_codex_auth = _LazyCodexAuth(manager, active_coordinator)
+        codex_auth = lazy_codex_auth
         codex_host = reviewer_host_status
 
         def codex_identity() -> tuple[str, bytes]:
             payload, profile = load_profile()
             return profile.identity.model, payload
 
+        def codex_reviewer(
+            profile_payload: bytes,
+            instruction_payload: bytes,
+            packet_payload: bytes,
+            schema_payload: bytes,
+            image_payloads: tuple[tuple[str, str, bytes], ...],
+        ) -> str:
+            with active_coordinator.activity():
+                with lazy_codex_auth.review_admission():
+                    pass
+                return run_cover_packet_reviewer(
+                    profile_payload,
+                    instruction_payload,
+                    packet_payload,
+                    schema_payload,
+                    image_payloads,
+                )
+
+        def codex_binding() -> tuple[
+            str,
+            bytes,
+            Callable[
+                [bytes, bytes, bytes, bytes, tuple[tuple[str, str, bytes], ...]],
+                str,
+            ],
+        ]:
+            model, payload = lazy_codex_auth.bind(codex_identity)
+            return model, payload, codex_reviewer
+
     return ReviewerAccessOperations(
         repository.reviewer_access_store(),
         codex_auth=codex_auth,
         codex_host=codex_host,
         codex_identity=codex_identity,
-        codex_binding=lambda: (*codex_identity(), run_cover_packet_reviewer),
+        codex_binding=(
+            codex_binding
+            if profile_file is not None
+            else lambda: (*codex_identity(), codex_reviewer)
+        ),
         openrouter_factory=lambda key, model: OpenRouterReviewer(key, model),
     )
 

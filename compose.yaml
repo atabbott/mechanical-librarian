@@ -14,7 +14,7 @@ services:
       - no-new-privileges:true
       # Docker's built-in seccomp profile intentionally denies namespace
       # creation. This checked-in derivative admits only Bubblewrap's two exact
-      # clone flag sets, its user-namespace lock-down, and mount construction.
+      # clone flag sets and mount construction; the inner filter denies nesting.
       - seccomp=./config/seccomp/contained-reviewer.json
     # Loopback-only by default: reaching the review surface from another host
     # is an explicit owner choice, made by overriding this line as described in
@@ -40,8 +40,10 @@ services:
     # two preparation lanes, and each may hold one evidence child, which
     # `epub_child.py` and `cover_child.py` cap at 256MiB of address space
     # apiece. So the worst case the code itself admits is 167.8 + 2 x 256 =
-    # 680MiB. The contained reviewer independently reserves 1GiB per run, so
-    # their reasoned simultaneous ceiling is 1,704MiB. A 2GiB container leaves
+    # 680MiB. Exactly one Codex activity may run at once; its broker, Bubblewrap
+    # outer supervisor, namespace PID 1, and payload share one enforced 1GiB
+    # aggregate ceiling. Their
+    # reasoned simultaneous ceiling is therefore 1,704MiB. A 2GiB container leaves
     # about 344MiB above that bound while the live host gate still requires the
     # full reviewer headroom before every run. `memswap_limit` matches
     # `mem_limit` so the cap is a real ceiling rather than an invitation to
