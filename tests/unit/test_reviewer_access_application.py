@@ -30,10 +30,14 @@ class _Auth:
         self.state = state
         self.current_calls = 0
         self.status_calls = 0
+        self.recheck_state: DeviceAuthStatus | None = None
 
     def start(self):
         self.state = "waiting"
         return CodexDeviceAuthState("waiting")
+
+    def activate_lease(self) -> None:
+        return None
 
     def status(self):
         self.status_calls += 1
@@ -53,6 +57,8 @@ class _Auth:
 
     def recheck_credential_status(self):
         self.current_calls += 1
+        if self.recheck_state is not None:
+            return CodexDeviceAuthState(self.recheck_state)
         return CodexDeviceAuthState(
             "usable" if self.state == "configured" else self.state
         )
@@ -248,6 +254,15 @@ def test_codex_selection_requires_current_host_and_credential_then_binds_lazily(
     assert auth.current_calls >= 2
 
 
+def test_codex_selection_response_uses_exact_recheck_not_prior_terminal() -> None:
+    operations, auth, _openrouter, _codex = _operations(auth_state="failed")
+
+    auth.recheck_state = "usable"
+    selected = operations.select_codex(expected_revision=1)
+    assert selected.mapping is not None and selected.mapping.engine == "codex"
+    assert selected.codex.state == "usable"
+
+
 def test_clearing_openrouter_is_immediate_and_removes_its_mapping() -> None:
     operations, _auth, _openrouter, _codex = _operations()
     operations.configure_openrouter(
@@ -279,8 +294,10 @@ def test_failed_codex_deactivation_after_clear_remains_fail_closed() -> None:
 def test_reauthentication_deselects_codex_before_starting_replacement() -> None:
     operations, auth, _openrouter, _codex = _operations(auth_state="usable")
     assert operations.select_codex(expected_revision=1).revision == 2
-    started = operations.start_codex(expected_revision=2)
+    access, started = operations.start_codex(expected_revision=2)
     assert started.state == "waiting"
+    assert access.revision == 3
+    assert access.mapping is None
     document, _configured = operations._repository.read()
     assert document.revision == 3
     assert document.cover_observation is None

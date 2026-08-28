@@ -654,12 +654,13 @@ def create_setup_app(
             ml_session: str | None = Cookie(default=None),
             x_csrf_token: str | None = Header(default=None),
             origin: str | None = Header(default=None),
-        ) -> CodexDeviceAuthState:
+        ) -> object:
             authorize_mutation(ml_session, x_csrf_token, origin)
             try:
-                return reviewer_authority().start_codex(
+                access, device = reviewer_authority().start_codex(
                     expected_revision=request.expected_revision
                 )
+                return {"access": access, "device": device}
             except (
                 ReviewerAccessApplicationError,
                 ReviewerAccessRepositoryError,

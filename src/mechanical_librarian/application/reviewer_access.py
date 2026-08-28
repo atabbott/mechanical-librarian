@@ -74,6 +74,8 @@ class ReviewerAccessRepository(Protocol):
 
 
 class CodexAuth(Protocol):
+    def activate_lease(self) -> None: ...
+
     def start(self) -> CodexDeviceAuthState: ...
 
     def status(self) -> CodexDeviceAuthState: ...
@@ -189,6 +191,9 @@ class ReviewerAccessOperations:
     ) -> None:
         self._serialized = serialized
 
+    def activate_codex_lease(self) -> None:
+        self._codex_auth.activate_lease()
+
     def read(self) -> ReviewerAccessView:
         return cast("ReviewerAccessView", self._serialized(self._view))
 
@@ -220,11 +225,14 @@ class ReviewerAccessOperations:
         document: ReviewerAccessDocument | None = None,
         configured: bool | None = None,
         openrouter: ReviewerEngineStatus | None = None,
+        codex: ReviewerEngineStatus | None = None,
     ) -> ReviewerAccessView:
         if document is None or configured is None:
             document, configured = self._repository.read()
         selection = document.cover_observation
-        if isinstance(selection, CodexTaskSelection):
+        if codex is not None:
+            codex_status = codex
+        elif isinstance(selection, CodexTaskSelection):
             host = self._codex_host()
             flow = self._codex_auth.status()
             credential = (
@@ -243,7 +251,7 @@ class ReviewerAccessOperations:
                 }
                 else self._codex_auth.current_credential_status()
             )
-            codex = ReviewerEngineStatus(
+            codex_status = ReviewerEngineStatus(
                 engine="codex",
                 state=("host_unsupported" if not host.available else credential.state),
                 reason=host.reason if not host.available else credential.failure,
@@ -253,7 +261,7 @@ class ReviewerAccessOperations:
             # Generic access reads remain engine-neutral and cannot initialize
             # CODEX_HOME, parse the contained profile, or inspect credentials.
             host = self._codex_host()
-            codex = ReviewerEngineStatus(
+            codex_status = ReviewerEngineStatus(
                 engine="codex",
                 state="ready" if host.available else "host_unsupported",
                 reason=None if host.available else host.reason,
@@ -278,7 +286,7 @@ class ReviewerAccessOperations:
             revision=document.revision,
             mapping=selection,
             openrouter_key_configured=configured,
-            codex=codex,
+            codex=codex_status,
             openrouter=openrouter_status,
         )
 
@@ -339,7 +347,13 @@ class ReviewerAccessOperations:
             expected_revision,
             CodexTaskSelection(engine="codex"),
         )
-        return self.read()
+        return self._view(
+            codex=ReviewerEngineStatus(
+                engine="codex",
+                state="usable",
+                host_headroom_bytes=host.headroom_bytes,
+            )
+        )
 
     def select_none(self, *, expected_revision: int) -> ReviewerAccessView:
         def select() -> ReviewerAccessView:
@@ -371,8 +385,10 @@ class ReviewerAccessOperations:
         )
         return self._view()
 
-    def start_codex(self, *, expected_revision: int) -> CodexDeviceAuthState:
-        def start() -> CodexDeviceAuthState:
+    def start_codex(
+        self, *, expected_revision: int
+    ) -> tuple[ReviewerAccessView, CodexDeviceAuthState]:
+        def start() -> tuple[ReviewerAccessView, CodexDeviceAuthState]:
             document, _configured = self._repository.read()
             if document.revision != expected_revision:
                 raise ReviewerAccessApplicationError("access_changed")
@@ -380,9 +396,12 @@ class ReviewerAccessOperations:
                 self._replace_selection(expected_revision, None)
             if not self._codex_host().available:
                 raise ReviewerAccessApplicationError("host_unsupported")
-            return self._codex_auth.start()
+            device = self._codex_auth.start()
+            return self._view(), device
 
-        return cast("CodexDeviceAuthState", self._serialized(start))
+        return cast(
+            "tuple[ReviewerAccessView, CodexDeviceAuthState]", self._serialized(start)
+        )
 
     def codex_status(self) -> CodexDeviceAuthState:
         def status() -> CodexDeviceAuthState:

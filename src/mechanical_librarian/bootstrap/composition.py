@@ -8,7 +8,8 @@ import os
 import stat
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
@@ -346,6 +347,7 @@ class _StoreRuntimeActivation:
         self._repository_authority = repository_authority
         self._dispatcher: MutableRuntimeDispatcher | None = None
         self._lock = threading.RLock()
+        self._codex_auth = _CodexAuthLeaseCoordinator()
 
     @property
     def dispatcher(self) -> MutableRuntimeDispatcher:
@@ -413,6 +415,9 @@ class _StoreRuntimeActivation:
         """Retire compatibility debt only after the initial generation woke."""
         view = self._settings_store.read()
         self._settings_store.acknowledge_runtime(view.document.revision)
+
+    def close(self) -> None:
+        self._codex_auth.close()
 
 
 class _PublicationReceiptRepository(Protocol):
@@ -2425,7 +2430,11 @@ def compose_store_runtime_generation(
                 ),
             )
         )
-        reviewer_access = _compose_reviewer_access(repository, review)
+        reviewer_access = _compose_reviewer_access(
+            repository,
+            review,
+            None if activation is None else activation._codex_auth,
+        )
         cover_considerations = _compose_cover_considerations(
             repository,
             artifact_store_path,
@@ -2480,10 +2489,14 @@ def compose_store_runtime_generation(
             finally:
                 session_store.close()
 
+        def start_generation() -> None:
+            reviewer_access.activate_codex_lease()
+            review_application.start_dormant()
+
         return (
             RuntimeGeneration(
                 create_review_app(review_application, review),
-                start_dormant=review_application.start_dormant,
+                start_dormant=start_generation,
                 stop_admission=review_application.stop_admission,
                 resume_admission=review_application.resume_admission,
                 admit=review_application.admit,
@@ -2590,6 +2603,7 @@ def _compose_setup_runtime_generation(
             owner_password_hash_file="/data/.owner-verifier-store",
             cover_reviewer_profile_file=bootstrap.cover_reviewer_profile_file,
         ),
+        activation._codex_auth,
     )
     setup_app = create_setup_app(
         sessions,
@@ -2601,9 +2615,15 @@ def _compose_setup_runtime_generation(
         canonical_origin=bootstrap.canonical_origin,
         activate=activate_setup,
     )
-    return RuntimeGeneration(
-        setup_app, close=reviewer_access.close, shutdown_seconds=300
-    ), activation
+    return (
+        RuntimeGeneration(
+            setup_app,
+            start_dormant=reviewer_access.activate_codex_lease,
+            close=reviewer_access.close,
+            shutdown_seconds=300,
+        ),
+        activation,
+    )
 
 
 def _reachable_setup_mount_names(
@@ -2745,6 +2765,7 @@ def run_review_server(
                     runtime.close()
                     raise
             finally:
+                activation.close()
                 if setup_session_store is not None:
                     setup_session_store.close()
                 control.close()
@@ -2965,6 +2986,9 @@ def _store_first_preparation(
 
 
 class _UnavailableCodexAuth:
+    def activate_lease(self) -> None:
+        return None
+
     def _state(self) -> CodexDeviceAuthState:
         return CodexDeviceAuthState("failed", failure="permission_or_profile")
 
@@ -2978,15 +3002,40 @@ class _UnavailableCodexAuth:
 class _LazyCodexAuth:
     """Do not touch the Codex profile or staging tree until Codex is requested."""
 
-    def __init__(self, factory: Callable[[], CodexDeviceAuthManager]) -> None:
+    def __init__(
+        self,
+        factory: Callable[
+            [Callable[[], bool], Callable[[], AbstractContextManager[None]]],
+            CodexDeviceAuthManager,
+        ],
+        coordinator: _CodexAuthLeaseCoordinator,
+    ) -> None:
         self._factory = factory
+        self._coordinator = coordinator
         self._lock = Lock()
         self._manager: CodexDeviceAuthManager | None = None
+        self._lease: int | None = None
+        self._retired = False
+
+    def activate_lease(self) -> None:
+        with self._lock:
+            if self._retired:
+                raise CodexDeviceAuthError("lease")
+        self._lease = self._coordinator.activate(self)
+
+    def _lease_current(self) -> bool:
+        lease = self._lease
+        return lease is not None and self._coordinator.current(self, lease)
 
     def _get(self) -> CodexDeviceAuthManager:
+        if not self._lease_current():
+            self.activate_lease()
         with self._lock:
             if self._manager is None:
-                self._manager = self._factory()
+                self._manager = self._factory(
+                    self._lease_current,
+                    lambda: self._coordinator.guard(self, cast("int", self._lease)),
+                )
             return self._manager
 
     def _state(self, operation: str) -> CodexDeviceAuthState:
@@ -3019,15 +3068,82 @@ class _LazyCodexAuth:
         return self._state("recheck_credential_status")
 
     def close(self) -> None:
+        self._mark_retired()
+        self._drain()
+        self._coordinator.release(self)
+
+    def _mark_retired(self) -> None:
+        with self._lock:
+            self._retired = True
+
+    def _drain(self) -> None:
         with self._lock:
             manager = self._manager
         if manager is not None:
             manager.close()
 
 
+class _CodexAuthLeaseCoordinator:
+    """Serialize one process-lifetime owner of a configured auth store."""
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._transition = Lock()
+        self._owner: _LazyCodexAuth | None = None
+        self._lease = 0
+
+    def activate(self, owner: _LazyCodexAuth) -> int:
+        with self._transition:
+            with self._lock:
+                if self._owner is owner:
+                    return self._lease
+                predecessor = self._owner
+                if predecessor is not None:
+                    predecessor._mark_retired()
+                self._owner = None
+                self._lease += 1
+            if predecessor is not None:
+                predecessor._drain()
+            with self._lock:
+                if self._owner is not None:
+                    raise CodexDeviceAuthError("lease")
+                self._lease += 1
+                self._owner = owner
+                return self._lease
+
+    def current(self, owner: _LazyCodexAuth, lease: int) -> bool:
+        with self._lock:
+            return self._owner is owner and self._lease == lease
+
+    @contextmanager
+    def guard(self, owner: _LazyCodexAuth, lease: int) -> Iterator[None]:
+        with self._lock:
+            if self._owner is not owner or self._lease != lease:
+                raise CodexDeviceAuthError("lease")
+            yield
+
+    def release(self, owner: _LazyCodexAuth) -> None:
+        with self._lock:
+            if self._owner is owner:
+                self._owner = None
+                self._lease += 1
+
+    def close(self) -> None:
+        with self._transition:
+            with self._lock:
+                owner = self._owner
+                if owner is not None:
+                    owner._mark_retired()
+                self._owner = None
+                self._lease += 1
+            if owner is not None:
+                owner._drain()
+
+
 def _compose_reviewer_access(
     repository: SQLiteMetadataReportRepository,
     review: ReviewWebConfiguration,
+    coordinator: _CodexAuthLeaseCoordinator | None = None,
 ) -> ReviewerAccessOperations:
     codex_auth: CodexAuth
     profile_file = review.cover_reviewer_profile_file
@@ -3046,16 +3162,23 @@ def _compose_reviewer_access(
             payload = read_contained_reviewer_profile(Path(profile_file))
             return payload, load_contained_reviewer_profile_bytes(payload)
 
-        def manager() -> CodexDeviceAuthManager:
+        def manager(
+            lease_current: Callable[[], bool],
+            lease_guard: Callable[[], AbstractContextManager[None]],
+        ) -> CodexDeviceAuthManager:
             _payload, profile = load_profile()
             return CodexDeviceAuthManager(
                 profile.auth_store_path,
                 lambda staging, action: prepare_contained_device_auth_command(
                     profile, staging, action
                 ),
+                lease_current=lease_current,
+                lease_guard=lease_guard,
             )
 
-        codex_auth = _LazyCodexAuth(manager)
+        codex_auth = _LazyCodexAuth(
+            manager, coordinator or _CodexAuthLeaseCoordinator()
+        )
         codex_host = reviewer_host_status
 
         def codex_identity() -> tuple[str, bytes]:

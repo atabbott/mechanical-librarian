@@ -15,6 +15,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock, Thread
@@ -59,17 +60,35 @@ class CodexDeviceAuthManager:
         command_factory: CommandFactory,
         *,
         popen: PopenFactory = subprocess.Popen,
+        lease_current: Callable[[], bool] = lambda: True,
+        lease_guard: Callable[[], AbstractContextManager[None]] = nullcontext,
     ) -> None:
         self._auth_store = auth_store
         self._command_factory = command_factory
         self._popen = popen
+        self._lease_current = lease_current
+        self._lease_guard = lease_guard
         self._lock = Lock()
         self._process: subprocess.Popen[bytes] | None = None
         self._thread: Thread | None = None
         self._cancelled = False
-        self._state = self._recover_interrupted_staging()
+        self._state = CodexDeviceAuthState("ready")
+        self._recovered = False
+
+    def _require_lease(self) -> None:
+        if not self._lease_current():
+            raise CodexDeviceAuthError("lease")
+
+    def _prepare_store(self) -> None:
+        self._require_lease()
+        with self._lock:
+            if self._recovered:
+                return
+            self._state = self._recover_interrupted_staging()
+            self._recovered = True
 
     def start(self) -> CodexDeviceAuthState:
+        self._prepare_store()
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 return self._state
@@ -81,6 +100,7 @@ class CodexDeviceAuthManager:
             return self._state
 
     def status(self) -> CodexDeviceAuthState:
+        self._prepare_store()
         with self._lock:
             current = self._state
             if current.state == "issued":
@@ -115,27 +135,33 @@ class CodexDeviceAuthManager:
                 raise CodexDeviceAuthError("codex auth is unavailable")
 
     def clear(self) -> CodexDeviceAuthState:
+        self._prepare_store()
         self.close()
-        directory = -1
-        try:
-            directory = _private_directory_descriptor(self._auth_store, create=False)
+        with self._lease_guard():
+            self._require_lease()
+            directory = -1
             try:
-                os.unlink("auth.json", dir_fd=directory)
+                directory = _private_directory_descriptor(
+                    self._auth_store, create=False
+                )
+                try:
+                    os.unlink("auth.json", dir_fd=directory)
+                except FileNotFoundError:
+                    pass
+                os.fsync(directory)
             except FileNotFoundError:
                 pass
-            os.fsync(directory)
-        except FileNotFoundError:
-            pass
-        except OSError as error:
-            raise CodexDeviceAuthError("codex auth is unavailable") from error
-        finally:
-            if directory >= 0:
-                os.close(directory)
+            except OSError as error:
+                raise CodexDeviceAuthError("codex auth is unavailable") from error
+            finally:
+                if directory >= 0:
+                    os.close(directory)
         with self._lock:
             self._state = CodexDeviceAuthState("ready")
             return self._state
 
     def current_credential_status(self) -> CodexDeviceAuthState:
+        self._prepare_store()
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 return self._state
@@ -159,6 +185,7 @@ class CodexDeviceAuthManager:
             return CodexDeviceAuthState("failed", failure="permission_or_profile")
 
     def recheck_credential_status(self) -> CodexDeviceAuthState:
+        self._prepare_store()
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 return self._state
@@ -176,6 +203,7 @@ class CodexDeviceAuthManager:
         except (OSError, subprocess.SubprocessError, CodexDeviceAuthError):
             return CodexDeviceAuthState("failed", failure="permission_or_profile")
         if returncode == 0 and output == b"Logged in using ChatGPT\n":
+            self._require_lease()
             return CodexDeviceAuthState("usable")
         return CodexDeviceAuthState("failed", failure="permission_or_profile")
 
@@ -254,7 +282,9 @@ class CodexDeviceAuthManager:
             with self._lock:
                 if self._cancelled:
                     return
-                _install_auth(auth_path, self._auth_store)
+                with self._lease_guard():
+                    self._require_lease()
+                    _install_auth(auth_path, self._auth_store)
                 self._state = CodexDeviceAuthState("usable")
         except (OSError, subprocess.SubprocessError, CodexDeviceAuthError):
             with self._lock:

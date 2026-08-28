@@ -634,6 +634,82 @@ describe('owner settings route', () => {
     expect(await screen.findByText('Status: usable')).toBeVisible()
   })
 
+  it('uses the replacement deselection revision before Codex reselection', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const selected = {
+      ...reviewerView,
+      mapping: { engine: 'codex' as const },
+      codex: { ...reviewerView.codex, state: 'usable' as const, reason: null },
+    }
+    const deselected = {
+      ...selected,
+      revision: 4,
+      mapping: null,
+      codex: { ...selected.codex, state: 'ready' as const },
+    }
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => selected)
+    http.startCodexDevice = vi.fn(async () => ({
+      access: deselected,
+      device: {
+        state: 'waiting' as const,
+        failure: null,
+        verification_url: null,
+        user_code: null,
+        expires_in_seconds: null,
+      },
+    }))
+    http.getCodexDevice = vi.fn(async () => ({
+      state: 'usable' as const,
+      failure: null,
+      verification_url: null,
+      user_code: null,
+      expires_in_seconds: null,
+    }))
+    http.selectReviewer = vi.fn(async () => ({ ...selected, revision: 5 }))
+    renderRoute('/settings?group=reviewer', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Replace Codex sign-in' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm replace Codex sign-in' }))
+    expect(await screen.findByText(/Current selection:/u)).toHaveTextContent('No reviewer')
+    expect(await screen.findByText('Status: usable')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Use Codex for cover observations' }))
+    expect(http.selectReviewer).toHaveBeenCalledWith('codex', 4)
+  })
+
+  it('evicts a checked usable device result after credential clear', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const configured = {
+      ...reviewerView,
+      codex: { ...reviewerView.codex, state: 'configured' as const, reason: null },
+    }
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => configured)
+    http.recheckCodex = vi.fn(async () => ({
+      state: 'usable' as const,
+      failure: null,
+      verification_url: null,
+      user_code: null,
+      expires_in_seconds: null,
+    }))
+    http.clearCodex = vi.fn(async () => ({
+      ...reviewerView,
+      codex: { ...reviewerView.codex, state: 'ready' as const, reason: null },
+    }))
+    renderRoute('/settings?group=reviewer', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Check existing Codex sign-in' }))
+    expect(await screen.findByText('Status: usable')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Clear Codex sign-in' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm clear Codex sign-in' }))
+    expect(await screen.findByText('Status: ready')).toBeVisible()
+    expect(
+      screen.queryByRole('button', { name: 'Use Codex for cover observations' }),
+    ).not.toBeInTheDocument()
+  })
+
   it('requires confirmation before clearing a reviewer key and restores cancel focus', async () => {
     const user = userEvent.setup()
     const http = createHttp()

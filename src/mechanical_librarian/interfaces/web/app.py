@@ -202,6 +202,11 @@ class _CodexDeviceAuthResponse(_ClosedModel):
     failure: DeviceAuthFailure | None = None
 
 
+class _CodexDeviceStartResponse(_ClosedModel):
+    access: ReviewerAccessView
+    device: _CodexDeviceAuthResponse
+
+
 class _SeriesValue(_ClosedModel):
     name: str
     sequence: str | None
@@ -1807,7 +1812,7 @@ def _register_reviewer_access_routes(
 
     @app.post(
         "/api/v1/reviewer-access/codex/device",
-        response_model=_CodexDeviceAuthResponse,
+        response_model=_CodexDeviceStartResponse,
         responses={
             status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)
         },
@@ -1816,10 +1821,22 @@ def _register_reviewer_access_routes(
         request: _ReviewerRevisionRequest,
         ml_session: str = Depends(authenticated_session_cookie),
         x_csrf_token: str = Header(),
-    ) -> CodexDeviceAuthState:
+    ) -> _CodexDeviceStartResponse:
         _require_session(application, ml_session, x_csrf_token)
         try:
-            return authority().start_codex(expected_revision=request.expected_revision)
+            access, device = authority().start_codex(
+                expected_revision=request.expected_revision
+            )
+            return _CodexDeviceStartResponse(
+                access=access,
+                device=_CodexDeviceAuthResponse(
+                    state=device.state,
+                    verification_url=device.verification_url,
+                    user_code=device.user_code,
+                    expires_in_seconds=device.expires_in_seconds,
+                    failure=device.failure,
+                ),
+            )
         except (ReviewerAccessRepositoryError, ReviewerAccessApplicationError) as error:
             raise problem(error) from None
 

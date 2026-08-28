@@ -7,8 +7,10 @@ import signal
 import stat
 import subprocess
 import time
+from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
-from threading import Event
+from threading import Event, Thread
 from typing import Any, cast
 from unittest.mock import Mock
 
@@ -23,7 +25,10 @@ from mechanical_librarian.adapters.reviewers.codex_device_auth import (
     _issued_state,
     _stop_process,
 )
-from mechanical_librarian.bootstrap.composition import _LazyCodexAuth
+from mechanical_librarian.bootstrap.composition import (
+    _CodexAuthLeaseCoordinator,
+    _LazyCodexAuth,
+)
 
 _PROMPT = (
     b"Open this URL in your browser\n"
@@ -86,6 +91,8 @@ def _manager(
     output: bytes = _PROMPT,
     returncode: int = 0,
     status: subprocess.CompletedProcess[bytes] | None = None,
+    lease_current: Callable[[], bool] = lambda: True,
+    lease_guard: Callable[[], AbstractContextManager[None]] = nullcontext,
 ) -> CodexDeviceAuthManager:
     def command(staging: Path, action: str):
         return ([action, str(staging)], {"CODEX_HOME": str(staging)})
@@ -108,6 +115,8 @@ def _manager(
         tmp_path / "profile",
         command,
         popen=popen,
+        lease_current=lease_current,
+        lease_guard=lease_guard,
     )
 
 
@@ -463,6 +472,74 @@ def test_active_device_flow_excludes_external_recheck_and_selection_probe(
     assert child.poll() == -15
 
 
+def test_successor_lease_revokes_flow_before_stale_install(tmp_path: Path) -> None:
+    coordinator = _CodexAuthLeaseCoordinator()
+    validating = Event()
+    release = Event()
+    holder: dict[str, CodexDeviceAuthManager] = {}
+
+    def predecessor_factory(
+        lease_current: Callable[[], bool],
+        lease_guard: Callable[[], AbstractContextManager[None]],
+    ) -> CodexDeviceAuthManager:
+        manager = _manager(
+            tmp_path, lease_current=lease_current, lease_guard=lease_guard
+        )
+        original = manager._popen
+
+        def blocked_status(command: list[str], **kwargs: Any):
+            if command[-2] == "status":
+                validating.set()
+                release.wait(timeout=2)
+            return original(command, **kwargs)
+
+        manager._popen = blocked_status
+        holder["manager"] = manager
+        return manager
+
+    predecessor = _LazyCodexAuth(predecessor_factory, coordinator)
+    successor = _LazyCodexAuth(
+        lambda lease, _guard: _manager(tmp_path, lease_current=lease), coordinator
+    )
+    predecessor.activate_lease()
+    predecessor.start()
+    assert validating.wait(timeout=2)
+    activated = Event()
+
+    def activate_successor() -> None:
+        successor.activate_lease()
+        activated.set()
+
+    cutover = Thread(target=activate_successor)
+    cutover.start()
+    release.set()
+    cutover.join(timeout=3)
+    assert activated.is_set()
+    manager = holder["manager"]
+    assert manager._thread is not None
+    manager._thread.join(timeout=2)
+    assert not (tmp_path / "profile" / "auth.json").exists()
+    assert not any(
+        path.name.startswith("reviewer-auth-") for path in tmp_path.iterdir()
+    )
+
+
+def test_failed_predecessor_drain_admits_no_successor_owner() -> None:
+    coordinator = _CodexAuthLeaseCoordinator()
+    manager = Mock(spec=CodexDeviceAuthManager)
+    manager.close.side_effect = CodexDeviceAuthError("process")
+    predecessor = _LazyCodexAuth(lambda _lease, _guard: manager, coordinator)
+    successor = _LazyCodexAuth(lambda _lease, _guard: manager, coordinator)
+    predecessor.activate_lease()
+    predecessor._manager = manager
+
+    with pytest.raises(CodexDeviceAuthError):
+        successor.activate_lease()
+
+    assert successor._lease is None
+    assert not coordinator.current(predecessor, cast("int", predecessor._lease))
+
+
 def test_device_child_uses_the_installed_resource_exec_wrapper(tmp_path: Path) -> None:
     manager = _manager(tmp_path)
     captured: dict[str, object] = {}
@@ -506,7 +583,8 @@ def test_clear_failures_never_report_success(
 def test_lazy_production_wrapper_propagates_clear_failure() -> None:
     manager = Mock(spec=CodexDeviceAuthManager)
     manager.clear.side_effect = OSError("private unlink detail")
-    lazy = _LazyCodexAuth(lambda: manager)
+    lazy = _LazyCodexAuth(lambda _lease, _guard: manager, _CodexAuthLeaseCoordinator())
+    lazy.activate_lease()
 
     with pytest.raises(OSError, match="private unlink detail"):
         lazy.clear()

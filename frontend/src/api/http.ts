@@ -95,6 +95,10 @@ export interface CodexDeviceAuthState {
     | 'restart_interrupted'
     | null
 }
+export interface CodexDeviceStartResult {
+  access: ReviewerAccessView
+  device: CodexDeviceAuthState
+}
 
 // These validators live at the DTO mapping boundary so the editor cannot
 // silently become stricter than the generated API contract. Their names make
@@ -649,7 +653,7 @@ export interface ReviewHttp {
     expectedRevision: number,
     signal?: AbortSignal,
   ): Promise<ReviewerAccessView>
-  startCodexDevice(expectedRevision: number, signal?: AbortSignal): Promise<CodexDeviceAuthState>
+  startCodexDevice(expectedRevision: number, signal?: AbortSignal): Promise<CodexDeviceStartResult>
   getCodexDevice(signal?: AbortSignal): Promise<CodexDeviceAuthState>
   recheckCodex(signal?: AbortSignal): Promise<CodexDeviceAuthState>
   cancelCodexDevice(signal?: AbortSignal): Promise<CodexDeviceAuthState>
@@ -844,13 +848,14 @@ export class ReviewApiClient implements ReviewHttp {
     )
   }
   async startCodexDevice(expectedRevision: number, signal?: AbortSignal) {
-    return mapCodexDevice(
-      await this.mutate(
-        '/api/v1/reviewer-access/codex/device',
-        { expected_revision: expectedRevision },
-        signal,
-      ),
+    const value: unknown = await this.mutate(
+      '/api/v1/reviewer-access/codex/device',
+      { expected_revision: expectedRevision },
+      signal,
     )
+    if (!record(value) || !exactKeys(value, ['access', 'device']))
+      throw new ApiError(502, 'invalid_reviewer_access_response')
+    return { access: mapReviewerAccess(value.access), device: mapCodexDevice(value.device) }
   }
   async getCodexDevice(signal?: AbortSignal) {
     return mapCodexDevice(await this.read('/api/v1/reviewer-access/codex/device', signal))

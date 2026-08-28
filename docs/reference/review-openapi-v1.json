@@ -2377,6 +2377,23 @@
         "title": "_CodexDeviceAuthResponse",
         "type": "object"
       },
+      "_CodexDeviceStartResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "access": {
+            "$ref": "#/components/schemas/ReviewerAccessView"
+          },
+          "device": {
+            "$ref": "#/components/schemas/_CodexDeviceAuthResponse"
+          }
+        },
+        "required": [
+          "access",
+          "device"
+        ],
+        "title": "_CodexDeviceStartResponse",
+        "type": "object"
+      },
       "_CoverAutomaticDecisionProjection": {
         "additionalProperties": false,
         "properties": {
@@ -11212,7 +11229,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/_CodexDeviceAuthResponse"
+                  "$ref": "#/components/schemas/_CodexDeviceStartResponse"
                 }
               }
             },

@@ -207,7 +207,7 @@ SETUP_JS = (
     )
     .replace(
         "const recovery=code=>({",
-        "const recovery=code=>({invalid_key:'OpenRouter rejected this key. Replace it and validate again.',quota_exhausted:'OpenRouter credits are exhausted. Add credits, then retry.',rate_limited:'OpenRouter is rate limited. Wait, then retry.',model_unavailable:'That model is unavailable. Choose another vision model.',model_text_only:'That model cannot inspect covers. Choose an image-capable model.',malformed_response:'OpenRouter returned an invalid or oversized response. Retry later.',unreachable:'OpenRouter could not be reached. Check network access, then retry.',credential_clear_failed:'The credential could not be removed. Retry from Settings.',host_unsupported:'This host cannot safely run the contained Codex reviewer.',credential_unavailable:'Codex sign-in is unavailable. Test or replace it, then select Codex.',access_changed:'Reviewer access changed in another session. Reload before trying again.',",
+        "const recovery=code=>({invalid_key:'OpenRouter rejected this key. Replace it and validate again.',quota_exhausted:'OpenRouter credits are exhausted. Add credits, then retry.',rate_limited:'OpenRouter is rate limited. Wait, then retry.',model_unavailable:'That model is unavailable. Choose another vision model.',model_text_only:'That model cannot inspect covers. Choose an image-capable model.',malformed_response:'OpenRouter returned an invalid or oversized response. Retry later.',unreachable:'OpenRouter could not be reached. Check network access, then retry.',credential_clear_failed:'The credential could not be removed. Retry from Settings.',host_unsupported:'This host cannot safely run the contained Codex reviewer.',credential_unavailable:'Codex sign-in is unavailable. Test or replace it, then select Codex.',access_changed:'Reviewer access changed in another session. Reload before trying again.',reviewer_access_stale:'Reviewer access changed in another session. Reload before trying again.',reviewer_access_unavailable:'Reviewer access is temporarily unavailable. Retry this step.',",
     )
     .replace(
         "const renderKickoff=()=>{",
@@ -228,6 +228,10 @@ SETUP_JS = (
     .replace(
         "start.disabled=access.codex.state==='host_unsupported'",
         "start.disabled=codexState.state==='host_unsupported'",
+    )
+    .replace(
+        "else{const start=button(",
+        "else{const check=button('Check existing sign-in');check.type='button';check.addEventListener('click',async()=>{try{codexTerminal=await api('/api/setup/reviewer/codex/recheck',{method:'POST',body:'{}',mutation:true});await render()}catch(e){error(form,e.message)}});codex.append(check);const start=button(",
     )
     .replace(
         "}while(['starting','issued','waiting','validating'].includes(device.state));await render()",

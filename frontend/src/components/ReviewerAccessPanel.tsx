@@ -77,10 +77,9 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
       if (action.kind === 'without') return http.selectReviewer(null, action.revision)
       if (action.kind === 'codex') return http.selectReviewer('codex', action.revision)
       if (action.kind === 'codex-start') {
-        queryClient.setQueryData(
-          ['reviewer-access', 'codex-device'],
-          await http.startCodexDevice(action.revision),
-        )
+        const started = await http.startCodexDevice(action.revision)
+        queryClient.setQueryData(['reviewer-access'], started.access)
+        queryClient.setQueryData(['reviewer-access', 'codex-device'], started.device)
         return null
       }
       if (action.kind === 'codex-recheck') {
@@ -109,6 +108,9 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
       setConfirmReplace(null)
       if (action.kind === 'codex-start') setDeviceActive(true)
       if (action.kind === 'codex-cancel' || action.kind === 'codex-clear') setDeviceActive(false)
+      if (action.kind === 'codex-clear') {
+        queryClient.removeQueries({ queryKey: ['reviewer-access', 'codex-device'] })
+      }
       if (action.kind === 'codex') {
         queryClient.removeQueries({ queryKey: ['reviewer-access', 'codex-device'] })
       }

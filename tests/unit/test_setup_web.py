@@ -862,4 +862,7 @@ def test_setup_library_step_uses_audiobookshelf_book_kind_without_owner_choice()
     assert "state.mounts.length?'Retest mounts':'Check mounts'" in SETUP_JS
     assert "const codexState=codexTerminal||access.codex" in SETUP_JS
     assert "codexTerminal=device;await render()" in SETUP_JS
+    assert "Check existing sign-in" in SETUP_JS
+    assert "/api/setup/reviewer/codex/recheck" in SETUP_JS
+    assert "reviewer_access_stale:'Reviewer access changed" in SETUP_JS
     assert "invalid_key:'OpenRouter rejected this key." in SETUP_JS
