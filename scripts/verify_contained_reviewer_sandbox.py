@@ -72,15 +72,25 @@ def exercise():
             try:
                 with ExitStack() as stack:
                     bound_codex = stack.enter_context(_bound_artifact(codex, profile.identity.executable_sha256)); bound_bwrap = stack.enter_context(_bound_artifact(bwrap, profile.identity.sandbox_sha256))
-                    before = descendants(os.getpid()); stage = 'version'; adapter._verify_codex(bound_codex, bound_bwrap)
-                    if descendants(os.getpid()) != before: raise RuntimeError('version tree survived')
+                    before = set(descendants(os.getpid())); stage = 'version'; adapter._verify_codex(bound_codex, bound_bwrap)
+                    if set(descendants(os.getpid())) != before: raise RuntimeError('version tree survived')
                     stage = 'status'
                     prepared = prepare_contained_device_auth_command(profile, staging, 'status')
                     try:
                         status = _run_owned_command(_resource_command(list(prepared.command)), env=dict(prepared.environment), pass_fds=prepared.pass_fds, timeout=30)
                         if status.returncode == 0: raise RuntimeError('unconfigured status unexpectedly succeeded')
                     finally: prepared.close()
-                    if descendants(os.getpid()) != before: raise RuntimeError('failed status tree survived')
+                    if set(descendants(os.getpid())) != before: raise RuntimeError('failed status tree survived')
+                    prepared = prepare_contained_device_auth_command(profile, staging, 'status')
+                    saved_token = reviewer_module._process_start_token
+                    reviewer_module._process_start_token = lambda _pid: (_ for _ in ()).throw(reviewer_module.ContainedReviewerProcessError('runtime'))
+                    try:
+                        try: _run_owned_command(_resource_command(list(prepared.command)), env=dict(prepared.environment), pass_fds=prepared.pass_fds, timeout=30)
+                        except reviewer_module.ContainedReviewerProcessError: pass
+                        else: raise RuntimeError('identity failure path did not fail')
+                    finally:
+                        reviewer_module._process_start_token = saved_token; prepared.close()
+                    if set(descendants(os.getpid())) != before: raise RuntimeError('identity-failed tree survived')
                     prepared = prepare_contained_device_auth_command(profile, staging, 'status')
                     try:
                         timeout_command = list(prepared.command); payload_index = timeout_command.index('/runtime/codex', timeout_command.index('/runtime/seccomp_exec.py')); timeout_command[payload_index:] = ['/runtime/python', '-c', 'import time; time.sleep(30)']
@@ -88,7 +98,7 @@ def exercise():
                         except subprocess.TimeoutExpired: pass
                         else: raise RuntimeError('timeout path did not time out')
                     finally: prepared.close()
-                    if descendants(os.getpid()) != before: raise RuntimeError('timed-out tree survived')
+                    if set(descendants(os.getpid())) != before: raise RuntimeError('timed-out tree survived')
                     prepared = prepare_contained_device_auth_command(profile, staging, 'status')
                     try:
                         cancel_command = list(prepared.command); payload_index = cancel_command.index('/runtime/codex', cancel_command.index('/runtime/seccomp_exec.py')); cancel_command[payload_index:] = ['/runtime/python', '-c', 'import time; time.sleep(30)']
@@ -106,7 +116,7 @@ def exercise():
                             else: raise RuntimeError('cancel path did not cancel')
                         finally: reviewer_module.subprocess.Popen = saved
                     finally: prepared.close()
-                    if descendants(os.getpid()) != before: raise RuntimeError('cancelled tree survived')
+                    if set(descendants(os.getpid())) != before: raise RuntimeError('cancelled tree survived')
                     stage = 'review'; job = jobs/'job'; provider = job/'provider'; job.mkdir(mode=0o700); provider.mkdir(mode=0o700)
                     credential = job/'auth.json'; credential.write_text('{}'); credential.chmod(0o600); result = job/'result.json'
                     stdin = stack.enter_context(open(os.devnull, 'rb')); stdout = stack.enter_context(tempfile.TemporaryFile()); stderr = stack.enter_context(tempfile.TemporaryFile())
@@ -132,7 +142,7 @@ def exercise():
                     try: returncode = adapter._run_gated(command, bound_codex, bound_bwrap, stdin.fileno(), stdout.fileno(), stderr.fileno(), dispatched, credential_descriptor=credential_fd, seccomp_descriptor=seccomp, model_catalog_descriptor=catalog)
                     finally: os.close(credential_fd)
                     captured['thread'].join(timeout=6); stdout.seek(0); document = json.loads(stdout.readline()); ids = captured['ids']; pgids = {value[1] for value in ids}
-                    if returncode != 0 or len(ids) != 4 or len(pgids) != 1 or ids[0] != captured['broker'] or descendants(ids[0][0]): raise RuntimeError('owned reviewer tree proof failed')
+                    if returncode != 0 or len(ids) != 4 or len(pgids) != 1 or ids[0] != captured['broker'] or set(descendants(os.getpid())) != before: raise RuntimeError('owned reviewer tree proof failed')
                     document.update({'limits': captured['limits'], 'lineage': ids, 'one_group': True}); runs.append(document)
             finally:
                 with lock: inside -= 1
@@ -142,7 +152,7 @@ threads = [threading.Thread(target=exercise) for _ in range(2)]
 for thread in threads: thread.start()
 for thread in threads: thread.join(timeout=60)
 if errors or any(thread.is_alive() for thread in threads) or len(runs) != 2: raise RuntimeError(json.dumps({'errors': errors, 'runs': len(runs)}))
-document = runs[0]; document.update({'non_overlap': maximum == 1, 'runs': len(runs), 'distinct_identities': runs[0]['lineage'][0] != runs[1]['lineage'][0], 'distinct_operation_identities': len({tuple(value) for value in operation_identities}) == len(operation_identities), 'operation_count': len(operation_identities), 'failure_reaped': True, 'timeout_reaped': True, 'cancel_reaped': True}); print(json.dumps(document, sort_keys=True))
+document = runs[0]; document.update({'non_overlap': maximum == 1, 'runs': len(runs), 'distinct_identities': runs[0]['lineage'][0] != runs[1]['lineage'][0], 'distinct_operation_identities': len({tuple(value) for value in operation_identities}) == len(operation_identities), 'operation_count': len(operation_identities), 'failure_reaped': True, 'identity_failure_reaped': True, 'timeout_reaped': True, 'cancel_reaped': True}); print(json.dumps(document, sort_keys=True))
 """
 
 
@@ -195,6 +205,7 @@ def main() -> int:
         and document["distinct_operation_identities"] is True
         and document["operation_count"] >= 10
         and document["failure_reaped"] is True
+        and document["identity_failure_reaped"] is True
         and document["timeout_reaped"] is True
         and document["cancel_reaped"] is True
         and document["runs"] == 2

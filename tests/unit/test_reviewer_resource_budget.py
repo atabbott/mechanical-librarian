@@ -7,6 +7,7 @@ import resource
 import struct
 import sys
 import time
+from typing import Any
 
 import pytest
 
@@ -186,6 +187,19 @@ def test_aggregate_budget_rejects_malformed_identity(
     valid = resource_budget.ProcessIdentity(101, 100, "2")
     with pytest.raises(resource_budget.ReviewerResourceError, match="identity"):
         resource_budget.apply_aggregate_budget(identity, valid, valid, 32)
+
+
+@pytest.mark.parametrize("process_limit", (True, 1.0))
+def test_aggregate_budget_rejects_noncanonical_process_limit(
+    process_limit: Any,
+) -> None:
+    broker = resource_budget.ProcessIdentity(100, 100, "1")
+    supervisor = resource_budget.ProcessIdentity(101, 100, "2")
+    sandbox = resource_budget.ProcessIdentity(102, 100, "3")
+    with pytest.raises(resource_budget.ReviewerResourceError, match="identity"):
+        resource_budget.apply_aggregate_budget(
+            broker, supervisor, sandbox, process_limit
+        )
 
 
 @pytest.mark.skipif(

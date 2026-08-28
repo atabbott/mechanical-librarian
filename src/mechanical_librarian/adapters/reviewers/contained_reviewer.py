@@ -1788,10 +1788,13 @@ def _wait_for_exit(pid: int, timeout_seconds: float) -> int:
 
 
 def _kill_and_prove_dead(pid: int, pgid: int, start_token: str) -> None:
-    try:
-        os.killpg(pgid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    if _require_signal_identity(pid, pgid, start_token):
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except OSError as error:
+            raise ContainedReviewerProcessError("runtime") from error
     try:
         _wait_for_exit(pid, 5)
     except TimeoutError as error:
@@ -1799,6 +1802,35 @@ def _kill_and_prove_dead(pid: int, pgid: int, start_token: str) -> None:
     _reap_process_group(pgid, 5)
     if _process_identity_alive(pid, pgid, start_token):
         raise ContainedReviewerProcessError("runtime")
+
+
+def _require_signal_identity(pid: int, pgid: int, start_token: str) -> bool:
+    """Reject a reused live leader before signalling its reserved process group."""
+    if (
+        type(pid) is not int
+        or type(pgid) is not int
+        or pid < 2
+        or pgid < 2
+        or type(start_token) is not str
+        or not start_token.isascii()
+        or not start_token.isdigit()
+    ):
+        raise ContainedReviewerProcessError("runtime")
+    try:
+        raw = Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
+    except FileNotFoundError:
+        # A surviving member reserves the captured, separate-session PGID after
+        # its leader exits; an empty group needs no signal and may be reused.
+        return _process_group_alive(pgid)
+    except (OSError, UnicodeError) as error:
+        raise ContainedReviewerProcessError("runtime") from error
+    try:
+        actual_token, actual_group = _proc_identity(raw)
+    except ValueError as error:
+        raise ContainedReviewerProcessError("runtime") from error
+    if actual_token != start_token or actual_group != pgid:
+        raise ContainedReviewerProcessError("runtime")
+    return True
 
 
 def _reap_process_group(pgid: int, timeout_seconds: float) -> None:
@@ -2321,7 +2353,11 @@ def _run_owned_command(
             pass_fds=pass_fds,
             start_new_session=True,
         )
-        token = _process_start_token(process.pid)
+        try:
+            token = _process_start_token(process.pid)
+        except BaseException:
+            _kill_spawned_process_group(process)
+            raise
         try:
             returncode = process.wait(timeout=timeout)
             try:
@@ -2347,6 +2383,26 @@ def _run_owned_command(
         ):
             raise ContainedReviewerProcessError("runtime")
         return subprocess.CompletedProcess(command, returncode, stdout, stderr)
+
+
+def _kill_spawned_process_group(process: subprocess.Popen[bytes]) -> None:
+    """Clean a just-spawned new session before its start token is available."""
+    pid = process.pid
+    try:
+        # Popen still owns the unreaped child PID here, so this lookup cannot
+        # resolve to a reused process even if the child has already exited.
+        if os.getpgid(pid) != pid:
+            raise ContainedReviewerProcessError("runtime")
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except OSError as error:
+        raise ContainedReviewerProcessError("runtime") from error
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired as error:
+        raise ContainedReviewerProcessError("runtime") from error
+    _reap_process_group(pid, 5)
 
 
 def _unique_output_object(pairs: list[tuple[str, object]]) -> dict[str, object]:

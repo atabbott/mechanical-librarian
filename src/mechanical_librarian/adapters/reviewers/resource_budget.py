@@ -248,6 +248,7 @@ def apply_aggregate_budget(
         or len({value.pid for value in identities}) != 3
         or len({value.process_group for value in identities}) != 1
         or broker.process_group != broker.pid
+        or type(process_limit) is not int
         or process_limit < 1
     ):
         raise ReviewerResourceError("invalid reviewer resource identity")

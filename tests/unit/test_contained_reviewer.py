@@ -16,6 +16,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import call, patch
 
 import pytest
@@ -643,6 +644,47 @@ def test_owned_command_uses_distinct_group_and_reaps_lingering_tree() -> None:
     )
     with pytest.raises(Exception, match="runtime"):
         adapter._run_owned_command(command, env={}, pass_fds=(), timeout=2)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux process groups")
+def test_owned_command_identity_capture_failure_reaps_spawned_tree() -> None:
+    original_popen = subprocess.Popen
+    with tempfile.TemporaryDirectory() as temporary:
+        marker = Path(temporary) / "child-pid"
+        spawned: list[subprocess.Popen[bytes]] = []
+
+        def popen(*args: Any, **kwargs: Any) -> subprocess.Popen[bytes]:
+            process = original_popen(*args, **kwargs)
+            spawned.append(process)
+            deadline = time.monotonic() + 5
+            while not marker.exists():
+                if time.monotonic() >= deadline:
+                    raise AssertionError("child marker unavailable")
+                time.sleep(0.01)
+            return process
+
+        command = (
+            sys.executable,
+            "-c",
+            "import pathlib,subprocess,sys,time; "
+            "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)']); "
+            f"pathlib.Path({str(marker)!r}).write_text(str(child.pid)); time.sleep(30)",
+        )
+        with (
+            patch.object(adapter.subprocess, "Popen", side_effect=popen),
+            patch.object(
+                adapter,
+                "_process_start_token",
+                side_effect=adapter.ContainedReviewerProcessError("runtime"),
+            ),
+            pytest.raises(adapter.ContainedReviewerProcessError, match="runtime"),
+        ):
+            adapter._run_owned_command(command, env={}, pass_fds=(), timeout=30)
+        child_pid = int(marker.read_text())
+    assert spawned[0].poll() is not None
+    assert not adapter._process_group_alive(spawned[0].pid)
+    with pytest.raises(ProcessLookupError):
+        os.kill(child_pid, 0)
 
 
 def test_fake_process_invocation_records_dispatch_before_output_and_cleans_job() -> (
@@ -1427,6 +1469,7 @@ def test_killed_direct_child_is_reaped_without_a_zombie() -> None:
 
 def test_cleanup_kills_group_and_proves_process_death() -> None:
     with (
+        patch.object(adapter, "_require_signal_identity", return_value=True) as safe,
         patch.object(adapter.os, "killpg") as kill,
         patch.object(adapter, "_wait_for_exit", return_value=0),
         patch.object(adapter, "_reap_process_group") as reap,
@@ -1434,8 +1477,23 @@ def test_cleanup_kills_group_and_proves_process_death() -> None:
     ):
         adapter._kill_and_prove_dead(12, 12, "34")
     kill.assert_called_once_with(12, adapter.signal.SIGKILL)
+    safe.assert_called_once_with(12, 12, "34")
     reap.assert_called_once_with(12, 5)
     alive.assert_called_once_with(12, 12, "34")
+
+
+def test_cleanup_refuses_reused_live_group_before_signal() -> None:
+    with (
+        patch.object(
+            adapter,
+            "_require_signal_identity",
+            side_effect=adapter.ContainedReviewerProcessError("runtime"),
+        ),
+        patch.object(adapter.os, "killpg") as kill,
+        pytest.raises(adapter.ContainedReviewerProcessError, match="runtime"),
+    ):
+        adapter._kill_and_prove_dead(12, 12, "34")
+    kill.assert_not_called()
 
 
 def test_live_schema_rejection_maps_to_closed_response_format_failure() -> None:
