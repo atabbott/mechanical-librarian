@@ -62,6 +62,9 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_field_effect 
 from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.review_sessions import (
+    SQLiteReviewSessionRepository,
+)
 from mechanical_librarian.adapters.private_recovery import PrivateCoverRecoveryStore
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.application.review_application import (
@@ -166,9 +169,17 @@ def _compose_review_client(
     password_binding = load_owner_password_binding(
         Path(review.owner_password_hash_file)
     )
+    # Session state lives in its own database now (#912) and the application
+    # repository no longer implements the session protocol, so this
+    # qualification composes its own store. It is in-memory on purpose: this
+    # driver signs in and exercises field effects inside one process against
+    # one connection, and it asserts nothing about sessions outliving a
+    # restart, so binding it to a path would only add a filesystem the caller
+    # does not otherwise need.
+    session_store = SQLiteReviewSessionRepository.open_ephemeral()
     application = compose_review_application(
         state_owner=repository,
-        session_store=repository,
+        session_store=session_store,
         case_store=repository,
         decision_store=repository,
         library_store=repository,

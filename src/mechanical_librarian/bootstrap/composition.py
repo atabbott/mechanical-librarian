@@ -63,6 +63,9 @@ from mechanical_librarian.adapters.persistence.provider_recovery import (
     ProviderRecoveryStoreError,
     SQLiteProviderRecoveryStore,
 )
+from mechanical_librarian.adapters.persistence.review_sessions import (
+    SQLiteReviewSessionRepository,
+)
 from mechanical_librarian.adapters.persistence.schema_adoption import adopt_schema
 from mechanical_librarian.adapters.private_recovery import (
     PrivateCoverRecoveryStore,
@@ -1873,6 +1876,18 @@ def _private_root(database_path: Path) -> Path:
     return root
 
 
+def _open_review_session_store(database_path: Path) -> SQLiteReviewSessionRepository:
+    """Open the dedicated session database beside the other private stores.
+
+    Session state deliberately does not share the application database or its
+    connection: owner sign-in must not queue behind a library scan's write
+    transaction (#912).
+    """
+    return SQLiteReviewSessionRepository.open(
+        _private_root(database_path) / "review-sessions.sqlite"
+    )
+
+
 def reopen_metadata_report(database_path: Path, report_id: str) -> str:
     """Read one exact persisted report without loading operational configuration."""
     repository = open_repository(database_path, create=False)
@@ -2288,6 +2303,11 @@ def compose_store_runtime_generation(
         authority=repository_authority,
     )
     try:
+        session_store = _open_review_session_store(database_path)
+    except Exception:
+        repository.close()
+        raise
+    try:
         settings_store = repository.owner_settings_store()
         if authority_snapshot is None:
             settings_view, stored_credentials, encoded_verifier = (
@@ -2392,7 +2412,7 @@ def compose_store_runtime_generation(
             owner_binding = owner_password_binding(encoded_verifier)
             review_application = compose_review_application(
                 state_owner=repository,
-                session_store=repository,
+                session_store=session_store,
                 case_store=repository,
                 decision_store=repository,
                 library_store=repository,
@@ -2429,6 +2449,13 @@ def compose_store_runtime_generation(
             if close_activity_projection is not None:
                 close_activity_projection()
             raise
+
+        def close_generation() -> None:
+            try:
+                review_application.stop()
+            finally:
+                session_store.close()
+
         return (
             RuntimeGeneration(
                 create_review_app(review_application, review),
@@ -2437,12 +2464,13 @@ def compose_store_runtime_generation(
                 resume_admission=review_application.resume_admission,
                 admit=review_application.admit,
                 begin_drain=review_application.begin_drain,
-                close=review_application.stop,
+                close=close_generation,
                 shutdown_seconds=review.graceful_shutdown_seconds,
             ),
             review,
         )
     except Exception:
+        session_store.close()
         repository.close()
         raise
 
@@ -2453,6 +2481,7 @@ def _compose_setup_runtime_generation(
     catalogue_path: Path,
     artifact_store_path: Path,
     repository: Any,
+    session_store: SQLiteReviewSessionRepository,
     *,
     initialize: bool,
 ) -> tuple[RuntimeGeneration, _StoreRuntimeActivation]:
@@ -2479,7 +2508,7 @@ def _compose_setup_runtime_generation(
         )
 
     sessions = OwnerSessionService(
-        repository,
+        session_store,
         verify_established_owner,
         established_owner_session_digest,
         lambda: int(time.time()),
@@ -2631,17 +2660,20 @@ def run_review_server(
         if authority == "store":
             assert bootstrap is not None
             control = open_repository(database_path, create=True, cross_thread=True)
+            setup_session_store: SQLiteReviewSessionRepository | None = None
             try:
                 if first_boot_mode in {
                     FirstBootMode.INITIALIZE_SETUP,
                     FirstBootMode.RESUME_SETUP,
                 }:
+                    setup_session_store = _open_review_session_store(database_path)
                     runtime, activation = _compose_setup_runtime_generation(
                         bootstrap,
                         database_path,
                         catalogue_path,
                         artifact_store_path,
                         control,
+                        setup_session_store,
                         initialize=first_boot_mode is FirstBootMode.INITIALIZE_SETUP,
                     )
                     acknowledge = None
@@ -2678,12 +2710,19 @@ def run_review_server(
                     runtime.close()
                     raise
             finally:
+                if setup_session_store is not None:
+                    setup_session_store.close()
                 control.close()
             return
         CoverArtifactStore(artifact_store_path, create=True)
         open_catalogue(catalogue_path, create=True).close()
         private_root = _private_root(database_path)
         repository = open_repository(database_path, create=True, cross_thread=True)
+        try:
+            session_store = _open_review_session_store(database_path)
+        except Exception:
+            repository.close()
+            raise
         try:
             assert configuration is not None and review is not None
             credentials = _load_batch_credentials(
@@ -2792,7 +2831,7 @@ def run_review_server(
             try:
                 review_application = compose_review_application(
                     state_owner=repository,
-                    session_store=repository,
+                    session_store=session_store,
                     case_store=repository,
                     decision_store=repository,
                     library_store=repository,
@@ -2823,6 +2862,13 @@ def run_review_server(
                     close_activity_projection()
                 raise
             app = create_review_app(review_application, review)
+
+            def close_generation() -> None:
+                try:
+                    review_application.stop()
+                finally:
+                    session_store.close()
+
             runtime = RuntimeGeneration(
                 app,
                 start_dormant=review_application.start_dormant,
@@ -2830,7 +2876,7 @@ def run_review_server(
                 resume_admission=review_application.resume_admission,
                 admit=review_application.admit,
                 begin_drain=review_application.begin_drain,
-                close=review_application.stop,
+                close=close_generation,
                 shutdown_seconds=review.graceful_shutdown_seconds,
             )
             dispatcher = MutableRuntimeDispatcher(runtime)
@@ -2861,6 +2907,7 @@ def run_review_server(
                 ssl_ciphers=REVIEW_TLS_CIPHERS,
             )
         except Exception:
+            session_store.close()
             repository.close()
             raise
 
@@ -2947,6 +2994,36 @@ def _compose_cover_considerations(
     return service
 
 
+class _OfflineSessionStore:
+    """Fail closed for offline compositions that never serve a session."""
+
+    def _unavailable(self) -> MetadataReportError:
+        return MetadataReportError("review sessions are unavailable offline")
+
+    def begin_login(self, now: int, window_seconds: int, maximum_failures: int) -> bool:
+        raise self._unavailable()
+
+    def create_review_session(
+        self, session_digest: str, csrf_digest: str, created_at: int, expires_at: int
+    ) -> None:
+        raise self._unavailable()
+
+    def authenticate_review_session(
+        self, session_digest: str, now: int
+    ) -> tuple[str, str, int]:
+        raise self._unavailable()
+
+    def rotate_review_session_csrf(
+        self, session_digest: str, csrf_digest: str, now: int
+    ) -> str:
+        raise self._unavailable()
+
+    def revoke_review_session(
+        self, session_digest: str, csrf_digest: str, now: int
+    ) -> str:
+        raise self._unavailable()
+
+
 def run_cover_review(
     config_path: Path,
     database_path: Path,
@@ -2967,7 +3044,7 @@ def run_cover_review(
         )
         application = compose_review_application(
             state_owner=repository,
-            session_store=repository,
+            session_store=_OfflineSessionStore(),
             case_store=repository,
             decision_store=repository,
             library_store=repository,

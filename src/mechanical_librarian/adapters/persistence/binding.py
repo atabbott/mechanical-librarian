@@ -371,10 +371,11 @@ def _connect_bound(
     preconnect: Callable[[], None] | None = None,
     *,
     cross_thread: bool = False,
+    allow_rollback_journal: bool = False,
 ) -> sqlite3.Connection:
     absolute = str(path.absolute())
     uri = f"file:{quote(absolute, safe='/')}?mode=rw"
-    _reject_database_sidecars(path)
+    _reject_database_sidecars(path, allow_rollback_journal=allow_rollback_journal)
     if preconnect is not None:
         preconnect()
     connection = sqlite3.connect(
@@ -391,8 +392,13 @@ def _connect_bound(
         raise
 
 
-def _reject_database_sidecars(path: Path) -> None:
-    for suffix in ("-journal", "-wal", "-shm"):
+def _reject_database_sidecars(
+    path: Path, *, allow_rollback_journal: bool = False
+) -> None:
+    suffixes = (
+        ("-wal", "-shm") if allow_rollback_journal else ("-journal", "-wal", "-shm")
+    )
+    for suffix in suffixes:
         sidecar = Path(f"{path}{suffix}")
         try:
             sidecar.lstat()

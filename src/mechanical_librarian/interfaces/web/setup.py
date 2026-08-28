@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import secrets
 import time
 from collections.abc import Awaitable, Callable
@@ -25,10 +24,7 @@ from mechanical_librarian.application.setup_journey import (
 from mechanical_librarian.domain.owner_settings import LibrarySettings, ProviderSettings
 from mechanical_librarian.domain.setup_state import SetupStateDocument
 from mechanical_librarian.domain.validation import OWNER_SESSION_LIFETIME_DEFAULT
-from mechanical_librarian.interfaces.web.app import (
-    BodyLimitMiddleware,
-    owner_password_binding,
-)
+from mechanical_librarian.interfaces.web.app import BodyLimitMiddleware
 from mechanical_librarian.interfaces.web.setup_frontend import (
     SETUP_CSS,
     SETUP_HTML,
@@ -67,10 +63,6 @@ class SetupStateStore(Protocol):
         *,
         expected_revision: int,
         owner_verifier: str,
-        session_digest: str,
-        csrf_digest: str,
-        created_at: int,
-        expires_at: int,
     ) -> SetupStateDocument: ...
 
 
@@ -287,39 +279,30 @@ def create_setup_app(
                 or not 1 <= len(request.password.encode("utf-8")) <= 1024
             ):
                 raise HTTPException(422, {"error": "invalid_password"})
-            session_token = token_factory(32)
-            csrf_token = token_factory(32)
-            if not 32 <= len(session_token) <= 128 or not 32 <= len(csrf_token) <= 128:
-                raise HTTPException(500, {"error": "unavailable"})
-            expires_at = now + session_lifetime_seconds
             owner_verifier = PasswordHasher().hash(request.password)
-            session_digest = owner_password_binding(owner_verifier)[1](session_token)
             try:
                 state.claim_owner(
                     expected_revision=request.expected_revision,
                     owner_verifier=owner_verifier,
-                    session_digest=session_digest,
-                    csrf_digest=hashlib.sha256(csrf_token.encode()).hexdigest(),
-                    created_at=now,
-                    expires_at=expires_at,
                 )
             except Exception as error:
                 raise HTTPException(409, {"error": "claimed"}) from error
             response.delete_cookie("ml_setup_nonce", path="/api/setup/session")
-            response.set_cookie(
-                "ml_session",
-                session_token,
-                httponly=True,
-                secure=True,
-                samesite="strict",
-                path="/",
-                max_age=session_lifetime_seconds,
-            )
-            return {"csrf_token": csrf_token, "expires_at": expires_at}
+            # The first session is issued through the ordinary login path
+            # below: the claim itself is atomic in the application database,
+            # while sessions live in their own database (#912). If session
+            # issuance fails here, the claim stands and resubmitting the same
+            # form reaches this already-claimed branch.
         try:
             tokens = sessions.login(request.password)
         except ReviewWebError as error:
-            status = 429 if error.code == "throttled" else 401
+            status = (
+                429
+                if error.code == "throttled"
+                else 401
+                if error.code == "invalid_credentials"
+                else 503
+            )
             raise HTTPException(status, {"error": error.code}) from error
         response.set_cookie(
             "ml_session",

@@ -73,6 +73,7 @@ context and consequences rather than reproducing code.
 | [0057](0057-sustain-explicit-sqlite-aggregate-topology.md) | accepted | Sustain the explicit SQLite aggregate topology |
 | [0058](0058-settings-authority-and-first-boot.md) | accepted | Make settings-store authority explicit after first boot |
 | [0059](0059-deterministic-cover-election.md) | accepted | Separate deterministic cover election from reviewer advice |
+| [0060](0060-dedicated-review-session-database.md) | accepted | Move review-session state to a dedicated session database |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

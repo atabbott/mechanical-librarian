@@ -8,9 +8,11 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import stat
 import sys
 import tempfile
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -23,6 +25,9 @@ from fastapi.testclient import TestClient
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
+)
+from mechanical_librarian.adapters.persistence.review_sessions import (
+    SQLiteReviewSessionRepository,
 )
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.metadata_report import MetadataReportError
@@ -281,15 +286,9 @@ def test_review_snapshot_failure_rolls_back_without_partial_state() -> None:
 
 def test_sqlite_logout_classification_is_atomic_across_connections() -> None:
     with tempfile.TemporaryDirectory() as directory:
-        database = Path(directory) / "application.sqlite3"
-        first = open_repository(database, cross_thread=True)
-        second = SQLiteMetadataReportRepository(
-            sqlite3.connect(
-                database,
-                check_same_thread=False,
-                isolation_level=None,
-            )
-        )
+        database = Path(directory) / "review-sessions.sqlite"
+        first = SQLiteReviewSessionRepository.open(database)
+        second = SQLiteReviewSessionRepository.open(database)
         first.create_review_session("a" * 64, "c" * 64, 100, 200)
         competing_started = threading.Event()
         competing_outcomes: list[str] = []
@@ -325,12 +324,11 @@ def test_sqlite_logout_classification_is_atomic_across_connections() -> None:
             def __getattr__(self, name: str):
                 return getattr(self._connection, name)
 
-        # The interleaving connection is supplied at construction, so it still
-        # reaches the lookup once the classification moves into an aggregate.
-        interleaved = SQLiteMetadataReportRepository(
-            InterleavingConnection(first._connection),
-            first._binding,
-            first.identity,
+        # The interleaving connection is supplied at construction, so the
+        # statement below reaches it: the store holds its own reference to
+        # its one private connection.
+        interleaved = SQLiteReviewSessionRepository(
+            InterleavingConnection(first._connection)
         )
         assert interleaved.revoke_review_session("a" * 64, "d" * 64, 151) == "csrf"
         competing.join(timeout=2)
@@ -744,11 +742,12 @@ def test_decision_reports_persistence_only_where_the_store_was_asked() -> None:
 
 def test_session_survives_exact_current_reopen_and_prior_schema_is_rejected() -> None:
     with tempfile.TemporaryDirectory() as directory:
-        path = Path(directory) / "application.sqlite3"
-        repository = open_repository(path)
+        path = Path(directory) / "review-sessions.sqlite"
+        repository = SQLiteReviewSessionRepository.open(path)
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
         repository.create_review_session("a" * 64, "b" * 64, 100, 200)
         repository.close()
-        reopened = open_repository(path, create=False)
+        reopened = SQLiteReviewSessionRepository.open(path)
         assert reopened.authenticate_review_session("a" * 64, 150) == (
             "owner",
             "b" * 64,
@@ -777,22 +776,105 @@ def test_session_survives_exact_current_reopen_and_prior_schema_is_rejected() ->
             == "unauthorized"
         )
         reopened.close()
+        foreign = Path(directory) / "foreign.sqlite"
+        connection = sqlite3.connect(foreign)
+        connection.execute("CREATE TABLE not_sessions(x)")
+        connection.commit()
+        connection.close()
+        before = foreign.read_bytes()
+        with pytest.raises(MetadataReportError):
+            SQLiteReviewSessionRepository.open(foreign)
+        assert foreign.read_bytes() == before
+
+
+def test_existing_empty_session_database_is_rejected_without_mutation(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "review-sessions.sqlite"
+    path.write_bytes(b"")
+    path.chmod(0o600)
+
+    with pytest.raises(MetadataReportError):
+        SQLiteReviewSessionRepository.open(path)
+
+    assert path.read_bytes() == b""
+
+
+@pytest.mark.parametrize("suffix", ("-journal", "-wal", "-shm"))
+def test_orphan_session_sidecar_is_rejected_without_mutation(
+    tmp_path: Path, suffix: str
+) -> None:
+    path = tmp_path / "review-sessions.sqlite"
+    sidecar = Path(f"{path}{suffix}")
+    sidecar.write_bytes(b"retained partial session state")
+    before = {value.name: value.read_bytes() for value in tmp_path.iterdir()}
+
+    with pytest.raises(MetadataReportError):
+        SQLiteReviewSessionRepository.open(path)
+
+    assert {value.name: value.read_bytes() for value in tmp_path.iterdir()} == before
+
+
+def test_wal_session_database_is_rejected_without_mutation(tmp_path: Path) -> None:
+    path = tmp_path / "review-sessions.sqlite"
+    repository = SQLiteReviewSessionRepository.open(path)
+    repository.close()
+    connection = sqlite3.connect(path, isolation_level=None)
+    assert connection.execute("PRAGMA journal_mode=WAL").fetchone() == ("wal",)
+    connection.close()
+    before = {value.name: value.read_bytes() for value in tmp_path.iterdir()}
+
+    with pytest.raises(MetadataReportError):
+        SQLiteReviewSessionRepository.open(path)
+
+    assert {value.name: value.read_bytes() for value in tmp_path.iterdir()} == before
+
+
+def test_session_database_symlink_is_rejected_without_target_mutation(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "target.sqlite"
+    target.write_bytes(b"")
+    target.chmod(0o600)
+    path = tmp_path / "review-sessions.sqlite"
+    path.symlink_to(target)
+
+    with pytest.raises(MetadataReportError):
+        SQLiteReviewSessionRepository.open(path)
+
+    assert path.is_symlink()
+    assert target.read_bytes() == b""
+
+
+def test_non_owner_only_session_database_is_rejected_without_mutation(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "review-sessions.sqlite"
+    repository = SQLiteReviewSessionRepository.open(path)
+    repository.close()
+    path.chmod(0o640)
+    before = path.read_bytes()
+
+    with pytest.raises(MetadataReportError):
+        SQLiteReviewSessionRepository.open(path)
+
+    assert path.read_bytes() == before
 
 
 def test_verifier_bound_session_survives_reopen_without_sliding_and_rejects_replacement(
     tmp_path: Path,
 ) -> None:
-    path = tmp_path / "application.sqlite3"
+    path = tmp_path / "review-sessions.sqlite"
     verifier = PasswordHasher().hash("correct horse")
     verify, digest = owner_password_binding(verifier)
     tokens = iter(("s" * 32, "c" * 32))
-    repository = open_repository(path)
+    repository = SQLiteReviewSessionRepository.open(path)
     issued = OwnerSessionService(
         repository, verify, digest, lambda: 100, 600, lambda _length: next(tokens)
     ).login("correct horse")
     repository.close()
 
-    reopened = open_repository(path, create=False)
+    reopened = SQLiteReviewSessionRepository.open(path)
     resumed = OwnerSessionService(reopened, verify, digest, lambda: 699, 600)
     assert resumed.authenticate(issued.session_token) == "owner"
     assert resumed.issue_browser_csrf(issued.session_token)
@@ -823,6 +905,9 @@ def test_real_repository_serves_login_from_fastapi_worker_thread() -> None:
         hash_path.write_text(PasswordHasher().hash("correct horse"), encoding="utf-8")
         os.chmod(hash_path, 0o600)
         repository = open_repository(database, cross_thread=True)
+        session_store = SQLiteReviewSessionRepository.open(
+            root / "review-sessions.sqlite"
+        )
         client = TestClient(
             create_transport_test_app(
                 repository,
@@ -830,6 +915,7 @@ def test_real_repository_serves_login_from_fastapi_worker_thread() -> None:
                     canonical_origin="https://review.test",
                     owner_password_hash_file=str(hash_path),
                 ),
+                session_store=session_store,
             ),
             base_url="https://review.test",
         )
@@ -842,6 +928,7 @@ def test_real_repository_serves_login_from_fastapi_worker_thread() -> None:
             assert response.status_code == 200, response.text
         finally:
             client.close()
+            session_store.close()
             repository.close()
 
 
@@ -856,6 +943,9 @@ def test_authenticated_preparation_status_survives_writer_journal_churn() -> Non
         hash_path.write_text(PasswordHasher().hash("correct horse"), encoding="utf-8")
         os.chmod(hash_path, 0o600)
         repository = open_repository(database, cross_thread=True)
+        session_store = SQLiteReviewSessionRepository.open(
+            root / "review-sessions.sqlite"
+        )
         repository.request_review_scan("primary", "fiction", "lib-1", "f" * 64, 1)
         repository.set_review_pipeline_paused(True, 2)
         authority = repository.authority
@@ -906,6 +996,7 @@ def test_authenticated_preparation_status_survives_writer_journal_churn() -> Non
                     canonical_origin="https://review.test",
                     owner_password_hash_file=str(hash_path),
                 ),
+                session_store=session_store,
                 review_preparation=preparation,
             ),
             base_url="https://review.test",
@@ -975,7 +1066,70 @@ def test_authenticated_preparation_status_survives_writer_journal_churn() -> Non
             release_writer.set()
             writer.join(5)
             client.close()
+            session_store.close()
             repository.close()
         assert not writer.is_alive()
         assert writer_errors == []
         assert trace_errors == []
+
+
+def test_login_ignores_application_database_writer_and_gate(tmp_path: Path) -> None:
+    """#912: owner sign-in must not wait on scan writes.
+
+    One writer holds the application database's rollback-journal write lock
+    for the whole request, and another thread holds the application
+    serialization gate; login still answers well inside the five-second busy
+    backstop the old shared-database coupling queued on.
+    """
+    database = tmp_path / "application.sqlite3"
+    hash_path = tmp_path / "owner.hash"
+    hash_path.write_text(PasswordHasher().hash("correct horse"), encoding="utf-8")
+    os.chmod(hash_path, 0o600)
+    repository = open_repository(database, cross_thread=True)
+    session_store = SQLiteReviewSessionRepository.open(
+        tmp_path / "review-sessions.sqlite"
+    )
+    app = create_transport_test_app(
+        repository,
+        ReviewWebConfiguration(
+            canonical_origin="https://review.test",
+            owner_password_hash_file=str(hash_path),
+        ),
+        session_store=session_store,
+    )
+    application = app.state.review_application
+    client = TestClient(app, base_url="https://review.test")
+    writer = sqlite3.connect(database, isolation_level=None, check_same_thread=False)
+    gate_held = threading.Event()
+    release_gate = threading.Event()
+
+    def hold_gate() -> None:
+        with application._gate:
+            gate_held.set()
+            release_gate.wait(30)
+
+    holder = threading.Thread(target=hold_gate)
+    try:
+        writer.execute("BEGIN IMMEDIATE")
+        writer.execute(
+            "UPDATE review_preparation_control SET updated_at=97 WHERE singleton=1"
+        )
+        holder.start()
+        assert gate_held.wait(5)
+        started = time.monotonic()
+        response = client.post(
+            "/api/v1/session/login",
+            headers={"Origin": "https://review.test"},
+            json={"password": "correct horse"},
+        )
+        elapsed = time.monotonic() - started
+        assert response.status_code == 200, response.text
+        assert elapsed < 2.0
+    finally:
+        release_gate.set()
+        holder.join(5)
+        writer.execute("ROLLBACK")
+        writer.close()
+        client.close()
+        session_store.close()
+        repository.close()

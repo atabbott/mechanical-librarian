@@ -83,7 +83,10 @@ def test_installed_consent_uses_only_capability_allowed_destinations() -> None:
     ]
 
 
-def test_installed_qualification_composes_application_before_fastapi() -> None:
+def test_installed_qualification_composes_application_before_fastapi(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
     repository = Mock()
     review = SimpleNamespace(
         owner_password_hash_file="/synthetic/owner.hash",
@@ -136,6 +139,7 @@ def test_installed_qualification_composes_application_before_fastapi() -> None:
         repository, Path("/synthetic/artifacts"), review
     )
     create.assert_called_once_with(application, review)
+    assert list(tmp_path.iterdir()) == []
 
 
 @pytest.mark.parametrize(

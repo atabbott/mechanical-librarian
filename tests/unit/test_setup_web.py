@@ -24,6 +24,7 @@ from mechanical_librarian.interfaces.web.setup_frontend import SETUP_JS
 class _Sessions:
     def __init__(self) -> None:
         self.failures = 0
+        self.fail_create = False
         self.records: dict[str, tuple[str, int]] = {}
 
     def begin_login(self, _now: int, _window: int, maximum: int) -> bool:
@@ -35,7 +36,10 @@ class _Sessions:
     def create_review_session(
         self, token: str, csrf: str, _now: int, expires: int
     ) -> None:
+        if self.fail_create:
+            raise RuntimeError("synthetic session persistence failure")
         self.records[token] = (csrf, expires)
+        self.failures = 0
 
     def authenticate_review_session(self, token: str, now: int) -> tuple[str, str, int]:
         csrf, expires = self.records[token]
@@ -79,10 +83,6 @@ class _State:
         *,
         expected_revision: int,
         owner_verifier: str,
-        session_digest: str,
-        csrf_digest: str,
-        created_at: int,
-        expires_at: int,
     ) -> SetupStateDocument:
         assert owner_verifier.startswith("$argon2id$")
         self.owner_verifier = owner_verifier
@@ -95,10 +95,6 @@ class _State:
                 "claimed": True,
             }
         )
-        if self.sessions is not None:
-            self.sessions.create_review_session(
-                session_digest, csrf_digest, created_at, expires_at
-            )
         return self.document
 
     def read(self, _bootstrap: str) -> SetupStateDocument:
@@ -165,7 +161,11 @@ def _client() -> tuple[TestClient, _State, _Connection]:
     state = _State(session_store)
     sessions = OwnerSessionService(
         session_store,
-        owner_password_verifier(verifier),
+        # Mirror the composition root: verify against the claimed verifier,
+        # which is what serves the first login right after the claim (#912).
+        lambda password: state.use_owner_verifier(
+            lambda encoded: owner_password_verifier(encoded)(password)
+        ),
         lambda token: state.use_owner_verifier(
             lambda encoded: owner_password_binding(encoded)[1](token)
         ),
@@ -294,6 +294,29 @@ def test_wrong_setup_password_is_rate_limited() -> None:
     assert (
         client.post("/api/setup/session", json={"password": "wrong"}).status_code == 429
     )
+
+
+def test_session_failure_after_owner_claim_is_retryable_unavailability() -> None:
+    client, state, _connection = _client()
+    assert state.sessions is not None
+    state.sessions.fail_create = True
+
+    failed = _claim(client)
+
+    assert failed.status_code == 503
+    assert failed.json() == {"detail": {"error": "persistence"}}
+    assert state.document.claimed
+    assert state.document.revision == 2
+    assert state.sessions.records == {}
+
+    state.sessions.fail_create = False
+    retried = client.post(
+        "/api/setup/session",
+        json={"password": "correct horse battery staple"},
+    )
+
+    assert retried.status_code == 200
+    assert "ml_session=" in retried.headers["set-cookie"]
 
 
 @pytest.mark.parametrize(

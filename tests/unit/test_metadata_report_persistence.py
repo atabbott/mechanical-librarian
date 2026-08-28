@@ -449,13 +449,11 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("review_case_field_facts",),
             ("review_case_transitions",),
             ("review_cases",),
-            ("review_login_failures",),
             ("review_preparation_absences",),
             ("review_preparation_connection_conditions",),
             ("review_preparation_control",),
             ("review_preparation_scans",),
             ("review_preparation_work",),
-            ("review_sessions",),
             ("shadow_decision_outcomes",),
             ("shadow_outcome_field_facts",),
         ]

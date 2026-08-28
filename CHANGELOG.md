@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Owner sign-in no longer waits on library-scan writes: session and login
+  throttle state moved to a dedicated `private/review-sessions.sqlite`
+  database with its own connection, the application schema dropped both
+  tables, and `review-session-decoupling-v1` adopts the exact retained
+  predecessor offline without a rebuild. (#912)
+
 - Recommend the best confirmed cover deterministically without requiring the
   optional reviewer, and keep unconfirmed matches out of selection. Active
   provider fetching delays choice; retry waiting does not. A qualified

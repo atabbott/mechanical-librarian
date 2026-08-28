@@ -44,6 +44,9 @@ from mechanical_librarian.adapters.persistence.metadata_reports import open_repo
 from mechanical_librarian.adapters.persistence.provider_recovery import (
     SQLiteProviderRecoveryStore,
 )
+from mechanical_librarian.adapters.persistence.review_sessions import (
+    SQLiteReviewSessionRepository,
+)
 from mechanical_librarian.application.batch import BatchSelection, batch_fingerprint
 from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.configuration import (
@@ -537,7 +540,12 @@ def _start_deterministic_installed_server(
     origin: str,
     admit_case: Callable[[str, str], None],
     after_advance: Callable[[PipelineAction, str | None], None],
-) -> tuple[uvicorn.Server, threading.Thread, SQLiteProviderRecoveryStore]:
+) -> tuple[
+    uvicorn.Server,
+    threading.Thread,
+    SQLiteProviderRecoveryStore,
+    SQLiteReviewSessionRepository,
+]:
     """Run installed-wheel HTTP over the production persisted pipeline boundary.
 
     The callbacks stand in only for expensive target/media/provider observation.
@@ -565,6 +573,9 @@ def _start_deterministic_installed_server(
     timing = StageTimer(timing_store)
     recovery = SQLiteProviderRecoveryStore.open(
         private_root / "provider-recovery.sqlite"
+    )
+    session_store = SQLiteReviewSessionRepository.open(
+        private_root / "review-sessions.sqlite"
     )
 
     def workers():
@@ -690,7 +701,7 @@ def _start_deterministic_installed_server(
         owner_binding = load_owner_password_binding(owner_hash)
         application = compose_review_application(
             state_owner=web_state_owner,
-            session_store=web_state_owner,
+            session_store=session_store,
             case_store=web_state_owner,
             decision_store=web_state_owner,
             library_store=web_state_owner,
@@ -753,7 +764,7 @@ def _start_deterministic_installed_server(
     while not server.started and thread.is_alive() and time.monotonic() < deadline:
         time.sleep(0.01)
     assert server.started is True
-    return server, thread, recovery
+    return server, thread, recovery, session_store
 
 
 class _InstalledPhaseObserver(Protocol):
@@ -840,10 +851,11 @@ class _InstalledPreparationRun:
         self._server: uvicorn.Server | None = None
         self._server_thread: threading.Thread | None = None
         self._recovery: SQLiteProviderRecoveryStore | None = None
+        self._session_store: SQLiteReviewSessionRepository | None = None
 
     def __enter__(self) -> _InstalledPreparationRun:
         self._fixture.hold_discovery()
-        self._server, self._server_thread, self._recovery = (
+        self._server, self._server_thread, self._recovery, self._session_store = (
             _start_deterministic_installed_server(
                 database=self._database,
                 configuration=self._configuration,
@@ -1471,6 +1483,8 @@ class _InstalledPreparationRun:
             assert self._server_thread.is_alive() is False
         if self._recovery is not None:
             self._recovery.close()
+        if self._session_store is not None:
+            self._session_store.close()
 
 
 @contextmanager

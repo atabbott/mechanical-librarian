@@ -40,6 +40,7 @@ from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.schema_adoption import (
     OWNER_SETTINGS_V1,
     REVIEW_OWNER_DECISION_ACTIONS_V1,
+    REVIEW_SESSION_DECOUPLING_V1,
     SchemaAdoptionRecoveryRequired,
 )
 from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
@@ -53,7 +54,31 @@ _DERIVED_TABLES = {
     "review_case_field_facts",
 }
 _TARGET_SCHEMA_OBJECTS_SHA256 = (
+    "3eb0ce258bbf4cdd8d5a59141ad11a9afa604c13ec5b37f8b4be326d6c28de28"
+)
+# The exact immediate predecessor of the #912 session decoupling: the previous
+# target schema, whose only difference is the two session tables that moved to
+# the dedicated session database.
+_REVIEW_SESSION_DECOUPLING_V1_SOURCE_OBJECTS_SHA256 = (
     "1c6ff10c050f7a4587e4b145d8516285c886ea211351cdc95363dfa8648a878c"
+)
+_PRE_DECOUPLING_REVIEW_SESSIONS_SQL = (
+    "CREATE TABLE review_sessions ("
+    "session_digest TEXT PRIMARY KEY NOT NULL CHECK(length(session_digest)=64 AND session_digest NOT GLOB '*[^0-9a-f]*'), "
+    "csrf_digest TEXT NOT NULL CHECK(length(csrf_digest)=64 AND csrf_digest NOT GLOB '*[^0-9a-f]*'), "
+    "actor TEXT NOT NULL CHECK(actor='owner'), created_at INTEGER NOT NULL CHECK(created_at>=0), "
+    "expires_at INTEGER NOT NULL CHECK(expires_at>created_at), revoked_at INTEGER CHECK(revoked_at IS NULL OR revoked_at>=created_at))"
+)
+_PRE_DECOUPLING_REVIEW_LOGIN_FAILURES_SQL = (
+    "CREATE TABLE review_login_failures ("
+    "failure_id TEXT PRIMARY KEY NOT NULL CHECK(length(failure_id)=64 AND failure_id NOT GLOB '*[^0-9a-f]*'), "
+    "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0))"
+)
+_PRE_DECOUPLING_SESSION_OBJECTS = (
+    ("index", "sqlite_autoindex_review_login_failures_1", None),
+    ("index", "sqlite_autoindex_review_sessions_1", None),
+    ("table", "review_login_failures", _PRE_DECOUPLING_REVIEW_LOGIN_FAILURES_SQL),
+    ("table", "review_sessions", _PRE_DECOUPLING_REVIEW_SESSIONS_SQL),
 )
 _PRE_HANDOVER_REVIEW_CONTROL_SQL = (
     "CREATE TABLE review_preparation_control ("
@@ -89,10 +114,29 @@ def _validate_owner_settings_predecessor_schema(
                 if pre_handover_control and value[1] == "review_preparation_control"
                 else value
             )
+        # Every predecessor this plan accepts predates #912, so each carries
+        # the session tables the decoupling later dropped.
+        expected.extend(_PRE_DECOUPLING_SESSION_OBJECTS)
+        expected.sort(key=lambda value: (value[0], value[1]))
         if observed == expected:
             _validate_schema_contents(connection)
             return missing_owner_settings, pre_handover_control
     raise MetadataReportError("database is unavailable or incompatible")
+
+
+def _validate_review_session_decoupling_predecessor_schema(
+    connection: sqlite3.Connection,
+) -> None:
+    """Validate the exact pre-#912 schema: the previous target, sessions included."""
+    observed = connection.execute(
+        "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
+    ).fetchall()
+    digest = hashlib.sha256(
+        json.dumps(observed, ensure_ascii=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    if digest != _REVIEW_SESSION_DECOUPLING_V1_SOURCE_OBJECTS_SHA256:
+        raise MetadataReportError("database is unavailable or incompatible")
+    _validate_schema_contents(connection)
 
 
 def _expected_schema_objects_digest() -> str:
@@ -411,7 +455,11 @@ def _close_adoption_resources(
 
 def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str, str]:
     """Apply one named exact-predecessor plan without changing application rows."""
-    if plan not in {REVIEW_OWNER_DECISION_ACTIONS_V1, OWNER_SETTINGS_V1}:
+    if plan not in {
+        REVIEW_OWNER_DECISION_ACTIONS_V1,
+        OWNER_SETTINGS_V1,
+        REVIEW_SESSION_DECOUPLING_V1,
+    }:
         raise MetadataReportError("schema adoption plan is unsupported")
     # This check precedes pathname resolution and all filesystem access. The
     # literal is the reviewed plan result, never a dynamically stored target.
@@ -478,6 +526,8 @@ def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str,
                 missing_owner_settings, pre_handover_control = (
                     _validate_owner_settings_predecessor_schema(connection)
                 )
+            elif plan == REVIEW_SESSION_DECOUPLING_V1:
+                _validate_review_session_decoupling_predecessor_schema(connection)
             else:
                 _validate_review_owner_decision_actions_predecessor_schema(connection)
                 pre_handover_control = True
@@ -522,15 +572,15 @@ def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str,
                 "circuit_open_until,updated_at FROM review_preparation_control_pre_handover"
             )
             connection.execute("DROP TABLE review_preparation_control_pre_handover")
-        if plan != OWNER_SETTINGS_V1:
+        if plan == REVIEW_OWNER_DECISION_ACTIONS_V1:
             connection.execute(_OWNER_SETTINGS_SQL)
             connection.execute(_OWNER_SETTING_SECRETS_SQL)
             connection.execute("DROP TRIGGER review_cases_project_field_facts")
-        if plan != OWNER_SETTINGS_V1:
+        if plan == REVIEW_OWNER_DECISION_ACTIONS_V1:
             connection.execute("DROP TABLE review_case_field_facts")
-        if plan != OWNER_SETTINGS_V1:
+        if plan == REVIEW_OWNER_DECISION_ACTIONS_V1:
             connection.execute(_REVIEW_CASE_FIELD_FACTS_SQL)
-        if plan != OWNER_SETTINGS_V1:
+        if plan == REVIEW_OWNER_DECISION_ACTIONS_V1:
             connection.execute(
                 "INSERT INTO review_case_field_facts("
                 "review_case_id,destination,unresolved_choice,manual_bibliographic_attention,has_owner_decision_actions) "
@@ -540,6 +590,13 @@ def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str,
                 "FROM review_cases rc,json_each(rc.document,'$.results') result"
             )
             connection.execute(_REVIEW_CASE_FIELD_FACTS_INSERT_SQL)
+        # Every accepted predecessor predates #912: drop the session tables
+        # whose state moved to the dedicated session database. Only expendable
+        # security-session rows are discarded -- at most a few live sessions
+        # (one owner re-login) and throttle timestamps inside a five-minute
+        # window; no canonical, audit, or derived state is touched.
+        connection.execute("DROP TABLE review_sessions")
+        connection.execute("DROP TABLE review_login_failures")
         recovery_required = True
         connection.commit()
         if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:

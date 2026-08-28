@@ -40,12 +40,38 @@ def select_first_boot_mode(
         return FirstBootMode.INITIALIZE_SETUP
     if database_name not in entries:
         raise FirstBootError("first boot state is unavailable")
+    # The private directory holds the dedicated session database (#912), which
+    # setup's first sign-in legitimately creates before setup completes; it is
+    # not evidence of a completed runtime. Any other private content is
+    # runtime state and keeps the volume failing closed as before.
+    setup_entries = set(entries)
+    if "private" in entries:
+        try:
+            private_entries = {
+                entry.name for entry in (data_path / "private").iterdir()
+            }
+        except OSError as error:
+            raise FirstBootError("first boot state is unavailable") from error
+        # The rollback journal belongs to the session database, not to a
+        # completed runtime: a sign-in interrupted mid-write leaves one behind,
+        # and the next open rolls it back. Refusing it would turn a crash
+        # during setup into a boot that will not resume. Only `-journal` is
+        # admitted, because this store is `journal_mode=DELETE` and no WAL is
+        # adopted anywhere (ADR-0060).
+        if private_entries <= {
+            "review-sessions.sqlite",
+            "review-sessions.sqlite-journal",
+        } and (
+            "review-sessions.sqlite-journal" not in private_entries
+            or "review-sessions.sqlite" in private_entries
+        ):
+            setup_entries.discard("private")
     try:
         if complete_store():
             return FirstBootMode.NORMAL
-        if entries == {database_name} and uninitialized_setup():
+        if setup_entries == {database_name} and uninitialized_setup():
             return FirstBootMode.INITIALIZE_SETUP
-        if entries == {database_name} and resumable_setup():
+        if setup_entries == {database_name} and resumable_setup():
             return FirstBootMode.RESUME_SETUP
     except Exception as error:
         raise FirstBootError("first boot state is unavailable") from error

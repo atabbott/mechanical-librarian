@@ -613,19 +613,22 @@ class ReviewApplication:
     def ready(self) -> bool:
         return self._operations is None or self._operations.ready()
 
+    # The four session operations below deliberately bypass ``serialized``:
+    # the session store owns its dedicated database and lock (#912), so owner
+    # sign-in and session checks never queue behind an operation that holds
+    # the application gate while it waits on a scan's write transaction.
+
     def login(self, password: str) -> SessionTokens:
-        return self.serialized(lambda: self._sessions.login(password))
+        return self._sessions.login(password)
 
     def authenticate(self, session_token: str, csrf_token: str | None = None) -> str:
-        return self.serialized(
-            lambda: self._sessions.authenticate(session_token, csrf_token)
-        )
+        return self._sessions.authenticate(session_token, csrf_token)
 
     def issue_browser_csrf(self, session_token: str) -> str:
-        return self.serialized(lambda: self._sessions.issue_browser_csrf(session_token))
+        return self._sessions.issue_browser_csrf(session_token)
 
     def logout(self, session_token: str, csrf_token: str) -> None:
-        self.serialized(lambda: self._sessions.logout(session_token, csrf_token))
+        self._sessions.logout(session_token, csrf_token)
 
     def operations_status(self) -> dict[str, object]:
         if self._operations is None:
