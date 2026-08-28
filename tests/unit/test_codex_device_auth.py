@@ -16,6 +16,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from mechanical_librarian.adapters.reviewers import codex_device_auth as auth_module
 from mechanical_librarian.adapters.reviewers import process_group as process_groups
 from mechanical_librarian.adapters.reviewers.codex_device_auth import (
     CodexAuthCommand,
@@ -96,6 +97,7 @@ def _manager(
     lease_current: Callable[[], bool] = lambda: True,
     lease_guard: Callable[[], AbstractContextManager[None]] = nullcontext,
     activity_guard: Callable[[], AbstractContextManager[None]] = nullcontext,
+    quarantine_activity: Callable[[], None] = lambda: None,
 ) -> CodexDeviceAuthManager:
     def capture(
         process: subprocess.Popen[bytes],
@@ -145,6 +147,7 @@ def _manager(
         lease_current=lease_current,
         lease_guard=lease_guard,
         activity_guard=activity_guard,
+        quarantine_activity=quarantine_activity,
         capture_process_group=capture,
         finish_process_group=finish,
         terminate_process_group=terminate,
@@ -347,6 +350,67 @@ def test_flow_retains_activity_and_process_until_cleanup_is_proven(
     assert not manager._thread.is_alive()
     assert exited.is_set()
     assert manager._process is None
+
+
+def test_permanent_cleanup_failure_stops_and_quarantines_shared_admission(
+    tmp_path: Path,
+) -> None:
+    coordinator = _CodexAuthLeaseCoordinator()
+    holder: dict[str, CodexDeviceAuthManager] = {}
+
+    def manager_factory(
+        lease_current: Callable[[], bool],
+        lease_guard: Callable[[], AbstractContextManager[None]],
+    ) -> CodexDeviceAuthManager:
+        manager = _manager(
+            tmp_path,
+            output=b"malformed\n",
+            lease_current=lease_current,
+            lease_guard=lease_guard,
+            activity_guard=coordinator.activity,
+            quarantine_activity=coordinator.quarantine,
+        )
+        holder["manager"] = manager
+        return manager
+
+    owner = _LazyCodexAuth(manager_factory, coordinator)
+    successor = _LazyCodexAuth(manager_factory, coordinator)
+    owner.activate_lease()
+    assert owner.status().state == "ready"
+    manager = holder["manager"]
+    cleanup_attempts = 0
+
+    def refuse_cleanup(
+        _process: subprocess.Popen[bytes],
+        _identity: process_groups.ReviewerProcessGroup,
+    ) -> None:
+        nonlocal cleanup_attempts
+        cleanup_attempts += 1
+        raise process_groups.ReviewerProcessGroupError("runtime")
+
+    manager._terminate_process_group = refuse_cleanup
+    manager.start()
+    assert manager._thread is not None
+    manager._thread.join(timeout=2)
+
+    assert not manager._thread.is_alive()
+    assert cleanup_attempts == 1 + len(auth_module._CLEANUP_RETRY_DELAYS)
+    assert manager._process is not None
+    assert manager._process_group is not None
+    assert manager._state == CodexDeviceAuthState(
+        "failed", failure="protocol_or_process"
+    )
+    assert owner.start() == CodexDeviceAuthState(
+        "failed", failure="permission_or_profile"
+    )
+    with pytest.raises(CodexDeviceAuthError):
+        owner.clear()
+    with pytest.raises(CodexDeviceAuthError):
+        with coordinator.activity():
+            pass
+    with pytest.raises(CodexDeviceAuthError):
+        successor.activate_lease()
+    assert cleanup_attempts == 1 + len(auth_module._CLEANUP_RETRY_DELAYS)
 
 
 def test_manager_identity_capture_failure_reaps_before_publication(
@@ -1002,6 +1066,119 @@ def test_restart_cleans_private_staging_and_reports_interruption(
     assert manager.status().state == "interrupted"
     assert manager.status().failure == "restart_interrupted"
     assert not stale.exists()
+
+
+def test_staging_entry_limit_is_enforced_while_streaming(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    staging = tmp_path / "reviewer-auth-oversized"
+    staging.mkdir(mode=0o700)
+    (staging / "first").write_bytes(b"")
+    (staging / "second").write_bytes(b"")
+    original_scandir = os.scandir
+    yielded = 0
+
+    class CountingEntries:
+        def __init__(self, directory: int) -> None:
+            self._entries = original_scandir(directory)
+
+        def __enter__(self) -> CountingEntries:
+            self._entries.__enter__()
+            return self
+
+        def __exit__(self, *arguments: object) -> None:
+            self._entries.__exit__(*arguments)
+
+        def __iter__(self) -> CountingEntries:
+            return self
+
+        def __next__(self) -> os.DirEntry[str]:
+            nonlocal yielded
+            yielded += 1
+            if yielded > 2:
+                raise AssertionError("entry traversal exceeded the bounded refusal")
+            return next(self._entries)
+
+    monkeypatch.setattr(auth_module, "_MAX_STAGING_ENTRIES", 1)
+    monkeypatch.setattr(os, "scandir", CountingEntries)
+
+    with pytest.raises(CodexDeviceAuthError, match="staging"):
+        auth_module._remove_staging(staging)
+
+    assert yielded == 2
+    assert staging.exists()
+
+
+def test_restart_staging_root_count_is_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for suffix in ("one", "two"):
+        (tmp_path / f"reviewer-auth-{suffix}").mkdir(mode=0o700)
+    unrelated = tmp_path / "unrelated"
+    unrelated.write_bytes(b"preserved")
+    monkeypatch.setattr(auth_module, "_MAX_STAGING_ROOTS", 1)
+
+    state = _manager(tmp_path).status()
+
+    assert state == CodexDeviceAuthState("failed", failure="protocol_or_process")
+    assert unrelated.read_bytes() == b"preserved"
+    assert any(path.name.startswith("reviewer-auth-") for path in tmp_path.iterdir())
+
+
+def test_restart_uses_shared_no_follow_staging_removal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stale = tmp_path / "reviewer-auth-stale"
+    stale.mkdir(mode=0o700)
+    calls: list[str] = []
+    original = auth_module._remove_staging_at
+
+    def recording_remove(parent: int, name: str) -> None:
+        calls.append(name)
+        original(parent, name)
+
+    monkeypatch.setattr(auth_module, "_remove_staging_at", recording_remove)
+    state = _manager(tmp_path).status()
+
+    assert state.failure == "restart_interrupted"
+    assert calls == ["reviewer-auth-stale"]
+
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o700)
+    protected = outside / "auth.json"
+    protected.write_bytes(b"preserved")
+    (tmp_path / "reviewer-auth-link").symlink_to(outside, target_is_directory=True)
+    state = _manager(tmp_path).status()
+    assert state == CodexDeviceAuthState("failed", failure="protocol_or_process")
+    assert protected.read_bytes() == b"preserved"
+
+
+def test_restart_rejects_staging_root_identity_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stale = tmp_path / "reviewer-auth-replaced"
+    stale.mkdir(mode=0o700)
+    original_stat = os.stat
+
+    def changed_identity(
+        path: str | bytes | int | os.PathLike[str] | os.PathLike[bytes],
+        *,
+        dir_fd: int | None = None,
+        follow_symlinks: bool = True,
+    ) -> os.stat_result:
+        result = original_stat(path, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
+        if path == "reviewer-auth-replaced" and dir_fd is not None:
+            values = list(result)
+            values[1] += 1
+            return os.stat_result(values)
+        return result
+
+    monkeypatch.setattr(os, "stat", changed_identity)
+
+    assert _manager(tmp_path).status() == CodexDeviceAuthState(
+        "failed", failure="protocol_or_process"
+    )
+    assert stale.exists()
 
 
 def test_auth_store_symlink_and_hardlinked_credential_fail_closed(

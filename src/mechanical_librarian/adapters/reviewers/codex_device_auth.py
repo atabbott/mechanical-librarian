@@ -7,7 +7,6 @@ import os
 import re
 import secrets
 import selectors
-import shutil
 import signal
 import stat
 import subprocess
@@ -33,6 +32,9 @@ _DEVICE_DEADLINE_SECONDS = 900
 _SHUTDOWN_GRACE_SECONDS = 5
 _MAX_STAGING_ENTRIES = 4096
 _MAX_STAGING_DEPTH = 16
+_MAX_STAGING_ROOTS = 64
+_MAX_STAGING_PARENT_ENTRIES = 4096
+_CLEANUP_RETRY_DELAYS = (0.05, 0.1, 0.2)
 _RESOURCE_EXEC_MODULE = "mechanical_librarian.adapters.reviewers.resource_exec"
 
 
@@ -79,6 +81,7 @@ class CodexDeviceAuthManager:
         terminate_process_group: ProcessGroupAction = lambda _process, identity: (
             process_groups.terminate_process_group(identity)
         ),
+        quarantine_activity: Callable[[], None] = lambda: None,
     ) -> None:
         self._auth_store = auth_store
         self._command_factory = command_factory
@@ -89,6 +92,7 @@ class CodexDeviceAuthManager:
         self._capture_process_group = capture_process_group
         self._finish_process_group = finish_process_group
         self._terminate_process_group = terminate_process_group
+        self._quarantine_activity = quarantine_activity
         self._lock = Lock()
         self._process: subprocess.Popen[bytes] | None = None
         self._process_group: process_groups.ReviewerProcessGroup | None = None
@@ -99,6 +103,7 @@ class CodexDeviceAuthManager:
         self._state = CodexDeviceAuthState("ready")
         self._recovered = False
         self._trust_failed = False
+        self._quarantined = False
 
     def _require_lease(self) -> None:
         if not self._lease_current():
@@ -118,6 +123,8 @@ class CodexDeviceAuthManager:
     def start(self) -> CodexDeviceAuthState:
         self._prepare_store()
         with self._lock:
+            if self._quarantined:
+                return self._state
             if self._trust_failed:
                 return self._state
             if self._thread is not None and self._thread.is_alive():
@@ -144,6 +151,8 @@ class CodexDeviceAuthManager:
 
     def cancel(self) -> CodexDeviceAuthState:
         with self._lock:
+            if self._quarantined:
+                raise CodexDeviceAuthError("process")
             if self._trust_failed:
                 return self._state
             if self._installing:
@@ -181,7 +190,7 @@ class CodexDeviceAuthManager:
     def clear(self) -> CodexDeviceAuthState:
         self._prepare_store()
         with self._lock:
-            if self._trust_failed:
+            if self._quarantined or self._trust_failed:
                 raise CodexDeviceAuthError("staging")
         self.close()
         with self._activity_guard(), self._lease_guard():
@@ -211,6 +220,8 @@ class CodexDeviceAuthManager:
         with self._lease_guard():
             self._prepare_store()
             with self._lock:
+                if self._quarantined:
+                    return self._state
                 if self._trust_failed:
                     return self._state
                 if self._thread is not None and self._thread.is_alive():
@@ -277,7 +288,7 @@ class CodexDeviceAuthManager:
         # activity boundary without hiding which operation owns the lock.
         with self._activity_guard():
             self._run_flow()
-            while True:
+            for delay in _CLEANUP_RETRY_DELAYS:
                 with self._lock:
                     process = self._process
                     process_group = self._process_group
@@ -288,7 +299,7 @@ class CodexDeviceAuthManager:
                         self._state = CodexDeviceAuthState(
                             "failed", failure="protocol_or_process"
                         )
-                    time.sleep(0.05)
+                    time.sleep(delay)
                     continue
                 try:
                     self._stop_owned_process(process, process_group)
@@ -297,10 +308,16 @@ class CodexDeviceAuthManager:
                         self._state = CodexDeviceAuthState(
                             "failed", failure="protocol_or_process"
                         )
-                    time.sleep(0.05)
+                    time.sleep(delay)
                     continue
                 self._release(process, process_group)
                 return
+            with self._lock:
+                self._quarantined = True
+                self._state = CodexDeviceAuthState(
+                    "failed", failure="protocol_or_process"
+                )
+            self._quarantine_activity()
 
     def _run_flow(self) -> None:
         deadline = time.monotonic() + _DEVICE_DEADLINE_SECONDS
@@ -434,7 +451,7 @@ class CodexDeviceAuthManager:
         with self._lease_guard():
             self._require_lease()
             with self._lock:
-                if self._process is not None or self._spawning:
+                if self._quarantined or self._process is not None or self._spawning:
                     raise CodexDeviceAuthError("process")
                 if (
                     not flow_owned
@@ -547,31 +564,39 @@ class CodexDeviceAuthManager:
 
     def _recover_interrupted_staging(self) -> CodexDeviceAuthState:
         parent = self._auth_store.parent
+        descriptor = -1
         try:
             try:
                 os.lstat(parent)
             except FileNotFoundError:
                 return CodexDeviceAuthState("ready")
-            _private_directory_descriptor(parent, create=False, close=True)
+            descriptor = _private_directory_descriptor(parent, create=False)
             interrupted = False
-            for candidate in parent.iterdir():
-                if not candidate.name.startswith("reviewer-auth-"):
-                    continue
-                information = candidate.lstat()
-                if (
-                    not stat.S_ISDIR(information.st_mode)
-                    or information.st_uid != os.geteuid()
-                    or stat.S_IMODE(information.st_mode) != 0o700
-                ):
-                    raise CodexDeviceAuthError("staging")
-                shutil.rmtree(candidate)
-                interrupted = True
+            roots = 0
+            parent_entries = 0
+            with os.scandir(descriptor) as entries:
+                for entry in entries:
+                    parent_entries += 1
+                    if parent_entries > _MAX_STAGING_PARENT_ENTRIES:
+                        raise CodexDeviceAuthError("staging")
+                    if not entry.name.startswith("reviewer-auth-"):
+                        continue
+                    roots += 1
+                    if roots > _MAX_STAGING_ROOTS:
+                        raise CodexDeviceAuthError("staging")
+                    _remove_staging_at(descriptor, entry.name)
+                    interrupted = True
+            if interrupted:
+                os.fsync(descriptor)
             return CodexDeviceAuthState(
                 "interrupted" if interrupted else "ready",
                 failure="restart_interrupted" if interrupted else None,
             )
         except (OSError, CodexDeviceAuthError):
             return CodexDeviceAuthState("failed", failure="protocol_or_process")
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
 
     def _set_state(self, state: CodexDeviceAuthState) -> None:
         with self._lock:
@@ -600,23 +625,31 @@ def _issued_state(lines: list[str]) -> CodexDeviceAuthState | None:
 
 def _remove_staging(path: Path) -> None:
     """Remove only the exact private staging tree with bounded no-follow descent."""
-    if not path.name.startswith("reviewer-auth-") or path.name in {
+    parent = _private_directory_descriptor(path.parent, create=False)
+    try:
+        _remove_staging_at(parent, path.name)
+        os.fsync(parent)
+    finally:
+        os.close(parent)
+
+
+def _remove_staging_at(parent: int, name: str) -> None:
+    """Remove one exact staging child relative to its already-bound parent."""
+    if not name.startswith("reviewer-auth-") or name in {
         "reviewer-auth-",
         ".",
         "..",
     }:
         raise CodexDeviceAuthError("staging")
-    parent = _private_directory_descriptor(path.parent, create=False)
-    staging = -1
+    staging = os.open(
+        name,
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+        dir_fd=parent,
+    )
     try:
-        staging = os.open(
-            path.name,
-            os.O_RDONLY
-            | getattr(os, "O_CLOEXEC", 0)
-            | getattr(os, "O_DIRECTORY", 0)
-            | getattr(os, "O_NOFOLLOW", 0),
-            dir_fd=parent,
-        )
         information = os.fstat(staging)
         if (
             not stat.S_ISDIR(information.st_mode)
@@ -625,14 +658,12 @@ def _remove_staging(path: Path) -> None:
         ):
             raise CodexDeviceAuthError("staging")
         _remove_staging_contents(staging, depth=0, remaining=[_MAX_STAGING_ENTRIES])
-        os.close(staging)
-        staging = -1
-        os.rmdir(path.name, dir_fd=parent)
-        os.fsync(parent)
+        current = os.stat(name, dir_fd=parent, follow_symlinks=False)
+        if current.st_dev != information.st_dev or current.st_ino != information.st_ino:
+            raise CodexDeviceAuthError("staging")
     finally:
-        if staging >= 0:
-            os.close(staging)
-        os.close(parent)
+        os.close(staging)
+    os.rmdir(name, dir_fd=parent)
 
 
 def _remove_staging_contents(
@@ -640,27 +671,43 @@ def _remove_staging_contents(
 ) -> None:
     if depth > _MAX_STAGING_DEPTH:
         raise CodexDeviceAuthError("staging")
-    for name in sorted(os.listdir(directory)):
-        remaining[0] -= 1
-        if remaining[0] < 0:
-            raise CodexDeviceAuthError("staging")
-        information = os.stat(name, dir_fd=directory, follow_symlinks=False)
-        if stat.S_ISDIR(information.st_mode):
-            child = os.open(
-                name,
-                os.O_RDONLY
-                | getattr(os, "O_CLOEXEC", 0)
-                | getattr(os, "O_DIRECTORY", 0)
-                | getattr(os, "O_NOFOLLOW", 0),
-                dir_fd=directory,
-            )
-            try:
-                _remove_staging_contents(child, depth=depth + 1, remaining=remaining)
-            finally:
-                os.close(child)
-            os.rmdir(name, dir_fd=directory)
-        else:
-            os.unlink(name, dir_fd=directory)
+    with os.scandir(directory) as entries:
+        for entry in entries:
+            remaining[0] -= 1
+            if remaining[0] < 0:
+                raise CodexDeviceAuthError("staging")
+            name = entry.name
+            information = os.stat(name, dir_fd=directory, follow_symlinks=False)
+            if stat.S_ISDIR(information.st_mode):
+                child = os.open(
+                    name,
+                    os.O_RDONLY
+                    | getattr(os, "O_CLOEXEC", 0)
+                    | getattr(os, "O_DIRECTORY", 0)
+                    | getattr(os, "O_NOFOLLOW", 0),
+                    dir_fd=directory,
+                )
+                try:
+                    child_information = os.fstat(child)
+                    if (
+                        child_information.st_dev != information.st_dev
+                        or child_information.st_ino != information.st_ino
+                    ):
+                        raise CodexDeviceAuthError("staging")
+                    _remove_staging_contents(
+                        child, depth=depth + 1, remaining=remaining
+                    )
+                finally:
+                    os.close(child)
+                current = os.stat(name, dir_fd=directory, follow_symlinks=False)
+                if (
+                    current.st_dev != information.st_dev
+                    or current.st_ino != information.st_ino
+                ):
+                    raise CodexDeviceAuthError("staging")
+                os.rmdir(name, dir_fd=directory)
+            else:
+                os.unlink(name, dir_fd=directory)
 
 
 def _stop_process(

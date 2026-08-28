@@ -3107,10 +3107,13 @@ class _CodexAuthLeaseCoordinator:
         self._activity = Lock()
         self._owner: _LazyCodexAuth | None = None
         self._lease = 0
+        self._quarantined = False
 
     def activate(self, owner: _LazyCodexAuth) -> int:
         with self._transition:
             with self._lock:
+                if self._quarantined:
+                    raise CodexDeviceAuthError("process")
                 if self._owner is owner:
                     return self._lease
                 predecessor = self._owner
@@ -3130,6 +3133,8 @@ class _CodexAuthLeaseCoordinator:
             # before changing lease authority.
             with self._activity:
                 with self._lock:
+                    if self._quarantined:
+                        raise CodexDeviceAuthError("process")
                     if self._owner not in {None, predecessor}:
                         raise CodexDeviceAuthError("lease")
                     self._lease += 1
@@ -3138,20 +3143,32 @@ class _CodexAuthLeaseCoordinator:
 
     def current(self, owner: _LazyCodexAuth, lease: int) -> bool:
         with self._lock:
-            return self._owner is owner and self._lease == lease
+            return (
+                not self._quarantined and self._owner is owner and self._lease == lease
+            )
 
     @contextmanager
     def activity(self) -> Iterator[None]:
         """Admit exactly one Codex auth, recheck, or review process tree."""
         with self._activity:
+            with self._lock:
+                if self._quarantined:
+                    raise CodexDeviceAuthError("process")
             yield
 
     @contextmanager
     def guard(self, owner: _LazyCodexAuth, lease: int) -> Iterator[None]:
         with self._lock:
-            if self._owner is not owner or self._lease != lease:
+            if self._quarantined or self._owner is not owner or self._lease != lease:
                 raise CodexDeviceAuthError("lease")
             yield
+
+    def quarantine(self) -> None:
+        """Permanently reject Codex admission after an unproved process teardown."""
+        with self._lock:
+            if not self._quarantined:
+                self._quarantined = True
+                self._lease += 1
 
     def release(self, owner: _LazyCodexAuth) -> None:
         with self._transition, self._activity, self._lock:
@@ -3210,6 +3227,7 @@ def _compose_reviewer_access(
                 lease_current=lease_current,
                 lease_guard=lease_guard,
                 activity_guard=active_coordinator.activity,
+                quarantine_activity=active_coordinator.quarantine,
             )
 
         lazy_codex_auth = _LazyCodexAuth(manager, active_coordinator)

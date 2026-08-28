@@ -156,6 +156,22 @@ def exercise():
                     successor.clear(); successor.close()
                     manager_handoff_reaped = set(descendants(os.getpid())) == before
                     if not manager_handoff_reaped: raise RuntimeError('device manager handoff tree survived')
+                    stage = 'manager-quarantine'; quarantine_coordinator = _CodexAuthLeaseCoordinator(); saved_deadline = auth_module._DEVICE_DEADLINE_SECONDS; auth_module._DEVICE_DEADLINE_SECONDS = 1
+                    try:
+                        quarantine_manager = CodexDeviceAuthManager(root/'manager-quarantine'/'profile', lambda home, action: sleeping_auth_command(profile, home, action), popen=recording_popen, activity_guard=quarantine_coordinator.activity, quarantine_activity=quarantine_coordinator.quarantine)
+                        quarantine_manager.start(); wait_for_device(quarantine_manager, {'issued', 'waiting'}); saved_terminate = quarantine_manager._terminate_process_group
+                        quarantine_manager._terminate_process_group = lambda _process, _identity: (_ for _ in ()).throw(auth_module.process_groups.ReviewerProcessGroupError('runtime'))
+                        if quarantine_manager._thread is None: raise RuntimeError('device manager quarantine thread absent')
+                        quarantine_manager._thread.join(timeout=5)
+                        if quarantine_manager._thread.is_alive() or quarantine_manager._process is None or quarantine_manager._process_group is None: raise RuntimeError('device manager quarantine did not retain failed ownership')
+                        try:
+                            with quarantine_coordinator.activity(): pass
+                        except auth_module.CodexDeviceAuthError: pass
+                        else: raise RuntimeError('quarantined device manager admitted another operation')
+                        process = quarantine_manager._process; process_group = quarantine_manager._process_group; saved_terminate(process, process_group); quarantine_manager._release(process, process_group)
+                    finally: auth_module._DEVICE_DEADLINE_SECONDS = saved_deadline
+                    manager_quarantine_reaped = set(descendants(os.getpid())) == before
+                    if not manager_quarantine_reaped: raise RuntimeError('device manager quarantine tree survived explicit proof cleanup')
                     stage = 'review'; job = jobs/'job'; provider = job/'provider'; job.mkdir(mode=0o700); provider.mkdir(mode=0o700)
                     credential = job/'auth.json'; credential.write_text('{}'); credential.chmod(0o600); result = job/'result.json'
                     stdin = stack.enter_context(open(os.devnull, 'rb')); stdout = stack.enter_context(tempfile.TemporaryFile()); stderr = stack.enter_context(tempfile.TemporaryFile())
@@ -182,7 +198,7 @@ def exercise():
                     finally: os.close(credential_fd)
                     captured['thread'].join(timeout=6); stdout.seek(0); document = json.loads(stdout.readline()); ids = captured['ids']; pgids = {value[1] for value in ids}
                     if returncode != 0 or len(ids) != 4 or len(pgids) != 1 or ids[0] != captured['broker'] or set(descendants(os.getpid())) != before: raise RuntimeError('owned reviewer tree proof failed')
-                    document.update({'limits': captured['limits'], 'lineage': ids, 'one_group': True, 'manager_cancel_reaped': manager_cancel_reaped, 'manager_timeout_reaped': manager_timeout_reaped, 'manager_handoff_reaped': manager_handoff_reaped}); runs.append(document)
+                    document.update({'limits': captured['limits'], 'lineage': ids, 'one_group': True, 'manager_cancel_reaped': manager_cancel_reaped, 'manager_timeout_reaped': manager_timeout_reaped, 'manager_handoff_reaped': manager_handoff_reaped, 'manager_quarantine_reaped': manager_quarantine_reaped}); runs.append(document)
             finally:
                 with lock: inside -= 1
     except BaseException as error: errors.append(stage + ':' + type(error).__name__ + ':' + str(error))
@@ -250,6 +266,7 @@ def main() -> int:
         and document["manager_cancel_reaped"] is True
         and document["manager_timeout_reaped"] is True
         and document["manager_handoff_reaped"] is True
+        and document["manager_quarantine_reaped"] is True
         and document["runs"] == 2
         and document["limits"] == expected_limits
         and document["payload_as"] == expected_limits[-1]
