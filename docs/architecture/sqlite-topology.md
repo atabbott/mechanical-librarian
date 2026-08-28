@@ -80,28 +80,28 @@ nearest KiB.
 | Control/configuration | `field_effect_authorities` | 0 R / 4 KiB | authority revocation/currentness; effect claim reader | Mutable authority witness for a decision after its immutable decision document is recorded. |
 | Control/configuration | `field_effect_consents` | 0 R / 4 KiB | owner consent grant/revoke; effect claim reader | Consent is separately revocable and library scoped. |
 | Control/configuration | `field_effect_manual_holds` | 0 R / 4 KiB | owner-decision return/release; pipeline/effect readers | Manual hold controls automatic return independently of policy or consent. |
+| Control/configuration | `reviewer_access` | not present in retained pre-F31 snapshot | reviewer-access repository; setup, Settings and dispatch readers | Singleton owns the exact optional task-to-engine/model mapping independently of deployment profile authority. |
+| Security/credential | `reviewer_access_secrets` | not present in retained pre-F31 snapshot | reviewer-access repository only | Write-only OpenRouter credential state is separated from its public presence and selection document. |
 
-## Exact production owner matrix
+## Historical pre-F31 owner matrix
 
-The offline `review-owner-decision-actions-v1` plan accepts only the frozen
-pre-#830 four-column `review_case_field_facts` schema. It checks the literal
-target against the installed build before filesystem access, then verifies the
-literal source and target after opening the bound database before replacing only that
-derived table and `review_cases_project_field_facts` trigger from
-immutable case JSON. Canonical, provider, decision, shadow, operational, and
-all other derived rows are digest-preserved.
+The following matrix is retained as August 2026 audit evidence. Its adoption
+columns describe the now-retired pre-F31 qualification seam and are not an
+installed command or current compatibility promise. ADR-0062 declares a clean
+rebuild and removes that code; current startup relies on the open-time exact
+checks identified here plus the reviewer-access singleton/secret validation in
+the executable schema.
 
 `W` names the persistence method that writes the relation. `O` names the
 owner-visible read path; a dash means the relation has no direct owner-visible
-surface and is used only to protect a later operation. `I/A` distinguishes
-open-time integrity (`schema._validate_schema_contents`, including exact object,
-foreign-key and `integrity_check` validation) from offline adoption. Adoption's
-`schema_adoption._application_table_digest` covers every non-derived application
-table. Its `_validate_canonical_documents` additionally validates every
-`document` column, while the two derived fact relations are separately
-reconstructed and checked by `_validate_review_field_facts` during open-time
-validation and adoption. This matrix was cross-checked against the persistence
-code graph and the named source symbols.
+surface and is used only to protect a later operation. `I/A` is the historical
+column label: `I` names current open-time integrity
+(`schema._validate_schema_contents`, including exact object, foreign-key and
+`integrity_check` validation), while `A` entries describe deleted qualification
+code and grant no current adoption path. Current canonical documents and the
+two derived fact relations are checked by the executable open-time validators.
+This matrix was cross-checked against the persistence code graph and the named
+source symbols at the time of the audit.
 
 | Table | W: production writer | O: owner-visible reader | I/A: additional exact check |
 | --- | --- | --- | --- |
@@ -152,11 +152,10 @@ code graph and the named source symbols.
 
 This compact cross-check separates all production occurrence classes rather than
 treating a read as ownership. `S` is the mandatory exact-schema/open integrity
-check; `D` is `schema_adoption._application_table_digest`; `C` is
-`schema_adoption._validate_canonical_documents`; and `F` is
-`schema._validate_review_field_facts` plus adoption reconstruction. Thus each
-row's validation and adoption column is explicit even where the common check is
-the only occurrence. Names are module-local persistence symbols.
+check and `F` is `schema._validate_review_field_facts`. The historical `D` and
+`C` marks in the Adoption column refer to the retired qualification seam and
+are not callable source symbols in this build. Names outside that historical
+column are module-local persistence symbols.
 
 | Table | Writers | Internal / operational reads | Owner-visible reads | Validation | Adoption |
 | --- | --- | --- | --- | --- | --- |

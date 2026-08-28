@@ -130,6 +130,13 @@ parser. A clean rebuild may be required and old state may be retained offline.
 Exact-ID and current-scope replay apply only within the exact current schema;
 current-schema restart, replay, and crash safety remain mandatory.
 
+The F31 reviewer-access increment declares a clean rebuild. It admits only
+`setup-state-v2`, `owner-settings-v2`, `reviewer-access-v1`, and the exact
+current application objects; the former offline exact-predecessor plans and
+their public command are retired. Reviewer engine/model provenance remains
+readable only inside `cover-consideration-v3` and its matching current report
+schema.
+
 The guarded-effect plan, authority, consent, recovery-action, cleanup-obligation
 tables, control row, and append-only audit events are part
 of the exact current application schema. A database without them, with altered

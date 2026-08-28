@@ -5,7 +5,7 @@
 - Owners: project maintainers
 - Supersedes: the `review_sessions` / `review_login_failures` placement in
   ADR-0057's application-database topology
-- Superseded by: none
+- Superseded by: ADR-0062 for this decision's application-schema adoption plan
 
 ## Context
 
@@ -90,18 +90,11 @@ exact schema) or its exact current state, and rejects anything else clearly
 and without mutation. Its clean rebuild is deleting the file, at the cost of
 one owner re-login; it never needs adoption machinery of its own.
 
-The application-schema change ships one new offline adoption plan,
-`review-session-decoupling-v1`, whose exact immediate predecessor is the
-previous target schema and whose only mutation drops the two session tables.
-The two existing plans, `review-owner-decision-actions-v1` and
-`owner-settings-v1`, gain the same drop, so every documented predecessor
-still adopts to the single current target. This extends ADR-0013's adoption
-confinement — reconstructible derived objects — to expendable operational
-security state for these plans: the drop discards at most a few live session
-digests (one owner re-login) and throttle timestamps inside a five-minute
-window, state whose loss the product already tolerates through expiry and
-pruning. No canonical, audit, control, or derived row is touched, and the
-per-table digest equality over every remaining table proves it.
+This change originally shipped an exact-predecessor offline plan that dropped
+the two session tables and retargeted the two then-current older plans. ADR-0062
+retires all three plans and their command because F31 changes the current
+application schema and declares a clean rebuild. The dedicated session
+placement and its absent-or-exact-current restart contract remain accepted.
 
 ## Consequences
 

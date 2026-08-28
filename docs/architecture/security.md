@@ -50,15 +50,12 @@ deletion, repair, import, schema-migration, or backward-compatibility authority.
 An existing database must match the installed increment's exact current schema
 before any writable connection or mutation.
 
-The named offline `schema-adopt` commands are the pre-release exceptions to
-exact-current startup. Each rejects a live-build target that differs from its
-literal plan target before path access, then validates one literal predecessor
-and target schema contract against the bound database. Plans may rebuild only
-their declared reconstructible derived objects or discard the dedicated
-session store's expendable digests and bounded throttle timestamps under
-exclusive, owner-only backup-protected authority. They receive no
-configuration, credentials, network, provider, reviewer, media, target,
-decision, canonical-row write, import, repair, or arbitrary-SQL authority.
+This build has no offline schema-adoption command. Earlier exact-predecessor
+plans are retired because reviewer-access and owner-state tables change the
+current application schema. Older state is rejected before mutation and needs
+a clean rebuild; no configuration, credential, network, provider, reviewer,
+media, target, decision, canonical-row, import, repair, or arbitrary-SQL
+authority is created for upgrading it.
 
 Foreground batch manifests are private immutable operator artifacts. Preview and
 read bind bounded regular no-follow descriptors under a private parent, validate
