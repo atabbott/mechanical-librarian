@@ -131,7 +131,7 @@ def test_unconfigured_dispatch_constructs_neither_engine() -> None:
     assert codex == []
 
 
-def test_generic_reads_do_not_touch_codex_for_none_or_openrouter() -> None:
+def test_generic_reads_only_use_cheap_codex_host_evidence() -> None:
     operations, auth, _openrouter, codex = _operations()
     host_calls: list[str] = []
 
@@ -147,7 +147,7 @@ def test_generic_reads_do_not_touch_codex_for_none_or_openrouter() -> None:
     assert operations.read().mapping is not None
     assert auth.status_calls == 0
     assert auth.current_calls == 0
-    assert host_calls == []
+    assert host_calls == ["host", "host", "host"]
     assert codex == []
 
 

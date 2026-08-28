@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 from threading import Event
 from typing import Any, cast
+from unittest.mock import Mock
 
 import pytest
 
@@ -22,6 +23,7 @@ from mechanical_librarian.adapters.reviewers.codex_device_auth import (
     _issued_state,
     _stop_process,
 )
+from mechanical_librarian.bootstrap.composition import _LazyCodexAuth
 
 _PROMPT = (
     b"Open this URL in your browser\n"
@@ -67,6 +69,17 @@ class _Chunked(io.BytesIO):
         return super().read(7 if size is None else min(size, 7))
 
 
+class _BlockingStream:
+    def __init__(self, entered: Event, release: Event) -> None:
+        self._entered = entered
+        self._release = release
+
+    def read(self, _size: int) -> bytes:
+        self._entered.set()
+        self._release.wait(timeout=2)
+        return b""
+
+
 def _manager(
     tmp_path: Path,
     *,
@@ -78,8 +91,9 @@ def _manager(
         return ([action, str(staging)], {"CODEX_HOME": str(staging)})
 
     def popen(command: list[str], **_kwargs: Any):
-        staging = Path(command[1])
-        if command[0] == "status":
+        action = command[-2]
+        staging = Path(command[-1])
+        if action == "status":
             completed = status or subprocess.CompletedProcess(
                 ("status",), 0, b"Logged in using ChatGPT\n", b""
             )
@@ -251,7 +265,7 @@ def test_status_deadline_stops_child_before_read(
 
     with pytest.raises(subprocess.TimeoutExpired):
         _bounded_status(
-            lambda *_args, **_kwargs: cast("subprocess.Popen[bytes]", process),
+            cast("subprocess.Popen[bytes]", process),
             prepared,
             time.monotonic() - 1,
         )
@@ -366,7 +380,7 @@ def test_cancel_between_status_validation_and_install_wins_without_install(
     original = manager._popen
 
     def blocked_status(command: list[str], **kwargs: Any):
-        if command[0] == "status":
+        if command[-2] == "status":
             validating.set()
             release.wait(timeout=2)
         return original(command, **kwargs)
@@ -383,18 +397,57 @@ def test_cancel_between_status_validation_and_install_wins_without_install(
     assert not (tmp_path / "profile" / "auth.json").exists()
 
 
-def test_device_child_receives_the_resource_limit_installer(tmp_path: Path) -> None:
+def test_cancel_owns_and_stops_spawned_validation_child(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = _manager(tmp_path)
+    entered = Event()
+    release = Event()
+    validation = _Process(b"", 0)
+    validation.returncode = None  # type: ignore[assignment]
+    validation.stdout = _BlockingStream(entered, release)  # type: ignore[assignment]
+    original = manager._popen
+
+    def popen(command: list[str], **kwargs: Any):
+        return validation if command[-2] == "status" else original(command, **kwargs)
+
+    manager._popen = popen
+
+    def terminate(_pid: int, _signal: int) -> None:
+        validation.returncode = -15
+
+    monkeypatch.setattr(os, "killpg", terminate)
+    manager.start()
+    assert entered.wait(timeout=2)
+    assert cast("object", manager._process) is validation
+    assert manager.cancel().state == "cancelled"
+    release.set()
+    assert manager._thread is not None
+    manager._thread.join(timeout=2)
+    assert not manager._thread.is_alive()
+    assert validation.poll() == -15
+    assert not (tmp_path / "profile" / "auth.json").exists()
+
+
+def test_device_child_uses_the_installed_resource_exec_wrapper(tmp_path: Path) -> None:
     manager = _manager(tmp_path)
     captured: dict[str, object] = {}
+    commands: list[list[str]] = []
     original = manager._popen
 
     def capturing_popen(command: list[str], **kwargs: Any):
         captured.update(kwargs)
+        commands.append(command)
         return original(command, **kwargs)
 
     manager._popen = capturing_popen
     _finish(manager)
-    assert callable(captured["preexec_fn"])
+    assert "preexec_fn" not in captured
+    assert tuple(commands[0][1:3]) == (
+        "-m",
+        "mechanical_librarian.adapters.reviewers.resource_exec",
+    )
+    assert commands[0][-2] == "start"
 
 
 def test_clear_failures_never_report_success(
@@ -414,6 +467,15 @@ def test_clear_failures_never_report_success(
     with pytest.raises(CodexDeviceAuthError):
         manager.clear()
     assert installed.exists()
+
+
+def test_lazy_production_wrapper_propagates_clear_failure() -> None:
+    manager = Mock(spec=CodexDeviceAuthManager)
+    manager.clear.side_effect = OSError("private unlink detail")
+    lazy = _LazyCodexAuth(lambda: manager)
+
+    with pytest.raises(OSError, match="private unlink detail"):
+        lazy.clear()
 
 
 def test_restart_cleans_private_staging_and_reports_interruption(

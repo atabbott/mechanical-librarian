@@ -206,7 +206,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             ),
         )
         self._owner_settings = OwnerSettingsStore(connection)
-        self._reviewer_access = ReviewerAccessStore(connection)
+        self._reviewer_access = ReviewerAccessStore(
+            connection, self._setup_serialization_lock
+        )
         self._review_scans = SQLiteReviewScanRepository(connection)
         self._field_effects = SQLiteFieldEffectRepository(
             connection,

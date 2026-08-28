@@ -536,6 +536,12 @@ describe('owner settings route', () => {
         model: 'dots-studio/dots-3-note-preview:free',
       },
       openrouter_key_configured: true,
+      openrouter: {
+        ...reviewerView.openrouter,
+        state: 'usable' as const,
+        model: 'dots-studio/dots-3-note-preview:free',
+        tier: 'free' as const,
+      },
     }))
     renderRoute('/settings?group=reviewer', http)
 
@@ -560,6 +566,7 @@ describe('owner settings route', () => {
       }),
     )
     expect(key).toHaveValue('')
+    expect(await screen.findByText('Status: usable')).toBeVisible()
   })
 
   it('requires confirmation before clearing a reviewer key and restores cancel focus', async () => {
@@ -597,5 +604,30 @@ describe('owner settings route', () => {
     await user.click(screen.getByRole('button', { name: 'Clear OpenRouter key' }))
     await user.click(screen.getByRole('button', { name: 'Confirm clear OpenRouter key' }))
     await waitFor(() => expect(http.clearOpenRouter).toHaveBeenCalledWith(3))
+  })
+
+  it('requires confirmation before replacing a reviewer key and restores cancel focus', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => ({
+      ...reviewerView,
+      mapping: {
+        engine: 'openrouter' as const,
+        model: 'dots-studio/dots-3-note-preview:free',
+      },
+      openrouter_key_configured: true,
+    }))
+    renderRoute('/settings?group=reviewer', http)
+
+    await user.type(await screen.findByRole('textbox', { name: 'Model ID' }), 'provider/model')
+    await user.type(screen.getByLabelText('API key'), 'replacement-key')
+    const replace = screen.getByRole('button', { name: 'Replace OpenRouter key' })
+    await user.click(replace)
+    expect(http.configureOpenRouter).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Keep existing OpenRouter key' }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Replace OpenRouter key' })).toHaveFocus(),
+    )
   })
 })

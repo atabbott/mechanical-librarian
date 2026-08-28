@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from threading import RLock
 from typing import Literal, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, StrictStr
@@ -183,15 +182,18 @@ class ReviewerAccessOperations:
         self._codex_binding = codex_binding
         self._codex_identity = codex_identity or (lambda: self._codex_binding()[:2])
         self._openrouter_factory = openrouter_factory
-        self._gate = RLock()
+        self._serialized: Callable[[Callable[[], object]], object] = lambda call: call()
+
+    def attach_serialization(
+        self, serialized: Callable[[Callable[[], object]], object]
+    ) -> None:
+        self._serialized = serialized
 
     def read(self) -> ReviewerAccessView:
-        with self._gate:
-            return self._view()
+        return cast("ReviewerAccessView", self._serialized(self._view))
 
     def refresh_openrouter(self) -> ReviewerAccessView:
-        with self._gate:
-            return self._refresh_openrouter()
+        return cast("ReviewerAccessView", self._serialized(self._refresh_openrouter))
 
     def _refresh_openrouter(self) -> ReviewerAccessView:
         document, configured = self._repository.read()
@@ -249,8 +251,14 @@ class ReviewerAccessOperations:
             )
         else:
             # Generic access reads remain engine-neutral and cannot initialize
-            # CODEX_HOME, parse the contained profile, or inspect host memory.
-            codex = ReviewerEngineStatus(engine="codex", state="ready")
+            # CODEX_HOME, parse the contained profile, or inspect credentials.
+            host = self._codex_host()
+            codex = ReviewerEngineStatus(
+                engine="codex",
+                state="ready" if host.available else "host_unsupported",
+                reason=None if host.available else host.reason,
+                host_headroom_bytes=host.headroom_bytes,
+            )
         openrouter_status = openrouter or ReviewerEngineStatus(
             engine="openrouter", state="unconfigured"
         )
@@ -277,10 +285,14 @@ class ReviewerAccessOperations:
     def configure_openrouter(
         self, *, expected_revision: int, api_key: str, model: str
     ) -> ReviewerAccessView:
-        with self._gate:
-            return self._configure_openrouter(
-                expected_revision=expected_revision, api_key=api_key, model=model
-            )
+        return cast(
+            "ReviewerAccessView",
+            self._serialized(
+                lambda: self._configure_openrouter(
+                    expected_revision=expected_revision, api_key=api_key, model=model
+                )
+            ),
+        )
 
     def _configure_openrouter(
         self, *, expected_revision: int, api_key: str, model: str
@@ -309,8 +321,12 @@ class ReviewerAccessOperations:
         )
 
     def select_codex(self, *, expected_revision: int) -> ReviewerAccessView:
-        with self._gate:
-            return self._select_codex(expected_revision=expected_revision)
+        return cast(
+            "ReviewerAccessView",
+            self._serialized(
+                lambda: self._select_codex(expected_revision=expected_revision)
+            ),
+        )
 
     def _select_codex(self, *, expected_revision: int) -> ReviewerAccessView:
         host = self._codex_host()
@@ -326,13 +342,19 @@ class ReviewerAccessOperations:
         return self.read()
 
     def select_none(self, *, expected_revision: int) -> ReviewerAccessView:
-        with self._gate:
+        def select() -> ReviewerAccessView:
             self._replace_selection(expected_revision, None)
             return self._view()
 
+        return cast("ReviewerAccessView", self._serialized(select))
+
     def clear_openrouter(self, *, expected_revision: int) -> ReviewerAccessView:
-        with self._gate:
-            return self._clear_openrouter(expected_revision=expected_revision)
+        return cast(
+            "ReviewerAccessView",
+            self._serialized(
+                lambda: self._clear_openrouter(expected_revision=expected_revision)
+            ),
+        )
 
     def _clear_openrouter(self, *, expected_revision: int) -> ReviewerAccessView:
         document, _configured = self._repository.read()
@@ -350,7 +372,7 @@ class ReviewerAccessOperations:
         return self._view()
 
     def start_codex(self, *, expected_revision: int) -> CodexDeviceAuthState:
-        with self._gate:
+        def start() -> CodexDeviceAuthState:
             document, _configured = self._repository.read()
             if document.revision != expected_revision:
                 raise ReviewerAccessApplicationError("access_changed")
@@ -360,8 +382,10 @@ class ReviewerAccessOperations:
                 raise ReviewerAccessApplicationError("host_unsupported")
             return self._codex_auth.start()
 
+        return cast("CodexDeviceAuthState", self._serialized(start))
+
     def codex_status(self) -> CodexDeviceAuthState:
-        with self._gate:
+        def status() -> CodexDeviceAuthState:
             flow = self._codex_auth.status()
             if flow.state in {
                 "starting",
@@ -377,12 +401,13 @@ class ReviewerAccessOperations:
                 return flow
             return self._codex_auth.current_credential_status()
 
+        return cast("CodexDeviceAuthState", self._serialized(status))
+
     def cancel_codex(self) -> CodexDeviceAuthState:
-        with self._gate:
-            return self._codex_auth.cancel()
+        return cast("CodexDeviceAuthState", self._serialized(self._codex_auth.cancel))
 
     def clear_codex(self, *, expected_revision: int) -> ReviewerAccessView:
-        with self._gate:
+        def clear() -> ReviewerAccessView:
             document, _configured = self._repository.read()
             if document.revision != expected_revision:
                 raise ReviewerAccessApplicationError("access_changed")
@@ -398,9 +423,12 @@ class ReviewerAccessOperations:
             self._replace_selection(expected_revision, selection)
             return self._view()
 
+        return cast("ReviewerAccessView", self._serialized(clear))
+
     def dispatch_cover_observation(self) -> ReviewerDispatch:
-        with self._gate:
-            return self._dispatch_cover_observation()
+        return cast(
+            "ReviewerDispatch", self._serialized(self._dispatch_cover_observation)
+        )
 
     def _dispatch_cover_observation(self) -> ReviewerDispatch:
         document, key = self._repository.snapshot()
@@ -428,8 +456,10 @@ class ReviewerAccessOperations:
         self,
     ) -> tuple[int, str, str, bytes] | None:
         """Return non-secret replay identity without constructing an engine."""
-        with self._gate:
-            return self._current_cover_observation_identity()
+        return cast(
+            "tuple[int, str, str, bytes] | None",
+            self._serialized(self._current_cover_observation_identity),
+        )
 
     def _current_cover_observation_identity(
         self,
@@ -452,12 +482,13 @@ class ReviewerAccessOperations:
         )
 
     def revision_is_current(self, revision: int) -> bool:
-        with self._gate:
-            return self._repository.revision_is_current(revision)
+        return cast(
+            "bool",
+            self._serialized(lambda: self._repository.revision_is_current(revision)),
+        )
 
     def close(self) -> None:
-        with self._gate:
-            self._codex_auth.close()
+        self._serialized(self._codex_auth.close)
 
     def _replace_selection(
         self, expected_revision: int, selection: ReviewerTaskSelection | None

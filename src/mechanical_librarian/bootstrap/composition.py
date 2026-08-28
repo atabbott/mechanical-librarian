@@ -3011,7 +3011,7 @@ class _LazyCodexAuth:
         return self._state("cancel")
 
     def clear(self) -> CodexDeviceAuthState:
-        return self._state("clear")
+        return self._get().clear()
 
     def current_credential_status(self) -> CodexDeviceAuthState:
         return self._state("current_credential_status")

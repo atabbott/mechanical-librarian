@@ -39,7 +39,10 @@ from mechanical_librarian.domain.owner_settings import LibrarySettings, Provider
 from mechanical_librarian.domain.reviewer_access import OpenRouterModelId
 from mechanical_librarian.domain.setup_state import SetupStateDocument
 from mechanical_librarian.domain.validation import OWNER_SESSION_LIFETIME_DEFAULT
-from mechanical_librarian.interfaces.web.app import BodyLimitMiddleware
+from mechanical_librarian.interfaces.web.app import (
+    BodyLimitMiddleware,
+    reviewer_failure_response,
+)
 from mechanical_librarian.interfaces.web.setup_frontend import (
     SETUP_CSS,
     SETUP_HTML,
@@ -582,6 +585,10 @@ def create_setup_app(
                 raise HTTPException(503, {"error": "reviewer_access_unavailable"})
             return reviewer_access
 
+        def reviewer_problem(error: Exception) -> HTTPException:
+            status, code = reviewer_failure_response(error)
+            return HTTPException(status, {"error": code})
+
         @app.post("/api/setup/reviewer/openrouter")
         def configure_openrouter(
             request: _OpenRouterWriteRequest,
@@ -596,10 +603,12 @@ def create_setup_app(
                     api_key=request.api_key.get_secret_value(),
                     model=request.model,
                 )
-            except ReviewerAccessApplicationError as error:
-                raise HTTPException(422, {"error": error.code}) from None
-            except (ReviewerAccessRepositoryError, ValueError):
-                raise HTTPException(409, {"error": "reviewer_access_invalid"}) from None
+            except (
+                ReviewerAccessApplicationError,
+                ReviewerAccessRepositoryError,
+                ValueError,
+            ) as error:
+                raise reviewer_problem(error) from None
 
         @app.post("/api/setup/reviewer/selection")
         def select_reviewer(
@@ -618,10 +627,11 @@ def create_setup_app(
                 return operations.select_none(
                     expected_revision=request.expected_revision
                 )
-            except ReviewerAccessApplicationError as error:
-                raise HTTPException(422, {"error": error.code}) from None
-            except ReviewerAccessRepositoryError:
-                raise HTTPException(409, {"error": "reviewer_access_stale"}) from None
+            except (
+                ReviewerAccessApplicationError,
+                ReviewerAccessRepositoryError,
+            ) as error:
+                raise reviewer_problem(error) from None
 
         @app.post("/api/setup/reviewer/codex/device")
         def start_codex_device(
@@ -635,8 +645,11 @@ def create_setup_app(
                 return reviewer_authority().start_codex(
                     expected_revision=request.expected_revision
                 )
-            except ReviewerAccessApplicationError as error:
-                raise HTTPException(422, {"error": error.code}) from None
+            except (
+                ReviewerAccessApplicationError,
+                ReviewerAccessRepositoryError,
+            ) as error:
+                raise reviewer_problem(error) from None
 
         @app.get("/api/setup/reviewer/codex/device")
         def codex_device_status(

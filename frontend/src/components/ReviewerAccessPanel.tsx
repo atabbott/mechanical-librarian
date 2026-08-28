@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 
 import { ApiError } from '../api/http'
@@ -32,6 +32,7 @@ const failureCopy: Readonly<Record<string, string>> = {
 }
 
 export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
+  const queryClient = useQueryClient()
   const query = useQuery({
     queryKey: ['reviewer-access'] as const,
     queryFn: ({ signal }) => http.getReviewerAccess(signal),
@@ -41,12 +42,22 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
   const [key, setKey] = useState('')
   const [deviceActive, setDeviceActive] = useState(false)
   const [confirmClear, setConfirmClear] = useState<'codex' | 'openrouter' | null>(null)
+  const [confirmReplace, setConfirmReplace] = useState<'codex' | 'openrouter' | null>(null)
   const codexClearTrigger = useRef<HTMLButtonElement>(null)
   const openrouterClearTrigger = useRef<HTMLButtonElement>(null)
+  const codexReplaceTrigger = useRef<HTMLButtonElement>(null)
+  const openrouterReplaceTrigger = useRef<HTMLButtonElement>(null)
   const cancelClear = (engine: 'codex' | 'openrouter') => {
     setConfirmClear(null)
     window.setTimeout(() => {
       const trigger = engine === 'codex' ? codexClearTrigger : openrouterClearTrigger
+      trigger.current?.focus()
+    }, 0)
+  }
+  const cancelReplace = (engine: 'codex' | 'openrouter') => {
+    setConfirmReplace(null)
+    window.setTimeout(() => {
+      const trigger = engine === 'codex' ? codexReplaceTrigger : openrouterReplaceTrigger
       trigger.current?.focus()
     }, 0)
   }
@@ -71,12 +82,14 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
         model: action.model,
       })
     },
-    onSuccess: (_result, action) => {
+    onSuccess: (result, action) => {
       setKey('')
       setConfirmClear(null)
+      setConfirmReplace(null)
       if (action.kind === 'codex-start') setDeviceActive(true)
       if (action.kind === 'codex-cancel' || action.kind === 'codex-clear') setDeviceActive(false)
-      void query.refetch()
+      if (result === null) void query.refetch()
+      else queryClient.setQueryData(['reviewer-access'], result)
     },
   })
   const waiting =
@@ -190,6 +203,33 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
               >
                 Use Codex for cover observations
               </button>
+              <button type="button" onClick={() => setDeviceActive(true)}>
+                Check existing Codex sign-in
+              </button>
+              {confirmReplace === 'codex' ? (
+                <div role="group" aria-label="Confirm replace Codex sign-in">
+                  <button
+                    type="button"
+                    autoFocus
+                    onClick={() =>
+                      mutation.mutate({ kind: 'codex-start', revision: view.revision })
+                    }
+                  >
+                    Confirm replace Codex sign-in
+                  </button>
+                  <button type="button" onClick={() => cancelReplace('codex')}>
+                    Keep existing Codex sign-in
+                  </button>
+                </div>
+              ) : (
+                <button
+                  ref={codexReplaceTrigger}
+                  type="button"
+                  onClick={() => setConfirmReplace('codex')}
+                >
+                  Replace Codex sign-in
+                </button>
+              )}
               {confirmClear === 'codex' ? (
                 <div role="group" aria-label="Confirm clear Codex sign-in">
                   <button
@@ -288,14 +328,28 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
           />
           <small>The key is write-only and is never returned to this page.</small>
           <button
+            ref={openrouterReplaceTrigger}
             type="button"
             disabled={mutation.isPending || !model || !key}
-            onClick={() =>
+            onClick={() => {
+              if (view.openrouter_key_configured && confirmReplace !== 'openrouter') {
+                setConfirmReplace('openrouter')
+                return
+              }
               mutation.mutate({ kind: 'openrouter', revision: view.revision, key, model })
-            }
+            }}
           >
-            Validate and use OpenRouter
+            {view.openrouter_key_configured
+              ? confirmReplace === 'openrouter'
+                ? 'Confirm replace OpenRouter key'
+                : 'Replace OpenRouter key'
+              : 'Validate and use OpenRouter'}
           </button>
+          {confirmReplace === 'openrouter' ? (
+            <button type="button" onClick={() => cancelReplace('openrouter')}>
+              Keep existing OpenRouter key
+            </button>
+          ) : null}
           {view.openrouter_key_configured ? (
             <>
               <button

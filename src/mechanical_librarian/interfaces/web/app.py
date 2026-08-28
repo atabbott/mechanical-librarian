@@ -1672,6 +1672,23 @@ def _register_settings_routes(
         return cast(SettingsView, value)
 
 
+def reviewer_failure_response(error: Exception) -> tuple[int, str]:
+    """Translate reviewer failures through one closed HTTP vocabulary."""
+    if isinstance(error, ReviewerAccessRepositoryError):
+        return (
+            (409, "reviewer_access_stale")
+            if str(error).endswith("stale")
+            else (503, "reviewer_access_unavailable")
+        )
+    if isinstance(error, ReviewerAccessApplicationError):
+        if error.code == "access_changed":
+            return 409, error.code
+        if error.code in {"credential_clear_failed", "unreachable"}:
+            return 503, error.code
+        return 422, error.code
+    return 422, "reviewer_access_invalid"
+
+
 def _register_reviewer_access_routes(
     app: FastAPI,
     application: ReviewApplication,
@@ -1684,19 +1701,7 @@ def _register_reviewer_access_routes(
         return value
 
     def problem(error: Exception) -> HTTPException:
-        if isinstance(error, ReviewerAccessRepositoryError):
-            status = 409 if str(error).endswith("stale") else 503
-            code = (
-                "reviewer_access_stale"
-                if status == 409
-                else "reviewer_access_unavailable"
-            )
-        elif isinstance(error, ReviewerAccessApplicationError):
-            status = 503 if error.code == "unreachable" else 422
-            code = error.code
-        else:
-            status = 422
-            code = "reviewer_access_invalid"
+        status, code = reviewer_failure_response(error)
         return HTTPException(status, detail={"code": code})
 
     @app.get(

@@ -9,7 +9,11 @@ from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
 
 from mechanical_librarian.application.review_web import OwnerSessionService
-from mechanical_librarian.application.reviewer_access import ReviewerAccessOperations
+from mechanical_librarian.application.reviewer_access import (
+    ReviewerAccessApplicationError,
+    ReviewerAccessOperations,
+    ReviewerAccessRepositoryError,
+)
 from mechanical_librarian.application.setup_connection import SetupConnectionError
 from mechanical_librarian.application.setup_journey import SetupJourneyOperation
 from mechanical_librarian.domain.setup_state import (
@@ -19,9 +23,31 @@ from mechanical_librarian.domain.setup_state import (
 from mechanical_librarian.interfaces.web.app import (
     owner_password_binding,
     owner_password_verifier,
+    reviewer_failure_response,
 )
 from mechanical_librarian.interfaces.web.setup import create_setup_app
 from mechanical_librarian.interfaces.web.setup_frontend import SETUP_JS
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    (
+        (ReviewerAccessApplicationError("access_changed"), (409, "access_changed")),
+        (
+            ReviewerAccessApplicationError("credential_clear_failed"),
+            (503, "credential_clear_failed"),
+        ),
+        (
+            ReviewerAccessRepositoryError("reviewer access is unavailable"),
+            (503, "reviewer_access_unavailable"),
+        ),
+        (ValueError("invalid"), (422, "reviewer_access_invalid")),
+    ),
+)
+def test_reviewer_failure_translation_is_shared_and_closed(
+    error: Exception, expected: tuple[int, str]
+) -> None:
+    assert reviewer_failure_response(error) == expected
 
 
 class _Sessions:
@@ -781,3 +807,6 @@ def test_setup_library_step_uses_audiobookshelf_book_kind_without_owner_choice()
         in SETUP_JS
     )
     assert "state.mounts.length?'Retest mounts':'Check mounts'" in SETUP_JS
+    assert "const codexState=codexTerminal||access.codex" in SETUP_JS
+    assert "codexTerminal=device;await render()" in SETUP_JS
+    assert "invalid_key:'OpenRouter rejected this key." in SETUP_JS

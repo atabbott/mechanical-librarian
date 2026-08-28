@@ -198,6 +198,78 @@ def test_reviewer_transition_failure_rolls_back_both_authorities(
     assert key == "reusable-secret"
 
 
+@pytest.mark.parametrize("owner", ("setup", "reviewer"))
+def test_same_connection_ports_serialize_whole_transactions(
+    tmp_path: Path, owner: str
+) -> None:
+    connection = sqlite3.connect(
+        tmp_path / "setup.db", isolation_level=None, check_same_thread=False
+    )
+    _create_schema(connection)
+    lock = threading.RLock()
+    setup = SetupStateStore(connection, lock)
+    reviewer_store = ReviewerAccessStore(connection, lock)
+    state = _reviewer_ready(setup)
+    reviewer = _configured_reviewer(reviewer_store)
+    entered = threading.Event()
+    release = threading.Event()
+    other_started = threading.Event()
+    other_done = threading.Event()
+    errors: list[BaseException] = []
+
+    def hold() -> int:
+        entered.set()
+        release.wait(timeout=2)
+        return 1
+
+    connection.create_function("hold_owner_transaction", 0, hold)
+    table = "owner_settings" if owner == "setup" else "reviewer_access"
+    connection.execute(
+        f"CREATE TRIGGER hold_owner BEFORE UPDATE ON {table} "
+        "BEGIN SELECT hold_owner_transaction(); END"
+    )
+
+    def owning_operation() -> None:
+        try:
+            if owner == "setup":
+                setup.transition_reviewer(
+                    _reviewer_successor(state, "skipped"), state.revision, 2, "skipped"
+                )
+            else:
+                reviewer_store.replace(
+                    reviewer.model_copy(
+                        update={"revision": 3, "cover_observation": None}
+                    ),
+                    2,
+                )
+        except BaseException as error:
+            errors.append(error)
+
+    def other_operation() -> None:
+        other_started.set()
+        try:
+            reviewer_store.snapshot() if owner == "setup" else setup.read()
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            other_done.set()
+
+    first = threading.Thread(target=owning_operation)
+    first.start()
+    assert entered.wait(timeout=2)
+    second = threading.Thread(target=other_operation)
+    second.start()
+    assert other_started.wait(timeout=2)
+    assert not other_done.wait(timeout=0.05)
+    release.set()
+    first.join(timeout=2)
+    second.join(timeout=2)
+
+    assert errors == []
+    assert other_done.is_set()
+    assert not connection.in_transaction
+
+
 def test_initialize_creates_the_only_verifier_free_resumable_setup_state() -> None:
     _connection, store = _store()
 

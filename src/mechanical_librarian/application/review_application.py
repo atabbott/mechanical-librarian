@@ -405,6 +405,8 @@ class ReviewApplication:
         self._cover_considerations = cover_considerations
         self._settings = settings
         self._reviewer_access = reviewer_access
+        if reviewer_access is not None:
+            reviewer_access.attach_serialization(self.serialized)
         self._settings_activation = settings_activation
         self._first_boot = first_boot
         self._acknowledge_first_boot = acknowledge_first_boot

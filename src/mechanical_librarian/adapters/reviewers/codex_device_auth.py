@@ -5,13 +5,13 @@ from __future__ import annotations
 import json
 import os
 import re
-import resource
 import secrets
 import selectors
 import shutil
 import signal
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -29,10 +29,7 @@ _MAX_OUTPUT_BYTES = 16_384
 _MAX_AUTH_BYTES = 65_536
 _DEVICE_DEADLINE_SECONDS = 900
 _SHUTDOWN_GRACE_SECONDS = 5
-_AUTH_ADDRESS_SPACE_BYTES = 1_073_741_824
-_AUTH_FILE_BYTES = 1_048_576
-_AUTH_OPEN_FILES = 64
-_AUTH_PROCESSES = 32
+_RESOURCE_EXEC_MODULE = "mechanical_librarian.adapters.reviewers.resource_exec"
 
 
 class CodexDeviceAuthError(RuntimeError):
@@ -165,8 +162,8 @@ class CodexDeviceAuthManager:
         try:
             prepared = _prepared(self._command_factory(self._auth_store, "status"))
             try:
-                output, returncode = _bounded_status(
-                    self._popen, prepared, time.monotonic() + 30
+                output, returncode = self._status_command(
+                    prepared, time.monotonic() + 30
                 )
             finally:
                 prepared.close()
@@ -191,18 +188,10 @@ class CodexDeviceAuthManager:
             with self._lock:
                 if self._cancelled:
                     return
-            process = self._popen(
-                prepared.command,
-                env=dict(prepared.environment),
-                pass_fds=prepared.pass_fds,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-                preexec_fn=_limit_device_auth_child,
+            process = self._spawn(
+                prepared,
             )
             with self._lock:
-                self._process = process
                 cancelled = self._cancelled
             if cancelled:
                 _stop_process(process)
@@ -248,7 +237,7 @@ class CodexDeviceAuthManager:
             auth_path = staging / "auth.json"
             _validated_auth(auth_path)
             prepared = _prepared(self._command_factory(staging, "status"))
-            output, returncode = _bounded_status(self._popen, prepared, deadline)
+            output, returncode = self._status_command(prepared, deadline)
             if not (returncode == 0 and output == b"Logged in using ChatGPT\n"):
                 raise CodexDeviceAuthError("permission")
             # The cancellation decision and credential commit are one terminal
@@ -273,10 +262,42 @@ class CodexDeviceAuthManager:
                     _stop_process(process)
                 except CodexDeviceAuthError:
                     pass
-            with self._lock:
-                self._process = None
+            self._release(process)
             if staging is not None:
                 shutil.rmtree(staging, ignore_errors=True)
+
+    def _spawn(self, prepared: CodexAuthCommand) -> subprocess.Popen[bytes]:
+        process = self._popen(
+            _resource_command(prepared.command),
+            env=dict(prepared.environment),
+            pass_fds=prepared.pass_fds,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        with self._lock:
+            self._process = process
+            cancelled = self._cancelled
+        if cancelled:
+            _stop_process(process)
+            self._release(process)
+            raise CodexDeviceAuthError("cancelled")
+        return process
+
+    def _release(self, process: subprocess.Popen[bytes] | None) -> None:
+        with self._lock:
+            if self._process is process:
+                self._process = None
+
+    def _status_command(
+        self, prepared: CodexAuthCommand, deadline: float
+    ) -> tuple[bytes, int]:
+        process = self._spawn(prepared)
+        try:
+            return _bounded_status(process, prepared, deadline)
+        finally:
+            self._release(process)
 
     def _publish_issued(self, lines: list[str]) -> None:
         issued = _issued_state(lines)
@@ -362,33 +383,14 @@ def _stop_process(process: subprocess.Popen[bytes]) -> None:
         raise CodexDeviceAuthError("process")
 
 
-def _limit_device_auth_child() -> None:
-    """Install the qualified contained-auth resource envelope before exec."""
-    for limit, maximum in (
-        (resource.RLIMIT_AS, _AUTH_ADDRESS_SPACE_BYTES),
-        (resource.RLIMIT_FSIZE, _AUTH_FILE_BYTES),
-        (resource.RLIMIT_NOFILE, _AUTH_OPEN_FILES),
-        (resource.RLIMIT_NPROC, _AUTH_PROCESSES),
-    ):
-        soft, hard = resource.getrlimit(limit)
-        accepted = maximum if hard == resource.RLIM_INFINITY else min(maximum, hard)
-        resource.setrlimit(limit, (min(soft, accepted), accepted))
+def _resource_command(command: Sequence[str]) -> tuple[str, ...]:
+    return (sys.executable, "-m", _RESOURCE_EXEC_MODULE, *command)
 
 
 def _bounded_status(
-    popen: PopenFactory, prepared: CodexAuthCommand, deadline: float
+    process: subprocess.Popen[bytes], prepared: CodexAuthCommand, deadline: float
 ) -> tuple[bytes, int]:
     """Run one status command with bounded merged output and one deadline."""
-    process = popen(
-        prepared.command,
-        env=dict(prepared.environment),
-        pass_fds=prepared.pass_fds,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-        preexec_fn=_limit_device_auth_child,
-    )
     if process.stdout is None:
         _stop_process(process)
         raise CodexDeviceAuthError("process")
