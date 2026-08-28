@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import stat
 import sys
 import tempfile
 import threading
@@ -743,6 +744,7 @@ def test_session_survives_exact_current_reopen_and_prior_schema_is_rejected() ->
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "review-sessions.sqlite"
         repository = SQLiteReviewSessionRepository.open(path)
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
         repository.create_review_session("a" * 64, "b" * 64, 100, 200)
         repository.close()
         reopened = SQLiteReviewSessionRepository.open(path)
@@ -783,6 +785,65 @@ def test_session_survives_exact_current_reopen_and_prior_schema_is_rejected() ->
         with pytest.raises(MetadataReportError):
             SQLiteReviewSessionRepository.open(foreign)
         assert foreign.read_bytes() == before
+
+
+def test_existing_empty_session_database_is_rejected_without_mutation(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "review-sessions.sqlite"
+    path.write_bytes(b"")
+    path.chmod(0o600)
+
+    with pytest.raises(MetadataReportError):
+        SQLiteReviewSessionRepository.open(path)
+
+    assert path.read_bytes() == b""
+
+
+def test_wal_session_database_is_rejected_without_mutation(tmp_path: Path) -> None:
+    path = tmp_path / "review-sessions.sqlite"
+    repository = SQLiteReviewSessionRepository.open(path)
+    repository.close()
+    connection = sqlite3.connect(path, isolation_level=None)
+    assert connection.execute("PRAGMA journal_mode=WAL").fetchone() == ("wal",)
+    connection.close()
+    before = {value.name: value.read_bytes() for value in tmp_path.iterdir()}
+
+    with pytest.raises(MetadataReportError):
+        SQLiteReviewSessionRepository.open(path)
+
+    assert {value.name: value.read_bytes() for value in tmp_path.iterdir()} == before
+
+
+def test_session_database_symlink_is_rejected_without_target_mutation(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "target.sqlite"
+    target.write_bytes(b"")
+    target.chmod(0o600)
+    path = tmp_path / "review-sessions.sqlite"
+    path.symlink_to(target)
+
+    with pytest.raises(MetadataReportError):
+        SQLiteReviewSessionRepository.open(path)
+
+    assert path.is_symlink()
+    assert target.read_bytes() == b""
+
+
+def test_non_owner_only_session_database_is_rejected_without_mutation(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "review-sessions.sqlite"
+    repository = SQLiteReviewSessionRepository.open(path)
+    repository.close()
+    path.chmod(0o640)
+    before = path.read_bytes()
+
+    with pytest.raises(MetadataReportError):
+        SQLiteReviewSessionRepository.open(path)
+
+    assert path.read_bytes() == before
 
 
 def test_verifier_bound_session_survives_reopen_without_sliding_and_rejects_replacement(

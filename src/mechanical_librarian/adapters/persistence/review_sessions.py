@@ -27,12 +27,19 @@ expiries and throttle timestamps, never a password, token or review document.
 from __future__ import annotations
 
 import hashlib
+import os
 import secrets
 import sqlite3
+import stat
 import threading
 from pathlib import Path
 from typing import cast
 
+from mechanical_librarian.adapters.persistence.binding import (
+    _connect_bound,
+    _unlink_created,
+    _validate_delete_mode_header,
+)
 from mechanical_librarian.application.metadata_report import MetadataReportError
 
 _REVIEW_SESSIONS_SQL = (
@@ -71,46 +78,89 @@ class SQLiteReviewSessionRepository:
         The parent directory is the composition root's owner-only private
         root; this opener owns only the database file's schema contract.
         """
-        connection = sqlite3.connect(
-            path, isolation_level=None, check_same_thread=False
-        )
+        connection: sqlite3.Connection | None = None
+        descriptor = -1
+        created_identity: tuple[int, int] | None = None
         try:
-            connection.execute("PRAGMA journal_mode=DELETE")
+            nofollow = getattr(os, "O_NOFOLLOW", 0)
+            if not nofollow:
+                raise MetadataReportError(
+                    "review session database no-follow access is unavailable"
+                )
+            flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | nofollow
+            if os.path.lexists(path):
+                descriptor = os.open(path, flags)
+                information = os.fstat(descriptor)
+                if (
+                    not stat.S_ISREG(information.st_mode)
+                    or information.st_uid != os.geteuid()
+                    or information.st_mode & 0o077
+                ):
+                    raise MetadataReportError(
+                        "review session database is unavailable or incompatible"
+                    )
+                _validate_delete_mode_header(descriptor)
+            else:
+                descriptor = os.open(path, flags | os.O_CREAT | os.O_EXCL, 0o600)
+                information = os.fstat(descriptor)
+                if (
+                    not stat.S_ISREG(information.st_mode)
+                    or information.st_uid != os.geteuid()
+                    or information.st_mode & 0o077
+                ):
+                    raise MetadataReportError(
+                        "review session database is unavailable or incompatible"
+                    )
+                created_identity = (information.st_dev, information.st_ino)
+            connection = _connect_bound(
+                path,
+                descriptor,
+                cross_thread=True,
+                allow_rollback_journal=True,
+            )
+            if connection.execute("PRAGMA journal_mode").fetchone() != ("delete",):
+                raise MetadataReportError(
+                    "review session database is unavailable or incompatible"
+                )
             connection.execute("PRAGMA synchronous=FULL")
             connection.execute("PRAGMA busy_timeout=5000")
             objects = connection.execute(
                 "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
             ).fetchall()
-            if not objects:
+            if created_identity is not None:
                 connection.execute("BEGIN IMMEDIATE")
                 try:
-                    # Re-read under the write lock: a concurrent opener may
-                    # have created the schema between the snapshot above and
-                    # this transaction.
-                    objects = connection.execute(
-                        "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
-                    ).fetchall()
-                    if not objects:
-                        connection.execute(_REVIEW_SESSIONS_SQL)
-                        connection.execute(_REVIEW_LOGIN_FAILURES_SQL)
+                    connection.execute(_REVIEW_SESSIONS_SQL)
+                    connection.execute(_REVIEW_LOGIN_FAILURES_SQL)
                     connection.execute("COMMIT")
                 except sqlite3.Error:
                     if connection.in_transaction:
                         connection.execute("ROLLBACK")
                     raise
-                if objects:
-                    _validate_session_schema(connection, objects)
+                objects = connection.execute(
+                    "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
+                ).fetchall()
+                _validate_session_schema(connection, objects)
             else:
                 _validate_session_schema(connection, objects)
             return cls(connection)
         except MetadataReportError:
-            connection.close()
+            if connection is not None:
+                connection.close()
+            if created_identity is not None:
+                _unlink_created(path, created_identity)
             raise
-        except sqlite3.Error as error:
-            connection.close()
+        except (OSError, sqlite3.Error) as error:
+            if connection is not None:
+                connection.close()
+            if created_identity is not None:
+                _unlink_created(path, created_identity)
             raise MetadataReportError(
                 "review session database is unavailable or incompatible"
             ) from error
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
 
     def close(self) -> None:
         with self._lock:
