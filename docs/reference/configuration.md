@@ -276,7 +276,15 @@ Codex is unavailable but the model-free path and owner-managed OpenRouter
 choice remain available. When present, it must be an absolute owner-only
 regular no-follow file containing the already-qualified contained-reviewer
 profile; its exact bytes bind every Codex observation. The browser never owns
-this path. Application state independently owns the exact task-to-engine/model
+this path. The supported container profile binds the image-supplied executable
+paths:
+`/opt/mechanical-librarian/reviewer/bin/codex` and
+`/opt/mechanical-librarian/reviewer/bin/bwrap`. Their architecture-specific
+digests are recorded inside the image at
+`/opt/mechanical-librarian/reviewer/metadata/SHA256SUMS`. Browser and
+application-owned settings cannot substitute another executable; deployment
+authority remains responsible for the profile itself. Application state
+independently owns the exact task-to-engine/model
 mapping and credential presence. During ordinary review preparation, the one
 selected usable reviewer performs one bounded advisory comparison before the
 review package becomes visible. An

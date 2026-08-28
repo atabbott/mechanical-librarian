@@ -279,11 +279,40 @@ def test_sandbox_binds_ordered_images_read_only_and_passes_exact_arguments() -> 
         assert ["--ro-bind-data", str(descriptor), f"/images/{index:02d}.png"] in [
             command[position : position + 3] for position in range(len(command) - 2)
         ]
+    assert "--proc" not in command
+    assert ["--symlink", "/runtime/codex", "/proc/self/exe"] in [
+        command[position : position + 3] for position in range(len(command) - 2)
+    ]
+    sandbox_index = command.index("--sandbox")
+    assert command[sandbox_index : sandbox_index + 2] == [
+        "--sandbox",
+        "danger-full-access",
+    ]
     assert [
         command[index + 1]
         for index, value in enumerate(command[:-1])
         if value == "--image"
     ] == [f"/images/{index:02d}.png" for index in range(1, 6)]
+
+
+def test_codex_version_and_auth_commands_expose_only_synthetic_proc_exe() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
+        codex = adapter._BoundArtifact(10, "/proc/self/fd/10")
+        sandbox = adapter._BoundArtifact(11, "/proc/self/fd/11")
+        completed = subprocess.CompletedProcess((), 0, stdout=b"codex 1\n", stderr=b"")
+        with patch.object(adapter.subprocess, "run", return_value=completed) as run:
+            reviewer._verify_codex(codex, sandbox)
+        version_command = run.call_args.args[0]
+        auth_command = reviewer._auth_command(codex, sandbox, 12)
+
+    for command in (version_command, auth_command):
+        assert "--proc" not in command
+        assert ["--symlink", "/runtime/codex", "/proc/self/exe"] in [
+            command[position : position + 3] for position in range(len(command) - 2)
+        ]
+    assert "--unshare-net" in version_command
+    assert "--unshare-net" not in auth_command
 
 
 def test_profile_load_is_canonical_private_and_does_not_touch_artifacts() -> None:
@@ -478,6 +507,15 @@ def test_failure_is_value_free_and_auth_configuration_disables_authority() -> No
     assert str(failure) == "runtime"
     assert "private" not in str(failure)
     config = adapter._exact_config("medium")
+    assert "features.shell_tool=false" in config
+    assert "features.unified_exec=false" in config
+    assert "agents.enabled=false" in config
+    assert "features.multi_agent=false" in config
+    assert "features.apps=false" in config
+    assert "features.plugins=false" in config
+    assert "features.browser_use=false" in config
+    assert "features.computer_use=false" in config
+    assert "features.hooks=false" in config
     assert 'web_search="disabled"' in config
     assert 'approval_policy="never"' in config
     assert 'shell_environment_policy.inherit="none"' in config

@@ -885,6 +885,17 @@ describe('owner settings route', () => {
   })
 
   it('requires confirmation before replacing a reviewer key and restores cancel focus', async () => {
+    const originalRequestFrame = window.requestAnimationFrame
+    const originalCancelFrame = window.cancelAnimationFrame
+    const frames = new Map<number, FrameRequestCallback>()
+    let nextFrame = 1
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      const frame = nextFrame
+      nextFrame += 1
+      frames.set(frame, callback)
+      return frame
+    })
+    vi.stubGlobal('cancelAnimationFrame', (frame: number) => frames.delete(frame))
     const user = userEvent.setup()
     const http = createHttp()
     http.getSettings = vi.fn(async () => view())
@@ -896,16 +907,32 @@ describe('owner settings route', () => {
       },
       openrouter_key_configured: true,
     }))
-    renderRoute('/settings?group=reviewer', http)
+    try {
+      renderRoute('/settings?group=reviewer', http)
 
-    await screen.findByRole('textbox', { name: 'Model ID' })
-    await user.type(screen.getByLabelText('API key'), 'replacement-key')
-    const replace = screen.getByRole('button', { name: 'Replace OpenRouter key' })
-    await user.click(replace)
-    expect(http.configureOpenRouter).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Keep existing OpenRouter key' }))
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Replace OpenRouter key' })).toHaveFocus(),
-    )
+      await screen.findByRole('textbox', { name: 'Model ID' })
+      const key = screen.getByLabelText('API key')
+      await user.type(key, 'replacement-key')
+      expect(key).toHaveValue('replacement-key')
+      act(() => {
+        const pending = [...frames.values()]
+        frames.clear()
+        for (const frame of pending) frame(0)
+      })
+      expect(screen.getByLabelText('API key')).toBe(key)
+      expect(key).toHaveFocus()
+      expect(key).toHaveValue('replacement-key')
+      const replace = screen.getByRole('button', { name: 'Replace OpenRouter key' })
+      expect(replace).toBeEnabled()
+      await user.click(replace)
+      expect(http.configureOpenRouter).not.toHaveBeenCalled()
+      await user.click(screen.getByRole('button', { name: 'Keep existing OpenRouter key' }))
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Replace OpenRouter key' })).toHaveFocus(),
+      )
+    } finally {
+      vi.stubGlobal('requestAnimationFrame', originalRequestFrame)
+      vi.stubGlobal('cancelAnimationFrame', originalCancelFrame)
+    }
   })
 })

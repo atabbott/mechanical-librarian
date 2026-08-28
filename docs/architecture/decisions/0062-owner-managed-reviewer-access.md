@@ -24,6 +24,41 @@ OpenRouter key is write-only secret state; Codex authentication is staged in a
 private contained `CODEX_HOME` and atomically installed only after the pinned
 CLI reports the exact usable account state.
 
+The supported image carries the exact platform build of Codex CLI 0.147.0 and
+its bundled Bubblewrap artifact at fixed, read-only paths. The build admits only
+`amd64` and `arm64`, verifies the selected registry tarball before extraction,
+executes the pinned CLI version probe, retains artifact checksums and package
+metadata, and includes the upstream Apache-2.0 licence. The deploy-owned profile
+for the supported container binds those installed paths, identities, and
+limits. Browser and application-owned settings cannot redirect that profile or
+supply an executable.
+
+The supported Compose runtime keeps a deny-by-default Docker seccomp profile
+derived from Moby's tagged default. Its only added syscall admissions are the
+two exact Bubblewrap namespace-clone masks, an exact user-namespace lock-down,
+and mount-namespace construction. Network namespace creation is admitted only
+as part of the exact offline version-probe mask. All capabilities remain
+dropped and no-new-privileges remains active. The nested sandbox exposes no
+procfs; it supplies only an immutable synthetic `/proc/self/exe` link to the
+already-bound Codex binary.
+
+Codex's own model-tool surface is closed before every observation: shell,
+unified execution, agents, apps, plugins, browser/computer use, hooks, web
+search, and the remaining optional tools are disabled through strict pinned-CLI
+configuration. The CLI therefore uses its `danger-full-access` internal
+sandbox mode inside the already-established outer Bubblewrap boundary. This
+prevents an unsupported second Bubblewrap/user-namespace layer; it does not
+widen the filesystem, credential, process, or network view already fixed by the
+outer sandbox, and there is no model-callable process tool to inherit that view.
+
+The supported whole-container memory ceiling is 2 GiB. The previously measured
+167.8 MiB serving peak plus two possible 256 MiB preparation children reasons
+to 680 MiB; one contained reviewer independently reserves 1 GiB, for a 1,704
+MiB simultaneous bound. The reviewer host gate still compares its full 1 GiB
+per-run contract with current available memory and cgroup headroom before every
+run. The larger ceiling makes that contract reachable without treating the cap
+as guaranteed free memory or weakening the live gate.
+
 Dispatch captures the mapping, access revision, and required secret/credential
 binding in one SQLite snapshot statement at the invocation boundary, constructs
 exactly one selected engine, and never falls back. Same-generation owner actions
@@ -65,5 +100,11 @@ exact-predecessor plans and their public command are retired, not retargeted.
   selected engine makes that observation unavailable.
 - Public views expose secret presence and typed status only, never secret
   values, private paths, raw provider errors, or raw reviewer streams.
+- The image pays the storage cost of the pinned reviewer artifacts, but no
+  reviewer executable, profile, auth store, or process is touched until an
+  owner explicitly uses available Codex access.
+- Supporting Bubblewrap inside the outer container widens its default seccomp
+  policy only by the checked-in exact namespace rules. A host that cannot
+  provide unprivileged user namespaces fails Codex closed.
 - OAuth, provider marketplaces, arbitrary endpoints, generic task registries,
   retries, and reviewer lifecycle management remain outside this decision.

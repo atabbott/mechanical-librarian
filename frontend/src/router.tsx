@@ -716,8 +716,10 @@ const Shell = () => {
     document.title = `${title} · Mechanical Librarian`
     const changed = previousPath.current !== path
     previousPath.current = path
+    const held = document.activeElement
+    const focusAlreadyInsideRoute = held !== null && main.current?.contains(held) === true
     const frame = requestAnimationFrame(() => {
-      if (changed) {
+      if (changed && !focusAlreadyInsideRoute && document.activeElement === held) {
         const target =
           main.current?.querySelector<HTMLElement>('[data-route-focus]') ?? main.current
         target?.focus({ preventScroll: true })

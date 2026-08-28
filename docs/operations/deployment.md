@@ -46,9 +46,13 @@ origin as its hostname. It presents no credential, returns no library data, and
 adds no `curl` or `wget` to the image.
 
 Compose also bounds the blast radius of a runaway container with `mem_limit`,
-`memswap_limit`, and `pids_limit`. Each value is sized from a measured run of
-this image, and `compose.yaml` records that measurement beside the setting so a
-later reader can tell it from a guess.
+`memswap_limit`, and `pids_limit`. The serving baseline is measured; bounded
+preparation children and the contained reviewer's 1 GiB per-run contract are
+then included in the whole-container ceiling. `compose.yaml` records that
+evidence and arithmetic beside each setting so a later reader can tell it from
+a guess. A 2 GiB cap is an upper bound, not an idle reservation: the live host
+gate still refuses Codex unless a full 1 GiB remains available inside both the
+host and cgroup limits.
 
 Compose also enables Docker's minimal init process. Nested reviewer PID
 namespaces can orphan short-lived descendants after the sandbox exits; init
@@ -63,9 +67,39 @@ therefore bounds that review without being consumed by application threads or
 same-uid sibling containers. `pids_limit` remains defence in depth for the
 whole container, not reviewer scheduling authority.
 
+The supported Compose file loads
+`config/seccomp/contained-reviewer.json` rather than disabling seccomp. It
+retains Moby's deny-by-default profile and admits only Bubblewrap's two exact
+namespace clone masks, its exact inner user-namespace lock-down, and
+mount-namespace construction. Capabilities remain dropped and
+no-new-privileges remains enabled. The reviewer PID namespace exposes no
+procfs; its only `/proc` entry is a synthetic `self/exe` link to the sealed
+Codex binding. A runtime that rejects the admitted user namespace leaves Codex
+unavailable; do not replace this profile with `seccomp=unconfined` or add
+`SYS_ADMIN`.
+
+The pinned Codex invocation disables every model-callable shell, execution,
+agent, app, plugin, browser, computer, hook, web-search, and optional tool
+surface. Its internal sandbox mode is therefore `danger-full-access` only
+inside the outer Bubblewrap boundary; this avoids an unsupported nested
+user-namespace sandbox and grants no path, process, credential, or tool beyond
+that outer view.
+
+The image contains the checksummed Codex CLI 0.147.0 and its paired Bubblewrap
+artifact at `/opt/mechanical-librarian/reviewer/bin/`. They are read-only image
+content, not runtime downloads or owner mounts. A deploy-owned contained-reviewer
+profile in the supported composition binds these exact paths and the digests
+published beside them in
+`/opt/mechanical-librarian/reviewer/metadata/SHA256SUMS`; an absent profile keeps
+Codex unavailable without touching either artifact, while OpenRouter and the
+no-reviewer path remain independent.
+
 Both healthchecks set a start interval, which needs Docker Engine 25 or newer
 and Compose v2.20 or newer. That is the newest runtime either file requires;
-nothing else in them assumes a version that recent.
+nothing else in them assumes a version that recent. The engine must also
+support seccomp and unprivileged user namespaces for Codex; the application and
+OpenRouter paths remain available when that independent Codex requirement
+fails.
 
 On a truly empty data volume the entrypoint captures that empty state before
 creating an exact incomplete setup store and serves only health, setup login,

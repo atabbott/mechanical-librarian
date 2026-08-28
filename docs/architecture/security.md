@@ -500,6 +500,27 @@ deselects an active Codex mapping at a new access revision. Installation and
 cancellation serialize at the final commit, and a newly installed credential is
 not dispatchable until the owner explicitly selects Codex again.
 
+The outer container retains its non-root user, read-only root, dropped
+capabilities, no-new-privileges, PID ceiling, and memory ceiling while its
+checked-in seccomp profile admits Bubblewrap's two exact namespace-clone flag
+sets, exact `CLONE_NEWUSER` lock-down, and mount-namespace construction. The
+profile remains deny-by-default and does not admit an arbitrary clone flag set;
+the kernel rejects the mount calls before entry to the admitted user namespace.
+The nested PID namespace mounts no procfs, because hardened container runtimes
+may reject a new proc mount and binding the outer procfs would expose sibling
+processes. A synthetic `/proc/self/exe` symlink resolves only to the sealed
+`/runtime/codex` binding required by the pinned CLI.
+
+The Codex observation invocation disables shell, unified execution, agents,
+apps, plugins, browser/computer use, hooks, web search, and every other optional
+model tool named by its strict pinned configuration. Because no model-callable
+process tool remains, the CLI uses internal `danger-full-access` mode inside
+the outer Bubblewrap sandbox rather than attempting a second Bubblewrap layer.
+The label describes only the skipped inner CLI sandbox: the process still sees
+only the outer sandbox's sealed Codex binary, read-only credential, private job
+directory, bounded images, selected system files, and network needed for the
+one reviewer request.
+
 Disabled providers cause no client construction or egress. Disabling also
 removes their library associations; enabling them again does not recreate those
 associations.

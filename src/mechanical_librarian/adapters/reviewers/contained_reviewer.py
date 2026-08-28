@@ -766,8 +766,13 @@ class ContainedReviewerAdapter:
             "/runtime",
             "--dir",
             "/auth",
-            "--proc",
+            "--dir",
             "/proc",
+            "--dir",
+            "/proc/self",
+            "--symlink",
+            "/runtime/codex",
+            "/proc/self/exe",
             "--dev",
             "/dev",
             "--tmpfs",
@@ -889,8 +894,13 @@ class ContainedReviewerAdapter:
             "/runtime",
             "--dir",
             "/auth",
-            "--proc",
+            "--dir",
             "/proc",
+            "--dir",
+            "/proc/self",
+            "--symlink",
+            "/runtime/codex",
+            "/proc/self/exe",
             "--dev",
             "/dev",
             "--tmpfs",
@@ -1085,8 +1095,13 @@ class ContainedReviewerAdapter:
             "/auth",
             "--dir",
             "/job",
-            "--proc",
+            "--dir",
             "/proc",
+            "--dir",
+            "/proc/self",
+            "--symlink",
+            "/runtime/codex",
+            "/proc/self/exe",
             "--dev",
             "/dev",
             "--tmpfs",
@@ -1142,7 +1157,7 @@ class ContainedReviewerAdapter:
                 "--model",
                 self._profile.identity.model,
                 "--sandbox",
-                "read-only",
+                "danger-full-access",
                 "--json",
                 "--output-schema",
                 "/job/output-schema.json",
@@ -1160,7 +1175,7 @@ class ContainedReviewerAdapter:
                         f"/images/{index:02d}.png",
                     )
                 )
-            command[command.index("--proc") : command.index("--proc")] = mounts
+            command[command.index("--dev") : command.index("--dev")] = mounts
             for index in range(1, len(image_descriptors) + 1):
                 command.extend(("--image", f"/images/{index:02d}.png"))
         for value in _exact_config(self._profile.identity.reasoning):
