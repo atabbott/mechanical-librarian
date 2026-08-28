@@ -6,11 +6,13 @@ import json
 import os
 import re
 import secrets
+import selectors
 import shutil
 import signal
 import stat
 import subprocess
 import tempfile
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,6 +26,8 @@ _EXPIRY_LINE = "Enter this one-time code (expires in 15 minutes)"
 _TIMEOUT_LINE = "device auth timed out after 15 minutes"
 _MAX_OUTPUT_BYTES = 16_384
 _MAX_AUTH_BYTES = 65_536
+_DEVICE_DEADLINE_SECONDS = 900
+_SHUTDOWN_GRACE_SECONDS = 5
 
 
 class CodexDeviceAuthError(RuntimeError):
@@ -79,27 +83,36 @@ class CodexDeviceAuthManager:
 
     def status(self) -> CodexDeviceAuthState:
         with self._lock:
-            return self._state
+            current = self._state
+            if current.state == "issued":
+                self._state = CodexDeviceAuthState(
+                    "waiting",
+                    verification_url=current.verification_url,
+                    user_code=current.user_code,
+                    expires_in_seconds=current.expires_in_seconds,
+                )
+            return current
 
     def cancel(self) -> CodexDeviceAuthState:
         with self._lock:
             process = self._process
             self._cancelled = True
-            if process is not None and process.poll() is None:
-                try:
-                    os.killpg(process.pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
             self._state = CodexDeviceAuthState("cancelled")
-            return self._state
+        if process is not None:
+            _stop_process(process)
+        return CodexDeviceAuthState("cancelled")
 
-    def clear(self) -> CodexDeviceAuthState:
+    def close(self) -> None:
+        """Boundedly stop this generation without deleting installed credentials."""
         self.cancel()
         thread = self._thread
         if thread is not None and thread.is_alive():
-            thread.join(timeout=35)
+            thread.join(timeout=_SHUTDOWN_GRACE_SECONDS * 2)
             if thread.is_alive():
                 raise CodexDeviceAuthError("codex auth is unavailable")
+
+    def clear(self) -> CodexDeviceAuthState:
+        self.close()
         directory = -1
         try:
             directory = _private_directory_descriptor(self._auth_store, create=False)
@@ -172,13 +185,16 @@ class CodexDeviceAuthManager:
         parent = self._auth_store.parent
         staging: Path | None = None
         prepared: CodexAuthCommand | None = None
-        output = bytearray()
+        process: subprocess.Popen[bytes] | None = None
         try:
             _private_directory_descriptor(parent, create=True, close=True)
             staging = Path(tempfile.mkdtemp(prefix="reviewer-auth-", dir=parent))
             os.chmod(staging, 0o700)
             _private_directory_descriptor(staging, create=False, close=True)
             prepared = _prepared(self._command_factory(staging, "start"))
+            with self._lock:
+                if self._cancelled:
+                    return
             process = self._popen(
                 prepared.command,
                 env=dict(prepared.environment),
@@ -190,25 +206,18 @@ class CodexDeviceAuthManager:
             )
             with self._lock:
                 self._process = process
+                cancelled = self._cancelled
+            if cancelled:
+                _stop_process(process)
+                return
             if process.stdout is None:
                 raise CodexDeviceAuthError("process")
-            lines: list[str] = []
-            for raw_line in iter(process.stdout.readline, b""):
-                output.extend(raw_line)
-                if len(output) > _MAX_OUTPUT_BYTES:
-                    raise CodexDeviceAuthError("protocol")
-                try:
-                    line = raw_line.decode("utf-8", "strict").rstrip("\n")
-                except UnicodeError as error:
-                    raise CodexDeviceAuthError("protocol") from error
-                if "\r" in line or any(ord(character) < 32 for character in line):
-                    raise CodexDeviceAuthError("protocol")
-                lines.append(line)
-                issued = _issued_state(lines)
-                if issued is not None:
-                    with self._lock:
-                        if not self._cancelled:
-                            self._state = issued
+            lines = _bounded_output_lines(
+                process,
+                process.stdout,
+                deadline=time.monotonic() + _DEVICE_DEADLINE_SECONDS,
+                on_lines=lambda value: self._publish_issued(value),
+            )
             returncode = process.wait()
             with self._lock:
                 cancelled = self._cancelled
@@ -261,10 +270,22 @@ class CodexDeviceAuthManager:
         finally:
             if prepared is not None:
                 prepared.close()
+            if process is not None and process.poll() is None:
+                try:
+                    _stop_process(process)
+                except CodexDeviceAuthError:
+                    pass
             with self._lock:
                 self._process = None
             if staging is not None:
                 shutil.rmtree(staging, ignore_errors=True)
+
+    def _publish_issued(self, lines: list[str]) -> None:
+        issued = _issued_state(lines)
+        if issued is not None:
+            with self._lock:
+                if not self._cancelled:
+                    self._state = issued
 
     def _recover_interrupted_staging(self) -> CodexDeviceAuthState:
         parent = self._auth_store.parent
@@ -312,11 +333,101 @@ def _issued_state(lines: list[str]) -> CodexDeviceAuthState | None:
     if not (urls[0] < expiry[0] < code_index):
         return None
     return CodexDeviceAuthState(
-        "waiting",
+        "issued",
         verification_url=_DEVICE_URL,
         user_code=code,
         expires_in_seconds=900,
     )
+
+
+def _stop_process(process: subprocess.Popen[bytes]) -> None:
+    if process.poll() is not None:
+        return
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        process.wait(timeout=_SHUTDOWN_GRACE_SECONDS)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    try:
+        process.wait(timeout=_SHUTDOWN_GRACE_SECONDS)
+    except subprocess.TimeoutExpired as error:
+        raise CodexDeviceAuthError("process") from error
+    if process.poll() is None:
+        raise CodexDeviceAuthError("process")
+
+
+def _bounded_output_lines(
+    process: subprocess.Popen[bytes],
+    stream: object,
+    *,
+    deadline: float,
+    on_lines: Callable[[list[str]], None],
+) -> list[str]:
+    """Read bounded chunks without permitting an unbounded pipe line allocation."""
+    output = bytearray()
+    lines: list[str] = []
+    pending = bytearray()
+    try:
+        descriptor = stream.fileno()  # type: ignore[attr-defined]
+    except (AttributeError, OSError):
+        descriptor = None
+    selector: selectors.BaseSelector | None = None
+    if descriptor is not None:
+        selector = selectors.DefaultSelector()
+        selector.register(descriptor, selectors.EVENT_READ)
+    try:
+        while True:
+            if time.monotonic() >= deadline:
+                _stop_process(process)
+                return [*lines, _TIMEOUT_LINE]
+            if selector is not None:
+                if not selector.select(timeout=min(0.25, deadline - time.monotonic())):
+                    if process.poll() is not None:
+                        chunk = os.read(descriptor, 4096)
+                        if not chunk:
+                            break
+                    else:
+                        continue
+                else:
+                    chunk = os.read(descriptor, 4096)
+            else:
+                chunk = stream.read(4096)  # type: ignore[attr-defined]
+            if not chunk:
+                break
+            output.extend(chunk)
+            pending.extend(chunk)
+            if len(output) > _MAX_OUTPUT_BYTES or len(pending) > _MAX_OUTPUT_BYTES:
+                raise CodexDeviceAuthError("protocol")
+            while b"\n" in pending:
+                raw_line, _, remainder = pending.partition(b"\n")
+                pending = bytearray(remainder)
+                lines.append(_validated_output_line(bytes(raw_line)))
+                on_lines(lines)
+        if pending:
+            lines.append(_validated_output_line(bytes(pending)))
+            on_lines(lines)
+        return lines
+    finally:
+        if selector is not None:
+            selector.close()
+
+
+def _validated_output_line(raw_line: bytes) -> str:
+    try:
+        line = raw_line.decode("utf-8", "strict")
+    except UnicodeError as error:
+        raise CodexDeviceAuthError("protocol") from error
+    if "\r" in line or any(ord(character) < 32 for character in line):
+        raise CodexDeviceAuthError("protocol")
+    return line
 
 
 def _prepared(

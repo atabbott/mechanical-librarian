@@ -1636,6 +1636,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         supersedes_id: str | None,
         occurred_at: int,
         preparation_kind: str = "automatic_prepared",
+        reviewer_access_revision: int | None = None,
     ) -> str:
         return self._cover_considerations.record_cover_consideration(
             document,
@@ -1645,6 +1646,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             supersedes_id=supersedes_id,
             occurred_at=occurred_at,
             preparation_kind=preparation_kind,
+            reviewer_access_revision=reviewer_access_revision,
         )
 
     def record_cover_consideration_outcome(

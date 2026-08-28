@@ -471,6 +471,32 @@ persistence; failure leaves the authoritative revision and admitting generation
 unchanged. After CAS commit, the new generation governs the next admitted unit
 while requests already admitted to the predecessor drain against it.
 
+Reviewer access is separate application authority in both settings modes. Its
+public document contains only task mapping, exact model, revision, secret
+presence, and closed status; the OpenRouter key is a write-only `SecretStr` at
+the HTTP boundary and a separate validated database row. Dispatch snapshots the
+mapping revision and required secret together under the repository lock,
+releases that lock before network work, and the consideration write verifies
+the same revision inside its SQLite transaction. An A-B-A replacement therefore
+cannot make old evidence current. Provider response bodies and raw errors never
+enter the status grammar, logs, or persisted failure identity.
+
+OpenRouter egress is fixed to `https://openrouter.ai`: key and model capability
+checks precede the one exact-model chat-completions request. Redirect and
+ambient proxy inheritance are disabled. Every response stream is consumed in
+bounded chunks up to its endpoint-specific cap plus one rejection byte,
+including when `Content-Length` is absent or false. Cover previews, the sealed
+packet, instruction, and strict schema are the only model inputs; no target
+credential or write authority crosses this boundary.
+
+Codex setup reads the deployment-owned contained profile only when a Codex
+status, setup, selection, or dispatch action requires it. Device flow uses a
+private staged `CODEX_HOME`; bounded stdout chunks are parsed through the exact
+URL/code grammar. Owner cancellation, expiry, runtime cutover, and shutdown
+stop the exact process group with TERM, a bounded wait, KILL when needed, a
+death check, thread join, and staging cleanup. Generation teardown does not
+delete an already validated installed credential.
+
 Disabled providers cause no client construction or egress. Disabling also
 removes their library associations; enabling them again does not recreate those
 associations.

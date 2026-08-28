@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
+from typing import cast
 
 import pytest
 
@@ -16,12 +17,16 @@ from mechanical_librarian.application.reviewer_access import (
     ReviewerAccessApplicationError,
     ReviewerAccessOperations,
 )
-from mechanical_librarian.application.reviewer_contracts import OpenRouterReviewerError
+from mechanical_librarian.application.reviewer_contracts import (
+    DeviceAuthStatus,
+    OpenRouterFailure,
+    OpenRouterReviewerError,
+)
 from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
 
 
 class _Auth:
-    def __init__(self, state: str = "ready") -> None:
+    def __init__(self, state: DeviceAuthStatus = "ready") -> None:
         self.state = state
         self.current_calls = 0
 
@@ -47,6 +52,9 @@ class _Auth:
     def recheck_credential_status(self):
         self.current_calls += 1
         return CodexDeviceAuthState(self.state)
+
+    def close(self) -> None:
+        return None
 
 
 @dataclass
@@ -79,7 +87,7 @@ class _OpenRouter:
 
 
 def _operations(
-    *, auth_state: str = "ready", openrouter_fail: bool = False
+    *, auth_state: DeviceAuthStatus = "ready", openrouter_fail: bool = False
 ) -> tuple[ReviewerAccessOperations, _Auth, list[tuple[str, str]], list[str]]:
     connection = sqlite3.connect(":memory:", isolation_level=None)
     connection.execute(
@@ -114,7 +122,7 @@ def _operations(
 
 def test_unconfigured_dispatch_constructs_neither_engine() -> None:
     operations, auth, openrouter, codex = _operations()
-    with pytest.raises(ReviewerAccessApplicationError, match="not configured"):
+    with pytest.raises(ReviewerAccessApplicationError, match="not_configured"):
         operations.dispatch_cover_observation()
     assert auth.current_calls == 0
     assert openrouter == []
@@ -153,6 +161,37 @@ def test_ordinary_read_does_not_probe_but_explicit_refresh_maps_typed_failure() 
     refreshed = operations.refresh_openrouter()
     assert refreshed.openrouter.state == "rate_limited"
     assert refreshed.openrouter.reason == "rate_limited"
+
+
+@pytest.mark.parametrize(
+    ("provider_code", "public_code"),
+    (
+        ("invalid_key", "invalid_key"),
+        ("quota_exhausted", "quota_exhausted"),
+        ("rate_limited", "rate_limited"),
+        ("model_unavailable", "model_unavailable"),
+        ("model_text_only", "model_text_only"),
+        ("malformed_response", "malformed_response"),
+        ("unreachable", "unreachable"),
+        ("transport", "unreachable"),
+    ),
+)
+def test_configuration_preserves_closed_value_free_provider_failure(
+    provider_code: str, public_code: str
+) -> None:
+    operations, _auth, calls, _codex = _operations()
+
+    class _Refused(_OpenRouter):
+        def probe(self):
+            raise OpenRouterReviewerError(cast("OpenRouterFailure", provider_code))
+
+    operations._openrouter_factory = lambda key, model: _Refused(key, model, calls)
+    with pytest.raises(ReviewerAccessApplicationError) as caught:
+        operations.configure_openrouter(
+            expected_revision=1, api_key="secret-key", model="example/vision"
+        )
+    assert caught.value.code == public_code
+    assert "secret-key" not in str(caught.value)
 
 
 def test_failed_openrouter_dispatch_never_falls_back_to_codex() -> None:
@@ -210,3 +249,25 @@ def test_failed_codex_deactivation_does_not_clear_credential() -> None:
         operations.clear_codex(expected_revision=2)
     assert auth.state == "usable"
     operations._repository.replace = original  # type: ignore[method-assign]
+
+
+def test_a_b_a_replacement_cannot_make_captured_dispatch_current_again() -> None:
+    operations, _auth, _openrouter, _codex = _operations()
+    operations.configure_openrouter(
+        expected_revision=1, api_key="key-a", model="example/model-a"
+    )
+    captured = operations.dispatch_cover_observation()
+    assert captured.access_revision == 2
+    operations.configure_openrouter(
+        expected_revision=2, api_key="key-b", model="example/model-b"
+    )
+    operations.configure_openrouter(
+        expected_revision=3, api_key="key-a-new", model="example/model-a"
+    )
+    assert captured.model == "example/model-a"
+    assert operations.revision_is_current(captured.access_revision) is False
+    assert operations.current_cover_observation_identity()[:3] == (
+        4,
+        "openrouter",
+        "example/model-a",
+    )

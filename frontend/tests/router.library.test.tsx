@@ -53,14 +53,8 @@ describe('Library route', () => {
       })),
     })
 
-    expect(
-      await screen.findByRole('heading', { name: 'Preparation is complete' }),
-    ).toBeVisible()
-    expect(
-      screen.getByText(
-        'Preparation complete · 1 unique work checked.',
-      ),
-    ).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Preparation is complete' })).toBeVisible()
+    expect(screen.getByText('Preparation complete · 1 unique work checked.')).toBeVisible()
     expect(screen.getByText('Preparation finished without ready work.')).toBeVisible()
     expect(screen.queryByText(/failures and recovery/u)).toBeNull()
     expect(screen.queryByRole('link', { name: 'Open workspace' })).toBeNull()
@@ -923,6 +917,9 @@ describe('Library route', () => {
       policyReference: `cover_policy_${'3'.repeat(64)}`,
       providerFetching: true,
       ready: false,
+      reviewerAccessRevision: null,
+      reviewerEngine: null,
+      reviewerModel: null,
       reviewerStatus: 'completed',
       reviewerUnavailableReason: null,
       targetFingerprint: 'fingerprint-cover',
@@ -1032,7 +1029,15 @@ describe('Library route', () => {
             artifactId: `cover_${'a'.repeat(64)}`,
             deterministicCitations: ['citation-a'],
             deterministicRank: 1,
-            deterministicRankKey: [1, 0, -960000, -800, -1200, 1, `cover_transport_ref_${'a'.repeat(64)}`],
+            deterministicRankKey: [
+              1,
+              0,
+              -960000,
+              -800,
+              -1200,
+              1,
+              `cover_transport_ref_${'a'.repeat(64)}`,
+            ],
             height: 1200,
             identity: { outcome: 'verified_work_match' },
             incumbent: false,
@@ -1062,6 +1067,9 @@ describe('Library route', () => {
         policyReference: `cover_policy_${'u'.repeat(64)}`,
         providerFetching: false,
         ready: false,
+        reviewerAccessRevision: null,
+        reviewerEngine: null,
+        reviewerModel: null,
         reviewerStatus,
         reviewerUnavailableReason,
         targetFingerprint: 'fingerprint-cover',
@@ -1213,6 +1221,9 @@ describe('Library route', () => {
             policyReference: 'policy',
             providerFetching: false,
             ready: false,
+            reviewerAccessRevision: null,
+            reviewerEngine: null,
+            reviewerModel: null,
             reviewerStatus: 'completed',
             reviewerUnavailableReason: null,
             targetFingerprint: 'fingerprint',
@@ -1277,7 +1288,15 @@ describe('Library route', () => {
           artifactId: `cover_${'a'.repeat(64)}`,
           deterministicCitations: ['citation-a'],
           deterministicRank: 1,
-          deterministicRankKey: [1, 0, -960000, -800, -1200, 1, `cover_transport_ref_${'a'.repeat(64)}`],
+          deterministicRankKey: [
+            1,
+            0,
+            -960000,
+            -800,
+            -1200,
+            1,
+            `cover_transport_ref_${'a'.repeat(64)}`,
+          ],
           height: 1200,
           identity: { outcome: 'verified_work_match' },
           incumbent: false,
@@ -1307,6 +1326,9 @@ describe('Library route', () => {
       policyReference: `cover_policy_${'p'.repeat(64)}`,
       providerFetching: false,
       ready: false,
+      reviewerAccessRevision: null,
+      reviewerEngine: null,
+      reviewerModel: null,
       reviewerStatus: 'completed',
       reviewerUnavailableReason: null,
       targetFingerprint: 'fingerprint-cover',

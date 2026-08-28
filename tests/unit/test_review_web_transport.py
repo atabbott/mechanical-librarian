@@ -1414,6 +1414,7 @@ def test_openapi_is_deterministic_and_secret_free(
         Path("docs/reference/review-openapi-v1.json").read_text(encoding="utf-8")
     )
     assert first.json() == expected
+
     assert (
         expected["components"]["schemas"]["SecretWrite"]["properties"]["value"][
             "writeOnly"
@@ -1729,6 +1730,17 @@ def test_openapi_is_deterministic_and_secret_free(
     assert b"private-value" not in invalid.content
 
 
+def test_openrouter_request_validation_redacts_the_write_only_key() -> None:
+    from mechanical_librarian.interfaces.web.app import _OpenRouterWriteRequest
+
+    canary = "secret-canary-" + "x" * 2048
+    request = _OpenRouterWriteRequest.model_validate(
+        {"expected_revision": 1, "api_key": canary, "model": "example/vision"}
+    )
+    assert canary not in str(request)
+    assert canary not in repr(request.model_dump())
+
+
 def test_parallel_failures_reserve_the_five_attempt_bound(
     web: ReviewWebContext[FakeReviewRepository],
 ) -> None:
@@ -1798,6 +1810,10 @@ def test_composition_opens_the_single_database_for_worker_threads(
     repository.reviewer_access_store.return_value.read.return_value = (
         SimpleNamespace(cover_observation=None),
         False,
+    )
+    repository.reviewer_access_store.return_value.snapshot.return_value = (
+        SimpleNamespace(cover_observation=None),
+        None,
     )
     database = Path(web.temporary.name) / "application.sqlite3"
     certificate, private_key = synthetic_tls_identity(Path(web.temporary.name))

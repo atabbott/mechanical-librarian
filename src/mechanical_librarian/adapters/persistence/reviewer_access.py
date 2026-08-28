@@ -34,26 +34,45 @@ class ReviewerAccessStore:
     def read(self) -> tuple[ReviewerAccessDocument, bool]:
         return self._with_lock(self._read)
 
+    def snapshot(self) -> tuple[ReviewerAccessDocument, str | None]:
+        """Capture selection and its required secret in one SQLite read boundary."""
+
+        def capture() -> tuple[ReviewerAccessDocument, str | None]:
+            document, configured = self._read()
+            return document, self._openrouter_key() if configured else None
+
+        return self._with_lock(capture)
+
+    def revision_is_current(self, revision: int) -> bool:
+        def check() -> bool:
+            document, _configured = self._read()
+            return document.revision == revision
+
+        return self._with_lock(check)
+
     def openrouter_key(self) -> str:
         """Snapshot the write-only key without holding the store lock afterwards."""
 
         def snapshot() -> str:
             try:
-                rows = self._secret_rows()
-                if (
-                    len(rows) != 1
-                    or rows[0][0] != _OPENROUTER_SECRET
-                    or type(rows[0][1]) is not str
-                    or not credential(rows[0][1])
-                ):
-                    raise ReviewerAccessStoreError("reviewer access is unavailable")
-                return rows[0][1]
+                return self._openrouter_key()
             except sqlite3.Error as error:
                 raise ReviewerAccessStoreError(
                     "reviewer access is unavailable"
                 ) from error
 
         return self._with_lock(snapshot)
+
+    def _openrouter_key(self) -> str:
+        rows = self._secret_rows()
+        if (
+            len(rows) != 1
+            or rows[0][0] != _OPENROUTER_SECRET
+            or type(rows[0][1]) is not str
+            or not credential(rows[0][1])
+        ):
+            raise ReviewerAccessStoreError("reviewer access is unavailable")
+        return rows[0][1]
 
     def replace(
         self,

@@ -35,7 +35,15 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from fastapi.security import APIKeyCookie
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, TypeAdapter
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    StrictInt,
+    StrictStr,
+    TypeAdapter,
+)
 from starlette.types import Message, Receive, Scope, Send
 
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
@@ -182,7 +190,7 @@ class _ReviewerSelectionRequest(_ReviewerRevisionRequest):
 
 
 class _OpenRouterWriteRequest(_ReviewerRevisionRequest):
-    api_key: StrictStr = Field(min_length=1, max_length=2048)
+    api_key: SecretStr = Field(json_schema_extra={"writeOnly": True})
     model: OpenRouterModelId
 
 
@@ -380,6 +388,7 @@ class _CoverConsiderationResponse(_ClosedModel):
     ready: bool
     reviewer_engine: Literal["codex", "openrouter"] | None
     reviewer_model: str | None
+    reviewer_access_revision: StrictInt | None
     reviewer_status: str
     reviewer_unavailable_reason: str | None
     schema_version: Literal["cover-consideration-v3"]
@@ -1683,8 +1692,8 @@ def _register_reviewer_access_routes(
                 else "reviewer_access_unavailable"
             )
         elif isinstance(error, ReviewerAccessApplicationError):
-            status = 409
-            code = "reviewer_access_refused"
+            status = 503 if error.code == "unreachable" else 422
+            code = error.code
         else:
             status = 422
             code = "reviewer_access_invalid"
@@ -1738,7 +1747,7 @@ def _register_reviewer_access_routes(
         try:
             return authority().configure_openrouter(
                 expected_revision=request.expected_revision,
-                api_key=request.api_key,
+                api_key=request.api_key.get_secret_value(),
                 model=request.model,
             )
         except (

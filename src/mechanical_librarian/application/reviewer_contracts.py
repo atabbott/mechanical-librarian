@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
@@ -17,6 +18,7 @@ DeviceAuthStatus = Literal[
     "ready",
     "configured",
     "starting",
+    "issued",
     "waiting",
     "validating",
     "usable",
@@ -34,6 +36,7 @@ DeviceAuthFailure = Literal[
 ReviewerStatus = Literal[
     "ready",
     "starting",
+    "issued",
     "waiting",
     "validating",
     "usable",
@@ -123,12 +126,16 @@ def openrouter_profile(model: str) -> bytes:
 
 @dataclass(frozen=True, slots=True)
 class ReviewerDispatch:
+    access_revision: int
     engine: ReviewerEngine
     model: str
     profile: bytes
     runner: Reviewer
+    close: Callable[[], None] = lambda: None
 
     def __post_init__(self) -> None:
+        if type(self.access_revision) is not int or self.access_revision < 1:
+            raise ValueError("invalid reviewer access revision")
         if self.engine == "openrouter":
             OpenRouterTaskSelection(engine="openrouter", model=self.model)
         elif not _LOCAL_MODEL.fullmatch(self.model):

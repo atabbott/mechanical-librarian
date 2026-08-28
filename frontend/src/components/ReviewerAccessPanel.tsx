@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import type { ReviewHttp, ReviewerAccessView } from '../api/http'
 
@@ -21,6 +21,7 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
   })
   const [model, setModel] = useState('')
   const [key, setKey] = useState('')
+  const [deviceActive, setDeviceActive] = useState(false)
   const mutation = useMutation({
     mutationFn: async (action: Action): Promise<ReviewerAccessView | null> => {
       if (action.kind === 'without') return http.selectReviewer(null, action.revision)
@@ -42,24 +43,40 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
         model: action.model,
       })
     },
-    onSuccess: () => {
+    onSuccess: (_result, action) => {
       setKey('')
+      if (action.kind === 'codex-start') setDeviceActive(true)
+      if (action.kind === 'codex-cancel' || action.kind === 'codex-clear') setDeviceActive(false)
       void query.refetch()
     },
   })
   const waiting =
-    query.data !== undefined &&
-    ['starting', 'waiting', 'validating'].includes(query.data.codex.state)
+    deviceActive ||
+    (query.data !== undefined &&
+      ['starting', 'issued', 'waiting', 'validating'].includes(query.data.codex.state))
   const deviceQuery = useQuery({
     queryKey: ['reviewer-access', 'codex-device'] as const,
     queryFn: ({ signal }) => http.getCodexDevice(signal),
     enabled: waiting,
     retry: false,
     refetchInterval: (result) =>
-      result.state.data && ['starting', 'waiting', 'validating'].includes(result.state.data.state)
+      result.state.data &&
+      ['starting', 'issued', 'waiting', 'validating'].includes(result.state.data.state)
         ? 1_000
         : false,
   })
+  const refetchAccess = query.refetch
+  useEffect(() => {
+    const state = deviceQuery.data?.state
+    if (state && !['starting', 'issued', 'waiting', 'validating'].includes(state)) {
+      const task = window.setTimeout(() => {
+        setDeviceActive(false)
+        void refetchAccess()
+      }, 0)
+      return () => window.clearTimeout(task)
+    }
+    return undefined
+  }, [deviceQuery.data?.state, refetchAccess])
   if (query.isPending) return <p aria-busy="true">Reading reviewer access…</p>
   if (query.isError)
     return (
@@ -107,7 +124,9 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
         <div className="settings-field-control">
           {waiting ? (
             <>
-              <p role="status">Waiting for device sign-in.</p>
+              <p role="status" aria-live="polite">
+                Device sign-in: {(device?.state ?? view.codex.state).replaceAll('_', ' ')}.
+              </p>
               {device?.verification_url ? (
                 <p>
                   Open{' '}
@@ -146,13 +165,20 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
               </button>
             </>
           ) : (
-            <button
-              type="button"
-              disabled={mutation.isPending || view.codex.state === 'host_unsupported'}
-              onClick={() => mutation.mutate({ kind: 'codex-start' })}
-            >
-              Start device sign-in
-            </button>
+            <>
+              {view.codex.reason ? (
+                <p role="alert">{view.codex.reason.replaceAll('_', ' ')}</p>
+              ) : null}
+              <button
+                type="button"
+                disabled={mutation.isPending || view.codex.state === 'host_unsupported'}
+                onClick={() => mutation.mutate({ kind: 'codex-start' })}
+              >
+                {['expired', 'failed', 'cancelled', 'interrupted'].includes(view.codex.state)
+                  ? 'Restart device sign-in'
+                  : 'Start device sign-in'}
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -163,9 +189,20 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
           <p>Choose a vision model that currently supports strict structured output.</p>
           <p>{view.free_tier_caveat}</p>
           <p>{view.data_use_caveat}</p>
-          {view.recommendations.length === 0 ? (
-            <small>No model recommendation is qualified by delivered evidence yet.</small>
-          ) : null}
+          <p>No model recommendation is qualified by delivered real-cover evidence yet.</p>
+          <ul>
+            {view.candidates.map((candidate) => (
+              <li key={candidate.model}>
+                <button type="button" onClick={() => setModel(candidate.model)}>
+                  Use {candidate.model}
+                </button>{' '}
+                ({candidate.tier}; catalogue capability only, not yet qualified)
+                {candidate.requests_per_minute === null
+                  ? null
+                  : ` — ${String(candidate.requests_per_minute)} RPM; ${candidate.requests_per_day ?? ''} RPD`}
+              </li>
+            ))}
+          </ul>
         </div>
         <div className="settings-field-control">
           <label htmlFor="reviewer-openrouter-model">Model ID</label>
@@ -217,7 +254,15 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
               </button>
             </>
           ) : null}
-          <p>Status: {view.openrouter.state.replaceAll('_', ' ')}</p>
+          <p
+            role={
+              ['usable', 'configured', 'unconfigured'].includes(view.openrouter.state)
+                ? 'status'
+                : 'alert'
+            }
+          >
+            Status: {view.openrouter.state.replaceAll('_', ' ')}
+          </p>
         </div>
       </div>
       {mutation.isError ? (

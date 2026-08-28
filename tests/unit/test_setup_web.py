@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any, Callable, TypeVar
+from unittest.mock import Mock
 
 import pytest
 from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
 
 from mechanical_librarian.application.review_web import OwnerSessionService
+from mechanical_librarian.application.reviewer_access import ReviewerAccessOperations
 from mechanical_librarian.application.setup_connection import SetupConnectionError
 from mechanical_librarian.application.setup_journey import SetupJourneyOperation
 from mechanical_librarian.domain.setup_state import (
@@ -155,7 +158,9 @@ class _Connection:
 _T = TypeVar("_T")
 
 
-def _client() -> tuple[TestClient, _State, _Connection]:
+def _client(
+    reviewer_access: ReviewerAccessOperations | None = None,
+) -> tuple[TestClient, _State, _Connection]:
     verifier = PasswordHasher().hash("correct horse battery staple")
     session_store = _Sessions()
     state = _State(session_store)
@@ -194,6 +199,7 @@ def _client() -> tuple[TestClient, _State, _Connection]:
                 connection,
                 "https://setup.invalid",
                 journey,
+                reviewer_access,
             )
         ),
         state,
@@ -639,7 +645,12 @@ def test_duplicate_local_library_names_return_closed_validation_without_mutation
 
 
 def test_seven_step_journey_closes_setup_routes_after_exact_kickoff_copy() -> None:
-    client, state, _connection = _client()
+    reviewer_access = Mock(spec=ReviewerAccessOperations)
+    reviewer_access.read.return_value = SimpleNamespace(
+        revision=7,
+        mapping=SimpleNamespace(engine="openrouter"),
+    )
+    client, state, _connection = _client(reviewer_access)
     login = _claim(client)
     headers = {
         "cookie": _session_cookie(login),
@@ -721,6 +732,8 @@ def test_seven_step_journey_closes_setup_routes_after_exact_kickoff_copy() -> No
         ]
     }
     assert kickoff.status_code == 202
+    reviewer_access.select_none.assert_called_once_with(expected_revision=7)
+    assert state.document.reviewer_setup == "skipped"
     assert state.document.libraries[0].display_name == "Owner's Ebooks & Audiobooks"
     assert kickoff.json() == {
         "status": "active",

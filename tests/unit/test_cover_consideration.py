@@ -45,9 +45,14 @@ def test_dynamic_dispatch_binds_engine_model_profile_schema_and_candidate(
         read_preview_digest=lambda digest: case.payload_by_preview[digest],
         clock=lambda: case.now,
         reviewer_dispatch=lambda: ReviewerDispatch(
-            "openrouter", "example/vision", profile, cast("ReviewRunner", reviewer)
+            7,
+            "openrouter",
+            "example/vision",
+            profile,
+            cast("ReviewRunner", reviewer),
         ),
-        reviewer_identity=lambda: ("openrouter", "example/vision", profile),
+        reviewer_identity=lambda: (7, "openrouter", "example/vision", profile),
+        reviewer_revision_current=lambda revision: revision == 7,
     )
     case_id = "review_case_" + "9" * 64
     projected = service.ensure(case_id, case.report.to_json(), case.proposal)
@@ -59,6 +64,7 @@ def test_dynamic_dispatch_binds_engine_model_profile_schema_and_candidate(
     assert projected["reviewer_model"] == "example/vision"
     assert persisted["reviewer_engine"] == "openrouter"
     assert persisted["reviewer_model"] == "example/vision"
+    assert persisted["reviewer_access_revision"] == 7
     assert observation["observer_reference"] == cover_observation._observer_reference(
         profile,
         observation["instruction_sha256"],

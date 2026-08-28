@@ -8,12 +8,49 @@ type CaseDetailDto = Schema<'_CaseDetailResponse'>
 export type SettingsView = Schema<'SettingsView'>
 export type SettingsWrite = Schema<'_SettingsWriteRequest'>
 export type AppearanceView = Schema<'_AppearanceResponse'>
+export type ReviewerState =
+  | 'ready'
+  | 'configured'
+  | 'starting'
+  | 'issued'
+  | 'waiting'
+  | 'validating'
+  | 'usable'
+  | 'expired'
+  | 'cancelled'
+  | 'failed'
+  | 'interrupted'
+  | 'host_unsupported'
+  | 'unconfigured'
+  | 'invalid_key'
+  | 'quota_exhausted'
+  | 'rate_limited'
+  | 'model_unavailable'
+  | 'model_text_only'
+  | 'malformed_response'
+  | 'unreachable'
+export type ReviewerReason =
+  | 'host_evidence_unavailable'
+  | 'cgroup_limit_below_1_gib'
+  | 'headroom_below_1_gib'
+  | 'permission_or_profile'
+  | 'permission_or_process'
+  | 'protocol_or_process'
+  | 'restart_interrupted'
+  | 'not_selected'
+  | 'invalid_key'
+  | 'quota_exhausted'
+  | 'rate_limited'
+  | 'model_unavailable'
+  | 'model_text_only'
+  | 'malformed_response'
+  | 'unreachable'
 export interface ReviewerEngineStatus {
   engine: 'codex' | 'openrouter'
-  state: string
-  reason: string | null
+  state: ReviewerState
+  reason: ReviewerReason | null
   model: string | null
-  tier: string | null
+  tier: 'free' | 'paid' | null
   host_headroom_bytes: number | null
 }
 export interface ReviewerAccessView {
@@ -24,6 +61,14 @@ export interface ReviewerAccessView {
   codex: ReviewerEngineStatus
   openrouter: ReviewerEngineStatus
   recommendations: readonly string[]
+  candidates: readonly {
+    model: string
+    tier: 'free' | 'paid'
+    qualified: false
+    evidence: 'catalogue_capability_only'
+    requests_per_minute: number | null
+    requests_per_day: string | null
+  }[]
   free_tier_caveat: string
   data_use_caveat: string
 }
@@ -32,6 +77,7 @@ export interface CodexDeviceAuthState {
     | 'ready'
     | 'configured'
     | 'starting'
+    | 'issued'
     | 'waiting'
     | 'validating'
     | 'usable'
@@ -42,7 +88,12 @@ export interface CodexDeviceAuthState {
   verification_url: string | null
   user_code: string | null
   expires_in_seconds: number | null
-  failure: string | null
+  failure:
+    | 'permission_or_profile'
+    | 'permission_or_process'
+    | 'protocol_or_process'
+    | 'restart_interrupted'
+    | null
 }
 
 // These validators live at the DTO mapping boundary so the editor cannot
@@ -280,8 +331,9 @@ export interface CoverConsiderationView {
     readonly preferMinimalComposition: boolean
   }
   policyReference: string
-  reviewerEngine?: 'codex' | 'openrouter' | null
-  reviewerModel?: string | null
+  reviewerEngine: 'codex' | 'openrouter' | null
+  reviewerModel: string | null
+  reviewerAccessRevision: number | null
   reviewerStatus: string
   reviewerUnavailableReason:
     | 'profile contract requires memory_bytes=1073741824'
@@ -1081,17 +1133,190 @@ export class ReviewApiClient implements ReviewHttp {
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-const mapReviewerAccess = (value: unknown): ReviewerAccessView => {
+const exactKeys = (value: Record<string, unknown>, keys: readonly string[]) =>
+  Object.keys(value).length === keys.length && keys.every((key) => key in value)
+
+const reviewerStates = new Set<ReviewerState>([
+  'ready',
+  'configured',
+  'starting',
+  'issued',
+  'waiting',
+  'validating',
+  'usable',
+  'expired',
+  'cancelled',
+  'failed',
+  'interrupted',
+  'host_unsupported',
+  'unconfigured',
+  'invalid_key',
+  'quota_exhausted',
+  'rate_limited',
+  'model_unavailable',
+  'model_text_only',
+  'malformed_response',
+  'unreachable',
+])
+const codexStates = new Set<ReviewerState>([
+  'ready',
+  'configured',
+  'starting',
+  'issued',
+  'waiting',
+  'validating',
+  'usable',
+  'expired',
+  'cancelled',
+  'failed',
+  'interrupted',
+  'host_unsupported',
+])
+const openRouterStates = new Set<ReviewerState>([
+  'unconfigured',
+  'configured',
+  'usable',
+  'invalid_key',
+  'quota_exhausted',
+  'rate_limited',
+  'model_unavailable',
+  'model_text_only',
+  'malformed_response',
+  'unreachable',
+])
+const reviewerReasons = new Set<ReviewerReason>([
+  'host_evidence_unavailable',
+  'cgroup_limit_below_1_gib',
+  'headroom_below_1_gib',
+  'permission_or_profile',
+  'permission_or_process',
+  'protocol_or_process',
+  'restart_interrupted',
+  'not_selected',
+  'invalid_key',
+  'quota_exhausted',
+  'rate_limited',
+  'model_unavailable',
+  'model_text_only',
+  'malformed_response',
+  'unreachable',
+])
+const codexHostReasons = new Set<ReviewerReason>([
+  'host_evidence_unavailable',
+  'cgroup_limit_below_1_gib',
+  'headroom_below_1_gib',
+])
+const codexFailureReasons = new Set<ReviewerReason>([
+  'permission_or_profile',
+  'permission_or_process',
+  'protocol_or_process',
+  'restart_interrupted',
+])
+const openRouterFailures = new Set<ReviewerState>([
+  'invalid_key',
+  'quota_exhausted',
+  'rate_limited',
+  'model_unavailable',
+  'model_text_only',
+  'malformed_response',
+  'unreachable',
+])
+const openRouterModel =
+  /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\/[A-Za-z0-9][A-Za-z0-9._-]{0,190}(?::[A-Za-z0-9][A-Za-z0-9._-]{0,31})?$/u
+const reviewerStatus = (value: unknown, engine: 'codex' | 'openrouter') => {
   if (
     !record(value) ||
+    !exactKeys(value, ['engine', 'state', 'reason', 'model', 'tier', 'host_headroom_bytes']) ||
+    value.engine !== engine ||
+    !reviewerStates.has(value.state as ReviewerState) ||
+    !(value.reason === null || reviewerReasons.has(value.reason as ReviewerReason))
+  )
+    return false
+  const state = value.state as ReviewerState
+  const reason = value.reason as ReviewerReason | null
+  if (engine === 'codex')
+    return (
+      codexStates.has(state) &&
+      value.model === null &&
+      value.tier === null &&
+      (value.host_headroom_bytes === null ||
+        (Number.isInteger(value.host_headroom_bytes) && Number(value.host_headroom_bytes) >= 0)) &&
+      (state === 'host_unsupported'
+        ? reason !== null && codexHostReasons.has(reason)
+        : state === 'failed' || state === 'interrupted'
+          ? reason !== null && codexFailureReasons.has(reason)
+          : reason === null)
+    )
+  const model = typeof value.model === 'string' && openRouterModel.test(value.model)
+  return (
+    openRouterStates.has(state) &&
+    value.host_headroom_bytes === null &&
+    (state === 'unconfigured'
+      ? value.model === null && value.tier === null && reason === null
+      : state === 'configured'
+        ? value.tier === null &&
+          ((model && reason === null) || (value.model === null && reason === 'not_selected'))
+        : state === 'usable'
+          ? model && (value.tier === 'free' || value.tier === 'paid') && reason === null
+          : openRouterFailures.has(state) && model && value.tier === null && reason === state)
+  )
+}
+
+export const mapReviewerAccess = (value: unknown): ReviewerAccessView => {
+  if (
+    !record(value) ||
+    !exactKeys(value, [
+      'schema_version',
+      'revision',
+      'mapping',
+      'openrouter_key_configured',
+      'codex',
+      'openrouter',
+      'recommendations',
+      'candidates',
+      'free_tier_caveat',
+      'data_use_caveat',
+    ]) ||
     value.schema_version !== 'reviewer-access-view-v1' ||
     !Number.isInteger(value.revision) ||
     typeof value.openrouter_key_configured !== 'boolean' ||
-    !record(value.codex) ||
-    value.codex.engine !== 'codex' ||
-    !record(value.openrouter) ||
-    value.openrouter.engine !== 'openrouter' ||
+    !reviewerStatus(value.codex, 'codex') ||
+    !reviewerStatus(value.openrouter, 'openrouter') ||
     !Array.isArray(value.recommendations) ||
+    value.recommendations.some((item) => typeof item !== 'string' || !openRouterModel.test(item)) ||
+    !Array.isArray(value.candidates) ||
+    value.candidates.some(
+      (item) =>
+        !record(item) ||
+        !exactKeys(item, [
+          'model',
+          'tier',
+          'qualified',
+          'evidence',
+          'requests_per_minute',
+          'requests_per_day',
+        ]) ||
+        !openRouterModel.test(String(item.model)) ||
+        !['free', 'paid'].includes(String(item.tier)) ||
+        item.qualified !== false ||
+        item.evidence !== 'catalogue_capability_only' ||
+        !(
+          item.requests_per_minute === null ||
+          (Number.isInteger(item.requests_per_minute) && Number(item.requests_per_minute) > 0)
+        ) ||
+        !(item.requests_per_day === null || typeof item.requests_per_day === 'string'),
+    ) ||
+    !(
+      value.mapping === null ||
+      (record(value.mapping) &&
+        value.mapping.engine === 'codex' &&
+        Object.keys(value.mapping).length === 1) ||
+      (record(value.mapping) &&
+        exactKeys(value.mapping, ['engine', 'model']) &&
+        value.mapping.engine === 'openrouter' &&
+        typeof value.mapping.model === 'string' &&
+        openRouterModel.test(value.mapping.model))
+    ) ||
     typeof value.free_tier_caveat !== 'string' ||
     typeof value.data_use_caveat !== 'string'
   )
@@ -1099,13 +1324,21 @@ const mapReviewerAccess = (value: unknown): ReviewerAccessView => {
   return value as unknown as ReviewerAccessView
 }
 
-const mapCodexDevice = (value: unknown): CodexDeviceAuthState => {
+export const mapCodexDevice = (value: unknown): CodexDeviceAuthState => {
   if (
     !record(value) ||
+    !exactKeys(value, [
+      'state',
+      'verification_url',
+      'user_code',
+      'expires_in_seconds',
+      'failure',
+    ]) ||
     ![
       'ready',
       'configured',
       'starting',
+      'issued',
       'waiting',
       'validating',
       'usable',
@@ -1113,7 +1346,33 @@ const mapCodexDevice = (value: unknown): CodexDeviceAuthState => {
       'cancelled',
       'failed',
       'interrupted',
-    ].includes(String(value.state))
+    ].includes(String(value.state)) ||
+    !(
+      value.verification_url === null ||
+      value.verification_url === 'https://auth.openai.com/codex/device'
+    ) ||
+    !(
+      value.user_code === null ||
+      (typeof value.user_code === 'string' && /^[A-Z0-9]{4}-[A-Z0-9]{4}$/u.test(value.user_code))
+    ) ||
+    !(value.expires_in_seconds === null || value.expires_in_seconds === 900) ||
+    !(
+      value.failure === null ||
+      (typeof value.failure === 'string' &&
+        [
+          'permission_or_profile',
+          'permission_or_process',
+          'protocol_or_process',
+          'restart_interrupted',
+        ].includes(value.failure))
+    ) ||
+    (['issued', 'waiting'].includes(String(value.state))
+      ? value.verification_url !== 'https://auth.openai.com/codex/device' ||
+        typeof value.user_code !== 'string' ||
+        value.expires_in_seconds !== 900
+      : value.verification_url !== null ||
+        value.user_code !== null ||
+        value.expires_in_seconds !== null)
   )
     throw new ApiError(502, 'invalid_codex_device_response')
   return value as unknown as CodexDeviceAuthState
@@ -2511,6 +2770,10 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
       value.reviewer_model === null
         ? null
         : stringValue(value.reviewer_model, 'cover_reviewer_model'),
+    reviewerAccessRevision:
+      value.reviewer_access_revision === null
+        ? null
+        : integerValue(value.reviewer_access_revision, 'cover_reviewer_access_revision'),
     reviewerStatus,
     reviewerUnavailableReason: reviewerUnavailableReason as
       | 'profile contract requires memory_bytes=1073741824'

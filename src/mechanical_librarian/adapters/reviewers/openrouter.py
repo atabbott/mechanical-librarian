@@ -253,15 +253,20 @@ class OpenRouterReviewer:
                     or int(declared) > maximum
                 ):
                     raise OpenRouterReviewerError("malformed_response")
-                body = response.read()
+                body = bytearray()
+                for chunk in response.iter_bytes(chunk_size=16_384):
+                    remaining = maximum + 1 - len(body)
+                    if remaining <= 0:
+                        raise OpenRouterReviewerError("malformed_response")
+                    body.extend(chunk[:remaining])
+                    if len(body) > maximum or len(chunk) > remaining:
+                        raise OpenRouterReviewerError("malformed_response")
         except OpenRouterReviewerError:
             raise
         except httpx.HTTPError as error:
             raise OpenRouterReviewerError("unreachable") from error
-        if len(body) > maximum:
-            raise OpenRouterReviewerError("malformed_response")
         try:
-            value = json.loads(body.decode("utf-8", "strict"))
+            value = json.loads(bytes(body).decode("utf-8", "strict"))
             if type(value) is not dict:
                 raise ValueError
             return value

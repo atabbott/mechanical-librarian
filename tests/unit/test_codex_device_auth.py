@@ -3,11 +3,12 @@ from __future__ import annotations
 import io
 import json
 import os
+import signal
 import stat
 import subprocess
 from pathlib import Path
 from threading import Event
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -15,6 +16,8 @@ from mechanical_librarian.adapters.reviewers.codex_device_auth import (
     CodexDeviceAuthError,
     CodexDeviceAuthManager,
     _install_auth,
+    _issued_state,
+    _stop_process,
 )
 
 _PROMPT = (
@@ -48,8 +51,9 @@ class _Process:
         self.returncode = returncode
         self.pid = 123456789
 
-    def wait(self) -> int:
-        return self.returncode
+    def wait(self, timeout: float | None = None) -> int:
+        del timeout
+        return 0 if self.returncode is None else self.returncode
 
     def poll(self) -> int | None:
         return self.returncode
@@ -106,11 +110,27 @@ def test_issued_prompt_validates_status_and_installs_private_auth_atomically(
     assert not list(tmp_path.glob("reviewer-auth-*"))
 
 
+def test_exact_prompt_enters_explicit_issued_state_before_waiting() -> None:
+    state = _issued_state(_PROMPT.decode().splitlines())
+    assert state is not None
+    assert state.state == "issued"
+    assert state.verification_url == "https://auth.openai.com/codex/device"
+    assert state.user_code == "ABCD-EFGH"
+    assert state.expires_in_seconds == 900
+
+
 def test_ordinary_credential_status_does_not_launch_cli(tmp_path: Path) -> None:
     calls: list[str] = []
     manager = _manager(tmp_path)
     _finish(manager)
-    manager._run = lambda *_args, **_kwargs: calls.append("run")  # type: ignore[method-assign]
+
+    def unexpected_run(
+        *_args: Any, **_kwargs: Any
+    ) -> subprocess.CompletedProcess[bytes]:
+        calls.append("run")
+        return subprocess.CompletedProcess(("status",), 1, b"", b"")
+
+    manager._run = unexpected_run
     assert manager.current_credential_status().state == "configured"
     assert calls == []
 
@@ -169,6 +189,17 @@ def test_clear_removes_installed_authority_immediately(tmp_path: Path) -> None:
     assert not (tmp_path / "profile" / "auth.json").exists()
 
 
+def test_generation_shutdown_preserves_valid_installed_credential(
+    tmp_path: Path,
+) -> None:
+    manager = _manager(tmp_path)
+    _finish(manager)
+    installed = tmp_path / "profile" / "auth.json"
+    before = installed.read_bytes()
+    manager.close()
+    assert installed.read_bytes() == before
+
+
 def test_cancel_targets_only_the_exact_active_process(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -182,10 +213,39 @@ def test_cancel_targets_only_the_exact_active_process(
     assert killed == [(123456789, 15)]
 
 
-def test_repeated_start_cannot_spawn_a_second_flow(tmp_path: Path) -> None:
+def test_shutdown_escalates_sigterm_resistant_child_and_proves_death(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = _Process(b"", 0)
+    process.returncode = None  # type: ignore[assignment]
+    waits = 0
+
+    def wait(timeout: float | None = None) -> int:
+        nonlocal waits
+        waits += 1
+        if waits == 1:
+            raise subprocess.TimeoutExpired(("device",), timeout or 0)
+        process.returncode = -9
+        return -9
+
+    monkeypatch.setattr(process, "wait", wait)
+    killed: list[int] = []
+    monkeypatch.setattr(os, "killpg", lambda _pid, sig: killed.append(sig))
+    _stop_process(cast("subprocess.Popen[bytes]", process))
+    assert killed == [signal.SIGTERM, signal.SIGKILL]
+    assert process.poll() == -9
+
+
+def test_repeated_start_cannot_spawn_a_second_flow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     manager = _manager(tmp_path)
     release = Event()
-    manager._flow = lambda: release.wait(timeout=2)  # type: ignore[method-assign]
+
+    def wait_for_release() -> None:
+        release.wait(timeout=2)
+
+    monkeypatch.setattr(manager, "_flow", wait_for_release)
     manager.start()
     thread = manager._thread
     manager.start()

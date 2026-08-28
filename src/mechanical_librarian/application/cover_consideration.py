@@ -87,6 +87,7 @@ class CoverConsiderationStore(Protocol):
         supersedes_id: str | None,
         occurred_at: int,
         preparation_kind: str = "automatic_prepared",
+        reviewer_access_revision: int | None = None,
     ) -> str: ...
 
     def current_cover_consideration_document(
@@ -124,6 +125,8 @@ class _ReviewerEvidence:
     reviewer_engine: str | None = None
     reviewer_model: str | None = None
     reviewer_profile: bytes | None = None
+    reviewer_access_revision: int | None = None
+    replay_reference: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +134,10 @@ class _ObservationRequest:
     replay_digest: str
     packet_payload: bytes | None
     image_payloads: tuple[tuple[str, str, bytes], ...]
+    dispatch: ReviewerDispatch | None = None
+    reviewer_failure: dict[str, object] | None = None
+    reviewer_access_revision: int | None = None
+    replay_reference: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,7 +170,10 @@ class CoverConsiderationService:
         reviewer_profile: bytes | None = None,
         reviewer: ReviewRunner | None = None,
         reviewer_dispatch: Callable[[], ReviewerDispatch] | None = None,
-        reviewer_identity: Callable[[], tuple[str, str, bytes] | None] | None = None,
+        reviewer_identity: (
+            Callable[[], tuple[int, str, str, bytes] | None] | None
+        ) = None,
+        reviewer_revision_current: Callable[[int], bool] | None = None,
         reviewer_unavailable_reason: str | None = None,
         bind_policy: Callable[[str, str], None] | None = None,
         provider_fetching: Callable[[MetadataReport], bool] | None = None,
@@ -177,6 +187,11 @@ class CoverConsiderationService:
         self._reviewer = reviewer
         self._reviewer_dispatch = reviewer_dispatch
         self._reviewer_identity = reviewer_identity
+        self._reviewer_revision_current = reviewer_revision_current
+        if reviewer_dispatch is not None and (
+            reviewer is not None or reviewer_profile is not None
+        ):
+            raise ValueError("ambiguous reviewer authority")
         if not is_cover_profile_contract_reason(reviewer_unavailable_reason):
             raise ValueError("invalid reviewer unavailable reason")
         self._reviewer_unavailable_reason = reviewer_unavailable_reason
@@ -211,6 +226,11 @@ class CoverConsiderationService:
         dynamic_identity = (
             None if self._reviewer_identity is None else self._reviewer_identity()
         )
+        return self._replay_reference(dynamic_identity)
+
+    def _replay_reference(
+        self, dynamic_identity: tuple[int, str, str, bytes] | None
+    ) -> str:
         value: dict[str, object] = {
             "policy": self._policy.document,
             "contracts": {
@@ -227,7 +247,7 @@ class CoverConsiderationService:
                 "taxonomy_reference": TAXONOMY_REFERENCE,
             },
             "profile_sha256": (
-                hashlib.sha256(dynamic_identity[2]).hexdigest()
+                hashlib.sha256(dynamic_identity[3]).hexdigest()
                 if dynamic_identity is not None
                 else None
                 if self._reviewer_profile is None
@@ -236,20 +256,26 @@ class CoverConsiderationService:
             "schema_version": SCHEMA_VERSION,
         }
         if dynamic_identity is not None:
-            value["reviewer_engine"] = dynamic_identity[0]
-            value["reviewer_model"] = dynamic_identity[1]
+            value["reviewer_access_revision"] = dynamic_identity[0]
+            value["reviewer_engine"] = dynamic_identity[1]
+            value["reviewer_model"] = dynamic_identity[2]
         if self._reviewer_unavailable_reason is not None:
             value["reviewer_unavailable_reason"] = self._reviewer_unavailable_reason
         identity = canonical_packet_json(value)
         return "cover_replay_" + hashlib.sha256(identity.encode()).hexdigest()
 
     def _replay_digest(
-        self, review_case_id: str, report_id: str, *, provider_fetching: bool
+        self,
+        review_case_id: str,
+        report_id: str,
+        *,
+        provider_fetching: bool,
+        replay_reference: str | None = None,
     ) -> str:
         return hashlib.sha256(
             canonical_packet_json(
                 {
-                    "replay_reference": self.replay_reference,
+                    "replay_reference": replay_reference or self.replay_reference,
                     "report": report_id,
                     "review_case_id": review_case_id,
                     "provider_fetching": provider_fetching,
@@ -283,11 +309,6 @@ class CoverConsiderationService:
     ) -> _ObservationRequest:
         """Capture bounded observer inputs while mutable product state is serialized."""
         report = MetadataReport.from_json(report_document)
-        replay_digest = self._replay_digest(
-            review_case_id,
-            report.report_id,
-            provider_fetching=self._provider_fetching(report),
-        )
         try:
             packet = prepare_cover_packet(report_document, self._read_preview)
         except ValueError as error:
@@ -295,7 +316,39 @@ class CoverConsiderationService:
                 raise
             packet = None
         if packet is None:
+            replay_digest = self._replay_digest(
+                review_case_id,
+                report.report_id,
+                provider_fetching=self._provider_fetching(report),
+            )
             return _ObservationRequest(replay_digest, None, ())
+        binding: ReviewerDispatch | None = None
+        failure: dict[str, object] | None = None
+        try:
+            if self._reviewer_dispatch is not None:
+                binding = self._reviewer_dispatch()
+        except Exception as error:
+            failure = {
+                "attempts": [],
+                "code": str(getattr(error, "code", "unavailable")),
+            }
+        dynamic_identity = (
+            None
+            if binding is None
+            else (
+                binding.access_revision,
+                binding.engine,
+                binding.model,
+                binding.profile,
+            )
+        )
+        replay_reference = self._replay_reference(dynamic_identity)
+        replay_digest = self._replay_digest(
+            review_case_id,
+            report.report_id,
+            provider_fetching=self._provider_fetching(report),
+            replay_reference=replay_reference,
+        )
         return _ObservationRequest(
             replay_digest,
             packet.document.encode(),
@@ -303,16 +356,31 @@ class CoverConsiderationService:
                 (image.reference, image.digest, image.payload)
                 for image in packet.images
             ),
+            binding,
+            failure,
+            None if binding is None else binding.access_revision,
+            replay_reference,
         )
 
     def observe(self, request: _ObservationRequest) -> _ReviewerEvidence:
         """Run optional external advice over an immutable captured request."""
         if request.packet_payload is None:
             return _ReviewerEvidence(request.replay_digest, None, "unavailable", None)
+        if request.reviewer_failure is not None:
+            return _ReviewerEvidence(
+                request.replay_digest,
+                None,
+                "unavailable",
+                request.reviewer_failure,
+                reviewer_access_revision=request.reviewer_access_revision,
+                replay_reference=request.replay_reference,
+            )
         return self._observe_payloads(
             request.replay_digest,
             request.packet_payload,
             request.image_payloads,
+            binding=request.dispatch,
+            replay_reference=request.replay_reference,
         )
 
     def _observe_packet(
@@ -332,14 +400,25 @@ class CoverConsiderationService:
         replay_digest: str,
         packet_payload: bytes,
         image_payloads: tuple[tuple[str, str, bytes], ...],
+        *,
+        binding: ReviewerDispatch | None = None,
+        replay_reference: str | None = None,
     ) -> _ReviewerEvidence:
         engine: str | None = None
         model: str | None = None
         profile = self._reviewer_profile
         reviewer = self._reviewer
-        if self._reviewer_dispatch is not None:
+        access_revision: int | None = None
+        if binding is not None:
+            access_revision = binding.access_revision
+            engine = binding.engine
+            model = binding.model
+            profile = binding.profile
+            reviewer = binding.runner
+        elif self._reviewer_dispatch is not None:
             try:
                 binding = self._reviewer_dispatch()
+                access_revision = binding.access_revision
                 engine = binding.engine
                 model = binding.model
                 profile = binding.profile
@@ -398,6 +477,8 @@ class CoverConsiderationService:
                 engine,
                 model,
                 profile,
+                access_revision,
+                replay_reference,
             )
         except Exception as error:
             if not dispatched or observed:
@@ -436,8 +517,19 @@ class CoverConsiderationService:
                 "code": str(getattr(error, "code", "runtime")),
             }
             return _ReviewerEvidence(
-                replay_digest, None, "failed", failure, engine, model, profile
+                replay_digest,
+                None,
+                "failed",
+                failure,
+                engine,
+                model,
+                profile,
+                access_revision,
+                replay_reference,
             )
+        finally:
+            if binding is not None:
+                binding.close()
 
     def ensure(
         self,
@@ -458,6 +550,17 @@ class CoverConsiderationService:
         if (
             reviewer_evidence is not None
             and reviewer_evidence.replay_digest != replay_digest
+        ):
+            raise CoverConsiderationError("stale")
+        if (
+            reviewer_evidence is not None
+            and reviewer_evidence.reviewer_access_revision is not None
+            and (
+                self._reviewer_revision_current is None
+                or not self._reviewer_revision_current(
+                    reviewer_evidence.reviewer_access_revision
+                )
+            )
         ):
             raise CoverConsiderationError("stale")
         if not retry:
@@ -491,6 +594,11 @@ class CoverConsiderationService:
             occurred_at=self._clock(),
             preparation_kind=(
                 "owner_retry_prepared" if retry else "automatic_prepared"
+            ),
+            reviewer_access_revision=(
+                None
+                if reviewer_evidence is None
+                else reviewer_evidence.reviewer_access_revision
             ),
         )
         return self._project(persisted, current=True)
@@ -594,11 +702,18 @@ class CoverConsiderationService:
             "report_document": report_document,
             "report_id": report.report_id,
             "replay_digest": replay_digest,
-            "replay_reference": self.replay_reference,
+            "replay_reference": (
+                evidence.replay_reference
+                if evidence is not None and evidence.replay_reference is not None
+                else self.replay_reference
+            ),
             "review_case_id": review_case_id,
             "reviewer_failure": reviewer_failure,
             "reviewer_engine": (None if evidence is None else evidence.reviewer_engine),
             "reviewer_model": None if evidence is None else evidence.reviewer_model,
+            "reviewer_access_revision": (
+                None if evidence is None else evidence.reviewer_access_revision
+            ),
             "reviewer_status": reviewer_status,
             "schema_version": SCHEMA_VERSION,
             "supersedes_id": supersedes_id,
@@ -779,6 +894,7 @@ class CoverConsiderationService:
             "policy_reference": value["policy_reference"],
             "provider_fetching": value["provider_fetching"],
             "ready": policy is not None and policy["status"] == "recommended",
+            "reviewer_access_revision": value["reviewer_access_revision"],
             "reviewer_status": value["reviewer_status"],
             "reviewer_engine": value["reviewer_engine"],
             "reviewer_model": value["reviewer_model"],

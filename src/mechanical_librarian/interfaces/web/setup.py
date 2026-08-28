@@ -9,14 +9,26 @@ from typing import Literal, Protocol
 
 from argon2 import PasswordHasher
 from fastapi import Cookie, FastAPI, Header, HTTPException, Request, Response
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, TypeAdapter
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    StrictInt,
+    StrictStr,
+    TypeAdapter,
+)
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from mechanical_librarian.application.review_web import (
     OwnerSessionService,
     ReviewWebError,
 )
-from mechanical_librarian.application.reviewer_access import ReviewerAccessOperations
+from mechanical_librarian.application.reviewer_access import (
+    ReviewerAccessApplicationError,
+    ReviewerAccessOperations,
+    ReviewerAccessRepositoryError,
+)
 from mechanical_librarian.application.reviewer_contracts import CodexDeviceAuthState
 from mechanical_librarian.application.setup_connection import SetupConnectionError
 from mechanical_librarian.application.setup_journey import (
@@ -164,9 +176,7 @@ class _ReviewerSelectionRequest(_ReviewerRevisionRequest):
 
 
 class _OpenRouterWriteRequest(_ReviewerRevisionRequest):
-    api_key: StrictStr = Field(
-        min_length=1, max_length=2048, json_schema_extra={"writeOnly": True}
-    )
+    api_key: SecretStr = Field(json_schema_extra={"writeOnly": True})
     model: OpenRouterModelId
 
 
@@ -583,13 +593,13 @@ def create_setup_app(
             try:
                 return reviewer_authority().configure_openrouter(
                     expected_revision=request.expected_revision,
-                    api_key=request.api_key,
+                    api_key=request.api_key.get_secret_value(),
                     model=request.model,
                 )
-            except Exception as error:
-                raise HTTPException(
-                    409, {"error": "reviewer_access_refused"}
-                ) from error
+            except ReviewerAccessApplicationError as error:
+                raise HTTPException(422, {"error": error.code}) from None
+            except (ReviewerAccessRepositoryError, ValueError):
+                raise HTTPException(409, {"error": "reviewer_access_invalid"}) from None
 
         @app.post("/api/setup/reviewer/selection")
         def select_reviewer(
@@ -608,10 +618,10 @@ def create_setup_app(
                 return operations.select_none(
                     expected_revision=request.expected_revision
                 )
-            except Exception as error:
-                raise HTTPException(
-                    409, {"error": "reviewer_access_refused"}
-                ) from error
+            except ReviewerAccessApplicationError as error:
+                raise HTTPException(422, {"error": error.code}) from None
+            except ReviewerAccessRepositoryError:
+                raise HTTPException(409, {"error": "reviewer_access_stale"}) from None
 
         @app.post("/api/setup/reviewer/codex/device")
         def start_codex_device(
@@ -622,10 +632,8 @@ def create_setup_app(
             authorize_mutation(ml_session, x_csrf_token, origin)
             try:
                 return reviewer_authority().start_codex()
-            except Exception as error:
-                raise HTTPException(
-                    409, {"error": "reviewer_access_refused"}
-                ) from error
+            except ReviewerAccessApplicationError as error:
+                raise HTTPException(422, {"error": error.code}) from None
 
         @app.get("/api/setup/reviewer/codex/device")
         def codex_device_status(
@@ -651,6 +659,10 @@ def create_setup_app(
             origin: str | None = Header(default=None),
         ) -> dict[str, object]:
             authorize_mutation(ml_session, x_csrf_token, origin)
+            if request.outcome == "skipped" and reviewer_access is not None:
+                current = reviewer_access.read()
+                if current.mapping is not None:
+                    reviewer_access.select_none(expected_revision=current.revision)
             if request.outcome == "configured":
                 if reviewer_access is None or reviewer_access.read().mapping is None:
                     raise HTTPException(409, {"error": "reviewer_unconfigured"})

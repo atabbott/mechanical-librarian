@@ -103,6 +103,51 @@ def test_catalogue_bound_covers_measured_current_payload_and_rejects_overflow() 
     assert caught.value.code == "malformed_response"
 
 
+@pytest.mark.parametrize("target", ("key", "models", "chat"))
+def test_chunked_oversize_is_rejected_without_content_length(
+    target: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if (
+            (target == "key" and request.url.path == "/api/v1/key")
+            or (target == "models" and request.url.path == "/api/v1/models")
+            or (target == "chat" and request.url.path == "/api/v1/chat/completions")
+        ):
+            maximum = {
+                "key": module._MAX_KEY_RESPONSE,
+                "models": module._MAX_MODELS_RESPONSE,
+                "chat": module._MAX_CHAT_RESPONSE,
+            }[target]
+            return httpx.Response(
+                200,
+                headers={"transfer-encoding": "chunked"},
+                content=b"x" * (maximum + 1),
+            )
+        if request.url.path == "/api/v1/key":
+            return httpx.Response(200, json=_key())
+        return httpx.Response(200, json=_models())
+
+    monkeypatch.setattr(module, "admit_cover_review_request", lambda *_args: _Request())
+    reviewer = OpenRouterReviewer(
+        "secret", "example/vision", transport=httpx.MockTransport(handler)
+    )
+    try:
+        with pytest.raises(OpenRouterReviewerError) as caught:
+            if target == "chat":
+                reviewer.run(
+                    openrouter_profile("example/vision"),
+                    b"instruction",
+                    b"{}",
+                    b"{}",
+                    (),
+                )
+            else:
+                reviewer.probe()
+    finally:
+        reviewer.close()
+    assert caught.value.code == "malformed_response"
+
+
 @dataclass(frozen=True)
 class _Request:
     digest: str = "a" * 64

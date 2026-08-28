@@ -609,6 +609,11 @@ class ReviewApplication:
                 self._close_activity_projection()
             except Exception as error:
                 failures.append(error)
+        if self._reviewer_access is not None:
+            try:
+                self._reviewer_access.close()
+            except Exception as error:
+                failures.append(error)
         if failures:
             first, *later = failures
             for failure in later:

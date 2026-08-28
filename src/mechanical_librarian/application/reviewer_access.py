@@ -27,9 +27,27 @@ from mechanical_librarian.domain.reviewer_access import (
 )
 from mechanical_librarian.domain.validation import credential
 
+ReviewerAccessFailure = Literal[
+    "not_configured",
+    "host_unsupported",
+    "credential_unavailable",
+    "access_changed",
+    "invalid_key",
+    "quota_exhausted",
+    "rate_limited",
+    "model_unavailable",
+    "model_text_only",
+    "malformed_response",
+    "unreachable",
+]
+
 
 class ReviewerAccessApplicationError(RuntimeError):
     """Value-free owner-facing reviewer-access refusal."""
+
+    def __init__(self, code: ReviewerAccessFailure) -> None:
+        super().__init__(code)
+        self.code = code
 
 
 class ReviewerAccessRepositoryError(RuntimeError):
@@ -38,6 +56,10 @@ class ReviewerAccessRepositoryError(RuntimeError):
 
 class ReviewerAccessRepository(Protocol):
     def read(self) -> tuple[ReviewerAccessDocument, bool]: ...
+
+    def snapshot(self) -> tuple[ReviewerAccessDocument, str | None]: ...
+
+    def revision_is_current(self, revision: int) -> bool: ...
 
     def replace(
         self,
@@ -62,6 +84,8 @@ class CodexAuth(Protocol):
     def current_credential_status(self) -> CodexDeviceAuthState: ...
 
     def recheck_credential_status(self) -> CodexDeviceAuthState: ...
+
+    def close(self) -> None: ...
 
 
 class OpenRouterClient(Protocol):
@@ -92,6 +116,15 @@ class ReviewerEngineStatus(_Closed):
     host_headroom_bytes: StrictInt | None = None
 
 
+class OpenRouterRecommendation(_Closed):
+    model: StrictStr
+    tier: Literal["free", "paid"]
+    qualified: Literal[False] = False
+    evidence: Literal["catalogue_capability_only"] = "catalogue_capability_only"
+    requests_per_minute: StrictInt | None = None
+    requests_per_day: StrictStr | None = None
+
+
 class ReviewerAccessView(_Closed):
     schema_version: Literal["reviewer-access-view-v1"] = "reviewer-access-view-v1"
     revision: StrictInt
@@ -100,8 +133,23 @@ class ReviewerAccessView(_Closed):
     codex: ReviewerEngineStatus
     openrouter: ReviewerEngineStatus
     recommendations: tuple[StrictStr, ...] = ()
+    candidates: tuple[OpenRouterRecommendation, ...] = (
+        OpenRouterRecommendation(
+            model="dots-studio/dots-3-note-preview:free",
+            tier="free",
+            requests_per_minute=20,
+            requests_per_day="50 before $10 lifetime purchases; 1000 after",
+        ),
+        OpenRouterRecommendation(model="mistralai/ministral-3b-2512", tier="paid"),
+        OpenRouterRecommendation(model="google/gemma-3-12b-it", tier="paid"),
+        OpenRouterRecommendation(
+            model="mistralai/mistral-small-3.2-24b-instruct", tier="paid"
+        ),
+    )
     free_tier_caveat: StrictStr = (
-        "Free-model request caps depend on the current account tier and may change."
+        "OpenRouter currently documents free-model caps of 20 requests/minute and "
+        "50 requests/day before $10 in lifetime purchases, or 1,000/day after; "
+        "provider limits may change."
     )
     data_use_caveat: StrictStr = (
         "OpenRouter and the selected endpoint may process submitted cover previews; "
@@ -172,6 +220,7 @@ class ReviewerAccessOperations:
             if flow.state
             in {
                 "starting",
+                "issued",
                 "waiting",
                 "validating",
                 "usable",
@@ -217,7 +266,12 @@ class ReviewerAccessOperations:
     ) -> ReviewerAccessView:
         if not credential(api_key):
             raise ValueError("invalid reviewer credential")
-        account = self._probe_openrouter(api_key, model)
+        try:
+            account = self._probe_openrouter(api_key, model)
+        except OpenRouterReviewerError as error:
+            raise ReviewerAccessApplicationError(
+                _public_openrouter_failure(error)
+            ) from None
         replacement = ReviewerAccessDocument(
             schema_version="reviewer-access-v1",
             revision=expected_revision + 1,
@@ -237,7 +291,9 @@ class ReviewerAccessOperations:
         host = self._codex_host()
         credential = self._codex_auth.recheck_credential_status()
         if not host.available or credential.state != "usable":
-            raise ReviewerAccessApplicationError("codex is unavailable")
+            raise ReviewerAccessApplicationError(
+                "host_unsupported" if not host.available else "credential_unavailable"
+            )
         self._replace_selection(
             expected_revision,
             CodexTaskSelection(engine="codex"),
@@ -265,7 +321,7 @@ class ReviewerAccessOperations:
 
     def start_codex(self) -> CodexDeviceAuthState:
         if not self._codex_host().available:
-            raise ReviewerAccessApplicationError("codex host is unsupported")
+            raise ReviewerAccessApplicationError("host_unsupported")
         return self._codex_auth.start()
 
     def codex_status(self) -> CodexDeviceAuthState:
@@ -284,26 +340,33 @@ class ReviewerAccessOperations:
         return self.read()
 
     def dispatch_cover_observation(self) -> ReviewerDispatch:
-        document, configured = self._repository.read()
+        document, key = self._repository.snapshot()
         selection = document.cover_observation
         if selection is None:
-            raise ReviewerAccessApplicationError("reviewer is not configured")
+            raise ReviewerAccessApplicationError("not_configured")
         if isinstance(selection, CodexTaskSelection):
             if not self._codex_host().available:
-                raise ReviewerAccessApplicationError("codex host is unsupported")
+                raise ReviewerAccessApplicationError("host_unsupported")
             if self._codex_auth.recheck_credential_status().state != "usable":
-                raise ReviewerAccessApplicationError("codex credential is unavailable")
+                raise ReviewerAccessApplicationError("credential_unavailable")
             model, profile, runner = self._codex_binding()
-            return ReviewerDispatch("codex", model, profile, runner)
-        if not configured:
-            raise ReviewerAccessApplicationError("openrouter key is unavailable")
-        return self._openrouter_dispatch(
-            self._repository.openrouter_key(), selection.model
-        )
+            if not self._repository.revision_is_current(document.revision):
+                raise ReviewerAccessApplicationError("access_changed")
+            return ReviewerDispatch(document.revision, "codex", model, profile, runner)
+        if key is None:
+            raise ReviewerAccessApplicationError("credential_unavailable")
+        dispatch = self._openrouter_dispatch(document.revision, key, selection.model)
+        if not self._repository.revision_is_current(document.revision):
+            dispatch.close()
+            raise ReviewerAccessApplicationError("access_changed")
+        return dispatch
 
-    def current_cover_observation_identity(self) -> tuple[str, str, bytes] | None:
+    def current_cover_observation_identity(
+        self,
+    ) -> tuple[int, str, str, bytes] | None:
         """Return non-secret replay identity without constructing an engine."""
-        selection = self._repository.read()[0].cover_observation
+        document, _key = self._repository.snapshot()
+        selection = document.cover_observation
         if selection is None:
             return None
         if isinstance(selection, CodexTaskSelection):
@@ -311,8 +374,19 @@ class ReviewerAccessOperations:
                 model, profile = self._codex_identity()
             except RuntimeError:
                 return None
-            return "codex", model, profile
-        return "openrouter", selection.model, openrouter_profile(selection.model)
+            return document.revision, "codex", model, profile
+        return (
+            document.revision,
+            "openrouter",
+            selection.model,
+            openrouter_profile(selection.model),
+        )
+
+    def revision_is_current(self, revision: int) -> bool:
+        return self._repository.revision_is_current(revision)
+
+    def close(self) -> None:
+        self._codex_auth.close()
 
     def _replace_selection(
         self, expected_revision: int, selection: ReviewerTaskSelection | None
@@ -331,7 +405,9 @@ class ReviewerAccessOperations:
         finally:
             client.close()
 
-    def _openrouter_dispatch(self, key: str, model: str) -> ReviewerDispatch:
+    def _openrouter_dispatch(
+        self, revision: int, key: str, model: str
+    ) -> ReviewerDispatch:
         client = self._openrouter_factory(key, model)
 
         def run(
@@ -346,7 +422,9 @@ class ReviewerAccessOperations:
             finally:
                 client.close()
 
-        return ReviewerDispatch("openrouter", model, openrouter_profile(model), run)
+        return ReviewerDispatch(
+            revision, "openrouter", model, openrouter_profile(model), run, client.close
+        )
 
 
 def _openrouter_failure_status(
@@ -368,11 +446,21 @@ def _openrouter_failure_status(
     )
 
 
+def _public_openrouter_failure(error: OpenRouterReviewerError) -> ReviewerAccessFailure:
+    if error.code in {"transport", "unreachable"}:
+        return "unreachable"
+    if error.code in {"profile_mismatch", "malformed_request"}:
+        return "malformed_response"
+    return cast("ReviewerAccessFailure", error.code)
+
+
 __all__ = [
     "ReviewerAccessApplicationError",
     "ReviewerAccessOperations",
+    "ReviewerAccessFailure",
     "ReviewerAccessRepositoryError",
     "ReviewerAccessView",
     "ReviewerDispatch",
     "ReviewerEngineStatus",
+    "OpenRouterRecommendation",
 ]

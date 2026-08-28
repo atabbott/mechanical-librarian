@@ -44,8 +44,9 @@ The owner may continue without a reviewer or select exactly one engine for
 write-only OpenRouter key and exact model ID. Reviews remain advisory and never
 receive target credentials or write authority. OpenRouter sends bounded cover
 previews to its fixed API origin and the selected provider; owners should check
-current tier, capability, and data-use terms. No model recommendation is
-qualified by delivered evidence in this build.
+current tier, capability, and data-use terms. Catalogue-capable free and paid
+candidates are labelled unqualified; no model recommendation is qualified by
+delivered real-cover evidence in this build.
 
 The installed command surface contains the authenticated `review-serve`
 workspace, single-policy `policy-preview`, owner-directed `cover-review`, and

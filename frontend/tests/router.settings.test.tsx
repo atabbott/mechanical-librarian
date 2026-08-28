@@ -13,7 +13,7 @@ import {
   settingsSecretValid,
   settingsTextValid,
 } from '../src/api/http'
-import type { SettingsView, SettingsWrite } from '../src/api/http'
+import type { ReviewerAccessView, SettingsView, SettingsWrite } from '../src/api/http'
 import { createHttp, renderRoute } from './fixtures'
 
 const document: SettingsView['document'] = {
@@ -101,6 +101,42 @@ const view = (authority: 'file' | 'store' = 'store'): SettingsView => ({
     { configured: true, field_id: 'provider.hardcover.key', indicator: 'Configured · ····abcd' },
   ],
 })
+
+const reviewerView: ReviewerAccessView = {
+  schema_version: 'reviewer-access-view-v1',
+  revision: 3,
+  mapping: null,
+  openrouter_key_configured: false,
+  codex: {
+    engine: 'codex',
+    state: 'failed',
+    reason: 'permission_or_profile',
+    model: null,
+    tier: null,
+    host_headroom_bytes: 2_147_483_648,
+  },
+  openrouter: {
+    engine: 'openrouter',
+    state: 'unconfigured',
+    reason: null,
+    model: null,
+    tier: null,
+    host_headroom_bytes: null,
+  },
+  recommendations: [],
+  candidates: [
+    {
+      model: 'dots-studio/dots-3-note-preview:free',
+      tier: 'free',
+      qualified: false,
+      evidence: 'catalogue_capability_only',
+      requests_per_minute: 20,
+      requests_per_day: '50 before $10 lifetime purchases; 1000 after',
+    },
+  ],
+  free_tier_caveat: '20 requests/minute; 50 or 1000 requests/day by account tier.',
+  data_use_caveat: 'Cover previews are sent to OpenRouter and its selected provider.',
+}
 
 describe('settings API field validation vocabulary', () => {
   it('matches the generated boundary at exact and unusual values', () => {
@@ -485,5 +521,44 @@ describe('owner settings route', () => {
     expect(timeout).toHaveAttribute('aria-invalid', 'true')
     expect(timeout).toHaveAccessibleDescription(/Request timeout must be from 1 to 60/)
     expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled()
+  })
+
+  it('keeps reviewer access owner-managed under file settings and labels candidates honestly', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view('file'))
+    http.getReviewerAccess = vi.fn(async () => reviewerView)
+    http.configureOpenRouter = vi.fn(async () => ({
+      ...reviewerView,
+      revision: 4,
+      mapping: {
+        engine: 'openrouter' as const,
+        model: 'dots-studio/dots-3-note-preview:free',
+      },
+      openrouter_key_configured: true,
+    }))
+    renderRoute('/settings?group=reviewer', http)
+
+    expect(await screen.findByText(/No model recommendation is qualified/u)).toBeVisible()
+    expect(screen.getByText(/20 requests\/minute/u)).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Restart device sign-in' })).toBeVisible()
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Use dots-studio/dots-3-note-preview:free',
+      }),
+    )
+    const model = screen.getByRole('textbox', { name: 'Model ID' })
+    expect(model).toHaveValue('dots-studio/dots-3-note-preview:free')
+    const key = screen.getByLabelText('API key')
+    await user.type(key, 'secret-key')
+    await user.click(screen.getByRole('button', { name: 'Validate and use OpenRouter' }))
+    await waitFor(() =>
+      expect(http.configureOpenRouter).toHaveBeenCalledWith({
+        expected_revision: 3,
+        api_key: 'secret-key',
+        model: 'dots-studio/dots-3-note-preview:free',
+      }),
+    )
+    expect(key).toHaveValue('')
   })
 })

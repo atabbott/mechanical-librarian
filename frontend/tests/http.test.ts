@@ -14,6 +14,8 @@ import {
   mapHistory,
   mapPreparation,
   mapCoverConsideration,
+  mapCodexDevice,
+  mapReviewerAccess,
 } from '../src/api/http'
 
 const token = 'a'.repeat(32)
@@ -24,13 +26,51 @@ const csrf = {
   renew: vi.fn(async () => renewedToken),
 }
 
+const reviewerAccessPayload = (overrides: Record<string, unknown> = {}) => ({
+  schema_version: 'reviewer-access-view-v1', revision: 3, mapping: null, openrouter_key_configured: false,
+  codex: { engine: 'codex', state: 'ready', reason: null, model: null, tier: null, host_headroom_bytes: 2_147_483_648 },
+  openrouter: { engine: 'openrouter', state: 'unconfigured', reason: null, model: null, tier: null, host_headroom_bytes: null },
+  recommendations: [], candidates: [], free_tier_caveat: 'Current limits may change.', data_use_caveat: 'Review current provider policies.', ...overrides,
+})
+
+describe('reviewer access transport vocabulary', () => {
+  it.each(['invalid_key', 'quota_exhausted', 'rate_limited', 'model_unavailable', 'model_text_only', 'malformed_response', 'unreachable'] as const)('preserves the closed %s refusal', (state) => {
+    const mapped = mapReviewerAccess(reviewerAccessPayload({ openrouter: {
+      engine: 'openrouter', state, reason: state, model: 'provider/model', tier: null, host_headroom_bytes: null,
+    } }))
+    expect(mapped.openrouter).toMatchObject({ state, reason: state })
+  })
+
+  it.each([
+    ['cross-engine reason', { codex: { engine: 'codex', state: 'failed', reason: 'invalid_key', model: null, tier: null, host_headroom_bytes: 1 } }],
+    ['hostile model', { mapping: { engine: 'openrouter', model: 'provider/model\nBearer secret' } }],
+    ['extra mapping field', { mapping: { engine: 'codex', model: 'invented' } }],
+    ['non-integer headroom', { codex: { engine: 'codex', state: 'ready', reason: null, model: null, tier: null, host_headroom_bytes: '1' } }],
+    ['qualified candidate', { candidates: [{ model: 'provider/model', tier: 'paid', qualified: true, evidence: 'catalogue_capability_only', requests_per_minute: null, requests_per_day: null }] }],
+    ['extra top-level field', { invented: true }],
+  ])('rejects %s', (_label, overrides) => {
+    expect(() => mapReviewerAccess(reviewerAccessPayload(overrides))).toThrow('invalid_reviewer_access_response')
+  })
+
+  it.each(['permission_or_profile', 'permission_or_process', 'protocol_or_process', 'restart_interrupted'] as const)('preserves the closed device failure %s', (failure) => {
+    expect(mapCodexDevice({ state: failure === 'restart_interrupted' ? 'interrupted' : 'failed', verification_url: null, user_code: null, expires_in_seconds: null, failure }).failure).toBe(failure)
+  })
+
+  it('accepts only the fixed issued prompt shape', () => {
+    const issued = { state: 'issued', verification_url: 'https://auth.openai.com/codex/device', user_code: 'ABCD-1234', expires_in_seconds: 900, failure: null }
+    expect(mapCodexDevice(issued).state).toBe('issued')
+    expect(() => mapCodexDevice({ ...issued, user_code: 'Bearer secret' })).toThrow('invalid_codex_device_response')
+    expect(() => mapCodexDevice({ ...issued, invented: true })).toThrow('invalid_codex_device_response')
+  })
+})
+
 describe('ReviewApiClient', () => {
   it('fails closed on cover candidate, policy, incumbent, and recommendation relationship contradictions', () => {
     const context = (alternative_id: string | null, selection: 'current' | 'proposed', recommendation: 'recommended' | 'no_recommendation' = 'no_recommendation') => ({ alternative_id, selection, recommendation, recommendation_reason: recommendation === 'recommended' ? 'Authoritative policy recommendation.' : 'No recommendation retained.', rationale: 'Retained cover choice.', limitations: [], evidence: [] })
     const observation = (overrides: Record<string, unknown> = {}) => ({ candidate_reference: 'candidate-1', composition: 'minimal', cover_text_language: 'english', explicit_imagery: 'absent', format_branding: 'absent', medium: 'illustrated', overlay_marking: 'absent', placeholder: 'absent', preview_sha256: 'b'.repeat(64), preview_variant: 'cover-preview-v1', promotional_text: 'absent', reproduction: 'clean', series_styling: 'standalone', thumbnail_legibility: 'legible', tie_in_branding: 'absent', ...overrides })
     const candidate = (overrides: Record<string, unknown> = {}) => ({ artifact_id: 'artifact-1', deterministic_citations: ['citation-1'], deterministic_rank: 1, deterministic_rank_key: [1, 0, -10000, -100, -100, 0, 'candidate-1'], height: 100, identity: { outcome: 'verified_work_match' }, incumbent: false, match_state: 'same_book', observation: null, original_sha256: 'a'.repeat(64), ordinal: 0, preview_sha256: 'b'.repeat(64), reference: 'candidate-1', selectable: true, source_kinds: [], state: 'acceptable', width: 100, ...overrides })
     const policy = (overrides: Record<string, unknown> = {}) => ({ status: 'abstained', recommended_candidate_reference: null, acceptable_candidate_references: ['candidate-1'], ...overrides })
-    const payload = (overrides: Record<string, unknown> = {}) => ({ schema_version: 'cover-consideration-v3', consideration_id: 'consideration', current: true, candidates: [candidate()], choice_contexts: [context(null, 'current'), context('candidate-1', 'proposed')], incumbent: { state: 'absent', reference: null }, omissions: [], policy: policy(), policy_preferences: { avoid_promotional_text: false, avoid_tie_in_branding: false, prefer_minimal_composition: false }, policy_reference: 'policy', provider_fetching: true, ready: false, reviewer_engine: 'openrouter', reviewer_model: 'provider/model', reviewer_status: 'completed', reviewer_unavailable_reason: null, supersedes_id: null, target_fingerprint: 'fingerprint', ...overrides })
+    const payload = (overrides: Record<string, unknown> = {}) => ({ schema_version: 'cover-consideration-v3', consideration_id: 'consideration', current: true, candidates: [candidate()], choice_contexts: [context(null, 'current'), context('candidate-1', 'proposed')], incumbent: { state: 'absent', reference: null }, omissions: [], policy: policy(), policy_preferences: { avoid_promotional_text: false, avoid_tie_in_branding: false, prefer_minimal_composition: false }, policy_reference: 'policy', provider_fetching: true, ready: false, reviewer_access_revision: 7, reviewer_engine: 'openrouter', reviewer_model: 'provider/model', reviewer_status: 'completed', reviewer_unavailable_reason: null, supersedes_id: null, target_fingerprint: 'fingerprint', ...overrides })
 
     expect(mapCoverConsideration(payload())?.choiceContexts).toHaveLength(2)
     expect(mapCoverConsideration(payload({ candidates: [], choice_contexts: [context(null, 'current')], policy: null }))).not.toBeNull()
@@ -75,7 +115,7 @@ describe('ReviewApiClient', () => {
     for (const [label, overrides] of invalid) expect(() => mapCoverConsideration(payload(overrides)), label).toThrow(ApiError)
   })
   it('maps only the fixed unavailable reviewer-contract reasons', () => {
-    const payload = (reviewer_unavailable_reason: unknown) => ({ schema_version: 'cover-consideration-v3', consideration_id: 'consideration', current: true, candidates: [], choice_contexts: [{ alternative_id: null, selection: 'current', recommendation: 'no_recommendation', recommendation_reason: 'No recommendation retained.', rationale: 'Retained cover choice.', limitations: [], evidence: [] }], incumbent: { state: 'absent', reference: null }, omissions: [], policy: null, policy_preferences: { avoid_promotional_text: false, avoid_tie_in_branding: false, prefer_minimal_composition: false }, policy_reference: 'policy', provider_fetching: false, ready: false, reviewer_engine: null, reviewer_model: null, reviewer_status: 'unavailable', reviewer_unavailable_reason, supersedes_id: null, target_fingerprint: 'fingerprint' })
+    const payload = (reviewer_unavailable_reason: unknown) => ({ schema_version: 'cover-consideration-v3', consideration_id: 'consideration', current: true, candidates: [], choice_contexts: [{ alternative_id: null, selection: 'current', recommendation: 'no_recommendation', recommendation_reason: 'No recommendation retained.', rationale: 'Retained cover choice.', limitations: [], evidence: [] }], incumbent: { state: 'absent', reference: null }, omissions: [], policy: null, policy_preferences: { avoid_promotional_text: false, avoid_tie_in_branding: false, prefer_minimal_composition: false }, policy_reference: 'policy', provider_fetching: false, ready: false, reviewer_access_revision: null, reviewer_engine: null, reviewer_model: null, reviewer_status: 'unavailable', reviewer_unavailable_reason, supersedes_id: null, target_fingerprint: 'fingerprint' })
 
     expect(mapCoverConsideration(payload(null))?.reviewerUnavailableReason).toBeNull()
     expect(mapCoverConsideration(payload('profile contract requires memory_bytes=1073741824'))?.reviewerUnavailableReason).toBe('profile contract requires memory_bytes=1073741824')

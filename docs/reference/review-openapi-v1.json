@@ -235,6 +235,63 @@
         "title": "OpenLibraryProviderSettings",
         "type": "object"
       },
+      "OpenRouterRecommendation": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "const": "catalogue_capability_only",
+            "default": "catalogue_capability_only",
+            "title": "Evidence",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "qualified": {
+            "const": false,
+            "default": false,
+            "title": "Qualified",
+            "type": "boolean"
+          },
+          "requests_per_day": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requests Per Day"
+          },
+          "requests_per_minute": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requests Per Minute"
+          },
+          "tier": {
+            "enum": [
+              "free",
+              "paid"
+            ],
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model",
+          "tier"
+        ],
+        "title": "OpenRouterRecommendation",
+        "type": "object"
+      },
       "OpenRouterTaskSelection": {
         "additionalProperties": false,
         "properties": {
@@ -455,6 +512,41 @@
       "ReviewerAccessView": {
         "additionalProperties": false,
         "properties": {
+          "candidates": {
+            "default": [
+              {
+                "evidence": "catalogue_capability_only",
+                "model": "dots-studio/dots-3-note-preview:free",
+                "qualified": false,
+                "requests_per_day": "50 before $10 lifetime purchases; 1000 after",
+                "requests_per_minute": 20,
+                "tier": "free"
+              },
+              {
+                "evidence": "catalogue_capability_only",
+                "model": "mistralai/ministral-3b-2512",
+                "qualified": false,
+                "tier": "paid"
+              },
+              {
+                "evidence": "catalogue_capability_only",
+                "model": "google/gemma-3-12b-it",
+                "qualified": false,
+                "tier": "paid"
+              },
+              {
+                "evidence": "catalogue_capability_only",
+                "model": "mistralai/mistral-small-3.2-24b-instruct",
+                "qualified": false,
+                "tier": "paid"
+              }
+            ],
+            "items": {
+              "$ref": "#/components/schemas/OpenRouterRecommendation"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
           "codex": {
             "$ref": "#/components/schemas/ReviewerEngineStatus"
           },
@@ -464,7 +556,7 @@
             "type": "string"
           },
           "free_tier_caveat": {
-            "default": "Free-model request caps depend on the current account tier and may change.",
+            "default": "OpenRouter currently documents free-model caps of 20 requests/minute and 50 requests/day before $10 in lifetime purchases, or 1,000/day after; provider limits may change.",
             "title": "Free Tier Caveat",
             "type": "string"
           },
@@ -594,6 +686,7 @@
             "enum": [
               "ready",
               "starting",
+              "issued",
               "waiting",
               "validating",
               "usable",
@@ -2243,6 +2336,7 @@
               "ready",
               "configured",
               "starting",
+              "issued",
               "waiting",
               "validating",
               "usable",
@@ -2557,6 +2651,17 @@
             "title": "Ready",
             "type": "boolean"
           },
+          "reviewer_access_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewer Access Revision"
+          },
           "reviewer_engine": {
             "anyOf": [
               {
@@ -2633,6 +2738,7 @@
           "ready",
           "reviewer_engine",
           "reviewer_model",
+          "reviewer_access_revision",
           "reviewer_status",
           "reviewer_unavailable_reason",
           "schema_version",
@@ -4223,10 +4329,10 @@
         "additionalProperties": false,
         "properties": {
           "api_key": {
-            "maxLength": 2048,
-            "minLength": 1,
+            "format": "password",
             "title": "Api Key",
-            "type": "string"
+            "type": "string",
+            "writeOnly": true
           },
           "expected_revision": {
             "minimum": 1.0,

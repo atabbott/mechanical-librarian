@@ -10,6 +10,7 @@ import threading
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from threading import Lock
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
 
 import uvicorn
@@ -89,10 +90,12 @@ from mechanical_librarian.adapters.providers.remote_cover import (
     fetch_remote_cover,
 )
 from mechanical_librarian.adapters.reviewers.codex_device_auth import (
+    CodexDeviceAuthError,
     CodexDeviceAuthManager,
 )
 from mechanical_librarian.adapters.reviewers.contained_reviewer import (
     ContainedReviewerProcessError,
+    ContainedReviewerProfile,
     cover_reviewer_profile_contract_mismatch,
     load_contained_reviewer_profile_bytes,
     prepare_contained_device_auth_command,
@@ -202,7 +205,10 @@ from mechanical_librarian.application.review_pipeline_stages import (
     ReviewPipelineStages,
 )
 from mechanical_librarian.application.review_web import OwnerSessionService
-from mechanical_librarian.application.reviewer_access import ReviewerAccessOperations
+from mechanical_librarian.application.reviewer_access import (
+    CodexAuth,
+    ReviewerAccessOperations,
+)
 from mechanical_librarian.application.reviewer_contracts import CodexDeviceAuthState
 from mechanical_librarian.application.reviewer_host import (
     ReviewerHostStatus,
@@ -2419,6 +2425,14 @@ def compose_store_runtime_generation(
                 ),
             )
         )
+        reviewer_access = _compose_reviewer_access(repository, review)
+        cover_considerations = _compose_cover_considerations(
+            repository,
+            artifact_store_path,
+            review,
+            provider_recovery,
+            reviewer_access,
+        )
         try:
             owner_binding = owner_password_binding(encoded_verifier)
             review_application = compose_review_application(
@@ -2448,10 +2462,9 @@ def compose_store_runtime_generation(
                 field_application=field_application,
                 activity_projection=activity_projection,
                 close_activity_projection=close_activity_projection,
-                cover_considerations=_compose_cover_considerations(
-                    repository, artifact_store_path, review
-                ),
+                cover_considerations=cover_considerations,
                 settings=OwnerSettingsOperations(settings_store),
+                reviewer_access=reviewer_access,
                 settings_activation=None if activation is None else activation.activate,
                 first_boot=first_boot,
                 acknowledge_first_boot=repository.acknowledge_first_boot_preparation,
@@ -2589,7 +2602,9 @@ def _compose_setup_runtime_generation(
         canonical_origin=bootstrap.canonical_origin,
         activate=activate_setup,
     )
-    return RuntimeGeneration(setup_app, shutdown_seconds=300), activation
+    return RuntimeGeneration(
+        setup_app, close=reviewer_access.close, shutdown_seconds=300
+    ), activation
 
 
 def _reachable_setup_mount_names(
@@ -2957,20 +2972,68 @@ class _UnavailableCodexAuth:
     start = status = cancel = clear = current_credential_status = _state
     recheck_credential_status = _state
 
+    def close(self) -> None:
+        return None
+
+
+class _LazyCodexAuth:
+    """Do not touch the Codex profile or staging tree until Codex is requested."""
+
+    def __init__(self, factory: Callable[[], CodexDeviceAuthManager]) -> None:
+        self._factory = factory
+        self._lock = Lock()
+        self._manager: CodexDeviceAuthManager | None = None
+
+    def _get(self) -> CodexDeviceAuthManager:
+        with self._lock:
+            if self._manager is None:
+                self._manager = self._factory()
+            return self._manager
+
+    def _state(self, operation: str) -> CodexDeviceAuthState:
+        try:
+            return cast("CodexDeviceAuthState", getattr(self._get(), operation)())
+        except (
+            OSError,
+            ValueError,
+            CodexDeviceAuthError,
+            ContainedReviewerProcessError,
+        ):
+            return CodexDeviceAuthState("failed", failure="permission_or_profile")
+
+    def start(self) -> CodexDeviceAuthState:
+        return self._state("start")
+
+    def status(self) -> CodexDeviceAuthState:
+        return self._state("status")
+
+    def cancel(self) -> CodexDeviceAuthState:
+        return self._state("cancel")
+
+    def clear(self) -> CodexDeviceAuthState:
+        return self._state("clear")
+
+    def current_credential_status(self) -> CodexDeviceAuthState:
+        return self._state("current_credential_status")
+
+    def recheck_credential_status(self) -> CodexDeviceAuthState:
+        return self._state("recheck_credential_status")
+
+    def close(self) -> None:
+        with self._lock:
+            manager = self._manager
+        if manager is not None:
+            manager.close()
+
 
 def _compose_reviewer_access(
     repository: SQLiteMetadataReportRepository,
     review: ReviewWebConfiguration,
 ) -> ReviewerAccessOperations:
-    profile_payload = (
-        None
-        if review.cover_reviewer_profile_file is None
-        else read_contained_reviewer_profile(Path(review.cover_reviewer_profile_file))
-    )
-    if profile_payload is None:
-        codex_auth: _UnavailableCodexAuth | CodexDeviceAuthManager = (
-            _UnavailableCodexAuth()
-        )
+    codex_auth: CodexAuth
+    profile_file = review.cover_reviewer_profile_file
+    if profile_file is None:
+        codex_auth = _UnavailableCodexAuth()
 
         def codex_host() -> ReviewerHostStatus:
             return ReviewerHostStatus(False, "host_evidence_unavailable", None)
@@ -2979,17 +3042,26 @@ def _compose_reviewer_access(
             raise RuntimeError("codex profile unavailable")
 
     else:
-        profile = load_contained_reviewer_profile_bytes(profile_payload)
-        codex_auth = CodexDeviceAuthManager(
-            profile.auth_store_path,
-            lambda staging, action: prepare_contained_device_auth_command(
-                profile, staging, action
-            ),
-        )
+
+        def load_profile() -> tuple[bytes, ContainedReviewerProfile]:
+            payload = read_contained_reviewer_profile(Path(profile_file))
+            return payload, load_contained_reviewer_profile_bytes(payload)
+
+        def manager() -> CodexDeviceAuthManager:
+            _payload, profile = load_profile()
+            return CodexDeviceAuthManager(
+                profile.auth_store_path,
+                lambda staging, action: prepare_contained_device_auth_command(
+                    profile, staging, action
+                ),
+            )
+
+        codex_auth = _LazyCodexAuth(manager)
         codex_host = reviewer_host_status
 
         def codex_identity() -> tuple[str, bytes]:
-            return profile.identity.model, profile_payload
+            payload, profile = load_profile()
+            return profile.identity.model, payload
 
     return ReviewerAccessOperations(
         repository.reviewer_access_store(),
@@ -3065,6 +3137,9 @@ def _compose_cover_considerations(
             None
             if reviewer_access is None
             else reviewer_access.current_cover_observation_identity
+        ),
+        reviewer_revision_current=(
+            None if reviewer_access is None else reviewer_access.revision_is_current
         ),
         reviewer_unavailable_reason=reviewer_unavailable_reason,
         bind_policy=bind_policy,
