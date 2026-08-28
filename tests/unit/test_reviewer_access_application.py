@@ -29,12 +29,14 @@ class _Auth:
     def __init__(self, state: DeviceAuthStatus = "ready") -> None:
         self.state = state
         self.current_calls = 0
+        self.status_calls = 0
 
     def start(self):
         self.state = "waiting"
         return CodexDeviceAuthState("waiting")
 
     def status(self):
+        self.status_calls += 1
         return CodexDeviceAuthState(self.state)
 
     def cancel(self):
@@ -126,6 +128,26 @@ def test_unconfigured_dispatch_constructs_neither_engine() -> None:
         operations.dispatch_cover_observation()
     assert auth.current_calls == 0
     assert openrouter == []
+    assert codex == []
+
+
+def test_generic_reads_do_not_touch_codex_for_none_or_openrouter() -> None:
+    operations, auth, _openrouter, codex = _operations()
+    host_calls: list[str] = []
+
+    def codex_host() -> ReviewerHostStatus:
+        host_calls.append("host")
+        return ReviewerHostStatus(True, None, 2 * 1024**3)
+
+    operations._codex_host = codex_host
+    assert operations.read().mapping is None
+    operations.configure_openrouter(
+        expected_revision=1, api_key="secret-key", model="example/vision"
+    )
+    assert operations.read().mapping is not None
+    assert auth.status_calls == 0
+    assert auth.current_calls == 0
+    assert host_calls == []
     assert codex == []
 
 
@@ -236,7 +258,7 @@ def test_clearing_openrouter_is_immediate_and_removes_its_mapping() -> None:
         operations.dispatch_cover_observation()
 
 
-def test_failed_codex_deactivation_does_not_clear_credential() -> None:
+def test_failed_codex_deactivation_after_clear_remains_fail_closed() -> None:
     operations, auth, _openrouter, _codex = _operations(auth_state="usable")
     operations.select_codex(expected_revision=1)
     original = operations._repository.replace
@@ -247,8 +269,35 @@ def test_failed_codex_deactivation_does_not_clear_credential() -> None:
     operations._repository.replace = fail  # type: ignore[method-assign]
     with pytest.raises(RuntimeError, match="stale"):
         operations.clear_codex(expected_revision=2)
-    assert auth.state == "usable"
+    assert auth.state == "ready"
+    assert operations._repository.read()[0].cover_observation is not None
     operations._repository.replace = original  # type: ignore[method-assign]
+
+
+def test_reauthentication_deselects_codex_before_starting_replacement() -> None:
+    operations, auth, _openrouter, _codex = _operations(auth_state="usable")
+    assert operations.select_codex(expected_revision=1).revision == 2
+    started = operations.start_codex(expected_revision=2)
+    assert started.state == "waiting"
+    document, _configured = operations._repository.read()
+    assert document.revision == 3
+    assert document.cover_observation is None
+    assert operations.codex_status().state == "waiting"
+
+
+def test_clear_failure_keeps_selected_authority_and_returns_closed_error() -> None:
+    operations, auth, _openrouter, _codex = _operations(auth_state="usable")
+    operations.select_codex(expected_revision=1)
+
+    def fail_clear() -> CodexDeviceAuthState:
+        raise RuntimeError("private path")
+
+    auth.clear = fail_clear  # type: ignore[method-assign]
+    with pytest.raises(ReviewerAccessApplicationError) as caught:
+        operations.clear_codex(expected_revision=2)
+    assert caught.value.code == "credential_clear_failed"
+    assert "private path" not in str(caught.value)
+    assert operations._repository.read()[0].cover_observation is not None
 
 
 def test_a_b_a_replacement_cannot_make_captured_dispatch_current_again() -> None:

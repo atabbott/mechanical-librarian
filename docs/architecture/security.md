@@ -475,8 +475,8 @@ Reviewer access is separate application authority in both settings modes. Its
 public document contains only task mapping, exact model, revision, secret
 presence, and closed status; the OpenRouter key is a write-only `SecretStr` at
 the HTTP boundary and a separate validated database row. Dispatch snapshots the
-mapping revision and required secret together under the repository lock,
-releases that lock before network work, and the consideration write verifies
+mapping revision and required secret together in one SQLite statement, releases
+the owner-operation gate before network work, and the consideration write verifies
 the same revision inside its SQLite transaction. An A-B-A replacement therefore
 cannot make old evidence current. Provider response bodies and raw errors never
 enter the status grammar, logs, or persisted failure identity.
@@ -495,7 +495,10 @@ private staged `CODEX_HOME`; bounded stdout chunks are parsed through the exact
 URL/code grammar. Owner cancellation, expiry, runtime cutover, and shutdown
 stop the exact process group with TERM, a bounded wait, KILL when needed, a
 death check, thread join, and staging cleanup. Generation teardown does not
-delete an already validated installed credential.
+delete an already validated installed credential. A replacement sign-in first
+deselects an active Codex mapping at a new access revision. Installation and
+cancellation serialize at the final commit, and a newly installed credential is
+not dispatchable until the owner explicitly selects Codex again.
 
 Disabled providers cause no client construction or egress. Disabling also
 removes their library associations; enabling them again does not recreate those

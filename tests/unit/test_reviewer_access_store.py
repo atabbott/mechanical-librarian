@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 
@@ -10,15 +12,18 @@ from mechanical_librarian.adapters.persistence.reviewer_access import (
     ReviewerAccessStore,
     ReviewerAccessStoreError,
 )
-from mechanical_librarian.domain.reviewer_access import ReviewerAccessDocument
+from mechanical_librarian.domain.reviewer_access import (
+    OpenRouterTaskSelection,
+    ReviewerAccessDocument,
+)
 
 
-def _document(revision: int) -> ReviewerAccessDocument:
+def _document(revision: int, model: str = "example/vision") -> ReviewerAccessDocument:
     return ReviewerAccessDocument.model_validate(
         {
             "schema_version": "reviewer-access-v1",
             "revision": revision,
-            "cover_observation": {"engine": "openrouter", "model": "example/vision"},
+            "cover_observation": {"engine": "openrouter", "model": model},
         }
     )
 
@@ -165,3 +170,47 @@ def test_public_projection_never_contains_the_secret_value() -> None:
     assert configured is True
     assert "secret-key" not in saved.model_dump_json()
     assert "secret-key" not in repr(store.read())
+
+
+def test_independent_connections_never_mix_document_and_secret_snapshots(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "reviewer.sqlite3"
+    writer_connection = sqlite3.connect(
+        path, isolation_level=None, check_same_thread=False
+    )
+    writer_connection.execute(
+        "CREATE TABLE reviewer_access (singleton INTEGER PRIMARY KEY CHECK(singleton=1),revision INTEGER NOT NULL,document TEXT NOT NULL)"
+    )
+    writer_connection.execute(
+        "CREATE TABLE reviewer_access_secrets (field_id TEXT PRIMARY KEY,value TEXT NOT NULL)"
+    )
+    reader_connection = sqlite3.connect(path, isolation_level=None)
+    writer = ReviewerAccessStore(writer_connection)
+    reader = ReviewerAccessStore(reader_connection)
+    writer.replace(_document(2, "example/model-a"), 1, openrouter_key="key-a")
+    finished = threading.Event()
+
+    def replace_repeatedly() -> None:
+        revision = 2
+        for index in range(80):
+            suffix = "b" if index % 2 == 0 else "a"
+            writer.replace(
+                _document(revision + 1, f"example/model-{suffix}"),
+                revision,
+                openrouter_key=f"key-{suffix}",
+            )
+            revision += 1
+        finished.set()
+
+    thread = threading.Thread(target=replace_repeatedly)
+    thread.start()
+    while not finished.is_set():
+        document, key = reader.snapshot()
+        assert isinstance(document.cover_observation, OpenRouterTaskSelection)
+        assert key is not None
+        assert (
+            document.cover_observation.model.rsplit("-", 1)[1] == key.rsplit("-", 1)[1]
+        )
+    thread.join(timeout=2)
+    assert not thread.is_alive()

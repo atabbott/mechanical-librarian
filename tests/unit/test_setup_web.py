@@ -702,6 +702,13 @@ def test_seven_step_journey_closes_setup_routes_after_exact_kickoff_copy() -> No
         },
         headers=headers,
     )
+    stale_reviewer = client.post(
+        "/api/setup/reviewer",
+        json={"expected_revision": mounts.json()["revision"] - 1, "outcome": "skipped"},
+        headers=headers,
+    )
+    assert stale_reviewer.status_code == 409
+    reviewer_access.select_none.assert_not_called()
     reviewer = client.post(
         "/api/setup/reviewer",
         json={"expected_revision": mounts.json()["revision"], "outcome": "skipped"},

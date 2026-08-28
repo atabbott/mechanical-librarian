@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import resource
 import secrets
 import selectors
 import shutil
@@ -28,6 +29,10 @@ _MAX_OUTPUT_BYTES = 16_384
 _MAX_AUTH_BYTES = 65_536
 _DEVICE_DEADLINE_SECONDS = 900
 _SHUTDOWN_GRACE_SECONDS = 5
+_AUTH_ADDRESS_SPACE_BYTES = 1_073_741_824
+_AUTH_FILE_BYTES = 1_048_576
+_AUTH_OPEN_FILES = 64
+_AUTH_PROCESSES = 32
 
 
 class CodexDeviceAuthError(RuntimeError):
@@ -95,6 +100,10 @@ class CodexDeviceAuthManager:
 
     def cancel(self) -> CodexDeviceAuthState:
         with self._lock:
+            if self._state.state == "usable" and (
+                self._process is None or self._process.poll() is not None
+            ):
+                return self._state
             process = self._process
             self._cancelled = True
             self._state = CodexDeviceAuthState("cancelled")
@@ -182,6 +191,7 @@ class CodexDeviceAuthManager:
         return CodexDeviceAuthState("failed", failure="permission_or_profile")
 
     def _flow(self) -> None:
+        deadline = time.monotonic() + _DEVICE_DEADLINE_SECONDS
         parent = self._auth_store.parent
         staging: Path | None = None
         prepared: CodexAuthCommand | None = None
@@ -203,6 +213,7 @@ class CodexDeviceAuthManager:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
+                preexec_fn=_limit_device_auth_child,
             )
             with self._lock:
                 self._process = process
@@ -215,10 +226,21 @@ class CodexDeviceAuthManager:
             lines = _bounded_output_lines(
                 process,
                 process.stdout,
-                deadline=time.monotonic() + _DEVICE_DEADLINE_SECONDS,
+                deadline=deadline,
                 on_lines=lambda value: self._publish_issued(value),
             )
-            returncode = process.wait()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                _stop_process(process)
+                lines.append(_TIMEOUT_LINE)
+                returncode = -signal.SIGKILL
+            else:
+                try:
+                    returncode = process.wait(timeout=remaining)
+                except subprocess.TimeoutExpired:
+                    _stop_process(process)
+                    lines.append(_TIMEOUT_LINE)
+                    returncode = -signal.SIGKILL
             with self._lock:
                 cancelled = self._cancelled
             if cancelled:
@@ -247,20 +269,28 @@ class CodexDeviceAuthManager:
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=30,
+                timeout=max(0.1, min(30, deadline - time.monotonic())),
                 check=False,
             )
+            if (
+                len(completed.stdout) > _MAX_OUTPUT_BYTES
+                or len(completed.stderr) > _MAX_OUTPUT_BYTES
+            ):
+                raise CodexDeviceAuthError("protocol")
             if not (
                 completed.returncode == 0
                 and completed.stdout == b"Logged in using ChatGPT\n"
                 and completed.stderr == b""
             ):
                 raise CodexDeviceAuthError("permission")
+            # The cancellation decision and credential commit are one terminal
+            # transition. Cancellation wins before this lock; installation wins
+            # once this lock is held and publishes usable before releasing it.
             with self._lock:
                 if self._cancelled:
                     return
-            _install_auth(auth_path, self._auth_store)
-            self._set_state(CodexDeviceAuthState("usable"))
+                _install_auth(auth_path, self._auth_store)
+                self._state = CodexDeviceAuthState("usable")
         except (OSError, subprocess.SubprocessError, CodexDeviceAuthError):
             with self._lock:
                 if not self._cancelled:
@@ -362,6 +392,19 @@ def _stop_process(process: subprocess.Popen[bytes]) -> None:
         raise CodexDeviceAuthError("process") from error
     if process.poll() is None:
         raise CodexDeviceAuthError("process")
+
+
+def _limit_device_auth_child() -> None:
+    """Install the qualified contained-auth resource envelope before exec."""
+    for limit, maximum in (
+        (resource.RLIMIT_AS, _AUTH_ADDRESS_SPACE_BYTES),
+        (resource.RLIMIT_FSIZE, _AUTH_FILE_BYTES),
+        (resource.RLIMIT_NOFILE, _AUTH_OPEN_FILES),
+        (resource.RLIMIT_NPROC, _AUTH_PROCESSES),
+    ):
+        soft, hard = resource.getrlimit(limit)
+        accepted = maximum if hard == resource.RLIM_INFINITY else min(maximum, hard)
+        resource.setrlimit(limit, (min(soft, accepted), accepted))
 
 
 def _bounded_output_lines(

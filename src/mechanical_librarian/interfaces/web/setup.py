@@ -625,13 +625,16 @@ def create_setup_app(
 
         @app.post("/api/setup/reviewer/codex/device")
         def start_codex_device(
+            request: _ReviewerRevisionRequest,
             ml_session: str | None = Cookie(default=None),
             x_csrf_token: str | None = Header(default=None),
             origin: str | None = Header(default=None),
         ) -> CodexDeviceAuthState:
             authorize_mutation(ml_session, x_csrf_token, origin)
             try:
-                return reviewer_authority().start_codex()
+                return reviewer_authority().start_codex(
+                    expected_revision=request.expected_revision
+                )
             except ReviewerAccessApplicationError as error:
                 raise HTTPException(422, {"error": error.code}) from None
 
@@ -659,6 +662,9 @@ def create_setup_app(
             origin: str | None = Header(default=None),
         ) -> dict[str, object]:
             authorize_mutation(ml_session, x_csrf_token, origin)
+            current_setup = state.read(bootstrap_verifier)
+            if current_setup.revision != request.expected_revision:
+                raise HTTPException(409, {"error": "setup_stale"})
             if request.outcome == "skipped" and reviewer_access is not None:
                 current = reviewer_access.read()
                 if current.mapping is not None:

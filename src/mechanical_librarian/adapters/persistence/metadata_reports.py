@@ -63,6 +63,7 @@ from mechanical_librarian.adapters.persistence.review_scans import (
 )
 from mechanical_librarian.adapters.persistence.reviewer_access import (
     ReviewerAccessStore,
+    ReviewerAccessStoreError,
 )
 from mechanical_librarian.adapters.persistence.schema import (
     _create_schema,
@@ -2167,6 +2168,10 @@ def open_repository(
         repository = SQLiteMetadataReportRepository(
             connection, binding, (information.st_dev, information.st_ino)
         )
+        try:
+            repository.reviewer_access_store().snapshot()
+        except ReviewerAccessStoreError as error:
+            raise MetadataReportError("reviewer access state is unavailable") from error
         connection = None
         binding = None
         return repository

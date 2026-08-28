@@ -561,4 +561,41 @@ describe('owner settings route', () => {
     )
     expect(key).toHaveValue('')
   })
+
+  it('requires confirmation before clearing a reviewer key and restores cancel focus', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const configured = {
+      ...reviewerView,
+      mapping: {
+        engine: 'openrouter' as const,
+        model: 'dots-studio/dots-3-note-preview:free',
+      },
+      openrouter_key_configured: true,
+      openrouter: {
+        ...reviewerView.openrouter,
+        state: 'configured' as const,
+        model: 'dots-studio/dots-3-note-preview:free',
+        tier: 'free' as const,
+      },
+    }
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => configured)
+    http.clearOpenRouter = vi.fn(async () => reviewerView)
+    renderRoute('/settings?group=reviewer', http)
+
+    const clear = await screen.findByRole('button', { name: 'Clear OpenRouter key' })
+    await user.click(clear)
+    expect(http.clearOpenRouter).not.toHaveBeenCalled()
+    const keep = screen.getByRole('button', { name: 'Keep OpenRouter key' })
+    expect(screen.getByRole('button', { name: 'Confirm clear OpenRouter key' })).toHaveFocus()
+    await user.click(keep)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Clear OpenRouter key' })).toHaveFocus(),
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Clear OpenRouter key' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm clear OpenRouter key' }))
+    await waitFor(() => expect(http.clearOpenRouter).toHaveBeenCalledWith(3))
+  })
 })

@@ -857,9 +857,7 @@ def _case(case_id: str) -> dict[str, object]:
                     "policy_reference": "cover-policy-synthetic",
                     "provider_fetching": False,
                     "ready": True,
-                    "reviewer_access_revision": (
-                        None if case_id == "case-3" else 7
-                    ),
+                    "reviewer_access_revision": (None if case_id == "case-3" else 7),
                     "reviewer_engine": None if case_id == "case-3" else "codex",
                     "reviewer_model": (
                         None if case_id == "case-3" else "contained-reviewer"

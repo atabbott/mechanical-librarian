@@ -1,17 +1,35 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
+import { ApiError } from '../api/http'
 import type { ReviewHttp, ReviewerAccessView } from '../api/http'
 
 type Action =
   | { kind: 'without'; revision: number }
   | { kind: 'codex'; revision: number }
-  | { kind: 'codex-start' }
+  | { kind: 'codex-start'; revision: number }
   | { kind: 'codex-cancel' }
   | { kind: 'codex-clear'; revision: number }
   | { kind: 'openrouter'; revision: number; key: string; model: string }
   | { kind: 'openrouter-clear'; revision: number }
   | { kind: 'openrouter-refresh' }
+
+const failureCopy: Readonly<Record<string, string>> = {
+  invalid_key: 'OpenRouter rejected this key. Replace it and validate again.',
+  quota_exhausted: 'OpenRouter credits are exhausted. Add credits, then retry the status test.',
+  rate_limited: 'OpenRouter is rate limited. Wait, then retry the status test.',
+  model_unavailable: 'That model is unavailable. Choose another vision model and validate again.',
+  model_text_only: 'That model cannot inspect covers. Choose a model with image input.',
+  malformed_response:
+    'OpenRouter returned an invalid or oversized response. Retry later or choose another model.',
+  unreachable: 'OpenRouter could not be reached. Check network access, then retry.',
+  credential_clear_failed:
+    'The credential could not be removed. It remains protected; retry the clear action.',
+  host_unsupported: 'This host cannot safely run the contained Codex reviewer.',
+  credential_unavailable:
+    'Codex sign-in is unavailable. Test or replace the sign-in, then select Codex again.',
+  access_changed: 'Reviewer access changed in another session. Reload before trying again.',
+}
 
 export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
   const query = useQuery({
@@ -22,12 +40,22 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
   const [model, setModel] = useState('')
   const [key, setKey] = useState('')
   const [deviceActive, setDeviceActive] = useState(false)
+  const [confirmClear, setConfirmClear] = useState<'codex' | 'openrouter' | null>(null)
+  const codexClearTrigger = useRef<HTMLButtonElement>(null)
+  const openrouterClearTrigger = useRef<HTMLButtonElement>(null)
+  const cancelClear = (engine: 'codex' | 'openrouter') => {
+    setConfirmClear(null)
+    window.setTimeout(() => {
+      const trigger = engine === 'codex' ? codexClearTrigger : openrouterClearTrigger
+      trigger.current?.focus()
+    }, 0)
+  }
   const mutation = useMutation({
     mutationFn: async (action: Action): Promise<ReviewerAccessView | null> => {
       if (action.kind === 'without') return http.selectReviewer(null, action.revision)
       if (action.kind === 'codex') return http.selectReviewer('codex', action.revision)
       if (action.kind === 'codex-start') {
-        await http.startCodexDevice()
+        await http.startCodexDevice(action.revision)
         return null
       }
       if (action.kind === 'codex-cancel') {
@@ -45,6 +73,7 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
     },
     onSuccess: (_result, action) => {
       setKey('')
+      setConfirmClear(null)
       if (action.kind === 'codex-start') setDeviceActive(true)
       if (action.kind === 'codex-cancel' || action.kind === 'codex-clear') setDeviceActive(false)
       void query.refetch()
@@ -91,6 +120,11 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
   const device = deviceQuery.data
   const codexUsable =
     view.codex.state === 'usable' || view.codex.state === 'configured' || device?.state === 'usable'
+  const mutationFailure =
+    mutation.error instanceof ApiError
+      ? (failureCopy[mutation.error.code] ??
+        'The reviewer change was refused. Reload and try again.')
+      : 'The reviewer change was not applied. Reload and try again.'
   return (
     <section className="settings-reviewer" aria-labelledby="reviewer-access-heading">
       <div>
@@ -156,13 +190,34 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
               >
                 Use Codex for cover observations
               </button>
-              <button
-                type="button"
-                disabled={mutation.isPending}
-                onClick={() => mutation.mutate({ kind: 'codex-clear', revision: view.revision })}
-              >
-                Clear Codex sign-in
-              </button>
+              {confirmClear === 'codex' ? (
+                <div role="group" aria-label="Confirm clear Codex sign-in">
+                  <button
+                    type="button"
+                    autoFocus
+                    disabled={mutation.isPending}
+                    onClick={() =>
+                      mutation.mutate({ kind: 'codex-clear', revision: view.revision })
+                    }
+                  >
+                    Confirm clear Codex sign-in
+                  </button>
+                  <button type="button" onClick={() => cancelClear('codex')}>
+                    Keep Codex sign-in
+                  </button>
+                </div>
+              ) : (
+                <button
+                  ref={codexClearTrigger}
+                  type="button"
+                  onClick={() => setConfirmClear('codex')}
+                >
+                  Clear Codex sign-in
+                </button>
+              )}
+              {mutation.isError && mutation.variables.kind.startsWith('codex') ? (
+                <p role="alert">{mutationFailure}</p>
+              ) : null}
             </>
           ) : (
             <>
@@ -171,12 +226,19 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
               ) : null}
               <button
                 type="button"
+                disabled={mutation.isPending}
+                onClick={() => setDeviceActive(true)}
+              >
+                Check existing Codex sign-in
+              </button>
+              <button
+                type="button"
                 disabled={mutation.isPending || view.codex.state === 'host_unsupported'}
-                onClick={() => mutation.mutate({ kind: 'codex-start' })}
+                onClick={() => mutation.mutate({ kind: 'codex-start', revision: view.revision })}
               >
                 {['expired', 'failed', 'cancelled', 'interrupted'].includes(view.codex.state)
                   ? 'Restart device sign-in'
-                  : 'Start device sign-in'}
+                  : 'Replace or create Codex sign-in'}
               </button>
             </>
           )}
@@ -243,15 +305,31 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
               >
                 Refresh current status
               </button>
-              <button
-                type="button"
-                disabled={mutation.isPending}
-                onClick={() =>
-                  mutation.mutate({ kind: 'openrouter-clear', revision: view.revision })
-                }
-              >
-                Clear OpenRouter key
-              </button>
+              {confirmClear === 'openrouter' ? (
+                <div role="group" aria-label="Confirm clear OpenRouter key">
+                  <button
+                    type="button"
+                    autoFocus
+                    disabled={mutation.isPending}
+                    onClick={() =>
+                      mutation.mutate({ kind: 'openrouter-clear', revision: view.revision })
+                    }
+                  >
+                    Confirm clear OpenRouter key
+                  </button>
+                  <button type="button" onClick={() => cancelClear('openrouter')}>
+                    Keep OpenRouter key
+                  </button>
+                </div>
+              ) : (
+                <button
+                  ref={openrouterClearTrigger}
+                  type="button"
+                  onClick={() => setConfirmClear('openrouter')}
+                >
+                  Clear OpenRouter key
+                </button>
+              )}
             </>
           ) : null}
           <p
@@ -263,10 +341,13 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
           >
             Status: {view.openrouter.state.replaceAll('_', ' ')}
           </p>
+          {mutation.isError && mutation.variables.kind.startsWith('openrouter') ? (
+            <p role="alert">{mutationFailure}</p>
+          ) : null}
         </div>
       </div>
-      {mutation.isError ? (
-        <p role="alert">The reviewer change was not applied. Reload and try again.</p>
+      {mutation.isError && mutation.variables.kind === 'without' ? (
+        <p role="alert">{mutationFailure}</p>
       ) : null}
     </section>
   )

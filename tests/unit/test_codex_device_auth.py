@@ -181,6 +181,16 @@ def test_status_must_be_the_exact_chatgpt_success(tmp_path: Path) -> None:
     assert not (tmp_path / "profile" / "auth.json").exists()
 
 
+def test_oversized_status_output_fails_before_install(tmp_path: Path) -> None:
+    manager = _manager(
+        tmp_path,
+        status=subprocess.CompletedProcess(("status",), 0, b"x" * 16_385, b""),
+    )
+    _finish(manager)
+    assert manager.status().state == "failed"
+    assert not (tmp_path / "profile" / "auth.json").exists()
+
+
 def test_clear_removes_installed_authority_immediately(tmp_path: Path) -> None:
     manager = _manager(tmp_path)
     _finish(manager)
@@ -236,6 +246,30 @@ def test_shutdown_escalates_sigterm_resistant_child_and_proves_death(
     assert process.poll() == -9
 
 
+def test_eof_from_still_running_child_uses_bounded_wait_then_kill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = _manager(tmp_path, output=b"")
+    process = _Process(b"", 0)
+    process.returncode = None  # type: ignore[assignment]
+    waits = 0
+
+    def wait(timeout: float | None = None) -> int:
+        nonlocal waits
+        waits += 1
+        if waits == 1:
+            raise subprocess.TimeoutExpired(("device",), timeout or 0)
+        process.returncode = -9
+        return -9
+
+    process.wait = wait  # type: ignore[method-assign]
+    manager._popen = lambda *_args, **_kwargs: process  # type: ignore[assignment]
+    monkeypatch.setattr(os, "killpg", lambda _pid, _signal: None)
+    _finish(manager)
+    assert manager.status().state == "expired"
+    assert process.poll() == -9
+
+
 def test_repeated_start_cannot_spawn_a_second_flow(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -253,6 +287,67 @@ def test_repeated_start_cannot_spawn_a_second_flow(
     release.set()
     assert thread is not None
     thread.join(timeout=2)
+
+
+def test_cancel_between_status_validation_and_install_wins_without_install(
+    tmp_path: Path,
+) -> None:
+    manager = _manager(tmp_path)
+    validating = Event()
+    release = Event()
+
+    def blocked_status(
+        *_args: Any, **_kwargs: Any
+    ) -> subprocess.CompletedProcess[bytes]:
+        validating.set()
+        release.wait(timeout=2)
+        return subprocess.CompletedProcess(
+            ("status",), 0, b"Logged in using ChatGPT\n", b""
+        )
+
+    manager._run = blocked_status
+    manager.start()
+    assert validating.wait(timeout=2)
+    assert manager.cancel().state == "cancelled"
+    release.set()
+    assert manager._thread is not None
+    manager._thread.join(timeout=2)
+    assert not manager._thread.is_alive()
+    assert manager.status().state == "cancelled"
+    assert not (tmp_path / "profile" / "auth.json").exists()
+
+
+def test_device_child_receives_the_resource_limit_installer(tmp_path: Path) -> None:
+    manager = _manager(tmp_path)
+    captured: dict[str, object] = {}
+    original = manager._popen
+
+    def capturing_popen(command: list[str], **kwargs: Any):
+        captured.update(kwargs)
+        return original(command, **kwargs)
+
+    manager._popen = capturing_popen
+    _finish(manager)
+    assert callable(captured["preexec_fn"])
+
+
+def test_clear_failures_never_report_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = _manager(tmp_path)
+    _finish(manager)
+    installed = tmp_path / "profile" / "auth.json"
+    original_unlink = os.unlink
+
+    def refused_unlink(path: str, *, dir_fd: int | None = None) -> None:
+        if path == "auth.json":
+            raise OSError("synthetic unlink refusal")
+        original_unlink(path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "unlink", refused_unlink)
+    with pytest.raises(CodexDeviceAuthError):
+        manager.clear()
+    assert installed.exists()
 
 
 def test_restart_cleans_private_staging_and_reports_interruption(

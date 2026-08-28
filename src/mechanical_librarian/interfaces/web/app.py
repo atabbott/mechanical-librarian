@@ -1808,12 +1808,13 @@ def _register_reviewer_access_routes(
         },
     )
     def start_codex_device(
+        request: _ReviewerRevisionRequest,
         ml_session: str = Depends(authenticated_session_cookie),
         x_csrf_token: str = Header(),
     ) -> CodexDeviceAuthState:
         _require_session(application, ml_session, x_csrf_token)
         try:
-            return authority().start_codex()
+            return authority().start_codex(expected_revision=request.expected_revision)
         except ReviewerAccessApplicationError as error:
             raise problem(error) from None
 

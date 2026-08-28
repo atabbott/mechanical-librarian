@@ -32,21 +32,34 @@ class ReviewerAccessStore:
         self._lock = lock
 
     def read(self) -> tuple[ReviewerAccessDocument, bool]:
-        return self._with_lock(self._read)
+        def read() -> tuple[ReviewerAccessDocument, bool]:
+            document, key = self._snapshot()
+            return document, key is not None
+
+        return self._with_lock(read)
 
     def snapshot(self) -> tuple[ReviewerAccessDocument, str | None]:
         """Capture selection and its required secret in one SQLite read boundary."""
 
-        def capture() -> tuple[ReviewerAccessDocument, str | None]:
-            document, configured = self._read()
-            return document, self._openrouter_key() if configured else None
-
-        return self._with_lock(capture)
+        return self._with_lock(self._snapshot)
 
     def revision_is_current(self, revision: int) -> bool:
         def check() -> bool:
-            document, _configured = self._read()
-            return document.revision == revision
+            try:
+                return self._connection.execute(
+                    "SELECT 1 FROM reviewer_access WHERE singleton=1 AND revision=?",
+                    (revision,),
+                ).fetchone() is not None or (
+                    revision == 1
+                    and self._connection.execute(
+                        "SELECT 1 FROM reviewer_access"
+                    ).fetchone()
+                    is None
+                )
+            except sqlite3.Error as error:
+                raise ReviewerAccessStoreError(
+                    "reviewer access is unavailable"
+                ) from error
 
         return self._with_lock(check)
 
@@ -144,32 +157,58 @@ class ReviewerAccessStore:
         return self._with_lock(commit)
 
     def _read(self) -> tuple[ReviewerAccessDocument, bool]:
+        document, key = self._snapshot()
+        return document, key is not None
+
+    def _snapshot(self) -> tuple[ReviewerAccessDocument, str | None]:
+        """Read document and every secret row from one SQLite snapshot statement."""
         try:
             rows = self._connection.execute(
-                "SELECT revision,document FROM reviewer_access WHERE singleton=1"
+                "SELECT r.revision,r.document,s.field_id,s.value,"
+                "(SELECT COUNT(*) FROM reviewer_access) "
+                "FROM (SELECT 1) AS anchor "
+                "LEFT JOIN reviewer_access AS r ON r.singleton=1 "
+                "LEFT JOIN reviewer_access_secrets AS s ON 1=1 "
+                "ORDER BY s.field_id"
             ).fetchall()
             if not rows:
-                if self._secret_rows():
+                raise ReviewerAccessStoreError("reviewer access is unavailable")
+            revision, payload = rows[0][0], rows[0][1]
+            reviewer_rows = rows[0][4]
+            secret_rows = [(row[2], row[3]) for row in rows if row[2] is not None]
+            if type(reviewer_rows) is not int or reviewer_rows not in {0, 1}:
+                raise ReviewerAccessStoreError("reviewer access is unavailable")
+            if revision is None and payload is None:
+                if reviewer_rows != 0 or secret_rows:
                     raise ReviewerAccessStoreError("reviewer access is unavailable")
                 return (
                     ReviewerAccessDocument(
                         schema_version="reviewer-access-v1", revision=1
                     ),
-                    self._configured(),
+                    None,
                 )
             if (
-                len(rows) != 1
-                or type(rows[0][0]) is not int
-                or type(rows[0][1]) is not str
+                type(revision) is not int
+                or type(payload) is not str
+                or len(secret_rows) > 1
             ):
                 raise ReviewerAccessStoreError("reviewer access is unavailable")
-            document = ReviewerAccessDocument.model_validate_json(rows[0][1])
+            document = ReviewerAccessDocument.model_validate_json(payload)
             if (
-                document.revision != rows[0][0]
-                or _canonical_json(document.model_dump()) != rows[0][1]
+                document.revision != revision
+                or _canonical_json(document.model_dump()) != payload
             ):
                 raise ReviewerAccessStoreError("reviewer access is unavailable")
-            return document, self._configured()
+            if not secret_rows:
+                return document, None
+            field_id, key = secret_rows[0]
+            if (
+                field_id != _OPENROUTER_SECRET
+                or type(key) is not str
+                or not credential(key)
+            ):
+                raise ReviewerAccessStoreError("reviewer access is unavailable")
+            return document, key
         except (sqlite3.Error, ValueError) as error:
             if isinstance(error, ReviewerAccessStoreError):
                 raise

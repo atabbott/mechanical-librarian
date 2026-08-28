@@ -25,8 +25,10 @@ private contained `CODEX_HOME` and atomically installed only after the pinned
 CLI reports the exact usable account state.
 
 Dispatch captures the mapping, access revision, and required secret/credential
-binding atomically at the invocation boundary, constructs exactly one selected
-engine, and never falls back. Observation uses only that capture and the
+binding in one SQLite snapshot statement at the invocation boundary, constructs
+exactly one selected engine, and never falls back. Same-generation owner actions
+and dispatch share one application gate; independent connections serialize
+writes through SQLite CAS. Observation uses only that capture and the
 durable write rejects it if the access revision changed, including an A-B-A
 replacement. Both
 engines receive the same bounded cover packet and strict result schema.
@@ -48,6 +50,9 @@ Codex profile parsing, staging recovery, and device-manager construction are
 lazy: no-reviewer and OpenRouter operation do not touch them. Runtime generation
 shutdown owns a bounded device child teardown (TERM, bounded wait, KILL, death
 check, and thread join) while preserving a previously installed credential.
+Starting Codex replacement first revision-advances and deselects an active Codex
+mapping; successful replacement remains unselected until a fresh owner selection.
+Cancellation and credential installation are one serialized terminal transition.
 
 The new application tables, `setup-state-v2`, `owner-settings-v2`, and
 `cover-consideration-v3` declare a clean rebuild under ADR-0013. Earlier

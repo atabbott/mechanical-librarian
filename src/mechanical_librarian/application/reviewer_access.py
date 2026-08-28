@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from threading import RLock
 from typing import Literal, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, StrictStr
@@ -39,6 +40,7 @@ ReviewerAccessFailure = Literal[
     "model_text_only",
     "malformed_response",
     "unreachable",
+    "credential_clear_failed",
 ]
 
 
@@ -181,11 +183,17 @@ class ReviewerAccessOperations:
         self._codex_binding = codex_binding
         self._codex_identity = codex_identity or (lambda: self._codex_binding()[:2])
         self._openrouter_factory = openrouter_factory
+        self._gate = RLock()
 
     def read(self) -> ReviewerAccessView:
-        return self._view()
+        with self._gate:
+            return self._view()
 
     def refresh_openrouter(self) -> ReviewerAccessView:
+        with self._gate:
+            return self._refresh_openrouter()
+
+    def _refresh_openrouter(self) -> ReviewerAccessView:
         document, configured = self._repository.read()
         selection = document.cover_observation
         if not configured or not isinstance(selection, OpenRouterTaskSelection):
@@ -213,34 +221,39 @@ class ReviewerAccessOperations:
     ) -> ReviewerAccessView:
         if document is None or configured is None:
             document, configured = self._repository.read()
-        host = self._codex_host()
-        flow = self._codex_auth.status()
-        credential = (
-            flow
-            if flow.state
-            in {
-                "starting",
-                "issued",
-                "waiting",
-                "validating",
-                "usable",
-                "expired",
-                "cancelled",
-                "failed",
-                "interrupted",
-            }
-            else self._codex_auth.current_credential_status()
-        )
-        codex = ReviewerEngineStatus(
-            engine="codex",
-            state=("host_unsupported" if not host.available else credential.state),
-            reason=host.reason if not host.available else credential.failure,
-            host_headroom_bytes=host.headroom_bytes,
-        )
+        selection = document.cover_observation
+        if isinstance(selection, CodexTaskSelection):
+            host = self._codex_host()
+            flow = self._codex_auth.status()
+            credential = (
+                flow
+                if flow.state
+                in {
+                    "starting",
+                    "issued",
+                    "waiting",
+                    "validating",
+                    "usable",
+                    "expired",
+                    "cancelled",
+                    "failed",
+                    "interrupted",
+                }
+                else self._codex_auth.current_credential_status()
+            )
+            codex = ReviewerEngineStatus(
+                engine="codex",
+                state=("host_unsupported" if not host.available else credential.state),
+                reason=host.reason if not host.available else credential.failure,
+                host_headroom_bytes=host.headroom_bytes,
+            )
+        else:
+            # Generic access reads remain engine-neutral and cannot initialize
+            # CODEX_HOME, parse the contained profile, or inspect host memory.
+            codex = ReviewerEngineStatus(engine="codex", state="ready")
         openrouter_status = openrouter or ReviewerEngineStatus(
             engine="openrouter", state="unconfigured"
         )
-        selection = document.cover_observation
         if (
             openrouter is None
             and configured
@@ -262,6 +275,14 @@ class ReviewerAccessOperations:
         )
 
     def configure_openrouter(
+        self, *, expected_revision: int, api_key: str, model: str
+    ) -> ReviewerAccessView:
+        with self._gate:
+            return self._configure_openrouter(
+                expected_revision=expected_revision, api_key=api_key, model=model
+            )
+
+    def _configure_openrouter(
         self, *, expected_revision: int, api_key: str, model: str
     ) -> ReviewerAccessView:
         if not credential(api_key):
@@ -288,6 +309,10 @@ class ReviewerAccessOperations:
         )
 
     def select_codex(self, *, expected_revision: int) -> ReviewerAccessView:
+        with self._gate:
+            return self._select_codex(expected_revision=expected_revision)
+
+    def _select_codex(self, *, expected_revision: int) -> ReviewerAccessView:
         host = self._codex_host()
         credential = self._codex_auth.recheck_credential_status()
         if not host.available or credential.state != "usable":
@@ -301,10 +326,15 @@ class ReviewerAccessOperations:
         return self.read()
 
     def select_none(self, *, expected_revision: int) -> ReviewerAccessView:
-        self._replace_selection(expected_revision, None)
-        return self.read()
+        with self._gate:
+            self._replace_selection(expected_revision, None)
+            return self._view()
 
     def clear_openrouter(self, *, expected_revision: int) -> ReviewerAccessView:
+        with self._gate:
+            return self._clear_openrouter(expected_revision=expected_revision)
+
+    def _clear_openrouter(self, *, expected_revision: int) -> ReviewerAccessView:
         document, _configured = self._repository.read()
         selection = document.cover_observation
         if isinstance(selection, OpenRouterTaskSelection):
@@ -317,29 +347,62 @@ class ReviewerAccessOperations:
         self._repository.replace(
             replacement, expected_revision, clear_openrouter_key=True
         )
-        return self.read()
+        return self._view()
 
-    def start_codex(self) -> CodexDeviceAuthState:
-        if not self._codex_host().available:
-            raise ReviewerAccessApplicationError("host_unsupported")
-        return self._codex_auth.start()
+    def start_codex(self, *, expected_revision: int) -> CodexDeviceAuthState:
+        with self._gate:
+            document, _configured = self._repository.read()
+            if document.revision != expected_revision:
+                raise ReviewerAccessApplicationError("access_changed")
+            if isinstance(document.cover_observation, CodexTaskSelection):
+                self._replace_selection(expected_revision, None)
+            if not self._codex_host().available:
+                raise ReviewerAccessApplicationError("host_unsupported")
+            return self._codex_auth.start()
 
     def codex_status(self) -> CodexDeviceAuthState:
-        return self._codex_auth.status()
+        with self._gate:
+            flow = self._codex_auth.status()
+            if flow.state in {
+                "starting",
+                "issued",
+                "waiting",
+                "validating",
+                "usable",
+                "expired",
+                "cancelled",
+                "failed",
+                "interrupted",
+            }:
+                return flow
+            return self._codex_auth.current_credential_status()
 
     def cancel_codex(self) -> CodexDeviceAuthState:
-        return self._codex_auth.cancel()
+        with self._gate:
+            return self._codex_auth.cancel()
 
     def clear_codex(self, *, expected_revision: int) -> ReviewerAccessView:
-        document, _configured = self._repository.read()
-        selection = document.cover_observation
-        if isinstance(selection, CodexTaskSelection):
-            selection = None
-        self._replace_selection(expected_revision, selection)
-        self._codex_auth.clear()
-        return self.read()
+        with self._gate:
+            document, _configured = self._repository.read()
+            if document.revision != expected_revision:
+                raise ReviewerAccessApplicationError("access_changed")
+            try:
+                self._codex_auth.clear()
+            except Exception:
+                raise ReviewerAccessApplicationError(
+                    "credential_clear_failed"
+                ) from None
+            selection = document.cover_observation
+            if isinstance(selection, CodexTaskSelection):
+                selection = None
+            self._replace_selection(expected_revision, selection)
+            return self._view()
 
     def dispatch_cover_observation(self) -> ReviewerDispatch:
+        with self._gate:
+            return self._dispatch_cover_observation()
+
+    def _dispatch_cover_observation(self) -> ReviewerDispatch:
         document, key = self._repository.snapshot()
         selection = document.cover_observation
         if selection is None:
@@ -365,6 +428,12 @@ class ReviewerAccessOperations:
         self,
     ) -> tuple[int, str, str, bytes] | None:
         """Return non-secret replay identity without constructing an engine."""
+        with self._gate:
+            return self._current_cover_observation_identity()
+
+    def _current_cover_observation_identity(
+        self,
+    ) -> tuple[int, str, str, bytes] | None:
         document, _key = self._repository.snapshot()
         selection = document.cover_observation
         if selection is None:
@@ -383,10 +452,12 @@ class ReviewerAccessOperations:
         )
 
     def revision_is_current(self, revision: int) -> bool:
-        return self._repository.revision_is_current(revision)
+        with self._gate:
+            return self._repository.revision_is_current(revision)
 
     def close(self) -> None:
-        self._codex_auth.close()
+        with self._gate:
+            self._codex_auth.close()
 
     def _replace_selection(
         self, expected_revision: int, selection: ReviewerTaskSelection | None
