@@ -51,7 +51,6 @@ CommandFactory = Callable[
     [Path, str], CodexAuthCommand | tuple[Sequence[str], Mapping[str, str]]
 ]
 PopenFactory = Callable[..., subprocess.Popen[bytes]]
-RunFactory = Callable[..., subprocess.CompletedProcess[bytes]]
 
 
 class CodexDeviceAuthManager:
@@ -63,12 +62,10 @@ class CodexDeviceAuthManager:
         command_factory: CommandFactory,
         *,
         popen: PopenFactory = subprocess.Popen,
-        run: RunFactory = subprocess.run,
     ) -> None:
         self._auth_store = auth_store
         self._command_factory = command_factory
         self._popen = popen
-        self._run = run
         self._lock = Lock()
         self._process: subprocess.Popen[bytes] | None = None
         self._thread: Thread | None = None
@@ -168,25 +165,14 @@ class CodexDeviceAuthManager:
         try:
             prepared = _prepared(self._command_factory(self._auth_store, "status"))
             try:
-                completed = self._run(
-                    prepared.command,
-                    env=dict(prepared.environment),
-                    pass_fds=prepared.pass_fds,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    timeout=30,
-                    check=False,
+                output, returncode = _bounded_status(
+                    self._popen, prepared, time.monotonic() + 30
                 )
             finally:
                 prepared.close()
         except (OSError, subprocess.SubprocessError, CodexDeviceAuthError):
             return CodexDeviceAuthState("failed", failure="permission_or_profile")
-        if (
-            completed.returncode == 0
-            and completed.stdout == b"Logged in using ChatGPT\n"
-            and completed.stderr == b""
-        ):
+        if returncode == 0 and output == b"Logged in using ChatGPT\n":
             return CodexDeviceAuthState("usable")
         return CodexDeviceAuthState("failed", failure="permission_or_profile")
 
@@ -262,26 +248,8 @@ class CodexDeviceAuthManager:
             auth_path = staging / "auth.json"
             _validated_auth(auth_path)
             prepared = _prepared(self._command_factory(staging, "status"))
-            completed = self._run(
-                prepared.command,
-                env=dict(prepared.environment),
-                pass_fds=prepared.pass_fds,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=max(0.1, min(30, deadline - time.monotonic())),
-                check=False,
-            )
-            if (
-                len(completed.stdout) > _MAX_OUTPUT_BYTES
-                or len(completed.stderr) > _MAX_OUTPUT_BYTES
-            ):
-                raise CodexDeviceAuthError("protocol")
-            if not (
-                completed.returncode == 0
-                and completed.stdout == b"Logged in using ChatGPT\n"
-                and completed.stderr == b""
-            ):
+            output, returncode = _bounded_status(self._popen, prepared, deadline)
+            if not (returncode == 0 and output == b"Logged in using ChatGPT\n"):
                 raise CodexDeviceAuthError("permission")
             # The cancellation decision and credential commit are one terminal
             # transition. Cancellation wins before this lock; installation wins
@@ -405,6 +373,70 @@ def _limit_device_auth_child() -> None:
         soft, hard = resource.getrlimit(limit)
         accepted = maximum if hard == resource.RLIM_INFINITY else min(maximum, hard)
         resource.setrlimit(limit, (min(soft, accepted), accepted))
+
+
+def _bounded_status(
+    popen: PopenFactory, prepared: CodexAuthCommand, deadline: float
+) -> tuple[bytes, int]:
+    """Run one status command with bounded merged output and one deadline."""
+    process = popen(
+        prepared.command,
+        env=dict(prepared.environment),
+        pass_fds=prepared.pass_fds,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+        preexec_fn=_limit_device_auth_child,
+    )
+    if process.stdout is None:
+        _stop_process(process)
+        raise CodexDeviceAuthError("process")
+    output = bytearray()
+    try:
+        descriptor = process.stdout.fileno()
+    except (AttributeError, OSError):
+        descriptor = None
+    selector: selectors.BaseSelector | None = None
+    if descriptor is not None:
+        selector = selectors.DefaultSelector()
+        selector.register(descriptor, selectors.EVENT_READ)
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                _stop_process(process)
+                raise subprocess.TimeoutExpired(prepared.command, 0)
+            if selector is not None:
+                if not selector.select(timeout=min(0.25, remaining)):
+                    if process.poll() is None:
+                        continue
+                assert descriptor is not None
+                chunk = os.read(
+                    descriptor, min(4096, _MAX_OUTPUT_BYTES + 1 - len(output))
+                )
+            else:
+                chunk = process.stdout.read(
+                    min(4096, _MAX_OUTPUT_BYTES + 1 - len(output))
+                )
+            if not chunk:
+                break
+            output.extend(chunk)
+            if len(output) > _MAX_OUTPUT_BYTES:
+                _stop_process(process)
+                raise CodexDeviceAuthError("protocol")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            _stop_process(process)
+            raise subprocess.TimeoutExpired(prepared.command, 0)
+        try:
+            return bytes(output), process.wait(timeout=remaining)
+        except subprocess.TimeoutExpired:
+            _stop_process(process)
+            raise
+    finally:
+        if selector is not None:
+            selector.close()
 
 
 def _bounded_output_lines(

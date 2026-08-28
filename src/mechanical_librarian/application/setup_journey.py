@@ -39,6 +39,14 @@ class SetupJourneyRepository(Protocol):
         expected_revision: int | None = None,
     ) -> None: ...
 
+    def transition_reviewer(
+        self,
+        document: SetupStateDocument,
+        expected_revision: int,
+        reviewer_revision: int,
+        outcome: Literal["skipped", "configured"],
+    ) -> SetupStateDocument: ...
+
 
 class SetupLibraryDiscovery(Protocol):
     def __call__(
@@ -232,7 +240,10 @@ class SetupJourneyOperation:
         return self._write(changed, current.revision)
 
     def reviewer(
-        self, expected_revision: int, outcome: Literal["skipped", "configured"]
+        self,
+        expected_revision: int,
+        reviewer_revision: int,
+        outcome: Literal["skipped", "configured"],
     ) -> SetupStateDocument:
         current = self._current(expected_revision, "reviewer")
         successor = SetupStateDocument.model_validate(
@@ -250,7 +261,12 @@ class SetupJourneyOperation:
                 "reviewer_setup": outcome,
             }
         )
-        return self._write(successor, current.revision)
+        try:
+            return self._repository.transition_reviewer(
+                successor, current.revision, reviewer_revision, outcome
+            )
+        except SetupStateError:
+            raise SetupJourneyError("stale") from None
 
     def kick_off(self, expected_revision: int) -> None:
         current = self.validate_kick_off(expected_revision)

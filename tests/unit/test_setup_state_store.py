@@ -4,6 +4,7 @@ import hashlib
 import sqlite3
 import threading
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
@@ -14,11 +15,18 @@ from mechanical_librarian.adapters.persistence.owner_settings import (
 from mechanical_librarian.adapters.persistence.review_sessions import (
     SQLiteReviewSessionRepository,
 )
+from mechanical_librarian.adapters.persistence.reviewer_access import (
+    ReviewerAccessStore,
+)
 from mechanical_librarian.adapters.persistence.schema import _create_schema
 from mechanical_librarian.adapters.persistence.setup_state import SetupStateStore
 from mechanical_librarian.application.review_web import OwnerSessionService
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 from mechanical_librarian.domain.owner_settings import OwnerSettingsError
+from mechanical_librarian.domain.reviewer_access import (
+    OpenRouterTaskSelection,
+    ReviewerAccessDocument,
+)
 from mechanical_librarian.domain.setup_state import SetupStateDocument, SetupStateError
 
 _BOOTSTRAP = "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$hash"
@@ -68,6 +76,126 @@ def _connected(store: SetupStateStore) -> SetupStateDocument:
         _BOOTSTRAP,
         {"connection.primary.key": "abs-secret"},
     )
+
+
+def _reviewer_ready(store: SetupStateStore) -> SetupStateDocument:
+    state = _connected(store)
+    for completed, changes in (
+        (["claim", "connect", "providers"], {}),
+        (
+            ["claim", "connect", "providers", "libraries"],
+            {
+                "libraries": [
+                    {
+                        "name": "books",
+                        "connection": "primary",
+                        "library_id": "books",
+                        "media_kind": "ebook",
+                        "mount": "books",
+                    }
+                ]
+            },
+        ),
+        (
+            ["claim", "connect", "providers", "libraries", "mounts"],
+            {"mounts": [{"library": "books", "state": "matched"}]},
+        ),
+    ):
+        state = store.write(
+            _next(state, completed_steps=completed, **changes), state.revision
+        )
+    return state
+
+
+def _configured_reviewer(store: ReviewerAccessStore) -> ReviewerAccessDocument:
+    return store.replace(
+        ReviewerAccessDocument(
+            schema_version="reviewer-access-v1",
+            revision=2,
+            cover_observation=OpenRouterTaskSelection(
+                engine="openrouter", model="provider/model"
+            ),
+        ),
+        1,
+        openrouter_key="reusable-secret",
+    )[0]
+
+
+def _reviewer_successor(
+    state: SetupStateDocument, outcome: Literal["skipped", "configured"]
+) -> SetupStateDocument:
+    return _next(
+        state,
+        completed_steps=[*state.completed_steps, "reviewer"],
+        reviewer_setup=outcome,
+    )
+
+
+def test_reviewer_transition_rejects_independent_connection_clear(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "setup.db"
+    first = sqlite3.connect(database, isolation_level=None)
+    _create_schema(first)
+    second = sqlite3.connect(database, isolation_level=None)
+    setup = SetupStateStore(first)
+    state = _reviewer_ready(setup)
+    reviewer = _configured_reviewer(ReviewerAccessStore(first))
+    ReviewerAccessStore(second).replace(
+        reviewer.model_copy(update={"revision": 3, "cover_observation": None}), 2
+    )
+
+    with pytest.raises(SetupStateError):
+        setup.transition_reviewer(
+            _reviewer_successor(state, "configured"),
+            state.revision,
+            2,
+            "configured",
+        )
+    assert setup.read().revision == state.revision
+
+
+def test_stale_skip_changes_neither_authority_and_preserves_key(tmp_path: Path) -> None:
+    database = tmp_path / "setup.db"
+    first = sqlite3.connect(database, isolation_level=None)
+    _create_schema(first)
+    second = sqlite3.connect(database, isolation_level=None)
+    setup = SetupStateStore(first)
+    state = _reviewer_ready(setup)
+    _configured_reviewer(ReviewerAccessStore(first))
+    SetupStateStore(second).write(_next(state), state.revision)
+
+    with pytest.raises(SetupStateError):
+        setup.transition_reviewer(
+            _reviewer_successor(state, "skipped"), state.revision, 2, "skipped"
+        )
+    document, key = ReviewerAccessStore(first).snapshot()
+    assert document.cover_observation is not None
+    assert key == "reusable-secret"
+
+
+def test_reviewer_transition_failure_rolls_back_both_authorities(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "setup.db"
+    connection = sqlite3.connect(database, isolation_level=None)
+    _create_schema(connection)
+    setup = SetupStateStore(connection)
+    state = _reviewer_ready(setup)
+    _configured_reviewer(ReviewerAccessStore(connection))
+    connection.execute(
+        "CREATE TRIGGER fail_reviewer_clear BEFORE UPDATE ON reviewer_access "
+        "BEGIN SELECT RAISE(ABORT,'failpoint'); END"
+    )
+
+    with pytest.raises(SetupStateError):
+        setup.transition_reviewer(
+            _reviewer_successor(state, "skipped"), state.revision, 2, "skipped"
+        )
+    assert setup.read() == state
+    document, key = ReviewerAccessStore(connection).snapshot()
+    assert document.cover_observation is not None
+    assert key == "reusable-secret"
 
 
 def test_initialize_creates_the_only_verifier_free_resumable_setup_state() -> None:

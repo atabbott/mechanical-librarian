@@ -662,19 +662,16 @@ def create_setup_app(
             origin: str | None = Header(default=None),
         ) -> dict[str, object]:
             authorize_mutation(ml_session, x_csrf_token, origin)
-            current_setup = state.read(bootstrap_verifier)
-            if current_setup.revision != request.expected_revision:
-                raise HTTPException(409, {"error": "setup_stale"})
-            if request.outcome == "skipped" and reviewer_access is not None:
-                current = reviewer_access.read()
-                if current.mapping is not None:
-                    reviewer_access.select_none(expected_revision=current.revision)
-            if request.outcome == "configured":
-                if reviewer_access is None or reviewer_access.read().mapping is None:
-                    raise HTTPException(409, {"error": "reviewer_unconfigured"})
+            if reviewer_access is None:
+                raise HTTPException(409, {"error": "reviewer_unconfigured"})
+            current = reviewer_access.read()
+            if request.outcome == "configured" and current.mapping is None:
+                raise HTTPException(409, {"error": "reviewer_unconfigured"})
             try:
                 return state_response(
-                    journey.reviewer(request.expected_revision, request.outcome)
+                    journey.reviewer(
+                        request.expected_revision, current.revision, request.outcome
+                    )
                 )
             except SetupJourneyError as error:
                 raise journey_failure(error) from error

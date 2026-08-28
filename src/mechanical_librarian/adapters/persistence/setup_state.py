@@ -7,7 +7,7 @@ import re
 import sqlite3
 from _thread import RLock
 from collections.abc import Callable
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.owner_settings import (
@@ -24,6 +24,7 @@ from mechanical_librarian.adapters.persistence.schema import (
 )
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.domain.owner_settings import OwnerSettingsError, SettingsView
+from mechanical_librarian.domain.reviewer_access import ReviewerAccessDocument
 from mechanical_librarian.domain.setup_state import SetupStateDocument, SetupStateError
 from mechanical_librarian.domain.validation import credential
 
@@ -230,6 +231,85 @@ class SetupStateStore(ConnectionScoped):
             transaction.rollback()
             raise SetupStateError("setup state is unavailable") from error
         return document
+
+    def transition_reviewer(
+        self,
+        document: SetupStateDocument,
+        expected_revision: int,
+        reviewer_revision: int,
+        outcome: Literal["skipped", "configured"],
+    ) -> SetupStateDocument:
+        """Commit setup outcome and reviewer authority in one SQLite transaction."""
+        if document.revision != expected_revision + 1:
+            raise SetupStateError("setup state is unavailable")
+        transaction = self._transaction("transition_setup_reviewer")
+        try:
+            transaction.begin()
+            current = self._read()
+            if (
+                current.revision != expected_revision
+                or document.bootstrap_verifier_digest
+                != current.bootstrap_verifier_digest
+            ):
+                raise SetupStateError("setup state is stale")
+            row = self._connection.execute(
+                "SELECT revision,document FROM reviewer_access WHERE singleton=1"
+            ).fetchone()
+            if row is None:
+                reviewer = ReviewerAccessDocument(
+                    schema_version="reviewer-access-v1", revision=1
+                )
+            else:
+                reviewer = ReviewerAccessDocument.model_validate_json(row[1])
+                if reviewer.revision != row[0]:
+                    raise SetupStateError("setup state is unavailable")
+            if reviewer.revision != reviewer_revision or (
+                outcome == "configured" and reviewer.cover_observation is None
+            ):
+                raise SetupStateError("setup state is stale")
+            if (
+                self._connection.execute(
+                    "UPDATE owner_settings SET revision=?,document=? "
+                    "WHERE singleton=1 AND revision=?",
+                    (
+                        document.revision,
+                        _canonical_json(document.model_dump()),
+                        expected_revision,
+                    ),
+                ).rowcount
+                != 1
+            ):
+                raise SetupStateError("setup state is stale")
+            if outcome == "skipped":
+                cleared = reviewer.model_copy(
+                    update={
+                        "revision": reviewer.revision + 1,
+                        "cover_observation": None,
+                    }
+                )
+                if row is None:
+                    self._connection.execute(
+                        "INSERT INTO reviewer_access(singleton,revision,document) VALUES(1,?,?)",
+                        (cleared.revision, _canonical_json(cleared.model_dump())),
+                    )
+                elif (
+                    self._connection.execute(
+                        "UPDATE reviewer_access SET revision=?,document=? "
+                        "WHERE singleton=1 AND revision=?",
+                        (
+                            cleared.revision,
+                            _canonical_json(cleared.model_dump()),
+                            reviewer_revision,
+                        ),
+                    ).rowcount
+                    != 1
+                ):
+                    raise SetupStateError("setup state is stale")
+            transaction.commit()
+            return document
+        except (SetupStateError, ValueError, sqlite3.Error) as error:
+            transaction.rollback()
+            raise SetupStateError("setup state is unavailable") from error
 
     def claim_owner(
         self,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, Literal, TypeVar
 from unittest.mock import Mock
 
 import pytest
@@ -124,6 +124,16 @@ class _State:
         _expected_revision: int | None = None,
     ) -> None:
         self.promoted = True
+
+    def transition_reviewer(
+        self,
+        document: SetupStateDocument,
+        _expected_revision: int,
+        _reviewer_revision: int,
+        _outcome: Literal["skipped", "configured"],
+    ) -> SetupStateDocument:
+        self.document = document
+        return document
 
 
 class _FailingState(_State):
@@ -739,7 +749,7 @@ def test_seven_step_journey_closes_setup_routes_after_exact_kickoff_copy() -> No
         ]
     }
     assert kickoff.status_code == 202
-    reviewer_access.select_none.assert_called_once_with(expected_revision=7)
+    reviewer_access.select_none.assert_not_called()
     assert state.document.reviewer_setup == "skipped"
     assert state.document.libraries[0].display_name == "Owner's Ebooks & Audiobooks"
     assert kickoff.json() == {

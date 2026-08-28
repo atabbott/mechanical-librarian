@@ -6,6 +6,7 @@ import os
 import signal
 import stat
 import subprocess
+import time
 from pathlib import Path
 from threading import Event
 from typing import Any, cast
@@ -13,8 +14,10 @@ from typing import Any, cast
 import pytest
 
 from mechanical_librarian.adapters.reviewers.codex_device_auth import (
+    CodexAuthCommand,
     CodexDeviceAuthError,
     CodexDeviceAuthManager,
+    _bounded_status,
     _install_auth,
     _issued_state,
     _stop_process,
@@ -59,6 +62,11 @@ class _Process:
         return self.returncode
 
 
+class _Chunked(io.BytesIO):
+    def read(self, size: int | None = -1) -> bytes:
+        return super().read(7 if size is None else min(size, 7))
+
+
 def _manager(
     tmp_path: Path,
     *,
@@ -71,6 +79,11 @@ def _manager(
 
     def popen(command: list[str], **_kwargs: Any):
         staging = Path(command[1])
+        if command[0] == "status":
+            completed = status or subprocess.CompletedProcess(
+                ("status",), 0, b"Logged in using ChatGPT\n", b""
+            )
+            return _Process(completed.stdout + completed.stderr, completed.returncode)
         if returncode == 0:
             auth = staging / "auth.json"
             auth.write_bytes(_auth_document())
@@ -81,12 +94,6 @@ def _manager(
         tmp_path / "profile",
         command,
         popen=popen,
-        run=lambda *_args, **_kwargs: (
-            status
-            or subprocess.CompletedProcess(
-                ("status",), 0, b"Logged in using ChatGPT\n", b""
-            )
-        ),
     )
 
 
@@ -124,13 +131,11 @@ def test_ordinary_credential_status_does_not_launch_cli(tmp_path: Path) -> None:
     manager = _manager(tmp_path)
     _finish(manager)
 
-    def unexpected_run(
-        *_args: Any, **_kwargs: Any
-    ) -> subprocess.CompletedProcess[bytes]:
-        calls.append("run")
-        return subprocess.CompletedProcess(("status",), 1, b"", b"")
+    def unexpected_popen(*_args: Any, **_kwargs: Any) -> subprocess.Popen[bytes]:
+        calls.append("popen")
+        raise AssertionError("ordinary status launched the CLI")
 
-    manager._run = unexpected_run
+    manager._popen = unexpected_popen
     assert manager.current_credential_status().state == "configured"
     assert calls == []
 
@@ -189,6 +194,68 @@ def test_oversized_status_output_fails_before_install(tmp_path: Path) -> None:
     _finish(manager)
     assert manager.status().state == "failed"
     assert not (tmp_path / "profile" / "auth.json").exists()
+
+
+def test_chunked_oversized_status_recheck_fails_at_the_stream_bound(
+    tmp_path: Path,
+) -> None:
+    manager = _manager(tmp_path)
+    _finish(manager)
+    process = _Process(b"", 0)
+    process.stdout = _Chunked(b"x" * 16_385)
+    manager._popen = lambda *_args, **_kwargs: process  # type: ignore[assignment]
+
+    assert manager.recheck_credential_status().state == "failed"
+    assert process.stdout.tell() == 16_385
+
+
+def test_status_eof_with_live_child_is_killed_and_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = _manager(tmp_path)
+    _finish(manager)
+    process = _Process(b"", 0)
+    process.returncode = None  # type: ignore[assignment]
+    waits = 0
+
+    def wait(timeout: float | None = None) -> int:
+        nonlocal waits
+        waits += 1
+        if waits == 1:
+            raise subprocess.TimeoutExpired(("status",), timeout or 0)
+        process.returncode = -9
+        return -9
+
+    process.wait = wait  # type: ignore[method-assign]
+    manager._popen = lambda *_args, **_kwargs: process  # type: ignore[assignment]
+    monkeypatch.setattr(os, "killpg", lambda _pid, _signal: None)
+
+    assert manager.recheck_credential_status().state == "failed"
+    assert process.poll() == -9
+
+
+def test_status_deadline_stops_child_before_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = _Process(b"Logged in using ChatGPT\n", 0)
+    process.returncode = None  # type: ignore[assignment]
+
+    def wait(timeout: float | None = None) -> int:
+        del timeout
+        process.returncode = -15
+        return -15
+
+    process.wait = wait  # type: ignore[method-assign]
+    monkeypatch.setattr(os, "killpg", lambda _pid, _signal: None)
+    prepared = CodexAuthCommand(("status",), {})
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        _bounded_status(
+            lambda *_args, **_kwargs: cast("subprocess.Popen[bytes]", process),
+            prepared,
+            time.monotonic() - 1,
+        )
+    assert process.poll() == -15
 
 
 def test_clear_removes_installed_authority_immediately(tmp_path: Path) -> None:
@@ -296,16 +363,15 @@ def test_cancel_between_status_validation_and_install_wins_without_install(
     validating = Event()
     release = Event()
 
-    def blocked_status(
-        *_args: Any, **_kwargs: Any
-    ) -> subprocess.CompletedProcess[bytes]:
-        validating.set()
-        release.wait(timeout=2)
-        return subprocess.CompletedProcess(
-            ("status",), 0, b"Logged in using ChatGPT\n", b""
-        )
+    original = manager._popen
 
-    manager._run = blocked_status
+    def blocked_status(command: list[str], **kwargs: Any):
+        if command[0] == "status":
+            validating.set()
+            release.wait(timeout=2)
+        return original(command, **kwargs)
+
+    manager._popen = blocked_status
     manager.start()
     assert validating.wait(timeout=2)
     assert manager.cancel().state == "cancelled"

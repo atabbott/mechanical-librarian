@@ -32,6 +32,12 @@ def _store() -> tuple[sqlite3.Connection, SetupStateStore]:
     connection.execute(
         "CREATE TABLE owner_setting_secrets (field_id TEXT PRIMARY KEY,value TEXT)"
     )
+    connection.execute(
+        "CREATE TABLE reviewer_access (singleton INTEGER PRIMARY KEY,revision INTEGER,document TEXT)"
+    )
+    connection.execute(
+        "CREATE TABLE reviewer_access_secrets (field_id TEXT PRIMARY KEY,value TEXT)"
+    )
     return connection, SetupStateStore(connection)
 
 
@@ -493,7 +499,7 @@ def test_kickoff_atomically_promotes_and_preserves_connection_secret() -> None:
         ],
     )
     state = journey.mounts(state.revision, {"books": "/library"})
-    state = journey.reviewer(state.revision, "skipped")
+    state = journey.reviewer(state.revision, 1, "skipped")
 
     journey.kick_off(state.revision)
 
