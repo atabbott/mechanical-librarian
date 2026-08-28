@@ -84,7 +84,45 @@ def test_cover_consideration_reports_its_reviewer_status(
     assert consideration["reviewer_unavailable_reason"] is None
     assert cover["editable"]
     assert cover["human_decision"] is None
-    assert any(candidate["selectable"] for candidate in consideration["candidates"])
+    assert consideration["provider_fetching"] is False
+    assert consideration["ready"] is True
+    assert consideration["policy"]["status"] == "recommended"
+    assert consideration["policy"]["recommended_candidate_reference"] == (
+        "cover-ref-choice"
+    )
+    assert consideration["policy"]["acceptable_candidate_references"] == [
+        "cover-ref-choice"
+    ]
+    recommended = next(
+        candidate
+        for candidate in consideration["candidates"]
+        if candidate["reference"] == "cover-ref-choice"
+    )
+    assert recommended["selectable"] is True
+    assert recommended["match_state"] == "same_book"
+    assert recommended["deterministic_rank"] == 1
+    assert recommended["deterministic_citations"]
+    assert recommended["state"] == "recommended"
+
+
+def test_cover_consideration_keeps_unconfirmed_alternative_visible_but_inert() -> None:
+    payload = rich_payload("/api/v1/review-cases/case-1")
+    assert isinstance(payload, dict)
+    cover = next(
+        field for field in payload["fields"] if field["destination"] == "cover"
+    )
+    consideration = cover["cover_consideration"]
+    unconfirmed = next(
+        candidate
+        for candidate in consideration["candidates"]
+        if candidate["reference"] == "cover-ref-unconfirmed"
+    )
+    assert unconfirmed["identity"]["outcome"] == "unknown"
+    assert unconfirmed["match_state"] == "match_not_confirmed"
+    assert unconfirmed["selectable"] is False
+    assert unconfirmed["deterministic_rank"] is None
+    assert unconfirmed["deterministic_rank_key"] is None
+    assert unconfirmed["state"] == "excluded"
 
 
 def test_real_app_gates_aliases_and_synthetic_cursors() -> None:

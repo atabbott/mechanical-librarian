@@ -6,6 +6,7 @@ from typing import Literal, Protocol, TypedDict, cast
 
 from mechanical_librarian.application.field_effects import AuthoritySnapshot
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
+from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
 from mechanical_librarian.domain.field_effect import EffectAuthority
 from mechanical_librarian.domain.human_decision import HumanDecision
 
@@ -30,7 +31,7 @@ class _AuthorityRepository(Protocol):
     """Persistence seam the guarded authority adapter reads."""
 
     def field_effect_authority_source(
-        self, decision: HumanDecision | AutomaticDecision
+        self, decision: HumanDecision | AutomaticDecision | CoverAutomaticDecision
     ) -> dict[str, object]: ...
     def field_effect_authority_is_current(self, authority: EffectAuthority) -> bool: ...
 
@@ -39,7 +40,9 @@ class PersistedFieldEffectAuthority:
     def __init__(self, repository: _AuthorityRepository) -> None:
         self._repository = repository
 
-    def resolve(self, decision: HumanDecision | AutomaticDecision) -> AuthoritySnapshot:
+    def resolve(
+        self, decision: HumanDecision | AutomaticDecision | CoverAutomaticDecision
+    ) -> AuthoritySnapshot:
         # The repository builds exactly AuthoritySnapshot's keyword shape; see
         # _AuthorityFields above.
         return AuthoritySnapshot(

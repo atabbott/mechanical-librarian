@@ -170,11 +170,11 @@ const fields: readonly FieldDefinition[] = [
   {
     key: 'cover_order',
     label: 'Cover',
-    meaning: 'Cover review uses the fixed supported source order.',
+    meaning: 'Choose the best identity-confirmed cover by one deterministic order.',
     options: ['fixed_source_order'],
-    optionLabels: { fixed_source_order: 'Fixed supported source order' },
+    optionLabels: { fixed_source_order: 'Deterministic confirmed order' },
     chapter: 'curation',
-    automatic: false,
+    automatic: true,
   },
   {
     key: 'asin',
@@ -365,10 +365,10 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
     fallback: 'abstains without it and never falls back to Hardcover',
   },
   'cover_order:fixed_source_order': {
-    admitted: 'the fixed supported cover source order',
-    transformation: 'keeps that order unchanged',
-    effect: 'orders Cover review',
-    fallback: 'abstains when no supported cover is available',
+    admitted: 'identity-confirmed non-current covers after provider fetching is quiescent',
+    transformation: 'uses the frozen identity, aspect, size and packet tie-break order',
+    effect: 'selects the rank-one confirmed Cover candidate',
+    fallback: 'abstains while fetching or when no non-current match is confirmed',
   },
   'asin:preserve_exact': {
     admitted: 'an already admitted exact ASIN',

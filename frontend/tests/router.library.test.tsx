@@ -538,7 +538,7 @@ describe('Library route', () => {
       automaticDecision: {
         candidate_id: null,
         decision_id: 'automatic-series',
-        destination: 'series',
+        destination: 'series' as const,
         occurred_at: 1,
         outcome: 'keep_current' as const,
         proposal_id: 'proposal-series',
@@ -658,7 +658,7 @@ describe('Library route', () => {
       automaticDecision: {
         candidate_id: 'alternative-series-1',
         decision_id: 'automatic-series',
-        destination: 'series',
+        destination: 'series' as const,
         occurred_at: 1,
         outcome: 'candidate' as const,
         proposal_id: 'proposal-series',
@@ -720,6 +720,50 @@ describe('Library route', () => {
     expect(screen.queryByRole('button', { name: /Choose /u })).toBeNull()
   })
 
+  it('keeps the owner outcome final when automatic authority remains in history', async () => {
+    const base = detail.fields[0]
+    if (!base) throw new Error('owner-final fixture requires a field')
+    const field = {
+      ...base,
+      automaticDecision: {
+        candidate_id: 'alternative-title-1',
+        decision_id: 'automatic-title',
+        destination: 'title' as const,
+        occurred_at: 1,
+        outcome: 'candidate' as const,
+        proposal_id: base.proposalId,
+        review_case_id: 'case-1',
+        selected_value: base.proposedValues[0] ?? null,
+        target_fingerprint: base.targetFingerprint,
+      },
+      decisionActions: [],
+      editable: false,
+      humanDecision: {
+        actor: 'owner',
+        decision_id: 'decision-title',
+        destination: 'title',
+        occurred_at: 2,
+        outcome: 'keep_current' as const,
+        proposal_id: base.proposalId,
+        review_case_id: 'case-1',
+        selected_value: null,
+        target_fingerprint: base.targetFingerprint,
+      },
+      needsAttention: false,
+      navigationRole: 'resolved' as const,
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=title', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [field] })),
+    })
+
+    const recorded = await screen.findByRole('region', { name: 'Title recorded outcome' })
+    expect(recorded).toHaveTextContent('Current value retained')
+    expect(recorded).not.toHaveTextContent('Resolved automatically')
+    const automaticCount = screen.getByText('Resolved automatically').closest('div')
+    expect(automaticCount).toHaveTextContent('0')
+  })
+
   it('opens a long description without recording a choice', async () => {
     const user = userEvent.setup()
     const description = 'A complete retained paragraph. '.repeat(20)
@@ -751,9 +795,13 @@ describe('Library route', () => {
     const reference = (index: number) => `cover_transport_ref_${String(index).repeat(64)}`
     const candidate = (index: number, incumbent = false) => ({
       artifactId: `cover_${String(index).repeat(64)}`,
+      deterministicCitations: [`citation-${String(index)}`],
+      deterministicRank: incumbent ? null : index - 1,
+      deterministicRankKey: [1, 0, -960000, -800, -1200, index, reference(index)],
       height: 1200,
-      identity: { outcome: 'plausible_match' },
+      identity: { outcome: 'verified_work_match' },
       incumbent,
+      matchState: 'same_book' as const,
       observation: null,
       originalSha256: String(index).repeat(64),
       ordinal: index,
@@ -812,8 +860,11 @@ describe('Library route', () => {
         candidate(4),
         {
           ...candidate(5),
+          deterministicRank: null,
+          deterministicRankKey: null,
+          matchState: 'match_not_confirmed' as const,
           selectable: false,
-          identity: { outcome: 'verified_work_match', reasons: ['accepted_work_identifier'] },
+          identity: { outcome: 'unknown', reasons: ['insufficient_identity_evidence'] },
           observation: {
             composition: 'dense',
             medium: 'photographic',
@@ -823,8 +874,11 @@ describe('Library route', () => {
         },
         {
           ...candidate(6),
+          deterministicRank: null,
+          deterministicRankKey: null,
+          matchState: 'match_not_confirmed' as const,
           selectable: false,
-          identity: { outcome: 'verified_work_match', reasons: ['accepted_work_identifier'] },
+          identity: { outcome: 'conflict', reasons: ['identity_conflict'] },
           observation: {
             composition: 'dense',
             medium: 'photographic',
@@ -847,6 +901,8 @@ describe('Library route', () => {
         preferMinimalComposition: false,
       },
       policyReference: `cover_policy_${'3'.repeat(64)}`,
+      providerFetching: true,
+      ready: false,
       reviewerStatus: 'completed',
       reviewerUnavailableReason: null,
       targetFingerprint: 'fingerprint-cover',
@@ -869,16 +925,19 @@ describe('Library route', () => {
 
     const comparison = await screen.findByLabelText('Choose a cover')
     expect(
-      within(comparison).getByText('Recommendation is unavailable; comparison remains manual.'),
+      within(comparison).getByText(
+        'Confirmed matches remain visible; the shared decision gate opens when fetching pauses.',
+      ),
     ).toBeVisible()
     expect(within(comparison).queryByText(/Recommended/u)).not.toBeInTheDocument()
     await user.click(within(comparison).getByText('Reasons retained'))
     expect(within(comparison).getByText('Preview unavailable')).toBeVisible()
-    expect(within(comparison).getByText('Observations ambiguous')).toBeVisible()
-    expect(within(comparison).getByText('Promotional text excluded by policy')).toBeVisible()
+    expect(
+      comparison.querySelectorAll('.cover-choice.is-unconfirmed .library-cover-card:disabled'),
+    ).toHaveLength(2)
     expect(comparison.querySelector('.library-cover-pinned')).not.toBeNull()
     expect(comparison.querySelectorAll('.library-cover-gallery .library-cover-card')).toHaveLength(
-      3,
+      5,
     )
   })
 
@@ -923,9 +982,13 @@ describe('Library route', () => {
       candidates: [
         {
           artifactId: `cover_${'a'.repeat(64)}`,
+          deterministicCitations: ['citation-a'],
+          deterministicRank: 1,
+          deterministicRankKey: [1, 0, -960000, -800, -1200, 1, `cover_transport_ref_${'a'.repeat(64)}`],
           height: 1200,
-          identity: { outcome: 'plausible_match' },
+          identity: { outcome: 'verified_work_match' },
           incumbent: false,
+          matchState: 'same_book' as const,
           observation: null,
           originalSha256: 'a'.repeat(64),
           ordinal: 1,
@@ -949,6 +1012,8 @@ describe('Library route', () => {
         preferMinimalComposition: false,
       },
       policyReference: `cover_policy_${'u'.repeat(64)}`,
+      providerFetching: false,
+      ready: false,
       reviewerStatus: 'unavailable',
       reviewerUnavailableReason,
       targetFingerprint: 'fingerprint-cover',
@@ -1013,24 +1078,32 @@ describe('Library route', () => {
             candidates: [
               {
                 artifactId: 'cover-current',
+                deterministicCitations: ['citation-current'],
+                deterministicRank: null,
+                deterministicRankKey: [1, 0, -10000, -100, -100, 0, 'current'],
                 height: 100,
-                identity: {},
+                identity: { outcome: 'verified_work_match' },
                 incumbent: true,
+                matchState: 'same_book',
                 observation: null,
                 originalSha256: 'a'.repeat(64),
                 ordinal: 0,
                 previewSha256: 'b'.repeat(64),
                 reference: 'current',
-                selectable: true,
+                selectable: false,
                 sourceKinds: [],
                 state: 'available',
                 width: 100,
               },
               {
                 artifactId: 'cover-alt',
+                deterministicCitations: ['citation-alternative'],
+                deterministicRank: 1,
+                deterministicRankKey: [1, 0, -10000, -100, -100, 1, 'alternative'],
                 height: 100,
-                identity: {},
+                identity: { outcome: 'verified_work_match' },
                 incumbent: false,
+                matchState: 'same_book',
                 observation: null,
                 originalSha256: 'c'.repeat(64),
                 ordinal: 1,
@@ -1081,6 +1154,8 @@ describe('Library route', () => {
               preferMinimalComposition: false,
             },
             policyReference: 'policy',
+            providerFetching: false,
+            ready: false,
             reviewerStatus: 'completed',
             reviewerUnavailableReason: null,
             targetFingerprint: 'fingerprint',
@@ -1143,9 +1218,13 @@ describe('Library route', () => {
       candidates: [
         {
           artifactId: `cover_${'a'.repeat(64)}`,
+          deterministicCitations: ['citation-a'],
+          deterministicRank: 1,
+          deterministicRankKey: [1, 0, -960000, -800, -1200, 1, `cover_transport_ref_${'a'.repeat(64)}`],
           height: 1200,
-          identity: { outcome: 'plausible_match' },
+          identity: { outcome: 'verified_work_match' },
           incumbent: false,
+          matchState: 'same_book' as const,
           observation: null,
           originalSha256: 'a'.repeat(64),
           ordinal: 1,
@@ -1169,6 +1248,8 @@ describe('Library route', () => {
         preferMinimalComposition: false,
       },
       policyReference: `cover_policy_${'p'.repeat(64)}`,
+      providerFetching: false,
+      ready: false,
       reviewerStatus: 'completed',
       reviewerUnavailableReason: null,
       targetFingerprint: 'fingerprint-cover',

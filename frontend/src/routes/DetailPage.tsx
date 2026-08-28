@@ -89,6 +89,10 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
         {item.candidateCount === 1 ? 'candidate' : 'candidates'}.
       </p>
       {item.ownerOutcome ? <p>Owner outcome: {labelWords(item.ownerOutcome)}.</p> : null}
+      {item.automaticOutcome ? <p>Automatic policy selected this cover.</p> : null}
+      {item.supersedesAutomatic ? (
+        <p>This strictly better confirmed cover replaced the earlier automatic choice.</p>
+      ) : null}
       {item.policyStatus ? <p>Policy outcome: {labelWords(item.policyStatus)}.</p> : null}
       {item.policyReasons.length ? (
         <ul className="diagnostic-limitations" aria-label="Cover policy limitations">

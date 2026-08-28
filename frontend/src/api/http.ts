@@ -181,7 +181,8 @@ export interface ReviewFieldView {
   targetFingerprint: string
   humanDecision: Schema<'_DecisionProjection'> | null
   inventoryRole?: 'primary' | 'contextual'
-  automaticDecision: Schema<'_AutomaticDecisionProjection'> | null
+  automaticDecision:
+    Schema<'_AutomaticDecisionProjection'> | Schema<'_CoverAutomaticDecisionProjection'> | null
   notices: readonly string[]
   provenance: readonly string[]
   preservationOnly: boolean
@@ -190,9 +191,13 @@ export interface ReviewFieldView {
 }
 export interface CoverCandidateView {
   artifactId: string
+  deterministicCitations: readonly string[]
+  deterministicRank: number | null
+  deterministicRankKey: readonly (number | string)[] | null
   height: number
   identity: Readonly<Record<string, unknown>>
   incumbent: boolean
+  matchState: 'same_edition' | 'same_book' | 'match_not_confirmed'
   observation: Readonly<Record<string, unknown>> | null
   originalSha256: string
   ordinal: number
@@ -214,6 +219,8 @@ export interface CoverConsiderationView {
   }
   omissions: readonly Readonly<Record<string, unknown>>[]
   policy: Readonly<Record<string, unknown>> | null
+  providerFetching: boolean
+  ready: boolean
   policyPreferences: {
     readonly avoidPromotionalText: boolean
     readonly avoidTieInBranding: boolean
@@ -276,12 +283,14 @@ export type HistoryItemView =
     }
   | {
       category: 'cover'
+      automaticOutcome?: string
       candidateCount: number
       outcome: string
       ownerOutcome?: string
       policyReasons: readonly string[]
       policyStatus?: string
       reviewerStatus: string
+      supersedesAutomatic: boolean
     }
   | { category: 'transition'; outcome: string; reason: string }
 export interface HistoryView {
@@ -1797,15 +1806,26 @@ export const mapHistory = (value: unknown): HistoryView => {
         const decision = item.decision
         if (decision !== null && !record(decision))
           throw new ApiError(502, `invalid_history_item_${String(index)}_decision`)
-        const ownerOutcome = decision
+        const decisionOutcome = decision
           ? boundedStringValue(
               decision.outcome,
               `history_item_${String(index)}_decision_outcome`,
               64,
             )
           : undefined
-        if (ownerOutcome && !['accept', 'keep_current', 'reject'].includes(ownerOutcome))
+        const ownerOutcome =
+          decisionOutcome && ['accept', 'keep_current', 'reject'].includes(decisionOutcome)
+            ? decisionOutcome
+            : undefined
+        const automaticOutcome = decisionOutcome === 'candidate' ? decisionOutcome : undefined
+        if (decisionOutcome && !ownerOutcome && !automaticOutcome)
           throw new ApiError(502, `invalid_history_item_${String(index)}_decision_outcome`)
+        const supersedesAutomatic =
+          automaticOutcome !== undefined &&
+          optionalString(
+            decision?.supersedes_decision_id,
+            `history_item_${String(index)}_supersedes_decision_id`,
+          ) !== undefined
         const policyReasons = policy
           ? stringArray(policy.reasons, `history_item_${String(index)}_policy_reasons`)
           : []
@@ -1823,6 +1843,7 @@ export const mapHistory = (value: unknown): HistoryView => {
           throw new ApiError(502, `invalid_history_item_${String(index)}_reviewer_status`)
         return {
           category: 'cover',
+          ...(automaticOutcome ? { automaticOutcome } : {}),
           candidateCount: item.consideration.candidates.length,
           outcome: kind,
           ...(ownerOutcome ? { ownerOutcome } : {}),
@@ -1837,6 +1858,7 @@ export const mapHistory = (value: unknown): HistoryView => {
               }
             : {}),
           reviewerStatus,
+          supersedesAutomatic,
         }
       }
       integerValue(item.checkpoint, `history_item_${String(index)}_checkpoint`)
@@ -1927,7 +1949,7 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
   if (value === null || value === undefined) return null
   if (
     !record(value) ||
-    value.schema_version !== 'cover-consideration-v1' ||
+    value.schema_version !== 'cover-consideration-v2' ||
     !Array.isArray(value.candidates) ||
     !Array.isArray(value.omissions) ||
     !record(value.incumbent) ||
@@ -1944,6 +1966,10 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
     typeof preferences.prefer_minimal_composition !== 'boolean'
   )
     throw new ApiError(502, 'invalid_cover_policy_preferences')
+  if (typeof value.provider_fetching !== 'boolean' || typeof value.ready !== 'boolean')
+    throw new ApiError(502, 'invalid_cover_readiness')
+  const providerFetching = value.provider_fetching
+  const ready = value.ready
   const candidates = value.candidates.map((candidate, index) => {
     if (
       !record(candidate) ||
@@ -1954,17 +1980,77 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
     const state = stringValue(candidate.state, 'cover_state')
     if (!['acceptable', 'available', 'excluded', 'recommended'].includes(state))
       throw new ApiError(502, 'invalid_cover_candidate_state')
+    const matchStateRaw = stringValue(candidate.match_state, 'cover_match_state')
+    if (!['same_edition', 'same_book', 'match_not_confirmed'].includes(matchStateRaw))
+      throw new ApiError(502, 'invalid_cover_match_state')
+    const matchState: CoverCandidateView['matchState'] =
+      matchStateRaw === 'same_edition'
+        ? 'same_edition'
+        : matchStateRaw === 'same_book'
+          ? 'same_book'
+          : 'match_not_confirmed'
+    const deterministicRank =
+      candidate.deterministic_rank === null
+        ? null
+        : integerValue(candidate.deterministic_rank, 'cover_deterministic_rank')
+    const deterministicRankKey =
+      candidate.deterministic_rank_key === null
+        ? null
+        : Array.isArray(candidate.deterministic_rank_key) &&
+            candidate.deterministic_rank_key.length === 7 &&
+            candidate.deterministic_rank_key.slice(0, 6).every((item) => Number.isInteger(item)) &&
+            candidate.deterministic_rank_key[6] === candidate.reference
+          ? (candidate.deterministic_rank_key as readonly (number | string)[])
+          : (() => {
+              throw new ApiError(502, 'invalid_cover_deterministic_rank_key')
+            })()
+    const identityOutcome = stringValue(candidate.identity.outcome, 'cover_identity_outcome')
+    if (
+      ![
+        'verified_manifestation_match',
+        'verified_work_match',
+        'plausible_match',
+        'unknown',
+        'conflict',
+      ].includes(identityOutcome)
+    )
+      throw new ApiError(502, 'invalid_cover_identity_outcome')
+    const expectedMatchState =
+      identityOutcome === 'verified_manifestation_match'
+        ? 'same_edition'
+        : identityOutcome === 'verified_work_match'
+          ? 'same_book'
+          : 'match_not_confirmed'
+    const confirmed = expectedMatchState !== 'match_not_confirmed'
+    const incumbent = candidate.incumbent === true
+    const selectable = candidate.selectable === true
+    if (
+      matchState !== expectedMatchState ||
+      (!confirmed && (selectable || deterministicRank !== null || deterministicRankKey !== null)) ||
+      (confirmed &&
+        incumbent &&
+        (selectable || deterministicRank !== null || deterministicRankKey === null)) ||
+      (confirmed && !incumbent && (!selectable || deterministicRankKey === null))
+    )
+      throw new ApiError(502, 'contradictory_cover_identity')
     return {
       artifactId: stringValue(candidate.artifact_id, 'cover_artifact_id'),
+      deterministicCitations: stringArray(
+        candidate.deterministic_citations,
+        'cover_deterministic_citations',
+      ),
+      deterministicRank,
+      deterministicRankKey,
       height: integerValue(candidate.height, 'cover_height'),
       identity: candidate.identity,
-      incumbent: candidate.incumbent === true,
+      incumbent,
+      matchState,
       observation: candidate.observation,
       originalSha256: stringValue(candidate.original_sha256, 'cover_original_digest'),
       ordinal: integerValue(candidate.ordinal, 'cover_ordinal'),
       previewSha256: stringValue(candidate.preview_sha256, 'cover_preview_digest'),
       reference: stringValue(candidate.reference, 'cover_reference'),
-      selectable: candidate.selectable === true,
+      selectable,
       sourceKinds: stringArray(candidate.source_kinds, 'cover_source_kinds'),
       state,
       width: integerValue(candidate.width, 'cover_width'),
@@ -2035,16 +2121,26 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
       : stringArray(policy.acceptable_candidate_references, 'cover_acceptable_references')
   if (
     (policyStatus === 'recommended') !== (recommendedReference !== null) ||
-    (policyStatus === 'abstained' && acceptable.length !== 0) ||
+    (policyStatus === 'abstained' && acceptable.length !== 0 && !providerFetching) ||
     new Set(acceptable).size !== acceptable.length
   )
     throw new ApiError(502, 'contradictory_cover_policy')
   const byReference = new Map(candidates.map((candidate) => [candidate.reference, candidate]))
+  const rankedSelectable = candidates
+    .filter((candidate) => candidate.selectable && !candidate.incumbent)
+    .sort((left, right) => (left.deterministicRank ?? 0) - (right.deterministicRank ?? 0))
+  const rankedReferences = rankedSelectable.map((candidate) => candidate.reference)
   if (
     acceptable.some((reference) => byReference.get(reference)?.selectable !== true) ||
+    rankedSelectable.some((candidate, index) => candidate.deterministicRank !== index + 1) ||
+    (acceptable.length === 0
+      ? !providerFetching && rankedReferences.length !== 0
+      : acceptable.length !== rankedReferences.length ||
+        acceptable.some((reference, index) => reference !== rankedReferences[index])) ||
     (recommendedReference !== null &&
       (!acceptable.includes(recommendedReference) ||
-        byReference.get(recommendedReference)?.selectable !== true))
+        byReference.get(recommendedReference)?.selectable !== true ||
+        byReference.get(recommendedReference)?.incumbent === true))
   )
     throw new ApiError(502, 'contradictory_cover_policy')
   if (
@@ -2084,6 +2180,18 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
         'recommended')
   )
     throw new ApiError(502, 'contradictory_cover_recommendation')
+  if (
+    ready !== (policyStatus === 'recommended') ||
+    (providerFetching === ready && acceptable.length > 0) ||
+    candidates.some(
+      (candidate) =>
+        (candidate.deterministicRank === null) !== !acceptable.includes(candidate.reference),
+    ) ||
+    acceptable.some(
+      (reference, index) => byReference.get(reference)?.deterministicRank !== index + 1,
+    )
+  )
+    throw new ApiError(502, 'contradictory_cover_readiness')
   return {
     id: stringValue(value.consideration_id, 'cover_consideration_id'),
     current: value.current === true,
@@ -2101,6 +2209,8 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
       return item
     }),
     policy,
+    providerFetching,
+    ready,
     policyPreferences: {
       avoidPromotionalText: preferences.avoid_promotional_text,
       avoidTieInBranding: preferences.avoid_tie_in_branding,

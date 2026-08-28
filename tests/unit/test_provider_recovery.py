@@ -154,6 +154,37 @@ def test_enqueue_enrolls_an_unseen_member_and_health_before_its_job() -> None:
         store.close()
 
 
+def test_cover_fetching_is_exact_and_treats_retry_wait_as_quiescent() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+        store.enqueue_jobs((_job("target"),), enqueued_at=3)
+
+        # A queued job in retry/backoff is quiescent, and adjacent report
+        # identities cannot borrow its provider state.
+        assert not store.cover_fetching(
+            target_connection="primary",
+            library="books",
+            item="target",
+            source_report_id="report-target",
+        )
+        assert not store.cover_fetching(
+            target_connection="primary",
+            library="books",
+            item="target",
+            source_report_id="report-other",
+        )
+
+        claimed = store.claim_one(generation=1, now=7_203, token="owner")
+        assert claimed is not None
+        assert store.cover_fetching(
+            target_connection="primary",
+            library="books",
+            item="target",
+            source_report_id="report-target",
+        )
+        store.close()
+
+
 @pytest.mark.parametrize("enqueued_at", (True, -1, MAX_TIMESTAMP - 7_199))
 def test_enqueue_rejects_noncanonical_or_overflowing_admission_timestamps(
     enqueued_at: object,

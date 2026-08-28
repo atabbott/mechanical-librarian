@@ -493,6 +493,40 @@ justify production activation by itself.
 
 ## Outcome
 
+## Deterministic election qualification — PASS
+
+Issue #864 freezes the public `cover-election-qualification-v1` candidate over
+one development cohort and two untouched holdouts. The harness consumes private
+case bindings but returns only cohort name, packet count, candidate digest and
+aggregate failure counts; it cannot emit identities, values, paths, media or
+per-case outcomes.
+
+Each private case supplies an independently frozen expected ordered-reference
+tuple and expected recommendation; the harness compares the implementation
+directly with those values and never derives its expectation by invoking the
+ranker under test.
+
+The exact candidate digest is
+`b91ae72a8c4e55c9bfe1d514c28210e22427b57a03082d2b5d1ae0b40df7c457`;
+the scorer digest is
+`1f87667eaa0373afddef9118976f0f091e234f19bb4a9ad64eb1d4e67afe7c3e`.
+All cohorts passed on their first permitted exposure:
+
+| Cohort | Packets / candidates | Confirmed / conservative exclusions | Ready | False admission / duplicate / order / recommendation / readiness errors |
+| --- | ---: | ---: | ---: | ---: |
+| Development | 30 / 66 | 47 / 19 | 25 | 0 / 0 / 0 / 0 / 0 |
+| Holdout A | 10 / 27 | 16 / 11 | 7 | 0 / 0 / 0 / 0 / 0 |
+| Holdout B | 10 / 18 | 7 / 11 | 7 | 0 / 0 / 0 / 0 / 0 |
+
+Independent adjudication marked all 111 candidates automatic-safe. That
+positive election/readiness cohort does not replace the existing public
+100-case mixed identity-classifier proof, which remains the negative safety
+gate with zero false plausible or verified outcomes and every conflict
+preserved. No private corpus material, identity, value, path or per-case result
+is recorded here. The default cover destination remains `Ask me`; the passing
+manifest admits `cover_order:fixed_source_order` only as an explicit Automatic
+opt-in.
+
 Issue #546 passes as a best-effort general-principle proof of a bounded,
 aggregate-safe provider-cover corpus. It establishes neither semantic quality
 nor runtime activation, and it does not qualify a model or a later transport

@@ -1032,6 +1032,43 @@ class SQLiteProviderRecoveryStore:
                 "provider recovery persistence is unavailable"
             ) from error
 
+    def cover_fetching(
+        self,
+        *,
+        target_connection: str,
+        library: str,
+        item: str,
+        source_report_id: str,
+    ) -> bool:
+        """Return whether the exact report's provider work is fetching now.
+
+        Durable retry/backoff waiting and queued fanout are quiescent. A
+        provider canary in ``checking`` or an exact member in ``running`` is
+        active fetching and therefore blocks cover-choice readiness.
+        """
+        if any(
+            type(value) is not str or not value
+            for value in (target_connection, library, item, source_report_id)
+        ):
+            raise ProviderRecoveryStoreError("provider recovery query is invalid")
+        try:
+            with self._lock:
+                row = self._connection.execute(
+                    "SELECT 1 FROM provider_recovery_jobs j "
+                    "JOIN provider_recovery_health h ON h.connection=j.connection "
+                    "AND h.adapter=j.adapter AND h.scope=j.scope "
+                    "AND h.generation=j.generation "
+                    "WHERE j.target_connection=? AND j.library=? AND j.item=? "
+                    "AND j.source_report_id=? AND j.state IN ('queued','running') "
+                    "AND (h.state='checking' OR j.state='running') LIMIT 1",
+                    (target_connection, library, item, source_report_id),
+                ).fetchone()
+            return row is not None
+        except sqlite3.Error as error:
+            raise ProviderRecoveryStoreError(
+                "provider recovery persistence is unavailable"
+            ) from error
+
     def enqueue_jobs(
         self, jobs: tuple[ProviderRecoveryJob, ...], *, enqueued_at: int
     ) -> int:

@@ -37,6 +37,11 @@ from mechanical_librarian.adapters.persistence.owner_settings import (
     _validate_owner_settings_content,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.domain.automatic_decision import AutomaticDecisionError
+from mechanical_librarian.domain.cover_automatic_decision import (
+    CoverAutomaticDecision,
+)
+from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyError,
     MetadataPolicyProfile,
@@ -70,7 +75,7 @@ _REPORTS_SQL = (
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
     "file_identity TEXT NOT NULL CHECK (length(file_identity) = 64 AND file_identity NOT GLOB '*[^0-9a-f]*'), "
     "content_digest TEXT NOT NULL CHECK (length(content_digest) = 64 AND content_digest NOT GLOB '*[^0-9a-f]*'), "
-    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v29'), "
+    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v30'), "
     "document_digest TEXT NOT NULL CHECK (length(document_digest) = 64 AND document_digest NOT GLOB '*[^0-9a-f]*'), "
     "document TEXT NOT NULL CHECK (typeof(document) = 'text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152), "
     "UNIQUE (connection_name, library_name, item_id, file_identity, document_digest))"
@@ -380,6 +385,32 @@ _CURRENT_COVER_CONSIDERATIONS_SQL = (
     "review_case_id TEXT PRIMARY KEY NOT NULL REFERENCES review_cases(review_case_id), "
     "consideration_id TEXT NOT NULL UNIQUE REFERENCES cover_considerations(consideration_id))"
 )
+_COVER_SELECTION_AUTHORITIES_SQL = (
+    "CREATE TABLE cover_selection_authorities ("
+    "selection_id TEXT PRIMARY KEY NOT NULL CHECK(typeof(selection_id)='text' AND selection_id GLOB 'cover_selection_[0-9a-f]*' AND length(selection_id)=80), "
+    "connection_name TEXT NOT NULL CHECK(typeof(connection_name)='text' AND length(CAST(connection_name AS BLOB)) BETWEEN 1 AND 128), "
+    "library_name TEXT NOT NULL CHECK(typeof(library_name)='text' AND length(CAST(library_name AS BLOB)) BETWEEN 1 AND 128), "
+    "item_id TEXT NOT NULL CHECK(typeof(item_id)='text' AND length(CAST(item_id AS BLOB)) BETWEEN 1 AND 512), "
+    "kind TEXT NOT NULL CHECK(kind IN ('automatic','owner')), "
+    "decision_id TEXT NOT NULL UNIQUE CHECK((kind='automatic' AND decision_id GLOB 'automatic_decision_[0-9a-f]*' AND length(decision_id)=83) OR (kind='owner' AND decision_id GLOB 'human_decision_[0-9a-f]*' AND length(decision_id)=79)), "
+    "consideration_id TEXT NOT NULL REFERENCES cover_considerations(consideration_id), "
+    "supersedes_selection_id TEXT REFERENCES cover_selection_authorities(selection_id), "
+    "occurred_at INTEGER NOT NULL CHECK(typeof(occurred_at)='integer' AND occurred_at>=0), "
+    "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 131072), "
+    "CHECK(supersedes_selection_id IS NULL OR supersedes_selection_id<>selection_id))"
+)
+_CURRENT_COVER_SELECTION_AUTHORITIES_SQL = (
+    "CREATE TABLE current_cover_selection_authorities ("
+    "connection_name TEXT NOT NULL CHECK(typeof(connection_name)='text' AND length(CAST(connection_name AS BLOB)) BETWEEN 1 AND 128), "
+    "library_name TEXT NOT NULL CHECK(typeof(library_name)='text' AND length(CAST(library_name AS BLOB)) BETWEEN 1 AND 128), "
+    "item_id TEXT NOT NULL CHECK(typeof(item_id)='text' AND length(CAST(item_id AS BLOB)) BETWEEN 1 AND 512), "
+    "selection_id TEXT NOT NULL UNIQUE REFERENCES cover_selection_authorities(selection_id), "
+    "PRIMARY KEY(connection_name,library_name,item_id))"
+)
+_COVER_SELECTION_AUTHORITY_NO_UPDATE_SQL = "CREATE TRIGGER cover_selection_authorities_no_update BEFORE UPDATE ON cover_selection_authorities BEGIN SELECT RAISE(ABORT, 'cover selection authorities are append-only'); END"
+_COVER_SELECTION_AUTHORITY_NO_DELETE_SQL = "CREATE TRIGGER cover_selection_authorities_no_delete BEFORE DELETE ON cover_selection_authorities BEGIN SELECT RAISE(ABORT, 'cover selection authorities are append-only'); END"
+_CURRENT_COVER_SELECTION_AUTHORITY_INSERT_SQL = "CREATE TRIGGER current_cover_selection_authorities_validate_insert BEFORE INSERT ON current_cover_selection_authorities WHEN NOT EXISTS (SELECT 1 FROM cover_selection_authorities selection WHERE selection.selection_id=NEW.selection_id AND selection.connection_name=NEW.connection_name AND selection.library_name=NEW.library_name AND selection.item_id=NEW.item_id) BEGIN SELECT RAISE(ABORT, 'cover selection authority target disagrees'); END"
+_CURRENT_COVER_SELECTION_AUTHORITY_UPDATE_SQL = "CREATE TRIGGER current_cover_selection_authorities_validate_update BEFORE UPDATE ON current_cover_selection_authorities WHEN NOT EXISTS (SELECT 1 FROM cover_selection_authorities selection WHERE selection.selection_id=NEW.selection_id AND selection.connection_name=NEW.connection_name AND selection.library_name=NEW.library_name AND selection.item_id=NEW.item_id) BEGIN SELECT RAISE(ABORT, 'cover selection authority target disagrees'); END"
 _COVER_CONSIDERATION_EVENTS_SQL = (
     "CREATE TABLE cover_consideration_events ("
     "event_id TEXT PRIMARY KEY NOT NULL CHECK(event_id GLOB 'cover_consideration_event_[0-9a-f]*' AND length(event_id)=90), "
@@ -660,6 +691,8 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_HUMAN_DECISION_EVENTS_SQL)
     connection.execute(_COVER_CONSIDERATIONS_SQL)
     connection.execute(_CURRENT_COVER_CONSIDERATIONS_SQL)
+    connection.execute(_COVER_SELECTION_AUTHORITIES_SQL)
+    connection.execute(_CURRENT_COVER_SELECTION_AUTHORITIES_SQL)
     connection.execute(_COVER_CONSIDERATION_EVENTS_SQL)
     connection.execute(_AUTOMATIC_DECISIONS_SQL)
     connection.execute(_AUTOMATIC_SAFETY_SQL)
@@ -705,6 +738,10 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_HUMAN_DECISION_EVENT_NO_DELETE_SQL)
     connection.execute(_COVER_CONSIDERATION_NO_UPDATE_SQL)
     connection.execute(_COVER_CONSIDERATION_NO_DELETE_SQL)
+    connection.execute(_COVER_SELECTION_AUTHORITY_NO_UPDATE_SQL)
+    connection.execute(_COVER_SELECTION_AUTHORITY_NO_DELETE_SQL)
+    connection.execute(_CURRENT_COVER_SELECTION_AUTHORITY_INSERT_SQL)
+    connection.execute(_CURRENT_COVER_SELECTION_AUTHORITY_UPDATE_SQL)
     connection.execute(_COVER_CONSIDERATION_EVENT_NO_UPDATE_SQL)
     connection.execute(_COVER_CONSIDERATION_EVENT_NO_DELETE_SQL)
     connection.execute(_AUTOMATIC_DECISION_NO_UPDATE_SQL)
@@ -760,6 +797,18 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
             ("index", "sqlite_autoindex_cover_considerations_1", None),
             ("index", "sqlite_autoindex_current_cover_considerations_1", None),
             ("index", "sqlite_autoindex_current_cover_considerations_2", None),
+            ("index", "sqlite_autoindex_cover_selection_authorities_1", None),
+            ("index", "sqlite_autoindex_cover_selection_authorities_2", None),
+            (
+                "index",
+                "sqlite_autoindex_current_cover_selection_authorities_1",
+                None,
+            ),
+            (
+                "index",
+                "sqlite_autoindex_current_cover_selection_authorities_2",
+                None,
+            ),
             ("index", "sqlite_autoindex_cover_consideration_events_1", None),
             ("index", "sqlite_autoindex_automatic_decisions_1", None),
             ("index", "sqlite_autoindex_automatic_decisions_2", None),
@@ -841,6 +890,12 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
                 "table",
                 "current_cover_considerations",
                 _CURRENT_COVER_CONSIDERATIONS_SQL,
+            ),
+            ("table", "cover_selection_authorities", _COVER_SELECTION_AUTHORITIES_SQL),
+            (
+                "table",
+                "current_cover_selection_authorities",
+                _CURRENT_COVER_SELECTION_AUTHORITIES_SQL,
             ),
             ("table", "cover_consideration_events", _COVER_CONSIDERATION_EVENTS_SQL),
             ("table", "human_decision_events", _HUMAN_DECISION_EVENTS_SQL),
@@ -934,6 +989,26 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
                 "trigger",
                 "cover_considerations_no_update",
                 _COVER_CONSIDERATION_NO_UPDATE_SQL,
+            ),
+            (
+                "trigger",
+                "cover_selection_authorities_no_delete",
+                _COVER_SELECTION_AUTHORITY_NO_DELETE_SQL,
+            ),
+            (
+                "trigger",
+                "cover_selection_authorities_no_update",
+                _COVER_SELECTION_AUTHORITY_NO_UPDATE_SQL,
+            ),
+            (
+                "trigger",
+                "current_cover_selection_authorities_validate_insert",
+                _CURRENT_COVER_SELECTION_AUTHORITY_INSERT_SQL,
+            ),
+            (
+                "trigger",
+                "current_cover_selection_authorities_validate_update",
+                _CURRENT_COVER_SELECTION_AUTHORITY_UPDATE_SQL,
             ),
             (
                 "trigger",
@@ -1038,6 +1113,7 @@ def _validate_schema_contents_without_review_field_facts(
     ).fetchone() != ("ok",):
         raise MetadataReportError("database is unavailable or incompatible")
     _validate_metadata_policy_documents(connection)
+    _validate_cover_selection_authorities(connection)
     _validate_field_effect_state(connection)
     try:
         _validate_owner_settings_content(connection)
@@ -1049,6 +1125,186 @@ def _validate_schema_contents_without_review_field_facts(
         "FROM provider_recovery_outbox"
     ):
         _validate_provider_recovery_outbox_row(row)
+
+
+def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> None:
+    """Require append-only cover authority rows to equal their canonical facts."""
+    try:
+        selections: dict[str, tuple[str, str, str, dict[str, object]]] = {}
+        selection_decision_ids: dict[str, str] = {}
+        automatic_supersessions: dict[str, str | None] = {}
+        for row in connection.execute(
+            "SELECT selection_id,connection_name,library_name,item_id,kind,decision_id,"
+            "consideration_id,supersedes_selection_id,occurred_at,document "
+            "FROM cover_selection_authorities"
+        ):
+            document = json.loads(row[9])
+            if (
+                type(document) is not dict
+                or _canonical_json(document) != row[9]
+                or document.get("schema_version") != "cover-selection-authority-v1"
+                or document.get("selection_id") != row[0]
+                or document.get("kind") != row[4]
+                or document.get("decision_id") != row[5]
+                or document.get("consideration_id") != row[6]
+                or document.get("supersedes_selection_id") != row[7]
+                or type(document.get("decision_document")) is not str
+            ):
+                raise ValueError
+            decision_document = cast(str, document["decision_document"])
+            consideration_row = connection.execute(
+                "SELECT document,review_case_id FROM cover_considerations "
+                "WHERE consideration_id=?",
+                (row[6],),
+            ).fetchone()
+            if consideration_row is None:
+                raise ValueError
+            consideration = json.loads(consideration_row[0])
+            case_row = connection.execute(
+                "SELECT document FROM review_cases WHERE review_case_id=?",
+                (consideration_row[1],),
+            ).fetchone()
+            if case_row is None:
+                raise ValueError
+            case = ReviewCase.from_json(case_row[0])
+            target = case.target
+            expected_artifact = None
+            expected_rank = None
+            if row[4] == "automatic":
+                automatic_decision = CoverAutomaticDecision.from_json(decision_document)
+                candidate = next(
+                    (
+                        value
+                        for value in consideration["candidates"]
+                        if value.get("reference")
+                        == automatic_decision.candidate_reference
+                    ),
+                    None,
+                )
+                if (
+                    automatic_decision.decision_id != row[5]
+                    or automatic_decision.consideration_id != row[6]
+                    or automatic_decision.review_case_id != consideration_row[1]
+                    or automatic_decision.occurred_at != row[8]
+                    or candidate is None
+                    or candidate.get("artifact_id") != automatic_decision.artifact_id
+                    or candidate.get("incumbent") is not False
+                    or candidate.get("selectable") is not True
+                    or candidate.get("deterministic_rank_key")
+                    != list(automatic_decision.rank_key)
+                ):
+                    raise ValueError
+                expected_artifact = automatic_decision.artifact_id
+                expected_rank = list(automatic_decision.rank_key)
+            else:
+                human_decision = HumanDecision.from_json(decision_document)
+                human = connection.execute(
+                    "SELECT document FROM human_decisions WHERE decision_id=?",
+                    (row[5],),
+                ).fetchone()
+                if (
+                    human_decision.decision_id != row[5]
+                    or human_decision.destination != "cover"
+                    or human_decision.review_case_id != consideration_row[1]
+                    or human_decision.occurred_at != row[8]
+                    or human != (decision_document,)
+                ):
+                    raise ValueError
+                candidate = next(
+                    (
+                        value
+                        for value in consideration["candidates"]
+                        if (
+                            human_decision.outcome == "accept"
+                            and human_decision.selected_value
+                            == {"kind": "cover", "value": value.get("artifact_id")}
+                        )
+                        or (
+                            human_decision.outcome == "keep_current"
+                            and value.get("incumbent") is True
+                        )
+                    ),
+                    None,
+                )
+                if human_decision.outcome == "reject":
+                    if (
+                        human_decision.selected_value is not None
+                        or candidate is not None
+                    ):
+                        raise ValueError
+                elif candidate is None:
+                    raise ValueError
+                if candidate is not None:
+                    expected_artifact = candidate.get("artifact_id")
+                    expected_rank = candidate.get("deterministic_rank_key")
+            expected_selection_id = (
+                "cover_selection_"
+                + hashlib.sha256(decision_document.encode("utf-8")).hexdigest()
+            )
+            expected_document = _canonical_json(
+                {
+                    "candidate_artifact_id": expected_artifact,
+                    "consideration_id": row[6],
+                    "decision_document": decision_document,
+                    "decision_id": row[5],
+                    "kind": row[4],
+                    "rank_key": expected_rank,
+                    "schema_version": "cover-selection-authority-v1",
+                    "selection_id": expected_selection_id,
+                    "supersedes_selection_id": row[7],
+                }
+            )
+            if (
+                row[0] != expected_selection_id
+                or row[9] != expected_document
+                or (row[1], row[2], row[3])
+                != (target["connection"], target["library"], target["item"])
+            ):
+                raise ValueError
+            selections[row[0]] = (row[1], row[2], row[3], document)
+            selection_decision_ids[row[0]] = row[5]
+            if row[4] == "automatic":
+                automatic_supersessions[row[0]] = (
+                    automatic_decision.supersedes_decision_id
+                )
+        for selection_id, (
+            connection_name,
+            library_name,
+            item_id,
+            document,
+        ) in selections.items():
+            predecessor = document.get("supersedes_selection_id")
+            if predecessor is not None and (
+                predecessor not in selections
+                or selections[predecessor][:3]
+                != (connection_name, library_name, item_id)
+                or predecessor == selection_id
+            ):
+                raise ValueError
+            expected_predecessor_decision_id = (
+                None if predecessor is None else selection_decision_ids[predecessor]
+            )
+            if (
+                selection_id in automatic_supersessions
+                and automatic_supersessions[selection_id]
+                != expected_predecessor_decision_id
+            ):
+                raise ValueError
+        for row in connection.execute(
+            "SELECT connection_name,library_name,item_id,selection_id "
+            "FROM current_cover_selection_authorities"
+        ):
+            if row[3] not in selections or selections[row[3]][:3] != row[:3]:
+                raise ValueError
+    except (
+        AutomaticDecisionError,
+        HumanDecisionError,
+        KeyError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as error:
+        raise MetadataReportError("database is unavailable or incompatible") from error
 
 
 def _validate_review_field_facts(connection: sqlite3.Connection) -> None:
@@ -1090,7 +1346,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
 
 
 _REVIEW_OWNER_DECISION_ACTIONS_V1_SOURCE_OBJECTS_SHA256 = (
-    "c89722892c7a2edf71ff53b11168b333750c2376a87222568a11277eeb904b02"
+    "14cb7a2fb01ca1070e71f6d65e6e6d476d9d627021186b6792c9ccd6c732577f"
 )
 _REVIEW_OWNER_DECISION_ACTIONS_V1_SOURCE_FACT_VALUES_SQL = (
     "json_extract(result.value,'$.destination'),"

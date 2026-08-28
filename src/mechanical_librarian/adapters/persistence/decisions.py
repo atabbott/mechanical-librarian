@@ -43,6 +43,9 @@ from mechanical_librarian.domain.automatic_decision import (
     AutomaticSafetyState,
     qualification_manifest_sha256,
 )
+from mechanical_librarian.domain.cover_automatic_decision import (
+    parse_automatic_authority,
+)
 from mechanical_librarian.domain.field_effect import FieldEffectOperation
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
@@ -60,6 +63,41 @@ from mechanical_librarian.domain.shadow_outcome import (
 _REPLACEMENT_BLOCKING_EFFECT_SQL = (
     "(state IN ('claimed','applying','reconciling') OR (state='verified' AND ?))"
 )
+
+
+def _automatic_decision_documents(
+    connection: sqlite3.Connection, review_case_id: str
+) -> tuple[str, ...]:
+    """Read every canonical automatic authority attached to one review case."""
+    try:
+        rows = connection.execute(
+            "SELECT decision_id,destination,idempotency_digest,occurred_at,document "
+            "FROM automatic_decisions WHERE review_case_id=? "
+            "UNION ALL SELECT selection.decision_id,'cover',"
+            "json_extract(json_extract(selection.document,'$.decision_document'),'$.idempotency_digest'),"
+            "selection.occurred_at,json_extract(selection.document,'$.decision_document') "
+            "FROM cover_selection_authorities selection JOIN cover_considerations consideration "
+            "ON consideration.consideration_id=selection.consideration_id "
+            "WHERE selection.kind='automatic' AND consideration.review_case_id=? "
+            "ORDER BY occurred_at,decision_id",
+            (review_case_id, review_case_id),
+        ).fetchall()
+        documents = []
+        for row in rows:
+            if len(row) != 5 or type(row[4]) is not str:
+                raise MetadataReportError("automatic decision is unavailable")
+            decision = parse_automatic_authority(row[4])
+            if (
+                decision.decision_id,
+                decision.destination,
+                decision.idempotency_digest,
+                decision.occurred_at,
+            ) != row[:4] or decision.review_case_id != review_case_id:
+                raise MetadataReportError("automatic decision is unavailable")
+            documents.append(decision.to_json())
+        return tuple(documents)
+    except (sqlite3.Error, AutomaticDecisionError, TypeError) as error:
+        raise MetadataReportError("automatic decision is unavailable") from error
 
 
 class SQLiteDecisionRepository(ConnectionScoped):
@@ -285,21 +323,9 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 ) != row[:10]:
                     raise MetadataReportError("human decision is invalid")
                 documents.append(decision.to_json())
-            automatic_rows = self._connection.execute(
-                "SELECT document FROM automatic_decisions WHERE review_case_id=? "
-                "ORDER BY occurred_at,decision_id",
-                (review_case_id,),
-            ).fetchall()
-            for (document,) in automatic_rows:
-                decision = json.loads(document)
-                if (
-                    type(decision) is not dict
-                    or decision.get("schema_version") != "automatic-decision-v1"
-                    or decision.get("origin") != "automatic_policy"
-                    or decision.get("review_case_id") != review_case_id
-                ):
-                    raise MetadataReportError("automatic decision is invalid")
-                documents.append(document)
+            documents.extend(
+                _automatic_decision_documents(self._connection, review_case_id)
+            )
             return tuple(documents)
         except (sqlite3.Error, HumanDecisionError, TypeError) as error:
             raise MetadataReportError("human decision is unavailable") from error
@@ -380,11 +406,25 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 raise HumanDecisionError("stale")
             case = ReviewCase.create_from_data(case_envelope["case"])
             decision.validate_new_for(case)
+            cover_automatic = None
+            if decision.destination == "cover":
+                target = case.target
+                cover_automatic = self._connection.execute(
+                    "SELECT selection.decision_id,'automatic' "
+                    "FROM current_cover_selection_authorities current "
+                    "JOIN cover_selection_authorities selection "
+                    "ON selection.selection_id=current.selection_id "
+                    "WHERE current.connection_name=? AND current.library_name=? "
+                    "AND current.item_id=? AND selection.kind='automatic'",
+                    (target["connection"], target["library"], target["item"]),
+                ).fetchone()
             previous = self._connection.execute(
                 "SELECT decision_id,'human' FROM human_decisions "
                 "WHERE review_case_id=? AND destination=? ORDER BY ordinal DESC LIMIT 1",
                 (decision.review_case_id, decision.destination),
             ).fetchone()
+            if previous is None and cover_automatic is not None:
+                previous = cover_automatic
             if previous is None:
                 previous = self._connection.execute(
                     "SELECT decision_id,'automatic' FROM automatic_decisions "
@@ -396,6 +436,8 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 "WHERE review_case_id=? AND destination=?",
                 (decision.review_case_id, decision.destination),
             ).fetchone()
+            if cover_automatic is not None:
+                automatic = cover_automatic
             if previous is not None:
                 effect = self._connection.execute(
                     "SELECT 1 FROM field_effects WHERE decision_id=? AND "

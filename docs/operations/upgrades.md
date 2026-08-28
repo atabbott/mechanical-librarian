@@ -7,9 +7,14 @@ rebuild or delivers one explicit exact-predecessor adoption limited to
 reconstructible derived objects. This is not a general migration, import,
 conversion, compatibility, downgrade, or repair facility.
 
+`metadata-report-v29` cannot carry the deterministic readiness, rank and
+citation contract of `cover-consideration-v2`. It is rejected at bootstrap and
+requires a clean rebuild as `metadata-report-v30`; this increment provides no
+adoption or legacy fallback.
+
 `metadata-report-v28` cannot distinguish burst throttling from exhausted daily
 quota in its persisted provider diagnostics. It is rejected at bootstrap and
-requires a clean rebuild as `metadata-report-v29`; this increment provides no
+requires a clean rebuild as `metadata-report-v29`; that increment provides no
 adoption or legacy fallback.
 
 `metadata-report-v27` cannot represent exact work dispatch and transformation

@@ -1164,8 +1164,8 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
 
         for case_id, label, retry in (
             ("case-1", "Advisory visual review complete", False),
-            ("case-2", "Manual comparison available", True),
-            ("case-3", "Manual comparison available", True),
+            ("case-2", "Deterministic confirmed choice remains available", True),
+            ("case-3", "Deterministic confirmed choice remains available", True),
         ):
             stage[0] = f"cover-library:{case_id}"
             page.goto(
@@ -1174,11 +1174,15 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             )
             comparison = page.get_by_role("region", name="Choose a cover")
             comparison.get_by_text(label, exact=True).wait_for()
-            assert (
-                "advice only" if not retry else "comparison remains manual"
-            ) in comparison.inner_text()
+            comparison.get_by_text("Recommended cover ready", exact=True).wait_for()
+            assert "best confirmed match is ready" in comparison.inner_text()
             for choice in comparison.locator("button[aria-pressed]").all():
-                expect(choice).to_be_enabled()
+                if "is-unconfirmed" in (
+                    choice.locator("xpath=..").get_attribute("class") or ""
+                ):
+                    expect(choice).to_be_disabled()
+                else:
+                    expect(choice).to_be_enabled()
                 expect(choice).to_have_attribute("aria-pressed", "false")
             for evidence in comparison.get_by_role(
                 "button", name=re.compile(r"^Evidence for .+ cover$")
@@ -1192,7 +1196,34 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 capture_visual_proof(
                     "library-completed" if case_id == "case-1" else "library-failed"
                 )
+            if case_id == "case-2":
+                page.set_viewport_size({"width": 390, "height": 844})
+                comparison_header = comparison.locator(":scope > header")
+                assert (
+                    comparison_header.evaluate(
+                        "node => getComputedStyle(node).flexDirection"
+                    )
+                    == "column"
+                )
+                assert (
+                    comparison_header.locator("strong").evaluate(
+                        "node => getComputedStyle(node).overflowWrap"
+                    )
+                    == "normal"
+                )
+                assert (
+                    page.evaluate("() => document.documentElement.scrollWidth") <= 390
+                )
+                page.set_viewport_size({"width": 1440, "height": 900})
             if case_id == "case-1":
+                unconfirmed = comparison.locator(".cover-choice.is-unconfirmed")
+                expect(unconfirmed).to_have_count(1)
+                unconfirmed.get_by_text("Match not confirmed", exact=True).wait_for()
+                assert (
+                    "couldn't confirm that this cover belongs"
+                    in unconfirmed.inner_text()
+                )
+                expect(unconfirmed.get_by_role("button")).to_be_disabled()
                 current_evidence = comparison.get_by_role(
                     "button", name="Evidence for Current cover"
                 )
@@ -1215,9 +1246,19 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 comparison.get_by_text("Open Library", exact=True).wait_for()
                 comparison.get_by_text("External corroboration", exact=True).wait_for()
                 expect(
-                    comparison.locator(".library-cover-card:not(.is-current)")
+                    comparison.locator(".library-cover-card.is-recommended")
                 ).to_have_attribute("aria-pressed", "false")
             if case_id == "case-3":
+                recommended = comparison.locator(".library-cover-card.is-recommended")
+                expect(recommended).to_have_count(1)
+                expect(recommended).to_be_enabled()
+                recommended.get_by_text("Same book", exact=True).wait_for()
+                recommended_evidence = comparison.get_by_role(
+                    "button", name="Evidence for Alternative 1 cover"
+                )
+                recommended_evidence.click()
+                expect(recommended_evidence).to_have_attribute("aria-expanded", "true")
+                comparison.get_by_text("Open Library", exact=True).wait_for()
                 unavailable_evidence = comparison.get_by_role(
                     "button", name="Evidence for Current cover"
                 )
@@ -2159,9 +2200,11 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         expect(page.locator("#policy-curation")).to_be_focused()
         cover_policy = page.get_by_role("region", name="Cover")
         cover_policy.get_by_text(
-            "Cover review uses the fixed supported source order.", exact=True
+            "Choose the best identity-confirmed cover by one deterministic order.",
+            exact=True,
         ).wait_for()
-        expect(cover_policy.get_by_role("button", name="Automatic")).to_be_disabled()
+        automatic_cover = cover_policy.get_by_role("button", name="Automatic")
+        expect(automatic_cover).to_be_enabled()
         expect(cover_policy.get_by_role("button", name="Ask me")).to_have_attribute(
             "aria-pressed", "true"
         )
@@ -2169,12 +2212,13 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             "combobox", name="Cover representation"
         )
         expect(cover_representation).to_be_disabled()
-        expect(cover_representation).to_have_text("Fixed supported source order")
-        # Unsupported automatic mode says so plainly; gate mechanics are gone.
-        assert "Automatic mode not supported" in cover_policy.inner_text()
-        assert "Automatic writes" not in cover_policy.inner_text()
-        assert "qualified" not in cover_policy.inner_text()
-        assert "Enter Preview" not in cover_policy.inner_text()
+        expect(cover_representation).to_have_text("Deterministic confirmed order")
+        automatic_cover.click()
+        expect(automatic_cover).to_have_attribute("aria-pressed", "true")
+        cover_policy.get_by_role("button", name="Ask me").click()
+        expect(cover_policy.get_by_role("button", name="Ask me")).to_have_attribute(
+            "aria-pressed", "true"
+        )
         cover_help = cover_policy.locator(".cm-policy-field-guidance")
         assert cover_help.evaluate("node => node.open") is False
         assert (

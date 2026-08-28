@@ -1453,6 +1453,13 @@ def test_openapi_is_deterministic_and_secret_free(
             assert build_parameters[0]["in"] == "header"
             assert "409" in operation["responses"]
     schemas = expected["components"]["schemas"]
+    automatic_destination = schemas["_AutomaticDecisionProjection"]["properties"][
+        "destination"
+    ]
+    assert "cover" not in automatic_destination["enum"]
+    cover_automatic = schemas["_CoverAutomaticDecisionProjection"]
+    assert cover_automatic["properties"]["destination"]["const"] == "cover"
+    assert "supersedes_decision_id" in cover_automatic["required"]
     qualification_items = schemas["_PolicyProfileResponse"]["properties"][
         "rich_qualification"
     ]["items"]
@@ -1471,7 +1478,10 @@ def test_openapi_is_deterministic_and_secret_free(
         closed_qualification.update(
             {f"{field}:{option}": disposition for option in options}
         )
-    assert dict(F20_OPTION_DISPOSITIONS) == closed_qualification
+    assert {
+        **dict(F20_OPTION_DISPOSITIONS),
+        "cover_order:fixed_source_order": "pass",
+    } == closed_qualification
     assert "HTTPValidationError" not in schemas
     assert all(
         schema.get("additionalProperties") is False

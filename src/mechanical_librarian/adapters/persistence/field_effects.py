@@ -57,6 +57,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
+from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
 from mechanical_librarian.domain.field_effect import (
     FIELD_EFFECT_FAILURES,
     EffectConsent,
@@ -84,7 +85,8 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
         record_field_effect_event: Callable[[FieldEffectOperation, str, int], None],
         field_effect_consent_envelope_identity: Callable[[str], str],
         field_effect_authority_source: Callable[
-            [HumanDecision | AutomaticDecision], dict[str, object]
+            [HumanDecision | AutomaticDecision | CoverAutomaticDecision],
+            dict[str, object],
         ],
         retire_stale_cover_consideration: Callable[
             [FieldEffectOperation, str, int], None

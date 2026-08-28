@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Recommend the best confirmed cover deterministically without requiring the
+  optional reviewer, and keep unconfirmed matches out of selection. Active
+  provider fetching delays choice; retry waiting does not. A qualified
+  default-off Automatic option is available after all frozen cohorts passed.
+  Existing pre-release v29 state requires a clean rebuild. (#864)
+
 - Ship the container on the exact Python and uv the public gate qualified, and
   keep it there: every toolchain pin site must agree, the qualified
   interpreter and resolver move as one Renovate group, and a half-landed

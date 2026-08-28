@@ -17,6 +17,7 @@ from mechanical_librarian.application.field_effects import (
     TargetServiceUnavailable,
 )
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
+from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
 from mechanical_librarian.domain.field_effect import (
     EffectAuthority,
     EffectConsent,
@@ -164,7 +165,7 @@ class FakeAuthorityCurrentness:
 
     def bind(
         self,
-        decision: HumanDecision | AutomaticDecision,
+        decision: HumanDecision | AutomaticDecision | CoverAutomaticDecision,
         *,
         connection: str,
         library: str,
@@ -174,7 +175,14 @@ class FakeAuthorityCurrentness:
     ) -> None:
         if type(decision) is HumanDecision and decision.outcome == "accept":
             value: object = decision.selected_value
-        elif type(decision) is AutomaticDecision and decision.outcome == "candidate":
+        elif (
+            type(decision)
+            in (
+                AutomaticDecision,
+                CoverAutomaticDecision,
+            )
+            and decision.outcome == "candidate"
+        ):
             value = self.automatic_values[decision.decision_id]
         else:
             raise ValueError("decision has no effect value")
@@ -190,7 +198,9 @@ class FakeAuthorityCurrentness:
             source,
         )
 
-    def resolve(self, decision: HumanDecision | AutomaticDecision) -> AuthoritySnapshot:
+    def resolve(
+        self, decision: HumanDecision | AutomaticDecision | CoverAutomaticDecision
+    ) -> AuthoritySnapshot:
         return self.bindings[decision.decision_id]
 
     def current(self, authority: EffectAuthority) -> bool:

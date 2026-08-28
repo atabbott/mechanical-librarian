@@ -150,8 +150,8 @@ source order. Front and rear subtitle/publisher/imprint canonical values share
 NFC and whitespace normalization. Rear position does not increase authority.
 Provider comparisons link only claims with the same role; no publisher/imprint
 hierarchy is inferred. The exact-current persisted report and database
-discriminator is `metadata-report-v29`. Every earlier report discriminator,
-including immediate prior `metadata-report-v28`, remains offline and requires a
+discriminator is `metadata-report-v30`. Every earlier report discriminator,
+including immediate prior `metadata-report-v29`, remains offline and requires a
 clean current database under ADR-0013.
 
 Google Books descriptions use one inert, bounded

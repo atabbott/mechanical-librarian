@@ -52,16 +52,17 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceKind,
     CoverSourceState,
 )
+from mechanical_librarian.domain.deterministic_cover_election import (
+    CoverElectionCandidate,
+)
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     TargetDestination,
     TargetFieldState,
 )
 
-SCHEMA_VERSION = "cover-consideration-v1"
-_IDENTITY_ELIGIBLE = frozenset(
-    {"plausible_match", "verified_manifestation_match", "verified_work_match"}
-)
+SCHEMA_VERSION = "cover-consideration-v2"
+_IDENTITY_ELIGIBLE = frozenset({"verified_manifestation_match", "verified_work_match"})
 
 
 class CoverConsiderationError(RuntimeError):
@@ -159,6 +160,7 @@ class CoverConsiderationService:
         reviewer: ReviewRunner | None = None,
         reviewer_unavailable_reason: str | None = None,
         bind_policy: Callable[[str, str], None] | None = None,
+        provider_fetching: Callable[[MetadataReport], bool] | None = None,
     ) -> None:
         self._store = store
         self._read_preview = read_preview
@@ -171,6 +173,7 @@ class CoverConsiderationService:
             raise ValueError("invalid reviewer unavailable reason")
         self._reviewer_unavailable_reason = reviewer_unavailable_reason
         self._bind_policy = bind_policy or (lambda _policy, _replay: None)
+        self._provider_fetching = provider_fetching or (lambda _report: False)
 
     def update_policy(self, policy: CoverPolicy) -> None:
         """Replace the live preference snapshot and its authority references."""
@@ -224,13 +227,16 @@ class CoverConsiderationService:
         identity = canonical_packet_json(value)
         return "cover_replay_" + hashlib.sha256(identity.encode()).hexdigest()
 
-    def _replay_digest(self, review_case_id: str, report_id: str) -> str:
+    def _replay_digest(
+        self, review_case_id: str, report_id: str, *, provider_fetching: bool
+    ) -> str:
         return hashlib.sha256(
             canonical_packet_json(
                 {
                     "replay_reference": self.replay_reference,
                     "report": report_id,
                     "review_case_id": review_case_id,
+                    "provider_fetching": provider_fetching,
                 }
             ).encode()
         ).hexdigest()
@@ -239,8 +245,14 @@ class CoverConsiderationService:
         self, review_case_id: str, report_document: str
     ) -> dict[str, object] | None:
         report = MetadataReport.from_json(report_document)
+        provider_fetching = self._provider_fetching(report)
         document = self._store.current_cover_consideration(
-            review_case_id, self._replay_digest(review_case_id, report.report_id)
+            review_case_id,
+            self._replay_digest(
+                review_case_id,
+                report.report_id,
+                provider_fetching=provider_fetching,
+            ),
         )
         return None if document is None else self._project(document, current=True)
 
@@ -255,7 +267,11 @@ class CoverConsiderationService:
     ) -> _ObservationRequest:
         """Capture bounded observer inputs while mutable product state is serialized."""
         report = MetadataReport.from_json(report_document)
-        replay_digest = self._replay_digest(review_case_id, report.report_id)
+        replay_digest = self._replay_digest(
+            review_case_id,
+            report.report_id,
+            provider_fetching=self._provider_fetching(report),
+        )
         try:
             packet = prepare_cover_packet(report_document, self._read_preview)
         except ValueError as error:
@@ -389,7 +405,12 @@ class CoverConsiderationService:
         reviewer_evidence: _ReviewerEvidence | None = None,
     ) -> dict[str, object]:
         report = MetadataReport.from_json(report_document)
-        replay_digest = self._replay_digest(review_case_id, report.report_id)
+        provider_fetching = self._provider_fetching(report)
+        replay_digest = self._replay_digest(
+            review_case_id,
+            report.report_id,
+            provider_fetching=provider_fetching,
+        )
         if (
             reviewer_evidence is not None
             and reviewer_evidence.replay_digest != replay_digest
@@ -415,6 +436,7 @@ class CoverConsiderationService:
             replay_digest,
             previous_id,
             reviewer_evidence,
+            provider_fetching,
         )
         persisted = self._store.record_cover_consideration(
             document,
@@ -438,6 +460,7 @@ class CoverConsiderationService:
         replay_digest: str,
         supersedes_id: str | None,
         reviewer_evidence: _ReviewerEvidence | None,
+        provider_fetching: bool,
     ) -> str:
         packet: PreparedCoverPacket | None
         try:
@@ -472,6 +495,7 @@ class CoverConsiderationService:
                 self._policy,
                 profile_payload=self._reviewer_profile,
                 read_preview=self._read_preview,
+                provider_fetching=provider_fetching,
             ).document
             candidates = self._candidates(
                 report,
@@ -520,6 +544,7 @@ class CoverConsiderationService:
             "policy_document": self._policy.document,
             "policy_report_document": policy_report_document,
             "policy_reference": self._policy.reference,
+            "provider_fetching": provider_fetching,
             "proposal_id": str(cover_proposal["proposal_id"]),
             "report_document": report_document,
             "report_id": report.report_id,
@@ -565,6 +590,7 @@ class CoverConsiderationService:
             }
         )
         acceptable = set(policy["acceptable_candidate_references"])
+        ranked_references = list(policy["acceptable_candidate_references"])
         recommendation = policy["recommended_candidate_reference"]
         source_by_reference = {
             cover_source_reference(report.report_id, source.source_id): source
@@ -604,15 +630,23 @@ class CoverConsiderationService:
             identity_row = identity_rows[reference]
             identity_eligible = identity_row["outcome"] in _IDENTITY_ELIGIBLE
             observation_row = observation_rows.get(reference)
-            definitely_excluded = False
-            if observation_row is not None:
-                definitely_excluded = bool(
-                    self._policy.avoid_promotional_text
-                    and observation_row["promotional_text"] == "present"
-                    or self._policy.avoid_tie_in_branding
-                    and observation_row["tie_in_branding"] == "present"
-                )
-            selectable = identity_eligible and not definitely_excluded
+            selectable = identity_eligible and candidate["incumbent"] is False
+            rank_key = (
+                CoverElectionCandidate(
+                    reference=reference,
+                    identity=str(identity_row["outcome"]),
+                    identity_citations=tuple(identity_row["evidence_references"]),
+                    source_citations=tuple(
+                        binding["reference"] for binding in candidate["source_bindings"]
+                    ),
+                    incumbent=bool(candidate["incumbent"]),
+                    width=artifact.width,
+                    height=artifact.height,
+                    packet_ordinal=ordinal,
+                ).rank_key
+                if identity_eligible
+                else None
+            )
             state = (
                 "excluded"
                 if not selectable
@@ -627,7 +661,28 @@ class CoverConsiderationService:
                     "artifact_id": artifact.artifact_id,
                     "height": artifact.height,
                     "identity": identity_row,
+                    "deterministic_citations": list(
+                        dict.fromkeys(
+                            [*identity_row["evidence_references"]]
+                            + [
+                                binding["reference"]
+                                for binding in candidate["source_bindings"]
+                            ]
+                        )
+                    ),
+                    "deterministic_rank": (
+                        ranked_references.index(reference) + 1
+                        if reference in acceptable
+                        else None
+                    ),
+                    "deterministic_rank_key": (
+                        None if rank_key is None else list(rank_key)
+                    ),
                     "incumbent": bool(candidate["incumbent"]),
+                    "match_state": {
+                        "verified_manifestation_match": "same_edition",
+                        "verified_work_match": "same_book",
+                    }.get(str(identity_row["outcome"]), "match_not_confirmed"),
                     "observation": observation_row,
                     "original_sha256": artifact.original_digest,
                     "ordinal": ordinal,
@@ -674,6 +729,8 @@ class CoverConsiderationService:
             "policy": policy,
             "policy_preferences": json.loads(value["policy_document"]),
             "policy_reference": value["policy_reference"],
+            "provider_fetching": value["provider_fetching"],
+            "ready": policy is not None and policy["status"] == "recommended",
             "reviewer_status": value["reviewer_status"],
             "reviewer_unavailable_reason": (
                 self._reviewer_unavailable_reason
@@ -736,8 +793,17 @@ class CoverConsiderationService:
             type(review_case_id) is str
             and type(report_id) is str
             and value.get("replay_reference") == self.replay_reference
+            and type(value.get("provider_fetching")) is bool
             and value.get("replay_digest")
-            == self._replay_digest(review_case_id, report_id)
+            == self._replay_digest(
+                review_case_id,
+                report_id,
+                provider_fetching=bool(value["provider_fetching"]),
+            )
+            and value["provider_fetching"]
+            == self._provider_fetching(
+                MetadataReport.from_json(str(value.get("report_document")))
+            )
         )
 
     def project_historical(self, document: str) -> dict[str, object]:
