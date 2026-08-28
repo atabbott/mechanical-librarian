@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import re
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 
 ReviewerTask = Literal["cover_observation"]
 ReviewerEngine = Literal["codex", "openrouter"]
+_OPENROUTER_MODEL_ID = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}/"
+    r"[A-Za-z0-9][A-Za-z0-9._-]{0,190}"
+    r"(?::[A-Za-z0-9][A-Za-z0-9._-]{0,31})?$"
+)
 
 
 class ReviewerAccessError(ValueError):
@@ -20,7 +26,10 @@ class _Closed(BaseModel):
 
 class OpenRouterTaskSelection(_Closed):
     engine: Literal["openrouter"]
-    model: Annotated[StrictStr, Field(min_length=1, max_length=256)]
+    model: Annotated[
+        StrictStr,
+        Field(min_length=3, max_length=256, pattern=_OPENROUTER_MODEL_ID.pattern),
+    ]
 
 
 class CodexTaskSelection(_Closed):
@@ -39,15 +48,6 @@ class ReviewerAccessDocument(_Closed):
     schema_version: Literal["reviewer-access-v1"]
     revision: Annotated[StrictInt, Field(ge=1)]
     cover_observation: ReviewerTaskSelection | None = None
-
-    @model_validator(mode="after")
-    def _validate_document(self) -> "ReviewerAccessDocument":
-        if self.cover_observation is not None and (
-            isinstance(self.cover_observation, OpenRouterTaskSelection)
-            and self.cover_observation.model.strip() != self.cover_observation.model
-        ):
-            raise ReviewerAccessError("reviewer access is invalid")
-        return self
 
 
 __all__ = [
