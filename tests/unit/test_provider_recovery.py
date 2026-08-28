@@ -1890,6 +1890,53 @@ def test_health_observation_is_idempotent_and_never_completes_a_claim() -> None:
         store.close()
 
 
+@pytest.mark.parametrize(
+    ("first_failure", "first_delay", "second_failure", "second_delay"),
+    (
+        ("burst_throttled", 100, "quota_exhausted", 90_000),
+        ("quota_exhausted", 90_000, "burst_throttled", 100),
+    ),
+    ids=("burst_then_quota", "quota_then_burst"),
+)
+def test_latest_authoritative_deferral_replaces_waiting_deadline(
+    first_failure: str,
+    first_delay: int,
+    second_failure: str,
+    second_delay: int,
+) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+        kwargs = {
+            "connection": "primary",
+            "adapter": "hardcover",
+            "scope": "books",
+            "generation": 1,
+        }
+        store.observe_failure(
+            **kwargs,
+            failure=first_failure,
+            now=10,
+            retry_after=first_delay,
+        )
+        store.observe_failure(
+            **kwargs,
+            failure=second_failure,
+            now=20,
+            retry_after=second_delay,
+        )
+        assert [("waiting", 0, 20 + second_delay)] == store._connection.execute(
+            "SELECT state,attempt,next_eligible_at FROM provider_recovery_health"
+        ).fetchall()
+        assert [
+            ("waiting", 0, 10 + first_delay, 10),
+            ("waiting", 0, 20 + second_delay, 20),
+        ] == store._connection.execute(
+            "SELECT state,attempt,next_eligible_at,occurred_at "
+            "FROM provider_recovery_events ORDER BY sequence"
+        ).fetchall()
+        store.close()
+
+
 def test_completion_rejects_exact_expiry_and_excluded_failure_without_mutation() -> (
     None
 ):

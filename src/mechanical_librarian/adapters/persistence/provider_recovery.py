@@ -744,7 +744,9 @@ class SQLiteProviderRecoveryStore:
                 retry_after=retry_after,
             )
             with self._lock:
-                self._observe_failure(observed, now)
+                self._observe_failure(
+                    observed, now, deferred=failure in DEFERRED_RECOVERY_FAILURES
+                )
                 return
         except ProviderRecoveryStoreError:
             raise
@@ -753,7 +755,9 @@ class SQLiteProviderRecoveryStore:
                 "provider recovery persistence is unavailable"
             ) from error
 
-    def _observe_failure(self, observed: ProviderRecovery, now: int) -> None:
+    def _observe_failure(
+        self, observed: ProviderRecovery, now: int, *, deferred: bool
+    ) -> None:
         with self._rollback_on_failure(ProviderRecoveryError):
             self._connection.execute("BEGIN IMMEDIATE")
             current = self._connection.execute(
@@ -765,8 +769,9 @@ class SQLiteProviderRecoveryStore:
                     "provider recovery generation is stale"
                 )
             # A checking lease is completed only by complete().  Within one
-            # generation, checking and dormant take precedence; dormant
-            # observations otherwise replace a waiting observation once.
+            # generation, checking and dormant take precedence.  The latest
+            # authoritative deferral replaces a waiting deadline while keeping
+            # its recovery attempt; ambiguous observations remain idempotent.
             successor = observed
             if current is not None:
                 if current[0] < observed.generation:
@@ -777,8 +782,23 @@ class SQLiteProviderRecoveryStore:
                     self._connection.execute("COMMIT")
                     return
                 if observed.state == "waiting" and current[1] == "waiting":
-                    self._connection.execute("COMMIT")
-                    return
+                    if not deferred:
+                        self._connection.execute("COMMIT")
+                        return
+                    deadline = observed.next_eligible_at
+                    if deadline is None:
+                        raise ProviderRecoveryStoreError(
+                            "provider recovery observation is invalid"
+                        )
+                    successor = ProviderRecovery(
+                        observed.connection,
+                        observed.adapter,
+                        observed.scope,
+                        observed.generation,
+                        "waiting",
+                        current[2],
+                        current[3],
+                    ).defer(now=now, retry_after=deadline - now)
             self._connection.execute(
                 "INSERT INTO provider_recovery_members(connection,adapter,scope) VALUES(?,?,?) ON CONFLICT DO NOTHING",
                 (observed.connection, observed.adapter, observed.scope),
