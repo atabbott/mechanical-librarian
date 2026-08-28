@@ -1682,7 +1682,7 @@ def reviewer_failure_response(error: Exception) -> tuple[int, str]:
         )
     if isinstance(error, ReviewerAccessApplicationError):
         if error.code == "access_changed":
-            return 409, error.code
+            return 409, "reviewer_access_stale"
         if error.code in {"credential_clear_failed", "unreachable"}:
             return 503, error.code
         return 422, error.code
@@ -1820,7 +1820,7 @@ def _register_reviewer_access_routes(
         _require_session(application, ml_session, x_csrf_token)
         try:
             return authority().start_codex(expected_revision=request.expected_revision)
-        except ReviewerAccessApplicationError as error:
+        except (ReviewerAccessRepositoryError, ReviewerAccessApplicationError) as error:
             raise problem(error) from None
 
     @app.get(
@@ -1832,7 +1832,27 @@ def _register_reviewer_access_routes(
         ml_session: str = Depends(authenticated_session_cookie),
     ) -> CodexDeviceAuthState:
         _require_session(application, ml_session)
-        return authority().codex_status()
+        try:
+            return authority().codex_status()
+        except (ReviewerAccessRepositoryError, ReviewerAccessApplicationError) as error:
+            raise problem(error) from None
+
+    @app.post(
+        "/api/v1/reviewer-access/codex/recheck",
+        response_model=_CodexDeviceAuthResponse,
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)
+        },
+    )
+    def recheck_codex(
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> CodexDeviceAuthState:
+        _require_session(application, ml_session, x_csrf_token)
+        try:
+            return authority().recheck_codex()
+        except (ReviewerAccessRepositoryError, ReviewerAccessApplicationError) as error:
+            raise problem(error) from None
 
     @app.post(
         "/api/v1/reviewer-access/codex/device/cancel",
@@ -1846,7 +1866,10 @@ def _register_reviewer_access_routes(
         x_csrf_token: str = Header(),
     ) -> CodexDeviceAuthState:
         _require_session(application, ml_session, x_csrf_token)
-        return authority().cancel_codex()
+        try:
+            return authority().cancel_codex()
+        except (ReviewerAccessRepositoryError, ReviewerAccessApplicationError) as error:
+            raise problem(error) from None
 
     @app.delete(
         "/api/v1/reviewer-access/codex",

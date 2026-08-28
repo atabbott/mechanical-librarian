@@ -403,6 +403,14 @@ class ReviewerAccessOperations:
 
         return cast("CodexDeviceAuthState", self._serialized(status))
 
+    def recheck_codex(self) -> CodexDeviceAuthState:
+        """Explicitly validate the installed credential unless a flow owns it."""
+
+        return cast(
+            "CodexDeviceAuthState",
+            self._serialized(self._codex_auth.recheck_credential_status),
+        )
+
     def cancel_codex(self) -> CodexDeviceAuthState:
         return cast("CodexDeviceAuthState", self._serialized(self._codex_auth.cancel))
 

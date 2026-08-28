@@ -429,6 +429,40 @@ def test_cancel_owns_and_stops_spawned_validation_child(
     assert not (tmp_path / "profile" / "auth.json").exists()
 
 
+def test_active_device_flow_excludes_external_recheck_and_selection_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = _manager(tmp_path)
+    entered = Event()
+    release = Event()
+    child = _Process(b"", 0)
+    child.returncode = None  # type: ignore[assignment]
+    child.stdout = _BlockingStream(entered, release)  # type: ignore[assignment]
+    spawn_count = 0
+
+    def popen(_command: list[str], **_kwargs: Any):
+        nonlocal spawn_count
+        spawn_count += 1
+        return child
+
+    manager._popen = popen
+
+    def terminate(_pid: int, _signal: int) -> None:
+        child.returncode = -15
+
+    monkeypatch.setattr(os, "killpg", terminate)
+    assert manager.start().state == "starting"
+    assert entered.wait(timeout=2)
+    assert manager.recheck_credential_status().state == "starting"
+    assert manager.current_credential_status().state == "starting"
+    assert spawn_count == 1
+    assert manager.cancel().state == "cancelled"
+    release.set()
+    manager.close()
+    assert spawn_count == 1
+    assert child.poll() == -15
+
+
 def test_device_child_uses_the_installed_resource_exec_wrapper(tmp_path: Path) -> None:
     manager = _manager(tmp_path)
     captured: dict[str, object] = {}

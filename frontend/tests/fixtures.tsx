@@ -190,6 +190,13 @@ export const createHttp = (): ReviewHttp => ({
   getCodexDevice: vi.fn(async () => {
     throw new Error('not configured')
   }),
+  recheckCodex: vi.fn(async () => ({
+    state: 'usable' as const,
+    failure: null,
+    verification_url: null,
+    user_code: null,
+    expires_in_seconds: null,
+  })),
   cancelCodexDevice: vi.fn(async () => {
     throw new Error('not configured')
   }),

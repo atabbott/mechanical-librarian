@@ -2591,7 +2591,6 @@ def _compose_setup_runtime_generation(
             cover_reviewer_profile_file=bootstrap.cover_reviewer_profile_file,
         ),
     )
-
     setup_app = create_setup_app(
         sessions,
         state,

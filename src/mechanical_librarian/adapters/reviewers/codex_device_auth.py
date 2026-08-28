@@ -136,6 +136,9 @@ class CodexDeviceAuthManager:
             return self._state
 
     def current_credential_status(self) -> CodexDeviceAuthState:
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return self._state
         target = self._auth_store / "auth.json"
         try:
             os.lstat(target)
@@ -156,6 +159,9 @@ class CodexDeviceAuthManager:
             return CodexDeviceAuthState("failed", failure="permission_or_profile")
 
     def recheck_credential_status(self) -> CodexDeviceAuthState:
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return self._state
         current = self.current_credential_status()
         if current.state != "configured":
             return current
@@ -163,7 +169,7 @@ class CodexDeviceAuthManager:
             prepared = _prepared(self._command_factory(self._auth_store, "status"))
             try:
                 output, returncode = self._status_command(
-                    prepared, time.monotonic() + 30
+                    prepared, time.monotonic() + 30, flow_owned=False
                 )
             finally:
                 prepared.close()
@@ -188,9 +194,7 @@ class CodexDeviceAuthManager:
             with self._lock:
                 if self._cancelled:
                     return
-            process = self._spawn(
-                prepared,
-            )
+            process = self._spawn(prepared, flow_owned=True)
             with self._lock:
                 cancelled = self._cancelled
             if cancelled:
@@ -231,13 +235,17 @@ class CodexDeviceAuthManager:
                 return
             if _issued_state(lines) is None:
                 raise CodexDeviceAuthError("protocol")
+            self._release(process)
+            process = None
             prepared.close()
             prepared = None
             self._set_state(CodexDeviceAuthState("validating"))
             auth_path = staging / "auth.json"
             _validated_auth(auth_path)
             prepared = _prepared(self._command_factory(staging, "status"))
-            output, returncode = self._status_command(prepared, deadline)
+            output, returncode = self._status_command(
+                prepared, deadline, flow_owned=True
+            )
             if not (returncode == 0 and output == b"Logged in using ChatGPT\n"):
                 raise CodexDeviceAuthError("permission")
             # The cancellation decision and credential commit are one terminal
@@ -266,17 +274,23 @@ class CodexDeviceAuthManager:
             if staging is not None:
                 shutil.rmtree(staging, ignore_errors=True)
 
-    def _spawn(self, prepared: CodexAuthCommand) -> subprocess.Popen[bytes]:
-        process = self._popen(
-            _resource_command(prepared.command),
-            env=dict(prepared.environment),
-            pass_fds=prepared.pass_fds,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
+    def _spawn(
+        self, prepared: CodexAuthCommand, *, flow_owned: bool
+    ) -> subprocess.Popen[bytes]:
         with self._lock:
+            if self._process is not None:
+                raise CodexDeviceAuthError("process")
+            if not flow_owned and self._thread is not None and self._thread.is_alive():
+                raise CodexDeviceAuthError("process")
+            process = self._popen(
+                _resource_command(prepared.command),
+                env=dict(prepared.environment),
+                pass_fds=prepared.pass_fds,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
             self._process = process
             cancelled = self._cancelled
         if cancelled:
@@ -291,9 +305,9 @@ class CodexDeviceAuthManager:
                 self._process = None
 
     def _status_command(
-        self, prepared: CodexAuthCommand, deadline: float
+        self, prepared: CodexAuthCommand, deadline: float, *, flow_owned: bool
     ) -> tuple[bytes, int]:
-        process = self._spawn(prepared)
+        process = self._spawn(prepared, flow_owned=flow_owned)
         try:
             return _bounded_status(process, prepared, deadline)
         finally:

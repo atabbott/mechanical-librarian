@@ -1528,6 +1528,7 @@ def test_openapi_is_deterministic_and_secret_free(
         ("get", "/api/v1/reviewer-access/codex/device"),
         ("post", "/api/v1/reviewer-access/codex/device"),
         ("post", "/api/v1/reviewer-access/codex/device/cancel"),
+        ("post", "/api/v1/reviewer-access/codex/recheck"),
         ("delete", "/api/v1/reviewer-access/openrouter"),
         ("put", "/api/v1/reviewer-access/openrouter"),
         ("post", "/api/v1/reviewer-access/openrouter/refresh"),

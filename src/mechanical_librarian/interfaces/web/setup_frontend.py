@@ -233,6 +233,14 @@ SETUP_JS = (
         "}while(['starting','issued','waiting','validating'].includes(device.state));await render()",
         "}while(['starting','issued','waiting','validating'].includes(device.state));codexTerminal=device;await render()",
     )
+    .replace(
+        "save.addEventListener('click',async()=>{try{await api('/api/setup/reviewer/openrouter'",
+        "save.addEventListener('click',async()=>{save.disabled=true;save.setAttribute('aria-live','polite');save.textContent='Validating OpenRouter…';try{await api('/api/setup/reviewer/openrouter'",
+    )
+    .replace(
+        "}catch(e){key.value='';error(form,e.message)}});router.append",
+        "}catch(e){key.value='';save.disabled=false;save.textContent='Validate and use OpenRouter';error(form,e.message)}});router.append",
+    )
 )
 
 __all__ = ["SETUP_CSS", "SETUP_HTML", "SETUP_JS"]

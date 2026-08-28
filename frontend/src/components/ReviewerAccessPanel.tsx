@@ -8,6 +8,7 @@ type Action =
   | { kind: 'without'; revision: number }
   | { kind: 'codex'; revision: number }
   | { kind: 'codex-start'; revision: number }
+  | { kind: 'codex-recheck' }
   | { kind: 'codex-cancel' }
   | { kind: 'codex-clear'; revision: number }
   | { kind: 'openrouter'; revision: number; key: string; model: string }
@@ -29,6 +30,16 @@ const failureCopy: Readonly<Record<string, string>> = {
   credential_unavailable:
     'Codex sign-in is unavailable. Test or replace the sign-in, then select Codex again.',
   access_changed: 'Reviewer access changed in another session. Reload before trying again.',
+  reviewer_access_stale: 'Reviewer access changed in another session. Reload before trying again.',
+}
+
+const deviceFailureCopy: Readonly<Record<string, string>> = {
+  permission_or_profile:
+    'The installed Codex sign-in could not be validated. Replace the sign-in and retry.',
+  permission_or_process:
+    'Codex refused or could not finish device sign-in. Restart the sign-in flow.',
+  protocol_or_process: 'Codex returned an unexpected sign-in result. Restart the sign-in flow.',
+  restart_interrupted: 'A prior sign-in was interrupted. Restart the sign-in flow.',
 }
 
 export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
@@ -66,11 +77,21 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
       if (action.kind === 'without') return http.selectReviewer(null, action.revision)
       if (action.kind === 'codex') return http.selectReviewer('codex', action.revision)
       if (action.kind === 'codex-start') {
-        await http.startCodexDevice(action.revision)
+        queryClient.setQueryData(
+          ['reviewer-access', 'codex-device'],
+          await http.startCodexDevice(action.revision),
+        )
+        return null
+      }
+      if (action.kind === 'codex-recheck') {
+        queryClient.setQueryData(['reviewer-access', 'codex-device'], await http.recheckCodex())
         return null
       }
       if (action.kind === 'codex-cancel') {
-        await http.cancelCodexDevice()
+        queryClient.setQueryData(
+          ['reviewer-access', 'codex-device'],
+          await http.cancelCodexDevice(),
+        )
         return null
       }
       if (action.kind === 'codex-clear') return http.clearCodex(action.revision)
@@ -88,8 +109,10 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
       setConfirmReplace(null)
       if (action.kind === 'codex-start') setDeviceActive(true)
       if (action.kind === 'codex-cancel' || action.kind === 'codex-clear') setDeviceActive(false)
-      if (result === null) void query.refetch()
-      else queryClient.setQueryData(['reviewer-access'], result)
+      if (action.kind === 'codex') {
+        queryClient.removeQueries({ queryKey: ['reviewer-access', 'codex-device'] })
+      }
+      if (result !== null) queryClient.setQueryData(['reviewer-access'], result)
     },
   })
   const waiting =
@@ -107,18 +130,16 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
         ? 1_000
         : false,
   })
-  const refetchAccess = query.refetch
   useEffect(() => {
     const state = deviceQuery.data?.state
     if (state && !['starting', 'issued', 'waiting', 'validating'].includes(state)) {
       const task = window.setTimeout(() => {
         setDeviceActive(false)
-        void refetchAccess()
       }, 0)
       return () => window.clearTimeout(task)
     }
     return undefined
-  }, [deviceQuery.data?.state, refetchAccess])
+  }, [deviceQuery.data?.state])
   if (query.isPending) return <p aria-busy="true">Reading reviewer access…</p>
   if (query.isError)
     return (
@@ -131,8 +152,10 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
     )
   const view = query.data
   const device = deviceQuery.data
-  const codexUsable =
-    view.codex.state === 'usable' || view.codex.state === 'configured' || device?.state === 'usable'
+  const codexState = device?.state ?? view.codex.state
+  const codexUsable = view.codex.state === 'usable' || device?.state === 'usable'
+  const codexManaged = codexUsable || view.codex.state === 'configured'
+  const effectiveModel = model || (view.mapping?.engine === 'openrouter' ? view.mapping.model : '')
   const mutationFailure =
     mutation.error instanceof ApiError
       ? (failureCopy[mutation.error.code] ??
@@ -161,7 +184,8 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
       <div className="settings-field-row">
         <div>
           <h3>Codex device sign-in</h3>
-          <p>Status: {view.codex.state.replaceAll('_', ' ')}</p>
+          <p aria-live="polite">Status: {codexState.replaceAll('_', ' ')}</p>
+          {device?.failure ? <p role="alert">{deviceFailureCopy[device.failure]}</p> : null}
           {view.codex.host_headroom_bytes !== null ? (
             <small>
               Available reviewer headroom: {view.codex.host_headroom_bytes.toLocaleString()} bytes
@@ -194,16 +218,20 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
                 Cancel sign-in
               </button>
             </>
-          ) : codexUsable ? (
+          ) : codexManaged ? (
             <>
               <button
                 type="button"
-                disabled={mutation.isPending || view.mapping?.engine === 'codex'}
+                disabled={mutation.isPending || !codexUsable || view.mapping?.engine === 'codex'}
                 onClick={() => mutation.mutate({ kind: 'codex', revision: view.revision })}
               >
                 Use Codex for cover observations
               </button>
-              <button type="button" onClick={() => setDeviceActive(true)}>
+              <button
+                type="button"
+                disabled={mutation.isPending}
+                onClick={() => mutation.mutate({ kind: 'codex-recheck' })}
+              >
                 Check existing Codex sign-in
               </button>
               {confirmReplace === 'codex' ? (
@@ -267,7 +295,7 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
               <button
                 type="button"
                 disabled={mutation.isPending}
-                onClick={() => setDeviceActive(true)}
+                onClick={() => mutation.mutate({ kind: 'codex-recheck' })}
               >
                 Check existing Codex sign-in
               </button>
@@ -330,13 +358,18 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
           <button
             ref={openrouterReplaceTrigger}
             type="button"
-            disabled={mutation.isPending || !model || !key}
+            disabled={mutation.isPending || !effectiveModel || !key}
             onClick={() => {
               if (view.openrouter_key_configured && confirmReplace !== 'openrouter') {
                 setConfirmReplace('openrouter')
                 return
               }
-              mutation.mutate({ kind: 'openrouter', revision: view.revision, key, model })
+              mutation.mutate({
+                kind: 'openrouter',
+                revision: view.revision,
+                key,
+                model: effectiveModel,
+              })
             }}
           >
             {view.openrouter_key_configured
@@ -387,13 +420,17 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
             </>
           ) : null}
           <p
+            aria-live="polite"
             role={
               ['usable', 'configured', 'unconfigured'].includes(view.openrouter.state)
                 ? 'status'
                 : 'alert'
             }
           >
-            Status: {view.openrouter.state.replaceAll('_', ' ')}
+            Status:{' '}
+            {mutation.isPending && mutation.variables.kind === 'openrouter'
+              ? 'validating'
+              : view.openrouter.state.replaceAll('_', ' ')}
           </p>
           {mutation.isError && mutation.variables.kind.startsWith('openrouter') ? (
             <p role="alert">{mutationFailure}</p>

@@ -5,6 +5,7 @@ from __future__ import annotations
 import secrets
 import time
 from collections.abc import Awaitable, Callable
+from threading import RLock
 from typing import Literal, Protocol
 
 from argon2 import PasswordHasher
@@ -226,6 +227,14 @@ def create_setup_app(
     )
     app.state.setup_complete = False
     app.state.claim_nonces = {}
+    if reviewer_access is not None:
+        reviewer_gate = RLock()
+
+        def serialized_reviewer(call: Callable[[], object]) -> object:
+            with reviewer_gate:
+                return call()
+
+        reviewer_access.attach_serialization(serialized_reviewer)
 
     @app.middleware("http")
     async def close_completed_setup(
@@ -578,7 +587,13 @@ def create_setup_app(
             authorize_read(ml_session)
             if reviewer_access is None:
                 raise HTTPException(503, {"error": "reviewer_access_unavailable"})
-            return reviewer_access.read()
+            try:
+                return reviewer_access.read()
+            except (
+                ReviewerAccessRepositoryError,
+                ReviewerAccessApplicationError,
+            ) as error:
+                raise reviewer_problem(error) from None
 
         def reviewer_authority() -> ReviewerAccessOperations:
             if reviewer_access is None:
@@ -656,7 +671,28 @@ def create_setup_app(
             ml_session: str | None = Cookie(default=None),
         ) -> CodexDeviceAuthState:
             authorize_read(ml_session)
-            return reviewer_authority().codex_status()
+            try:
+                return reviewer_authority().codex_status()
+            except (
+                ReviewerAccessApplicationError,
+                ReviewerAccessRepositoryError,
+            ) as error:
+                raise reviewer_problem(error) from None
+
+        @app.post("/api/setup/reviewer/codex/recheck")
+        def recheck_codex(
+            ml_session: str | None = Cookie(default=None),
+            x_csrf_token: str | None = Header(default=None),
+            origin: str | None = Header(default=None),
+        ) -> CodexDeviceAuthState:
+            authorize_mutation(ml_session, x_csrf_token, origin)
+            try:
+                return reviewer_authority().recheck_codex()
+            except (
+                ReviewerAccessApplicationError,
+                ReviewerAccessRepositoryError,
+            ) as error:
+                raise reviewer_problem(error) from None
 
         @app.post("/api/setup/reviewer/codex/device/cancel")
         def cancel_codex_device(
@@ -665,7 +701,13 @@ def create_setup_app(
             origin: str | None = Header(default=None),
         ) -> CodexDeviceAuthState:
             authorize_mutation(ml_session, x_csrf_token, origin)
-            return reviewer_authority().cancel_codex()
+            try:
+                return reviewer_authority().cancel_codex()
+            except (
+                ReviewerAccessApplicationError,
+                ReviewerAccessRepositoryError,
+            ) as error:
+                raise reviewer_problem(error) from None
 
         @app.post("/api/setup/reviewer")
         def reviewer(
@@ -677,7 +719,13 @@ def create_setup_app(
             authorize_mutation(ml_session, x_csrf_token, origin)
             if reviewer_access is None:
                 raise HTTPException(409, {"error": "reviewer_unconfigured"})
-            current = reviewer_access.read()
+            try:
+                current = reviewer_access.read()
+            except (
+                ReviewerAccessRepositoryError,
+                ReviewerAccessApplicationError,
+            ) as error:
+                raise reviewer_problem(error) from None
             if request.outcome == "configured" and current.mapping is None:
                 raise HTTPException(409, {"error": "reviewer_unconfigured"})
             try:

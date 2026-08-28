@@ -53,7 +53,9 @@ class _Auth:
 
     def recheck_credential_status(self):
         self.current_calls += 1
-        return CodexDeviceAuthState(self.state)
+        return CodexDeviceAuthState(
+            "usable" if self.state == "configured" else self.state
+        )
 
     def close(self) -> None:
         return None
@@ -283,6 +285,15 @@ def test_reauthentication_deselects_codex_before_starting_replacement() -> None:
     assert document.revision == 3
     assert document.cover_observation is None
     assert operations.codex_status().state == "waiting"
+
+
+def test_explicit_codex_recheck_preserves_closed_result() -> None:
+    operations, auth, _openrouter, _codex = _operations(auth_state="configured")
+    assert operations.recheck_codex().state == "usable"
+    assert auth.current_calls == 1
+
+    auth.state = "failed"
+    assert operations.recheck_codex().state == "failed"
 
 
 def test_clear_failure_keeps_selected_authority_and_returns_closed_error() -> None:

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from threading import Event, Thread
 from types import SimpleNamespace
-from typing import Any, Callable, Literal, TypeVar
+from typing import Any, Callable, Literal, TypeVar, cast
 from unittest.mock import Mock
 
 import pytest
@@ -32,7 +33,10 @@ from mechanical_librarian.interfaces.web.setup_frontend import SETUP_JS
 @pytest.mark.parametrize(
     ("error", "expected"),
     (
-        (ReviewerAccessApplicationError("access_changed"), (409, "access_changed")),
+        (
+            ReviewerAccessApplicationError("access_changed"),
+            (409, "reviewer_access_stale"),
+        ),
         (
             ReviewerAccessApplicationError("credential_clear_failed"),
             (503, "credential_clear_failed"),
@@ -48,6 +52,55 @@ def test_reviewer_failure_translation_is_shared_and_closed(
     error: Exception, expected: tuple[int, str]
 ) -> None:
     assert reviewer_failure_response(error) == expected
+
+
+def test_setup_reviewer_read_translates_repository_unavailability() -> None:
+    reviewer = Mock(spec=ReviewerAccessOperations)
+    reviewer.read.side_effect = ReviewerAccessRepositoryError(
+        "reviewer access is unavailable"
+    )
+    client, _state, _connection = _client(reviewer)
+    session = _claim(client)
+    response = client.get(
+        "/api/setup/reviewer-access",
+        headers={"cookie": _session_cookie(session)},
+    )
+    assert response.status_code == 503
+    assert response.json() == {"detail": {"error": "reviewer_access_unavailable"}}
+
+
+def test_setup_generation_serializes_reviewer_operations() -> None:
+    reviewer = object.__new__(ReviewerAccessOperations)
+    reviewer._serialized = lambda call: call()
+    _client(reviewer)
+    entered = Event()
+    release = Event()
+    second_done = Event()
+    calls: list[str] = []
+
+    def view() -> object:
+        calls.append("entered")
+        entered.set()
+        release.wait(timeout=2)
+        return object()
+
+    cast("Any", reviewer)._view = view
+
+    def second_read() -> None:
+        reviewer.read()
+        second_done.set()
+
+    first = Thread(target=reviewer.read)
+    second = Thread(target=second_read)
+    first.start()
+    assert entered.wait(timeout=2)
+    second.start()
+    assert not second_done.wait(timeout=0.05)
+    assert calls == ["entered"]
+    release.set()
+    first.join(timeout=2)
+    second.join(timeout=2)
+    assert calls == ["entered", "entered"]
 
 
 class _Sessions:

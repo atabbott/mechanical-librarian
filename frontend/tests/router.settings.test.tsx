@@ -569,6 +569,71 @@ describe('owner settings route', () => {
     expect(await screen.findByText('Status: usable')).toBeVisible()
   })
 
+  it.each([
+    ['usable', null],
+    ['expired', null],
+    ['cancelled', null],
+    ['interrupted', 'restart_interrupted'],
+    ['failed', 'permission_or_profile'],
+  ] as const)('retains explicit Codex check terminal state %s', async (state, failure) => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => ({
+      ...reviewerView,
+      codex: { ...reviewerView.codex, state: 'configured' as const, reason: null },
+    }))
+    http.recheckCodex = vi.fn(async () => ({
+      state,
+      failure,
+      verification_url: null,
+      user_code: null,
+      expires_in_seconds: null,
+    }))
+    renderRoute('/settings?group=reviewer', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Check existing Codex sign-in' }))
+    expect(await screen.findByText(`Status: ${state}`)).toBeVisible()
+    expect(http.recheckCodex).toHaveBeenCalledOnce()
+    if (failure) expect(screen.getByRole('alert')).toBeVisible()
+  })
+
+  it('announces OpenRouter validation before retaining its terminal result', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    let finish!: (value: ReviewerAccessView) => void
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => reviewerView)
+    http.configureOpenRouter = vi.fn(
+      async () => await new Promise<ReviewerAccessView>((resolve) => (finish = resolve)),
+    )
+    renderRoute('/settings?group=reviewer', http)
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Use dots-studio/dots-3-note-preview:free',
+      }),
+    )
+    await user.type(screen.getByLabelText('API key'), 'secret-key')
+    await user.click(screen.getByRole('button', { name: 'Validate and use OpenRouter' }))
+    expect(screen.getByText('Status: validating')).toBeVisible()
+    finish({
+      ...reviewerView,
+      revision: 4,
+      mapping: {
+        engine: 'openrouter',
+        model: 'dots-studio/dots-3-note-preview:free',
+      },
+      openrouter_key_configured: true,
+      openrouter: {
+        ...reviewerView.openrouter,
+        state: 'usable',
+        model: 'dots-studio/dots-3-note-preview:free',
+        tier: 'free',
+      },
+    })
+    expect(await screen.findByText('Status: usable')).toBeVisible()
+  })
+
   it('requires confirmation before clearing a reviewer key and restores cancel focus', async () => {
     const user = userEvent.setup()
     const http = createHttp()
@@ -620,7 +685,7 @@ describe('owner settings route', () => {
     }))
     renderRoute('/settings?group=reviewer', http)
 
-    await user.type(await screen.findByRole('textbox', { name: 'Model ID' }), 'provider/model')
+    await screen.findByRole('textbox', { name: 'Model ID' })
     await user.type(screen.getByLabelText('API key'), 'replacement-key')
     const replace = screen.getByRole('button', { name: 'Replace OpenRouter key' })
     await user.click(replace)

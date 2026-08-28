@@ -651,6 +651,7 @@ export interface ReviewHttp {
   ): Promise<ReviewerAccessView>
   startCodexDevice(expectedRevision: number, signal?: AbortSignal): Promise<CodexDeviceAuthState>
   getCodexDevice(signal?: AbortSignal): Promise<CodexDeviceAuthState>
+  recheckCodex(signal?: AbortSignal): Promise<CodexDeviceAuthState>
   cancelCodexDevice(signal?: AbortSignal): Promise<CodexDeviceAuthState>
   clearCodex(expectedRevision: number, signal?: AbortSignal): Promise<ReviewerAccessView>
   getLibrary(search: LibrarySearch, signal?: AbortSignal): Promise<LibraryView>
@@ -853,6 +854,9 @@ export class ReviewApiClient implements ReviewHttp {
   }
   async getCodexDevice(signal?: AbortSignal) {
     return mapCodexDevice(await this.read('/api/v1/reviewer-access/codex/device', signal))
+  }
+  async recheckCodex(signal?: AbortSignal) {
+    return mapCodexDevice(await this.mutate('/api/v1/reviewer-access/codex/recheck', {}, signal))
   }
   async cancelCodexDevice(signal?: AbortSignal) {
     return mapCodexDevice(
