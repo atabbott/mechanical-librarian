@@ -352,6 +352,23 @@ focus move the whole choice into the teal family. A dashed edge means the
 current value; automatic, resolved, or stale fields must not present a false
 choice.
 
+### Cover Observation Evidence
+
+Whole-cover choice remains primary. Each candidate places one compact visual-
+check block after its decision button, so the block cannot become or intercept
+the choice control. High-signal defects are always first: a complete all-clear,
+an explicit issue count with plain-language flags, an uncertainty state, or an
+unavailable-evidence state. Unavailable reviewer evidence never uses the all-
+clear treatment.
+
+The exact defect checks and the quieter style/advisory observations live in one
+native disclosure below that summary, with defects before preferences in
+document order. Existing source evidence stays a separate reachable disclosure;
+reviewer observations do not replace deterministic match evidence or source
+provenance. At compact widths both disclosures keep 44px targets and travel with
+their cover in the same horizontal comparison track. Color reinforces the
+written state but never carries it alone.
+
 ### Policy Notebook and Activity Ledger
 
 Policy uses a chapter-indexed notebook with restrained form controls and a

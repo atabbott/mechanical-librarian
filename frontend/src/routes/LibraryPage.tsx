@@ -7,6 +7,7 @@ import { displayValue } from '../api/http'
 import type {
   CaseDetailView,
   ChoiceContextView,
+  CoverObservationView,
   DecisionCommand,
   LibraryView,
   LibraryWorkView,
@@ -560,6 +561,7 @@ function RecordedOutcome({
 
 function LibraryCoverChoices(props: {
   reviewCaseId: string
+  mediaKind: string
   field: ReviewField
   disabled: boolean
   progress: ChoiceProgress
@@ -573,8 +575,149 @@ function LibraryCoverChoices(props: {
   return <LibraryCoverChoicesContent key={props.reviewCaseId} {...props} />
 }
 
+const coverObservationLabel = (value: string) =>
+  ({
+    absent: 'Absent',
+    audiobook: 'Audiobook branding',
+    clean: 'Clean reproduction',
+    degraded: 'Degraded reproduction',
+    english: 'English',
+    explicit: 'Explicit',
+    illustrated: 'Illustrated',
+    illegible: 'Illegible',
+    legible: 'Legible',
+    minimal: 'Minimal',
+    mixed: 'Mixed media',
+    multiple: 'Multiple languages',
+    no_visible_title: 'No visible title',
+    non_english: 'Non-English',
+    omnibus_or_set: 'Omnibus or set',
+    photographic: 'Photographic',
+    present: 'Present',
+    series_branded: 'Series branded',
+    standalone: 'Standalone',
+    suggestive: 'Suggestive',
+    text_edition: 'Text-edition branding',
+    typographic: 'Typographic',
+    unknown: 'Uncertain',
+  })[value] ?? fieldLabel(value)
+
+function CoverObservationEvidence({
+  label,
+  mediaKind,
+  observation,
+}: {
+  label: string
+  mediaKind: string
+  observation: CoverObservationView | null
+}) {
+  if (observation === null)
+    return (
+      <section className="cover-observation is-unavailable" aria-label={`${label} visual checks`}>
+        <strong>Visual checks unavailable</strong>
+        <small>No complete reviewer evidence was recorded for this cover.</small>
+      </section>
+    )
+  const expectedBranding =
+    mediaKind === 'audiobook'
+      ? 'audiobook'
+      : mediaKind === 'epub' || mediaKind === 'ebook'
+        ? 'text_edition'
+        : null
+  const wrongFormatBranding =
+    expectedBranding !== null &&
+    observation.formatBranding !== 'absent' &&
+    observation.formatBranding !== 'unknown' &&
+    observation.formatBranding !== expectedBranding
+      ? coverObservationLabel(observation.formatBranding)
+      : null
+  const defects = [
+    observation.placeholder === 'present' ? 'Placeholder artwork' : null,
+    observation.reproduction === 'degraded' ? 'Degraded reproduction' : null,
+    observation.overlayMarking === 'present' ? 'Overlay or marking' : null,
+    wrongFormatBranding,
+  ].filter((value): value is string => value !== null)
+  const uncertain = [
+    observation.placeholder === 'unknown' ? 'Placeholder check' : null,
+    observation.reproduction === 'unknown' ? 'Reproduction check' : null,
+    observation.overlayMarking === 'unknown' ? 'Overlay check' : null,
+    observation.formatBranding === 'unknown' ? 'Format-branding check' : null,
+  ].filter((value): value is string => value !== null)
+  const defectRows = [
+    ['Placeholder', observation.placeholder],
+    ['Reproduction', observation.reproduction],
+    ['Overlay or marking', observation.overlayMarking],
+    ['Format branding', observation.formatBranding],
+  ] as const
+  const preferenceRows = [
+    ['Composition', observation.composition],
+    ['Artwork', observation.medium],
+    ['Promotional text', observation.promotionalText],
+    ['Adaptation branding', observation.tieInBranding],
+    ['Explicit imagery', observation.explicitImagery],
+    ['Title-text language', observation.coverTextLanguage],
+    ['Series styling', observation.seriesStyling],
+    ['Small-preview title', observation.thumbnailLegibility],
+  ] as const
+  return (
+    <section className="cover-observation" aria-label={`${label} visual checks`}>
+      <div
+        className={`cover-defect-summary${defects.length ? ' has-defects' : uncertain.length ? ' is-uncertain' : ' is-clean'}`}
+      >
+        <strong>
+          {defects.length
+            ? `${String(defects.length)} visual ${defects.length === 1 ? 'issue' : 'issues'} flagged`
+            : uncertain.length
+              ? 'Some visual checks are uncertain'
+              : 'No visual defects flagged'}
+        </strong>
+        {defects.length || uncertain.length ? (
+          <ul>
+            {defects.map((defect) => (
+              <li key={defect}>{defect}</li>
+            ))}
+            {uncertain.map((item) => (
+              <li className="is-uncertain" key={item}>
+                {item} uncertain
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+      <details className="cover-observation-details">
+        <summary>Visual observation details</summary>
+        <div>
+          <section aria-label="Defect checks">
+            <strong>Defect checks</strong>
+            <dl>
+              {defectRows.map(([name, value]) => (
+                <div key={name}>
+                  <dt>{name}</dt>
+                  <dd>{coverObservationLabel(value)}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+          <section className="cover-preference-notes" aria-label="Style and advisory notes">
+            <strong>Style and advisory notes</strong>
+            <dl>
+              {preferenceRows.map(([name, value]) => (
+                <div key={name}>
+                  <dt>{name}</dt>
+                  <dd>{coverObservationLabel(value)}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        </div>
+      </details>
+    </section>
+  )
+}
+
 function LibraryCoverChoicesContent({
   reviewCaseId,
+  mediaKind,
   field,
   disabled,
   expandedEvidence,
@@ -583,6 +726,7 @@ function LibraryCoverChoicesContent({
   choose,
 }: {
   reviewCaseId: string
+  mediaKind: string
   field: ReviewField
   disabled: boolean
   progress: ChoiceProgress
@@ -723,6 +867,11 @@ function LibraryCoverChoicesContent({
             {selected && progress?.phase === 'recording' ? <b>Recording…</b> : null}
           </span>
         </button>
+        <CoverObservationEvidence
+          label={label}
+          mediaKind={mediaKind}
+          observation={candidate.observation}
+        />
         {context && (context.evidence.length || context.limitations.length) ? (
           <button
             type="button"
@@ -2184,6 +2333,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                     selected.destination === 'cover' ? (
                       <LibraryCoverChoices
                         reviewCaseId={selectedReviewCaseId}
+                        mediaKind={detail.data.target.mediaKind}
                         field={selected}
                         disabled={false}
                         expandedEvidence={expandedChoices}

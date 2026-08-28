@@ -189,6 +189,23 @@ export interface ReviewFieldView {
   corroborationSources: readonly string[]
   coverConsideration?: CoverConsiderationView | null
 }
+export interface CoverObservationView {
+  candidateReference: string
+  composition: 'dense' | 'minimal' | 'unknown'
+  coverTextLanguage: 'english' | 'non_english' | 'multiple' | 'no_visible_title' | 'unknown'
+  explicitImagery: 'absent' | 'suggestive' | 'explicit' | 'unknown'
+  formatBranding: 'absent' | 'text_edition' | 'audiobook' | 'unknown'
+  medium: 'illustrated' | 'mixed' | 'photographic' | 'typographic' | 'unknown'
+  overlayMarking: 'absent' | 'present' | 'unknown'
+  placeholder: 'absent' | 'present' | 'unknown'
+  previewSha256: string
+  previewVariant: string
+  promotionalText: 'absent' | 'present' | 'unknown'
+  reproduction: 'clean' | 'degraded' | 'unknown'
+  seriesStyling: 'standalone' | 'series_branded' | 'omnibus_or_set' | 'unknown'
+  thumbnailLegibility: 'legible' | 'illegible' | 'unknown'
+  tieInBranding: 'absent' | 'present' | 'unknown'
+}
 export interface CoverCandidateView {
   artifactId: string
   deterministicCitations: readonly string[]
@@ -198,7 +215,7 @@ export interface CoverCandidateView {
   identity: Readonly<Record<string, unknown>>
   incumbent: boolean
   matchState: 'same_edition' | 'same_book' | 'match_not_confirmed'
-  observation: Readonly<Record<string, unknown>> | null
+  observation: CoverObservationView | null
   originalSha256: string
   ordinal: number
   previewSha256: string
@@ -1945,6 +1962,116 @@ const mapChoiceContexts = (
   return contexts
 }
 
+const coverObservationValue = <T extends string>(
+  value: unknown,
+  label: string,
+  allowed: readonly T[],
+): T => {
+  const result = stringValue(value, label)
+  if (!allowed.includes(result as T)) throw new ApiError(502, `invalid_${label}`)
+  return result as T
+}
+
+const mapCoverObservation = (
+  value: unknown,
+  candidateReference: string,
+  previewSha256: string,
+): CoverObservationView | null => {
+  if (value === null) return null
+  if (!record(value)) throw new ApiError(502, 'invalid_cover_observation')
+  const keys = [
+    'candidate_reference',
+    'composition',
+    'cover_text_language',
+    'explicit_imagery',
+    'format_branding',
+    'medium',
+    'overlay_marking',
+    'placeholder',
+    'preview_sha256',
+    'preview_variant',
+    'promotional_text',
+    'reproduction',
+    'series_styling',
+    'thumbnail_legibility',
+    'tie_in_branding',
+  ]
+  if (Object.keys(value).length !== keys.length || keys.some((key) => !Object.hasOwn(value, key)))
+    throw new ApiError(502, 'invalid_cover_observation_shape')
+  const boundReference = stringValue(value.candidate_reference, 'cover_observation_reference')
+  const boundPreview = stringValue(value.preview_sha256, 'cover_observation_preview')
+  if (boundReference !== candidateReference || boundPreview !== previewSha256)
+    throw new ApiError(502, 'misaligned_cover_observation')
+  return {
+    candidateReference: boundReference,
+    composition: coverObservationValue(value.composition, 'cover_observation_composition', [
+      'dense',
+      'minimal',
+      'unknown',
+    ]),
+    coverTextLanguage: coverObservationValue(
+      value.cover_text_language,
+      'cover_observation_text_language',
+      ['english', 'non_english', 'multiple', 'no_visible_title', 'unknown'],
+    ),
+    explicitImagery: coverObservationValue(
+      value.explicit_imagery,
+      'cover_observation_explicit_imagery',
+      ['absent', 'suggestive', 'explicit', 'unknown'],
+    ),
+    formatBranding: coverObservationValue(
+      value.format_branding,
+      'cover_observation_format_branding',
+      ['absent', 'text_edition', 'audiobook', 'unknown'],
+    ),
+    medium: coverObservationValue(value.medium, 'cover_observation_medium', [
+      'illustrated',
+      'mixed',
+      'photographic',
+      'typographic',
+      'unknown',
+    ]),
+    overlayMarking: coverObservationValue(
+      value.overlay_marking,
+      'cover_observation_overlay_marking',
+      ['absent', 'present', 'unknown'],
+    ),
+    placeholder: coverObservationValue(value.placeholder, 'cover_observation_placeholder', [
+      'absent',
+      'present',
+      'unknown',
+    ]),
+    previewSha256: boundPreview,
+    previewVariant: stringValue(value.preview_variant, 'cover_observation_preview_variant'),
+    promotionalText: coverObservationValue(
+      value.promotional_text,
+      'cover_observation_promotional_text',
+      ['absent', 'present', 'unknown'],
+    ),
+    reproduction: coverObservationValue(value.reproduction, 'cover_observation_reproduction', [
+      'clean',
+      'degraded',
+      'unknown',
+    ]),
+    seriesStyling: coverObservationValue(value.series_styling, 'cover_observation_series_styling', [
+      'standalone',
+      'series_branded',
+      'omnibus_or_set',
+      'unknown',
+    ]),
+    thumbnailLegibility: coverObservationValue(
+      value.thumbnail_legibility,
+      'cover_observation_thumbnail_legibility',
+      ['legible', 'illegible', 'unknown'],
+    ),
+    tieInBranding: coverObservationValue(
+      value.tie_in_branding,
+      'cover_observation_tie_in_branding',
+      ['absent', 'present', 'unknown'],
+    ),
+  }
+}
+
 export const mapCoverConsideration = (value: unknown): CoverConsiderationView | null => {
   if (value === null || value === undefined) return null
   if (
@@ -2024,6 +2151,9 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
     const confirmed = expectedMatchState !== 'match_not_confirmed'
     const incumbent = candidate.incumbent === true
     const selectable = candidate.selectable === true
+    const reference = stringValue(candidate.reference, 'cover_reference')
+    const previewSha256 = stringValue(candidate.preview_sha256, 'cover_preview_digest')
+    const observation = mapCoverObservation(candidate.observation, reference, previewSha256)
     if (
       matchState !== expectedMatchState ||
       (!confirmed && (selectable || deterministicRank !== null || deterministicRankKey !== null)) ||
@@ -2045,11 +2175,11 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
       identity: candidate.identity,
       incumbent,
       matchState,
-      observation: candidate.observation,
+      observation,
       originalSha256: stringValue(candidate.original_sha256, 'cover_original_digest'),
       ordinal: integerValue(candidate.ordinal, 'cover_ordinal'),
-      previewSha256: stringValue(candidate.preview_sha256, 'cover_preview_digest'),
-      reference: stringValue(candidate.reference, 'cover_reference'),
+      previewSha256,
+      reference,
       selectable,
       sourceKinds: stringArray(candidate.source_kinds, 'cover_source_kinds'),
       state,

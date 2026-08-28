@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Show closed, observation-only cover defect checks before quieter style and
+  advisory notes. Missing or failed reviewer evidence is labelled unavailable,
+  never clean, and none of the new evidence changes match, recommendation, or
+  automatic-selection authority. Exact v1/v2 reports stay replayable but appear
+  unavailable until complete current evidence is recorded. (#865)
+
 - Owner sign-in no longer waits on library-scan writes: session and login
   throttle state moved to a dedicated `private/review-sessions.sqlite`
   database with its own connection, the application schema dropped both

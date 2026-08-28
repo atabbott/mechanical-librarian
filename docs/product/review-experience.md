@@ -337,6 +337,15 @@ cannot be mistaken for cover content. Excluded candidates remain subordinate
 with their recorded reason. Reduced motion preserves the same status text,
 success state, focus, and polite announcement without nonessential movement.
 
+Each cover candidate keeps visual advice subordinate to the whole-cover choice.
+Its always-visible check summary distinguishes explicitly clean defect evidence,
+one or more named defect flags, uncertain checks, and unavailable reviewer
+evidence. The exact defect values precede the quieter composition, medium,
+branding, imagery, title-language, series-style, and thumbnail-legibility notes
+inside one disclosure. Source provenance remains in the adjacent evidence
+disclosure. None of these observations confirms a match, changes deterministic
+ordering, or earns automatic authority.
+
 An unresolved field with no eligible alternative remains readable context, not
 owner work. Only an eligible alternative makes retaining the current value a
 meaningful direct choice; automatic, resolved, and stale fields never present a
