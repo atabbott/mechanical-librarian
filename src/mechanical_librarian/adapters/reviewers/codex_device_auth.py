@@ -80,24 +80,28 @@ class CodexDeviceAuthManager:
             raise CodexDeviceAuthError("lease")
 
     def _prepare_store(self) -> None:
-        self._require_lease()
-        with self._lock:
-            if self._recovered:
-                return
-            self._state = self._recover_interrupted_staging()
-            self._recovered = True
+        with self._lease_guard():
+            self._require_lease()
+            with self._lock:
+                if self._recovered:
+                    return
+                self._state = self._recover_interrupted_staging()
+                self._recovered = True
 
     def start(self) -> CodexDeviceAuthState:
-        self._prepare_store()
-        with self._lock:
-            if self._thread is not None and self._thread.is_alive():
+        with self._lease_guard():
+            self._prepare_store()
+            with self._lock:
+                if self._thread is not None and self._thread.is_alive():
+                    return self._state
+                self._cancelled = False
+                self._state = CodexDeviceAuthState("starting")
+                thread = Thread(
+                    target=self._flow, name="reviewer-device-auth", daemon=True
+                )
+                self._thread = thread
+                thread.start()
                 return self._state
-            self._cancelled = False
-            self._state = CodexDeviceAuthState("starting")
-            thread = Thread(target=self._flow, name="reviewer-device-auth", daemon=True)
-            self._thread = thread
-            thread.start()
-            return self._state
 
     def status(self) -> CodexDeviceAuthState:
         self._prepare_store()
@@ -161,51 +165,55 @@ class CodexDeviceAuthManager:
             return self._state
 
     def current_credential_status(self) -> CodexDeviceAuthState:
-        self._prepare_store()
-        with self._lock:
-            if self._thread is not None and self._thread.is_alive():
-                return self._state
-        target = self._auth_store / "auth.json"
-        try:
-            os.lstat(target)
-        except FileNotFoundError:
-            current = self.status()
-            return (
-                current
-                if current.state in {"interrupted", "failed"}
-                else CodexDeviceAuthState("ready")
-            )
-        except OSError:
-            return CodexDeviceAuthState("failed", failure="permission_or_profile")
-        try:
-            _private_directory_descriptor(self._auth_store, create=False, close=True)
-            _validated_auth(target)
-            return CodexDeviceAuthState("configured")
-        except (OSError, CodexDeviceAuthError):
-            return CodexDeviceAuthState("failed", failure="permission_or_profile")
+        with self._lease_guard():
+            self._prepare_store()
+            with self._lock:
+                if self._thread is not None and self._thread.is_alive():
+                    return self._state
+            target = self._auth_store / "auth.json"
+            try:
+                os.lstat(target)
+            except FileNotFoundError:
+                current = self.status()
+                return (
+                    current
+                    if current.state in {"interrupted", "failed"}
+                    else CodexDeviceAuthState("ready")
+                )
+            except OSError:
+                return CodexDeviceAuthState("failed", failure="permission_or_profile")
+            try:
+                _private_directory_descriptor(
+                    self._auth_store, create=False, close=True
+                )
+                _validated_auth(target)
+                return CodexDeviceAuthState("configured")
+            except (OSError, CodexDeviceAuthError):
+                return CodexDeviceAuthState("failed", failure="permission_or_profile")
 
     def recheck_credential_status(self) -> CodexDeviceAuthState:
-        self._prepare_store()
-        with self._lock:
-            if self._thread is not None and self._thread.is_alive():
-                return self._state
-        current = self.current_credential_status()
-        if current.state != "configured":
-            return current
-        try:
-            prepared = _prepared(self._command_factory(self._auth_store, "status"))
+        with self._lease_guard():
+            self._prepare_store()
+            with self._lock:
+                if self._thread is not None and self._thread.is_alive():
+                    return self._state
+            current = self.current_credential_status()
+            if current.state != "configured":
+                return current
             try:
-                output, returncode = self._status_command(
-                    prepared, time.monotonic() + 30, flow_owned=False
-                )
-            finally:
-                prepared.close()
-        except (OSError, subprocess.SubprocessError, CodexDeviceAuthError):
+                prepared = _prepared(self._command_factory(self._auth_store, "status"))
+                try:
+                    output, returncode = self._status_command(
+                        prepared, time.monotonic() + 30, flow_owned=False
+                    )
+                finally:
+                    prepared.close()
+            except (OSError, subprocess.SubprocessError, CodexDeviceAuthError):
+                return CodexDeviceAuthState("failed", failure="permission_or_profile")
+            if returncode == 0 and output == b"Logged in using ChatGPT\n":
+                self._require_lease()
+                return CodexDeviceAuthState("usable")
             return CodexDeviceAuthState("failed", failure="permission_or_profile")
-        if returncode == 0 and output == b"Logged in using ChatGPT\n":
-            self._require_lease()
-            return CodexDeviceAuthState("usable")
-        return CodexDeviceAuthState("failed", failure="permission_or_profile")
 
     def _flow(self) -> None:
         deadline = time.monotonic() + _DEVICE_DEADLINE_SECONDS
@@ -214,14 +222,16 @@ class CodexDeviceAuthManager:
         prepared: CodexAuthCommand | None = None
         process: subprocess.Popen[bytes] | None = None
         try:
-            _private_directory_descriptor(parent, create=True, close=True)
-            staging = Path(tempfile.mkdtemp(prefix="reviewer-auth-", dir=parent))
-            os.chmod(staging, 0o700)
-            _private_directory_descriptor(staging, create=False, close=True)
-            prepared = _prepared(self._command_factory(staging, "start"))
-            with self._lock:
-                if self._cancelled:
-                    return
+            with self._lease_guard():
+                self._require_lease()
+                with self._lock:
+                    if self._cancelled:
+                        return
+                _private_directory_descriptor(parent, create=True, close=True)
+                staging = Path(tempfile.mkdtemp(prefix="reviewer-auth-", dir=parent))
+                os.chmod(staging, 0o700)
+                _private_directory_descriptor(staging, create=False, close=True)
+                prepared = _prepared(self._command_factory(staging, "start"))
             process = self._spawn(prepared, flow_owned=True)
             with self._lock:
                 cancelled = self._cancelled
@@ -307,22 +317,28 @@ class CodexDeviceAuthManager:
     def _spawn(
         self, prepared: CodexAuthCommand, *, flow_owned: bool
     ) -> subprocess.Popen[bytes]:
-        with self._lock:
-            if self._process is not None:
-                raise CodexDeviceAuthError("process")
-            if not flow_owned and self._thread is not None and self._thread.is_alive():
-                raise CodexDeviceAuthError("process")
-            process = self._popen(
-                _resource_command(prepared.command),
-                env=dict(prepared.environment),
-                pass_fds=prepared.pass_fds,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-            )
-            self._process = process
-            cancelled = self._cancelled
+        with self._lease_guard():
+            self._require_lease()
+            with self._lock:
+                if self._process is not None:
+                    raise CodexDeviceAuthError("process")
+                if (
+                    not flow_owned
+                    and self._thread is not None
+                    and self._thread.is_alive()
+                ):
+                    raise CodexDeviceAuthError("process")
+                process = self._popen(
+                    _resource_command(prepared.command),
+                    env=dict(prepared.environment),
+                    pass_fds=prepared.pass_fds,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
+                self._process = process
+                cancelled = self._cancelled
         if cancelled:
             _stop_process(process)
             self._release(process)

@@ -23,6 +23,10 @@ from unittest.mock import Mock, patch
 import pytest
 
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
+from mechanical_librarian.adapters.reviewers.codex_device_auth import (
+    CodexDeviceAuthManager,
+    CodexDeviceAuthState,
+)
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_pipeline import pipeline_scan_id
@@ -115,8 +119,92 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover() ->
         compose_application.call_args.kwargs["cover_considerations"]
         is cover_considerations
     )
+    runtime.start_dormant()
+    reviewer_access.activate_codex_lease.assert_not_called()
+    runtime.admit()
+    reviewer_access.activate_codex_lease.assert_called_once_with()
+    review_application.admit.assert_called_once_with()
     runtime.close()
     review_application.stop.assert_called_once_with()
+
+
+@pytest.mark.parametrize("failure", ("settings_dormant", "setup_commit"))
+def test_candidate_failure_preserves_active_codex_lease_owner(failure: str) -> None:
+    coordinator = composition._CodexAuthLeaseCoordinator()
+    predecessor_manager = Mock(spec=CodexDeviceAuthManager)
+    predecessor_manager.status.return_value = CodexDeviceAuthState("usable")
+    predecessor = composition._LazyCodexAuth(
+        lambda _current, _guard: predecessor_manager, coordinator
+    )
+    successor = composition._LazyCodexAuth(
+        lambda _current, _guard: Mock(spec=CodexDeviceAuthManager), coordinator
+    )
+    predecessor.activate_lease()
+    predecessor._manager = predecessor_manager
+    current = RuntimeGeneration(_runtime_app)
+    dispatcher = MutableRuntimeDispatcher(current)
+    dispatcher.start()
+
+    def start_dormant() -> None:
+        if failure == "settings_dormant":
+            raise RuntimeError("candidate start failed")
+
+    candidate = RuntimeGeneration(
+        _runtime_app,
+        start_dormant=start_dormant,
+        admit=successor.activate_lease,
+        close=successor.close,
+    )
+    if failure == "settings_dormant":
+        with pytest.raises(RuntimeError, match="candidate start failed"):
+            dispatcher.prepare(candidate)
+    else:
+        dispatcher.prepare(candidate)
+
+        def fail_commit() -> None:
+            raise RuntimeError("authority commit failed")
+
+        with pytest.raises(RuntimeError, match="authority commit failed"):
+            dispatcher.transition(current, candidate, fail_commit)
+
+    assert predecessor.status().state == "usable"
+    predecessor_manager.close.assert_not_called()
+    assert predecessor._lease is not None
+    assert coordinator.current(predecessor, predecessor._lease)
+
+
+def test_setup_runtime_reserves_codex_lease_until_admission() -> None:
+    repository = Mock()
+    reviewer_access = Mock()
+    setup_app = Mock()
+    bootstrap = ReviewBootstrap(
+        schema_version="review-bootstrap-v1",
+        canonical_origin="https://library.invalid",
+        tls_certificate_file="certificate",
+        tls_private_key_file="private-key",
+    )
+    with (
+        patch.object(
+            composition, "_compose_reviewer_access", return_value=reviewer_access
+        ),
+        patch.object(composition, "create_setup_app", return_value=setup_app),
+    ):
+        runtime, _activation = composition._compose_setup_runtime_generation(
+            bootstrap,
+            Path("application.sqlite3"),
+            Path("catalogue.sqlite3"),
+            Path("artifacts"),
+            repository,
+            Mock(),
+            initialize=False,
+        )
+
+    runtime.start_dormant()
+    reviewer_access.activate_codex_lease.assert_not_called()
+    runtime.admit()
+    reviewer_access.activate_codex_lease.assert_called_once_with()
+    runtime.close()
+    reviewer_access.close.assert_called_once_with()
 
 
 def test_store_runtime_activation_reuses_outer_control_authority_for_successors() -> (

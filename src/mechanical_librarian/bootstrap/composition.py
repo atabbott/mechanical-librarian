@@ -2489,17 +2489,17 @@ def compose_store_runtime_generation(
             finally:
                 session_store.close()
 
-        def start_generation() -> None:
+        def admit_generation() -> None:
             reviewer_access.activate_codex_lease()
-            review_application.start_dormant()
+            review_application.admit()
 
         return (
             RuntimeGeneration(
                 create_review_app(review_application, review),
-                start_dormant=start_generation,
+                start_dormant=review_application.start_dormant,
                 stop_admission=review_application.stop_admission,
                 resume_admission=review_application.resume_admission,
-                admit=review_application.admit,
+                admit=admit_generation,
                 begin_drain=review_application.begin_drain,
                 close=close_generation,
                 shutdown_seconds=review.graceful_shutdown_seconds,
@@ -2618,7 +2618,7 @@ def _compose_setup_runtime_generation(
     return (
         RuntimeGeneration(
             setup_app,
-            start_dormant=reviewer_access.activate_codex_lease,
+            admit=reviewer_access.activate_codex_lease,
             close=reviewer_access.close,
             shutdown_seconds=300,
         ),

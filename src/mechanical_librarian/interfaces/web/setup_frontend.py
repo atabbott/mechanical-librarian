@@ -219,7 +219,7 @@ SETUP_JS = (
     )
     .replace(
         "const codexStatus=document.createElement('p');codexStatus.setAttribute('aria-live','polite');codexStatus.textContent=`Status: ${access.codex.state.replaceAll('_',' ')}`;codex.append(codexHeading,codexStatus);if(access.codex.state==='usable'||access.codex.state==='configured')",
-        "const codexState=codexTerminal||access.codex;const codexStatus=document.createElement('p');codexStatus.setAttribute('aria-live','polite');codexStatus.textContent=`Status: ${codexState.state.replaceAll('_',' ')}`;codex.append(codexHeading,codexStatus);if(codexState.state==='usable'||codexState.state==='configured')",
+        "const codexState=access.codex.state==='host_unsupported'?access.codex:(codexTerminal||access.codex);const codexStatus=document.createElement('p');codexStatus.setAttribute('aria-live','polite');codexStatus.textContent=`Status: ${codexState.state.replaceAll('_',' ')}`;codex.append(codexHeading,codexStatus);if(codexState.state==='usable'||codexState.state==='configured')",
     )
     .replace(
         "['expired','failed','cancelled','interrupted'].includes(access.codex.state)?'Restart device sign-in':'Start device sign-in'",
@@ -231,7 +231,7 @@ SETUP_JS = (
     )
     .replace(
         "else{const start=button(",
-        "else{const check=button('Check existing sign-in');check.type='button';check.addEventListener('click',async()=>{try{codexTerminal=await api('/api/setup/reviewer/codex/recheck',{method:'POST',body:'{}',mutation:true});await render()}catch(e){error(form,e.message)}});codex.append(check);const start=button(",
+        "else{const check=button('Check existing sign-in');check.type='button';check.disabled=codexState.state==='host_unsupported';check.addEventListener('click',async()=>{try{codexTerminal=await api('/api/setup/reviewer/codex/recheck',{method:'POST',body:'{}',mutation:true});await render()}catch(e){error(form,e.message)}});codex.append(check);const start=button(",
     )
     .replace(
         "}while(['starting','issued','waiting','validating'].includes(device.state));await render()",

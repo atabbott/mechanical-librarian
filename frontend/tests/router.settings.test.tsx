@@ -678,6 +678,45 @@ describe('owner settings route', () => {
     expect(http.selectReviewer).toHaveBeenCalledWith('codex', 4)
   })
 
+  it.each([
+    ['ready', null, false],
+    ['failed', 'permission_or_profile', false],
+    ['expired', null, false],
+    ['interrupted', 'restart_interrupted', false],
+    ['host_unsupported', 'headroom_below_1_gib', true],
+  ] as const)(
+    'keeps mapped unhealthy Codex state %s manageable',
+    async (state, reason, hostUnsupported) => {
+      const user = userEvent.setup()
+      const http = createHttp()
+      http.getSettings = vi.fn(async () => view())
+      http.getReviewerAccess = vi.fn(async () => ({
+        ...reviewerView,
+        mapping: { engine: 'codex' as const },
+        codex: { ...reviewerView.codex, state, reason },
+      }))
+      renderRoute('/settings?group=reviewer', http)
+
+      const replace = await screen.findByRole('button', { name: 'Replace Codex sign-in' })
+      const clear = screen.getByRole('button', { name: 'Clear Codex sign-in' })
+      const check = screen.getByRole('button', { name: 'Check existing Codex sign-in' })
+      if (hostUnsupported) {
+        expect(replace).toBeDisabled()
+        expect(check).toBeDisabled()
+      } else {
+        expect(replace).toBeEnabled()
+        expect(check).toBeEnabled()
+      }
+      expect(clear).toBeEnabled()
+      expect(
+        screen.getByRole('button', { name: 'Use Codex for cover observations' }),
+      ).toBeDisabled()
+
+      await user.click(clear)
+      expect(screen.getByRole('button', { name: 'Confirm clear Codex sign-in' })).toHaveFocus()
+    },
+  )
+
   it('evicts a checked usable device result after credential clear', async () => {
     const user = userEvent.setup()
     const http = createHttp()

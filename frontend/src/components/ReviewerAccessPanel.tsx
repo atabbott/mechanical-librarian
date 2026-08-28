@@ -154,9 +154,12 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
     )
   const view = query.data
   const device = deviceQuery.data
-  const codexState = device?.state ?? view.codex.state
-  const codexUsable = view.codex.state === 'usable' || device?.state === 'usable'
-  const codexManaged = codexUsable || view.codex.state === 'configured'
+  const hostUnsupported = view.codex.state === 'host_unsupported'
+  const codexState = hostUnsupported ? view.codex.state : (device?.state ?? view.codex.state)
+  const codexUsable =
+    !hostUnsupported && (view.codex.state === 'usable' || device?.state === 'usable')
+  const codexManaged =
+    view.mapping?.engine === 'codex' || codexUsable || view.codex.state === 'configured'
   const effectiveModel = model || (view.mapping?.engine === 'openrouter' ? view.mapping.model : '')
   const mutationFailure =
     mutation.error instanceof ApiError
@@ -231,7 +234,7 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
               </button>
               <button
                 type="button"
-                disabled={mutation.isPending}
+                disabled={mutation.isPending || hostUnsupported}
                 onClick={() => mutation.mutate({ kind: 'codex-recheck' })}
               >
                 Check existing Codex sign-in
@@ -255,6 +258,7 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
                 <button
                   ref={codexReplaceTrigger}
                   type="button"
+                  disabled={hostUnsupported}
                   onClick={() => setConfirmReplace('codex')}
                 >
                   Replace Codex sign-in
@@ -296,7 +300,7 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
               ) : null}
               <button
                 type="button"
-                disabled={mutation.isPending}
+                disabled={mutation.isPending || hostUnsupported}
                 onClick={() => mutation.mutate({ kind: 'codex-recheck' })}
               >
                 Check existing Codex sign-in

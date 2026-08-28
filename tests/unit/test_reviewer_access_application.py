@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from typing import cast
+from typing import Literal, cast
 
 import pytest
 
@@ -30,9 +30,11 @@ class _Auth:
         self.state = state
         self.current_calls = 0
         self.status_calls = 0
+        self.start_calls = 0
         self.recheck_state: DeviceAuthStatus | None = None
 
     def start(self):
+        self.start_calls += 1
         self.state = "waiting"
         return CodexDeviceAuthState("waiting")
 
@@ -311,6 +313,55 @@ def test_explicit_codex_recheck_preserves_closed_result() -> None:
 
     auth.state = "failed"
     assert operations.recheck_codex().state == "failed"
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ("host_evidence_unavailable", "cgroup_limit_below_1_gib", "headroom_below_1_gib"),
+)
+def test_explicit_codex_recheck_rejects_host_before_auth(
+    reason: Literal[
+        "host_evidence_unavailable",
+        "cgroup_limit_below_1_gib",
+        "headroom_below_1_gib",
+    ],
+) -> None:
+    operations, auth, _openrouter, _codex = _operations(auth_state="configured")
+    operations._codex_host = lambda: ReviewerHostStatus(False, reason, None)
+
+    with pytest.raises(ReviewerAccessApplicationError) as caught:
+        operations.recheck_codex()
+
+    assert caught.value.code == "host_unsupported"
+    assert auth.current_calls == 0
+    assert auth.status_calls == 0
+
+
+def test_host_gate_precedes_every_codex_status_selection_and_start_side_effect() -> (
+    None
+):
+    operations, auth, _openrouter, _codex = _operations(auth_state="usable")
+    selected = operations.select_codex(expected_revision=1)
+    assert selected.revision == 2
+    prior_current_calls = auth.current_calls
+    operations._codex_host = lambda: ReviewerHostStatus(
+        False, "headroom_below_1_gib", None
+    )
+
+    with pytest.raises(ReviewerAccessApplicationError) as selection:
+        operations.select_codex(expected_revision=2)
+    with pytest.raises(ReviewerAccessApplicationError) as start:
+        operations.start_codex(expected_revision=2)
+
+    assert selection.value.code == "host_unsupported"
+    assert start.value.code == "host_unsupported"
+    assert auth.status_calls == 0
+    assert auth.current_calls == prior_current_calls
+    assert auth.start_calls == 0
+    document, _configured = operations._repository.read()
+    assert document.revision == 2
+    assert document.cover_observation is not None
+    assert document.cover_observation.engine == "codex"
 
 
 def test_clear_failure_keeps_selected_authority_and_returns_closed_error() -> None:

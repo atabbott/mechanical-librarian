@@ -7,8 +7,8 @@ import signal
 import stat
 import subprocess
 import time
-from collections.abc import Callable
-from contextlib import AbstractContextManager, nullcontext
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from pathlib import Path
 from threading import Event, Thread
 from typing import Any, cast
@@ -20,6 +20,7 @@ from mechanical_librarian.adapters.reviewers.codex_device_auth import (
     CodexAuthCommand,
     CodexDeviceAuthError,
     CodexDeviceAuthManager,
+    CodexDeviceAuthState,
     _bounded_status,
     _install_auth,
     _issued_state,
@@ -522,6 +523,63 @@ def test_successor_lease_revokes_flow_before_stale_install(tmp_path: Path) -> No
     assert not any(
         path.name.startswith("reviewer-auth-") for path in tmp_path.iterdir()
     )
+
+
+def test_handoff_winning_before_start_admission_touches_nothing(tmp_path: Path) -> None:
+    coordinator = _CodexAuthLeaseCoordinator()
+    approaching_guard = Event()
+    resume_start = Event()
+    popen_calls = 0
+    holder: dict[str, CodexDeviceAuthManager] = {}
+
+    def predecessor_factory(
+        lease_current: Callable[[], bool],
+        lease_guard: Callable[[], AbstractContextManager[None]],
+    ) -> CodexDeviceAuthManager:
+        @contextmanager
+        def delayed_guard() -> Iterator[None]:
+            approaching_guard.set()
+            assert resume_start.wait(timeout=2)
+            with lease_guard():
+                yield
+
+        manager = _manager(
+            tmp_path, lease_current=lease_current, lease_guard=delayed_guard
+        )
+        original = manager._popen
+
+        def counted_popen(command: list[str], **kwargs: Any):
+            nonlocal popen_calls
+            popen_calls += 1
+            return original(command, **kwargs)
+
+        manager._popen = counted_popen
+        holder["manager"] = manager
+        return manager
+
+    predecessor = _LazyCodexAuth(predecessor_factory, coordinator)
+    successor = _LazyCodexAuth(
+        lambda lease, guard: _manager(tmp_path, lease_current=lease, lease_guard=guard),
+        coordinator,
+    )
+    predecessor.activate_lease()
+    result: list[CodexDeviceAuthState] = []
+    starter = Thread(target=lambda: result.append(predecessor.start()))
+    starter.start()
+    assert approaching_guard.wait(timeout=2)
+
+    successor.activate_lease()
+    resume_start.set()
+    starter.join(timeout=2)
+
+    assert not starter.is_alive()
+    assert result == [CodexDeviceAuthState("failed", failure="permission_or_profile")]
+    assert popen_calls == 0
+    assert not (tmp_path / "profile").exists()
+    assert not any(
+        path.name.startswith("reviewer-auth-") for path in tmp_path.iterdir()
+    )
+    holder["manager"].close()
 
 
 def test_failed_predecessor_drain_admits_no_successor_owner() -> None:

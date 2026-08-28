@@ -338,11 +338,11 @@ class ReviewerAccessOperations:
 
     def _select_codex(self, *, expected_revision: int) -> ReviewerAccessView:
         host = self._codex_host()
+        if not host.available:
+            raise ReviewerAccessApplicationError("host_unsupported")
         credential = self._codex_auth.recheck_credential_status()
-        if not host.available or credential.state != "usable":
-            raise ReviewerAccessApplicationError(
-                "host_unsupported" if not host.available else "credential_unavailable"
-            )
+        if credential.state != "usable":
+            raise ReviewerAccessApplicationError("credential_unavailable")
         self._replace_selection(
             expected_revision,
             CodexTaskSelection(engine="codex"),
@@ -392,10 +392,10 @@ class ReviewerAccessOperations:
             document, _configured = self._repository.read()
             if document.revision != expected_revision:
                 raise ReviewerAccessApplicationError("access_changed")
-            if isinstance(document.cover_observation, CodexTaskSelection):
-                self._replace_selection(expected_revision, None)
             if not self._codex_host().available:
                 raise ReviewerAccessApplicationError("host_unsupported")
+            if isinstance(document.cover_observation, CodexTaskSelection):
+                self._replace_selection(expected_revision, None)
             device = self._codex_auth.start()
             return self._view(), device
 
@@ -425,10 +425,12 @@ class ReviewerAccessOperations:
     def recheck_codex(self) -> CodexDeviceAuthState:
         """Explicitly validate the installed credential unless a flow owns it."""
 
-        return cast(
-            "CodexDeviceAuthState",
-            self._serialized(self._codex_auth.recheck_credential_status),
-        )
+        def recheck() -> CodexDeviceAuthState:
+            if not self._codex_host().available:
+                raise ReviewerAccessApplicationError("host_unsupported")
+            return self._codex_auth.recheck_credential_status()
+
+        return cast("CodexDeviceAuthState", self._serialized(recheck))
 
     def cancel_codex(self) -> CodexDeviceAuthState:
         return cast("CodexDeviceAuthState", self._serialized(self._codex_auth.cancel))
