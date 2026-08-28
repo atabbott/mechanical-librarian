@@ -74,16 +74,27 @@ provider. Audiobook evidence remains read-side only.
    across the configured marketplace set, accepts ISBN-10-shaped ASINs
    without prefix filtering, and records the resolving marketplace as
    provenance.
-5. **Failure posture.** Adapters parse tolerantly: an absent response field
-   is absent evidence, never a failure. Each provider receives one shared
-   request-start pacer across foreground and recovery work; rate-limit
-   responses honor `Retry-After`; failures classify into the ADR-0053
-   recovery vocabulary. Loss of the primary degrades discovery to the
-   community tiers without a configuration change.
-6. **Setup surface.** Every admitted audiobook provider is keyless. Fresh
+5. **Failure posture.** Adapters parse tolerantly for optional evidence
+   fields only: an absent optional field is absent evidence, never a
+   failure. A response missing required identity or a required join key is a
+   malformed response and fails closed into the typed failure vocabulary,
+   preserving its recovery diagnostic — the fail-closed identity invariant
+   in `docs/architecture/security.md` applies to these providers unchanged.
+   Each provider receives one shared request-start pacer across foreground
+   and recovery work; rate-limit responses honor `Retry-After`; failures
+   classify into the ADR-0053 recovery vocabulary. Loss of the primary
+   degrades discovery to the community tiers without a configuration change.
+6. **Egress boundary.** The admitted providers inherit the existing
+   provider-egress invariants: credential-free fixed-origin HTTPS, no
+   ambient redirects, bounded bytes, requests, and deadlines, and
+   hostile-response handling within the established parser constraints.
+   `docs/architecture/security.md` gains their per-provider threat-model
+   entries as required surface of the #749 provider slice, before any
+   adapter egress activates.
+7. **Setup surface.** Every admitted audiobook provider is keyless. Fresh
    installs get audiobook evidence with zero keys, and no key exists for
    these providers even as an optional upgrade.
-7. **Schema entry.** The configuration schema's closed adapter set is
+8. **Schema entry.** The configuration schema's closed adapter set is
    unchanged by this record. The audiobook adapters enter the closed set
    through the #749 provider-slice schema revision under ADR-0013 — clean
    rebuild, no migration.
@@ -92,8 +103,10 @@ provider. Audiobook evidence remains read-side only.
 
 ### Positive
 
-- Zero-setup audiobook evidence, with measured complete identifier coverage
-  on the reference library.
+- Zero-setup audiobook evidence, with every known ASIN on the reference
+  library resolved through the admitted providers (103/103, marketplace
+  fallback included). Discovery for the items with no local identifier is
+  not yet measured; it is a slice-2 qualification output.
 - Provider adapters stay replaceable behind the existing chassis, and the
   recovery, pacing, and capability postures carry over unchanged.
 
@@ -141,10 +154,10 @@ fingerprint lookup.
 
 ## Validation
 
-- Slice-2 qualification measures provider resolution rate on the reference
-  library and classifies the four embedded-versus-asserted ASIN
-  disagreements; resolution regressing below the measured coverage baseline
-  reopens this record.
+- Slice-2 qualification measures the discovery rate for identifier-less
+  items, re-measures known-ASIN resolution, and classifies the four
+  embedded-versus-asserted ASIN disagreements; known-ASIN resolution
+  regressing below the measured 103/103 baseline reopens this record.
 - Reopen triggers: anonymous catalog access gating, sustained community-tier
   collapse, or a supported offline-deployment requirement.
 - The stability record and the coverage measurement are attached to #925 as
