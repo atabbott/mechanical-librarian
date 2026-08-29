@@ -73,6 +73,13 @@ The browser asset build is not optional: the tier reads `ML_REACT_ASSET_DIR`
 with no fallback, and building into the checkout would leave untracked output
 where a clean tree is itself a check.
 
+The slow tier is also the only cohort that executes the audiobook probe, so it
+needs the same ffmpeg package the shipped image pins (Debian: `apt-get install
+ffmpeg`; macOS: `brew install ffmpeg`). A missing probe fails that cohort with
+a diagnostic naming the paths it searched rather than skipping, because a skip
+would report unproved evidence as covered. Every other tier reads recorded
+probe documents and needs no binary.
+
 A test may move out of routine qualification only when its expensive property
 is scale, endurance, exhaustive breadth, or resource measurement and a smaller
 required test preserves the same functional path and failure transitions. A

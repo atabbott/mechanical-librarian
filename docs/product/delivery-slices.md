@@ -160,6 +160,16 @@ fields rail and Library rail legible; each uses `Delivery slice: Not
 applicable`. The tranche slices F35–F38 qualify through the #445 route. The
 audiobook evidence-source selection (#893) stays outside this checkpoint.
 
+## Delivery checkpoint 0.20.0: audiobook foundation
+
+This checkpoint opens audiobooks as a read-only evidence surface: local
+evidence first, provider discovery and enrichment after it, under the keyless
+posture of [ADR-0061](../architecture/decisions/0061-audiobook-provider-posture.md).
+
+| Slice | Tracker | Demonstrable outcome | Planning state |
+| --- | --- | --- | --- |
+| F43 Local audiobook evidence | #749 | Each single-audio-file item of a mounted audiobook library produces a closed local evidence set — ASIN, narrator, series and sequence, duration, embedded chapters, performance type, language, description, embedded-cover presence — with per-surface provenance, projected read-only to the owner. | In delivery. |
+
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
 
 Write-capable slices use fake or disposable services until their explicit

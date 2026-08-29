@@ -7,6 +7,12 @@ rebuild or delivers one explicit exact-predecessor adoption limited to
 reconstructible derived objects. This is not a general migration, import,
 conversion, compatibility, downgrade, or repair facility.
 
+`metadata-report-v30` cannot carry an audiobook's local evidence: it has no
+structured audio section for embedded chapters and cover presence, no duration
+or performance-type claim kind, and no audio evidence sources. It is rejected
+at bootstrap and requires a clean rebuild as `metadata-report-v31`; this
+increment provides no adoption or legacy fallback.
+
 `metadata-report-v29` cannot carry the deterministic readiness, rank and
 citation contract of `cover-consideration-v2`. It is rejected at bootstrap and
 requires a clean rebuild as `metadata-report-v30`; this increment provides no

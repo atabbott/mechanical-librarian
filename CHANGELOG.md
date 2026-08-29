@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Read local evidence from single-file audiobooks in a mounted audiobook
+  library — ASIN, narrator, series, running time, performance type, language,
+  description, chapters, embedded-cover presence — each attributed to the tag,
+  sidecar, or path it came from. Media is parsed only by an isolated `ffprobe`
+  child the image now installs; no provider is contacted and no cover authority
+  is granted. Pre-release v30 state requires a clean rebuild. (#749)
+
 - Record the audiobook provider posture in ADR-0061: keyless read-side
   providers with the anonymous Audible catalog primary, Audnexus per-ASIN
   enrichment, community tiers as degraded mode, marketplace-scoped ASINs, and

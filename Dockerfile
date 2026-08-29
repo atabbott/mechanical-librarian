@@ -24,7 +24,15 @@ RUN ML_FRONTEND_PREBUILT_DIR=/frontend-dist \
     uv sync --frozen --no-dev --no-editable
 
 FROM python:3.14.7-slim-bookworm@sha256:416f0db2a2b561945630cef9877a7ea0581b27449eb9fd9df42f03e1b74b5b63
-RUN groupadd --system --gid 65532 librarian \
+# The audiobook inspector runs `ffprobe` as an isolated, resource-bounded child
+# and parses no media bytes itself. It is installed from the distribution at a
+# pinned version so the probe carries Debian's provenance and its security
+# updates, rather than a vendored binary this project would then own.
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends ffmpeg=7:5.1.9-0+deb12u1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && test -x /usr/bin/ffprobe \
+    && groupadd --system --gid 65532 librarian \
     && useradd --system --uid 65532 --gid librarian --home-dir /nonexistent --shell /usr/sbin/nologin librarian \
     && install -d -o librarian -g librarian -m 0700 /data
 COPY --from=build /opt/mechanical-librarian /opt/mechanical-librarian

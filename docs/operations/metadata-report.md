@@ -150,9 +150,23 @@ source order. Front and rear subtitle/publisher/imprint canonical values share
 NFC and whitespace normalization. Rear position does not increase authority.
 Provider comparisons link only claims with the same role; no publisher/imprint
 hierarchy is inferred. The exact-current persisted report and database
-discriminator is `metadata-report-v30`. Every earlier report discriminator,
-including immediate prior `metadata-report-v29`, remains offline and requires a
+discriminator is `metadata-report-v31`. Every earlier report discriminator,
+including immediate prior `metadata-report-v30`, remains offline and requires a
 clean current database under ADR-0013.
+
+An audiobook item in a mounted audiobook library, with exactly one audio file
+in a supported container, is prepared as a local-evidence report and nothing
+further. Its closed evidence set carries ASIN, narrator contributions, series
+and sequence, running time, performance type, language, description, embedded
+chapters, and whether the file carries embedded cover art — each attributed to
+the surface it was read from: an embedded tag, a sidecar document beside the
+file, or the exported file and folder names. Chapters are a bounded structured
+section rather than claims, and the embedded cover is a presence fact that
+grants no cover authority. No provider is contacted for such a report, and its
+review preparation ends at the provider stage with `local_evidence_only`.
+Multi-file audiobook items and audiobook libraries without a named read-only
+mount stay excluded, exactly as before. See
+[ADR-0062](../architecture/decisions/0062-isolated-audiobook-inspector.md).
 
 Google Books descriptions use one inert, bounded
 `google-books-html-visible-text-v1` projection. Its report-bound transformation

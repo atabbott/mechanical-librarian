@@ -75,6 +75,7 @@ context and consequences rather than reproducing code.
 | [0059](0059-deterministic-cover-election.md) | accepted | Separate deterministic cover election from reviewer advice |
 | [0060](0060-dedicated-review-session-database.md) | accepted | Move review-session state to a dedicated session database |
 | [0061](0061-audiobook-provider-posture.md) | accepted | Admit keyless audiobook providers with the anonymous Audible catalog primary |
+| [0062](0062-isolated-audiobook-inspector.md) | accepted | Read audiobook evidence through two isolated children |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

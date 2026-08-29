@@ -162,7 +162,7 @@ def _chpl(chapters: tuple[tuple[int, str], ...]) -> bytes:
 def _cover_trak(milliseconds: int, offset: int) -> bytes:
     """One attached-picture track, which is how MP4 carries embedded art."""
     entry = _box(
-        "mp4v" if False else "jpeg",
+        "jpeg",
         b"\x00" * 6,
         struct.pack(">H", 1),
         b"\x00" * 16,
