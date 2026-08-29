@@ -929,6 +929,8 @@ def test_closed_claim_vocabulary_is_exact() -> None:
         "imprint",
         "genre",
         "tag",
+        "duration",
+        "performance_type",
     }
 
 
@@ -977,6 +979,9 @@ def test_field_results_are_complete_canonical_and_separate_from_claims() -> None
             (
                 FieldSourceResult(FieldSource.EPUB, FieldState.ABSENT),
                 FieldSourceResult(FieldSource.TARGET_METADATA, FieldState.VALID),
+                FieldSourceResult(FieldSource.AUDIO_TAG, FieldState.ABSENT),
+                FieldSourceResult(FieldSource.AUDIO_SIDECAR, FieldState.ABSENT),
+                FieldSourceResult(FieldSource.AUDIO_PATH, FieldState.ABSENT),
             ),
         )
         if value.kind is ClaimKind.TITLE

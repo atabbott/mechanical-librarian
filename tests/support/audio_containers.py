@@ -17,9 +17,7 @@ import struct
 from dataclasses import dataclass, field
 
 _AAC_AUDIO_SPECIFIC_CONFIG = bytes((0x12, 0x10))
-_MATRIX = struct.pack(
-    ">9i", 0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000
-)
+_MATRIX = struct.pack(">9i", 0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000)
 _MP3_FRAME_HEADER = bytes((0xFF, 0xFB, 0x90, 0x00))
 _MP3_FRAME_BYTES = 417
 _MP3_FRAME_SECONDS = 1152 / 44_100
@@ -31,7 +29,9 @@ def _box(name: str, *payload: bytes) -> bytes:
 
 
 def _full_box(name: str, version: int, flags: int, *payload: bytes) -> bytes:
-    return _box(name, struct.pack(">B", version) + struct.pack(">I", flags)[1:], *payload)
+    return _box(
+        name, struct.pack(">B", version) + struct.pack(">I", flags)[1:], *payload
+    )
 
 
 def _descriptor(tag: int, payload: bytes) -> bytes:
@@ -82,9 +82,7 @@ def _minf(samples: int, offset: int) -> bytes:
         _full_box("smhd", 0, 0, struct.pack(">HH", 0, 0)),
         _box(
             "dinf",
-            _full_box(
-                "dref", 0, 0, struct.pack(">I", 1), _full_box("url ", 0, 1)
-            ),
+            _full_box("dref", 0, 0, struct.pack(">I", 1), _full_box("url ", 0, 1)),
         ),
         _stbl(samples, offset),
     )
@@ -138,9 +136,7 @@ def _data(value: str) -> bytes:
 
 
 def _ilst(well_known: dict[str, str], freeform: dict[tuple[str, str], str]) -> bytes:
-    entries = [
-        _box(name, _data(value)) for name, value in sorted(well_known.items())
-    ]
+    entries = [_box(name, _data(value)) for name, value in sorted(well_known.items())]
     entries.extend(
         _box(
             "----",
@@ -234,7 +230,10 @@ class Mp4Fixture:
     embedded_cover: bool = False
 
 
-def mp4_audiobook(fixture: Mp4Fixture = Mp4Fixture()) -> bytes:
+_DEFAULT_MP4_FIXTURE = Mp4Fixture()
+
+
+def mp4_audiobook(fixture: Mp4Fixture = _DEFAULT_MP4_FIXTURE) -> bytes:
     """Build one single-file MP4 audiobook from an explicit fixture."""
     samples = max(1, fixture.milliseconds * 44_100 // (1_000 * 1024))
     payload = b"\x00" * (8 * (samples + 1))
@@ -306,7 +305,11 @@ def mp3_audiobook(
     payload += b"".join(
         _id3_frame(
             "TXXX",
-            b"\x03" + description.encode("utf-8") + b"\x00" + value.encode("utf-8") + b"\x00",
+            b"\x03"
+            + description.encode("utf-8")
+            + b"\x00"
+            + value.encode("utf-8")
+            + b"\x00",
         )
         for description, value in sorted((user_text or {}).items())
     )

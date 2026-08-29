@@ -296,6 +296,16 @@ class ReviewPipelineStages:
         value = MetadataReport.from_json(
             cast("ReviewStageRepository", pipeline_repository).get(report_id)
         )
+        if value.file.format in AUDIO_FILE_FORMATS:
+            # F43 slice 1 publishes a closed local evidence set for an
+            # audiobook and grants nothing beyond it: no provider was
+            # constructed or dispatched, so there is no comparison a proposal
+            # could be evaluated from and no package a review case could
+            # admit. The stop is explicit and terminal at the first stage that
+            # already holds the report, so the owner sees why the work ends
+            # where it does rather than seeing it stall or fail as if a
+            # provider had been tried.
+            raise ReviewPipelineError("local_evidence_only")
         record_provider_recovery_observations(
             self._recovery_observer,
             value,
@@ -312,8 +322,6 @@ class ReviewPipelineStages:
     def propose(
         self, pipeline_repository: ReviewPipelineRepository, report_id: str
     ) -> str:
-        if self._extraction_only(pipeline_repository, report_id):
-            raise ReviewPipelineError("local_evidence_only")
         try:
             serialized = self._create_proposal_set(report_id, pipeline_repository)
         except TargetConnectionError:
@@ -336,26 +344,6 @@ class ReviewPipelineStages:
         except Exception as error:
             raise ReviewPipelineError("unknown") from error
         return ProposalSet.from_json(serialized).proposal_set_id
-
-    def _extraction_only(
-        self, pipeline_repository: ReviewPipelineRepository, report_id: str
-    ) -> bool:
-        """Stop an audiobook work at the evidence it was prepared for.
-
-        F43 slice 1 publishes a closed local evidence set for an audiobook and
-        deliberately grants nothing beyond it: no provider was dispatched, so
-        there is no comparison a proposal could be evaluated from, and no
-        package a review case could admit. The stop is explicit and terminal
-        rather than a silent stage skip, so the owner sees why the work ends
-        where it does instead of seeing it stall.
-        """
-        try:
-            report = MetadataReport.from_json(
-                cast("ReviewStageRepository", pipeline_repository).get(report_id)
-            )
-        except Exception as error:
-            raise ReviewPipelineError("malformed_retained_data") from error
-        return report.file.format in AUDIO_FILE_FORMATS
 
     def admit(
         self, pipeline_repository: ReviewPipelineRepository, proposal_set_id: str

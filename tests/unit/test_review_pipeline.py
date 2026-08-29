@@ -627,7 +627,7 @@ def test_composed_currentness_preserves_target_connection_errors(
     repository.publish_proposal(proposal)
     repository.close()
 
-    def current(target, *_args):
+    def current(target, *_args, **_keywords):
         target.read("item-1")
         return True
 
@@ -747,7 +747,7 @@ def test_store_credentials_reach_proposal_and_admission_currentness(
         def __init__(self, *, client_factory, **_arguments) -> None:
             self.client_factory = client_factory
 
-    def current(target, *_arguments) -> bool:
+    def current(target, *_arguments, **_keywords) -> bool:
         assert target.client_factory() is client
         return True
 

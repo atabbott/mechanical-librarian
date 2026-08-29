@@ -54,13 +54,13 @@ _DERIVED_TABLES = {
     "review_case_field_facts",
 }
 _TARGET_SCHEMA_OBJECTS_SHA256 = (
-    "3eb0ce258bbf4cdd8d5a59141ad11a9afa604c13ec5b37f8b4be326d6c28de28"
+    "82f7f6064998f03fbe36d79df2d141577f120e518b4cbb788bedbdf46b9a753e"
 )
 # The exact immediate predecessor of the #912 session decoupling: the previous
 # target schema, whose only difference is the two session tables that moved to
 # the dedicated session database.
 _REVIEW_SESSION_DECOUPLING_V1_SOURCE_OBJECTS_SHA256 = (
-    "1c6ff10c050f7a4587e4b145d8516285c886ea211351cdc95363dfa8648a878c"
+    "7faa0ed11339dedd785d6d1545373ad8088fa720f4cca0c418a59c0d4682cda5"
 )
 _PRE_DECOUPLING_REVIEW_SESSIONS_SQL = (
     "CREATE TABLE review_sessions ("
