@@ -2919,24 +2919,27 @@ def _register_browse_and_preparation_routes(
         )
 
     @app.get(
-        "/api/v1/library/{connection}/{library_name}/{item}/report",
+        "/api/v1/library/report",
         response_model=_ReportDetailResponse,
         responses={
             status: {"model": _ErrorResponse} for status in (400, 401, 404, 422, 503)
         },
     )
     def library_report(
-        connection: str,
-        library_name: str,
-        item: str,
+        connection: str = Query(max_length=512),
+        library: str = Query(max_length=512),
+        item: str = Query(max_length=512),
         ml_session: str | None = Security(session_cookie),
     ) -> _ReportDetailResponse:
-        """Read-only: the recorded evidence for a work with no review case."""
+        """Read-only: the recorded evidence for a work with no review case.
+
+        The identity is a query rather than path segments because an item id
+        may contain a slash, which no path match survives: ASGI decodes the
+        escape before the router sees it.
+        """
         _require_session(sessions, ml_session)
         return _ReportDetailResponse.model_validate(
-            _report_call(
-                lambda: application.report_detail(connection, library_name, item)
-            )
+            _report_call(lambda: application.report_detail(connection, library, item))
         )
 
     @app.get(

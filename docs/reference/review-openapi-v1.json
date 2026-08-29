@@ -7938,34 +7938,37 @@
         "summary": "Library"
       }
     },
-    "/api/v1/library/{connection}/{library_name}/{item}/report": {
+    "/api/v1/library/report": {
       "get": {
-        "description": "Read-only: the recorded evidence for a work with no review case.",
-        "operationId": "library_report_api_v1_library__connection___library_name___item__report_get",
+        "description": "Read-only: the recorded evidence for a work with no review case.\n\nThe identity is a query rather than path segments because an item id\nmay contain a slash, which no path match survives: ASGI decodes the\nescape before the router sees it.",
+        "operationId": "library_report_api_v1_library_report_get",
         "parameters": [
           {
-            "in": "path",
+            "in": "query",
             "name": "connection",
             "required": true,
             "schema": {
+              "maxLength": 512,
               "title": "Connection",
               "type": "string"
             }
           },
           {
-            "in": "path",
-            "name": "library_name",
+            "in": "query",
+            "name": "library",
             "required": true,
             "schema": {
-              "title": "Library Name",
+              "maxLength": 512,
+              "title": "Library",
               "type": "string"
             }
           },
           {
-            "in": "path",
+            "in": "query",
             "name": "item",
             "required": true,
             "schema": {
+              "maxLength": 512,
               "title": "Item",
               "type": "string"
             }

@@ -22,6 +22,7 @@ from mechanical_librarian.adapters.evidence_extractors.audio_local import (
 )
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.field_effects import GuardedApplicationError
+from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_pipeline import (
     ReviewPipelineError,
 )
@@ -1615,7 +1616,10 @@ def test_complete_library_includes_current_report_without_review_lineage(
     assert item["review_case_id"] is None
     # No case to open, but the evidence is still addressable: the row points at
     # the report it stands for rather than at nothing.
-    assert item["detail_url"] == "/api/v1/library/primary/ebooks/item-1/report"
+    assert (
+        item["detail_url"]
+        == "/api/v1/library/report?connection=primary&library=ebooks&item=item-1"
+    )
     assert item["work_id"].startswith("library_work_")
     assert item["attention_state"] == "no_attention_needed"
     assert item["dispositions"] == []
@@ -2192,7 +2196,9 @@ def test_a_claim_rich_report_is_truncated_rather_than_refused(
     web.repository.browse_without_cases.append(report)
     web.login()
 
-    response = web.client.get("/api/v1/library/primary/ebooks/item-8/report")
+    response = web.client.get(
+        "/api/v1/library/report?connection=primary&library=ebooks&item=item-8"
+    )
 
     assert response.status_code == 200, response.text
     body = response.json()
@@ -2204,3 +2210,101 @@ def test_a_claim_rich_report_is_truncated_rather_than_refused(
         "Subject 0002",
         "Subject 0003",
     ]
+
+
+def test_an_item_id_holding_a_slash_is_reachable_at_the_address_it_advertises(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    """A library server's item id may contain a slash, and both ends must hold.
+
+    Percent-encoded in a path segment it is decoded before the router matches,
+    so such a work answered 404 at exactly the address its own row handed out.
+    The row's `detail_url` is followed here verbatim rather than rebuilt, so
+    the generator and the route are proved to agree.
+    """
+    report = MetadataReport.create(
+        target=TargetFacts(
+            "primary", "ebooks", "col/1", default_target_fields("Slashed work")
+        ),
+        file=FileFacts(0, "e" * 64, "f" * 64),
+        local_claims=(),
+        local_reasons=("no_opening_claims",),
+        providers=(),
+    )
+    web.repository.browse_without_cases.append(report)
+    web.login()
+
+    listing = web.client.get("/api/v1/library?lens=all&q=Slashed")
+    assert listing.status_code == 200, listing.text
+    advertised = next(
+        value["detail_url"]
+        for value in listing.json()["items"]
+        if value["item"] == "col/1"
+    )
+    response = web.client.get(cast(str, advertised))
+
+    assert advertised == (
+        "/api/v1/library/report?connection=primary&library=ebooks&item=col%2F1"
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["item"] == "col/1"
+
+
+def test_a_store_that_cannot_answer_is_not_a_work_that_is_not_there(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    """Absence is 404 and a persistence fault is 503, never one for the other.
+
+    Collapsing them told an owner their audiobook had vanished whenever the
+    database was busy or unreadable, which is the opposite of what happened.
+    """
+    web.login()
+
+    missing = web.client.get(
+        "/api/v1/library/report?connection=primary&library=ebooks&item=no-such-item"
+    )
+
+    def unavailable(_connection: str, _library: str, _item: str) -> str | None:
+        raise MetadataReportError("review snapshot is unavailable")
+
+    web.repository.read_current_report_document = unavailable  # type: ignore[method-assign,assignment]
+    failed = web.client.get(
+        "/api/v1/library/report?connection=primary&library=ebooks&item=item-1"
+    )
+
+    assert (missing.status_code, missing.json()["error"]["code"]) == (404, "missing")
+    assert (failed.status_code, failed.json()["error"]["code"]) == (
+        503,
+        "unavailable",
+    )
+
+
+def test_a_shaped_but_corrupt_document_is_refused_rather_than_projected(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    """The browse envelope closes the shape; it does not check the report.
+
+    Every member arrives from it on trust, so a document that satisfies the
+    envelope while contradicting the domain would have projected arbitrary
+    text to the owner as recorded evidence. Reconstructing the report is what
+    refuses it, and the report id below is exactly the kind of member the
+    envelope has no opinion about.
+    """
+    document = json.loads(_report(title="Corrupt work", actionable=False).to_json())
+    document["report_id"] = "report_" + "0" * 64
+    corrupted = json.dumps(document)
+
+    def corrupt(_connection: str, _library: str, _item: str) -> str | None:
+        return corrupted
+
+    web.repository.read_current_report_document = corrupt  # type: ignore[method-assign,assignment]
+    web.login()
+
+    response = web.client.get(
+        "/api/v1/library/report?connection=primary&library=ebooks&item=item-1"
+    )
+
+    assert (response.status_code, response.json()["error"]["code"]) == (
+        503,
+        "unavailable",
+    )

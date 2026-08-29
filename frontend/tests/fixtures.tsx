@@ -38,6 +38,7 @@ export const library: LibraryView = {
       mediaKind: 'ebook',
       attentionCount: 1,
       attention: 'needs_attention',
+      detailUrl: '/review/case-1',
       preparation: null,
       preparationOutcomes: [],
     },
@@ -162,6 +163,9 @@ export const activity = (
 }
 
 export const createHttp = (): ReviewHttp => ({
+  getReportDetail: vi.fn(async () => {
+    throw new Error('not configured')
+  }),
   getAppearance: vi.fn(async (): Promise<AppearanceView> => ({ reduced_motion: 'follow_system' })),
   getSettings: vi.fn(async () => {
     throw new Error('not configured')

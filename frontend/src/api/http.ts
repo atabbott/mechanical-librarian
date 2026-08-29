@@ -198,6 +198,33 @@ export interface WorkSummaryView {
   reason: string
   state: string
 }
+export interface ReportEvidenceView {
+  basis: string
+  excerpt: string
+  kind: string
+  role: string | null
+  state: string
+  value: string
+}
+export interface ReportChapterView {
+  endMilliseconds: number
+  ordinal: number
+  startMilliseconds: number
+  title: string | null
+}
+export interface ReportDetailView {
+  chapters: readonly ReportChapterView[]
+  chaptersTruncated: boolean
+  coverPresent: boolean
+  coverSurface: string | null
+  evidence: readonly ReportEvidenceView[]
+  evidenceTruncated: boolean
+  item: string
+  library: string
+  mediaKind: string
+  reportId: string
+  title: string
+}
 export interface LibraryWorkView {
   id: string
   reviewCaseId?: string
@@ -208,6 +235,10 @@ export interface LibraryWorkView {
   mediaKind: string
   attentionCount: number
   attention: string
+  // The address of this work's recorded evidence. A work with a review case
+  // points at that case; a work with only a published report points at the
+  // report itself, which is the one route its evidence has.
+  detailUrl: string | null
   preparation: PreparationFailureView | null
   preparationOutcomes: readonly ProviderOutcomeView[]
   summary: WorkSummaryView | null
@@ -659,6 +690,7 @@ export interface ReviewHttp {
   cancelCodexDevice(signal?: AbortSignal): Promise<CodexDeviceAuthState>
   clearCodex(expectedRevision: number, signal?: AbortSignal): Promise<ReviewerAccessView>
   getLibrary(search: LibrarySearch, signal?: AbortSignal): Promise<LibraryView>
+  getReportDetail(detailUrl: string, signal?: AbortSignal): Promise<ReportDetailView>
   getAttention(search: AttentionSearch, signal?: AbortSignal): Promise<AttentionView>
   getCaseDetail(reviewCaseId: string, signal?: AbortSignal): Promise<CaseDetailView>
   getCaseSuccessor(reviewCaseId: string, signal?: AbortSignal): Promise<string | null>
@@ -793,6 +825,12 @@ export class ReviewApiClient implements ReviewHttp {
     if (search.q) p.set('q', search.q)
     if (search.cursor) p.set('cursor', search.cursor)
     return mapLibrary(await this.read(`/api/v1/library?${p}`, signal))
+  }
+  // The address is the one the library row handed back, followed rather than
+  // rebuilt: an item id may hold any character a target permits, and only the
+  // server that escaped it knows how.
+  async getReportDetail(detailUrl: string, signal?: AbortSignal) {
+    return mapReportDetail(await this.read(detailUrl, signal))
   }
   async getSettings(signal?: AbortSignal) {
     return mapSettings(await this.read('/api/v1/settings', signal))
@@ -1884,6 +1922,53 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
   }
 }
 
+export const mapReportDetail = (value: unknown): ReportDetailView => {
+  if (
+    !record(value) ||
+    value.schema_version !== 'review-report-detail-v1' ||
+    !record(value.embedded_cover) ||
+    !Array.isArray(value.chapters) ||
+    !Array.isArray(value.evidence)
+  )
+    throw new ApiError(502, 'invalid_report_detail_response')
+  const cover = value.embedded_cover
+  if (typeof cover.present !== 'boolean' || typeof value.chapters_truncated !== 'boolean')
+    throw new ApiError(502, 'invalid_report_detail_response')
+  if (typeof value.evidence_truncated !== 'boolean')
+    throw new ApiError(502, 'invalid_report_detail_response')
+  return {
+    chapters: (value.chapters as unknown[]).map((chapter, index) => {
+      if (!record(chapter)) throw new ApiError(502, `invalid_report_chapter_${String(index)}`)
+      return {
+        endMilliseconds: integerValue(chapter.end_milliseconds, 'report_chapter_end'),
+        ordinal: integerValue(chapter.ordinal, 'report_chapter_ordinal'),
+        startMilliseconds: integerValue(chapter.start_milliseconds, 'report_chapter_start'),
+        title: chapter.title == null ? null : stringValue(chapter.title, 'report_chapter_title'),
+      }
+    }),
+    chaptersTruncated: value.chapters_truncated,
+    coverPresent: cover.present,
+    coverSurface: cover.surface == null ? null : stringValue(cover.surface, 'report_cover_surface'),
+    evidence: (value.evidence as unknown[]).map((claim, index) => {
+      if (!record(claim)) throw new ApiError(502, `invalid_report_evidence_${String(index)}`)
+      return {
+        basis: stringValue(claim.basis, 'report_evidence_basis'),
+        excerpt: stringValue(claim.excerpt, 'report_evidence_excerpt'),
+        kind: stringValue(claim.kind, 'report_evidence_kind'),
+        role: claim.role == null ? null : stringValue(claim.role, 'report_evidence_role'),
+        state: stringValue(claim.state, 'report_evidence_state'),
+        value: stringValue(claim.value, 'report_evidence_value'),
+      }
+    }),
+    evidenceTruncated: value.evidence_truncated,
+    item: stringValue(value.item, 'report_item'),
+    library: stringValue(value.library, 'report_library'),
+    mediaKind: stringValue(value.media_kind, 'report_media_kind'),
+    reportId: stringValue(value.report_id, 'report_id'),
+    title: stringValue(value.title, 'report_title'),
+  }
+}
+
 export const mapLibrary = (value: unknown): LibraryView => {
   if (!record(value) || !record(value.counts) || !Array.isArray(value.items))
     throw new ApiError(502, 'invalid_library_response')
@@ -1963,6 +2048,7 @@ export const mapLibrary = (value: unknown): LibraryView => {
         mediaKind: stringValue(item.media_kind, 'media_kind'),
         attentionCount: integerValue(item.attention_count, 'attention_count'),
         attention: stringValue(item.attention_state, 'attention_state'),
+        detailUrl: item.detail_url === null ? null : stringValue(item.detail_url, 'detail_url'),
         preparation,
         preparationOutcomes,
         summary,

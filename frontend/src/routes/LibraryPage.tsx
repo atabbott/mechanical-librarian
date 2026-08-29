@@ -48,6 +48,20 @@ type ChoiceProgress = {
 
 const authorLine = (work: LibraryWorkView) =>
   work.authors.length ? work.authors.join(', ') : 'Author details unavailable'
+// A work with a review case opens that case; one with only a published report
+// is addressed by the report itself, and the server says which by handing back
+// an API address rather than a `/review` one. Deciding it here keeps the row
+// and the panel agreeing on what is openable.
+const reportEvidenceUrl = (work: LibraryWorkView) =>
+  !work.reviewCaseId && work.detailUrl?.startsWith('/api/') ? work.detailUrl : null
+const chapterSpan = (start: number, end: number) => {
+  const clock = (value: number) => {
+    const seconds = Math.floor(value / 1000)
+    const parts = [Math.floor(seconds / 3600), Math.floor((seconds % 3600) / 60), seconds % 60]
+    return parts.map((part) => String(part).padStart(2, '0')).join(':')
+  }
+  return `${clock(start)} – ${clock(end)}`
+}
 // The server's closed lane status is an audit token, not something an owner can
 // read: `candidates` and `candidate_limit_exceeded` differ by one word and mean
 // opposite things. The consequence beside it is the server's own owner-facing
@@ -241,8 +255,93 @@ function WorkSources({
   )
 }
 
+// The evidence a work with no review case carries. It is recorded, retained,
+// and -- until this read -- reachable from nowhere in the browser: an audiobook
+// acquires no case, so `detail_url` on its row is the only route it has.
+// Read-only by construction: nothing here proposes, decides, or writes.
+function WorkEvidence({ detailUrl }: { detailUrl: string }) {
+  const { http } = useReviewContext()
+  const report = useQuery({
+    queryKey: ['library-report', detailUrl],
+    queryFn: ({ signal }) => http.getReportDetail(detailUrl, signal),
+    staleTime: 15_000,
+    retry: false,
+  })
+  if (report.isPending)
+    return (
+      <p role="status" className="library-work-summary-reason">
+        Loading recorded evidence…
+      </p>
+    )
+  if (report.isError)
+    return (
+      <p role="alert" className="library-work-summary-reason">
+        Recorded evidence could not be loaded.{' '}
+        <button type="button" onClick={() => void report.refetch()}>
+          Try again
+        </button>
+      </p>
+    )
+  const data = report.data
+  return (
+    <section className="library-work-evidence" aria-label="Recorded evidence">
+      <h3>Recorded evidence</h3>
+      {data.evidence.length === 0 ? (
+        <p role="status">No local evidence was recorded for this work.</p>
+      ) : (
+        <dl className="library-work-values">
+          {data.evidence.map((claim, index) => (
+            <div key={`${claim.kind}-${claim.basis}-${String(index)}`}>
+              <dt>
+                {fieldLabel(claim.kind)}
+                {claim.role ? ` · ${fieldLabel(claim.role)}` : ''}
+              </dt>
+              <dd>
+                {claim.value}
+                <small>
+                  {fieldLabel(claim.basis)}
+                  {claim.state === 'valid' ? '' : ` · ${fieldLabel(claim.state)}`}
+                </small>
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {data.evidenceTruncated ? (
+        <p role="status">
+          Only the first {String(data.evidence.length)} recorded observations are shown.
+        </p>
+      ) : null}
+      <p className="library-work-cover-presence">
+        {data.coverPresent
+          ? `Embedded cover art is present${
+              data.coverSurface ? ` (${fieldLabel(data.coverSurface)})` : ''
+            }.`
+          : 'No embedded cover art was recorded.'}
+      </p>
+      {data.chapters.length ? (
+        <details className="library-work-chapters">
+          <summary>
+            Chapters ({String(data.chapters.length)}
+            {data.chaptersTruncated ? ', truncated' : ''})
+          </summary>
+          <ol>
+            {data.chapters.map((chapter) => (
+              <li key={chapter.ordinal}>
+                {chapter.title ?? `Chapter ${String(chapter.ordinal)}`}
+                <small>{chapterSpan(chapter.startMilliseconds, chapter.endMilliseconds)}</small>
+              </li>
+            ))}
+          </ol>
+        </details>
+      ) : null}
+    </section>
+  )
+}
+
 function WorkSummary({ work }: { work: LibraryWorkView }) {
   const summary = work.summary
+  const evidenceUrl = reportEvidenceUrl(work)
   return (
     <>
       <header className="selected-work-header" tabIndex={-1} data-route-focus="true">
@@ -281,6 +380,7 @@ function WorkSummary({ work }: { work: LibraryWorkView }) {
           ))}
         </dl>
       ) : null}
+      {evidenceUrl ? <WorkEvidence detailUrl={evidenceUrl} /> : null}
       <WorkSources outcomes={work.preparationOutcomes} />
     </>
   )
@@ -1975,14 +2075,21 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                   ? search.preview === work.reviewCaseId
                   : search.work === work.workId
                 const needsAttention = work.attentionCount > 0
-                const status = work.preparation
-                  ? 'Preparation failed safely'
-                  : needsAttention
-                    ? work.attentionCount === 1
-                      ? '1 field needs attention'
-                      : `${String(work.attentionCount)} fields need attention`
-                    : 'No attention needed'
-                const terminalFailure = work.preparation !== null && !work.reviewCaseId
+                // A published report is not a failure. The row for a work
+                // that stopped before producing one has nothing to open and
+                // stays an article; a work whose evidence is addressable is a
+                // successful entry the owner can read.
+                const evidence = reportEvidenceUrl(work) !== null
+                const status = evidence
+                  ? 'Recorded evidence available'
+                  : work.preparation
+                    ? 'Preparation failed safely'
+                    : needsAttention
+                      ? work.attentionCount === 1
+                        ? '1 field needs attention'
+                        : `${String(work.attentionCount)} fields need attention`
+                      : 'No attention needed'
+                const terminalFailure = work.preparation !== null && !work.reviewCaseId && !evidence
                 const preparation = work.preparation
                 const preparationId = preparation ? `preparation-${work.id}` : undefined
                 const row = (
@@ -1999,7 +2106,9 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                       <span className="library-work-status">
                         <span
                           className={
-                            needsAttention || work.preparation ? 'needs-attention' : 'handled'
+                            !evidence && (needsAttention || work.preparation)
+                              ? 'needs-attention'
+                              : 'handled'
                           }
                         >
                           {status}

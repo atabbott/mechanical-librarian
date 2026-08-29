@@ -92,9 +92,15 @@ provider means to the review pipeline.
 6. **Recorded evidence is addressable without a review case.** An audiobook
    acquires no review case, so the `report_only` package row is what addresses
    its report: a read-only detail route keyed by connection, library and item
-   serves the current document through the same browse validation the library
-   page uses. Evidence that is recorded and retained but unreachable is not
-   evidence an owner has.
+   serves the current document, reconstructed as a domain report rather than
+   taken on the browse envelope's word. The identity travels in the query
+   because a library server's item id may contain a slash, which no path match
+   survives. Its row in the browser is a successful, openable entry rather
+   than a failure card, and each observation carries the state the extraction
+   gave it, so a malformed claim cannot read as sound evidence. Evidence that
+   is recorded and retained but unreachable is not evidence an owner has —
+   and a browser that drops the address is exactly as unreachable as no
+   address at all.
 7. **The audio source ceiling is its own setting.** An audiobook is read by
    header rather than whole, and is routinely larger than any EPUB, so the
    digest bound is `audio_source_bytes` (8 GiB by default, 16 GiB maximum,

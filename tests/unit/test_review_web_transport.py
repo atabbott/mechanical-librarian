@@ -1586,7 +1586,7 @@ def test_openapi_is_deterministic_and_secret_free(
         ("post", "/api/v1/activity/{connection}/{library}/revoke"),
         ("get", "/api/v1/attention"),
         ("get", "/api/v1/library"),
-        ("get", "/api/v1/library/{connection}/{library_name}/{item}/report"),
+        ("get", "/api/v1/library/report"),
         ("get", "/api/v1/operations/status"),
         ("get", "/api/v1/operations/support/preview"),
         ("post", "/api/v1/operations/support/export"),

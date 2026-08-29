@@ -5168,8 +5168,9 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
     found = repository.count_current_review_cases("Recorded work")
     incidents = operational_incidents(repository.operational_snapshot())
     addressed = repository.read_current_report_document("primary", "fiction", "item")
-    with pytest.raises(MetadataReportError) as absent:
-        repository.read_current_report_document("primary", "fiction", "no-such-item")
+    absent = repository.read_current_report_document(
+        "primary", "fiction", "no-such-item"
+    )
     remaining = repository.claim_review_pipeline_action(15)
     repository.close()
 
@@ -5185,9 +5186,12 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
     assert browse_report(report_document)["audio"] is not None
     # And addressable by the identity of the package row that lists it, which
     # is the only route to an audiobook's evidence: it has no review case.
+    assert addressed is not None
     assert MetadataReport.from_json(addressed).schema_version == "metadata-report-v31"
     assert browse_report(addressed)["audio"] is not None
-    assert str(absent.value) == "review report is unavailable"
+    # No such work is a `None`, not a refusal: a store that cannot answer
+    # raises, and the two must not read alike to the caller above.
+    assert absent is None
     assert found == (1, 0)
     # And a stop that is not a fault raises no incident, so the status surface
     # keeps answering for every other library.

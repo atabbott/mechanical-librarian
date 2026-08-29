@@ -379,6 +379,7 @@ describe('ReviewApiClient', () => {
       mediaKind: 'ebook',
       attentionCount: 1,
       attention: 'needs_attention',
+      detailUrl: '/review/case-1',
       preparation: null,
       preparationOutcomes: [],
     })
@@ -391,6 +392,7 @@ describe('ReviewApiClient', () => {
       mediaKind: 'ebook',
       attentionCount: 0,
       attention: 'no_attention_needed',
+      detailUrl: null,
       preparation: null,
       preparationOutcomes: [{ providerRequests: 2, laneKind: 'isbn', provider: 'google-books', reason: 'Returned no matching metadata, so nothing was retained.', status: 'no_match' }],
       // A work with no review case still travels with its current values, so

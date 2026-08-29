@@ -1178,7 +1178,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
 
     def read_current_report_document(
         self, connection: str, library: str, item: str
-    ) -> str:
+    ) -> str | None:
         return self._review_projections.read_current_report_document(
             connection, library, item
         )

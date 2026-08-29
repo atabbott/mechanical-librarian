@@ -10,7 +10,7 @@ import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, cast
-from urllib.parse import quote
+from urllib.parse import urlencode
 
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
@@ -172,7 +172,7 @@ class ReviewLibraryStore(Protocol):
     ) -> ReviewAttentionSnapshot: ...
     def read_current_report_document(
         self, connection: str, library: str, item: str
-    ) -> str: ...
+    ) -> str | None: ...
 
 
 class HumanDecisionStore(CurrentReviewCaseStore, Protocol):
@@ -1088,8 +1088,19 @@ class BrowseReviewLibrary:
                 connection, library, item
             )
         except Exception as error:
-            raise ReviewWebError("missing") from error
+            # A store that could not answer is not a work that is not there.
+            # Collapsing the two told an owner their audiobook had vanished
+            # whenever the database was busy or unreadable.
+            raise ReviewWebError("unavailable") from error
+        if document is None:
+            raise ReviewWebError("missing")
         try:
+            # The domain report first: `browse_report` closes the envelope but
+            # takes each member on trust, so a shaped-but-corrupt document
+            # would have projected arbitrary evidence as recorded fact. This
+            # is the same reconstruction `_library_item` performs before it
+            # projects a caseless row.
+            MetadataReport.from_json(document)
             report = browse_report(document)
             return _report_detail(report)
         except Exception as error:
@@ -1101,16 +1112,19 @@ def _report_detail_url(target: TargetFacts) -> str:
 
     A work without a review case has nothing to open under `/review`, so its
     evidence is addressed by the identity the package row already carries.
-    Each component is escaped whole: a library or item name is owner data and
-    may hold any character a target permits.
+
+    The identity travels in the query rather than in path segments. A library
+    server's item id may contain a slash, and both the catalogue and
+    `TargetFacts` accept one; percent-encoded in a path it is decoded before
+    the router matches, so such a work answered 404 at exactly the address its
+    own row handed out.
     """
-    return (
-        "/api/v1/library/"
-        + "/".join(
-            quote(value, safe="")
-            for value in (target.connection, target.library, target.item)
-        )
-        + "/report"
+    return "/api/v1/library/report?" + urlencode(
+        {
+            "connection": target.connection,
+            "library": target.library,
+            "item": target.item,
+        }
     )
 
 
