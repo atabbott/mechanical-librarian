@@ -301,7 +301,8 @@ def _server(
         if preparation_terminal:
             repository._connection.execute(
                 "UPDATE review_preparation_presentation SET work_stage='projection',"
-                "current_work_state='complete',work_outcome='ready',updated_at=1000 "
+                "current_work_state='complete',work_outcome='ready',updated_at=1000,"
+                "completion_sequence=ordinal+1 "
                 "WHERE row_kind='work'"
             )
             repository._connection.execute(

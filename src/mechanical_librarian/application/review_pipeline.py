@@ -295,6 +295,12 @@ class ReviewPipelineRepository(Protocol):
 
     def set_review_pipeline_paused(self, paused: bool, updated_at: int) -> None: ...
 
+    def resume_review_pipeline(
+        self,
+        libraries: tuple[tuple[str, str, str, str], ...],
+        updated_at: int,
+    ) -> None: ...
+
     def target_connection_conditions(self) -> tuple[TargetConnectionCondition, ...]: ...
     def guard_target_connection(
         self, action: PipelineAction, checked_at: int
@@ -610,7 +616,16 @@ class ReviewPreparationPipeline:
         repository = self._open_repository()
         try:
             try:
-                repository.set_review_pipeline_paused(paused, self._clock())
+                if paused:
+                    repository.set_review_pipeline_paused(True, self._clock())
+                else:
+                    repository.resume_review_pipeline(
+                        tuple(
+                            (connection, library, values[0], values[1])
+                            for (connection, library), values in self._libraries.items()
+                        ),
+                        self._clock(),
+                    )
             except ReviewPipelineError:
                 raise
             except Exception as error:
@@ -1267,20 +1282,9 @@ class ReviewPreparationSupervisor:
 
     def set_paused(self, paused: bool) -> None:
         with self._schedule_lock:
-            if not paused:
-                configured = {item[:2] for item in self.libraries}
-                deferred = self._pipeline.deferred_library_additions()
-                if any(target not in configured for target in deferred):
-                    raise ReviewPipelineError("configuration")
             self._pipeline.set_paused(paused)
             self._schedule_paused = paused
             if not paused:
-                for connection, library in deferred:
-                    if (
-                        self._pipeline.request_library_addition(connection, library)
-                        is not None
-                    ):
-                        self._wake.set()
                 self._schedule_waiting_for_action = False
                 self._next_schedule_at = None
         if not paused:

@@ -2099,6 +2099,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         const next = { ...current, preview: reviewCaseId, field }
         delete next.work
         delete next.attention
+        delete next.preparation
         return next
       },
     })

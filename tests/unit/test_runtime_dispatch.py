@@ -193,6 +193,12 @@ def test_post_commit_paused_library_addition_keeps_successor_available_until_res
 
         def set_paused(self, paused: bool) -> None:
             self.paused = paused
+            if not paused:
+                self.requests.extend(
+                    (connection, library, PreparationTrigger.LIBRARY_ADDED)
+                    for connection, library in self.deferred
+                )
+                self.deferred = ()
 
     pipeline = PausedPipeline()
     supervisor = ReviewPreparationSupervisor(pipeline)

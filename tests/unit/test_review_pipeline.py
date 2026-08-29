@@ -852,7 +852,7 @@ def test_preparation_projection_bounds_private_names_and_preserves_outcomes(
     for index, (work_id,) in enumerate(work):
         repository._connection.execute(
             "UPDATE review_preparation_work SET stage='complete',state=?,updated_at=? WHERE work_id=?",
-            ("complete" if index % 2 == 0 else "failed", 103 + index, work_id),
+            ("complete" if index % 2 == 0 else "failed", 103, work_id),
         )
     repository._connection.execute(
         "UPDATE review_preparation_scans SET state='completed_with_failures',updated_at=113"
@@ -862,6 +862,9 @@ def test_preparation_projection_bounds_private_names_and_preserves_outcomes(
 
     presentation = repository.preparation_presentation(113)
     repository.close()
+    reopened = open_repository(application_path, create=False)
+    after_reopen = reopened.preparation_presentation(113)
+    reopened.close()
     assert presentation is not None
     assert presentation.passage.ready == 5
     assert presentation.passage.failed == 5
@@ -873,6 +876,8 @@ def test_preparation_projection_bounds_private_names_and_preserves_outcomes(
         "failed",
     }
     assert presentation.recent_completions[0].name == "Private book 09"
+    assert after_reopen is not None
+    assert after_reopen.recent_completions == presentation.recent_completions
     assert presentation.throughput_per_minute == 46.2
 
 
@@ -1243,7 +1248,7 @@ def test_per_work_presentation_query_count_does_not_grow_with_run_population(
             row[3]
             for sql in (
                 "SELECT presentation.display_name,authoritative.stage FROM review_preparation_presentation AS presentation INDEXED BY review_preparation_presentation_active CROSS JOIN review_preparation_work AS authoritative ON authoritative.work_id=presentation.work_id WHERE presentation.row_kind='work' AND presentation.run_id=? AND presentation.current_work_state='running' AND authoritative.state='running' ORDER BY presentation.enrollment_ordinal,presentation.ordinal,presentation.work_id LIMIT 5",
-                "SELECT display_name,work_outcome,updated_at FROM review_preparation_presentation WHERE row_kind='work' AND run_id=? AND work_outcome IS NOT NULL ORDER BY updated_at DESC,enrollment_ordinal DESC,ordinal DESC,work_id DESC LIMIT 8",
+                "SELECT display_name,work_outcome,updated_at FROM review_preparation_presentation WHERE row_kind='work' AND run_id=? AND work_outcome IS NOT NULL ORDER BY completion_sequence DESC LIMIT 8",
                 "SELECT COUNT(*) FROM review_preparation_presentation WHERE row_kind='work' AND run_id=? AND work_outcome IS NOT NULL AND updated_at>=?",
             )
             for row in repository._connection.execute(
@@ -1445,6 +1450,15 @@ def test_nonhex_presentation_cycle_identity_fails_closed(
         "deferred_enrollment_overlap",
         "deferred_active_scan_overlap",
         "work_display_name",
+        "enrollment_cycle_state",
+        "work_stage",
+        "work_current_state",
+        "work_outcome",
+        "trigger_updated_at",
+        "enrollment_updated_at",
+        "deferred_updated_at",
+        "work_updated_at",
+        "completion_sequence",
     ),
 )
 def test_presentation_corruption_is_value_free_and_refused_without_repair(
@@ -1507,12 +1521,45 @@ def test_presentation_corruption_is_value_free_and_refused_without_repair(
             "library_name='poetry',row_id=? WHERE row_kind='deferred_enrollment'",
             (deferred_preparation_enrollment_id("primary", "poetry"),),
         )
-    else:
+    elif corruption == "work_display_name":
         private_value += "界" * 683
         connection.execute(
             "UPDATE review_preparation_presentation SET display_name=? "
             "WHERE row_kind='work'",
             (private_value,),
+        )
+    elif corruption == "enrollment_cycle_state":
+        connection.execute(
+            "UPDATE review_preparation_presentation SET cycle_state=? "
+            "WHERE row_kind='enrollment'",
+            (private_value,),
+        )
+    elif corruption == "work_stage":
+        connection.execute(
+            "UPDATE review_preparation_presentation SET work_stage=? WHERE row_kind='work'",
+            (private_value,),
+        )
+    elif corruption == "work_current_state":
+        connection.execute(
+            "UPDATE review_preparation_presentation SET current_work_state=? WHERE row_kind='work'",
+            (private_value,),
+        )
+    elif corruption == "work_outcome":
+        connection.execute(
+            "UPDATE review_preparation_presentation SET work_outcome=?,completion_sequence=1 "
+            "WHERE row_kind='work'",
+            (private_value,),
+        )
+    elif corruption.endswith("_updated_at"):
+        row_kind = corruption.removesuffix("_updated_at")
+        connection.execute(
+            "UPDATE review_preparation_presentation SET updated_at=-1 WHERE row_kind=?",
+            ("deferred_enrollment" if row_kind == "deferred" else row_kind,),
+        )
+    else:
+        connection.execute(
+            "UPDATE review_preparation_presentation SET completion_sequence=0 "
+            "WHERE row_kind='work'"
         )
     connection.commit()
     before_rows = tuple(
@@ -2087,7 +2134,7 @@ def test_deferred_ordinals_remain_canonical_during_out_of_order_promotion(
     assert current is not None and current.triggers[0].accepted_count == 2
 
 
-def test_resume_fails_closed_for_unconfigured_deferred_target(
+def test_resume_retires_unconfigured_deferred_target_without_pinning_run(
     application_path: Path,
 ) -> None:
     owner = open_repository(application_path)
@@ -2110,19 +2157,155 @@ def test_resume_fails_closed_for_unconfigured_deferred_target(
     supervisor.set_paused(True)
     supervisor._wake.clear()
 
-    with pytest.raises(ReviewPipelineError, match="configuration"):
-        supervisor.set_paused(False)
+    supervisor.set_paused(False)
 
     current = owner.preparation_presentation(102)
-    assert owner.review_pipeline_paused()
-    assert supervisor.paused()
-    assert supervisor._schedule_paused
-    assert not supervisor._wake.is_set()
-    assert current is not None and current.state is PreparationRunState.BLOCKED
-    assert owner.deferred_library_additions() == (("primary", "history"),)
+    assert not owner.review_pipeline_paused()
+    assert not supervisor.paused()
+    assert not supervisor._schedule_paused
+    assert supervisor._wake.is_set()
+    assert current is None
+    assert owner.deferred_library_additions() == ()
     assert owner.review_pipeline_progress("primary", "history") is None
     assert owner.claim_review_pipeline_action(103) is None
     owner.close()
+    reopened = open_repository(application_path, create=False)
+    assert reopened.preparation_presentation(103) is None
+    assert reopened.review_pipeline_progress("primary", "history") is None
+    assert reopened.claim_review_pipeline_action(103) is None
+    reopened.close()
+
+
+def test_atomic_resume_retires_removed_target_and_compacts_survivor(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.set_review_pipeline_paused(True, 100)
+    repository.request_library_addition("primary", "history", "lib-2", _PRODUCER, 101)
+    repository.request_library_addition("primary", "poetry", "lib-3", _PRODUCER, 102)
+    repository.resume_review_pipeline((("primary", "poetry", "lib-3", _PRODUCER),), 103)
+    assert repository.review_pipeline_progress("primary", "history") is None
+    assert repository.review_pipeline_progress("primary", "poetry") is not None
+    assert repository._connection.execute(
+        "SELECT library_name,ordinal FROM review_preparation_presentation "
+        "WHERE row_kind='enrollment'"
+    ).fetchall() == [("poetry", 0)]
+    assert repository._connection.execute(
+        "SELECT accepted_count FROM review_preparation_presentation "
+        "WHERE row_id='trigger:library_added'"
+    ).fetchone() == (2,)
+    repository.close()
+
+    reopened = open_repository(application_path, create=False)
+    assert reopened.review_pipeline_progress("primary", "history") is None
+    assert reopened.review_pipeline_progress("primary", "poetry") is not None
+    action = reopened.claim_review_pipeline_action(104)
+    assert action is not None
+    assert action.library == "poetry"
+    reopened.close()
+
+
+@pytest.mark.parametrize("failure_index", (0, 1), ids=("first", "later"))
+def test_atomic_resume_rolls_back_every_promotion_and_retries_once(
+    application_path: Path, failure_index: int
+) -> None:
+    repository = open_repository(application_path)
+    repository.set_review_pipeline_paused(True, 100)
+    libraries = (
+        ("primary", "history", "lib-2", _PRODUCER),
+        ("primary", "poetry", "lib-3", _PRODUCER),
+    )
+    for index, (connection, library, library_id, fingerprint) in enumerate(libraries):
+        repository.request_library_addition(
+            connection, library, library_id, fingerprint, 101 + index
+        )
+    accepted_before = repository._connection.execute(
+        "SELECT accepted_count FROM review_preparation_presentation "
+        "WHERE row_id='trigger:library_added'"
+    ).fetchone()
+    original = repository._review_scans._request_review_scan_unpaused
+    calls = 0
+
+    def fail_selected(*args: object, **kwargs: object) -> PipelineProgress:
+        nonlocal calls
+        if calls == failure_index:
+            calls += 1
+            raise sqlite3.OperationalError("private promotion sentinel")
+        calls += 1
+        return original(*args, **kwargs)  # type: ignore[arg-type]
+
+    with (
+        patch.object(
+            repository._review_scans, "_request_review_scan_unpaused", fail_selected
+        ),
+        pytest.raises(MetadataReportError, match="persistence failed") as raised,
+    ):
+        repository.resume_review_pipeline(libraries, 104)
+    assert "private promotion sentinel" not in str(raised.value)
+    assert repository.review_pipeline_paused()
+    assert repository.deferred_library_additions() == (
+        ("primary", "history"),
+        ("primary", "poetry"),
+    )
+    assert repository._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_scans WHERE library_name IN ('history','poetry')"
+    ).fetchone() == (0,)
+    assert (
+        repository._connection.execute(
+            "SELECT accepted_count FROM review_preparation_presentation "
+            "WHERE row_id='trigger:library_added'"
+        ).fetchone()
+        == accepted_before
+    )
+
+    repository.resume_review_pipeline(libraries, 105)
+    assert not repository.review_pipeline_paused()
+    assert repository.deferred_library_additions() == ()
+    assert repository._connection.execute(
+        "SELECT library_name,COUNT(*) FROM review_preparation_scans "
+        "WHERE library_name IN ('history','poetry') GROUP BY library_name ORDER BY library_name"
+    ).fetchall() == [("history", 1), ("poetry", 1)]
+    repository.close()
+
+    reopened = open_repository(application_path, create=False)
+    assert (
+        reopened._connection.execute(
+            "SELECT accepted_count FROM review_preparation_presentation "
+            "WHERE row_id='trigger:library_added'"
+        ).fetchone()
+        == accepted_before
+    )
+    reopened.close()
+
+
+def test_pause_mutation_failure_rolls_back_releases_writer_and_retries(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    with (
+        patch(
+            "mechanical_librarian.adapters.persistence.review_scans.refresh_preparation_run_state",
+            side_effect=sqlite3.OperationalError("private pause sentinel"),
+        ),
+        pytest.raises(MetadataReportError, match="persistence failed") as raised,
+    ):
+        repository.set_review_pipeline_paused(True, 100)
+    assert repository._connection.in_transaction is False
+    assert not repository.review_pipeline_paused()
+    assert "private pause sentinel" not in str(raised.value)
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    second = sqlite3.connect(application_path, timeout=0)
+    second.execute("BEGIN IMMEDIATE")
+    second.execute(
+        "UPDATE review_preparation_control SET updated_at=99 WHERE singleton=1"
+    )
+    second.commit()
+    second.close()
+    repository.set_review_pipeline_paused(True, 101)
+    repository.close()
+    reopened = open_repository(application_path, create=False)
+    assert reopened.review_pipeline_paused()
+    reopened.close()
 
 
 def test_supervisor_serializes_resume_prevalidation_with_library_addition(

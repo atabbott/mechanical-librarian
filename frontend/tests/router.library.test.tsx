@@ -60,7 +60,24 @@ describe('Library route', () => {
     const confirmedPresentation = confirmed.presentation
     if (!confirmedPresentation) throw new Error('preparation fixture requires a presentation')
     http.getPreparation = vi.fn(async () => confirmed)
-    const { queryClient } = renderRoute('/library?lens=all', http, updates)
+    http.getAttention = vi.fn(async () => ({
+      total: 1,
+      items: [
+        {
+          id: 'case-1',
+          destination: 'title',
+          title: 'A Book',
+          authors: [],
+          library: 'Books',
+          mediaKind: 'ebook',
+          classificationReason: 'Title needs a decision',
+          notices: [],
+          provenance: [],
+          workAttentionCount: 1,
+        },
+      ],
+    }))
+    const { queryClient, router } = renderRoute('/library?lens=all', http, updates)
 
     const summary = await screen.findByRole('button', { name: /Preparing your library/u })
     expect(summary).toBeVisible()
@@ -181,6 +198,19 @@ describe('Library route', () => {
       queryClient.setQueryData(['review-preparation'], semanticChange)
     })
     expect(document.querySelector('.preparation-run-state')).not.toHaveClass('reported-change')
+
+    await user.click(screen.getByRole('button', { name: 'Attention queue' }))
+    const attentionRail = await screen.findByLabelText('Attention queue')
+    await user.click(within(attentionRail).getByRole('button', { name: /A Book/u }))
+    const selectedHeading = await screen.findByRole('heading', { name: 'A Book' })
+    await waitFor(() => expect(selectedHeading.closest('[data-route-focus]')).toHaveFocus())
+    expect(screen.queryByRole('heading', { name: 'Now preparing' })).toBeNull()
+    expect(screen.getByRole('button', { name: /Choose current value/u })).toBeEnabled()
+    expect(router.state.location.search).toEqual({
+      lens: 'all',
+      preview: 'case-1',
+      field: 'title',
+    })
   })
 
   it('retries a failed reconnect snapshot until current-epoch HTTP succeeds', async () => {

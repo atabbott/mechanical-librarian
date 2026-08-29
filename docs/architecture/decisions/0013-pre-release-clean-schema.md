@@ -76,6 +76,8 @@ command are retired. This does not weaken ordinary absent-or-exact-current
 startup or create a generic conversion seam.
 
 Issue #869 also takes the clean-rebuild branch. Its exact-current application
-schema adds the derived `review_preparation_presentation` object and supplies no
-migration, adoption, repair, or compatibility path. Absent state is created at
-bootstrap; any earlier application schema is rejected before mutation.
+schema adds the derived `review_preparation_presentation` object, including its
+first-terminal completion sequence used for authoritative recent ordering, and
+supplies no migration, adoption, repair, or compatibility path. Absent state is
+created at bootstrap; any earlier application schema is rejected before
+mutation.

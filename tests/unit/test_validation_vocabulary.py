@@ -7,10 +7,12 @@ import pytest
 from mechanical_librarian.domain.validation import (
     boolean,
     bounded_integer,
+    bounded_utf8_text,
     closed_document,
     exact_type,
     literal,
     non_negative_integer,
+    prefixed_hex_identity,
     text,
 )
 
@@ -99,6 +101,23 @@ def test_non_integer_values_are_rejected_without_raising(value: object) -> None:
 def test_non_negative_integer_starts_at_zero() -> None:
     assert non_negative_integer(0)
     assert not non_negative_integer(-1)
+
+
+def test_bounded_utf8_text_uses_exact_type_and_encoded_bytes() -> None:
+    check = bounded_utf8_text(6)
+    assert check("ééé")
+    assert not check("")
+    assert not check("éééé")
+    assert not check(_Text("value"))
+    assert not check("\ud800")
+
+
+def test_prefixed_hex_identity_requires_exact_lowercase_64_hex_suffix() -> None:
+    check = prefixed_hex_identity("record_")
+    assert check("record_" + "a" * 64)
+    assert not check("record_" + "A" * 64)
+    assert not check("record_" + "a" * 63)
+    assert not check(_Text("record_" + "a" * 64))
 
 
 def test_literal_accepts_only_the_frozen_constant() -> None:

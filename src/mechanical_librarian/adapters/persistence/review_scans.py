@@ -182,135 +182,17 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                     transaction.commit()
                     return None
                 raise ReviewPipelineError("paused")
-            row = self._connection.execute(
-                "SELECT scan_id,state,producer_fingerprint,rescan_requested FROM review_preparation_scans "
-                "WHERE connection_name=? AND library_name=? "
-                "ORDER BY requested_at DESC,scan_id DESC LIMIT 1",
-                (connection, library),
-            ).fetchone()
-            if (
-                row is not None
-                and row[1] in {"completed", "completed_with_failures"}
-                and is_first_boot_scan_id(row[0], connection, library)
-            ):
-                latest = self._connection.execute(
-                    "SELECT scan_id,connection_name,library_name,state "
-                    "FROM review_preparation_scans s WHERE s.scan_id=("
-                    "SELECT selected.scan_id FROM review_preparation_scans selected "
-                    "WHERE selected.connection_name=s.connection_name "
-                    "AND selected.library_name=s.library_name "
-                    "ORDER BY selected.requested_at DESC,selected.scan_id DESC LIMIT 1)"
-                ).fetchall()
-                first_preparation_incomplete = all(
-                    is_first_boot_scan_id(scan_id, row_connection, row_library)
-                    for scan_id, row_connection, row_library, _state in latest
-                ) and any(
-                    state not in {"completed", "completed_with_failures"}
-                    for _scan_id, _connection, _library, state in latest
-                )
-                if first_preparation_incomplete:
-                    transaction.commit()
-                    progress = self.review_pipeline_progress(connection, library)
-                    if progress is None:
-                        raise MetadataReportError("review preparation state is invalid")
-                    return progress
-                row = None
-                first_boot = False
-            if row is not None:
-                if row[1] in {"queued", "discovering", "processing"}:
-                    if row[2] != producer_fingerprint:
-                        raise MetadataReportError(
-                            "review preparation producer changed during active work"
-                        )
-                    if row[1] == "queued":
-                        self._connection.execute(
-                            "UPDATE review_preparation_scans SET requested_at=?,"
-                            "updated_at=? WHERE scan_id=?",
-                            (requested_at, requested_at, row[0]),
-                        )
-                    else:
-                        self._connection.execute(
-                            "UPDATE review_preparation_scans SET rescan_requested=1,updated_at=? WHERE scan_id=?",
-                            (requested_at, row[0]),
-                        )
-                else:
-                    self._connection.execute(
-                        "UPDATE review_preparation_scans SET state='queued',"
-                        "library_id=?,producer_fingerprint=?,requested_at=?,updated_at=?,"
-                        "catalogue_generation=NULL,catalogue_fingerprint=NULL,total=0,"
-                        "qualification_epoch=NULL,refresh_count=0,"
-                        "rescan_requested=0 WHERE scan_id=?",
-                        (
-                            library_id,
-                            producer_fingerprint,
-                            requested_at,
-                            requested_at,
-                            row[0],
-                        ),
-                    )
-                self._refresh_target_connection_affected(connection)
-                if first_boot and trigger is None:
-                    trigger = PreparationTrigger.INITIAL_SETUP
-                if trigger is not None:
-                    accept_preparation_trigger(
-                        self._connection,
-                        trigger,
-                        cast(str, row[0]),
-                        connection,
-                        library,
-                        requested_at,
-                        cast(str, row[1]),
-                        bool(row[3]),
-                    )
-                transaction.commit()
-                progress = self.review_pipeline_progress(connection, library)
-                if progress is None:
-                    raise MetadataReportError("review preparation state is invalid")
-                return progress
-            scan_id = pipeline_scan_id(connection, library, first_boot=first_boot)
-            self._connection.execute(
-                "INSERT INTO review_preparation_scans("
-                "scan_id,connection_name,library_name,library_id,producer_fingerprint,"
-                "state,requested_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
-                (
-                    scan_id,
-                    connection,
-                    library,
-                    library_id,
-                    producer_fingerprint,
-                    "queued",
-                    requested_at,
-                    requested_at,
-                ),
-            )
-            self._refresh_target_connection_affected(connection)
-            if first_boot and trigger is None:
-                trigger = PreparationTrigger.INITIAL_SETUP
-            if trigger is not None:
-                accept_preparation_trigger(
-                    self._connection,
-                    trigger,
-                    scan_id,
-                    connection,
-                    library,
-                    requested_at,
-                    None,
-                    False,
-                )
-            transaction.commit()
-            return PipelineProgress(
-                scan_id,
+            progress = self._request_review_scan_unpaused(
                 connection,
                 library,
-                "queued",
-                0,
-                0,
-                0,
-                0,
-                False,
+                library_id,
+                producer_fingerprint,
                 requested_at,
-                _EMPTY_STAGES,
+                first_boot=first_boot,
+                trigger=trigger,
             )
+            transaction.commit()
+            return progress
         except (sqlite3.Error, MetadataReportError, ReviewPipelineError) as error:
             transaction.rollback()
             if isinstance(error, (MetadataReportError, ReviewPipelineError)):
@@ -318,6 +200,146 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             raise MetadataReportError(
                 "review preparation persistence failed"
             ) from error
+
+    def _request_review_scan_unpaused(
+        self,
+        connection: str,
+        library: str,
+        library_id: str,
+        producer_fingerprint: str,
+        requested_at: int,
+        *,
+        first_boot: bool,
+        trigger: PreparationTrigger | None,
+        promoting_deferred: bool = False,
+    ) -> PipelineProgress:
+        row = self._connection.execute(
+            "SELECT scan_id,state,producer_fingerprint,rescan_requested FROM review_preparation_scans "
+            "WHERE connection_name=? AND library_name=? "
+            "ORDER BY requested_at DESC,scan_id DESC LIMIT 1",
+            (connection, library),
+        ).fetchone()
+        if (
+            row is not None
+            and row[1] in {"completed", "completed_with_failures"}
+            and is_first_boot_scan_id(row[0], connection, library)
+            and not promoting_deferred
+        ):
+            latest = self._connection.execute(
+                "SELECT scan_id,connection_name,library_name,state "
+                "FROM review_preparation_scans s WHERE s.scan_id=("
+                "SELECT selected.scan_id FROM review_preparation_scans selected "
+                "WHERE selected.connection_name=s.connection_name "
+                "AND selected.library_name=s.library_name "
+                "ORDER BY selected.requested_at DESC,selected.scan_id DESC LIMIT 1)"
+            ).fetchall()
+            first_preparation_incomplete = all(
+                is_first_boot_scan_id(scan_id, row_connection, row_library)
+                for scan_id, row_connection, row_library, _state in latest
+            ) and any(
+                state not in {"completed", "completed_with_failures"}
+                for _scan_id, _connection, _library, state in latest
+            )
+            if first_preparation_incomplete:
+                progress = self.review_pipeline_progress(connection, library)
+                if progress is None:
+                    raise MetadataReportError("review preparation state is invalid")
+                return progress
+            row = None
+            first_boot = False
+        if row is not None:
+            if row[1] in {"queued", "discovering", "processing"}:
+                if row[2] != producer_fingerprint:
+                    raise MetadataReportError(
+                        "review preparation producer changed during active work"
+                    )
+                if row[1] == "queued":
+                    self._connection.execute(
+                        "UPDATE review_preparation_scans SET requested_at=?,"
+                        "updated_at=? WHERE scan_id=?",
+                        (requested_at, requested_at, row[0]),
+                    )
+                else:
+                    self._connection.execute(
+                        "UPDATE review_preparation_scans SET rescan_requested=1,updated_at=? WHERE scan_id=?",
+                        (requested_at, row[0]),
+                    )
+            else:
+                self._connection.execute(
+                    "UPDATE review_preparation_scans SET state='queued',"
+                    "library_id=?,producer_fingerprint=?,requested_at=?,updated_at=?,"
+                    "catalogue_generation=NULL,catalogue_fingerprint=NULL,total=0,"
+                    "qualification_epoch=NULL,refresh_count=0,"
+                    "rescan_requested=0 WHERE scan_id=?",
+                    (
+                        library_id,
+                        producer_fingerprint,
+                        requested_at,
+                        requested_at,
+                        row[0],
+                    ),
+                )
+            self._refresh_target_connection_affected(connection)
+            if first_boot and trigger is None:
+                trigger = PreparationTrigger.INITIAL_SETUP
+            if trigger is not None:
+                accept_preparation_trigger(
+                    self._connection,
+                    trigger,
+                    cast(str, row[0]),
+                    connection,
+                    library,
+                    requested_at,
+                    cast(str, row[1]),
+                    bool(row[3]),
+                )
+            progress = self.review_pipeline_progress(connection, library)
+            if progress is None:
+                raise MetadataReportError("review preparation state is invalid")
+            return progress
+        scan_id = pipeline_scan_id(connection, library, first_boot=first_boot)
+        self._connection.execute(
+            "INSERT INTO review_preparation_scans("
+            "scan_id,connection_name,library_name,library_id,producer_fingerprint,"
+            "state,requested_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+            (
+                scan_id,
+                connection,
+                library,
+                library_id,
+                producer_fingerprint,
+                "queued",
+                requested_at,
+                requested_at,
+            ),
+        )
+        self._refresh_target_connection_affected(connection)
+        if first_boot and trigger is None:
+            trigger = PreparationTrigger.INITIAL_SETUP
+        if trigger is not None:
+            accept_preparation_trigger(
+                self._connection,
+                trigger,
+                scan_id,
+                connection,
+                library,
+                requested_at,
+                None,
+                False,
+            )
+        return PipelineProgress(
+            scan_id,
+            connection,
+            library,
+            "queued",
+            0,
+            0,
+            0,
+            0,
+            False,
+            requested_at,
+            _EMPTY_STAGES,
+        )
 
     def review_pipeline_progress(
         self, connection: str, library: str
@@ -451,6 +473,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
         if type(paused) is not bool or type(updated_at) is not int or updated_at < 0:
             raise MetadataReportError("review preparation control is invalid")
         transaction = self._transaction("set_review_pipeline_paused")
+        failed = False
         try:
             transaction.begin()
             self._connection.execute(
@@ -459,10 +482,108 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             )
             refresh_preparation_run_state(self._connection, updated_at)
             transaction.commit()
-        except sqlite3.Error as error:
-            raise MetadataReportError(
-                "review preparation persistence failed"
-            ) from error
+        except Exception:
+            transaction.rollback()
+            failed = True
+        if failed:
+            raise MetadataReportError("review preparation persistence failed") from None
+
+    def resume_review_pipeline(
+        self,
+        libraries: tuple[tuple[str, str, str, str], ...],
+        updated_at: int,
+    ) -> None:
+        if (
+            type(libraries) is not tuple
+            or len(libraries) > 128
+            or type(updated_at) is not int
+            or updated_at < 0
+            or any(
+                type(item) is not tuple
+                or len(item) != 4
+                or any(
+                    type(value) is not str or not 1 <= len(value) <= 128
+                    for value in item[:3]
+                )
+                or len(item[3]) != 64
+                or any(character not in "0123456789abcdef" for character in item[3])
+                for item in libraries
+            )
+        ):
+            raise MetadataReportError("review preparation scope is invalid")
+        if len({item[:2] for item in libraries}) != len(libraries):
+            raise MetadataReportError("review preparation scope is invalid")
+        configured = {(item[0], item[1]): item[2:] for item in libraries}
+        transaction = self._transaction("resume_review_pipeline")
+        try:
+            transaction.begin()
+            deferred = self._connection.execute(
+                "SELECT row_id,connection_name,library_name,ordinal "
+                "FROM review_preparation_presentation "
+                "WHERE row_kind='deferred_enrollment' ORDER BY ordinal,row_id"
+            ).fetchall()
+            for row_id, connection, library, _ordinal in deferred:
+                if (connection, library) not in configured:
+                    self._connection.execute(
+                        "DELETE FROM review_preparation_presentation WHERE row_id=?",
+                        (row_id,),
+                    )
+            authorities = self._connection.execute(
+                "SELECT row_id,row_kind,scan_id,cycle_id FROM review_preparation_presentation "
+                "WHERE row_kind IN ('enrollment','deferred_enrollment') "
+                "ORDER BY ordinal,row_id"
+            ).fetchall()
+            if (
+                not authorities
+                and self._connection.execute(
+                    "SELECT COUNT(*) FROM review_preparation_presentation WHERE row_kind='work'"
+                ).fetchone()[0]
+                == 0
+            ):
+                self._connection.execute("DELETE FROM review_preparation_presentation")
+            else:
+                for ordinal, (row_id, row_kind, scan_id, cycle_id) in enumerate(
+                    authorities
+                ):
+                    self._connection.execute(
+                        "UPDATE review_preparation_presentation SET ordinal=?,updated_at=? WHERE row_id=?",
+                        (ordinal, updated_at, row_id),
+                    )
+                    if row_kind == "enrollment" and cycle_id is not None:
+                        self._connection.execute(
+                            "UPDATE review_preparation_presentation SET enrollment_ordinal=? "
+                            "WHERE row_kind='work' AND scan_id=? AND cycle_id=?",
+                            (ordinal, scan_id, cycle_id),
+                        )
+            self._connection.execute(
+                "UPDATE review_preparation_control SET paused=0,updated_at=? WHERE singleton=1",
+                (updated_at,),
+            )
+            surviving = self._connection.execute(
+                "SELECT connection_name,library_name FROM review_preparation_presentation "
+                "WHERE row_kind='deferred_enrollment' ORDER BY ordinal,row_id"
+            ).fetchall()
+            for connection, library in surviving:
+                library_id, fingerprint = configured[(connection, library)]
+                self._request_review_scan_unpaused(
+                    connection,
+                    library,
+                    library_id,
+                    fingerprint,
+                    updated_at,
+                    first_boot=False,
+                    trigger=PreparationTrigger.LIBRARY_ADDED,
+                    promoting_deferred=True,
+                )
+            refresh_preparation_run_state(self._connection, updated_at)
+            transaction.commit()
+        except Exception:
+            transaction.rollback()
+            failed = True
+        else:
+            failed = False
+        if failed:
+            raise MetadataReportError("review preparation persistence failed") from None
 
     def recover_review_pipeline(
         self, producers: tuple[tuple[str, str, str, str], ...]

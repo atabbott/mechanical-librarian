@@ -18,7 +18,12 @@ from mechanical_librarian.domain.preparation_presentation import (
     PreparationTrigger,
     PreparationTriggerRecord,
 )
-from mechanical_librarian.domain.validation import preparation_display_name
+from mechanical_librarian.domain.validation import (
+    bounded_utf8_text,
+    non_negative_integer,
+    prefixed_hex_identity,
+    preparation_display_name,
+)
 
 if TYPE_CHECKING:
     from mechanical_librarian.application.catalogue import CatalogueEntry
@@ -396,7 +401,7 @@ def refresh_preparation_work(
 ) -> None:
     """Advance one enrolled work's high water in a fixed number of queries."""
     presentation = connection.execute(
-        "SELECT work.run_id,work.work_stage,work.work_outcome,work.updated_at,work.current_work_state "
+        "SELECT work.run_id,work.work_stage,work.work_outcome,work.updated_at,work.current_work_state,work.completion_sequence "
         "FROM review_preparation_presentation AS work JOIN review_preparation_presentation AS enrollment "
         "ON enrollment.row_kind='enrollment' AND enrollment.scan_id=work.scan_id "
         "AND enrollment.cycle_id=work.cycle_id AND enrollment.cycle_state NOT IN ('completed','completed_with_failures') "
@@ -424,6 +429,13 @@ def refresh_preparation_work(
     old_outcome = cast(str | None, presentation[2])
     outcome = old_outcome or observed_outcome
     outcome_at = presentation[3] if old_outcome is not None else authoritative[2]
+    completion_sequence = presentation[5]
+    if old_outcome is None and outcome is not None:
+        completion_sequence = connection.execute(
+            "SELECT COALESCE(MAX(completion_sequence),0)+1 FROM review_preparation_presentation "
+            "WHERE row_kind='work' AND run_id=?",
+            (presentation[0],),
+        ).fetchone()[0]
     old_rank = _STAGE_ORDER[old_stage]
     new_rank = _STAGE_ORDER[high_stage]
     increments = tuple(
@@ -433,9 +445,16 @@ def refresh_preparation_work(
         int(old_outcome != "failed" and outcome == "failed"),
     )
     connection.execute(
-        "UPDATE review_preparation_presentation SET work_stage=?,current_work_state=?,work_outcome=?,updated_at=? "
+        "UPDATE review_preparation_presentation SET work_stage=?,current_work_state=?,work_outcome=?,updated_at=?,completion_sequence=? "
         "WHERE row_id=?",
-        (high_stage, authoritative[1], outcome, outcome_at, "work:" + work_id),
+        (
+            high_stage,
+            authoritative[1],
+            outcome,
+            outcome_at,
+            completion_sequence,
+            "work:" + work_id,
+        ),
     )
     old_active = presentation[4] == "running"
     new_active = authoritative[1] == "running"
@@ -465,21 +484,28 @@ def _refresh_preparation_presentation(
         (run_id,),
     )
     work_rows = connection.execute(
-        "SELECT presentation.row_id,presentation.work_stage,presentation.work_outcome,presentation.updated_at,"
+        "SELECT presentation.row_id,presentation.work_stage,presentation.work_outcome,presentation.updated_at,presentation.completion_sequence,"
         "work.stage,work.state,work.updated_at,work.failure_code FROM review_preparation_presentation AS presentation "
         "JOIN review_preparation_work AS work ON work.work_id=presentation.work_id "
         "JOIN review_preparation_presentation AS enrollment ON enrollment.row_kind='enrollment' "
         "AND enrollment.scan_id=presentation.scan_id AND enrollment.cycle_id=presentation.cycle_id "
         "AND enrollment.cycle_state NOT IN ('completed','completed_with_failures') "
-        "WHERE presentation.row_kind='work' AND presentation.run_id=?",
+        "WHERE presentation.row_kind='work' AND presentation.run_id=? "
+        "ORDER BY work.updated_at,presentation.enrollment_ordinal,presentation.ordinal,presentation.work_id",
         (run_id,),
     ).fetchall()
     observed = [0, 0, 0, 0, 0, 0]
+    next_completion_sequence = connection.execute(
+        "SELECT COALESCE(MAX(completion_sequence),0)+1 FROM review_preparation_presentation "
+        "WHERE row_kind='work' AND run_id=?",
+        (run_id,),
+    ).fetchone()[0]
     for (
         row_id,
         old_stage,
         old_outcome,
         old_updated_at,
+        completion_sequence,
         current_stage,
         current_state,
         work_updated_at,
@@ -490,13 +516,17 @@ def _refresh_preparation_presentation(
         )
         stage = max((old_stage, current_stage), key=lambda value: _STAGE_ORDER[value])
         outcome = old_outcome or observed_outcome
+        if old_outcome is None and outcome is not None:
+            completion_sequence = next_completion_sequence
+            next_completion_sequence += 1
         connection.execute(
-            "UPDATE review_preparation_presentation SET work_stage=?,current_work_state=?,work_outcome=?,updated_at=? WHERE row_id=?",
+            "UPDATE review_preparation_presentation SET work_stage=?,current_work_state=?,work_outcome=?,updated_at=?,completion_sequence=? WHERE row_id=?",
             (
                 stage,
                 current_state,
                 outcome,
                 old_updated_at if old_outcome is not None else work_updated_at,
+                completion_sequence,
                 row_id,
             ),
         )
@@ -512,7 +542,7 @@ def _refresh_preparation_presentation(
     )
     active_count = sum(
         current_state == "running"
-        for _row_id, _old_stage, outcome, _old_updated_at, _current_stage, current_state, _work_updated_at, _failure_code in work_rows
+        for _row_id, _old_stage, outcome, _old_updated_at, _completion_sequence, _current_stage, current_state, _work_updated_at, _failure_code in work_rows
     )
     connection.execute(
         "UPDATE review_preparation_presentation SET total=?,read=?,searches_finished=?,"
@@ -634,7 +664,7 @@ def preparation_presentation_snapshot(
         completion_rows = connection.execute(
             "SELECT display_name,work_outcome,updated_at FROM review_preparation_presentation "
             "WHERE row_kind='work' AND run_id=? AND work_outcome IS NOT NULL "
-            "ORDER BY updated_at DESC,enrollment_ordinal DESC,ordinal DESC,work_id DESC LIMIT 8",
+            "ORDER BY completion_sequence DESC LIMIT 8",
             (run_id,),
         ).fetchall()
         started_at = cast(int, row[2])
@@ -690,6 +720,11 @@ def dismiss_preparation_presentation(
 
 
 def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
+    preparation_run_identity = prefixed_hex_identity("preparation_run_")
+    review_scan_identity = prefixed_hex_identity("review_scan_")
+    preparation_cycle_identity = prefixed_hex_identity("preparation_cycle_")
+    review_work_identity = prefixed_hex_identity("review_work_")
+    preparation_target_name = bounded_utf8_text(128)
     run_count = connection.execute(
         "SELECT COUNT(*) FROM review_preparation_presentation WHERE row_kind='run'"
     ).fetchone()[0]
@@ -755,6 +790,7 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                     "work_stage",
                     "current_work_state",
                     "work_outcome",
+                    "completion_sequence",
                 },
             }
             columns = tuple(
@@ -766,7 +802,8 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
             for row in connection.execute(
                 "SELECT * FROM review_preparation_presentation"
             ):
-                row_kind = cast(str, row[columns.index("row_kind")])
+                values = dict(zip(columns, row, strict=True))
+                row_kind = values["row_kind"]
                 relevant = allowed.get(row_kind)
                 if relevant is None:
                     raise ValueError("invalid presentation row kind")
@@ -775,6 +812,141 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                     for column, value in zip(columns, row, strict=True)
                 ):
                     raise ValueError("irrelevant presentation columns")
+                if (
+                    type(values["row_id"]) is not str
+                    or type(row_kind) is not str
+                    or not preparation_run_identity(values["run_id"])
+                    or not non_negative_integer(values["updated_at"])
+                ):
+                    raise ValueError("invalid presentation common fields")
+                if row_kind == "run":
+                    counters = tuple(
+                        values[name]
+                        for name in (
+                            "total",
+                            "active_count",
+                            "read",
+                            "searches_finished",
+                            "compared",
+                            "checked",
+                            "ready",
+                            "failed",
+                        )
+                    )
+                    if (
+                        values["row_id"] != "run"
+                        or type(values["state"]) is not str
+                        or values["state"]
+                        not in {state.value for state in PreparationRunState}
+                        or not non_negative_integer(values["started_at"])
+                        or any(not non_negative_integer(value) for value in counters)
+                        or values["updated_at"] < values["started_at"]
+                        or (
+                            (
+                                values["state"]
+                                in {
+                                    state.value for state in TERMINAL_PREPARATION_STATES
+                                }
+                            )
+                            != (values["completed_at"] is not None)
+                        )
+                        or (
+                            values["completed_at"] is not None
+                            and (
+                                not non_negative_integer(values["completed_at"])
+                                or values["completed_at"] < values["started_at"]
+                            )
+                        )
+                    ):
+                        raise ValueError("invalid presentation run")
+                elif row_kind == "trigger":
+                    if (
+                        type(values["trigger"]) is not str
+                        or values["trigger"]
+                        not in {trigger.value for trigger in PreparationTrigger}
+                        or type(values["trigger_ordinal"]) is not int
+                        or not 0 <= values["trigger_ordinal"] < len(PreparationTrigger)
+                        or type(values["accepted_count"]) is not int
+                        or values["accepted_count"] <= 0
+                        or not non_negative_integer(values["first_accepted_at"])
+                        or not non_negative_integer(values["last_accepted_at"])
+                        or not values["first_accepted_at"]
+                        <= values["last_accepted_at"]
+                        <= values["updated_at"]
+                    ):
+                        raise ValueError("invalid presentation trigger")
+                elif row_kind == "enrollment":
+                    if (
+                        not review_scan_identity(values["scan_id"])
+                        or not preparation_target_name(values["connection_name"])
+                        or not preparation_target_name(values["library_name"])
+                        or (
+                            values["cycle_id"] is not None
+                            and not preparation_cycle_identity(values["cycle_id"])
+                        )
+                        or (
+                            values["pending_cycle_id"] is not None
+                            and not preparation_cycle_identity(
+                                values["pending_cycle_id"]
+                            )
+                        )
+                        or values["cycle_id"] == values["pending_cycle_id"]
+                        or type(values["cycle_state"]) is not str
+                        or values["cycle_state"]
+                        not in {
+                            "queued",
+                            "discovering",
+                            "processing",
+                            "completed",
+                            "completed_with_failures",
+                        }
+                        or not non_negative_integer(values["ordinal"])
+                    ):
+                        raise ValueError("invalid presentation enrollment")
+                elif row_kind == "deferred_enrollment":
+                    if (
+                        not preparation_target_name(values["connection_name"])
+                        or not preparation_target_name(values["library_name"])
+                        or not non_negative_integer(values["ordinal"])
+                    ):
+                        raise ValueError("invalid deferred enrollment")
+                elif (
+                    not review_scan_identity(values["scan_id"])
+                    or not preparation_cycle_identity(values["cycle_id"])
+                    or not review_work_identity(values["work_id"])
+                    or not non_negative_integer(values["ordinal"])
+                    or not non_negative_integer(values["enrollment_ordinal"])
+                    or not preparation_display_name(values["display_name"])
+                    or type(values["work_stage"]) is not str
+                    or values["work_stage"] not in _STAGE_ORDER
+                    or type(values["current_work_state"]) is not str
+                    or values["current_work_state"]
+                    not in {
+                        "queued",
+                        "delayed",
+                        "running",
+                        "complete",
+                        "failed",
+                        "stale",
+                    }
+                    or (
+                        values["work_outcome"] is not None
+                        and type(values["work_outcome"]) is not str
+                    )
+                    or values["work_outcome"] not in {None, "ready", "failed"}
+                    or (
+                        (values["work_outcome"] is None)
+                        != (values["completion_sequence"] is None)
+                    )
+                    or (
+                        values["completion_sequence"] is not None
+                        and (
+                            type(values["completion_sequence"]) is not int
+                            or values["completion_sequence"] <= 0
+                        )
+                    )
+                ):
+                    raise ValueError("invalid presentation work")
             enrollments = connection.execute(
                 "SELECT scan_id,cycle_id,pending_cycle_id,ordinal,row_id,connection_name,library_name "
                 "FROM review_preparation_presentation "
@@ -828,6 +1000,15 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                 raise ValueError("noncanonical presentation cycle identity")
             if len(cycle_ids) != len(set(cycle_ids)):
                 raise ValueError("noncanonical presentation cycles")
+            completion_sequences = [
+                row[0]
+                for row in connection.execute(
+                    "SELECT completion_sequence FROM review_preparation_presentation "
+                    "WHERE row_kind='work' AND completion_sequence IS NOT NULL"
+                )
+            ]
+            if len(completion_sequences) != len(set(completion_sequences)):
+                raise ValueError("noncanonical completion sequence")
             for (
                 scan_id,
                 _cycle_id,
@@ -883,10 +1064,14 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                 if row_id != "work:" + cast(str, work_id):
                     raise ValueError("noncanonical presentation work identity")
                 authoritative = connection.execute(
-                    "SELECT scan_id,ordinal FROM review_preparation_work WHERE work_id=?",
+                    "SELECT scan_id,ordinal,state FROM review_preparation_work WHERE work_id=?",
                     (work_id,),
                 ).fetchone()
-                if authoritative != (scan_id, ordinal):
+                current_state = connection.execute(
+                    "SELECT current_work_state FROM review_preparation_presentation WHERE row_id=?",
+                    (row_id,),
+                ).fetchone()[0]
+                if authoritative != (scan_id, ordinal, current_state):
                     raise ValueError("noncanonical presentation work")
                 if not preparation_display_name(display_name):
                     raise ValueError("invalid presentation display name")

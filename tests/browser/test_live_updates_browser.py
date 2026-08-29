@@ -368,7 +368,9 @@ def test_a_change_in_one_tab_reaches_another_without_a_reload() -> None:
                 assert len(documents) == documents_before
 
 
-def test_preparation_run_shares_library_workspace_and_compacts_without_losing_state() -> None:
+def test_preparation_run_shares_library_workspace_and_compacts_without_losing_state() -> (
+    None
+):
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         os.chmod(root, 0o700)
@@ -404,27 +406,47 @@ def test_preparation_run_shares_library_workspace_and_compacts_without_losing_st
 
                 summary.click()
                 page.get_by_role("heading", name="Now preparing").wait_for()
-                assert page.get_by_role("button", name="Dismiss preparation").count() == 0
+                assert (
+                    page.get_by_role("button", name="Dismiss preparation").count() == 0
+                )
                 page.get_by_text("Preparation book 00").wait_for()
-                assert page.get_by_text(re.compile(r"more active books follow")).count() == 0
+                assert (
+                    page.get_by_text(re.compile(r"more active books follow")).count()
+                    == 0
+                )
                 assert page.locator(".preparation-active-books li").count() == 1
                 assert page.locator("[data-route-focus]").evaluate(
                     "element => element === document.activeElement"
                 )
 
-                page.get_by_role("button", name=re.compile(r"^Mistborn")).click()
-                page.get_by_role("heading", name=re.compile(r"^Mistborn")).first.wait_for()
-                assert page.get_by_role("heading", name="Now preparing").count() == 0
-
-                page.get_by_role("button", name="Preparing your library").click()
                 page.set_viewport_size({"width": 390, "height": 844})
+                page.get_by_role("button", name="Attention queue").click()
+                attention = page.locator(".attention-rail")
+                attention.wait_for()
+                attention.locator(".attention-queue-item").first.click()
+                page.get_by_role(
+                    "heading", name=re.compile(r"^Mistborn")
+                ).first.wait_for()
+                assert page.get_by_role("heading", name="Now preparing").count() == 0
+                expect(page.locator(".selected-work-header")).to_be_focused()
+                decision = page.locator(".decision-canvas")
+                decision.wait_for()
+                expect(decision.locator(".choice-select").first).to_be_enabled()
+                assert "preview=" in page.url and "field=" in page.url
+                assert "preparation=" not in page.url
+
+                page.get_by_role("button", name="Back to works").click()
+                page.get_by_role("button", name="Preparing your library").click()
                 assert page.evaluate(
                     "document.documentElement.scrollWidth <= window.innerWidth"
                 )
                 page.emulate_media(reduced_motion="reduce")
-                assert page.locator(".preparation-run-state").evaluate(
-                    "element => getComputedStyle(element).animationName"
-                ) == "none"
+                assert (
+                    page.locator(".preparation-run-state").evaluate(
+                        "element => getComputedStyle(element).animationName"
+                    )
+                    == "none"
+                )
             browser.close()
 
 
