@@ -43,6 +43,7 @@ const document: SettingsView['document'] = {
     },
   ],
   limits: {
+    audio_source_bytes: 8_589_934_592,
     provider_response_bytes: 65_536,
     source_archive_bytes: 268_435_456,
     target_response_bytes: 1_048_576,

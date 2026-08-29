@@ -10,6 +10,7 @@ import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, cast
+from urllib.parse import quote
 
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
@@ -32,8 +33,10 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderLaneObservation,
     ReportValueError,
     TargetDestination,
+    TargetFacts,
 )
 from mechanical_librarian.domain.proposal_set import canonical_target_fields
+from mechanical_librarian.domain.review_browse import browse_report
 from mechanical_librarian.domain.review_case import ReviewCase, ReviewCaseValueError
 from mechanical_librarian.domain.review_field_classification import (
     ReviewFieldCause,
@@ -167,6 +170,9 @@ class ReviewLibraryStore(Protocol):
     def read_review_attention(
         self, search: str | None, limit: int, offset: int
     ) -> ReviewAttentionSnapshot: ...
+    def read_current_report_document(
+        self, connection: str, library: str, item: str
+    ) -> str: ...
 
 
 class HumanDecisionStore(CurrentReviewCaseStore, Protocol):
@@ -1062,6 +1068,125 @@ class BrowseReviewLibrary:
             "total": raw_total,
         }
 
+    def report_detail(
+        self, connection: str, library: str, item: str
+    ) -> dict[str, object]:
+        """Project one item's recorded evidence, read-only and complete.
+
+        A work with no review case has no case to open, and until this existed
+        its evidence was recorded, retained, and unreachable.  Nothing here
+        decides anything: it is the report the library row already stands for,
+        stated in the vocabulary the owner reads.
+        """
+        if any(
+            type(value) is not str or not 1 <= len(value) <= 512
+            for value in (connection, library, item)
+        ):
+            raise ReviewWebError("request")
+        try:
+            document = self._repository.read_current_report_document(
+                connection, library, item
+            )
+        except Exception as error:
+            raise ReviewWebError("missing") from error
+        try:
+            report = browse_report(document)
+            return _report_detail(report)
+        except Exception as error:
+            raise ReviewWebError("unavailable") from error
+
+
+def _report_detail_url(target: TargetFacts) -> str:
+    """Address one item's recorded evidence where a case identity does not exist.
+
+    A work without a review case has nothing to open under `/review`, so its
+    evidence is addressed by the identity the package row already carries.
+    Each component is escaped whole: a library or item name is owner data and
+    may hold any character a target permits.
+    """
+    return (
+        "/api/v1/library/"
+        + "/".join(
+            quote(value, safe="")
+            for value in (target.connection, target.library, target.item)
+        )
+        + "/report"
+    )
+
+
+def _report_detail(report: dict[str, object]) -> dict[str, object]:
+    """Read the closed report envelope into the owner-facing evidence view."""
+    target = report["target"]
+    file = report["file"]
+    local = report["local"]
+    audio = report["audio"]
+    if (
+        type(target) is not dict
+        or type(file) is not dict
+        or type(local) is not dict
+        or (audio is not None and type(audio) is not dict)
+    ):
+        raise ReviewWebError("unavailable")
+    claims = local.get("claims")
+    if type(claims) is not list:
+        raise ReviewWebError("unavailable")
+    chapters = [] if audio is None else audio.get("chapters")
+    cover = None if audio is None else audio.get("embedded_cover")
+    if type(chapters) is not list or (cover is not None and type(cover) is not dict):
+        raise ReviewWebError("unavailable")
+    return {
+        "chapters": [
+            {
+                "end_milliseconds": value["end_milliseconds"],
+                "ordinal": value["ordinal"],
+                "start_milliseconds": value["start_milliseconds"],
+                "title": value["title"],
+            }
+            for value in chapters
+            if type(value) is dict
+        ],
+        "chapters_truncated": bool(
+            audio is not None and audio.get("chapters_truncated")
+        ),
+        # Presence and the grammar that showed it, and deliberately no more:
+        # this build records that a file carries art and claims no authority
+        # over those bytes.
+        "embedded_cover": {
+            "present": bool(cover is not None and cover.get("present")),
+            "surface": None if cover is None else cover.get("surface"),
+        },
+        "evidence": [
+            {
+                "basis": value["basis"],
+                "excerpt": value["excerpt"],
+                "kind": value["kind"],
+                "role": value["role"],
+                "value": value["canonical"] or value["observed"],
+            }
+            for value in claims
+            if type(value) is dict
+        ],
+        "item": target["item"],
+        "library": target["library"],
+        "connection": target["connection"],
+        "media_kind": file["format"],
+        "report_id": report["report_id"],
+        "schema_version": "review-report-detail-v1",
+        "title": _report_title(report),
+    }
+
+
+def _report_title(report: dict[str, object]) -> str:
+    target = report["target"]
+    fields = target["fields"] if type(target) is dict else None
+    if type(fields) is list:
+        for field in fields:
+            if type(field) is dict and field.get("kind") == "title":
+                value = field.get("value")
+                if type(value) is str and value:
+                    return value
+    return "Untitled"
+
 
 def _digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
@@ -1893,7 +2018,9 @@ def _library_item(
         "attention_state": (
             "needs_attention" if current_attention_count else "no_attention_needed"
         ),
-        "detail_url": None if case is None else f"/review/{case.review_case_id}",
+        "detail_url": f"/review/{case.review_case_id}"
+        if case is not None
+        else _report_detail_url(report.target),
         "dispositions": outcomes,
         "item": report.target.item,
         "library": report.target.library,

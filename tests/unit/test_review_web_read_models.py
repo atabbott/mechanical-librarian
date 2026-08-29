@@ -15,6 +15,11 @@ from unittest.mock import Mock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from mechanical_librarian.adapters.evidence_extractors.audio_local import (
+    AudioPathContext,
+    AudioSidecar,
+    interpret,
+)
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.field_effects import GuardedApplicationError
 from mechanical_librarian.application.review_pipeline import (
@@ -40,13 +45,22 @@ from mechanical_librarian.application.review_web import (
     _provider_comparison_notices,
     _provider_label,
 )
+from mechanical_librarian.domain.audio_inspection import (
+    AudioEvidenceSurface,
+    AudioInspectionLimits,
+)
 from mechanical_librarian.domain.automatic_decision import (
     F19A_QUALIFICATION_MANIFEST_SHA256,
     AutomaticDecision,
 )
+from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
 from mechanical_librarian.domain.metadata_report import (
+    AudioFacts,
     ClaimKind,
     ClaimScope,
+    FieldState,
+    FileFacts,
+    LocalClaim,
     MetadataReport,
     ProviderObservation,
     ProviderStatus,
@@ -55,6 +69,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     TargetField,
     TargetFieldState,
+    default_target_fields,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
@@ -1598,7 +1613,9 @@ def test_complete_library_includes_current_report_without_review_lineage(
     }
     item = response.json()["items"][0]
     assert item["review_case_id"] is None
-    assert item["detail_url"] is None
+    # No case to open, but the evidence is still addressable: the row points at
+    # the report it stands for rather than at nothing.
+    assert item["detail_url"] == "/api/v1/library/primary/ebooks/item-1/report"
     assert item["work_id"].startswith("library_work_")
     assert item["attention_state"] == "no_attention_needed"
     assert item["dispositions"] == []
@@ -1967,3 +1984,156 @@ def test_audio_observations_are_labelled_for_the_owner(
         )
         == expected
     )
+
+
+def _recorded_audiobook() -> MetadataReport:
+    """Build one audiobook report the way the isolated inspector builds it.
+
+    `interpret` is the same pure grammar the inspection child runs, fed a
+    recorded ffprobe document rather than a probe, so the claims this report
+    carries are the ones a real m4b produces and not a hand-written imitation
+    of them.
+    """
+    interpretation = interpret(
+        json.dumps(
+            {
+                "chapters": [
+                    {
+                        "start_time": "0.000",
+                        "end_time": "1800.000",
+                        "tags": {"title": "Chapter One"},
+                    }
+                ],
+                "format": {
+                    "duration": "43200.000000",
+                    "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+                    "tags": {"PERFORMANCETYPE": "unabridged"},
+                },
+                "streams": [
+                    {
+                        "codec_type": "audio",
+                        "codec_name": "aac",
+                        "tags": {"language": "eng"},
+                    },
+                    {
+                        "codec_type": "video",
+                        "codec_name": "mjpeg",
+                        "disposition": {"attached_pic": 1},
+                    },
+                ],
+            }
+        ),
+        (
+            AudioSidecar(
+                AudioEvidenceSurface.SIDECAR_LIBATION,
+                "book.metadata.json",
+                json.dumps(
+                    {
+                        "asin": "B0CW1KL2QD",
+                        "narrators": [{"name": "Recorded Narrator"}],
+                        "publisherSummary": "A recorded summary.",
+                        "series": [{"name": "Discworld", "sequence": "3"}],
+                        "title": "Recorded work",
+                    }
+                ),
+            ),
+        ),
+        AudioPathContext("book.m4b"),
+        Fingerprint("sha256", SchemaVersion("local-file-v1"), "a" * 64),
+        AudioInspectionLimits(),
+    )
+    claims = tuple(
+        LocalClaim.create(
+            kind=ClaimKind(fact.field.value),
+            observed=fact.observed_value,
+            canonical=fact.canonical_value,
+            excerpt=fact.supporting_context,
+            applicability="not_applicable",
+            basis=fact.basis,
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            state=FieldState(fact.state),
+            role=fact.role,
+            occurrence=occurrence,
+        )
+        for occurrence, fact in enumerate(interpretation.facts, 1)
+    )
+    return MetadataReport.create(
+        target=TargetFacts(
+            "primary", "ebooks", "item-9", default_target_fields("Recorded work")
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=claims,
+        local_reasons=tuple(
+            sorted({f"{claim.basis}_{claim.kind.value}" for claim in claims})
+        )
+        or ("no_local_audio_claims",),
+        providers=(),
+        audio=AudioFacts(
+            interpretation.chapters,
+            interpretation.chapters_truncated,
+            interpretation.embedded_cover,
+        ),
+    )
+
+
+def test_an_audiobooks_recorded_evidence_is_reachable_from_the_library(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    """The owner can get from the listing to what the inspection recorded.
+
+    An audiobook acquires no review case, so its row carried no address and
+    every field the F43 inspection wrote -- ASIN, narrator, series, duration,
+    performance type, language, description, chapters, cover presence -- was
+    recorded, retained and unreachable.  This walks the only route an owner
+    has: the listing, the address it hands back, and the document behind it.
+    """
+    web.repository.browse_without_cases.append(_recorded_audiobook())
+    web.login()
+
+    listing = web.client.get("/api/v1/library?lens=all&q=Recorded work")
+    assert listing.status_code == 200, listing.text
+    item = next(value for value in listing.json()["items"] if value["item"] == "item-9")
+    assert item["review_case_id"] is None
+
+    detail = web.client.get(cast(str, item["detail_url"]))
+
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert body["schema_version"] == "review-report-detail-v1"
+    assert (body["connection"], body["library"], body["item"]) == (
+        "primary",
+        "ebooks",
+        "item-9",
+    )
+    assert body["media_kind"] == "m4b"
+    evidence = {
+        (value["kind"], value["role"], value["value"]) for value in body["evidence"]
+    }
+    assert {
+        ("asin", None, "B0CW1KL2QD"),
+        ("contributor", "narrator", "Recorded Narrator"),
+        ("description", None, "A recorded summary."),
+        ("duration", None, "43200.000"),
+        ("language", None, "eng"),
+        ("performance_type", None, "unabridged"),
+        ("series", None, "Discworld"),
+        ("series_sequence", None, "3"),
+    } <= evidence
+    # Every claim states where it came from, so the owner reads evidence
+    # rather than an assertion.
+    assert all(value["basis"] for value in body["evidence"])
+    assert body["chapters"] == [
+        {
+            "end_milliseconds": 1_800_000,
+            "ordinal": 1,
+            "start_milliseconds": 0,
+            "title": "Chapter One",
+        }
+    ]
+    assert body["chapters_truncated"] is False
+    # Presence and its surface, and deliberately no bytes.
+    assert body["embedded_cover"] == {
+        "present": True,
+        "surface": "container_stream",
+    }

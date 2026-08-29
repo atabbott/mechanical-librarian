@@ -501,6 +501,29 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             raise MetadataReportError("review attention is unavailable")
         return tuple((destination, causes[scope]) for destination, scope in rows)
 
+    def read_current_report_document(
+        self, connection: str, library: str, item: str
+    ) -> str:
+        """Return one item's current report exactly as the browse page reads it.
+
+        The same package row that puts a work in the library is what makes its
+        report addressable, so a document reachable here is reachable there and
+        nowhere else.
+        """
+        with self._consistent_review_read():
+            row = self._connection.execute(
+                "SELECT mr.document FROM current_review_packages ml "
+                "JOIN metadata_reports mr ON mr.report_id=ml.report_id "
+                "WHERE ml.connection_name=? AND ml.library_name=? AND ml.item_id=?",
+                (connection, library, item),
+            ).fetchone()
+            if row is None or type(row[0]) is not str:
+                raise MetadataReportError("review report is unavailable")
+            # Validated through the browse envelope rather than trusted: the
+            # same closed shape the library page already requires.
+            browse_report(row[0])
+            return row[0]
+
     def read_review_attention(
         self, search: str | None, limit: int, offset: int
     ) -> ReviewAttentionSnapshot:

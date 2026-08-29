@@ -33,6 +33,7 @@ from mechanical_librarian.application.metadata_policy import (
     PolicyContentionError,
     PolicyTransition,
 )
+from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_pipeline import (
     PipelineProgress,
 )
@@ -506,6 +507,23 @@ class FakeReviewRepository:
             (None if case is None else case.to_json(), report.to_json())
             for case, report in rows[offset : offset + limit]
         )
+
+    def read_current_report_document(
+        self, connection: str, library: str, item: str
+    ) -> str:
+        """Answer for exactly the reports the library page already lists."""
+        for report in (
+            *self.browse_without_cases,
+            *(value for _case, value in self.browse_cases),
+        ):
+            target = report.target
+            if (target.connection, target.library, target.item) == (
+                connection,
+                library,
+                item,
+            ):
+                return report.to_json()
+        raise MetadataReportError("review report is unavailable")
 
     def count_current_review_cases(self, search: str | None) -> tuple[int, int]:
         rows = self.list_current_review_case_documents(search, 100_000, 0, None)
