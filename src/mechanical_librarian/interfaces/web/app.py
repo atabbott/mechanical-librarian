@@ -1088,6 +1088,7 @@ class _OperationalIncident(_ClosedModel):
             "missing_required_input",
             "malformed_retained_data",
             "internal_failure",
+            "local_evidence_only",
             "unknown",
         ]
         | None

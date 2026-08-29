@@ -11,6 +11,7 @@ from urllib.parse import quote
 import httpx
 
 from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_location import (
+    EbookLocation,
     normalize_ebook_location,
 )
 from mechanical_librarian.application.catalogue import (
@@ -23,6 +24,7 @@ from mechanical_librarian.application.configuration import (
     MediaMountConfiguration,
 )
 from mechanical_librarian.domain.metadata_report import (
+    AUDIO_FILE_FORMATS,
     ReportValueError,
     canonical_json,
     validate_observed_title,
@@ -249,9 +251,27 @@ def _entry(
     metadata_file = None
     has_audio = type(media.get("audioFiles")) is list
     if ebook is None and (plural is None or plural == []):
-        classification = "none"
-        file_identity = service_path = format_value = mount_name = None
         has_ebook = False
+        # An audiobook library reaches preparation only through a named
+        # read-only mount and only as one single-file item, which mirrors the
+        # singular-supported posture the ebook branch below already holds. An
+        # unmounted audiobook library keeps exactly the disposition it had
+        # before F43: nothing to prepare, and nothing to attend to.
+        audio_mount = mount
+        audio_location = (
+            None
+            if audio_mount is None
+            else _singular_audio_location(media.get("audioFiles"), audio_mount, detail)
+        )
+        if audio_location is None or audio_mount is None:
+            classification = "none"
+            file_identity = service_path = format_value = mount_name = None
+        else:
+            classification = "singular-supported"
+            file_identity = audio_location.identity
+            service_path = audio_location.relative_path
+            format_value = audio_location.format
+            mount_name = audio_mount.name
     elif type(ebook) is dict and plural is None:
         has_ebook = True
         metadata_file = ebook.get("metadata")
@@ -385,6 +405,26 @@ def _entry(
         mount_name,
         source_fingerprint,
     )
+
+
+def _singular_audio_location(
+    value: object, mount: MediaMountConfiguration, detail: dict[str, Any]
+) -> EbookLocation | None:
+    """Admit exactly one supported audio file, or nothing at all.
+
+    The location grammar itself is format-neutral -- it agrees a service
+    path, a format token, and an identity -- so the audio branch reuses it
+    rather than restating it, and narrows only which formats it will accept.
+    """
+    if type(value) is not list or len(value) != 1:
+        return None
+    try:
+        location = normalize_ebook_location(
+            value[0], service_path=mount.service_path, item=detail
+        )
+    except ValueError:
+        return None
+    return location if location.format in AUDIO_FILE_FORMATS else None
 
 
 def _observed_catalogue_title(value: object) -> tuple[str, bool]:

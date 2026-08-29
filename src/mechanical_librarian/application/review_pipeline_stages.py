@@ -65,7 +65,11 @@ from mechanical_librarian.application.review_pipeline import (
     inspection_failure_code,
 )
 from mechanical_librarian.domain.epub_inspection import EpubInspectionOutcome
-from mechanical_librarian.domain.metadata_report import MetadataReport, ProviderStatus
+from mechanical_librarian.domain.metadata_report import (
+    AUDIO_FILE_FORMATS,
+    MetadataReport,
+    ProviderStatus,
+)
 from mechanical_librarian.domain.proposal_set import ProposalSet
 from mechanical_librarian.domain.review_case import (
     ReviewAdmissionResult,
@@ -308,6 +312,8 @@ class ReviewPipelineStages:
     def propose(
         self, pipeline_repository: ReviewPipelineRepository, report_id: str
     ) -> str:
+        if self._extraction_only(pipeline_repository, report_id):
+            raise ReviewPipelineError("local_evidence_only")
         try:
             serialized = self._create_proposal_set(report_id, pipeline_repository)
         except TargetConnectionError:
@@ -330,6 +336,26 @@ class ReviewPipelineStages:
         except Exception as error:
             raise ReviewPipelineError("unknown") from error
         return ProposalSet.from_json(serialized).proposal_set_id
+
+    def _extraction_only(
+        self, pipeline_repository: ReviewPipelineRepository, report_id: str
+    ) -> bool:
+        """Stop an audiobook work at the evidence it was prepared for.
+
+        F43 slice 1 publishes a closed local evidence set for an audiobook and
+        deliberately grants nothing beyond it: no provider was dispatched, so
+        there is no comparison a proposal could be evaluated from, and no
+        package a review case could admit. The stop is explicit and terminal
+        rather than a silent stage skip, so the owner sees why the work ends
+        where it does instead of seeing it stall.
+        """
+        try:
+            report = MetadataReport.from_json(
+                cast("ReviewStageRepository", pipeline_repository).get(report_id)
+            )
+        except Exception as error:
+            raise ReviewPipelineError("malformed_retained_data") from error
+        return report.file.format in AUDIO_FILE_FORMATS
 
     def admit(
         self, pipeline_repository: ReviewPipelineRepository, proposal_set_id: str

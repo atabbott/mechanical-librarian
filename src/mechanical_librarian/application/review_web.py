@@ -1313,8 +1313,11 @@ def _choice_observation(evidence: dict[str, str | None]) -> str:
         "dict[object, str]",
         {
             "authors": "Contributors",
+            "contributor": "Narration credit",
             "description": "Description",
+            "duration": "Running time",
             "isbn": "ISBN",
+            "performance_type": "Performance",
             "publication_date": "Publication date",
             "series": "Series membership",
             "title": "Title",
@@ -1717,6 +1720,10 @@ _TERMINAL_PREPARATION_GUIDANCE: dict[str, tuple[str, str]] = {
     "internal_failure": (
         "Preparation stopped before a usable review package was produced.",
         "No owner action is currently available.",
+    ),
+    "local_evidence_only": (
+        "This audiobook's local evidence was recorded; no review package follows it yet.",
+        "No owner action is needed. The recorded evidence is shown on this work.",
     ),
     "unknown": (
         "Preparation failed; no safe detail is available.",

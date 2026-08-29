@@ -109,6 +109,46 @@ _TAG_FIELDS: dict[str, AudioInspectionField] = {
     "comment": AudioInspectionField.DESCRIPTION,
     "longdescription": AudioInspectionField.DESCRIPTION,
 }
+# The MP4 metadata keys ffmpeg has its own name for.  Everything else in an
+# MP4's exported tags is an atom it could not name, which is what
+# `_surface_for` distinguishes.
+_MP4_WELL_KNOWN = frozenset(
+    {
+        "album",
+        "album_artist",
+        "artist",
+        "comment",
+        "compilation",
+        "composer",
+        "copyright",
+        "date",
+        "description",
+        "disc",
+        "encoder",
+        "episode_id",
+        "episode_sort",
+        "gapless_playback",
+        "genre",
+        "grouping",
+        "hd_video",
+        "lyrics",
+        "media_type",
+        "performer",
+        "publisher",
+        "purchase_date",
+        "season_number",
+        "show",
+        "sort_album",
+        "sort_album_artist",
+        "sort_artist",
+        "sort_composer",
+        "sort_name",
+        "sort_show",
+        "synopsis",
+        "title",
+        "track",
+    }
+)
 _ABRIDGED_KEYS = frozenset({"abridged", "isabridged"})
 _PERFORMANCE_KEYS = frozenset({"performancetype", "performance_type", "narratortype"})
 
@@ -385,6 +425,23 @@ def _tag_facts(
 def _surface_for(
     key: str, freeform: bool, default_surface: AudioEvidenceSurface
 ) -> AudioEvidenceSurface:
+    """Name the surface one exported key actually came from.
+
+    ffprobe flattens every container's metadata into one ``tags`` object and
+    does not say which box or frame a key arrived in, so the surface is
+    reconstructed from what only that surface can produce.
+
+    For MP3, a key outside ffmpeg's own ID3 mapping reached the document
+    through a ``TXXX`` user-defined frame, which is the one way an arbitrary
+    description becomes a key.
+
+    For MP4, a key outside ffmpeg's mapping is an atom it has no name for, and
+    ``-export_all`` exported it verbatim.  A raw ilst atom is a four-character
+    type -- ``CDEK``, ``prID`` -- so a longer unmapped key can only have come
+    from a ``----`` freeform atom, which is what the tone writers emit.  Some
+    ffmpeg builds spell that atom's mean and name into the key, and
+    ``_normalized_key`` reports it directly when they do.
+    """
     if freeform:
         return AudioEvidenceSurface.MP4_FREEFORM_TONE
     if default_surface is AudioEvidenceSurface.ID3_FRAME:
@@ -393,7 +450,9 @@ def _surface_for(
             if key in _ID3_WELL_KNOWN
             else AudioEvidenceSurface.ID3_USER_TEXT
         )
-    return default_surface
+    if key in _MP4_WELL_KNOWN or len(key) <= 4:
+        return AudioEvidenceSurface.MP4_ILST
+    return AudioEvidenceSurface.MP4_FREEFORM_TONE
 
 
 def _is_sequence(value: object) -> bool:
