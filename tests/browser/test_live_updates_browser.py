@@ -405,7 +405,8 @@ def test_preparation_run_shares_library_workspace_and_compacts_without_losing_st
                 summary.click()
                 page.get_by_role("heading", name="Now preparing").wait_for()
                 page.get_by_text("Preparation book 00").wait_for()
-                page.get_by_text("2 more active books follow in this run.").wait_for()
+                assert page.get_by_text(re.compile(r"more active books follow")).count() == 0
+                assert page.locator(".preparation-active-books li").count() == 1
                 assert page.locator("[data-route-focus]").evaluate(
                     "element => element === document.activeElement"
                 )

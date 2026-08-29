@@ -140,11 +140,13 @@ const PreparationSummary = ({
 const PreparationDetail = ({
   presentation,
   reconnecting,
+  animateChange,
   dismissing,
   onDismiss,
 }: {
   presentation: PreparationPresentation
   reconnecting: boolean
+  animateChange: boolean
   dismissing: boolean
   onDismiss: () => void
 }) => {
@@ -161,8 +163,7 @@ const PreparationDetail = ({
         <strong>{String(presentation.passage.ready)} ready</strong>
       </header>
       <p
-        key={`${presentation.run_id}:${String(presentation.updated_at)}`}
-        className={`preparation-run-state state-${presentation.state}`}
+        className={`preparation-run-state state-${presentation.state}${animateChange ? ' reported-change' : ''}`}
         role="status"
       >
         {reconnecting
@@ -172,7 +173,10 @@ const PreparationDetail = ({
       <p className="preparation-provenance">
         Triggered by{' '}
         {presentation.triggers
-          .map((trigger) => preparationTriggerCopy[trigger.trigger])
+          .map(
+            (trigger) =>
+              `${preparationTriggerCopy[trigger.trigger]} ×${String(trigger.accepted_count)}`,
+          )
           .join(' · ')}
       </p>
       <section aria-labelledby="now-preparing-title">
@@ -1237,6 +1241,34 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       ? null
       : (preparationState.data?.presentation ?? null)
   const preparationSelected = presentation !== null && search.preparation === presentation.run_id
+  const presentationVersion = presentation
+    ? `${presentation.run_id}:${String(presentation.updated_at)}:${presentation.state}`
+    : null
+  const adoptedPresentationVersion = useRef<string | null>(null)
+  const [animatedPresentationVersion, setAnimatedPresentationVersion] = useState<string | null>(
+    null,
+  )
+  useEffect(() => {
+    if (presentationVersion === null) return
+    if (adoptedPresentationVersion.current === null) {
+      adoptedPresentationVersion.current = presentationVersion
+      return
+    }
+    if (adoptedPresentationVersion.current === presentationVersion) return
+    adoptedPresentationVersion.current = presentationVersion
+    if (!preparationSelected) return
+    let timer: number | null = null
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) return
+      setAnimatedPresentationVersion(presentationVersion)
+      timer = window.setTimeout(() => setAnimatedPresentationVersion(null), 400)
+    })
+    return () => {
+      cancelled = true
+      if (timer !== null) window.clearTimeout(timer)
+    }
+  }, [preparationSelected, presentationVersion])
   const dismissPreparation = useMutation({
     mutationFn: (runId: string) => http.dismissPreparation(runId),
     retry: false,
@@ -2321,6 +2353,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
             <PreparationDetail
               presentation={presentation}
               reconnecting={preparationState.reconnecting}
+              animateChange={animatedPresentationVersion === presentationVersion}
               dismissing={dismissPreparation.isPending}
               onDismiss={() => dismissPreparation.mutate(presentation.run_id)}
             />

@@ -43,10 +43,9 @@ describe('Application shell', () => {
           triggers: [
             {
               trigger: 'initial_setup',
-              connection: 'primary',
-              library: 'Books',
-              scan_id: 'scan-1',
-              accepted_at: 100,
+              accepted_count: 1,
+              first_accepted_at: 100,
+              last_accepted_at: 100,
             },
           ],
           passage: {
@@ -112,10 +111,9 @@ describe('Application shell', () => {
           triggers: [
             {
               trigger: 'initial_setup',
-              connection: 'primary',
-              library: 'Books',
-              scan_id: 'scan-1',
-              accepted_at: 100,
+              accepted_count: 1,
+              first_accepted_at: 100,
+              last_accepted_at: 100,
             },
           ],
           passage: {
@@ -128,9 +126,7 @@ describe('Application shell', () => {
           },
           active_books: [],
           active_overflow: 0,
-          recent_completions: [
-            { name: 'Unfinished work', outcome: 'failed', completed_at: 101 },
-          ],
+          recent_completions: [{ name: 'Unfinished work', outcome: 'failed', completed_at: 101 }],
           throughput_per_minute: 7,
           started_at: 100,
           updated_at: 101,

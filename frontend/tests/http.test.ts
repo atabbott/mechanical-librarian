@@ -602,7 +602,7 @@ describe('ReviewApiClient', () => {
     const presentation = {
       run_id: `preparation_run_${'a'.repeat(64)}`,
       state: 'running',
-      triggers: [{ trigger: 'manual_scan', connection: 'primary', library: 'Books', scan_id: 'scan-1', accepted_at: 100 }],
+      triggers: [{ trigger: 'manual_scan', accepted_count: 1, first_accepted_at: 100, last_accepted_at: 100 }],
       passage: { read: 4, searches_finished: 3, compared: 2, checked: 2, ready: 1, failed: 1 },
       active_books: [{ name: 'Private title', stage: 'Comparing candidates' }],
       active_overflow: 0,
@@ -616,7 +616,8 @@ describe('ReviewApiClient', () => {
     }
     const base = { schema_version: 'review-preparation-v2', active: true, actionable: false, paused: false, libraries: [], connections: [], presentation }
     expect(mapPreparation(base).presentation?.passage.ready).toBe(1)
-    expect(() => mapPreparation({ ...base, presentation: { ...presentation, passage: { ...presentation.passage, checked: 1 } } })).toThrow('invalid_preparation_passage_order')
+    expect(() => mapPreparation({ ...base, presentation: { ...presentation, passage: { ...presentation.passage, checked: 1, ready: 2 } } })).toThrow('invalid_preparation_passage_order')
+    expect(mapPreparation({ ...base, presentation: { ...presentation, passage: { read: 1, searches_finished: 0, compared: 0, checked: 0, ready: 0, failed: 1 } } }).presentation?.passage.failed).toBe(1)
     expect(() => mapPreparation({ ...base, presentation: { ...presentation, active_books: Array.from({ length: 6 }, () => ({ name: 'Private title', stage: 'Reading' })) } })).toThrow('invalid_preparation_presentation')
     expect(() => mapPreparation({ ...base, presentation: { ...presentation, recent_completions: [{ name: 'Private title', outcome: 'invented', completed_at: 101 }] } })).toThrow('invalid_preparation_completion')
   })

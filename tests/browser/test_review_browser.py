@@ -2306,6 +2306,10 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                     viewport={"width": 390, "height": 844},
                     reduced_motion="reduce" if reduced else "no-preference",
                 )
+                context.add_init_script(
+                    "addEventListener('pageswap',event=>sessionStorage.setItem('preparation-pageswap',event.viewTransition?'observed':'absent'));"
+                    "addEventListener('pagereveal',event=>{if(event.viewTransition)sessionStorage.setItem('preparation-pagereveal','observed')});"
+                )
                 page = context.new_page()
                 page.route("**/favicon.ico", lambda route: route.fulfill(status=204))
                 _login(page, origin)
@@ -2406,6 +2410,8 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                         "preparation-detail",
                     ]
                 )
+                if not reduced:
+                    assert page.evaluate("sessionStorage.getItem('preparation-pageswap')") == "observed"
                 context.close()
             browser.close()
 

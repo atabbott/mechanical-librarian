@@ -352,9 +352,9 @@ def test_only_accepted_owner_trigger_creates_or_replaces_visible_run(
     assert extended is not None
     assert extended.run_id == first.run_id
     assert [item.trigger for item in extended.triggers] == [
-        PreparationTrigger.MANUAL_SCAN,
-        PreparationTrigger.MANUAL_SCAN,
+        PreparationTrigger.MANUAL_SCAN
     ]
+    assert extended.triggers[0].accepted_count == 1
 
     repository._connection.execute(
         "UPDATE review_preparation_scans SET state='completed',updated_at=13 WHERE scan_id=?",
@@ -364,9 +364,18 @@ def test_only_accepted_owner_trigger_creates_or_replaces_visible_run(
     repository._connection.commit()
     terminal = repository.preparation_presentation(13)
     assert terminal is not None and terminal.dismissible
-    repository.dismiss_preparation_presentation(terminal.run_id, 14)
-    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 15)
-    dismissed = repository.preparation_presentation(15)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 14)
+    triggerless = repository.preparation_presentation(14)
+    assert triggerless is not None
+    assert (
+        triggerless.run_id,
+        triggerless.state,
+        triggerless.passage,
+        triggerless.completed_at,
+    ) == (terminal.run_id, terminal.state, terminal.passage, terminal.completed_at)
+    repository.dismiss_preparation_presentation(terminal.run_id, 15)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 16)
+    dismissed = repository.preparation_presentation(16)
     assert dismissed is not None and dismissed.state.value == "dismissed"
 
     repository.request_review_scan(
@@ -374,16 +383,88 @@ def test_only_accepted_owner_trigger_creates_or_replaces_visible_run(
         "fiction",
         "lib-1",
         _PRODUCER,
-        16,
+        17,
         trigger=PreparationTrigger.LIBRARY_ADDED,
     )
-    replacement = repository.preparation_presentation(16)
+    replacement = repository.preparation_presentation(17)
     repository.close()
     assert replacement is not None
     assert replacement.run_id != terminal.run_id
     assert [item.trigger for item in replacement.triggers] == [
         PreparationTrigger.LIBRARY_ADDED
     ]
+
+
+@pytest.mark.parametrize(
+    "terminal_failure", (False, True), ids=("rollover", "terminal-cancellation")
+)
+def test_accepted_successor_cycle_settles_once_and_reopens_exact_current(
+    application_path: Path, terminal_failure: bool
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry("item", "1" * 64),), 102
+    )
+
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        103,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        104,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    before_rollover = repository.preparation_presentation(104)
+    assert before_rollover is not None
+    assert before_rollover.triggers[0].accepted_count == 2
+    assert before_rollover.updated_at == 103
+
+    work = repository.claim_review_pipeline_action(105)
+    assert work is not None and work.stage == "extraction"
+    if terminal_failure:
+        repository.fail_review_pipeline_action(work, "failed", False, 106)
+    else:
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET stage='complete',state='complete',updated_at=106 "
+            "WHERE work_id=?",
+            (work.action_id,),
+        )
+        refresh_preparation_work(repository._connection, work.action_id, 106)
+    assert repository.claim_review_pipeline_action(107) is None
+    cycles = repository._connection.execute(
+        "SELECT enrollment.cycle_id,enrollment.pending_cycle_id,work.cycle_id "
+        "FROM review_preparation_presentation AS enrollment "
+        "JOIN review_preparation_presentation AS work ON work.row_kind='work' "
+        "AND work.scan_id=enrollment.scan_id "
+        "WHERE enrollment.row_kind='enrollment'"
+    ).fetchone()
+    expected = repository.preparation_presentation(107)
+    repository.close()
+
+    assert cycles is not None
+    assert cycles[1] is None
+    assert cycles[0] == cycles[2]
+    reopened = open_repository(application_path, create=False)
+    assert reopened.preparation_presentation(107) == expected
+    reopened.close()
 
 
 def test_preparation_projection_bounds_private_names_and_preserves_outcomes(
@@ -609,7 +690,7 @@ def test_preparation_blocking_is_scoped_to_enrolled_connections(
 def test_per_work_presentation_query_count_does_not_grow_with_run_population(
     tmp_path: Path,
 ) -> None:
-    def measured(population: int) -> tuple[int, tuple[str, ...]]:
+    def measured(population: int) -> tuple[int, tuple[str, ...], int, tuple[str, ...]]:
         repository = open_repository(tmp_path / f"population-{population}.sqlite3")
         repository.request_review_scan(
             "primary",
@@ -670,16 +751,107 @@ def test_per_work_presentation_query_count_does_not_grow_with_run_population(
                 (repository.preparation_presentation(103).run_id,),
             )
         )
-        repository.close()
-        return len(statements), exact_work_plan + trigger_plan
+        snapshot_plans = tuple(
+            row[3]
+            for sql in (
+                "SELECT display_name,work_stage FROM review_preparation_presentation WHERE row_kind='work' AND run_id=? AND current_work_state='running' AND work_outcome IS NULL ORDER BY trigger_ordinal,ordinal,work_id LIMIT 5",
+                "SELECT display_name,work_outcome,updated_at FROM review_preparation_presentation WHERE row_kind='work' AND run_id=? AND work_outcome IS NOT NULL ORDER BY updated_at DESC,trigger_ordinal DESC,ordinal DESC,work_id DESC LIMIT 8",
+                "SELECT COUNT(*) FROM review_preparation_presentation WHERE row_kind='work' AND run_id=? AND work_outcome IS NOT NULL AND updated_at>=?",
+            )
+            for row in repository._connection.execute(
+                "EXPLAIN QUERY PLAN " + sql,
+                (repository.preparation_presentation(103).run_id, 0)
+                if sql.endswith("updated_at>=?")
+                else (repository.preparation_presentation(103).run_id,),
+            )
+        )
+        vm_steps = 0
 
-    small_count, small_plan = measured(1)
-    large_count, large_plan = measured(2_000)
+        def count_step() -> int:
+            nonlocal vm_steps
+            vm_steps += 1
+            return 0
+
+        repository._connection.set_progress_handler(count_step, 1)
+        repository.preparation_presentation(103)
+        repository._connection.set_progress_handler(None, 0)
+        repository.close()
+        return len(statements), exact_work_plan + trigger_plan, vm_steps, snapshot_plans
+
+    small_count, small_plan, small_vm, small_snapshot_plan = measured(1)
+    large_count, large_plan, large_vm, large_snapshot_plan = measured(2_000)
     assert large_count == small_count
     assert large_count <= 10
-    assert any("sqlite_autoindex_review_preparation_presentation_1" in row for row in small_plan)
+    assert any(
+        "sqlite_autoindex_review_preparation_presentation_1" in row
+        for row in small_plan
+    )
     assert any("review_preparation_presentation_run" in row for row in small_plan)
     assert large_plan == small_plan
+    assert large_vm <= small_vm + 40
+    assert large_snapshot_plan == small_snapshot_plan
+    assert all("USE TEMP B-TREE" not in row for row in large_snapshot_plan)
+    assert any(
+        "review_preparation_presentation_active" in row for row in large_snapshot_plan
+    )
+    assert any(
+        "review_preparation_presentation_recent" in row for row in large_snapshot_plan
+    )
+    assert any(
+        "review_preparation_presentation_throughput" in row
+        for row in large_snapshot_plan
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "UPDATE review_preparation_presentation SET completed_at=123 "
+        "WHERE row_kind='trigger'",
+        "UPDATE review_preparation_presentation SET ordinal=2 "
+        "WHERE row_kind='enrollment'",
+        "UPDATE review_preparation_presentation SET run_id='preparation_run_' || "
+        "lower(hex(randomblob(32))) WHERE row_kind='trigger'",
+        "UPDATE review_preparation_presentation SET trigger_ordinal=9 "
+        "WHERE row_kind='work'",
+    ),
+    ids=(
+        "irrelevant-column",
+        "noncanonical-ordinal",
+        "foreign-run",
+        "work-enrollment-ordinal",
+    ),
+)
+def test_exact_current_presentation_rows_fail_closed(
+    tmp_path: Path, mutation: str
+) -> None:
+    path = tmp_path / "invalid-presentation.sqlite3"
+    repository = open_repository(path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry("item", "1" * 64),), 102
+    )
+    repository.close()
+
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA ignore_check_constraints=ON")
+    connection.execute(mutation)
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(
+        MetadataReportError, match="database is unavailable or incompatible"
+    ):
+        open_repository(path, create=False)
 
 
 def test_pause_state_is_durable_and_does_not_remove_committed_work(

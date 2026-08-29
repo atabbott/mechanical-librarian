@@ -393,34 +393,34 @@ describe('shipped first-run setup script', () => {
   })
 
   it.each([
-    ['Your work is ready', 1, false, false, 'Open the workspace while preparation continues.'],
+    ['Preparation continues', 1, false, false, 'Open the workspace while preparation continues.'],
     [
       'Preparation needs attention',
       0,
       false,
       true,
-      'Open the workspace to review the paused connection and use Check connection again.',
+      'Open the workspace to review recovery while preparation remains safely paused.',
     ],
     [
-      'Your work is ready',
+      'Preparation is complete',
       1,
       true,
       false,
-      'Preparation is complete. Open the workspace to review your ready work.',
+      'Open the workspace to review the completed preparation record.',
     ],
     [
       'Preparation is complete',
       0,
       true,
       false,
-      'Preparation finished without ready work. Open the workspace to continue.',
+      'Open the workspace to review the completed preparation record.',
     ],
     [
       'Preparation is complete',
       0,
       true,
       true,
-      'No work became ready. Open the workspace to review the failures and recovery.',
+      'Open the workspace to review the completed preparation record.',
     ],
   ] as const)(
     'offers the setup bridge at %s without navigating',

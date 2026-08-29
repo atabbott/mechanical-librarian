@@ -1604,9 +1604,12 @@ const preparationPresentation = (value: unknown) => {
     passage.searchesFinished > passage.read ||
     passage.compared > passage.searchesFinished ||
     passage.checked > passage.compared ||
-    passage.ready + passage.failed > passage.checked
+    passage.ready > passage.checked
   )
     throw new ApiError(502, 'invalid_preparation_passage_order')
+  if (value.triggers.length < 1 || value.triggers.length > 3)
+    throw new ApiError(502, 'invalid_preparation_trigger')
+  const triggerFamilies = new Set<string>()
   for (const trigger of value.triggers) {
     if (!record(trigger)) throw new ApiError(502, 'invalid_preparation_trigger')
     if (
@@ -1615,10 +1618,27 @@ const preparationPresentation = (value: unknown) => {
       )
     )
       throw new ApiError(502, 'invalid_preparation_trigger')
-    for (const field of ['connection', 'library', 'scan_id'])
-      boundedStringValue(trigger[field], `preparation_trigger_${field}`, 128)
-    integerValue(trigger.accepted_at, 'preparation_trigger_accepted_at')
+    const family = stringValue(trigger.trigger, 'preparation_trigger')
+    if (triggerFamilies.has(family)) throw new ApiError(502, 'invalid_preparation_trigger')
+    triggerFamilies.add(family)
+    const acceptedCount = integerValue(trigger.accepted_count, 'preparation_trigger_accepted_count')
+    const firstAccepted = integerValue(
+      trigger.first_accepted_at,
+      'preparation_trigger_first_accepted_at',
+    )
+    const lastAccepted = integerValue(
+      trigger.last_accepted_at,
+      'preparation_trigger_last_accepted_at',
+    )
+    if (acceptedCount < 1 || lastAccepted < firstAccepted)
+      throw new ApiError(502, 'invalid_preparation_trigger')
   }
+  const total = integerValue(value.total, 'preparation_total')
+  if (
+    Object.values(passage).some((count) => count > total) ||
+    passage.ready + passage.failed > total
+  )
+    throw new ApiError(502, 'invalid_preparation_passage_total')
   for (const active of value.active_books) {
     if (!record(active)) throw new ApiError(502, 'invalid_preparation_active_book')
     boundedStringValue(active.name, 'preparation_active_name', 1024)

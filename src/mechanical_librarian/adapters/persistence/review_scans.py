@@ -117,7 +117,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             if bool(control[0]):
                 raise ReviewPipelineError("paused")
             row = self._connection.execute(
-                "SELECT scan_id,state,producer_fingerprint FROM review_preparation_scans "
+                "SELECT scan_id,state,producer_fingerprint,rescan_requested FROM review_preparation_scans "
                 "WHERE connection_name=? AND library_name=? "
                 "ORDER BY requested_at DESC,scan_id DESC LIMIT 1",
                 (connection, library),
@@ -193,6 +193,8 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                         connection,
                         library,
                         requested_at,
+                        cast(str, row[1]),
+                        bool(row[3]),
                     )
                 transaction.commit()
                 progress = self.review_pipeline_progress(connection, library)
@@ -226,6 +228,8 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                     connection,
                     library,
                     requested_at,
+                    None,
+                    False,
                 )
             transaction.commit()
             return PipelineProgress(

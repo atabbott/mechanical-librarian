@@ -1120,9 +1120,8 @@ def _preparation_presentation(state: PreparationRunState) -> PreparationPresenta
         triggers=(
             PreparationTriggerRecord(
                 PreparationTrigger.MANUAL_SCAN,
-                "primary",
-                "fiction",
-                "review_scan_" + "b" * 64,
+                1,
+                100,
                 100,
             ),
         ),

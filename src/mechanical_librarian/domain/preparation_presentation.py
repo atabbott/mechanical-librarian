@@ -95,30 +95,32 @@ class PreparationPassage:
 @dataclass(frozen=True, slots=True)
 class PreparationTriggerRecord:
     trigger: PreparationTrigger
-    connection: str
-    library: str
-    scan_id: str
-    accepted_at: int
+    accepted_count: int
+    first_accepted_at: int
+    last_accepted_at: int
 
     def __post_init__(self) -> None:
         if (
             type(self.trigger) is not PreparationTrigger
             or any(
-                type(value) is not str or not value
-                for value in (self.connection, self.library, self.scan_id)
+                type(value) is not int or value < 0
+                for value in (
+                    self.accepted_count,
+                    self.first_accepted_at,
+                    self.last_accepted_at,
+                )
             )
-            or type(self.accepted_at) is not int
-            or self.accepted_at < 0
+            or self.accepted_count < 1
+            or self.last_accepted_at < self.first_accepted_at
         ):
             raise ValueError("preparation trigger is invalid")
 
     def to_data(self) -> dict[str, object]:
         return {
             "trigger": self.trigger.value,
-            "connection": self.connection,
-            "library": self.library,
-            "scan_id": self.scan_id,
-            "accepted_at": self.accepted_at,
+            "accepted_count": self.accepted_count,
+            "first_accepted_at": self.first_accepted_at,
+            "last_accepted_at": self.last_accepted_at,
         }
 
 
@@ -190,6 +192,8 @@ class PreparationPresentation:
             )
             or type(self.state) is not PreparationRunState
             or not self.triggers
+            or len(self.triggers) > len(PreparationTrigger)
+            or len({item.trigger for item in self.triggers}) != len(self.triggers)
             or len(self.active_books) > 5
             or len(self.recent_completions) > 8
             or type(self.active_overflow) is not int

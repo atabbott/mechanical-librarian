@@ -288,23 +288,37 @@ _REVIEW_CONTROL_SQL = (
 )
 _REVIEW_PREPARATION_PRESENTATION_SQL = (
     "CREATE TABLE review_preparation_presentation ("
-    "row_id TEXT PRIMARY KEY NOT NULL, row_kind TEXT NOT NULL CHECK(row_kind IN ('run','trigger','work')), "
+    "row_id TEXT PRIMARY KEY NOT NULL, row_kind TEXT NOT NULL CHECK(row_kind IN ('run','trigger','enrollment','work')), "
     "run_id TEXT NOT NULL CHECK(run_id GLOB 'preparation_run_[0-9a-f]*' AND length(run_id)=80), "
     "state TEXT CHECK(state IS NULL OR state IN ('starting','running','blocked','completed_clean','completed_with_failures','dismissed')), "
     "trigger TEXT CHECK(trigger IS NULL OR trigger IN ('initial_setup','manual_scan','library_added')), "
-    "scan_id TEXT, connection_name TEXT, library_name TEXT, work_id TEXT, ordinal INTEGER CHECK(ordinal IS NULL OR ordinal>=0), "
+    "scan_id TEXT, connection_name TEXT, library_name TEXT, cycle_id TEXT CHECK(cycle_id IS NULL OR (cycle_id GLOB 'preparation_cycle_[0-9a-f]*' AND length(cycle_id)=82)), pending_cycle_id TEXT CHECK(pending_cycle_id IS NULL OR (pending_cycle_id GLOB 'preparation_cycle_[0-9a-f]*' AND length(pending_cycle_id)=82)), cycle_state TEXT CHECK(cycle_state IS NULL OR cycle_state IN ('queued','discovering','processing','completed','completed_with_failures')), work_id TEXT, ordinal INTEGER CHECK(ordinal IS NULL OR ordinal>=0), trigger_ordinal INTEGER CHECK(trigger_ordinal IS NULL OR trigger_ordinal BETWEEN 0 AND 2), "
     "display_name TEXT CHECK(display_name IS NULL OR (typeof(display_name)='text' AND length(CAST(display_name AS BLOB)) BETWEEN 1 AND 1024)), "
     "work_stage TEXT CHECK(work_stage IS NULL OR work_stage IN ('extraction','provider','proposal','admission','projection')), "
-    "work_outcome TEXT CHECK(work_outcome IS NULL OR work_outcome IN ('ready','failed')), "
+    "current_work_state TEXT CHECK(current_work_state IS NULL OR current_work_state IN ('queued','delayed','running','complete','failed','stale')), work_outcome TEXT CHECK(work_outcome IS NULL OR work_outcome IN ('ready','failed')), "
+    "accepted_count INTEGER CHECK(accepted_count IS NULL OR accepted_count>0), first_accepted_at INTEGER CHECK(first_accepted_at IS NULL OR first_accepted_at>=0), last_accepted_at INTEGER CHECK(last_accepted_at IS NULL OR last_accepted_at>=0), "
     "started_at INTEGER CHECK(started_at IS NULL OR started_at>=0), updated_at INTEGER NOT NULL CHECK(updated_at>=0), completed_at INTEGER CHECK(completed_at IS NULL OR completed_at>=0), "
-    "total INTEGER CHECK(total IS NULL OR total>=0), read INTEGER CHECK(read IS NULL OR read>=0), searches_finished INTEGER CHECK(searches_finished IS NULL OR searches_finished>=0), compared INTEGER CHECK(compared IS NULL OR compared>=0), checked INTEGER CHECK(checked IS NULL OR checked>=0), ready INTEGER CHECK(ready IS NULL OR ready>=0), failed INTEGER CHECK(failed IS NULL OR failed>=0), "
-    "CHECK((row_kind='run' AND row_id='run' AND state IS NOT NULL AND started_at IS NOT NULL AND total IS NOT NULL AND read IS NOT NULL AND searches_finished IS NOT NULL AND compared IS NOT NULL AND checked IS NOT NULL AND ready IS NOT NULL AND failed IS NOT NULL AND trigger IS NULL AND scan_id IS NULL AND work_id IS NULL AND display_name IS NULL AND work_stage IS NULL AND work_outcome IS NULL) OR "
-    "(row_kind='trigger' AND trigger IS NOT NULL AND scan_id IS NOT NULL AND connection_name IS NOT NULL AND library_name IS NOT NULL AND ordinal IS NOT NULL AND state IS NULL AND work_id IS NULL AND display_name IS NULL) OR "
-    "(row_kind='work' AND scan_id IS NOT NULL AND work_id IS NOT NULL AND ordinal IS NOT NULL AND display_name IS NOT NULL AND work_stage IS NOT NULL AND trigger IS NULL AND state IS NULL)))"
+    "total INTEGER CHECK(total IS NULL OR total>=0), active_count INTEGER CHECK(active_count IS NULL OR active_count>=0), read INTEGER CHECK(read IS NULL OR read>=0), searches_finished INTEGER CHECK(searches_finished IS NULL OR searches_finished>=0), compared INTEGER CHECK(compared IS NULL OR compared>=0), checked INTEGER CHECK(checked IS NULL OR checked>=0), ready INTEGER CHECK(ready IS NULL OR ready>=0), failed INTEGER CHECK(failed IS NULL OR failed>=0), "
+    "CHECK((row_kind='run' AND row_id='run' AND state IS NOT NULL AND started_at IS NOT NULL AND total IS NOT NULL AND active_count IS NOT NULL AND read IS NOT NULL AND searches_finished IS NOT NULL AND compared IS NOT NULL AND checked IS NOT NULL AND ready IS NOT NULL AND failed IS NOT NULL AND trigger IS NULL AND scan_id IS NULL AND cycle_id IS NULL AND pending_cycle_id IS NULL AND work_id IS NULL AND ordinal IS NULL AND display_name IS NULL AND work_stage IS NULL AND current_work_state IS NULL AND work_outcome IS NULL AND accepted_count IS NULL) OR "
+    "(row_kind='trigger' AND row_id='trigger:'||trigger AND trigger IS NOT NULL AND trigger_ordinal IS NOT NULL AND accepted_count IS NOT NULL AND first_accepted_at IS NOT NULL AND last_accepted_at IS NOT NULL AND last_accepted_at>=first_accepted_at AND state IS NULL AND scan_id IS NULL AND cycle_id IS NULL AND pending_cycle_id IS NULL AND work_id IS NULL AND ordinal IS NULL AND display_name IS NULL AND work_stage IS NULL AND current_work_state IS NULL AND total IS NULL) OR "
+    "(row_kind='enrollment' AND trigger IS NULL AND scan_id IS NOT NULL AND connection_name IS NOT NULL AND library_name IS NOT NULL AND (cycle_id IS NOT NULL OR pending_cycle_id IS NOT NULL) AND cycle_state IS NOT NULL AND work_id IS NULL AND ordinal IS NOT NULL AND display_name IS NULL AND work_stage IS NULL AND current_work_state IS NULL AND accepted_count IS NULL AND state IS NULL AND total IS NULL) OR "
+    "(row_kind='work' AND scan_id IS NOT NULL AND cycle_id IS NOT NULL AND pending_cycle_id IS NULL AND work_id IS NOT NULL AND ordinal IS NOT NULL AND trigger_ordinal IS NOT NULL AND display_name IS NOT NULL AND work_stage IS NOT NULL AND current_work_state IS NOT NULL AND trigger IS NULL AND accepted_count IS NULL AND state IS NULL AND total IS NULL)))"
 )
 _REVIEW_PREPARATION_PRESENTATION_RUN_INDEX_SQL = (
     "CREATE INDEX review_preparation_presentation_run "
     "ON review_preparation_presentation(run_id,row_kind,ordinal)"
+)
+_REVIEW_PREPARATION_PRESENTATION_ACTIVE_INDEX_SQL = (
+    "CREATE INDEX review_preparation_presentation_active ON review_preparation_presentation("
+    "run_id,current_work_state,trigger_ordinal,ordinal,work_id) WHERE row_kind='work' AND work_outcome IS NULL"
+)
+_REVIEW_PREPARATION_PRESENTATION_RECENT_INDEX_SQL = (
+    "CREATE INDEX review_preparation_presentation_recent ON review_preparation_presentation("
+    "run_id,updated_at DESC,trigger_ordinal DESC,ordinal DESC,work_id DESC) WHERE row_kind='work' AND work_outcome IS NOT NULL"
+)
+_REVIEW_PREPARATION_PRESENTATION_THROUGHPUT_INDEX_SQL = (
+    "CREATE INDEX review_preparation_presentation_throughput ON review_preparation_presentation("
+    "run_id,updated_at) WHERE row_kind='work' AND work_outcome IS NOT NULL"
 )
 _REVIEW_CONNECTION_CONDITIONS_SQL = (
     "CREATE TABLE review_preparation_connection_conditions ("
@@ -691,7 +705,10 @@ def _create_schema(connection: sqlite3.Connection) -> None:
         _SETUP_REVIEW_CONTROL_ROW,
     )
     connection.execute(_REVIEW_PREPARATION_PRESENTATION_SQL)
+    connection.execute(_REVIEW_PREPARATION_PRESENTATION_ACTIVE_INDEX_SQL)
+    connection.execute(_REVIEW_PREPARATION_PRESENTATION_RECENT_INDEX_SQL)
     connection.execute(_REVIEW_PREPARATION_PRESENTATION_RUN_INDEX_SQL)
+    connection.execute(_REVIEW_PREPARATION_PRESENTATION_THROUGHPUT_INDEX_SQL)
     connection.execute(_REVIEW_CONNECTION_CONDITIONS_SQL)
     connection.execute(_REVIEW_WORK_SQL)
     connection.execute(_METADATA_POLICY_TRANSITION_ITEMS_SQL)
@@ -866,8 +883,23 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
             ("index", "sqlite_autoindex_review_preparation_work_2", None),
             (
                 "index",
+                "review_preparation_presentation_active",
+                _REVIEW_PREPARATION_PRESENTATION_ACTIVE_INDEX_SQL,
+            ),
+            (
+                "index",
+                "review_preparation_presentation_recent",
+                _REVIEW_PREPARATION_PRESENTATION_RECENT_INDEX_SQL,
+            ),
+            (
+                "index",
                 "review_preparation_presentation_run",
                 _REVIEW_PREPARATION_PRESENTATION_RUN_INDEX_SQL,
+            ),
+            (
+                "index",
+                "review_preparation_presentation_throughput",
+                _REVIEW_PREPARATION_PRESENTATION_THROUGHPUT_INDEX_SQL,
             ),
             (
                 "index",

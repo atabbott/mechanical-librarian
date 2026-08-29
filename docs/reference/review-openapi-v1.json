@@ -5272,6 +5272,8 @@
             "items": {
               "$ref": "#/components/schemas/_PreparationTriggerRecord"
             },
+            "maxItems": 3,
+            "minItems": 1,
             "title": "Triggers",
             "type": "array"
           },
@@ -5482,22 +5484,20 @@
       "_PreparationTriggerRecord": {
         "additionalProperties": false,
         "properties": {
-          "accepted_at": {
-            "minimum": 0.0,
-            "title": "Accepted At",
+          "accepted_count": {
+            "minimum": 1.0,
+            "title": "Accepted Count",
             "type": "integer"
           },
-          "connection": {
-            "title": "Connection",
-            "type": "string"
+          "first_accepted_at": {
+            "minimum": 0.0,
+            "title": "First Accepted At",
+            "type": "integer"
           },
-          "library": {
-            "title": "Library",
-            "type": "string"
-          },
-          "scan_id": {
-            "title": "Scan Id",
-            "type": "string"
+          "last_accepted_at": {
+            "minimum": 0.0,
+            "title": "Last Accepted At",
+            "type": "integer"
           },
           "trigger": {
             "enum": [
@@ -5511,10 +5511,9 @@
         },
         "required": [
           "trigger",
-          "connection",
-          "library",
-          "scan_id",
-          "accepted_at"
+          "accepted_count",
+          "first_accepted_at",
+          "last_accepted_at"
         ],
         "title": "_PreparationTriggerRecord",
         "type": "object"
