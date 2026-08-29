@@ -155,7 +155,7 @@ export function Dropdown(props: {
     }
   }
   const choose = (value: string) => {
-    props.onChange(value)
+    if (value !== props.value) props.onChange(value)
     returnFocusOnCloseRef.current = true
     setOpen(false)
   }
