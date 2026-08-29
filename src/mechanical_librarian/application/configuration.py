@@ -273,6 +273,11 @@ class ReportLimits:
     target_response_bytes: int = 1_048_576
     provider_response_bytes: int = 65_536
     source_archive_bytes: int = 268_435_456
+    # An audiobook is not an archive that must be read whole: the probe reads
+    # its headers.  The ceiling exists to bound the digest, so it is the size
+    # of the files people actually hold rather than the EPUB archive limit,
+    # which would refuse a routine multi-hour recording outright.
+    audio_source_bytes: int = 8_589_934_592
     timeout_seconds: int = 30
 
     def __post_init__(self) -> None:
@@ -283,6 +288,8 @@ class ReportLimits:
             or not 1_024 <= self.provider_response_bytes <= 262_144
             or type(self.source_archive_bytes) is not int
             or not 1_024 <= self.source_archive_bytes <= 268_435_456
+            or type(self.audio_source_bytes) is not int
+            or not 1_024 <= self.audio_source_bytes <= 17_179_869_184
             or type(self.timeout_seconds) is not int
             or not 1 <= self.timeout_seconds <= 60
         ):

@@ -142,6 +142,9 @@ class ReportLimitSettings(_Closed):
     source_archive_bytes: Annotated[StrictInt, Field(ge=1_024, le=268_435_456)] = (
         268_435_456
     )
+    audio_source_bytes: Annotated[StrictInt, Field(ge=1_024, le=17_179_869_184)] = (
+        8_589_934_592
+    )
     timeout_seconds: Annotated[StrictInt, Field(ge=1, le=60)] = 30
 
 

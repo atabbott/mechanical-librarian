@@ -347,6 +347,7 @@
           "limits": {
             "$ref": "#/components/schemas/ReportLimitSettings",
             "default": {
+              "audio_source_bytes": 8589934592,
               "provider_response_bytes": 65536,
               "source_archive_bytes": 268435456,
               "target_response_bytes": 1048576,
@@ -477,6 +478,13 @@
       "ReportLimitSettings": {
         "additionalProperties": false,
         "properties": {
+          "audio_source_bytes": {
+            "default": 8589934592,
+            "maximum": 17179869184.0,
+            "minimum": 1024.0,
+            "title": "Audio Source Bytes",
+            "type": "integer"
+          },
           "provider_response_bytes": {
             "default": 65536,
             "maximum": 262144.0,
@@ -4189,6 +4197,21 @@
             "title": "Authors",
             "type": "array"
           },
+          "detail_kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "case",
+                  "report"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail Kind"
+          },
           "detail_url": {
             "anyOf": [
               {
@@ -4271,6 +4294,7 @@
           "attention_count",
           "attention_state",
           "detail_url",
+          "detail_kind",
           "dispositions",
           "item",
           "library",
@@ -5369,6 +5393,205 @@
           "state"
         ],
         "title": "_ProviderRecoveryActivity",
+        "type": "object"
+      },
+      "_ReportChapter": {
+        "additionalProperties": false,
+        "properties": {
+          "end_milliseconds": {
+            "minimum": 0.0,
+            "title": "End Milliseconds",
+            "type": "integer"
+          },
+          "ordinal": {
+            "minimum": 1.0,
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "start_milliseconds": {
+            "minimum": 0.0,
+            "title": "Start Milliseconds",
+            "type": "integer"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 280,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "end_milliseconds",
+          "ordinal",
+          "start_milliseconds"
+        ],
+        "title": "_ReportChapter",
+        "type": "object"
+      },
+      "_ReportDetailResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "chapters": {
+            "items": {
+              "$ref": "#/components/schemas/_ReportChapter"
+            },
+            "maxItems": 1024,
+            "title": "Chapters",
+            "type": "array"
+          },
+          "chapters_truncated": {
+            "title": "Chapters Truncated",
+            "type": "boolean"
+          },
+          "connection": {
+            "maxLength": 512,
+            "title": "Connection",
+            "type": "string"
+          },
+          "embedded_cover": {
+            "$ref": "#/components/schemas/_ReportEmbeddedCover"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/_ReportEvidence"
+            },
+            "maxItems": 1024,
+            "title": "Evidence",
+            "type": "array"
+          },
+          "evidence_truncated": {
+            "title": "Evidence Truncated",
+            "type": "boolean"
+          },
+          "item": {
+            "maxLength": 512,
+            "title": "Item",
+            "type": "string"
+          },
+          "library": {
+            "maxLength": 512,
+            "title": "Library",
+            "type": "string"
+          },
+          "media_kind": {
+            "maxLength": 32,
+            "title": "Media Kind",
+            "type": "string"
+          },
+          "report_id": {
+            "maxLength": 128,
+            "title": "Report Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "review-report-detail-v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 1024,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chapters",
+          "chapters_truncated",
+          "connection",
+          "embedded_cover",
+          "evidence",
+          "evidence_truncated",
+          "item",
+          "library",
+          "media_kind",
+          "report_id",
+          "schema_version",
+          "title"
+        ],
+        "title": "_ReportDetailResponse",
+        "type": "object"
+      },
+      "_ReportEmbeddedCover": {
+        "additionalProperties": false,
+        "properties": {
+          "present": {
+            "title": "Present",
+            "type": "boolean"
+          },
+          "surface": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Surface"
+          }
+        },
+        "required": [
+          "present"
+        ],
+        "title": "_ReportEmbeddedCover",
+        "type": "object"
+      },
+      "_ReportEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "maxLength": 64,
+            "title": "Basis",
+            "type": "string"
+          },
+          "excerpt": {
+            "maxLength": 1024,
+            "title": "Excerpt",
+            "type": "string"
+          },
+          "kind": {
+            "maxLength": 64,
+            "title": "Kind",
+            "type": "string"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          },
+          "state": {
+            "maxLength": 32,
+            "title": "State",
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 1024,
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "basis",
+          "excerpt",
+          "kind",
+          "state",
+          "value"
+        ],
+        "title": "_ReportEvidence",
         "type": "object"
       },
       "_ReviewCounts": {
@@ -7729,6 +7952,112 @@
           }
         ],
         "summary": "Library"
+      }
+    },
+    "/api/v1/library/report": {
+      "get": {
+        "description": "Read-only: the recorded evidence for a work with no review case.\n\nThe identity is a query rather than path segments because an item id\nmay contain a slash, which no path match survives: ASGI decodes the\nescape before the router sees it.",
+        "operationId": "library_report_api_v1_library_report_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "connection",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "title": "Connection",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "library",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "title": "Library",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "item",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "title": "Item",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ReportDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Library Report"
       }
     },
     "/api/v1/metadata-policy/activate": {

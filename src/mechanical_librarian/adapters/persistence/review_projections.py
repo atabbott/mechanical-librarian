@@ -501,6 +501,35 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             raise MetadataReportError("review attention is unavailable")
         return tuple((destination, causes[scope]) for destination, scope in rows)
 
+    def read_current_report_document(
+        self, connection: str, library: str, item: str
+    ) -> str | None:
+        """Return one item's current report document, or ``None`` for no row.
+
+        The same package row that puts a work in the library is what makes its
+        report addressable, so a document reachable here is reachable there and
+        nowhere else.
+
+        Absence is a return value and a store fault is a raise, deliberately:
+        the two mean different things to an owner -- there is no such work
+        against this database cannot answer -- and a caller that had to read
+        them off one exception could not tell them apart.  The document is
+        returned unvalidated, as the browse listing's are; the projection that
+        reads it reconstructs the domain report.
+        """
+        with self._consistent_review_read():
+            row = self._connection.execute(
+                "SELECT mr.document FROM current_review_packages ml "
+                "JOIN metadata_reports mr ON mr.report_id=ml.report_id "
+                "WHERE ml.connection_name=? AND ml.library_name=? AND ml.item_id=?",
+                (connection, library, item),
+            ).fetchone()
+            if row is None:
+                return None
+            if type(row[0]) is not str:
+                raise MetadataReportError("review report is unavailable")
+            return row[0]
+
     def read_review_attention(
         self, search: str | None, limit: int, offset: int
     ) -> ReviewAttentionSnapshot:

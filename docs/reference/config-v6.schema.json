@@ -382,6 +382,13 @@
     "LimitsInput": {
       "additionalProperties": false,
       "properties": {
+        "audio_source_bytes": {
+          "default": 8589934592,
+          "maximum": 17179869184,
+          "minimum": 1024,
+          "title": "Audio Source Bytes",
+          "type": "integer"
+        },
         "provider_response_bytes": {
           "default": 65536,
           "maximum": 262144,
@@ -647,6 +654,7 @@
     "limits": {
       "$ref": "#/$defs/LimitsInput",
       "default": {
+        "audio_source_bytes": 8589934592,
         "provider_response_bytes": 65536,
         "source_archive_bytes": 268435456,
         "target_response_bytes": 1048576,

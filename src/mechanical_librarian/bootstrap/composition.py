@@ -972,7 +972,7 @@ class _IsolatedAudioInspector:
 
 
 def _audio_source_bytes(maximum_bytes: int) -> int:
-    """Fit the configured EPUB archive ceiling to the audio limit's own cap."""
+    """Hold the configured audio ceiling inside the domain's immutable cap."""
     caps = AudioInspectionLimits.HARD_CAPS["source_bytes"]
     return max(1, min(int(maximum_bytes), caps))
 

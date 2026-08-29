@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- A prepared audiobook no longer settles its own scan: absences reconcile again
+  in mixed-format libraries and nothing counts it as blocked. Its recorded
+  evidence is reachable from the library row, its digest is bounded by a
+  separate `audio_source_bytes` setting instead of the EPUB archive limit, and
+  neither playback nor a later scan re-reads an unchanged file. Existing
+  configuration files need no change. (#936)
+
 - Read local evidence from single-file audiobooks in a mounted library — ASIN,
   narrator, series, running time, performance type, language, description,
   chapters, embedded-cover presence — each attributed to the tag, sidecar, or

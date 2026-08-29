@@ -237,7 +237,11 @@ ranking policy:
 
 - `target_response_bytes` (1,024–4,194,304; default 1,048,576)
 - `provider_response_bytes` (1,024–262,144; default 65,536)
-- `source_archive_bytes` (1,024–268,435,456; default 268,435,456)
+- `source_archive_bytes` (1,024–268,435,456; default 268,435,456) — the EPUB
+  archive ceiling, and only that
+- `audio_source_bytes` (1,024–17,179,869,184; default 8,589,934,592) — the
+  audiobook ceiling, separate because an audiobook is read by header rather
+  than whole and is routinely larger than any EPUB
 - `timeout_seconds` (1–60; default 30)
 
 Optional `review` configuration is required by `review-serve` and ignored by

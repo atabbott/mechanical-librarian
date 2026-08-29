@@ -745,6 +745,14 @@ class ReviewApplication:
             )
         )
 
+    def report_detail(
+        self, connection: str, library: str, item: str
+    ) -> dict[str, object]:
+        """Read one item's recorded evidence where no review case exists."""
+        return self.serialized(
+            lambda: self._browse.report_detail(connection, library, item)
+        )
+
     def record_decision(
         self,
         review_case_id: str,

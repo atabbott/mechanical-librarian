@@ -18,6 +18,7 @@ from mechanical_librarian.application.configuration import (
     TargetConnectionConfiguration,
 )
 from mechanical_librarian.application.metadata_report import CredentialError
+from mechanical_librarian.domain.audio_inspection import AudioInspectionLimits
 from mechanical_librarian.domain.owner_settings import SecretWrite
 from mechanical_librarian.domain.validation import credential
 from mechanical_librarian.infrastructure.configuration import (
@@ -749,3 +750,37 @@ def test_hardcover_raw_token_is_confined_to_the_exact_graphql_post() -> None:
     assert "Bearer synthetic-provider-token" == requests[0].headers.get("authorization")
     assert requests[1].headers.get("authorization") is None
     assert requests[2].headers.get("authorization") is None
+
+
+def test_the_audio_ceiling_is_a_default_a_config_v6_document_need_not_carry() -> None:
+    """No schema increment: an older `config-v6` document still validates.
+
+    `LimitsInput` is closed, so a key added to it would reject every document
+    written before it existed had it not carried a default. Both shapes an
+    owner can have on disk -- no `limits` block, and one written before this
+    key -- are read here, and an explicit value still reaches the domain.
+    """
+    without_limits = ConfigurationInput.model_validate(_source(_SYNTHETIC_ROOT))
+    without_key = ConfigurationInput.model_validate(
+        {
+            **_source(_SYNTHETIC_ROOT),
+            "limits": {"source_archive_bytes": 268_435_456, "timeout_seconds": 30},
+        }
+    )
+    explicit = ConfigurationInput.model_validate(
+        {
+            **_source(_SYNTHETIC_ROOT),
+            "limits": {"audio_source_bytes": 17_179_869_184},
+        }
+    )
+
+    assert without_limits.limits.audio_source_bytes == 8_589_934_592
+    assert without_key.limits.audio_source_bytes == 8_589_934_592
+    assert explicit.limits.audio_source_bytes == 17_179_869_184
+    # The immutable inspection cap is the ceiling of the configurable one.
+    assert AudioInspectionLimits.HARD_CAPS["source_bytes"] == 17_179_869_184
+    for value in (1_023, 17_179_869_185):
+        with pytest.raises(ValidationError):
+            ConfigurationInput.model_validate(
+                {**_source(_SYNTHETIC_ROOT), "limits": {"audio_source_bytes": value}}
+            )

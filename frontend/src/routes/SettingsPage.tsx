@@ -88,6 +88,13 @@ const validationErrors = (
       268_435_456,
       'Source archive limit',
     ],
+    [
+      'limits.audio_source_bytes',
+      document.limits.audio_source_bytes,
+      1024,
+      17_179_869_184,
+      'Audiobook source limit',
+    ],
     ['limits.timeout_seconds', document.limits.timeout_seconds, 1, 60, 'Request timeout'],
     [
       'server.session_lifetime_seconds',
@@ -978,6 +985,10 @@ const SettingsEditor = ({
                       ['target_response_bytes', 'Target response limit', 4_194_304],
                       ['provider_response_bytes', 'Provider response limit', 262_144],
                       ['source_archive_bytes', 'Source archive limit', 268_435_456],
+                      // An audiobook is read by header rather than whole and is
+                      // routinely larger than any EPUB, so it carries its own
+                      // ceiling rather than the archive one.
+                      ['audio_source_bytes', 'Audiobook source limit', 17_179_869_184],
                     ] as const
                   ).map(([key, label, maximum]) => (
                     <Row

@@ -852,3 +852,84 @@ def test_audiobook_shapes_outside_the_slice_stay_uneligible_without_attention(
         False,
         False,
     )
+
+
+_AUDIO_MOUNT = MediaMountConfiguration("audiobooks", "/media", "/library", True)
+
+
+def _recorded_audio_item(revision: int, updated_at: int) -> dict[str, object]:
+    record = _audio_record()
+    cast(dict[str, object], record["metadata"])["mtimeMs"] = revision
+    detail = _audio_item([record])
+    detail["updatedAt"] = updated_at
+    return detail
+
+
+def _audio_fingerprint(detail: dict[str, object]) -> str | None:
+    return catalogue_entry(
+        "primary",
+        _library("audio"),
+        _AUDIO_MOUNT,
+        {
+            "id": "item-1",
+            "libraryId": "library-1",
+            "updatedAt": detail["updatedAt"],
+        },
+        detail,
+    ).source_fingerprint
+
+
+def test_playback_alone_does_not_re_prepare_an_audiobook() -> None:
+    """An audiobook's fingerprint follows its file, not its item timestamp.
+
+    Audiobookshelf advances `updatedAt` on playback, and the audio branch
+    populated no file revision, so every audiobook someone listened to came
+    back changed and was prepared again -- re-hashing gigabytes for a file
+    nobody wrote.  A cover path is no reason to keep that fallback here: an
+    audiobook's art is recorded as presence and never acquired.
+    """
+    baseline = _recorded_audio_item(1, 1)
+    played = _recorded_audio_item(1, 2)
+    covered = _recorded_audio_item(1, 3)
+    covered["coverPath"] = "/cover/item-1"
+
+    assert _audio_fingerprint(baseline) == _audio_fingerprint(played)
+    # The cover path itself is still material; the timestamp behind it is not.
+    assert _audio_fingerprint(covered) != _audio_fingerprint(played)
+    assert _audio_fingerprint(covered) == _audio_fingerprint(
+        {**_recorded_audio_item(1, 9), "coverPath": "/cover/item-1"}
+    )
+    # And a file that actually moved still re-prepares.
+    assert _audio_fingerprint(_recorded_audio_item(2, 1)) != _audio_fingerprint(
+        baseline
+    )
+
+
+def test_an_ebook_with_a_cover_reference_still_follows_the_item_timestamp() -> None:
+    """The fallback the audio branch drops is the one the ebook branch needs.
+
+    This build acquires an ebook item's cover bytes, and the supported payload
+    gives a cover path no revision of its own, so the item timestamp stays the
+    only signal that those bytes may have been replaced.
+    """
+    summary = {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}
+    fingerprints = []
+    for updated_at in (1, 2):
+        detail = _item()
+        cast(
+            dict[str, object],
+            cast(dict[str, object], detail["media"])["ebookFile"],
+        )["metadata"]["mtimeMs"] = 1
+        detail["coverPath"] = "/cover/item-1"
+        detail["updatedAt"] = updated_at
+        fingerprints.append(
+            catalogue_entry(
+                "primary",
+                _library(),
+                None,
+                {**summary, "updatedAt": updated_at},
+                detail,
+            ).source_fingerprint
+        )
+
+    assert fingerprints[0] != fingerprints[1]

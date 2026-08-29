@@ -624,6 +624,10 @@ class _LibraryWork(_ClosedModel):
     attention_count: int
     attention_state: str
     detail_url: str | None
+    # `case` opens a review case, `report` opens the recorded evidence of a
+    # work that has none, and `None` means there is nothing to open. Closed
+    # here so a client switches on the kind rather than on the URL's shape.
+    detail_kind: Literal["case", "report"] | None
     dispositions: list[str]
     item: str
     library: str
@@ -634,6 +638,45 @@ class _LibraryWork(_ClosedModel):
     work_id: str
     preparation: _PreparationFailure | None = None
     preparation_outcomes: list[_ProviderOutcome]
+
+
+class _ReportChapter(_ClosedModel):
+    end_milliseconds: int = Field(ge=0)
+    ordinal: int = Field(ge=1)
+    start_milliseconds: int = Field(ge=0)
+    title: str | None = Field(default=None, max_length=280)
+
+
+class _ReportEmbeddedCover(_ClosedModel):
+    present: bool
+    surface: str | None = Field(default=None, max_length=64)
+
+
+class _ReportEvidence(_ClosedModel):
+    basis: str = Field(max_length=64)
+    excerpt: str = Field(max_length=1024)
+    kind: str = Field(max_length=64)
+    role: str | None = Field(default=None, max_length=64)
+    state: str = Field(max_length=32)
+    value: str = Field(max_length=1024)
+
+
+class _ReportDetailResponse(_ClosedModel):
+    chapters: list[_ReportChapter] = Field(max_length=1024)
+    chapters_truncated: bool
+    connection: str = Field(max_length=512)
+    embedded_cover: _ReportEmbeddedCover
+    # Nothing in the domain caps a report's claim count -- only the report's
+    # own byte ceiling does -- so the projection truncates to this bound and
+    # says it did, rather than the transport refusing a claim-rich work.
+    evidence: list[_ReportEvidence] = Field(max_length=1024)
+    evidence_truncated: bool
+    item: str = Field(max_length=512)
+    library: str = Field(max_length=512)
+    media_kind: str = Field(max_length=32)
+    report_id: str = Field(max_length=128)
+    schema_version: Literal["review-report-detail-v1"]
+    title: str = Field(max_length=1024)
 
 
 class _LibraryResponse(_ClosedModel):
@@ -2880,6 +2923,30 @@ def _register_browse_and_preparation_routes(
         )
 
     @app.get(
+        "/api/v1/library/report",
+        response_model=_ReportDetailResponse,
+        responses={
+            status: {"model": _ErrorResponse} for status in (400, 401, 404, 422, 503)
+        },
+    )
+    def library_report(
+        connection: str = Query(max_length=512),
+        library: str = Query(max_length=512),
+        item: str = Query(max_length=512),
+        ml_session: str | None = Security(session_cookie),
+    ) -> _ReportDetailResponse:
+        """Read-only: the recorded evidence for a work with no review case.
+
+        The identity is a query rather than path segments because an item id
+        may contain a slash, which no path match survives: ASGI decodes the
+        escape before the router sees it.
+        """
+        _require_session(sessions, ml_session)
+        return _ReportDetailResponse.model_validate(
+            _report_call(lambda: application.report_detail(connection, library, item))
+        )
+
+    @app.get(
         "/api/v1/attention",
         response_model=_AttentionResponse,
         responses={
@@ -3416,6 +3483,14 @@ def _query_call(call: Callable[[], _Result]) -> _Result:
         return call()
     except ReviewWebError as error:
         status = 400 if error.code == "request" else 503
+        raise HTTPException(status, detail={"code": error.code}) from None
+
+
+def _report_call(call: Callable[[], dict[str, object]]) -> dict[str, object]:
+    try:
+        return call()
+    except ReviewWebError as error:
+        status = {"request": 400, "missing": 404}.get(error.code, 503)
         raise HTTPException(status, detail={"code": error.code}) from None
 
 
