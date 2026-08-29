@@ -289,6 +289,20 @@ def _adopt_enrollment_states(connection: sqlite3.Connection, updated_at: int) ->
             )
 
 
+def _presentation_observation(
+    stage: str, state: str, failure_code: str | None
+) -> tuple[str, str | None]:
+    report_only = failure_code == "local_evidence_only"
+    return (
+        "projection" if stage == "complete" or report_only else stage,
+        "ready"
+        if state == "complete" or report_only
+        else "failed"
+        if state in {"failed", "stale"}
+        else None,
+    )
+
+
 def refresh_preparation_work(
     connection: sqlite3.Connection, work_id: str, updated_at: int
 ) -> None:
@@ -315,21 +329,11 @@ def refresh_preparation_work(
         _refresh_run_state(connection, cast(str, presentation[0]), updated_at)
         return
     old_stage = cast(str, presentation[1])
-    report_only = authoritative[3] == "local_evidence_only"
-    new_stage = (
-        "projection"
-        if authoritative[0] == "complete" or report_only
-        else authoritative[0]
+    new_stage, observed_outcome = _presentation_observation(
+        authoritative[0], authoritative[1], authoritative[3]
     )
     high_stage = max((old_stage, new_stage), key=lambda value: _STAGE_ORDER[value])
     old_outcome = cast(str | None, presentation[2])
-    observed_outcome = (
-        "ready"
-        if authoritative[1] == "complete" or report_only
-        else "failed"
-        if authoritative[1] in {"failed", "stale"}
-        else None
-    )
     outcome = old_outcome or observed_outcome
     outcome_at = presentation[3] if old_outcome is not None else authoritative[2]
     old_rank = _STAGE_ORDER[old_stage]
@@ -374,7 +378,7 @@ def _refresh_preparation_presentation(
     )
     work_rows = connection.execute(
         "SELECT presentation.row_id,presentation.work_stage,presentation.work_outcome,presentation.updated_at,"
-        "work.stage,work.state,work.updated_at FROM review_preparation_presentation AS presentation "
+        "work.stage,work.state,work.updated_at,work.failure_code FROM review_preparation_presentation AS presentation "
         "JOIN review_preparation_work AS work ON work.work_id=presentation.work_id "
         "JOIN review_preparation_presentation AS enrollment ON enrollment.row_kind='enrollment' "
         "AND enrollment.scan_id=presentation.scan_id AND enrollment.cycle_id=presentation.cycle_id "
@@ -391,16 +395,13 @@ def _refresh_preparation_presentation(
         current_stage,
         current_state,
         work_updated_at,
+        failure_code,
     ) in work_rows:
-        current_stage = "projection" if current_stage == "complete" else current_stage
-        stage = max((old_stage, current_stage), key=lambda value: _STAGE_ORDER[value])
-        outcome = old_outcome or (
-            "ready"
-            if current_state == "complete"
-            else "failed"
-            if current_state in {"failed", "stale"}
-            else None
+        current_stage, observed_outcome = _presentation_observation(
+            current_stage, current_state, failure_code
         )
+        stage = max((old_stage, current_stage), key=lambda value: _STAGE_ORDER[value])
+        outcome = old_outcome or observed_outcome
         connection.execute(
             "UPDATE review_preparation_presentation SET work_stage=?,current_work_state=?,work_outcome=?,updated_at=? WHERE row_id=?",
             (
@@ -423,7 +424,7 @@ def _refresh_preparation_presentation(
     )
     active_count = sum(
         current_state == "running"
-        for _row_id, _old_stage, outcome, _old_updated_at, _current_stage, current_state, _work_updated_at in work_rows
+        for _row_id, _old_stage, outcome, _old_updated_at, _current_stage, current_state, _work_updated_at, _failure_code in work_rows
     )
     connection.execute(
         "UPDATE review_preparation_presentation SET total=?,read=?,searches_finished=?,"

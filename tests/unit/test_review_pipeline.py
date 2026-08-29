@@ -6312,6 +6312,60 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
     reopened.close()
 
 
+def test_broad_reconciliation_projects_active_report_only_work_as_clean_ready(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    scan = repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        10,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry("item", "1" * 64),), 12
+    )
+    work = repository.claim_review_pipeline_action(13)
+    assert work is not None and work.stage == "extraction"
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET stage='provider',state='failed',"
+        "failure_code='local_evidence_only',updated_at=14 WHERE work_id=?",
+        (work.action_id,),
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed',updated_at=14 WHERE scan_id=?",
+        (scan.scan_id,),
+    )
+    active = repository._connection.execute(
+        "SELECT enrollment.cycle_state,work.work_outcome FROM review_preparation_presentation AS enrollment "
+        "JOIN review_preparation_presentation AS work ON work.scan_id=enrollment.scan_id "
+        "WHERE enrollment.row_kind='enrollment' AND work.row_kind='work'"
+    ).fetchone()
+
+    refresh_preparation_presentation(repository._connection, 14)
+
+    presentation = repository.preparation_presentation(14)
+    authoritative = repository._connection.execute(
+        "SELECT stage,state,failure_code FROM review_preparation_work WHERE work_id=?",
+        (work.action_id,),
+    ).fetchone()
+    repository.close()
+
+    assert active is not None
+    assert active[0] not in {"completed", "completed_with_failures"}
+    assert active[1] is None
+    assert authoritative == ("provider", "failed", "local_evidence_only")
+    assert presentation is not None
+    assert presentation.state is PreparationRunState.COMPLETED_CLEAN
+    assert presentation.passage.ready == 1
+    assert presentation.passage.failed == 0
+    assert presentation.recent_completions[0].outcome == "ready"
+
+
 def test_audiobook_publication_refreshes_before_interleaved_claim_next(
     application_path: Path,
 ) -> None:
