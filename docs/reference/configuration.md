@@ -199,7 +199,8 @@ is prepared as a local-evidence report and stops there, with no provider
 contacted. An audiobook library that keeps `mount: null`, and any multi-file
 audiobook item, is rejected before parser/provider/publication activity exactly
 as before. Reading that local evidence requires the `ffprobe` binary the
-shipped image installs; a deployment without it records no audiobook evidence.
+shipped image builds and carries; a deployment without it records no audiobook
+evidence.
 
 Every provider has explicit enablement and one of exactly three built-in adapter
 values:

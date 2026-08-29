@@ -44,10 +44,15 @@ provider means to the review pipeline.
    probe document and each sidecar it is passed a descriptor for. The
    interpretation module itself imports only `json` and `re` and touches no
    filesystem, socket, or process.
-2. **`ffprobe` ships as a version-pinned distribution package.** The final
-   image installs `ffmpeg=7:5.1.9-0+deb12u1` and the parent resolves the binary
-   from a closed path list rather than an inherited `PATH`, which the child
-   environment does not carry.
+2. **`ffprobe` is built from a checksum-pinned upstream release.** A builder
+   stage fetches FFmpeg 7.1.5, verifies its SHA-256 against a pinned value and
+   hard-fails on mismatch, configures with `--disable-everything` plus only the
+   demuxers, decoders, parsers, and protocols this library reads, builds the
+   `ffprobe` target alone, and strips it. The result is a 1,976,960-byte binary
+   copied into the final image at `/usr/local/bin/ffprobe`; the parent resolves
+   it from a closed path list rather than an inherited `PATH`, which the child
+   environment does not carry. `--disable-network` makes the zero-network
+   invariant a property of the binary rather than of the sandbox around it.
 3. **Chapters and embedded art are structure, not claims.** Embedded chapters
    are a bounded section on the report (at most 1,024, contiguous ordinals,
    millisecond boundaries, projection-validated titles, an explicit truncation
@@ -75,19 +80,34 @@ provider means to the review pipeline.
   grammar carried each observation: an embedded tag, a sidecar, or a path.
 - The stop is atomic with publication, so an audiobook neither stalls in a
   stage it cannot complete nor reports a provider failure that never happened.
+- The probe costs the image almost nothing: 3 MB on disk (261 MB to 264 MB) and
+  under 1 MB pulled (55.5 MB to 56.5 MB compressed). The shipped media parser
+  contains no muxer, encoder, filter, device, or network protocol at all.
 
 ### Negative
 
-- The shipped image grows by 556 MB (261 MB to 817 MB). Debian's `ffprobe`
-  links 213 shared objects including `libavdevice` and `libavfilter`, whose
-  closure pulls LLVM, Mesa, flite, and librsvg; the cost is what that binary
-  links, not recommended packages, and trimming or copying just the binary does
-  not avoid it.
+- The project owns the pin. There is no distribution security feed behind this
+  binary, so a published FFmpeg CVE is answered by bumping `FFMPEG_VERSION` and
+  `FFMPEG_SHA256` in the Dockerfile and rebuilding. That duty is manual: see
+  the Renovate note below.
+- Container qualification compiles FFmpeg. The container-image job builds on a
+  fresh runner with no layer cache, so the compile runs once per qualification
+  run.
 - A deployment without the probe binary produces no audiobook evidence. That
   is a typed `invalid_configuration` outcome rather than a partial report.
 
 ### Neutral or deferred
 
+- Renovate does not track the FFmpeg pin. The repository's config enables four
+  managers and carries no `customManagers` precedent, and a regex manager would
+  bump `FFMPEG_VERSION` while leaving `FFMPEG_SHA256` stale — Renovate cannot
+  hash the new tarball — producing a red PR on every release. The pin bump is a
+  manual duty until a manager can move version and checksum together.
+- The builder stage depends on nothing else in the build, so BuildKit overlaps
+  the compile with the existing frontend and uv stages. Layer caching for the
+  qualification job (`gha` cache in the workflow) would remove the repeat
+  compile cost, and is a delivery-contract change explicitly outside this
+  slice.
 - Multi-file audiobooks and unmounted audiobook libraries stay excluded exactly
   as before this slice, and remain a later decision.
 - Provider discovery, enrichment, and any write authority for audiobooks stay
@@ -104,11 +124,30 @@ counts threads, so it cannot start a threaded probe. Relaxing that cap to let
 it fork would weaken the same isolation the pattern exists to provide, for
 every capability that shares the uid.
 
-### A vendored static `ffprobe` build
+### The distribution `ffmpeg` package
 
-Rejected on provenance and maintenance: a static binary carries no
-distribution security-update path, and this project would own its supply chain
-and its CVE response for a media parser it did not build.
+Rejected on size, measured rather than estimated: `ffmpeg=7:5.1.9-0+deb12u1`
+grows the image by 556 MB (261 MB to 817 MB on disk, 149 MB compressed).
+Debian's `ffprobe` links 213 shared objects including `libavdevice` and
+`libavfilter`, whose hard-dependency closure pulls LLVM, Mesa, and X11
+libraries. `--no-install-recommends` does not avoid it, and neither does
+copying only the binary out of the package: the closure is what that binary
+links. It also ships every muxer, encoder, filter, device, and network protocol
+FFmpeg builds by default, none of which this capability uses.
+
+### A third-party prebuilt static `ffprobe`
+
+Rejected on provenance: roughly 70 MB, and the artifact's build inputs and
+flags are attested by whoever published it rather than verified here. Building
+from a signature-checked upstream tarball with an explicit flag set costs
+build time and gives an auditable binary whose contents this record can state.
+
+### Replacing the probe with a Python metadata library
+
+Rejected on coverage: `mutagen` and its peers read MP4 and ID3 tags but not the
+Nero `chpl` chapter table this slice records, and `libmediainfo`'s coverage of
+the Audible and tone freeform atom grammar is unverified. The probe already
+reads every surface in one bounded document.
 
 ### An in-tree container parser
 

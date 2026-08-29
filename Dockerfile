@@ -1,3 +1,41 @@
+# The audiobook inspector parses no media bytes itself: it runs `ffprobe` as an
+# isolated, resource-bounded child. That probe is built here from a
+# checksum-pinned upstream release rather than installed from the distribution,
+# for three reasons. Network support is compiled out, so the slice's
+# zero-network invariant is a property of the binary rather than of the sandbox
+# around it. Only the demuxers, decoders, and parsers this library actually
+# reads are compiled in, so the shipped attack surface is the audiobook
+# grammar and nothing else -- and the distribution package's `libavfilter` and
+# `libavdevice` closure, which drags in LLVM, Mesa, and X11, never exists. In
+# exchange this project owns the pin: a CVE in FFmpeg is answered by bumping
+# `FFMPEG_VERSION` and `FFMPEG_SHA256` here, not by a base-image rebuild.
+FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS probe-build
+ARG FFMPEG_VERSION=7.1.5
+ARG FFMPEG_SHA256=de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends \
+        ca-certificates curl gcc libc6-dev make pkg-config xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+RUN curl -fsSLO "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" \
+    && echo "${FFMPEG_SHA256}  ffmpeg-${FFMPEG_VERSION}.tar.xz" | sha256sum -c - \
+    && tar xf "ffmpeg-${FFMPEG_VERSION}.tar.xz"
+WORKDIR /src/ffmpeg-${FFMPEG_VERSION}
+RUN ./configure \
+        --disable-everything --disable-network --disable-autodetect --disable-doc \
+        --disable-avdevice --disable-avfilter --disable-swscale --disable-swresample \
+        --disable-postproc --disable-encoders --disable-muxers --disable-filters \
+        --disable-indevs --disable-outdevs --disable-hwaccels --disable-bsfs \
+        --disable-ffmpeg --disable-ffplay \
+        --enable-ffprobe \
+        --enable-demuxer=mov,mp3,aac,flac,ogg,wav,asf \
+        --enable-decoder=aac,mp3,flac,vorbis,mjpeg,png \
+        --enable-parser=aac,mpegaudio,flac,vorbis,mjpeg,png \
+        --enable-protocol=file,pipe,fd \
+    && make -j"$(nproc)" ffprobe \
+    && strip ffprobe \
+    && install -m 0755 ffprobe /usr/local/bin/ffprobe
+
 FROM node:24.19.0-bookworm-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03 AS frontend-build
 WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json ./frontend/
@@ -24,14 +62,8 @@ RUN ML_FRONTEND_PREBUILT_DIR=/frontend-dist \
     uv sync --frozen --no-dev --no-editable
 
 FROM python:3.14.7-slim-bookworm@sha256:416f0db2a2b561945630cef9877a7ea0581b27449eb9fd9df42f03e1b74b5b63
-# The audiobook inspector runs `ffprobe` as an isolated, resource-bounded child
-# and parses no media bytes itself. It is installed from the distribution at a
-# pinned version so the probe carries Debian's provenance and its security
-# updates, rather than a vendored binary this project would then own.
-RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ffmpeg=7:5.1.9-0+deb12u1 \
-    && rm -rf /var/lib/apt/lists/* \
-    && test -x /usr/bin/ffprobe \
+COPY --from=probe-build /usr/local/bin/ffprobe /usr/local/bin/ffprobe
+RUN /usr/local/bin/ffprobe -version \
     && groupadd --system --gid 65532 librarian \
     && useradd --system --uid 65532 --gid librarian --home-dir /nonexistent --shell /usr/sbin/nologin librarian \
     && install -d -o librarian -g librarian -m 0700 /data

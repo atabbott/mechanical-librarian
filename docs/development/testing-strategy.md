@@ -74,11 +74,13 @@ with no fallback, and building into the checkout would leave untracked output
 where a clean tree is itself a check.
 
 The slow tier is also the only cohort that executes the audiobook probe, so it
-needs the same ffmpeg package the shipped image pins (Debian: `apt-get install
-ffmpeg`; macOS: `brew install ffmpeg`). A missing probe fails that cohort with
-a diagnostic naming the paths it searched rather than skipping, because a skip
-would report unproved evidence as covered. Every other tier reads recorded
-probe documents and needs no binary.
+needs an `ffprobe` on one of the paths the parent resolves (Debian: `apt-get
+install ffmpeg`; macOS: `brew install ffmpeg`). The shipped image builds its
+own minimal probe instead, so this is a workstation prerequisite rather than a
+shared pin. A missing probe fails that cohort with a diagnostic naming the
+paths it searched rather than skipping, because a skip would report unproved
+evidence as covered. Every other tier reads recorded probe documents and needs
+no binary.
 
 A test may move out of routine qualification only when its expensive property
 is scale, endurance, exhaustive breadth, or resource measurement and a smaller
