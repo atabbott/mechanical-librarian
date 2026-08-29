@@ -4622,6 +4622,7 @@ describe('Library route', () => {
     }
     renderRoute('/library?lens=all&preview=case-1', http)
 
+    await waitFor(() => expect(http.getCaseDetail).toHaveBeenCalled())
     expect(await screen.findByRole('heading', { name: 'Selected work' })).toBeVisible()
     expect(
       screen.getByText('Readable work identity is not available on this Library page.'),

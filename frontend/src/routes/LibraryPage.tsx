@@ -1350,6 +1350,9 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const selectedDetailRetryButton = useRef<HTMLButtonElement>(null)
   const pendingSuccessorRef = useRef(new Set<string>())
   const lineageGenerationRef = useRef(0)
+  const [reconciledSuccessorIdentity, setReconciledSuccessorIdentity] = useState<string | null>(
+    null,
+  )
   const [activeLineageGeneration, setActiveLineageGeneration] = useState<number | null>(null)
   const [lineageReconciliation, setLineageReconciliation] = useState<{
     predecessor: string
@@ -1505,7 +1508,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       search.preview
         ? (data.works.find((work) => work.reviewCaseId === search.preview) ??
           attentionItems.find((item) => item.id === search.preview) ??
-          (detail.data
+          (detail.data && reconciledSuccessorIdentity === search.preview
             ? {
                 id: detail.data.id,
                 title: detail.data.title,
@@ -1515,7 +1518,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
               }
             : undefined))
         : undefined,
-    [attentionItems, data.works, detail.data, search.preview],
+    [attentionItems, data.works, detail.data, reconciledSuccessorIdentity, search.preview],
   )
   useEffect(() => {
     if (selectedIdentity && search.preview)
@@ -1643,6 +1646,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
             successor.target.item !== selectedTarget.item
           )
             continue
+          setReconciledSuccessorIdentity(successor.id)
           await navigate({
             replace: true,
             search: (current) =>
