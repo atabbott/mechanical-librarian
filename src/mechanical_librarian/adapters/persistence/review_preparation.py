@@ -598,20 +598,23 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 )
                 existing = self._connection.execute(
                     "SELECT file_identity,source_fingerprint,producer_fingerprint,"
-                    "stage,state,report_id,proposal_set_id,review_case_id "
+                    "stage,state,report_id,proposal_set_id,review_case_id,"
+                    "failure_code,failure_root "
                     "FROM review_preparation_work WHERE work_id=?",
                     (work_id,),
                 ).fetchone()
                 stage = "extraction"
                 state = "queued"
                 report_id = proposal_set_id = review_case_id = None
+                failure_code = failure_root = None
                 if existing is not None and existing[:3] == (
                     entry.file_identity,
                     entry.source_fingerprint,
                     action.producer_fingerprint,
                 ):
                     stage, previous_state = existing[3], existing[4]
-                    report_id, proposal_set_id, review_case_id = existing[5:]
+                    report_id, proposal_set_id, review_case_id = existing[5:8]
+                    previous_failure_code, previous_failure_root = existing[8:]
                     report_current = True
                     if report_id is not None:
                         report_current = self._connection.execute(
@@ -628,6 +631,16 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     if not report_current or previous_state == "stale":
                         stage = "extraction"
                         report_id = proposal_set_id = review_case_id = None
+                    elif (
+                        previous_state == "failed"
+                        and previous_failure_code == "local_evidence_only"
+                    ):
+                        # The file this outcome is terminal about has not moved:
+                        # re-inspecting it would re-hash gigabytes to reach the
+                        # same recorded evidence.
+                        state = "failed"
+                        failure_code = previous_failure_code
+                        failure_root = previous_failure_root
                     elif previous_state == "failed" and stage == "provider":
                         stage = "extraction"
                         report_id = proposal_set_id = review_case_id = None
@@ -673,7 +686,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     "review_case_id=excluded.review_case_id,recovery_source_report_id="
                     "CASE WHEN excluded.report_id IS NULL THEN NULL "
                     "ELSE review_preparation_work.recovery_source_report_id END,"
-                    "failure_code=NULL,failure_root=NULL,"
+                    "failure_code=excluded.failure_code,"
+                    "failure_root=excluded.failure_root,"
                     "updated_at=excluded.updated_at",
                     (
                         work_id,
@@ -697,8 +711,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                         report_id,
                         proposal_set_id,
                         review_case_id,
-                        None,
-                        None,
+                        failure_code,
+                        failure_root,
                         completed_at,
                     ),
                 )

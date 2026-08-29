@@ -6,8 +6,8 @@
   in mixed-format libraries and nothing counts it as blocked. Its recorded
   evidence is reachable from the library row, its digest is bounded by a
   separate `audio_source_bytes` setting instead of the EPUB archive limit, and
-  playback alone stops re-preparing it. Existing configuration files need no
-  change. (#936)
+  neither playback nor a later scan re-reads an unchanged file. Existing
+  configuration files need no change. (#936)
 
 - Read local evidence from single-file audiobooks in a mounted library — ASIN,
   narrator, series, running time, performance type, language, description,
