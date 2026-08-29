@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal
 
+from mechanical_librarian.domain.validation import preparation_display_name
+
 
 class PreparationPresentationError(RuntimeError):
     """One expected owner-action rejection with a closed identity."""
@@ -131,8 +133,7 @@ class PreparationActiveBook:
 
     def __post_init__(self) -> None:
         if (
-            type(self.name) is not str
-            or not self.name
+            not preparation_display_name(self.name)
             or type(self.stage) is not str
             or not self.stage
         ):
@@ -150,8 +151,7 @@ class PreparationCompletion:
 
     def __post_init__(self) -> None:
         if (
-            type(self.name) is not str
-            or not self.name
+            not preparation_display_name(self.name)
             or self.outcome not in {"ready", "failed"}
             or type(self.completed_at) is not int
             or self.completed_at < 0

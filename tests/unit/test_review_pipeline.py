@@ -21,6 +21,7 @@ import pytest
 import mechanical_librarian.bootstrap.composition as composition
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.preparation_presentation import (
+    deferred_preparation_enrollment_id,
     refresh_preparation_presentation,
     refresh_preparation_run_state,
     refresh_preparation_work,
@@ -1435,7 +1436,16 @@ def test_nonhex_presentation_cycle_identity_fails_closed(
 
 
 @pytest.mark.parametrize(
-    "corruption", ("state", "trigger", "row_kind", "deferred_target")
+    "corruption",
+    (
+        "state",
+        "trigger",
+        "row_kind",
+        "deferred_target",
+        "deferred_enrollment_overlap",
+        "deferred_active_scan_overlap",
+        "work_display_name",
+    ),
 )
 def test_presentation_corruption_is_value_free_and_refused_without_repair(
     tmp_path: Path, corruption: str
@@ -1450,10 +1460,16 @@ def test_presentation_corruption_is_value_free_and_refused_without_repair(
         100,
         trigger=PreparationTrigger.MANUAL_SCAN,
     )
-    repository.set_review_pipeline_paused(True, 101)
-    repository.request_library_addition("primary", "history", "lib-2", _PRODUCER, 102)
-    repository.close()
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
     private_value = "private-owner-title-library"
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry(private_value, "1" * 64),), 102
+    )
+    repository.request_review_scan("primary", "poetry", "lib-3", _PRODUCER, 103)
+    repository.set_review_pipeline_paused(True, 104)
+    repository.request_library_addition("primary", "history", "lib-2", _PRODUCER, 105)
+    repository.close()
     connection = sqlite3.connect(path)
     connection.execute("PRAGMA ignore_check_constraints=ON")
     if corruption == "state":
@@ -1473,10 +1489,29 @@ def test_presentation_corruption_is_value_free_and_refused_without_repair(
             "WHERE row_kind='trigger' AND trigger='manual_scan'",
             (private_value,),
         )
-    else:
+    elif corruption == "deferred_target":
         connection.execute(
             "UPDATE review_preparation_presentation SET connection_name=? "
             "WHERE row_kind='deferred_enrollment'",
+            (private_value,),
+        )
+    elif corruption == "deferred_enrollment_overlap":
+        connection.execute(
+            "UPDATE review_preparation_presentation SET connection_name='primary',"
+            "library_name='fiction',row_id=? WHERE row_kind='deferred_enrollment'",
+            (deferred_preparation_enrollment_id("primary", "fiction"),),
+        )
+    elif corruption == "deferred_active_scan_overlap":
+        connection.execute(
+            "UPDATE review_preparation_presentation SET connection_name='primary',"
+            "library_name='poetry',row_id=? WHERE row_kind='deferred_enrollment'",
+            (deferred_preparation_enrollment_id("primary", "poetry"),),
+        )
+    else:
+        private_value += "界" * 683
+        connection.execute(
+            "UPDATE review_preparation_presentation SET display_name=? "
+            "WHERE row_kind='work'",
             (private_value,),
         )
     connection.commit()
@@ -2072,15 +2107,78 @@ def test_resume_fails_closed_for_unconfigured_deferred_target(
         clock=lambda: 102,
     )
     supervisor = ReviewPreparationSupervisor(pipeline, clock=lambda: 102)
+    supervisor.set_paused(True)
+    supervisor._wake.clear()
 
     with pytest.raises(ReviewPipelineError, match="configuration"):
         supervisor.set_paused(False)
 
     current = owner.preparation_presentation(102)
-    assert not owner.review_pipeline_paused()
+    assert owner.review_pipeline_paused()
+    assert supervisor.paused()
+    assert supervisor._schedule_paused
+    assert not supervisor._wake.is_set()
     assert current is not None and current.state is PreparationRunState.BLOCKED
     assert owner.deferred_library_additions() == (("primary", "history"),)
     assert owner.review_pipeline_progress("primary", "history") is None
+    assert owner.claim_review_pipeline_action(103) is None
+    owner.close()
+
+
+def test_supervisor_serializes_resume_prevalidation_with_library_addition(
+    application_path: Path,
+) -> None:
+    owner = open_repository(application_path)
+    owner.set_review_pipeline_paused(True, 100)
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: open_repository(
+            application_path, create=False, authority=owner.authority
+        ),
+        libraries=(
+            ("primary", "fiction", "lib-1", _PRODUCER),
+            ("primary", "history", "lib-2", _PRODUCER),
+        ),
+        discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        clock=lambda: 101,
+    )
+    supervisor = ReviewPreparationSupervisor(pipeline, clock=lambda: 101)
+    barrier = threading.Barrier(2)
+    errors: list[BaseException] = []
+
+    def resume() -> None:
+        try:
+            barrier.wait()
+            supervisor.set_paused(False)
+        except BaseException as error:
+            errors.append(error)
+
+    def add() -> None:
+        try:
+            barrier.wait()
+            supervisor.request_library_addition("primary", "history")
+        except BaseException as error:
+            errors.append(error)
+
+    threads = (threading.Thread(target=resume), threading.Thread(target=add))
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(3)
+
+    assert not errors
+    assert all(not thread.is_alive() for thread in threads)
+    assert not owner.review_pipeline_paused()
+    assert owner.deferred_library_additions() == ()
+    assert owner.review_pipeline_progress("primary", "history") is not None
+    assert owner._connection.execute(
+        "SELECT accepted_count FROM review_preparation_presentation "
+        "WHERE row_id='trigger:library_added'"
+    ).fetchone() == (1,)
     owner.close()
 
 

@@ -18,7 +18,7 @@ from contextlib import closing
 from pathlib import Path
 
 from argon2 import PasswordHasher
-from playwright.sync_api import Page, Response, sync_playwright
+from playwright.sync_api import Page, Response, expect, sync_playwright
 
 from tests.browser.test_review_browser import (
     _PASSWORD,
@@ -404,6 +404,7 @@ def test_preparation_run_shares_library_workspace_and_compacts_without_losing_st
 
                 summary.click()
                 page.get_by_role("heading", name="Now preparing").wait_for()
+                assert page.get_by_role("button", name="Dismiss preparation").count() == 0
                 page.get_by_text("Preparation book 00").wait_for()
                 assert page.get_by_text(re.compile(r"more active books follow")).count() == 0
                 assert page.locator(".preparation-active-books li").count() == 1
@@ -424,6 +425,64 @@ def test_preparation_run_shares_library_workspace_and_compacts_without_losing_st
                 assert page.locator(".preparation-run-state").evaluate(
                     "element => getComputedStyle(element).animationName"
                 ) == "none"
+            browser.close()
+
+
+def test_terminal_preparation_dismissal_restores_the_prior_work_decision() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 1440, "height": 900},
+            )
+            page = context.new_page()
+            with (
+                closing(ReservedPort()) as reserved_port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=reserved_port,
+                    preparation=True,
+                    preparation_terminal=True,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
+                page.get_by_role(
+                    "heading", name="Which title should this work use?"
+                ).wait_for()
+                selected_header = page.locator(".selected-work-header")
+                expect(selected_header).to_be_focused()
+
+                page.get_by_role("button", name="Preparing your library").click()
+                preparation_heading = page.get_by_role(
+                    "heading", name="Preparing your library", exact=True
+                )
+                preparation_heading.wait_for()
+                expect(preparation_heading).to_be_focused()
+                assert "preview=" in page.url and "field=title" in page.url
+                page.get_by_role("button", name="Dismiss preparation").click()
+
+                expect(
+                    page.get_by_role("button", name="Preparing your library")
+                ).to_have_count(0)
+                expect(preparation_heading).to_have_count(0)
+                page.get_by_role(
+                    "heading", name="Which title should this work use?"
+                ).wait_for()
+                expect(selected_header).to_be_focused()
+                assert "preview=" in page.url and "field=title" in page.url
+                assert "preparation=" not in page.url
             browser.close()
 
 

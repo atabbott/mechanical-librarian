@@ -46,6 +46,17 @@ boolean = exact_type(bool)
 text = exact_type(str)
 
 
+def preparation_display_name(value: object) -> bool:
+    """Accept one exact, nonempty owner-visible preparation title."""
+    if type(value) is not str:
+        return False
+    try:
+        length = len(value.encode("utf-8"))
+    except UnicodeEncodeError:
+        return False
+    return 1 <= length <= 2048
+
+
 def credential(value: object) -> bool:
     """Accept the exact canonical bearer-token payload used by every adapter."""
     return (

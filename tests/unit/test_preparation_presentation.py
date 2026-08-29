@@ -19,6 +19,10 @@ class _IntSubclass(int):
     pass
 
 
+class _StrSubclass(str):
+    pass
+
+
 @pytest.mark.parametrize("value", [True, _IntSubclass(1), -1])
 @pytest.mark.parametrize("field", ["ready", "failed"])
 def test_passage_rejects_noncanonical_outcome_counts(field: str, value: int) -> None:
@@ -92,6 +96,19 @@ def test_presentation_bounds_private_book_lists() -> None:
         _presentation(active=active)
     with pytest.raises(ValueError, match="presentation is invalid"):
         _presentation(completions=completions)
+
+
+def test_preparation_book_names_use_the_exact_2048_byte_utf8_boundary() -> None:
+    exact = "界" * 682 + "ab"
+    assert len(exact.encode("utf-8")) == 2048
+    PreparationActiveBook(exact, "Reading")
+    PreparationCompletion(exact, "ready", 100)
+
+    for invalid in (exact + "c", _StrSubclass("Book")):
+        with pytest.raises(ValueError, match="active preparation book is invalid"):
+            PreparationActiveBook(invalid, "Reading")
+        with pytest.raises(ValueError, match="preparation completion is invalid"):
+            PreparationCompletion(invalid, "ready", 100)
 
 
 def test_only_completed_presentation_is_dismissible() -> None:

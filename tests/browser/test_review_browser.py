@@ -168,6 +168,7 @@ def _server(
     cover_shapes: tuple[tuple[int, int], ...] = ((1, 1), (1, 1)),
     cohort: int = 0,
     preparation: bool = False,
+    preparation_terminal: bool = False,
     settings_document: OwnerSettingsDocument | None = _DEFAULT_SETTINGS_DOCUMENT,
     on_app: Callable[[Any], None] | None = None,
 ):
@@ -297,6 +298,23 @@ def _server(
         )
         repository.complete_review_discovery(discovery, 1, "e" * 64, entries, 992)
         assert repository.claim_review_pipeline_action(993) is not None
+        if preparation_terminal:
+            repository._connection.execute(
+                "UPDATE review_preparation_presentation SET work_stage='projection',"
+                "current_work_state='complete',work_outcome='ready',updated_at=1000 "
+                "WHERE row_kind='work'"
+            )
+            repository._connection.execute(
+                "UPDATE review_preparation_presentation SET cycle_state='completed',"
+                "updated_at=1000 WHERE row_kind='enrollment'"
+            )
+            repository._connection.execute(
+                "UPDATE review_preparation_presentation SET state='completed_clean',"
+                "completed_at=1000,updated_at=1000,active_count=0,read=7,"
+                "searches_finished=7,compared=7,checked=7,ready=7,failed=0 "
+                "WHERE row_kind='run'"
+            )
+            repository._connection.commit()
     # A cohort large enough that a whole-Library projection is measurably
     # slower than one exact-case read. #635's acceptance is about what the
     # next field waits on, and one work cannot tell those two apart.

@@ -18,6 +18,7 @@ from mechanical_librarian.domain.preparation_presentation import (
     PreparationTrigger,
     PreparationTriggerRecord,
 )
+from mechanical_librarian.domain.validation import preparation_display_name
 
 if TYPE_CHECKING:
     from mechanical_librarian.application.catalogue import CatalogueEntry
@@ -799,6 +800,16 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                 for connection_name, library_name, _ordinal, row_id in deferred
             ):
                 raise ValueError("noncanonical deferred enrollment")
+            deferred_targets = {(row[0], row[1]) for row in deferred}
+            enrolled_targets = {(row[5], row[6]) for row in enrollments}
+            active_scan_targets = set(
+                connection.execute(
+                    "SELECT connection_name,library_name FROM review_preparation_scans "
+                    "WHERE state IN ('queued','discovering','processing')"
+                )
+            )
+            if deferred_targets & (enrolled_targets | active_scan_targets):
+                raise ValueError("overlapping deferred enrollment")
             cycle_ids = [
                 cycle_id
                 for row in enrollments
@@ -862,8 +873,9 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                 ordinal,
                 enrollment_ordinal,
                 row_id,
+                display_name,
             ) in connection.execute(
-                "SELECT scan_id,cycle_id,work_id,ordinal,enrollment_ordinal,row_id "
+                "SELECT scan_id,cycle_id,work_id,ordinal,enrollment_ordinal,row_id,display_name "
                 "FROM review_preparation_presentation WHERE row_kind='work'"
             ):
                 if enrollment_cycles.get((scan_id, cycle_id)) != enrollment_ordinal:
@@ -876,6 +888,8 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                 ).fetchone()
                 if authoritative != (scan_id, ordinal):
                     raise ValueError("noncanonical presentation work")
+                if not preparation_display_name(display_name):
+                    raise ValueError("invalid presentation display name")
             observed_active = connection.execute(
                 "SELECT COUNT(*) FROM review_preparation_presentation WHERE row_kind='work' "
                 "AND current_work_state='running'"

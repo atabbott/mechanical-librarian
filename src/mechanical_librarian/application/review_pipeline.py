@@ -1266,14 +1266,15 @@ class ReviewPreparationSupervisor:
         return self._pipeline.paused()
 
     def set_paused(self, paused: bool) -> None:
-        self._pipeline.set_paused(paused)
         with self._schedule_lock:
-            self._schedule_paused = paused
             if not paused:
                 configured = {item[:2] for item in self.libraries}
                 deferred = self._pipeline.deferred_library_additions()
                 if any(target not in configured for target in deferred):
                     raise ReviewPipelineError("configuration")
+            self._pipeline.set_paused(paused)
+            self._schedule_paused = paused
+            if not paused:
                 for connection, library in deferred:
                     if (
                         self._pipeline.request_library_addition(connection, library)
