@@ -165,17 +165,8 @@ class CodexDeviceAuthManager:
             process_group = self._process_group
             self._cancelled = True
             self._state = CodexDeviceAuthState("cancelled")
-        if process is not None:
-            if process_group is None:
-                raise CodexDeviceAuthError("process")
-            try:
-                self._stop_owned_process(process, process_group)
-            except CodexDeviceAuthError:
-                with self._lock:
-                    self._state = CodexDeviceAuthState(
-                        "failed", failure="protocol_or_process"
-                    )
-                raise
+        if process is not None or process_group is not None:
+            self._release_retained_process_or_quarantine()
         return CodexDeviceAuthState("cancelled")
 
     def close(self) -> None:
@@ -277,6 +268,9 @@ class CodexDeviceAuthManager:
             finally:
                 prepared.close()
         except (OSError, subprocess.SubprocessError, CodexDeviceAuthError):
+            with self._lock:
+                if self._quarantined:
+                    return self._state
             return CodexDeviceAuthState("failed", failure="permission_or_profile")
         if returncode == 0 and output == b"Logged in using ChatGPT\n":
             self._require_lease()
@@ -287,37 +281,13 @@ class CodexDeviceAuthManager:
         # The small wrapper makes the whole long-lived device flow one testable
         # activity boundary without hiding which operation owns the lock.
         with self._activity_guard():
-            self._run_flow()
-            for delay in _CLEANUP_RETRY_DELAYS:
-                with self._lock:
-                    process = self._process
-                    process_group = self._process_group
-                if process is None and process_group is None:
-                    return
-                if process is None or process_group is None:
-                    with self._lock:
-                        self._state = CodexDeviceAuthState(
-                            "failed", failure="protocol_or_process"
-                        )
-                    time.sleep(delay)
-                    continue
+            try:
+                self._run_flow()
+            finally:
                 try:
-                    self._stop_owned_process(process, process_group)
+                    self._release_retained_process_or_quarantine()
                 except CodexDeviceAuthError:
-                    with self._lock:
-                        self._state = CodexDeviceAuthState(
-                            "failed", failure="protocol_or_process"
-                        )
-                    time.sleep(delay)
-                    continue
-                self._release(process, process_group)
-                return
-            with self._lock:
-                self._quarantined = True
-                self._state = CodexDeviceAuthState(
-                    "failed", failure="protocol_or_process"
-                )
-            self._quarantine_activity()
+                    pass
 
     def _run_flow(self) -> None:
         deadline = time.monotonic() + _DEVICE_DEADLINE_SECONDS
@@ -341,31 +311,27 @@ class CodexDeviceAuthManager:
             with self._lock:
                 cancelled = self._cancelled
             if cancelled:
-                self._stop_owned_process(process, process_group)
+                self._release_retained_process_or_quarantine()
                 return
             if process.stdout is None:
                 raise CodexDeviceAuthError("process")
-            output_process = process
-            output_process_group = process_group
             lines = _bounded_output_lines(
-                output_process,
-                output_process.stdout,
+                process,
+                process.stdout,
                 deadline=deadline,
                 on_lines=lambda value: self._publish_issued(value),
-                stop_process=lambda: self._stop_owned_process(
-                    output_process, output_process_group
-                ),
+                stop_process=self._release_retained_process_or_quarantine,
             )
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                self._stop_owned_process(process, process_group)
+                self._release_retained_process_or_quarantine()
                 lines.append(_TIMEOUT_LINE)
                 returncode = -signal.SIGKILL
             else:
                 try:
                     returncode = process.wait(timeout=remaining)
                 except subprocess.TimeoutExpired:
-                    self._stop_owned_process(process, process_group)
+                    self._release_retained_process_or_quarantine()
                     lines.append(_TIMEOUT_LINE)
                     returncode = -signal.SIGKILL
             with self._lock:
@@ -425,16 +391,6 @@ class CodexDeviceAuthManager:
         finally:
             if prepared is not None:
                 prepared.close()
-            if process is not None and process_group is not None:
-                try:
-                    self._stop_owned_process(process, process_group)
-                except CodexDeviceAuthError:
-                    with self._lock:
-                        self._state = CodexDeviceAuthState(
-                            "failed", failure="protocol_or_process"
-                        )
-                else:
-                    self._release(process, process_group)
             if staging is not None:
                 try:
                     _remove_staging(staging)
@@ -498,8 +454,7 @@ class CodexDeviceAuthManager:
                 self._process_group = process_group
                 cancelled = self._cancelled
         if cancelled:
-            self._stop_owned_process(process, process_group)
-            self._release(process, process_group)
+            self._release_retained_process_or_quarantine()
             raise CodexDeviceAuthError("cancelled")
         return process, process_group
 
@@ -522,18 +477,48 @@ class CodexDeviceAuthManager:
                 process,
                 prepared,
                 deadline,
-                stop_process=lambda: self._stop_owned_process(process, process_group),
+                stop_process=self._release_retained_process_or_quarantine,
             )
             self._finish_owned_process(process, process_group)
+            self._release(process, process_group)
             return result
         finally:
-            if self._process is process:
-                try:
-                    self._stop_owned_process(process, process_group)
-                except CodexDeviceAuthError:
-                    raise
-                else:
-                    self._release(process, process_group)
+            with self._lock:
+                retained = (
+                    self._process is process and self._process_group == process_group
+                )
+            if retained:
+                self._release_retained_process_or_quarantine()
+
+    def _release_retained_process_or_quarantine(self) -> None:
+        """Prove the exact retained group absent or poison all Codex admission."""
+        with self._lock:
+            if self._quarantined:
+                raise CodexDeviceAuthError("process")
+            process = self._process
+            process_group = self._process_group
+        if process is None and process_group is None:
+            return
+        if process is None or process_group is None:
+            self._quarantine_retained_process()
+            raise CodexDeviceAuthError("process")
+        for delay in (0.0, *_CLEANUP_RETRY_DELAYS):
+            if delay:
+                time.sleep(delay)
+            try:
+                self._stop_owned_process(process, process_group)
+            except CodexDeviceAuthError:
+                continue
+            self._release(process, process_group)
+            return
+        self._quarantine_retained_process()
+        raise CodexDeviceAuthError("process")
+
+    def _quarantine_retained_process(self) -> None:
+        with self._lock:
+            self._quarantined = True
+            self._state = CodexDeviceAuthState("failed", failure="protocol_or_process")
+        self._quarantine_activity()
 
     def _stop_owned_process(
         self,

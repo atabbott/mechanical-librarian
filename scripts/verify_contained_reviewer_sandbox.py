@@ -71,6 +71,13 @@ def sleeping_auth_command(profile, home, action):
     command[payload_index:] = ['/runtime/python', '-c', script]
     return CodexAuthCommand(command, prepared.environment, prepared.pass_fds, prepared.close)
 
+def successful_status_command(profile, home, action):
+    if action != 'status': raise RuntimeError('foreground proof admitted a non-status action')
+    prepared = prepare_contained_device_auth_command(profile, home, action)
+    command = list(prepared.command); payload_index = command.index('/runtime/codex', command.index('/runtime/seccomp_exec.py'))
+    command[payload_index:] = ['/runtime/python', '-c', "print('Logged in using ChatGPT', flush=True)"]
+    return CodexAuthCommand(command, prepared.environment, prepared.pass_fds, prepared.close)
+
 def wait_for_device(manager, states, timeout=8):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -172,6 +179,24 @@ def exercise():
                     finally: auth_module._DEVICE_DEADLINE_SECONDS = saved_deadline
                     manager_quarantine_reaped = set(descendants(os.getpid())) == before
                     if not manager_quarantine_reaped: raise RuntimeError('device manager quarantine tree survived explicit proof cleanup')
+                    stage = 'manager-foreground-quarantine'; foreground_coordinator = _CodexAuthLeaseCoordinator(); foreground_root = root/'manager-foreground-quarantine'; foreground_root.mkdir(mode=0o700); foreground_home = foreground_root/'profile'; foreground_home.mkdir(mode=0o700)
+                    foreground_credential = foreground_home/'auth.json'; foreground_credential.write_text(json.dumps({'auth_mode': 'chatgpt', 'OPENAI_API_KEY': None, 'tokens': {'id_token': 'id', 'access_token': 'access', 'refresh_token': 'refresh', 'account_id': 'account'}, 'last_refresh': '2026-08-28T00:00:00Z'})); foreground_credential.chmod(0o600)
+                    foreground_manager = CodexDeviceAuthManager(foreground_home, lambda home, action: successful_status_command(profile, home, action), popen=recording_popen, activity_guard=foreground_coordinator.activity, quarantine_activity=foreground_coordinator.quarantine)
+                    saved_finish = foreground_manager._finish_process_group; saved_terminate = foreground_manager._terminate_process_group
+                    foreground_manager._finish_process_group = lambda _process, _identity: (_ for _ in ()).throw(auth_module.process_groups.ReviewerProcessGroupError('runtime'))
+                    foreground_manager._terminate_process_group = lambda _process, _identity: (_ for _ in ()).throw(auth_module.process_groups.ReviewerProcessGroupError('runtime'))
+                    operations_before_foreground = len(operation_identities); foreground_state = foreground_manager.recheck_credential_status()
+                    if foreground_state.state != 'failed' or foreground_state.failure != 'protocol_or_process' or foreground_manager._process is None or foreground_manager._process_group is None: raise RuntimeError('foreground recheck did not quarantine retained ownership:' + json.dumps({'state': foreground_state.state, 'failure': foreground_state.failure, 'process': foreground_manager._process is not None, 'group': foreground_manager._process_group is not None, 'operations': len(operation_identities) - operations_before_foreground}))
+                    operations_after_foreground = len(operation_identities)
+                    foreground_manager.start()
+                    if len(operation_identities) != operations_after_foreground or operations_after_foreground <= operations_before_foreground: raise RuntimeError('foreground quarantine admitted another process')
+                    try:
+                        with foreground_coordinator.activity(): pass
+                    except auth_module.CodexDeviceAuthError: pass
+                    else: raise RuntimeError('foreground quarantine admitted another activity')
+                    process = foreground_manager._process; process_group = foreground_manager._process_group; foreground_manager._finish_process_group = saved_finish; foreground_manager._terminate_process_group = saved_terminate; saved_terminate(process, process_group); foreground_manager._release(process, process_group)
+                    manager_foreground_quarantine_reaped = set(descendants(os.getpid())) == before
+                    if not manager_foreground_quarantine_reaped: raise RuntimeError('foreground quarantine tree survived explicit proof cleanup')
                     stage = 'review'; job = jobs/'job'; provider = job/'provider'; job.mkdir(mode=0o700); provider.mkdir(mode=0o700)
                     credential = job/'auth.json'; credential.write_text('{}'); credential.chmod(0o600); result = job/'result.json'
                     stdin = stack.enter_context(open(os.devnull, 'rb')); stdout = stack.enter_context(tempfile.TemporaryFile()); stderr = stack.enter_context(tempfile.TemporaryFile())
@@ -198,7 +223,7 @@ def exercise():
                     finally: os.close(credential_fd)
                     captured['thread'].join(timeout=6); stdout.seek(0); document = json.loads(stdout.readline()); ids = captured['ids']; pgids = {value[1] for value in ids}
                     if returncode != 0 or len(ids) != 4 or len(pgids) != 1 or ids[0] != captured['broker'] or set(descendants(os.getpid())) != before: raise RuntimeError('owned reviewer tree proof failed')
-                    document.update({'limits': captured['limits'], 'lineage': ids, 'one_group': True, 'manager_cancel_reaped': manager_cancel_reaped, 'manager_timeout_reaped': manager_timeout_reaped, 'manager_handoff_reaped': manager_handoff_reaped, 'manager_quarantine_reaped': manager_quarantine_reaped}); runs.append(document)
+                    document.update({'limits': captured['limits'], 'lineage': ids, 'one_group': True, 'manager_cancel_reaped': manager_cancel_reaped, 'manager_timeout_reaped': manager_timeout_reaped, 'manager_handoff_reaped': manager_handoff_reaped, 'manager_quarantine_reaped': manager_quarantine_reaped, 'manager_foreground_quarantine_reaped': manager_foreground_quarantine_reaped}); runs.append(document)
             finally:
                 with lock: inside -= 1
     except BaseException as error: errors.append(stage + ':' + type(error).__name__ + ':' + str(error))
@@ -267,6 +292,7 @@ def main() -> int:
         and document["manager_timeout_reaped"] is True
         and document["manager_handoff_reaped"] is True
         and document["manager_quarantine_reaped"] is True
+        and document["manager_foreground_quarantine_reaped"] is True
         and document["runs"] == 2
         and document["limits"] == expected_limits
         and document["payload_as"] == expected_limits[-1]

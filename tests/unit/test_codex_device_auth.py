@@ -413,6 +413,94 @@ def test_permanent_cleanup_failure_stops_and_quarantines_shared_admission(
     assert cleanup_attempts == 1 + len(auth_module._CLEANUP_RETRY_DELAYS)
 
 
+def test_foreground_recheck_cleanup_failure_quarantines_every_codex_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    profile = tmp_path / "profile"
+    profile.mkdir(mode=0o700)
+    credential = profile / "auth.json"
+    credential.write_bytes(_auth_document())
+    credential.chmod(0o600)
+    coordinator = _CodexAuthLeaseCoordinator()
+    holder: dict[str, CodexDeviceAuthManager] = {}
+    spawns = 0
+
+    def manager_factory(
+        lease_current: Callable[[], bool],
+        lease_guard: Callable[[], AbstractContextManager[None]],
+    ) -> CodexDeviceAuthManager:
+        manager = _manager(
+            tmp_path,
+            lease_current=lease_current,
+            lease_guard=lease_guard,
+            activity_guard=coordinator.activity,
+            quarantine_activity=coordinator.quarantine,
+        )
+        original_popen = manager._popen
+
+        def recording_popen(command: list[str], **kwargs: Any):
+            nonlocal spawns
+            spawns += 1
+            return original_popen(command, **kwargs)
+
+        manager._popen = recording_popen
+        holder["manager"] = manager
+        return manager
+
+    owner = _LazyCodexAuth(manager_factory, coordinator)
+    successor = _LazyCodexAuth(manager_factory, coordinator)
+    owner.activate_lease()
+    assert owner.current_credential_status().state == "configured"
+    manager = holder["manager"]
+    cleanup_attempts = 0
+    delays: list[float] = []
+
+    manager._finish_process_group = lambda _process, _identity: (_ for _ in ()).throw(
+        process_groups.ReviewerProcessGroupError("runtime")
+    )
+
+    def refuse_cleanup(
+        _process: subprocess.Popen[bytes],
+        _identity: process_groups.ReviewerProcessGroup,
+    ) -> None:
+        nonlocal cleanup_attempts
+        cleanup_attempts += 1
+        raise process_groups.ReviewerProcessGroupError("runtime")
+
+    manager._terminate_process_group = refuse_cleanup
+    monkeypatch.setattr(auth_module.time, "sleep", delays.append)
+
+    assert owner.recheck_credential_status() == CodexDeviceAuthState(
+        "failed", failure="protocol_or_process"
+    )
+
+    retained_process = manager._process
+    retained_group = manager._process_group
+    assert retained_process is not None
+    assert retained_group == process_groups.ReviewerProcessGroup(
+        retained_process.pid, retained_process.pid, "1"
+    )
+    assert cleanup_attempts == 1 + len(auth_module._CLEANUP_RETRY_DELAYS)
+    assert delays == list(auth_module._CLEANUP_RETRY_DELAYS)
+    assert manager._quarantined
+    assert coordinator._quarantined
+    assert owner.start().state == "failed"
+    assert owner.recheck_credential_status().state == "failed"
+    with pytest.raises(CodexDeviceAuthError):
+        owner.clear()
+    with pytest.raises(CodexDeviceAuthError):
+        with coordinator.activity():
+            pass
+    with pytest.raises(CodexDeviceAuthError):
+        with owner.review_admission():
+            pass
+    with pytest.raises(CodexDeviceAuthError):
+        successor.activate_lease()
+    assert spawns == 1
+    assert manager._process is retained_process
+    assert manager._process_group == retained_group
+
+
 def test_manager_identity_capture_failure_reaps_before_publication(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -446,9 +534,17 @@ def test_cancel_cleanup_failure_is_failed_and_retains_exact_owner(
     identity = process_groups.ReviewerProcessGroup(process.pid, process.pid, "1")
     manager._process = process  # type: ignore[assignment]
     manager._process_group = identity
-    manager._terminate_process_group = lambda _process, _identity: (
-        _ for _ in ()
-    ).throw(process_groups.ReviewerProcessGroupError("runtime"))
+    cleanup_attempts = 0
+
+    def refuse_cleanup(
+        _process: subprocess.Popen[bytes],
+        _identity: process_groups.ReviewerProcessGroup,
+    ) -> None:
+        nonlocal cleanup_attempts
+        cleanup_attempts += 1
+        raise process_groups.ReviewerProcessGroupError("runtime")
+
+    manager._terminate_process_group = refuse_cleanup
 
     with pytest.raises(CodexDeviceAuthError, match="process"):
         manager.cancel()
@@ -458,6 +554,11 @@ def test_cancel_cleanup_failure_is_failed_and_retains_exact_owner(
     )
     assert cast("object", manager._process) is process
     assert manager._process_group == identity
+    assert manager._quarantined
+    assert cleanup_attempts == 1 + len(auth_module._CLEANUP_RETRY_DELAYS)
+    with pytest.raises(CodexDeviceAuthError, match="process"):
+        manager.close()
+    assert cleanup_attempts == 1 + len(auth_module._CLEANUP_RETRY_DELAYS)
 
 
 @pytest.mark.parametrize(
@@ -885,7 +986,8 @@ def test_active_device_flow_excludes_external_recheck_and_selection_probe(
 def test_successor_lease_revokes_flow_before_stale_install(tmp_path: Path) -> None:
     coordinator = _CodexAuthLeaseCoordinator()
     validating = Event()
-    release = Event()
+    validation_finishing = Event()
+    release_validation = Event()
     holder: dict[str, CodexDeviceAuthManager] = {}
 
     def predecessor_factory(
@@ -900,10 +1002,21 @@ def test_successor_lease_revokes_flow_before_stale_install(tmp_path: Path) -> No
         def blocked_status(command: list[str], **kwargs: Any):
             if command[-2] == "status":
                 validating.set()
-                release.wait(timeout=2)
             return original(command, **kwargs)
 
         manager._popen = blocked_status
+        original_finish = manager._finish_process_group
+
+        def blocked_finish(
+            process: subprocess.Popen[bytes],
+            identity: process_groups.ReviewerProcessGroup,
+        ) -> None:
+            if validating.is_set():
+                validation_finishing.set()
+                release_validation.wait(timeout=2)
+            original_finish(process, identity)
+
+        manager._finish_process_group = blocked_finish
         holder["manager"] = manager
         return manager
 
@@ -913,19 +1026,28 @@ def test_successor_lease_revokes_flow_before_stale_install(tmp_path: Path) -> No
     )
     predecessor.activate_lease()
     predecessor.start()
-    assert validating.wait(timeout=2)
+    assert validation_finishing.wait(timeout=2)
     activated = Event()
+    cancelled = Event()
+    manager = holder["manager"]
+    original_cancel = manager.cancel
+
+    def observed_cancel() -> CodexDeviceAuthState:
+        result = original_cancel()
+        cancelled.set()
+        return result
 
     def activate_successor() -> None:
         successor.activate_lease()
         activated.set()
 
-    cutover = Thread(target=activate_successor)
-    cutover.start()
-    release.set()
-    cutover.join(timeout=3)
+    with patch.object(manager, "cancel", side_effect=observed_cancel):
+        cutover = Thread(target=activate_successor)
+        cutover.start()
+        assert cancelled.wait(timeout=2)
+        release_validation.set()
+        cutover.join(timeout=3)
     assert activated.is_set()
-    manager = holder["manager"]
     assert manager._thread is not None
     manager._thread.join(timeout=2)
     assert not (tmp_path / "profile" / "auth.json").exists()
