@@ -46,6 +46,10 @@ from collections.abc import Callable
 from typing import cast
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
+from mechanical_librarian.adapters.persistence.preparation_presentation import (
+    record_preparation_names,
+    refresh_preparation_presentation,
+)
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.metadata_report import MetadataReportError
@@ -158,6 +162,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     "WHERE scan_id=? AND state='queued'",
                     (claimed_at, scan[0]),
                 )
+                refresh_preparation_presentation(self._connection, claimed_at)
                 transaction.commit()
                 return PipelineAction(
                     scan[0],
@@ -230,6 +235,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     "last_library=?,updated_at=? WHERE singleton=1",
                     (work[5], claimed_at),
                 )
+                refresh_preparation_presentation(self._connection, claimed_at)
                 transaction.commit()
                 return PipelineAction(
                     work[0],
@@ -316,6 +322,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                         "UPDATE review_preparation_scans SET state=?,updated_at=? WHERE scan_id=?",
                         (state, claimed_at, scan_id),
                     )
+            refresh_preparation_presentation(self._connection, claimed_at)
             transaction.commit()
             return None
         except (sqlite3.Error, MetadataReportError) as error:
@@ -368,6 +375,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 != 1
             ):
                 raise MetadataReportError("review preparation claim changed")
+            refresh_preparation_presentation(self._connection, claimed_at)
             transaction.commit()
             return PipelineAction(
                 work[0],
@@ -720,6 +728,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     action.scan_id,
                 ),
             )
+            record_preparation_names(
+                self._connection, action.scan_id, selected, completed_at
+            )
             transaction.commit()
         except (sqlite3.Error, MetadataReportError, ReviewCaseValueError) as error:
             transaction.rollback()
@@ -962,6 +973,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     else None
                 )
             )
+            refresh_preparation_presentation(self._connection, completed_at)
             self._connection.commit()
             return next_action
         except (sqlite3.Error, MetadataReportError, ReviewAdmissionStaleError) as error:
@@ -1146,6 +1158,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         self._review_pipeline_claim = (
             self.claim_review_pipeline_action(completed_at) if claim_next else None
         )
+        refresh_preparation_presentation(self._connection, completed_at)
 
     def fail_review_pipeline_action(
         self,
@@ -1179,6 +1192,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 ).rowcount
                 if updated != 1:
                     raise MetadataReportError("review preparation state changed")
+                refresh_preparation_presentation(self._connection, completed_at)
                 transaction.commit()
                 return
             except (sqlite3.Error, MetadataReportError) as error:
@@ -1270,6 +1284,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     self._refresh_metadata_policy_transition(
                         transition_row[0], completed_at
                     )
+            refresh_preparation_presentation(self._connection, completed_at)
             transaction.commit()
         except (sqlite3.Error, MetadataReportError) as error:
             transaction.rollback()

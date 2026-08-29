@@ -20,6 +20,52 @@ import { createApplicationRouter, normalizeLibrarySearch } from '../src/router'
 import { activity, createHttp, createLiveStream, detail, library, renderRoute } from './fixtures'
 
 describe('Library route', () => {
+  it('hands one preparation run from the Works summary into shared detail and restores work selection', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const updates = createLiveStream()
+    http.getPreparation = vi.fn(async () => ({
+      schema_version: 'review-preparation-v2' as const,
+      active: true,
+      actionable: false,
+      paused: false,
+      libraries: [],
+      connections: [],
+      presentation: {
+        run_id: `preparation_run_${'a'.repeat(64)}`,
+        state: 'running' as const,
+        triggers: [{ trigger: 'initial_setup' as const, connection: 'primary', library: 'Books', scan_id: 'scan-1', accepted_at: 100 }],
+        passage: { read: 4, searches_finished: 3, compared: 2, checked: 2, ready: 1, failed: 1 },
+        active_books: [{ name: 'Private title', stage: 'Comparing candidates' }],
+        active_overflow: 2,
+        recent_completions: [{ name: 'Finished title', outcome: 'failed' as const, completed_at: 101 }],
+        throughput_per_minute: 1.2,
+        started_at: 100,
+        updated_at: 101,
+        completed_at: null,
+        total: 4,
+        dismissible: false,
+      },
+    }))
+    renderRoute('/library?lens=all', http, updates)
+
+    const summary = await screen.findByRole('button', { name: /Preparing your library/u })
+    expect(summary).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Works' })).toBeVisible()
+    await user.click(summary)
+    expect(await screen.findByRole('heading', { name: 'Now preparing' })).toBeVisible()
+    expect(screen.getByText('Private title')).toBeVisible()
+    expect(screen.getByText('1.2 books/min')).toBeVisible()
+    expect(screen.getByText('Finished title')).toBeVisible()
+    act(() => updates.setState('degraded'))
+    expect(await screen.findByText(/Reconnecting · showing the last confirmed state/u)).toBeVisible()
+    expect(screen.getByText('Private title')).toBeVisible()
+
+    await user.click(screen.getByRole('button', { name: /^A Book\./u }))
+    expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'Now preparing' })).toBeNull()
+  })
+
   it('shows the terminal first-boot measurement without a Library self-action', async () => {
     const previousMatchMedia = window.matchMedia
     vi.stubGlobal(
@@ -29,13 +75,28 @@ describe('Library route', () => {
     renderRoute('/library?lens=all', {
       ...createHttp(),
       getPreparation: vi.fn(async () => ({
-        schema_version: 'review-preparation-v1' as const,
+        schema_version: 'review-preparation-v2' as const,
         active: false,
         actionable: false,
         paused: false,
         first_boot: true,
         first_boot_complete: true,
         first_boot_works: 1,
+        presentation: {
+          run_id: `preparation_run_${'a'.repeat(64)}`,
+          state: 'completed_with_failures' as const,
+          triggers: [{ trigger: 'initial_setup' as const, connection: 'primary', library: 'books', scan_id: 'scan-1', accepted_at: 100 }],
+          passage: { read: 1, searches_finished: 1, compared: 1, checked: 1, ready: 0, failed: 1 },
+          active_books: [],
+          active_overflow: 0,
+          recent_completions: [{ name: 'Unfinished work', outcome: 'failed' as const, completed_at: 101 }],
+          throughput_per_minute: 1,
+          started_at: 100,
+          updated_at: 101,
+          completed_at: 101,
+          total: 1,
+          dismissible: true,
+        },
         libraries: [
           {
             blocked: 1,
@@ -53,12 +114,13 @@ describe('Library route', () => {
       })),
     })
 
-    expect(await screen.findByRole('heading', { name: 'Preparation is complete' })).toBeVisible()
-    expect(screen.getByText('Preparation complete · 1 unique work checked.')).toBeVisible()
-    expect(screen.getByText('Preparation finished without ready work.')).toBeVisible()
-    expect(screen.queryByText(/failures and recovery/u)).toBeNull()
-    expect(screen.queryByRole('link', { name: 'Open workspace' })).toBeNull()
-    expect(screen.queryByText('Your first work is ready')).toBeNull()
+    const summary = await screen.findByRole('button', { name: /Preparing your library/u })
+    expect(screen.getByRole('heading', { name: 'Works' })).toBeVisible()
+    fireEvent.click(summary)
+    expect(await screen.findByText('Preparation completed with failures')).toBeVisible()
+    expect(screen.getAllByText('Could not finish')).toHaveLength(2)
+    expect(screen.getByText('Unfinished work')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Dismiss preparation' })).toBeVisible()
     vi.stubGlobal('matchMedia', previousMatchMedia)
   })
 
@@ -4449,7 +4511,7 @@ describe('Library route', () => {
     const http: ReviewHttp = {
       ...createHttp(),
       getPreparation: vi.fn(async () => ({
-        schema_version: 'review-preparation-v1' as const,
+        schema_version: 'review-preparation-v2' as const,
         active: true,
         actionable: false,
         paused: false,

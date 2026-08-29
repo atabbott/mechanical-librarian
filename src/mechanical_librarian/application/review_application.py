@@ -58,6 +58,10 @@ from mechanical_librarian.domain.owner_settings import (
     OwnerSettingsError,
     SecretWrite,
 )
+from mechanical_librarian.domain.preparation_presentation import (
+    PreparationPresentation,
+    PreparationTrigger,
+)
 
 if TYPE_CHECKING:
     from mechanical_librarian.application.cover_consideration import (
@@ -100,6 +104,12 @@ class BrowserStateOwner(Protocol):
     def field_effect_capability_suspension(
         self, connection: str, destination: str
     ) -> str | None: ...
+
+    def preparation_presentation(self, now: int) -> PreparationPresentation | None: ...
+
+    def dismiss_preparation_presentation(
+        self, run_id: str, dismissed_at: int
+    ) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,7 +233,8 @@ class PreparationView:
     first_boot: bool = False
     first_boot_complete: bool = False
     first_boot_works: int | None = None
-    schema_version: str = "review-preparation-v1"
+    presentation: dict[str, object] | None = None
+    schema_version: str = "review-preparation-v2"
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -235,6 +246,9 @@ class PreparationView:
             "first_boot_complete": self.first_boot_complete,
             "first_boot_works": self.first_boot_works,
             "connections": [dict(item) for item in self.connections],
+            "presentation": None
+            if self.presentation is None
+            else dict(self.presentation),
             "schema_version": self.schema_version,
         }
 
@@ -952,8 +966,17 @@ class ReviewApplication:
         )
 
     def preparation(self) -> PreparationView:
+        presentation = self.serialized(
+            lambda: self._state_owner.preparation_presentation(self._clock())
+        )
         if self._preparation is None:
-            return PreparationView((), False, False, False)
+            return PreparationView(
+                (),
+                False,
+                False,
+                False,
+                presentation=None if presentation is None else presentation.to_data(),
+            )
         progress_values, paused = self.serialized(self._preparation.status)
         if len(progress_values) != len(self._preparation.libraries):
             raise ReviewApplicationError("persistence")
@@ -1021,7 +1044,23 @@ class ReviewApplication:
             sum(cast("int", item["total"]) for item in libraries)
             if first_boot_complete
             else None,
+            None if presentation is None else presentation.to_data(),
         )
+
+    def dismiss_preparation(self, run_id: str) -> PreparationView:
+        if type(run_id) is not str or not run_id.startswith("preparation_run_"):
+            raise ReviewApplicationError("stale")
+        try:
+            self.serialized(
+                lambda: self._state_owner.dismiss_preparation_presentation(
+                    run_id, self._clock()
+                )
+            )
+        except Exception as error:
+            code = "blocked" if "not dismissible" in str(error) else "stale"
+            raise ReviewApplicationError(code) from error
+        self._updates.publish("preparation")
+        return self.preparation()
 
     def acknowledge_first_boot_preparation(self) -> PreparationView:
         if self._acknowledge_first_boot is None:
@@ -1057,7 +1096,17 @@ class ReviewApplication:
         if self._preparation is None:
             raise ReviewApplicationError("unavailable")
         selected = getattr(self._preparation, action)
-        progress = self.serialized(lambda: selected(connection, library))
+        progress = self.serialized(
+            lambda: (
+                selected(connection, library)
+                if action == "retry"
+                else selected(
+                    connection,
+                    library,
+                    trigger=PreparationTrigger.MANUAL_SCAN,
+                )
+            )
+        )
         library_id = next(
             item[2]
             for item in self._preparation.libraries

@@ -38,6 +38,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import open_repo
 from mechanical_librarian.adapters.persistence.review_sessions import (
     SQLiteReviewSessionRepository,
 )
+from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
@@ -57,6 +58,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
 )
 from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
+from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.setup_state import SetupStateDocument
 from mechanical_librarian.interfaces.web.react_assets import ReactAssetLoader
@@ -160,6 +162,7 @@ def _server(
     automatic_fixture: bool = False,
     cover_shapes: tuple[tuple[int, int], ...] = ((1, 1), (1, 1)),
     cohort: int = 0,
+    preparation: bool = False,
     settings_document: OwnerSettingsDocument | None = _DEFAULT_SETTINGS_DOCUMENT,
     on_app: Callable[[Any], None] | None = None,
 ):
@@ -257,6 +260,37 @@ def _server(
     proposal_set = evaluate_report(report)
     repository.publish_proposal(proposal_set)
     case_id = json.loads(repository.admit_review_case(proposal_set))["review_case_id"]
+    if preparation:
+        repository.request_review_scan(
+            "primary",
+            "ebooks",
+            "library",
+            "f" * 64,
+            990,
+            trigger=PreparationTrigger.MANUAL_SCAN,
+        )
+        discovery = repository.claim_review_pipeline_action(991)
+        assert discovery is not None
+        entries = tuple(
+            CatalogueEntry(
+                "primary",
+                "ebooks",
+                "library",
+                f"preparation-{index:02}",
+                1,
+                f"Preparation book {index:02}",
+                ("Synthetic Author",),
+                True,
+                False,
+                "singular-supported",
+                f"{index + 10_000:064x}",
+                f"/synthetic/preparation-{index:02}.epub",
+                "epub",
+                "books",
+            )
+            for index in range(7)
+        )
+        repository.complete_review_discovery(discovery, 1, "e" * 64, entries, 992)
     # A cohort large enough that a whole-Library projection is measurably
     # slower than one exact-case read. #635's acceptance is about what the
     # next field waits on, and one work cannot tell those two apart.

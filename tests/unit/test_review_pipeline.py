@@ -19,6 +19,9 @@ import pytest
 
 import mechanical_librarian.bootstrap.composition as composition
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.preparation_presentation import (
+    refresh_preparation_presentation,
+)
 from mechanical_librarian.adapters.persistence.review_preparation import (
     _FAILURE_CODES,
 )
@@ -82,6 +85,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     default_target_fields,
 )
+from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.provider_recovery import MAX_TIMESTAMP
 from mechanical_librarian.domain.review_browse import browse_report
@@ -310,6 +314,178 @@ def application_path() -> Iterator[Path]:
         path = Path(directory) / "application.sqlite3"
         open_repository(path).close()
         yield path
+
+
+def test_only_accepted_owner_trigger_creates_or_replaces_visible_run(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    ordinary = repository.request_review_scan(
+        "primary", "fiction", "lib-1", _PRODUCER, 10
+    )
+    assert repository.preparation_presentation(10) is None
+
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        11,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    first = repository.preparation_presentation(11)
+    assert first is not None
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        12,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    extended = repository.preparation_presentation(12)
+    assert extended is not None
+    assert extended.run_id == first.run_id
+    assert [item.trigger for item in extended.triggers] == [
+        PreparationTrigger.MANUAL_SCAN,
+        PreparationTrigger.MANUAL_SCAN,
+    ]
+
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed',updated_at=13 WHERE scan_id=?",
+        (ordinary.scan_id,),
+    )
+    refresh_preparation_presentation(repository._connection, 13)
+    repository._connection.commit()
+    terminal = repository.preparation_presentation(13)
+    assert terminal is not None and terminal.dismissible
+    repository.dismiss_preparation_presentation(terminal.run_id, 14)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 15)
+    dismissed = repository.preparation_presentation(15)
+    assert dismissed is not None and dismissed.state.value == "dismissed"
+
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        16,
+        trigger=PreparationTrigger.LIBRARY_ADDED,
+    )
+    replacement = repository.preparation_presentation(16)
+    repository.close()
+    assert replacement is not None
+    assert replacement.run_id != terminal.run_id
+    assert [item.trigger for item in replacement.triggers] == [
+        PreparationTrigger.LIBRARY_ADDED
+    ]
+
+
+def test_preparation_projection_bounds_private_names_and_preserves_outcomes(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    entries = tuple(
+        CatalogueEntry(
+            "primary",
+            "fiction",
+            "lib-1",
+            f"item-{index:02}",
+            1,
+            f"Private book {index:02}",
+            ("Example Author",),
+            True,
+            False,
+            "singular-supported",
+            f"{index + 1:064x}",
+            f"/book-{index:02}.epub",
+            "epub",
+            "books",
+        )
+        for index in range(10)
+    )
+    repository.complete_review_discovery(discovery, 1, "a" * 64, entries, 102)
+    work = repository._connection.execute(
+        "SELECT work_id FROM review_preparation_work ORDER BY ordinal"
+    ).fetchall()
+    for index, (work_id,) in enumerate(work):
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET stage='complete',state=?,updated_at=? WHERE work_id=?",
+            ("complete" if index % 2 == 0 else "failed", 103 + index, work_id),
+        )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed_with_failures',updated_at=113"
+    )
+    refresh_preparation_presentation(repository._connection, 113)
+    repository._connection.commit()
+
+    presentation = repository.preparation_presentation(113)
+    repository.close()
+    assert presentation is not None
+    assert presentation.passage.ready == 5
+    assert presentation.passage.failed == 5
+    assert presentation.passage.checked == 10
+    assert presentation.active_books == ()
+    assert len(presentation.recent_completions) == 8
+    assert {item.outcome for item in presentation.recent_completions} == {
+        "ready",
+        "failed",
+    }
+    assert presentation.recent_completions[0].name == "Private book 09"
+    assert presentation.throughput_per_minute == 46.2
+
+
+def test_preparation_projection_exposes_five_active_names_and_overflow(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.INITIAL_SETUP,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    entries = tuple(
+        CatalogueEntry(
+            "primary",
+            "fiction",
+            "lib-1",
+            f"item-{index:02}",
+            1,
+            f"Private book {index:02}",
+            ("Example Author",),
+            True,
+            False,
+            "singular-supported",
+            f"{index + 1:064x}",
+            f"/book-{index:02}.epub",
+            "epub",
+            "books",
+        )
+        for index in range(7)
+    )
+    repository.complete_review_discovery(discovery, 1, "a" * 64, entries, 102)
+    presentation = repository.preparation_presentation(102)
+    repository.close()
+    assert presentation is not None
+    assert [item.name for item in presentation.active_books] == [
+        f"Private book {index:02}" for index in range(5)
+    ]
+    assert presentation.active_overflow == 2
 
 
 def test_pause_state_is_durable_and_does_not_remove_committed_work(
@@ -3893,7 +4069,7 @@ class _ScheduledPipeline:
             self.is_paused,
         )
 
-    def request(self, connection, library):
+    def request(self, connection, library, *, trigger=None):
         self.requests.append((connection, library))
         return PipelineProgress(
             "review_scan_" + "a" * 64, connection, library, "queued", 0, 0, 0, 0, False

@@ -22,6 +22,10 @@ from __future__ import annotations
 import sqlite3
 from typing import cast
 
+from mechanical_librarian.adapters.persistence.preparation_presentation import (
+    accept_preparation_trigger,
+    refresh_preparation_presentation,
+)
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_pipeline import (
@@ -32,6 +36,7 @@ from mechanical_librarian.application.review_pipeline import (
     is_first_boot_scan_id,
     pipeline_scan_id,
 )
+from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
 
 # The eight buckets #641 names, expressed once over the two persisted columns
 # that decide them. Order is the order an owner reads them in: the work has not
@@ -82,6 +87,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
         requested_at: int,
         *,
         first_boot: bool = False,
+        trigger: PreparationTrigger | None = None,
     ) -> PipelineProgress:
         if (
             any(
@@ -96,6 +102,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             )
             or type(requested_at) is not int
             or requested_at < 0
+            or (trigger is not None and type(trigger) is not PreparationTrigger)
         ):
             raise MetadataReportError("review preparation request is invalid")
         transaction = self._transaction("request_review_scan")
@@ -175,6 +182,17 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                         ),
                     )
                 self._refresh_target_connection_affected(connection)
+                if first_boot and trigger is None:
+                    trigger = PreparationTrigger.INITIAL_SETUP
+                if trigger is not None:
+                    accept_preparation_trigger(
+                        self._connection,
+                        trigger,
+                        cast(str, row[0]),
+                        connection,
+                        library,
+                        requested_at,
+                    )
                 transaction.commit()
                 progress = self.review_pipeline_progress(connection, library)
                 if progress is None:
@@ -197,6 +215,17 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 ),
             )
             self._refresh_target_connection_affected(connection)
+            if first_boot and trigger is None:
+                trigger = PreparationTrigger.INITIAL_SETUP
+            if trigger is not None:
+                accept_preparation_trigger(
+                    self._connection,
+                    trigger,
+                    scan_id,
+                    connection,
+                    library,
+                    requested_at,
+                )
             transaction.commit()
             return PipelineProgress(
                 scan_id,
@@ -357,6 +386,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 "UPDATE review_preparation_control SET paused=?,updated_at=? WHERE singleton=1",
                 (paused, updated_at),
             )
+            refresh_preparation_presentation(self._connection, updated_at)
             transaction.commit()
         except sqlite3.Error as error:
             raise MetadataReportError(
@@ -447,6 +477,10 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                         "WHERE scan_id=?",
                         (library_id, producer_fingerprint, row[0]),
                     )
+            latest = self._connection.execute(
+                "SELECT COALESCE(MAX(updated_at),0) FROM review_preparation_scans"
+            ).fetchone()[0]
+            refresh_preparation_presentation(self._connection, latest)
             transaction.commit()
         except sqlite3.Error as error:
             transaction.rollback()
@@ -639,6 +673,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                     updated_at,
                 ),
             )
+            refresh_preparation_presentation(self._connection, updated_at)
             transaction.commit()
         except sqlite3.Error as error:
             transaction.rollback()

@@ -19,7 +19,7 @@ import type {
   ShadowPostureView,
   ShadowSampleView,
 } from '../src/api/http'
-import type { LiveUpdate, LiveUpdateStream } from '../src/liveUpdates'
+import type { LiveStreamState, LiveUpdate, LiveUpdateStream } from '../src/liveUpdates'
 import { createApplicationRouter } from '../src/router'
 
 export const library: LibraryView = {
@@ -213,14 +213,21 @@ export const createHttp = (): ReviewHttp => ({
     throw new Error('not configured')
   }),
   getPreparation: vi.fn(async (): Promise<PreparationView> => ({
-    schema_version: 'review-preparation-v1',
+    schema_version: 'review-preparation-v2',
     active: false,
     actionable: false,
     paused: false,
     libraries: [],
   })),
   preparationAction: vi.fn(async (): Promise<PreparationView> => ({
-    schema_version: 'review-preparation-v1',
+    schema_version: 'review-preparation-v2',
+    active: false,
+    actionable: false,
+    paused: false,
+    libraries: [],
+  })),
+  dismissPreparation: vi.fn(async (): Promise<PreparationView> => ({
+    schema_version: 'review-preparation-v2',
     active: false,
     actionable: false,
     paused: false,
@@ -283,20 +290,37 @@ export const createHttp = (): ReviewHttp => ({
  */
 export const createLiveStream = (): LiveUpdateStream & {
   announce: (update: LiveUpdate) => void
+  setState: (state: LiveStreamState) => void
 } => {
   const listeners = new Set<(update: LiveUpdate) => void>()
+  const stateListeners = new Set<(state: LiveStreamState) => void>()
+  let state: LiveStreamState = 'live'
+  let hasBeenLive = true
   return {
-    state: 'live',
+    get state() {
+      return state
+    },
+    get hasBeenLive() {
+      return hasBeenLive
+    },
     subscribe: (listener) => {
       listeners.add(listener)
       return () => {
         listeners.delete(listener)
       }
     },
-    observeState: () => () => undefined,
+    observeState: (listener) => {
+      stateListeners.add(listener)
+      return () => stateListeners.delete(listener)
+    },
     close: () => undefined,
     announce: (update) => {
       for (const listener of [...listeners]) listener(update)
+    },
+    setState: (next) => {
+      state = next
+      if (next === 'live') hasBeenLive = true
+      for (const listener of [...stateListeners]) listener(state)
     },
   }
 }

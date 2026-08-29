@@ -347,7 +347,8 @@ def test_setup_surface_exposes_only_health_shell_session_and_redacted_state() ->
     assert "csrf=state.csrf_token" in script.text
     assert "location.assign('/library')" not in script.text
     assert "open.href='/library?lens=all'" in script.text
-    assert "preparation.first_boot_complete" in script.text
+    assert "['completed_clean','completed_with_failures'].includes(visible?.state)" in script.text
+    assert "encodeURIComponent(visible.run_id)" in script.text
     assert ".field[hidden]{display:none}" in css.text
     assert "MutationObserver" not in script.text
     assert "Writes stay off until you turn them on in Activity." in script.text

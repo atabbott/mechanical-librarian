@@ -443,6 +443,25 @@ describe('shipped first-run setup script', () => {
           return response({
             actionable,
             first_boot_complete: terminal,
+            presentation: {
+              run_id: `preparation_run_${'a'.repeat(64)}`,
+              state: terminal
+                ? actionable
+                  ? 'completed_with_failures'
+                  : 'completed_clean'
+                : actionable
+                  ? 'blocked'
+                  : 'running',
+              passage: {
+                read: 1,
+                searches_finished: 1,
+                compared: 1,
+                checked: 1,
+                ready,
+                failed: terminal && actionable ? 1 : 0,
+              },
+              total: 1,
+            },
             libraries: [
               {
                 checked: 1,
@@ -475,7 +494,7 @@ describe('shipped first-run setup script', () => {
       expect(screen.getByText(expectedCopy)).toBeVisible()
       expect(screen.getByRole('link', { name: 'Open workspace' })).toHaveAttribute(
         'href',
-        '/library?lens=all',
+        `/library?lens=all&preparation=preparation_run_${'a'.repeat(64)}`,
       )
       expect(screen.queryByRole('button', { name: 'Change' })).toBeNull()
       expect(screen.queryAllByRole('button')).toHaveLength(0)

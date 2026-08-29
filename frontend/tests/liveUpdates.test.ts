@@ -108,8 +108,10 @@ describe('live update frames', () => {
   it('reports degraded and retries once only when the browser has given up', () => {
     const { stream, source: first, sources, timers } = openStream()
 
+    expect(stream.hasBeenLive).toBe(false)
     first.onopen?.()
     expect(stream.state).toBe('live')
+    expect(stream.hasBeenLive).toBe(true)
 
     // A break the browser will reconnect on its own: degraded, but no second
     // connection of ours, which would leave two streams on one tab.

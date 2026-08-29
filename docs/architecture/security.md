@@ -77,9 +77,14 @@ claim work. Duplicate requests coalesce and restart recovery returns a claim to
 the queue; report publication and its extraction checkpoint share one database
 transaction. A third crashed attempt becomes a bounded failed work rather than
 an invalid fourth claim. Operational rows contain only bounded identifiers, stage, state,
-counts, timestamps, and fixed failure codes; the authenticated progress response
-contains no metadata values, paths, credentials, provider payloads, or raw
-errors. Target TLS, authentication, authorization, and unavailable observations
+counts, timestamps, and fixed failure codes. The same transaction maintains one
+owner-facing presentation run for explicitly accepted setup, manual-scan, and
+library-add triggers. Its authenticated private, no-store snapshot additionally
+contains at most five current book display names and eight recent completion
+names; those values never enter stream frames, logs, audit identifiers,
+diagnostics, support bundles, or reviewer input. Dismissal requires the exact
+current terminal run identity plus session, CSRF, Origin, and installed-build
+identity, and cannot hide blocked work. Target TLS, authentication, authorization, and unavailable observations
 are connection-scoped durable conditions with only a closed code, state, epoch,
 and affected-work count. Owner recovery is CSRF-bound and probes the configured
 TLS client with bounded JSON only; it never reflects endpoint or transport
@@ -361,7 +366,7 @@ graceful-shutdown path.
 Its frames carry invalidation and never state. Each frame's data is a closed
 object of exactly a sequence, a topic, and either null or a review case
 identity, so there is nowhere in the encoding to place a count, a work record, a
-status string, a path, a credential, a provider payload, an unfinished proposal,
+status string, a preparation run, a book display name, a path, a credential, a provider payload, an unfinished proposal,
 or book content; the browser discards whole any frame that is not exactly those
 three fields. A subscriber is told what changed and refetches the authoritative
 answer over the ordinary HTTP surface, which is what keeps every existing

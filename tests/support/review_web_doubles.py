@@ -57,6 +57,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
     TargetSeries,
 )
+from mechanical_librarian.domain.preparation_presentation import PreparationPresentation
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.review_field_classification import (
@@ -152,6 +153,20 @@ class FakeReviewRepository:
         self.library_shadow_abstentions: dict[str, tuple[str, ...]] = {}
         self.library_terminal_documents: dict[str, str] = {}
         self.library_attention_counts: dict[str, int] = {}
+        self.preparation_presentation_value: PreparationPresentation | None = None
+        self.dismissed_preparation_runs: list[str] = []
+
+    def preparation_presentation(self, _now: int) -> PreparationPresentation | None:
+        return self.preparation_presentation_value
+
+    def dismiss_preparation_presentation(self, run_id: str, _dismissed_at: int) -> None:
+        presentation = self.preparation_presentation_value
+        if presentation is None or presentation.run_id != run_id:
+            raise RuntimeError("preparation presentation is stale")
+        if not presentation.dismissible:
+            raise RuntimeError("preparation presentation is not dismissible")
+        self.dismissed_preparation_runs.append(run_id)
+        self.preparation_presentation_value = None
 
     def review_case_ready_at(self, review_case_id: str) -> int | None:
         if review_case_id != self.case.review_case_id:

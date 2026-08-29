@@ -35,6 +35,7 @@ from mechanical_librarian.domain.owner_settings import (
     OwnerSettingsDocument,
     SettingsView,
 )
+from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
 from mechanical_librarian.infrastructure.first_boot import (
     FirstBootMode,
     select_first_boot_mode,
@@ -63,6 +64,9 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover() ->
     reviewer_access = Mock()
     cover_considerations = Mock()
     review_application = Mock()
+    preparation = Mock()
+    preparation.libraries = (("primary", "fiction", "library-1"),)
+    preparation.progress.return_value = None
     review = ReviewWebConfiguration(
         canonical_origin="https://library.invalid",
         owner_password_hash_file="/data/owner.hash",
@@ -79,7 +83,7 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover() ->
         ),
         patch.object(composition, "_store_first_preparation", return_value=False),
         patch.object(
-            composition, "create_review_pipeline", return_value=Mock()
+            composition, "create_review_pipeline", return_value=preparation
         ) as create_pipeline,
         patch.object(
             composition.SQLiteProviderRecoveryStore, "open", return_value=Mock()
@@ -127,6 +131,9 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover() ->
     runtime.admit()
     reviewer_access.activate_codex_lease.assert_called_once_with()
     review_application.admit.assert_called_once_with()
+    preparation.request.assert_called_once_with(
+        "primary", "fiction", trigger=PreparationTrigger.LIBRARY_ADDED
+    )
     runtime.close()
     review_application.stop.assert_called_once_with()
 

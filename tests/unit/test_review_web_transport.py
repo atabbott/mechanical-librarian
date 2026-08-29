@@ -51,6 +51,13 @@ from mechanical_librarian.application.review_web import (
 from mechanical_librarian.bootstrap.composition import run_review_server
 from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
+from mechanical_librarian.domain.preparation_presentation import (
+    PreparationPassage,
+    PreparationPresentation,
+    PreparationRunState,
+    PreparationTrigger,
+    PreparationTriggerRecord,
+)
 from mechanical_librarian.domain.proposal_set import (
     ProposalAlternative,
     ProposalAssessment,
@@ -1101,6 +1108,76 @@ def test_one_explicit_decision_requires_csrf_and_is_server_authoritative(
     assert len(web.repository.decisions) == 1
 
 
+def _preparation_presentation(state: PreparationRunState) -> PreparationPresentation:
+    terminal = state in {
+        PreparationRunState.COMPLETED_CLEAN,
+        PreparationRunState.COMPLETED_WITH_FAILURES,
+        PreparationRunState.DISMISSED,
+    }
+    return PreparationPresentation(
+        run_id="preparation_run_" + "a" * 64,
+        state=state,
+        triggers=(
+            PreparationTriggerRecord(
+                PreparationTrigger.MANUAL_SCAN,
+                "primary",
+                "fiction",
+                "review_scan_" + "b" * 64,
+                100,
+            ),
+        ),
+        passage=PreparationPassage(1, 1, 1, 1, 1, 0),
+        active_books=(),
+        active_overflow=0,
+        recent_completions=(),
+        throughput_per_minute=1.0,
+        started_at=100,
+        updated_at=101,
+        completed_at=101 if terminal else None,
+        total=1,
+    )
+
+
+def test_preparation_dismissal_is_authenticated_guarded_and_stale_safe(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    path = "/api/v1/review-preparation/dismiss"
+    run_id = "preparation_run_" + "a" * 64
+    anonymous = web.client.post(path, headers=web.origin, json={"run_id": run_id})
+    assert anonymous.status_code == 401
+    assert anonymous.headers["cache-control"] == "no-store, private"
+
+    login = web.login()
+    missing_csrf = web.client.post(path, headers=web.origin, json={"run_id": run_id})
+    assert missing_csrf.status_code == 422
+    bad_csrf = web.client.post(
+        path,
+        headers={**web.origin, "x-csrf-token": "wrong"},
+        json={"run_id": run_id},
+    )
+    assert bad_csrf.status_code == 403
+    headers = {**web.origin, "x-csrf-token": login["csrf_token"]}
+    stale = web.client.post(path, headers=headers, json={"run_id": run_id})
+    assert stale.status_code == 409
+    assert stale.json()["error"]["code"] == "stale"
+
+    web.repository.preparation_presentation_value = _preparation_presentation(
+        PreparationRunState.BLOCKED
+    )
+    blocked = web.client.post(path, headers=headers, json={"run_id": run_id})
+    assert blocked.status_code == 409
+    assert blocked.json()["error"]["code"] == "blocked"
+
+    web.repository.preparation_presentation_value = _preparation_presentation(
+        PreparationRunState.COMPLETED_WITH_FAILURES
+    )
+    accepted = web.client.post(path, headers=headers, json={"run_id": run_id})
+    assert accepted.status_code == 200
+    assert accepted.headers["cache-control"] == "no-store, private"
+    assert accepted.json()["presentation"] is None
+    assert web.repository.dismissed_preparation_runs == [run_id]
+
+
 def test_review_page_rotates_one_memory_only_csrf_token(
     web: ReviewWebContext[FakeReviewRepository],
 ) -> None:
@@ -1108,7 +1185,7 @@ def test_review_page_rotates_one_memory_only_csrf_token(
     inactive = web.client.get("/api/v1/review-preparation")
     assert inactive.status_code == 200, inactive.text
     assert inactive.json() == {
-        "schema_version": "review-preparation-v1",
+        "schema_version": "review-preparation-v2",
         "libraries": [],
         "paused": False,
         "active": False,
@@ -1117,6 +1194,7 @@ def test_review_page_rotates_one_memory_only_csrf_token(
         "first_boot": False,
         "first_boot_complete": False,
         "first_boot_works": None,
+        "presentation": None,
     }
     page = web.client.get(f"/review/{web.case.review_case_id}")
     assert page.status_code == 200, page.text
@@ -1623,6 +1701,7 @@ def test_openapi_is_deterministic_and_secret_free(
         ),
         ("post", "/api/v1/metadata-policy/validate"),
         ("get", "/api/v1/review-preparation"),
+        ("post", "/api/v1/review-preparation/dismiss"),
         ("post", "/api/v1/review-preparation/first-boot/acknowledge"),
         # The live invalidation stream is a protected read like any other.
         ("get", "/api/v1/updates"),

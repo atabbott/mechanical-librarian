@@ -36,6 +36,9 @@ from mechanical_librarian.adapters.persistence.field_effect_validation import (
 from mechanical_librarian.adapters.persistence.owner_settings import (
     _validate_owner_settings_content,
 )
+from mechanical_librarian.adapters.persistence.preparation_presentation import (
+    validate_preparation_presentation,
+)
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.automatic_decision import AutomaticDecisionError
 from mechanical_librarian.domain.cover_automatic_decision import (
@@ -282,6 +285,22 @@ _REVIEW_CONTROL_SQL = (
     "first_boot_acknowledged INTEGER NOT NULL CHECK(first_boot_acknowledged IN (0,1)), "
     "last_library TEXT CHECK(last_library IS NULL OR (typeof(last_library)='text' AND length(CAST(last_library AS BLOB)) BETWEEN 1 AND 64 AND last_library NOT GLOB '*[^a-z0-9_-]*' AND substr(last_library,1,1) GLOB '[a-z]')), circuit_failures INTEGER NOT NULL CHECK(circuit_failures BETWEEN 0 AND 3), "
     "circuit_open_until INTEGER NOT NULL CHECK(circuit_open_until>=0), updated_at INTEGER NOT NULL CHECK(updated_at>=0))"
+)
+_REVIEW_PREPARATION_PRESENTATION_SQL = (
+    "CREATE TABLE review_preparation_presentation ("
+    "row_id TEXT PRIMARY KEY NOT NULL, row_kind TEXT NOT NULL CHECK(row_kind IN ('run','trigger','work')), "
+    "run_id TEXT NOT NULL CHECK(run_id GLOB 'preparation_run_[0-9a-f]*' AND length(run_id)=80), "
+    "state TEXT CHECK(state IS NULL OR state IN ('starting','running','blocked','completed_clean','completed_with_failures','dismissed')), "
+    "trigger TEXT CHECK(trigger IS NULL OR trigger IN ('initial_setup','manual_scan','library_added')), "
+    "scan_id TEXT, connection_name TEXT, library_name TEXT, work_id TEXT, ordinal INTEGER CHECK(ordinal IS NULL OR ordinal>=0), "
+    "display_name TEXT CHECK(display_name IS NULL OR (typeof(display_name)='text' AND length(CAST(display_name AS BLOB)) BETWEEN 1 AND 1024)), "
+    "work_stage TEXT CHECK(work_stage IS NULL OR work_stage IN ('extraction','provider','proposal','admission','projection')), "
+    "work_outcome TEXT CHECK(work_outcome IS NULL OR work_outcome IN ('ready','failed')), "
+    "started_at INTEGER CHECK(started_at IS NULL OR started_at>=0), updated_at INTEGER NOT NULL CHECK(updated_at>=0), completed_at INTEGER CHECK(completed_at IS NULL OR completed_at>=0), "
+    "total INTEGER CHECK(total IS NULL OR total>=0), read INTEGER CHECK(read IS NULL OR read>=0), searches_finished INTEGER CHECK(searches_finished IS NULL OR searches_finished>=0), compared INTEGER CHECK(compared IS NULL OR compared>=0), checked INTEGER CHECK(checked IS NULL OR checked>=0), ready INTEGER CHECK(ready IS NULL OR ready>=0), failed INTEGER CHECK(failed IS NULL OR failed>=0), "
+    "CHECK((row_kind='run' AND row_id='run' AND state IS NOT NULL AND started_at IS NOT NULL AND total IS NOT NULL AND read IS NOT NULL AND searches_finished IS NOT NULL AND compared IS NOT NULL AND checked IS NOT NULL AND ready IS NOT NULL AND failed IS NOT NULL AND trigger IS NULL AND scan_id IS NULL AND work_id IS NULL AND display_name IS NULL AND work_stage IS NULL AND work_outcome IS NULL) OR "
+    "(row_kind='trigger' AND trigger IS NOT NULL AND scan_id IS NOT NULL AND connection_name IS NOT NULL AND library_name IS NOT NULL AND ordinal IS NOT NULL AND state IS NULL AND work_id IS NULL AND display_name IS NULL) OR "
+    "(row_kind='work' AND scan_id IS NOT NULL AND work_id IS NOT NULL AND ordinal IS NOT NULL AND display_name IS NOT NULL AND work_stage IS NOT NULL AND trigger IS NULL AND state IS NULL)))"
 )
 _REVIEW_CONNECTION_CONDITIONS_SQL = (
     "CREATE TABLE review_preparation_connection_conditions ("
@@ -667,6 +686,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
         "INSERT INTO review_preparation_control(singleton,paused,claim_sequence,first_boot_acknowledged,last_library,circuit_failures,circuit_open_until,updated_at) VALUES(?,?,?,?,?,?,?,?)",
         _SETUP_REVIEW_CONTROL_ROW,
     )
+    connection.execute(_REVIEW_PREPARATION_PRESENTATION_SQL)
     connection.execute(_REVIEW_CONNECTION_CONDITIONS_SQL)
     connection.execute(_REVIEW_WORK_SQL)
     connection.execute(_METADATA_POLICY_TRANSITION_ITEMS_SQL)
@@ -836,6 +856,7 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
                 None,
             ),
             ("index", "sqlite_autoindex_review_preparation_scans_1", None),
+            ("index", "sqlite_autoindex_review_preparation_presentation_1", None),
             ("index", "sqlite_autoindex_review_preparation_work_1", None),
             ("index", "sqlite_autoindex_review_preparation_work_2", None),
             (
@@ -921,6 +942,11 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
             ("table", "review_cases", _REVIEW_CASES_SQL),
             ("table", "review_case_field_facts", _REVIEW_CASE_FIELD_FACTS_SQL),
             ("table", "review_preparation_control", _REVIEW_CONTROL_SQL),
+            (
+                "table",
+                "review_preparation_presentation",
+                _REVIEW_PREPARATION_PRESENTATION_SQL,
+            ),
             (
                 "table",
                 "review_preparation_connection_conditions",
@@ -1104,6 +1130,7 @@ def _validate_schema_contents_without_review_field_facts(
     _validate_metadata_policy_documents(connection)
     _validate_cover_selection_authorities(connection)
     _validate_field_effect_state(connection)
+    validate_preparation_presentation(connection)
     try:
         _validate_owner_settings_content(connection)
     except OwnerSettingsError as error:

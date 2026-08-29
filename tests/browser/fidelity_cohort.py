@@ -1386,7 +1386,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
     query = parse_qs(parsed.query)
     if path == "/api/v1/review-preparation":
         return {
-            "schema_version": "review-preparation-v1",
+            "schema_version": "review-preparation-v2",
             "active": True,
             "actionable": True,
             "paused": False,

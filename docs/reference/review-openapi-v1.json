@@ -4985,6 +4985,58 @@
         "title": "_PolicyTransitionResponse",
         "type": "object"
       },
+      "_PreparationActiveBook": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "stage"
+        ],
+        "title": "_PreparationActiveBook",
+        "type": "object"
+      },
+      "_PreparationCompletion": {
+        "additionalProperties": false,
+        "properties": {
+          "completed_at": {
+            "minimum": 0.0,
+            "title": "Completed At",
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "ready",
+              "failed"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "outcome",
+          "completed_at"
+        ],
+        "title": "_PreparationCompletion",
+        "type": "object"
+      },
       "_PreparationConnection": {
         "additionalProperties": false,
         "properties": {
@@ -5030,6 +5082,21 @@
           "updated_at"
         ],
         "title": "_PreparationConnection",
+        "type": "object"
+      },
+      "_PreparationDismissRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "pattern": "^preparation_run_[0-9a-f]{64}$",
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "title": "_PreparationDismissRequest",
         "type": "object"
       },
       "_PreparationFailure": {
@@ -5079,6 +5146,156 @@
           "status"
         ],
         "title": "_PreparationFailure",
+        "type": "object"
+      },
+      "_PreparationPassage": {
+        "additionalProperties": false,
+        "properties": {
+          "checked": {
+            "minimum": 0.0,
+            "title": "Checked",
+            "type": "integer"
+          },
+          "compared": {
+            "minimum": 0.0,
+            "title": "Compared",
+            "type": "integer"
+          },
+          "failed": {
+            "minimum": 0.0,
+            "title": "Failed",
+            "type": "integer"
+          },
+          "read": {
+            "minimum": 0.0,
+            "title": "Read",
+            "type": "integer"
+          },
+          "ready": {
+            "minimum": 0.0,
+            "title": "Ready",
+            "type": "integer"
+          },
+          "searches_finished": {
+            "minimum": 0.0,
+            "title": "Searches Finished",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "read",
+          "searches_finished",
+          "compared",
+          "checked",
+          "ready",
+          "failed"
+        ],
+        "title": "_PreparationPassage",
+        "type": "object"
+      },
+      "_PreparationPresentation": {
+        "additionalProperties": false,
+        "properties": {
+          "active_books": {
+            "items": {
+              "$ref": "#/components/schemas/_PreparationActiveBook"
+            },
+            "maxItems": 5,
+            "title": "Active Books",
+            "type": "array"
+          },
+          "active_overflow": {
+            "minimum": 0.0,
+            "title": "Active Overflow",
+            "type": "integer"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "dismissible": {
+            "title": "Dismissible",
+            "type": "boolean"
+          },
+          "passage": {
+            "$ref": "#/components/schemas/_PreparationPassage"
+          },
+          "recent_completions": {
+            "items": {
+              "$ref": "#/components/schemas/_PreparationCompletion"
+            },
+            "maxItems": 8,
+            "title": "Recent Completions",
+            "type": "array"
+          },
+          "run_id": {
+            "pattern": "^preparation_run_[0-9a-f]{64}$",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "started_at": {
+            "minimum": 0.0,
+            "title": "Started At",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "starting",
+              "running",
+              "blocked",
+              "completed_clean",
+              "completed_with_failures",
+              "dismissed"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "throughput_per_minute": {
+            "minimum": 0.0,
+            "title": "Throughput Per Minute",
+            "type": "number"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          },
+          "triggers": {
+            "items": {
+              "$ref": "#/components/schemas/_PreparationTriggerRecord"
+            },
+            "title": "Triggers",
+            "type": "array"
+          },
+          "updated_at": {
+            "minimum": 0.0,
+            "title": "Updated At",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "run_id",
+          "state",
+          "triggers",
+          "passage",
+          "active_books",
+          "active_overflow",
+          "recent_completions",
+          "throughput_per_minute",
+          "started_at",
+          "updated_at",
+          "total",
+          "dismissible"
+        ],
+        "title": "_PreparationPresentation",
         "type": "object"
       },
       "_PreparationProgress": {
@@ -5209,9 +5426,19 @@
             "title": "Paused",
             "type": "boolean"
           },
+          "presentation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_PreparationPresentation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "schema_version": {
-            "const": "review-preparation-v1",
-            "default": "review-preparation-v1",
+            "const": "review-preparation-v2",
+            "default": "review-preparation-v2",
             "title": "Schema Version",
             "type": "string"
           }
@@ -5250,6 +5477,46 @@
           "count"
         ],
         "title": "_PreparationStage",
+        "type": "object"
+      },
+      "_PreparationTriggerRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted_at": {
+            "minimum": 0.0,
+            "title": "Accepted At",
+            "type": "integer"
+          },
+          "connection": {
+            "title": "Connection",
+            "type": "string"
+          },
+          "library": {
+            "title": "Library",
+            "type": "string"
+          },
+          "scan_id": {
+            "title": "Scan Id",
+            "type": "string"
+          },
+          "trigger": {
+            "enum": [
+              "initial_setup",
+              "manual_scan",
+              "library_added"
+            ],
+            "title": "Trigger",
+            "type": "string"
+          }
+        },
+        "required": [
+          "trigger",
+          "connection",
+          "library",
+          "scan_id",
+          "accepted_at"
+        ],
+        "title": "_PreparationTriggerRecord",
         "type": "object"
       },
       "_ProposedValue": {
@@ -10336,6 +10603,110 @@
           }
         ],
         "summary": "Review Preparation Status"
+      }
+    },
+    "/api/v1/review-preparation/dismiss": {
+      "post": {
+        "operationId": "dismiss_preparation_api_v1_review_preparation_dismiss_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_PreparationDismissRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_PreparationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Dismiss Preparation"
       }
     },
     "/api/v1/review-preparation/first-boot/acknowledge": {

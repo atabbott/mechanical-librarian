@@ -9,6 +9,12 @@
   from checksum-pinned source with networking compiled out; no provider is
   contacted. Pre-release v30 state requires a clean rebuild. (#749)
 
+- Carry one truthful preparation run from final setup into Library: accepted
+  owner triggers, cumulative stage passage, bounded current names and recent
+  ready/failed outcomes, reconnect state, and guarded terminal dismissal now
+  share one server-owned projection. Existing pre-release state requires a
+  clean rebuild. (#869)
+
 - Record the audiobook provider posture in ADR-0061: keyless read-side
   providers with the anonymous Audible catalog primary, Audnexus per-ASIN
   enrichment, community tiers as degraded mode, marketplace-scoped ASINs, and

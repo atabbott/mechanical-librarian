@@ -39,6 +39,10 @@ from mechanical_librarian.adapters.persistence.metadata_policy import (
     SQLiteMetadataPolicyRepository,
 )
 from mechanical_librarian.adapters.persistence.owner_settings import OwnerSettingsStore
+from mechanical_librarian.adapters.persistence.preparation_presentation import (
+    dismiss_preparation_presentation,
+    preparation_presentation_snapshot,
+)
 from mechanical_librarian.adapters.persistence.proposal_sets import (
     SQLiteProposalSetRepository,
     _validate_proposal_row,
@@ -119,6 +123,10 @@ from mechanical_librarian.domain.metadata_policy import (
 )
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
+)
+from mechanical_librarian.domain.preparation_presentation import (
+    PreparationPresentation,
+    PreparationTrigger,
 )
 from mechanical_librarian.domain.proposal_set import (
     ProposalSet,
@@ -940,6 +948,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         requested_at: int,
         *,
         first_boot: bool = False,
+        trigger: PreparationTrigger | None = None,
     ) -> PipelineProgress:
         return self._review_scans.request_review_scan(
             connection,
@@ -948,7 +957,21 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             producer_fingerprint,
             requested_at,
             first_boot=first_boot,
+            trigger=trigger,
         )
+
+    def preparation_presentation(self, now: int) -> PreparationPresentation | None:
+        return preparation_presentation_snapshot(self._connection, now)
+
+    def dismiss_preparation_presentation(self, run_id: str, dismissed_at: int) -> None:
+        transaction = self._transaction("dismiss_preparation_presentation")
+        try:
+            transaction.begin()
+            dismiss_preparation_presentation(self._connection, run_id, dismissed_at)
+            transaction.commit()
+        except Exception:
+            transaction.rollback()
+            raise
 
     def review_pipeline_progress(
         self, connection: str, library: str

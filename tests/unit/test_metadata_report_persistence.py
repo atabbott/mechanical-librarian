@@ -289,6 +289,13 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             ),
         ),
         (
+            "immediate previous v30",
+            lambda connection: create_prior_schema(
+                connection,
+                "metadata-report-v30",
+            ),
+        ),
+        (
             "previous proposal policy v3",
             lambda connection: create_prior_schema(
                 connection,
@@ -452,6 +459,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("review_preparation_absences",),
             ("review_preparation_connection_conditions",),
             ("review_preparation_control",),
+            ("review_preparation_presentation",),
             ("review_preparation_scans",),
             ("review_preparation_work",),
             ("reviewer_access",),

@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useRouterState } from '@tanstack/react-router'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { KeyboardEvent, SyntheticEvent } from 'react'
+import type { CSSProperties, KeyboardEvent, SyntheticEvent } from 'react'
 
 import { displayValue } from '../api/http'
 import type {
@@ -11,6 +11,7 @@ import type {
   DecisionCommand,
   LibraryView,
   LibraryWorkView,
+  PreparationView,
   ProviderOutcomeView,
 } from '../api/http'
 import { useCoverChoiceData } from '../coverChoices'
@@ -19,9 +20,9 @@ import { fieldLabel, labelWords, opaqueSource } from '../labels'
 import { coalesceMilliseconds } from '../liveInvalidation'
 import {
   detailQuery,
-  FirstBootHandover,
   libraryRoute,
   PreparationNotice,
+  usePreparation,
   useReviewContext,
 } from '../router'
 import { WriteReadyNotice } from '../components/WriteReadyNotice'
@@ -83,6 +84,187 @@ const initials = (title: string) =>
     .slice(0, 2)
     .map((word) => word[0]?.toUpperCase())
     .join('') || 'ML'
+type PreparationPresentation = NonNullable<PreparationView['presentation']>
+const preparationStateCopy: Record<PreparationPresentation['state'], string> = {
+  starting: 'Preparation is starting',
+  running: 'Preparation continues',
+  blocked: 'Preparation needs recovery',
+  completed_clean: 'Preparation is complete',
+  completed_with_failures: 'Preparation completed with failures',
+  dismissed: 'Preparation dismissed',
+}
+const preparationTriggerCopy: Record<
+  PreparationPresentation['triggers'][number]['trigger'],
+  string
+> = {
+  initial_setup: 'Initial setup',
+  manual_scan: 'Owner scan',
+  library_added: 'Library added',
+}
+const preparationPassage = [
+  ['read', 'Read from library'],
+  ['searches_finished', 'Searches finished'],
+  ['compared', 'Candidates compared'],
+  ['checked', 'Metadata checked'],
+] as const
+
+const PreparationSummary = ({
+  presentation,
+  reconnecting,
+  selected,
+  onSelect,
+}: {
+  presentation: PreparationPresentation
+  reconnecting: boolean
+  selected: boolean
+  onSelect: () => void
+}) => (
+  <button
+    type="button"
+    className={`preparation-summary${selected ? ' active' : ''}`}
+    aria-current={selected ? 'true' : undefined}
+    onClick={onSelect}
+  >
+    <span className="preparation-summary-mark" aria-hidden="true" />
+    <span>
+      <strong>Preparing your library</strong>
+      <small>
+        {reconnecting
+          ? 'Reconnecting · last confirmed progress shown'
+          : `${String(presentation.passage.ready)} ready · ${String(presentation.active_books.length + presentation.active_overflow)} active`}
+      </small>
+    </span>
+  </button>
+)
+
+const PreparationDetail = ({
+  presentation,
+  reconnecting,
+  dismissing,
+  onDismiss,
+}: {
+  presentation: PreparationPresentation
+  reconnecting: boolean
+  dismissing: boolean
+  onDismiss: () => void
+}) => {
+  const outcomeTotal = presentation.passage.ready + presentation.passage.failed
+  return (
+    <div className="preparation-detail">
+      <header tabIndex={-1} data-route-focus="true">
+        <div>
+          <h2>Preparing your library</h2>
+          <p>The run that began in setup continues here while ready works remain selectable.</p>
+        </div>
+        <strong>{String(presentation.passage.ready)} ready</strong>
+      </header>
+      <p
+        key={`${presentation.run_id}:${String(presentation.updated_at)}`}
+        className={`preparation-run-state state-${presentation.state}`}
+        role="status"
+      >
+        {reconnecting
+          ? 'Reconnecting · showing the last confirmed state'
+          : preparationStateCopy[presentation.state]}
+      </p>
+      <p className="preparation-provenance">
+        Triggered by{' '}
+        {presentation.triggers
+          .map((trigger) => preparationTriggerCopy[trigger.trigger])
+          .join(' · ')}
+      </p>
+      <section aria-labelledby="now-preparing-title">
+        <div className="preparation-section-heading">
+          <h3 id="now-preparing-title">Now preparing</h3>
+          <span>
+            {String(presentation.active_books.length + presentation.active_overflow)} active
+          </span>
+        </div>
+        {presentation.active_books.length ? (
+          <ol className="preparation-active-books">
+            {presentation.active_books.map((book, index) => (
+              <li key={`${book.name}:${String(index)}`}>
+                <span className="library-book-mark" aria-hidden="true">
+                  {initials(book.name)}
+                </span>
+                <span>
+                  <strong>{book.name}</strong>
+                  <small>{book.stage}</small>
+                </span>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p>No book is active at the last confirmed refresh.</p>
+        )}
+        {presentation.active_overflow ? (
+          <p>{String(presentation.active_overflow)} more active books follow in this run.</p>
+        ) : null}
+      </section>
+      <section aria-labelledby="preparation-progress-title">
+        <div className="preparation-section-heading">
+          <div>
+            <h3 id="preparation-progress-title">Preparation progress</h3>
+            <p>How many books made it this far?</p>
+          </div>
+          <strong>{presentation.throughput_per_minute.toFixed(1)} books/min</strong>
+        </div>
+        <dl className="preparation-passage">
+          {preparationPassage.map(([field, label]) => (
+            <div key={field}>
+              <dt>{label}</dt>
+              <dd>
+                <span
+                  style={
+                    {
+                      '--passage-scale': String(
+                        presentation.total ? presentation.passage[field] / presentation.total : 0,
+                      ),
+                    } as CSSProperties
+                  }
+                />
+                <strong>{String(presentation.passage[field])}</strong>
+              </dd>
+            </div>
+          ))}
+          <div className="preparation-outcomes">
+            <dt>Ready for review</dt>
+            <dd>
+              <strong>{String(presentation.passage.ready)}</strong>
+            </dd>
+            <dt>Could not finish</dt>
+            <dd>
+              <strong>{String(presentation.passage.failed)}</strong>
+            </dd>
+          </div>
+        </dl>
+      </section>
+      <section aria-labelledby="recent-completions-title">
+        <div className="preparation-section-heading">
+          <h3 id="recent-completions-title">Recent completions</h3>
+          <span>{String(outcomeTotal)} outcomes</span>
+        </div>
+        {presentation.recent_completions.length ? (
+          <ul className="preparation-completions">
+            {presentation.recent_completions.map((completion, index) => (
+              <li key={`${completion.name}:${String(completion.completed_at)}:${String(index)}`}>
+                <span>{completion.name}</span>
+                <strong>{completion.outcome === 'ready' ? 'Ready' : 'Could not finish'}</strong>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p>No terminal book has been reported yet.</p>
+        )}
+      </section>
+      {presentation.dismissible ? (
+        <button type="button" disabled={dismissing} onClick={onDismiss}>
+          {dismissing ? 'Dismissing…' : 'Dismiss preparation'}
+        </button>
+      ) : null}
+    </div>
+  )
+}
 const bounded = (value: string, fallback: string) =>
   opaqueSource.test(value) ? fallback : value.length > 160 ? `${value.slice(0, 157)}…` : value
 const decisionValue = (field: ReviewField) => {
@@ -1047,6 +1229,27 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const search = libraryRoute.useSearch()
   const navigate = useNavigate({ from: '/library' })
   const { http, updates } = useReviewContext()
+  const preparationState = usePreparation()
+  const presentation =
+    preparationState.data?.presentation?.state === 'dismissed'
+      ? null
+      : (preparationState.data?.presentation ?? null)
+  const preparationSelected = presentation !== null && search.preparation === presentation.run_id
+  const dismissPreparation = useMutation({
+    mutationFn: (runId: string) => http.dismissPreparation(runId),
+    retry: false,
+    onSuccess: (value) => {
+      preparationState.queryClient.setQueryData(['review-preparation'], value)
+      void navigate({
+        replace: true,
+        search: (current) => {
+          const next = { ...current }
+          delete next.preparation
+          return next
+        },
+      })
+    },
+  })
   const currentSearch = useRef(search)
   const pendingSearchQuery = useRef<string | null>(null)
   const searchNavigation = useRef<Promise<void> | null>(null)
@@ -1192,13 +1395,24 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       },
     })
   }, [unresolvableWork, navigate])
-  const hasSelection = Boolean(search.preview) || selectedWork !== undefined
+  useEffect(() => {
+    if (!search.preparation || preparationSelected) return
+    void navigate({
+      replace: true,
+      search: (current) => {
+        const next = { ...current }
+        delete next.preparation
+        return next
+      },
+    })
+  }, [navigate, preparationSelected, search.preparation])
+  const hasSelection = preparationSelected || Boolean(search.preview) || selectedWork !== undefined
   const selectedLibraryWork = search.preview
     ? data.works.find((work) => work.reviewCaseId === search.preview)
     : undefined
   const detail = useQuery({
     ...detailQuery(http, selectedReviewCaseId),
-    enabled: Boolean(search.preview),
+    enabled: Boolean(search.preview) && !preparationSelected,
   })
   const activeLineageReconciliation =
     lineageReconciliation !== null &&
@@ -1511,10 +1725,14 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       setAutomaticResults((current) => ({ ...current, [request.key]: 'error' })),
   })
 
-  const routeIdentity = `${search.lens}:${search.q ?? ''}:${search.cursor ?? ''}:${search.attentionCursor ?? ''}:${search.preview ?? ''}:${search.work ?? ''}:${search.field ?? ''}:${search.attention ?? ''}`
+  const routeIdentity = `${search.lens}:${search.q ?? ''}:${search.cursor ?? ''}:${search.attentionCursor ?? ''}:${search.preview ?? ''}:${search.work ?? ''}:${search.field ?? ''}:${search.attention ?? ''}:${search.preparation ?? ''}`
   useRouteReadyFocus(routeIdentity)
   const selectedDetailReady =
-    Boolean(search.preview) && search.attention !== 'open' && !detail.isPending && !detail.isError
+    !preparationSelected &&
+    Boolean(search.preview) &&
+    search.attention !== 'open' &&
+    !detail.isPending &&
+    !detail.isError
   useEffect(() => {
     selectedDetailRetry.current = null
   }, [search.preview])
@@ -1665,6 +1883,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       search: (current) => {
         const next = { ...current, preview: reviewCaseId }
         delete next.work
+        delete next.preparation
         if (field) next.field = field
         else delete next.field
         return next
@@ -1684,6 +1903,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         const next = { ...current, work: work.workId }
         delete next.preview
         delete next.field
+        delete next.preparation
         return next
       },
     })
@@ -1799,6 +2019,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         delete next.work
         delete next.field
         delete next.attention
+        delete next.preparation
         return next
       },
     })
@@ -1911,12 +2132,27 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         </div>
       ) : null}
       <PreparationNotice routeIdentity={routeIdentity} />
-      <FirstBootHandover />
       <WriteReadyNotice />
       <div
         className={`library-workspace${hasSelection ? ' has-selection' : ''}${search.attention === 'open' ? ' attention-open' : ''}`}
       >
         <section className="library-works" aria-labelledby="library-works-title">
+          {presentation ? (
+            <PreparationSummary
+              presentation={presentation}
+              reconnecting={preparationState.reconnecting}
+              selected={preparationSelected}
+              onSelect={() =>
+                void navigate({
+                  search: (current) => {
+                    const next = { ...current, preparation: presentation.run_id }
+                    delete next.attention
+                    return next
+                  },
+                })
+              }
+            />
+          ) : null}
           <div className="library-works-heading">
             <h2 id="library-works-title">Works</h2>
             <span>{data.counts.all} total</span>
@@ -2070,7 +2306,14 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
             ? { 'data-route-focus': 'true' }
             : {})}
         >
-          {selectedWork ? (
+          {preparationSelected ? (
+            <PreparationDetail
+              presentation={presentation}
+              reconnecting={preparationState.reconnecting}
+              dismissing={dismissPreparation.isPending}
+              onDismiss={() => dismissPreparation.mutate(presentation.run_id)}
+            />
+          ) : selectedWork ? (
             <WorkSummary work={selectedWork} />
           ) : !search.preview ? (
             <div className="library-selection">

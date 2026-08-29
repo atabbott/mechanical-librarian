@@ -16,6 +16,7 @@ from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.domain.audio_inspection import AudioInspectionOutcome
 from mechanical_librarian.domain.epub_inspection import EpubInspectionOutcome
 from mechanical_librarian.domain.metadata_report import ProviderStatus
+from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
 
 __all__ = [
     "PipelineAction",
@@ -264,6 +265,7 @@ class ReviewPipelineRepository(Protocol):
         requested_at: int,
         *,
         first_boot: bool = False,
+        trigger: PreparationTrigger | None = None,
     ) -> PipelineProgress: ...
 
     def review_pipeline_progress(
@@ -491,7 +493,13 @@ class ReviewPreparationPipeline:
             finally:
                 repository.close()
 
-    def request(self, connection: str, library: str) -> PipelineProgress:
+    def request(
+        self,
+        connection: str,
+        library: str,
+        *,
+        trigger: PreparationTrigger | None = None,
+    ) -> PipelineProgress:
         selected = self._libraries.get((connection, library))
         if selected is None:
             raise ReviewPipelineError("library")
@@ -506,8 +514,14 @@ class ReviewPreparationPipeline:
                 self._clock(),
             )
             if self._first_boot:
-                return repository.request_review_scan(*arguments, first_boot=True)
-            return repository.request_review_scan(*arguments)
+                return repository.request_review_scan(
+                    *arguments,
+                    first_boot=True,
+                    trigger=trigger or PreparationTrigger.INITIAL_SETUP,
+                )
+            if trigger is None:
+                return repository.request_review_scan(*arguments)
+            return repository.request_review_scan(*arguments, trigger=trigger)
 
         progress = self._with_foreground_repository(request)
         self._announce("preparation", None)
@@ -1182,8 +1196,14 @@ class ReviewPreparationSupervisor:
         finally:
             self._pipeline.close_observation()
 
-    def request(self, connection: str, library: str) -> PipelineProgress:
-        progress = self._pipeline.request(connection, library)
+    def request(
+        self,
+        connection: str,
+        library: str,
+        *,
+        trigger: PreparationTrigger | None = None,
+    ) -> PipelineProgress:
+        progress = self._pipeline.request(connection, library, trigger=trigger)
         with self._schedule_lock:
             self._schedule_waiting_for_action = False
             self._next_schedule_at = None
@@ -1214,7 +1234,7 @@ class ReviewPreparationSupervisor:
         progress = self.progress(connection, library)
         if progress is None or progress.state != "completed_with_failures":
             raise ReviewPipelineError("retry")
-        return self.request(connection, library)
+        return self.request(connection, library, trigger=PreparationTrigger.MANUAL_SCAN)
 
     def connection_conditions(self) -> tuple[TargetConnectionCondition, ...]:
         return self._pipeline.connection_conditions()

@@ -579,15 +579,15 @@ describe('ReviewApiClient', () => {
   it('accepts scan progress acknowledgements independently from preparation controls', async () => {
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(Response.json({ scan_id: 'scan-1', connection: 'primary', library: 'Books', library_id: 'books', state: 'queued', checked: 0, total: 2, ready: 0, blocked: 0, rescan_requested: false }))
-      .mockResolvedValueOnce(Response.json({ schema_version: 'review-preparation-v1', active: false, actionable: false, paused: false, libraries: [], connections: [] }))
+      .mockResolvedValueOnce(Response.json({ schema_version: 'review-preparation-v2', active: false, actionable: false, paused: false, libraries: [], connections: [] }))
     const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
 
     await expect(client.preparationAction('primary/Books/scan')).resolves.toMatchObject({ scan_id: 'scan-1', state: 'queued' })
-    await expect(client.preparationAction('pause')).resolves.toMatchObject({ schema_version: 'review-preparation-v1', paused: false })
+    await expect(client.preparationAction('pause')).resolves.toMatchObject({ schema_version: 'review-preparation-v2', paused: false })
   })
 
   it('maps only closed target-connection preparation conditions', () => {
-    const base = { schema_version: 'review-preparation-v1', active: true, actionable: false, paused: false, libraries: [] }
+    const base = { schema_version: 'review-preparation-v2', active: true, actionable: false, paused: false, libraries: [] }
     for (const state of ['paused', 'checking', 'recovered']) {
       expect(mapPreparation({ ...base, connections: [{ connection: 'primary', code: 'unavailable', state, affected: state === 'recovered' ? 0 : 2, updated_at: 1 }] }).connections?.[0]?.state).toBe(state)
     }
@@ -596,6 +596,29 @@ describe('ReviewApiClient', () => {
       { ...base, connections: [{ connection: 'primary', code: 'unknown', state: 'paused', affected: 1, updated_at: 1 }] },
       { ...base, connections: [{ connection: 'primary', code: 'tls', state: 'paused', affected: 1 }] },
     ]) expect(() => mapPreparation(invalid)).toThrow(ApiError)
+  })
+
+  it('accepts only ordered and bounded preparation presentation content', () => {
+    const presentation = {
+      run_id: `preparation_run_${'a'.repeat(64)}`,
+      state: 'running',
+      triggers: [{ trigger: 'manual_scan', connection: 'primary', library: 'Books', scan_id: 'scan-1', accepted_at: 100 }],
+      passage: { read: 4, searches_finished: 3, compared: 2, checked: 2, ready: 1, failed: 1 },
+      active_books: [{ name: 'Private title', stage: 'Comparing candidates' }],
+      active_overflow: 0,
+      recent_completions: [{ name: 'Finished title', outcome: 'ready', completed_at: 101 }],
+      throughput_per_minute: 1.2,
+      started_at: 100,
+      updated_at: 101,
+      completed_at: null,
+      total: 4,
+      dismissible: false,
+    }
+    const base = { schema_version: 'review-preparation-v2', active: true, actionable: false, paused: false, libraries: [], connections: [], presentation }
+    expect(mapPreparation(base).presentation?.passage.ready).toBe(1)
+    expect(() => mapPreparation({ ...base, presentation: { ...presentation, passage: { ...presentation.passage, checked: 1 } } })).toThrow('invalid_preparation_passage_order')
+    expect(() => mapPreparation({ ...base, presentation: { ...presentation, active_books: Array.from({ length: 6 }, () => ({ name: 'Private title', stage: 'Reading' })) } })).toThrow('invalid_preparation_presentation')
+    expect(() => mapPreparation({ ...base, presentation: { ...presentation, recent_completions: [{ name: 'Private title', outcome: 'invented', completed_at: 101 }] } })).toThrow('invalid_preparation_completion')
   })
 
   it('preserves structured server error codes and rejects malformed DTOs', async () => {
