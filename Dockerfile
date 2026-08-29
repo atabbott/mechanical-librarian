@@ -3,7 +3,7 @@
 # checksum-pinned upstream release rather than installed from the distribution,
 # for three reasons. Network support is compiled out, so the slice's
 # zero-network invariant is a property of the binary rather than of the sandbox
-# around it. The enabled set is exactly the three admitted containers and the
+# around it. The enabled set is exactly the two admitted containers and the
 # codecs they carry, so a payload outside that envelope is refused as an
 # extraction failure instead of being demuxed by a component the library never
 # reads -- `ffprobe` sniffs by content, not by extension, and the distribution
@@ -30,7 +30,7 @@ RUN ./configure \
         --disable-indevs --disable-outdevs --disable-hwaccels --disable-bsfs \
         --disable-ffmpeg --disable-ffplay \
         --enable-ffprobe \
-        --enable-demuxer=mov,mp3,aac \
+        --enable-demuxer=mov,mp3 \
         --enable-decoder=aac,mp3,mjpeg,png \
         --enable-parser=aac,mpegaudio,mjpeg,png \
         --enable-protocol=file,pipe,fd \

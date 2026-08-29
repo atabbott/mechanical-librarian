@@ -4984,6 +4984,41 @@ def test_an_audiobook_inspection_failure_is_named_at_the_extraction_stage() -> N
     assert raised.value.code == "internal_failure"
 
 
+def test_a_terminal_stop_that_registers_no_package_refuses_to_pass_silently(
+    application_path: Path,
+) -> None:
+    """The unreachable-evidence failure must not become a quiet no-op.
+
+    A foreign key already keeps a report the pipeline never published out of
+    this call, so the guard sits behind it.  Lifting that key is the only way
+    to reach the state it exists for, and the guard is what stops that state
+    from producing a work with no package and no complaint.
+    """
+    repository = open_repository(application_path)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_audio_entry("item", "1" * 64),), 12
+    )
+    extraction = repository.claim_review_pipeline_action(13)
+    assert extraction is not None
+
+    repository._connection.execute("PRAGMA foreign_keys=OFF")
+    repository._connection.execute("BEGIN")
+    with pytest.raises(MetadataReportError):
+        repository.complete_review_extraction_publication(
+            extraction, "report_" + "c" * 64, 14, 0, "local_evidence_only"
+        )
+    packages = repository._connection.execute(
+        "SELECT COUNT(*) FROM current_review_packages"
+    ).fetchone()
+    repository._connection.execute("ROLLBACK")
+    repository.close()
+
+    assert packages == (0,)
+
+
 def test_the_provider_stage_refuses_an_audiobook_report_it_should_never_see() -> None:
     def unreachable(*_arguments: object, **_keywords: object) -> None:
         raise AssertionError

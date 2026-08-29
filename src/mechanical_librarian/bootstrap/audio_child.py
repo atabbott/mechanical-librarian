@@ -259,6 +259,10 @@ def main(argv: list[str] | None = None) -> int:
             expected,
             limits,
         )
+        # The deadline covered the interpretation, which is the unbounded part.
+        # An alarm arriving during the write would turn a complete report into
+        # a child failure, and the parent's own wall clock still bounds it.
+        signal.setitimer(signal.ITIMER_REAL, 0)
         _write_report(
             AudioInspection(
                 result.outcome,

@@ -47,17 +47,19 @@ provider means to the review pipeline.
 2. **`ffprobe` is built from a checksum-pinned upstream release.** A builder
    stage fetches FFmpeg 7.1.5, verifies its SHA-256 against a pinned value and
    hard-fails on mismatch, configures with `--disable-everything` plus exactly
-   the `mov`, `mp3` and `aac` demuxers, the `aac`, `mp3`, `mjpeg` and `png`
-   decoders and parsers, and the `file`, `pipe` and `fd` protocols, builds the
-   `ffprobe` target alone, and strips it. The result is a 1,845,864-byte binary
+   the `mov` and `mp3` demuxers -- the two container grammars behind the `m4b`,
+   `m4a` and `mp3` files this library admits -- the `aac`, `mp3`, `mjpeg` and
+   `png` decoders and parsers those containers carry, and the `file`, `pipe`
+   and `fd` protocols, builds the `ffprobe` target alone, and strips it. The
+   result is a 1,845,864-byte binary
    copied into the final image at `/usr/local/bin/ffprobe`; the parent resolves
    it from a closed path list rather than an inherited `PATH`, which the child
    environment does not carry. `--disable-network` makes the zero-network
    invariant a property of the binary rather than of the sandbox around it, and
    the enabled set closes the grammar: `ffprobe` sniffs by content rather than
-   by extension, so a payload outside the three admitted containers is refused
-   as an extraction failure instead of being demuxed by a component nothing
-   here reads.
+   by extension, so a payload outside those two containers is refused as an
+   extraction failure instead of being demuxed by a component nothing here
+   reads.
 3. **Chapters and embedded art are structure, not claims.** Embedded chapters
    are a bounded section on the report (at most 1,024, contiguous ordinals,
    millisecond boundaries, projection-validated titles, an explicit truncation
@@ -91,9 +93,9 @@ provider means to the review pipeline.
 - The stop is atomic with publication, so an audiobook neither stalls in a
   stage it cannot complete nor reports a provider failure that never happened.
 - The probe costs the image almost nothing: 3 MB on disk (261 MB to 264 MB) and
-  under 1 MB pulled (55,458,311 to 56,336,949 bytes compressed). The shipped
+  under 1 MB pulled (55,458,311 to 56,334,723 bytes compressed). The shipped
   media parser contains no muxer, encoder, filter, device, or network protocol
-  at all, and no demuxer or decoder outside the three admitted containers.
+  at all, and no demuxer or decoder outside the two admitted containers.
 
 ### Negative
 

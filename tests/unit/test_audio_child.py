@@ -222,6 +222,35 @@ def test_the_child_holds_its_own_deadline_over_the_interpretation() -> None:
     assert armed[-1] == (child.signal.ITIMER_REAL, 0)
 
 
+def test_the_deadline_is_lifted_before_a_complete_report_is_written() -> None:
+    """An alarm during the write would turn a whole report into a failure."""
+    events: list[str] = []
+    written: list[AudioInspection] = []
+
+    def record(value: AudioInspection) -> None:
+        events.append("write")
+        written.append(value)
+
+    with (
+        patch.object(child, "_install_parent_guard"),
+        patch.object(child, "_apply_limits"),
+        patch.object(child, "_read_context", return_value=_context()),
+        patch.object(child, "_write_report", side_effect=record),
+        patch.object(child.signal, "signal"),
+        patch.object(
+            child.signal,
+            "setitimer",
+            side_effect=lambda _which, seconds: events.append(
+                "arm" if seconds else "disarm"
+            ),
+        ),
+    ):
+        assert child.main(["10", "123"]) == 0
+
+    assert written[0].outcome is AudioInspectionOutcome.SUCCESS
+    assert events == ["arm", "disarm", "write", "disarm"]
+
+
 def test_the_deadline_signal_raises_rather_than_ending_the_process() -> None:
     with pytest.raises(child._Expired):
         child._expire(child.signal.SIGALRM, None)
