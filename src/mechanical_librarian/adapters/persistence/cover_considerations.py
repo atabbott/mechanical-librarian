@@ -423,12 +423,13 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         supersedes_id: str | None,
         occurred_at: int,
         preparation_kind: str = "automatic_prepared",
+        reviewer_access_revision: int | None = None,
     ) -> str:
         try:
             value = json.loads(document)
             if (
                 type(value) is not dict
-                or value.get("schema_version") != "cover-consideration-v2"
+                or value.get("schema_version") != "cover-consideration-v3"
                 or value.get("review_case_id") != review_case_id
                 or value.get("report_id") != report_id
                 or value.get("replay_digest") != replay_digest
@@ -444,6 +445,13 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         transaction = self._transaction("record_cover_consideration")
         try:
             transaction.begin()
+            if reviewer_access_revision is not None:
+                row = self._connection.execute(
+                    "SELECT revision FROM reviewer_access WHERE singleton=1"
+                ).fetchone()
+                current_revision = 1 if row is None else row[0]
+                if current_revision != reviewer_access_revision:
+                    raise MetadataReportError("cover consideration changed")
             existing = self._connection.execute(
                 "SELECT document FROM cover_considerations WHERE consideration_id=?",
                 (consideration_id,),

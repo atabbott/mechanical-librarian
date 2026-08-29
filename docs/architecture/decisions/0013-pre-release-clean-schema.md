@@ -68,3 +68,9 @@ Issue #830 retires the historical `review-field-facts-v1` plan and introduces
 rebuilds only the derived owner-actionability fact and trigger. Its literal
 target is checked against the installed build before any filesystem access;
 future schema changes therefore require a new reviewed plan or a clean rebuild.
+
+Issue #872/#873 takes the clean-rebuild branch. Its reviewer-access and owner
+state objects cannot update the canonical historical state targeted by the
+three previous exact-predecessor plans, so those plans and the now-empty public
+command are retired. This does not weaken ordinary absent-or-exact-current
+startup or create a generic conversion seam.

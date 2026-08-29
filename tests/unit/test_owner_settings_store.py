@@ -23,7 +23,7 @@ from mechanical_librarian.domain.owner_settings import (
 def _document(revision: int = 1) -> OwnerSettingsDocument:
     return OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v1",
+            "schema_version": "owner-settings-v2",
             "revision": revision,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}

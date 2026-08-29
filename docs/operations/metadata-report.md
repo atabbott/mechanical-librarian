@@ -173,7 +173,7 @@ code raises no operational incident, because nothing about it needs owner
 action.
 Multi-file audiobook items and audiobook libraries without a named read-only
 mount stay excluded, exactly as before. See
-[ADR-0062](../architecture/decisions/0062-isolated-audiobook-inspector.md).
+[ADR-0063](../architecture/decisions/0063-isolated-audiobook-inspector.md).
 
 Google Books descriptions use one inert, bounded
 `google-books-html-visible-text-v1` projection. Its report-bound transformation

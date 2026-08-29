@@ -14,6 +14,7 @@ import {
   settingsValidationCopy,
 } from '../api/http'
 import type { SettingsView, SettingsWrite } from '../api/http'
+import { ReviewerAccessPanel } from '../components/ReviewerAccessPanel'
 import { settingsRoute, useReviewContext } from '../router'
 import type { SettingsGroup } from '../router'
 
@@ -1035,33 +1036,7 @@ const SettingsEditor = ({
                 </Row>
               </>
             ) : null}
-            {active === 'reviewer' ? (
-              <Row
-                fieldId="server.reviewer_enabled"
-                title="AI reviewer"
-                description="The sign-in details and private profile stay on the server and never enter the browser."
-                effect={effect('server.reviewer_enabled')}
-                locked={locked}
-              >
-                {locked ? (
-                  <strong>{draft.server.reviewer_enabled ? 'Enabled' : 'Disabled'}</strong>
-                ) : (
-                  <label className="settings-check">
-                    <FieldInput
-                      fieldId="server.reviewer_enabled"
-                      type="checkbox"
-                      checked={draft.server.reviewer_enabled}
-                      onChange={(event) =>
-                        update((value) => {
-                          value.server.reviewer_enabled = event.currentTarget.checked
-                        })
-                      }
-                    />
-                    Use contained review for eligible cover work
-                  </label>
-                )}
-              </Row>
-            ) : null}
+            {active === 'reviewer' ? <ReviewerAccessPanel http={http} /> : null}
             {active === 'server' ? (
               <>
                 {(

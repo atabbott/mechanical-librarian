@@ -14,6 +14,12 @@
   enrichment, community tiers as degraded mode, marketplace-scoped ASINs, and
   no bundled dataset. A decision record only — no runtime change. (#925)
 
+- Let the owner optionally select one exact cover-observation reviewer: staged
+  Codex device sign-in or a write-only OpenRouter key/model, with immediate
+  no-fallback rechecks and engine/model provenance. Earlier pre-release state
+  requires a clean rebuild; the obsolete schema-adoption command is retired.
+  (#872, #873)
+
 - Show closed, observation-only cover defect checks before quieter style and
   advisory notes. Missing or failed reviewer evidence is labelled unavailable,
   never clean, and none of the new evidence changes match, recommendation, or

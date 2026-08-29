@@ -376,7 +376,7 @@ _TOOLCHAIN_PINS: dict[str, tuple[_PinSite, ...]] = {
         ),
     ),
     "node": (
-        _PinSite("Dockerfile", r"^FROM node:(\d+\.\d+\.\d+)-bookworm-slim@sha256:", 1),
+        _PinSite("Dockerfile", r"^FROM node:(\d+\.\d+\.\d+)-bookworm-slim@sha256:", 2),
         _PinSite("Dockerfile", r'test "\$\(node --version\)" = "v(\d+\.\d+\.\d+)"', 1),
         _PinSite(
             ".github/workflows/public-gate.yml",

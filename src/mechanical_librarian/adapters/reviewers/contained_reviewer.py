@@ -7,20 +7,27 @@ import hashlib
 import json
 import os
 import resource
-import select
 import shutil
-import signal
 import stat
 import subprocess
 import sys
 import tempfile
 import time
 from collections.abc import Callable
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import AbstractContextManager, ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import IO, Iterator, cast
 
+from mechanical_librarian.adapters.reviewers import process_group as process_groups
+from mechanical_librarian.adapters.reviewers.codex_device_auth import CodexAuthCommand
+from mechanical_librarian.adapters.reviewers.resource_budget import (
+    MAX_SANDBOX_INFO_BYTES as _MAX_SANDBOX_INFO_BYTES,
+)
+from mechanical_librarian.adapters.reviewers.resource_budget import (
+    ReviewerResourceError,
+    no_process_seccomp_descriptor,
+)
 from mechanical_librarian.application.contained_reviewer_contract import (
     ContainedReviewerAttempt,
     ContainedReviewerError,
@@ -37,7 +44,15 @@ from mechanical_librarian.application.contained_reviewer_contract import (
 PROFILE_SCHEMA = "contained-reviewer-profile-v1"
 MAX_PROFILE_BYTES = 65_536
 MAX_FAILURE_SIGNAL_BYTES = 65_536
-MAX_SANDBOX_INFO_BYTES = 4_096
+_RESOURCE_EXEC_MODULE = "mechanical_librarian.adapters.reviewers.resource_exec"
+_SECCOMP_EXEC_PATH = Path(__file__).with_name("seccomp_exec.py")
+_SECCOMP_PYTHON_PATH = Path(sys.executable).resolve()
+_SAFE_DEVICE_ARGUMENTS = tuple(
+    value
+    for device in ("null", "zero", "full", "random", "urandom", "tty")
+    for value in ("--dev-bind", f"/dev/{device}", f"/dev/{device}")
+)
+MAX_SANDBOX_INFO_BYTES = _MAX_SANDBOX_INFO_BYTES
 _LIVE_SCHEMA_REJECTION_PREFIX = (
     "Invalid schema for response_format 'codex_output_schema': "
 )
@@ -56,6 +71,59 @@ _FAILURES = frozenset(
         "local_cli_abort",
     }
 )
+
+_CLOSED_MODEL_CATALOG = canonical_json(
+    {
+        "models": [
+            {
+                "apply_patch_tool_type": None,
+                "availability_nux": None,
+                "default_reasoning_level": "medium",
+                "default_verbosity": None,
+                "description": "Contained cover observer",
+                "display_name": "Contained cover observer",
+                "experimental_supported_tools": [],
+                "include_apps_usage_instructions": False,
+                "include_plugin_usage_instructions": False,
+                "include_skills_usage_instructions": False,
+                "input_modalities": ["text", "image"],
+                "model_messages": {
+                    "approvals": None,
+                    "instructions_template": (
+                        "You are a contained cover observer. Follow the supplied "
+                        "instruction and return only the required structured result."
+                    ),
+                    "instructions_variables": {
+                        "personality_default": "",
+                        "personality_friendly": "",
+                        "personality_pragmatic": "",
+                    },
+                },
+                "multi_agent_version": None,
+                "priority": 1,
+                "shell_type": "shell_command",
+                "slug": "gpt-5.6-sol",
+                "support_verbosity": False,
+                "supported_in_api": True,
+                "supported_reasoning_levels": [
+                    {"description": "Low", "effort": "low"},
+                    {"description": "Medium", "effort": "medium"},
+                    {"description": "High", "effort": "high"},
+                    {"description": "Extra high", "effort": "xhigh"},
+                    {"description": "Maximum", "effort": "max"},
+                    {"description": "Ultra", "effort": "ultra"},
+                ],
+                "supports_parallel_tool_calls": False,
+                "supports_search_tool": False,
+                "tool_mode": None,
+                "truncation_policy": {"limit": 10_000, "mode": "tokens"},
+                "upgrade": None,
+                "use_responses_lite": True,
+                "visibility": "list",
+            }
+        ]
+    }
+).encode("utf-8")
 
 
 class ContainedReviewerProcessError(ContainedReviewerError):
@@ -175,6 +243,39 @@ def _linux_seal_constants() -> tuple[int, int, int] | None:
     if any(type(value) is not int for value in (*commands, *flags)):
         return None
     return commands[0], commands[1], flags[0] | flags[1] | flags[2] | flags[3]
+
+
+@contextmanager
+def _sealed_model_catalog_descriptor() -> Iterator[int]:
+    """Bind the exact tool-free model metadata as immutable admitted bytes."""
+    descriptor = -1
+    try:
+        seal_constants = _linux_seal_constants()
+        if (
+            not hasattr(os, "memfd_create")
+            or not hasattr(os, "MFD_ALLOW_SEALING")
+            or not hasattr(os, "MFD_CLOEXEC")
+            or seal_constants is None
+        ):
+            raise ContainedReviewerProcessError("setup")
+        descriptor = os.memfd_create(
+            "contained-reviewer-model-catalog",
+            os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING,
+        )
+        if os.write(descriptor, _CLOSED_MODEL_CATALOG) != len(_CLOSED_MODEL_CATALOG):
+            raise OSError("model catalog write failed")
+        os.fsync(descriptor)
+        add_seals, get_seals, seals = seal_constants
+        fcntl.fcntl(descriptor, add_seals, seals)
+        if fcntl.fcntl(descriptor, get_seals) & seals != seals:
+            raise OSError("model catalog flags changed")
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        yield descriptor
+    except (OSError, ValueError) as error:
+        raise ContainedReviewerProcessError("setup") from error
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
 
 
 @contextmanager
@@ -452,15 +553,21 @@ class ContainedReviewerAdapter:
         ):
             self._verify_sandbox(sandbox)
             with self._auth_lock():
-                with self._empty_auth_config() as empty_config:
+                with (
+                    self._empty_auth_config() as empty_config,
+                    no_process_seccomp_descriptor() as seccomp_descriptor,
+                ):
                     self._verify_codex(codex, sandbox)
-                    command = self._auth_command(codex, sandbox, empty_config)
+                    command = self._auth_command(
+                        codex, sandbox, empty_config, seccomp_descriptor
+                    )
                     if action == "start":
                         completed = self._run_auth(
                             [*command, "login", "--device-auth"],
                             codex,
                             sandbox,
                             empty_config,
+                            seccomp_descriptor,
                             interactive=True,
                         )
                         if completed.returncode != 0:
@@ -474,10 +581,18 @@ class ContainedReviewerAdapter:
                         )
                     if action == "logout":
                         self._require_chatgpt_auth(
-                            command, codex, sandbox, empty_config
+                            command,
+                            codex,
+                            sandbox,
+                            empty_config,
+                            seccomp_descriptor,
                         )
                         completed = self._run_auth(
-                            [*command, "logout"], codex, sandbox, empty_config
+                            [*command, "logout"],
+                            codex,
+                            sandbox,
+                            empty_config,
+                            seccomp_descriptor,
                         )
                         if completed.returncode != 0:
                             raise ContainedReviewerProcessError("auth")
@@ -488,7 +603,13 @@ class ContainedReviewerAdapter:
                                 "status": "logged_out",
                             }
                         )
-                    self._require_chatgpt_auth(command, codex, sandbox, empty_config)
+                    self._require_chatgpt_auth(
+                        command,
+                        codex,
+                        sandbox,
+                        empty_config,
+                        seccomp_descriptor,
+                    )
                     return canonical_json(
                         {
                             "mode": "contained",
@@ -672,19 +793,24 @@ class ContainedReviewerAdapter:
         provider_state_path = job_path / "provider-state"
         provider_state_path.mkdir(mode=0o700)
         try:
-            with self._empty_auth_config() as empty_config:
+            with (
+                self._empty_auth_config() as empty_config,
+                no_process_seccomp_descriptor() as auth_seccomp_descriptor,
+            ):
                 self._verify_codex(codex, sandbox)
                 self._require_chatgpt_auth(
                     self._auth_command(
                         codex,
                         sandbox,
                         empty_config,
+                        auth_seccomp_descriptor,
                         provider_state_path=provider_state_path,
                         credential_path=credential.invocation_path,
                     ),
                     codex,
                     sandbox,
                     empty_config,
+                    auth_seccomp_descriptor,
                     credential,
                 )
             schema_path = job_path / "output-schema.json"
@@ -700,6 +826,8 @@ class ContainedReviewerAdapter:
             stdout_path = job_path / "stdout.bin"
             stderr_path = job_path / "stderr.bin"
             with (
+                no_process_seccomp_descriptor() as seccomp_descriptor,
+                _sealed_model_catalog_descriptor() as model_catalog_descriptor,
                 prompt_path.open("rb") as prompt_file,
                 stdout_path.open("w+b") as stdout_file,
                 stderr_path.open("w+b") as stderr_file,
@@ -713,6 +841,8 @@ class ContainedReviewerAdapter:
                         codex.invocation_path,
                         sandbox.invocation_path,
                         credential.invocation_path,
+                        seccomp_descriptor,
+                        model_catalog_descriptor,
                     ),
                     codex,
                     sandbox,
@@ -721,6 +851,8 @@ class ContainedReviewerAdapter:
                     stderr_file.fileno(),
                     dispatched,
                     credential_descriptor=credential.descriptor,
+                    seccomp_descriptor=seccomp_descriptor,
+                    model_catalog_descriptor=model_catalog_descriptor,
                     sealed_images=sealed_images,
                 )
                 if returncode != 0:
@@ -765,14 +897,20 @@ class ContainedReviewerAdapter:
             "/runtime",
             "--dir",
             "/auth",
-            "--proc",
+            "--dir",
             "/proc",
-            "--dev",
+            "--dir",
+            "/proc/self",
+            "--symlink",
+            "/runtime/codex",
+            "/proc/self/exe",
+            "--dir",
             "/dev",
+            *_SAFE_DEVICE_ARGUMENTS,
             "--tmpfs",
             "/tmp",
         ]
-        for system_path in ("/usr", "/lib", "/lib64"):
+        for system_path in ("/usr", "/usr/local", "/lib", "/lib64"):
             if Path(system_path).exists():
                 command.extend(("--ro-bind", system_path, system_path))
         command.extend(
@@ -780,6 +918,12 @@ class ContainedReviewerAdapter:
                 "--ro-bind",
                 codex.invocation_path,
                 "/runtime/codex",
+                "--ro-bind",
+                str(_SECCOMP_EXEC_PATH),
+                "/runtime/seccomp_exec.py",
+                "--ro-bind",
+                str(_SECCOMP_PYTHON_PATH),
+                "/runtime/python",
                 "--chdir",
                 "/auth",
                 "--setenv",
@@ -792,22 +936,39 @@ class ContainedReviewerAdapter:
                 "LANG",
                 "C.UTF-8",
                 "--setenv",
+                "LD_LIBRARY_PATH",
+                "/usr/local/lib:/usr/lib:/lib",
+                "--setenv",
                 "PATH",
                 "/runtime:/usr/bin:/bin",
+                "/runtime/python",
+                "-I",
+                "/runtime/seccomp_exec.py",
+                "/runtime/seccomp.bpf",
                 "/runtime/codex",
                 "--version",
             )
         )
         try:
-            completed = subprocess.run(
-                command,
-                env={},
-                capture_output=True,
-                pass_fds=(codex.descriptor, sandbox.descriptor),
-                timeout=min(self._profile.identity.timeout_seconds, 30),
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError) as error:
+            with no_process_seccomp_descriptor() as seccomp_descriptor:
+                command[command.index("--chdir") : command.index("--chdir")] = (
+                    "--perms",
+                    "0400",
+                    "--ro-bind-data",
+                    str(seccomp_descriptor),
+                    "/runtime/seccomp.bpf",
+                )
+                completed = _run_owned_command(
+                    _resource_command(command),
+                    env={},
+                    pass_fds=(
+                        codex.descriptor,
+                        sandbox.descriptor,
+                        seccomp_descriptor,
+                    ),
+                    timeout=min(self._profile.identity.timeout_seconds, 30),
+                )
+        except (OSError, subprocess.SubprocessError, ReviewerResourceError) as error:
             raise ContainedReviewerProcessError("setup") from error
         expected = self._profile.identity.executable_version.encode("utf-8")
         if (
@@ -844,6 +1005,7 @@ class ContainedReviewerAdapter:
         codex: "_BoundArtifact",
         sandbox: "_BoundArtifact",
         empty_config: int,
+        seccomp_descriptor: int,
         credential: "_BoundCredential | None" = None,
     ) -> None:
         completed = self._run_auth(
@@ -851,6 +1013,7 @@ class ContainedReviewerAdapter:
             codex,
             sandbox,
             empty_config,
+            seccomp_descriptor,
             credential_descriptor=(
                 credential.descriptor if credential is not None else None
             ),
@@ -869,6 +1032,7 @@ class ContainedReviewerAdapter:
         codex: "_BoundArtifact",
         sandbox: "_BoundArtifact",
         empty_config: int,
+        seccomp_descriptor: int,
         *,
         provider_state_path: Path | None = None,
         credential_path: str | None = None,
@@ -888,15 +1052,22 @@ class ContainedReviewerAdapter:
             "/runtime",
             "--dir",
             "/auth",
-            "--proc",
+            "--dir",
             "/proc",
-            "--dev",
+            "--dir",
+            "/proc/self",
+            "--symlink",
+            "/runtime/codex",
+            "/proc/self/exe",
+            "--dir",
             "/dev",
+            *_SAFE_DEVICE_ARGUMENTS,
             "--tmpfs",
             "/tmp",
         ]
         for system_path in (
             "/usr",
+            "/usr/local",
             "/lib",
             "/lib64",
             "/etc/ssl/certs",
@@ -926,12 +1097,23 @@ class ContainedReviewerAdapter:
                 "--ro-bind",
                 codex.invocation_path,
                 "/runtime/codex",
+                "--ro-bind",
+                str(_SECCOMP_EXEC_PATH),
+                "/runtime/seccomp_exec.py",
+                "--ro-bind",
+                str(_SECCOMP_PYTHON_PATH),
+                "/runtime/python",
                 *auth_mount,
                 "--perms",
                 "0400",
                 "--ro-bind-data",
                 str(empty_config),
                 "/auth/config.toml",
+                "--perms",
+                "0400",
+                "--ro-bind-data",
+                str(seccomp_descriptor),
+                "/runtime/seccomp.bpf",
                 "--chdir",
                 "/auth",
                 "--setenv",
@@ -944,8 +1126,15 @@ class ContainedReviewerAdapter:
                 "LANG",
                 "C.UTF-8",
                 "--setenv",
+                "LD_LIBRARY_PATH",
+                "/usr/local/lib:/usr/lib:/lib",
+                "--setenv",
                 "PATH",
                 "/runtime:/usr/bin:/bin",
+                "/runtime/python",
+                "-I",
+                "/runtime/seccomp_exec.py",
+                "/runtime/seccomp.bpf",
                 "/runtime/codex",
             )
         )
@@ -959,27 +1148,30 @@ class ContainedReviewerAdapter:
         codex: "_BoundArtifact",
         sandbox: "_BoundArtifact",
         empty_config: int,
+        seccomp_descriptor: int,
         *,
         interactive: bool = False,
         timeout: int | None = None,
         credential_descriptor: int | None = None,
     ) -> subprocess.CompletedProcess[bytes]:
-        pass_fds: tuple[int, ...] = (codex.descriptor, sandbox.descriptor, empty_config)
+        pass_fds: tuple[int, ...] = (
+            codex.descriptor,
+            sandbox.descriptor,
+            empty_config,
+            seccomp_descriptor,
+        )
         if credential_descriptor is not None:
             pass_fds = (*pass_fds, credential_descriptor)
         try:
-            return subprocess.run(
-                command,
+            return _run_owned_command(
+                _resource_command(command),
                 env=self._auth_environment(),
-                stdin=None,
-                stdout=None if interactive else subprocess.PIPE,
-                stderr=None if interactive else subprocess.PIPE,
                 pass_fds=pass_fds,
                 timeout=min(
                     self._profile.identity.timeout_seconds,
                     timeout or self._profile.identity.timeout_seconds,
                 ),
-                check=False,
+                interactive=interactive,
             )
         except subprocess.TimeoutExpired as error:
             raise ContainedReviewerProcessError("timeout") from error
@@ -1068,6 +1260,8 @@ class ContainedReviewerAdapter:
         codex_path: str,
         sandbox_path: str,
         credential_path: str,
+        seccomp_descriptor: int,
+        model_catalog_descriptor: int,
     ) -> list[str]:
         command = [
             sandbox_path,
@@ -1084,15 +1278,22 @@ class ContainedReviewerAdapter:
             "/auth",
             "--dir",
             "/job",
-            "--proc",
+            "--dir",
             "/proc",
-            "--dev",
+            "--dir",
+            "/proc/self",
+            "--symlink",
+            "/runtime/codex",
+            "/proc/self/exe",
+            "--dir",
             "/dev",
+            *_SAFE_DEVICE_ARGUMENTS,
             "--tmpfs",
             "/tmp",
         ]
         for system_path in (
             "/usr",
+            "/usr/local",
             "/lib",
             "/lib64",
             "/etc/ssl/certs",
@@ -1108,6 +1309,22 @@ class ContainedReviewerAdapter:
                 "--ro-bind",
                 codex_path,
                 "/runtime/codex",
+                "--ro-bind",
+                str(_SECCOMP_EXEC_PATH),
+                "/runtime/seccomp_exec.py",
+                "--ro-bind",
+                str(_SECCOMP_PYTHON_PATH),
+                "/runtime/python",
+                "--perms",
+                "0400",
+                "--ro-bind-data",
+                str(seccomp_descriptor),
+                "/runtime/seccomp.bpf",
+                "--perms",
+                "0400",
+                "--ro-bind-data",
+                str(model_catalog_descriptor),
+                "/runtime/model-catalog.json",
                 "--bind",
                 str(provider_state_path),
                 "/auth",
@@ -1129,8 +1346,15 @@ class ContainedReviewerAdapter:
                 "LANG",
                 "C.UTF-8",
                 "--setenv",
+                "LD_LIBRARY_PATH",
+                "/usr/local/lib:/usr/lib:/lib",
+                "--setenv",
                 "PATH",
                 "/runtime:/usr/bin:/bin",
+                "/runtime/python",
+                "-I",
+                "/runtime/seccomp_exec.py",
+                "/runtime/seccomp.bpf",
                 "/runtime/codex",
                 "exec",
                 "--ignore-user-config",
@@ -1141,7 +1365,7 @@ class ContainedReviewerAdapter:
                 "--model",
                 self._profile.identity.model,
                 "--sandbox",
-                "read-only",
+                "danger-full-access",
                 "--json",
                 "--output-schema",
                 "/job/output-schema.json",
@@ -1159,7 +1383,7 @@ class ContainedReviewerAdapter:
                         f"/images/{index:02d}.png",
                     )
                 )
-            command[command.index("--proc") : command.index("--proc")] = mounts
+            command[command.index("--tmpfs") : command.index("--tmpfs")] = mounts
             for index in range(1, len(image_descriptors) + 1):
                 command.extend(("--image", f"/images/{index:02d}.png"))
         for value in _exact_config(self._profile.identity.reasoning):
@@ -1178,11 +1402,19 @@ class ContainedReviewerAdapter:
         dispatched: Callable[[int, int, str], None],
         *,
         credential_descriptor: int,
+        seccomp_descriptor: int | None = None,
+        model_catalog_descriptor: int | None = None,
         sealed_images: tuple[_SealedImage, ...] = (),
     ) -> int:
+        if (
+            type(command) is not list
+            or not command
+            or any(type(value) is not str or not value for value in command)
+        ):
+            raise ContainedReviewerProcessError("spawn")
         descriptors: list[int] = []
         try:
-            for _ in range(5):
+            for _ in range(3):
                 descriptors.extend(os.pipe())
         except OSError as error:
             _close_descriptors(descriptors)
@@ -1194,20 +1426,7 @@ class ContainedReviewerAdapter:
             ready_write,
             failure_read,
             failure_write,
-            budget_read,
-            budget_write,
-            info_read,
-            info_write,
         ) = descriptors
-        try:
-            command = _sandbox_command_with_budget_fds(
-                command,
-                budget_read,
-                info_write,
-            )
-        except Exception:
-            _close_descriptors(descriptors)
-            raise
         try:
             pid = os.fork()
         except OSError as error:
@@ -1218,8 +1437,6 @@ class ContainedReviewerAdapter:
                 os.close(release_write)
                 os.close(ready_read)
                 os.close(failure_read)
-                os.close(budget_write)
-                os.close(info_read)
                 os.setsid()
                 os.write(ready_write, b"R")
                 os.close(ready_write)
@@ -1234,12 +1451,15 @@ class ContainedReviewerAdapter:
                     os.set_inheritable(codex.descriptor, True)
                     os.set_inheritable(sandbox.descriptor, True)
                     os.set_inheritable(credential_descriptor, True)
-                    os.set_inheritable(budget_read, True)
-                    os.set_inheritable(info_write, True)
+                    if seccomp_descriptor is not None:
+                        os.set_inheritable(seccomp_descriptor, True)
+                    if model_catalog_descriptor is not None:
+                        os.set_inheritable(model_catalog_descriptor, True)
                     for image in sealed_images:
                         os.set_inheritable(image.descriptor, True)
                     self._limit_child()
-                    os.execve(sandbox.invocation_path, command, {})
+                    broker_command = _resource_command(command)
+                    os.execve(sys.executable, broker_command, {})
                 except BaseException:
                     os.write(failure_write, b"S")
                     os._exit(126)
@@ -1248,10 +1468,7 @@ class ContainedReviewerAdapter:
         os.close(release_read)
         os.close(ready_write)
         os.close(failure_write)
-        os.close(budget_read)
-        os.close(info_write)
         released = False
-        budget_released = False
         finished = False
         try:
             if os.read(ready_read, 1) != b"R":
@@ -1272,22 +1489,6 @@ class ContainedReviewerAdapter:
             os.close(release_write)
             release_write = -1
             deadline = time.monotonic() + self._profile.identity.timeout_seconds
-            try:
-                sandbox_pid = _read_sandbox_child_pid(info_read, deadline)
-            except TimeoutError as error:
-                raise ContainedReviewerProcessError("spawn") from error
-            _apply_namespaced_process_limit(
-                sandbox_pid,
-                pgid,
-                self._profile.identity.process_limit,
-            )
-            try:
-                os.write(budget_write, b"G")
-            except OSError as error:
-                raise ContainedReviewerProcessError("spawn") from error
-            budget_released = True
-            os.close(budget_write)
-            budget_write = -1
             returncode = _wait_for_exit(pid, max(0.0, deadline - time.monotonic()))
             _reap_process_group(pgid, 5)
             finished = True
@@ -1305,14 +1506,8 @@ class ContainedReviewerAdapter:
         finally:
             os.close(ready_read)
             os.close(failure_read)
-            os.close(info_read)
             if release_write >= 0:
                 os.close(release_write)
-            if budget_write >= 0:
-                if released and not finished:
-                    _kill_and_prove_dead(pid, pid, _safe_start_token(pid))
-                    finished = True
-                os.close(budget_write)
             if not released:
                 try:
                     _wait_for_exit(pid, 5)
@@ -1320,7 +1515,7 @@ class ContainedReviewerAdapter:
                     _kill_and_prove_dead(pid, pid, _safe_start_token(pid))
                 else:
                     _reap_process_group(pid, 5)
-            elif budget_released and not finished:
+            elif not finished:
                 _kill_and_prove_dead(pid, pid, _safe_start_token(pid))
 
     def _limit_child(self) -> None:
@@ -1345,42 +1540,19 @@ class ContainedReviewerAdapter:
 
 
 def _process_identity_alive(pid: int, pgid: int, start_token: str) -> bool:
-    if (
-        type(pid) is not int
-        or type(pgid) is not int
-        or pid < 2
-        or pgid < 2
-        or type(start_token) is not str
-        or not start_token.isascii()
-        or not start_token.isdigit()
-    ):
-        raise ContainedReviewerProcessError("runtime")
     try:
-        if os.getpgid(pid) == pgid and _process_start_token(pid) == start_token:
-            return True
-    except (OSError, ContainedReviewerProcessError):
-        pass
-    return _process_group_alive(pgid)
+        return process_groups.process_identity_alive(
+            process_groups.ReviewerProcessGroup(pid, pgid, start_token)
+        )
+    except process_groups.ReviewerProcessGroupError as error:
+        raise ContainedReviewerProcessError("runtime") from error
 
 
 def _process_group_alive(pgid: int) -> bool:
-    if type(pgid) is not int or pgid < 2:
-        raise ContainedReviewerProcessError("runtime")
     try:
-        names = os.listdir("/proc")
-    except OSError as error:
+        return process_groups.process_group_alive(pgid)
+    except process_groups.ReviewerProcessGroupError as error:
         raise ContainedReviewerProcessError("runtime") from error
-    for name in names:
-        if not name.isascii() or not name.isdigit():
-            continue
-        try:
-            raw = Path("/proc", name, "stat").read_text(encoding="ascii")
-            _, member_group = _proc_identity(raw)
-        except (OSError, UnicodeError, ValueError):
-            continue
-        if member_group == pgid:
-            return True
-    return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -1516,7 +1688,7 @@ def _bound_artifact(path: Path, expected_digest: str) -> Iterator[_BoundArtifact
         information = os.fstat(descriptor)
         if (
             not stat.S_ISREG(information.st_mode)
-            or information.st_uid != os.geteuid()
+            or information.st_uid not in {0, os.geteuid()}
             or information.st_mode & 0o022
             or not information.st_mode & stat.S_IXUSR
         ):
@@ -1542,22 +1714,13 @@ def _bound_artifact(path: Path, expected_digest: str) -> Iterator[_BoundArtifact
 
 def _process_start_token(pid: int) -> str:
     try:
-        token, _ = _proc_identity(Path(f"/proc/{pid}/stat").read_text(encoding="ascii"))
-    except (OSError, UnicodeError, ValueError) as error:
+        return process_groups.capture_process_group_token(pid)
+    except process_groups.ReviewerProcessGroupError as error:
         raise ContainedReviewerProcessError("runtime") from error
-    return token
 
 
 def _proc_identity(raw: str) -> tuple[str, int]:
-    try:
-        tail = raw[raw.rindex(")") + 2 :].split()
-        process_group = int(tail[2], 10)
-        start_token = tail[19]
-    except (IndexError, ValueError) as error:
-        raise ValueError("invalid proc stat") from error
-    if not start_token.isascii() or not start_token.isdigit() or process_group < 1:
-        raise ValueError("invalid proc stat")
-    return start_token, process_group
+    return process_groups.parse_proc_identity(raw)
 
 
 def _safe_start_token(pid: int) -> str:
@@ -1565,78 +1728,6 @@ def _safe_start_token(pid: int) -> str:
         return _process_start_token(pid)
     except ContainedReviewerProcessError:
         return "0"
-
-
-def _sandbox_command_with_budget_fds(
-    command: list[str], budget_descriptor: int, info_descriptor: int
-) -> list[str]:
-    if (
-        type(command) is not list
-        or not command
-        or any(type(value) is not str for value in command)
-        or type(budget_descriptor) is not int
-        or budget_descriptor < 0
-        or type(info_descriptor) is not int
-        or info_descriptor < 0
-    ):
-        raise ContainedReviewerProcessError("spawn")
-    return [
-        command[0],
-        "--block-fd",
-        str(budget_descriptor),
-        "--info-fd",
-        str(info_descriptor),
-        *command[1:],
-    ]
-
-
-def _read_sandbox_child_pid(descriptor: int, deadline: float) -> int:
-    payload = bytearray()
-    while True:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError
-        try:
-            readable, _, _ = select.select((descriptor,), (), (), remaining)
-            if not readable:
-                raise TimeoutError
-            chunk = os.read(
-                descriptor,
-                MAX_SANDBOX_INFO_BYTES + 1 - len(payload),
-            )
-        except OSError as error:
-            raise ContainedReviewerProcessError("spawn") from error
-        if not chunk:
-            break
-        payload.extend(chunk)
-        if len(payload) > MAX_SANDBOX_INFO_BYTES:
-            raise ContainedReviewerProcessError("spawn")
-    try:
-        document = json.loads(payload)
-        sandbox_pid = document["child-pid"]
-    except (KeyError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise ContainedReviewerProcessError("spawn") from error
-    if type(document) is not dict or type(sandbox_pid) is not int or sandbox_pid < 2:
-        raise ContainedReviewerProcessError("spawn")
-    return sandbox_pid
-
-
-def _apply_namespaced_process_limit(pid: int, pgid: int, limit: int) -> None:
-    if (
-        type(pid) is not int
-        or pid < 2
-        or type(pgid) is not int
-        or pgid < 2
-        or type(limit) is not int
-        or limit < 1
-    ):
-        raise ContainedReviewerProcessError("spawn")
-    try:
-        if os.getpgid(pid) != pgid:
-            raise ProcessLookupError
-        resource.prlimit(pid, resource.RLIMIT_NPROC, (limit, limit))
-    except (OSError, ValueError) as error:
-        raise ContainedReviewerProcessError("spawn") from error
 
 
 def _child_spawn_failed(descriptor: int) -> bool:
@@ -1647,52 +1738,32 @@ def _child_spawn_failed(descriptor: int) -> bool:
 
 
 def _wait_for_exit(pid: int, timeout_seconds: float) -> int:
-    deadline = time.monotonic() + timeout_seconds
-    while True:
-        try:
-            waited, status = os.waitpid(pid, os.WNOHANG)
-        except ChildProcessError:
-            return 0
-        if waited == pid:
-            if os.WIFEXITED(status):
-                return os.WEXITSTATUS(status)
-            if os.WIFSIGNALED(status):
-                return 128 + os.WTERMSIG(status)
-            return 126
-        if time.monotonic() >= deadline:
-            raise TimeoutError
-        time.sleep(0.01)
+    return process_groups.wait_for_exit(pid, timeout_seconds)
 
 
 def _kill_and_prove_dead(pid: int, pgid: int, start_token: str) -> None:
     try:
-        os.killpg(pgid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    try:
-        _wait_for_exit(pid, 5)
-    except TimeoutError as error:
+        process_groups.kill_process_group(
+            process_groups.ReviewerProcessGroup(pid, pgid, start_token)
+        )
+    except process_groups.ReviewerProcessGroupError as error:
         raise ContainedReviewerProcessError("runtime") from error
-    _reap_process_group(pgid, 5)
-    if _process_identity_alive(pid, pgid, start_token):
-        raise ContainedReviewerProcessError("runtime")
+
+
+def _require_signal_identity(pid: int, pgid: int, start_token: str) -> bool:
+    try:
+        return process_groups.require_signal_identity(
+            process_groups.ReviewerProcessGroup(pid, pgid, start_token)
+        )
+    except process_groups.ReviewerProcessGroupError as error:
+        raise ContainedReviewerProcessError("runtime") from error
 
 
 def _reap_process_group(pgid: int, timeout_seconds: float) -> None:
-    deadline = time.monotonic() + timeout_seconds
-    while True:
-        while True:
-            try:
-                waited, _status = os.waitpid(-pgid, os.WNOHANG)
-            except ChildProcessError:
-                break
-            if waited == 0:
-                break
-        if not _process_group_alive(pgid):
-            return
-        if time.monotonic() >= deadline:
-            raise ContainedReviewerProcessError("runtime")
-        time.sleep(0.01)
+    try:
+        process_groups.reap_process_group(pgid, timeout_seconds)
+    except process_groups.ReviewerProcessGroupError as error:
+        raise ContainedReviewerProcessError("runtime") from error
 
 
 def _diagnostic(stdout_file: IO[bytes], stderr_file: IO[bytes]) -> tuple[int, str]:
@@ -2122,8 +2193,10 @@ def _matches_output_schema(value: object, schema: dict[str, object]) -> bool:
 def _exact_config(reasoning: str) -> tuple[str, ...]:
     return (
         "model_reasoning_effort=" + json.dumps(reasoning, ensure_ascii=False),
+        'model_catalog_json="/runtime/model-catalog.json"',
         "features.shell_tool=false",
         "features.unified_exec=false",
+        "features.view_image=false",
         "agents.enabled=false",
         "features.multi_agent=false",
         "features.apps=false",
@@ -2138,6 +2211,8 @@ def _exact_config(reasoning: str) -> tuple[str, ...]:
         "features.hooks=false",
         "features.memories=false",
         "features.remote_plugin=false",
+        "tools.update_plan.enabled=false",
+        "tools.experimental_request_user_input.enabled=false",
         'approval_policy="never"',
         'history.persistence="none"',
         'forced_login_method="chatgpt"',
@@ -2163,7 +2238,74 @@ def _auth_config() -> tuple[str, ...]:
         "features.plugins=false",
         "features.apps=false",
         "apps._default.enabled=false",
+        "tools.update_plan.enabled=false",
+        "tools.experimental_request_user_input.enabled=false",
     )
+
+
+def _resource_command(command: list[str]) -> tuple[str, ...]:
+    return (sys.executable, "-m", _RESOURCE_EXEC_MODULE, *command)
+
+
+def _run_owned_command(
+    command: tuple[str, ...],
+    *,
+    env: dict[str, str],
+    pass_fds: tuple[int, ...],
+    timeout: int,
+    interactive: bool = False,
+) -> subprocess.CompletedProcess[bytes]:
+    """Run one admitted command in a distinct group and prove its whole tree gone."""
+    with (
+        tempfile.TemporaryFile() as stdout_file,
+        tempfile.TemporaryFile() as stderr_file,
+    ):
+        process = subprocess.Popen(
+            command,
+            env=env,
+            stdin=None,
+            stdout=None if interactive else stdout_file,
+            stderr=None if interactive else stderr_file,
+            pass_fds=pass_fds,
+            start_new_session=True,
+        )
+        try:
+            token = _process_start_token(process.pid)
+        except BaseException:
+            _kill_spawned_process_group(process)
+            raise
+        try:
+            returncode = process.wait(timeout=timeout)
+            try:
+                _reap_process_group(process.pid, 0.1)
+            except ContainedReviewerProcessError:
+                _kill_and_prove_dead(process.pid, process.pid, token)
+                raise
+        except subprocess.TimeoutExpired:
+            _kill_and_prove_dead(process.pid, process.pid, token)
+            raise
+        except KeyboardInterrupt:
+            _kill_and_prove_dead(process.pid, process.pid, token)
+            raise
+        if interactive:
+            return subprocess.CompletedProcess(command, returncode, b"", b"")
+        stdout_file.seek(0)
+        stderr_file.seek(0)
+        stdout = stdout_file.read(_MAX_SANDBOX_INFO_BYTES + 1)
+        stderr = stderr_file.read(_MAX_SANDBOX_INFO_BYTES + 1)
+        if (
+            len(stdout) > _MAX_SANDBOX_INFO_BYTES
+            or len(stderr) > _MAX_SANDBOX_INFO_BYTES
+        ):
+            raise ContainedReviewerProcessError("runtime")
+        return subprocess.CompletedProcess(command, returncode, stdout, stderr)
+
+
+def _kill_spawned_process_group(process: subprocess.Popen[bytes]) -> None:
+    try:
+        process_groups.kill_spawned_process_group(process)
+    except process_groups.ReviewerProcessGroupError as error:
+        raise ContainedReviewerProcessError("runtime") from error
 
 
 def _unique_output_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -2184,6 +2326,50 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return result
 
 
+def prepare_contained_device_auth_command(
+    profile: ContainedReviewerProfile, staging: Path, action: str
+) -> CodexAuthCommand:
+    """Bind exact artifacts and one private CODEX_HOME for an auth child."""
+    if action not in {"start", "status"}:
+        raise ContainedReviewerProcessError("auth")
+    stack = ExitStack()
+    try:
+        staged = replace(profile, auth_store_path=staging)
+        reviewer = ContainedReviewerAdapter(staged)
+        reviewer._require_private_directory(staging)
+        codex = stack.enter_context(
+            _bound_artifact(staged.codex_path, staged.identity.executable_sha256)
+        )
+        sandbox = stack.enter_context(
+            _bound_artifact(staged.sandbox_path, staged.identity.sandbox_sha256)
+        )
+        reviewer._verify_sandbox(sandbox)
+        stack.enter_context(reviewer._auth_lock())
+        empty_config = stack.enter_context(reviewer._empty_auth_config())
+        seccomp_descriptor = stack.enter_context(no_process_seccomp_descriptor())
+        reviewer._verify_codex(codex, sandbox)
+        command = reviewer._auth_command(
+            codex, sandbox, empty_config, seccomp_descriptor
+        )
+        command.extend(
+            ("login", "--device-auth") if action == "start" else ("login", "status")
+        )
+        return CodexAuthCommand(
+            command,
+            reviewer._auth_environment(),
+            (
+                codex.descriptor,
+                sandbox.descriptor,
+                empty_config,
+                seccomp_descriptor,
+            ),
+            stack.close,
+        )
+    except BaseException:
+        stack.close()
+        raise
+
+
 __all__ = [
     "ContainedReviewerAdapter",
     "PROFILE_SCHEMA",
@@ -2191,4 +2377,5 @@ __all__ = [
     "ContainedReviewerProcessError",
     "load_contained_reviewer_profile",
     "load_contained_reviewer_profile_bytes",
+    "prepare_contained_device_auth_command",
 ]

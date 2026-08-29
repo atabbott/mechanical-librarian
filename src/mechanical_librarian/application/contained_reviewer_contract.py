@@ -20,8 +20,10 @@ MAX_INPUT_BYTES = 1_048_576
 MAX_SCHEMA_BYTES = 65_536
 COVER_MEMORY_BYTES = 1_073_741_824
 COVER_PROCESS_LIMIT = 32
+COVER_MODEL = "gpt-5.6-sol"
 _COVER_PROFILE_CONTRACT_REASONS = frozenset(
     {
+        f"profile contract requires model={COVER_MODEL}",
         f"profile contract requires memory_bytes={COVER_MEMORY_BYTES}",
         f"profile contract requires process_limit={COVER_PROCESS_LIMIT}",
     }
@@ -114,6 +116,8 @@ class ContainedReviewerIdentity:
 
 def cover_profile_contract_mismatch(identity: ContainedReviewerIdentity) -> str | None:
     """Return the fixed public reason for one stale cover-resource limit."""
+    if identity.model != COVER_MODEL:
+        return f"profile contract requires model={COVER_MODEL}"
     if identity.memory_bytes != COVER_MEMORY_BYTES:
         return f"profile contract requires memory_bytes={COVER_MEMORY_BYTES}"
     if identity.process_limit != COVER_PROCESS_LIMIT:

@@ -598,6 +598,8 @@ _SHADOW_DECISION_OUTCOME_NO_UPDATE_SQL = "CREATE TRIGGER shadow_decision_outcome
 _SHADOW_DECISION_OUTCOME_NO_DELETE_SQL = "CREATE TRIGGER shadow_decision_outcomes_no_delete BEFORE DELETE ON shadow_decision_outcomes BEGIN SELECT RAISE(ABORT, 'shadow decision outcomes are append-only'); END"
 _OWNER_SETTINGS_SQL = "CREATE TABLE owner_settings (singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1),revision INTEGER NOT NULL CHECK(revision>=1),document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 262144))"
 _OWNER_SETTING_SECRETS_SQL = "CREATE TABLE owner_setting_secrets (field_id TEXT PRIMARY KEY NOT NULL CHECK(length(field_id) BETWEEN 1 AND 128),value TEXT NOT NULL CHECK(typeof(value)='text' AND length(CAST(value AS BLOB)) BETWEEN 1 AND 2048))"
+_REVIEWER_ACCESS_SQL = "CREATE TABLE reviewer_access (singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1),revision INTEGER NOT NULL CHECK(revision>=1),document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 262144))"
+_REVIEWER_ACCESS_SECRETS_SQL = "CREATE TABLE reviewer_access_secrets (field_id TEXT PRIMARY KEY NOT NULL CHECK(field_id='openrouter.api_key'),value TEXT NOT NULL CHECK(typeof(value)='text' AND length(CAST(value AS BLOB)) BETWEEN 1 AND 2048))"
 _BUILTIN_POLICY = MetadataPolicyProfile.builtin()
 _SETUP_POLICY_DRAFT_ROW = (_BUILTIN_POLICY.policy_id, _BUILTIN_POLICY.canonical_json)
 _SETUP_POLICY_STATE_ROW = (1, _BUILTIN_POLICY.policy_id, 1, 0, "automatic")
@@ -702,6 +704,8 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_FIELD_EFFECT_CLEANUPS_SQL)
     connection.execute(_OWNER_SETTINGS_SQL)
     connection.execute(_OWNER_SETTING_SECRETS_SQL)
+    connection.execute(_REVIEWER_ACCESS_SQL)
+    connection.execute(_REVIEWER_ACCESS_SECRETS_SQL)
     connection.execute(_SHADOW_DECISION_OUTCOMES_SQL)
     connection.execute(_SHADOW_DECISION_OUTCOMES_CASE_HISTORY_INDEX_SQL)
     connection.execute(_SHADOW_OUTCOME_FIELD_FACTS_SQL)
@@ -820,6 +824,7 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
             ("index", "sqlite_autoindex_metadata_policy_transitions_2", None),
             ("index", "sqlite_autoindex_metadata_policy_transition_items_1", None),
             ("index", "sqlite_autoindex_owner_setting_secrets_1", None),
+            ("index", "sqlite_autoindex_reviewer_access_secrets_1", None),
             ("index", "sqlite_autoindex_proposal_sets_1", None),
             ("index", "sqlite_autoindex_review_cases_1", None),
             ("index", "sqlite_autoindex_review_case_transitions_1", None),
@@ -909,6 +914,8 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
             ),
             ("table", "owner_setting_secrets", _OWNER_SETTING_SECRETS_SQL),
             ("table", "owner_settings", _OWNER_SETTINGS_SQL),
+            ("table", "reviewer_access", _REVIEWER_ACCESS_SQL),
+            ("table", "reviewer_access_secrets", _REVIEWER_ACCESS_SECRETS_SQL),
             ("table", "proposal_sets", _PROPOSAL_SETS_SQL),
             ("table", "review_case_transitions", _REVIEW_TRANSITIONS_SQL),
             ("table", "review_cases", _REVIEW_CASES_SQL),
@@ -1328,7 +1335,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
 
 
 _REVIEW_OWNER_DECISION_ACTIONS_V1_SOURCE_OBJECTS_SHA256 = (
-    "48f85c41f00dda56f6ad74c9dbe99cb49621424410f9f8d20720d0db8d22787d"
+    "14cb7a2fb01ca1070e71f6d65e6e6d476d9d627021186b6792c9ccd6c732577f"
 )
 _REVIEW_OWNER_DECISION_ACTIONS_V1_SOURCE_FACT_VALUES_SQL = (
     "json_extract(result.value,'$.destination'),"

@@ -6,19 +6,18 @@ import io
 import json
 import os
 import re
-import shutil
 import signal
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 import tomllib
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from typing import Any
+from unittest.mock import call, patch
 
 import pytest
 from PIL import Image
@@ -29,6 +28,7 @@ sys.path.insert(0, str(ROOT / "workbench"))
 from mechanical_librarian.adapters.reviewers import (  # noqa: E402
     contained_reviewer as adapter,
 )
+from mechanical_librarian.adapters.reviewers import resource_budget  # noqa: E402
 from mechanical_librarian.application import (  # noqa: E402
     contained_reviewer_contract as contract,
 )
@@ -44,13 +44,42 @@ from mechanical_librarian.application.cover_packet_semantics import (  # noqa: E
 )
 
 
+@pytest.fixture(autouse=True)
+def _contained_linux_descriptors() -> object:
+    """Unit tests mock process execution; keep Linux-only sealed FDs synthetic."""
+    if sys.platform.startswith("linux"):
+        yield
+        return
+
+    @contextmanager
+    def descriptor(payload: bytes) -> object:
+        with tempfile.TemporaryFile() as stream:
+            stream.write(payload)
+            stream.seek(0)
+            yield stream.fileno()
+
+    with (
+        patch.object(
+            adapter,
+            "no_process_seccomp_descriptor",
+            side_effect=lambda: descriptor(b"synthetic-seccomp"),
+        ),
+        patch.object(
+            adapter,
+            "_sealed_model_catalog_descriptor",
+            side_effect=lambda: descriptor(adapter._CLOSED_MODEL_CATALOG),
+        ),
+    ):
+        yield
+
+
 def _identity() -> ContainedReviewerIdentity:
     return ContainedReviewerIdentity(
         "a" * 64,
         "codex 1",
         "b" * 64,
         "bubblewrap 1",
-        "reviewer",
+        "gpt-5.6-sol",
         "medium",
         30,
         65_536,
@@ -274,16 +303,71 @@ def test_sandbox_binds_ordered_images_read_only_and_passes_exact_arguments() -> 
             "/proc/self/fd/10",
             "/proc/self/fd/11",
             "/proc/self/fd/12",
+            90,
+            91,
         )
     for index, descriptor in enumerate(image_descriptors, start=1):
         assert ["--ro-bind-data", str(descriptor), f"/images/{index:02d}.png"] in [
             command[position : position + 3] for position in range(len(command) - 2)
         ]
+    assert "--proc" not in command
+    assert ["--symlink", "/runtime/codex", "/proc/self/exe"] in [
+        command[position : position + 3] for position in range(len(command) - 2)
+    ]
+    sandbox_index = command.index("--sandbox")
+    assert command[sandbox_index : sandbox_index + 2] == [
+        "--sandbox",
+        "danger-full-access",
+    ]
     assert [
         command[index + 1]
         for index, value in enumerate(command[:-1])
         if value == "--image"
     ] == [f"/images/{index:02d}.png" for index in range(1, 6)]
+
+
+def test_codex_version_and_auth_commands_expose_only_synthetic_proc_exe() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
+        codex = adapter._BoundArtifact(10, "/proc/self/fd/10")
+        sandbox = adapter._BoundArtifact(11, "/proc/self/fd/11")
+        completed = subprocess.CompletedProcess((), 0, stdout=b"codex 1\n", stderr=b"")
+        with patch.object(adapter, "_run_owned_command", return_value=completed) as run:
+            reviewer._verify_codex(codex, sandbox)
+        version_command = run.call_args.args[0][3:]
+        auth_command = reviewer._auth_command(codex, sandbox, 12, 90)
+
+    for command in (version_command, auth_command):
+        assert "--proc" not in command
+        assert ["--symlink", "/runtime/codex", "/proc/self/exe"] in [
+            list(command[position : position + 3])
+            for position in range(len(command) - 2)
+        ]
+    assert "--unshare-net" in version_command
+    assert "--unshare-net" not in auth_command
+
+
+def test_bound_artifact_accepts_root_owned_immutable_install(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        artifact = Path(temporary) / "artifact"
+        artifact.write_bytes(b"pinned")
+        artifact.chmod(0o555)
+        actual = artifact.stat()
+        with monkeypatch.context() as context:
+            context.setattr(
+                adapter.os,
+                "fstat",
+                lambda descriptor: SimpleNamespace(
+                    st_mode=actual.st_mode,
+                    st_uid=0,
+                ),
+            )
+            with adapter._bound_artifact(
+                artifact, hashlib.sha256(b"pinned").hexdigest()
+            ) as bound:
+                assert bound.descriptor >= 0
 
 
 def test_profile_load_is_canonical_private_and_does_not_touch_artifacts() -> None:
@@ -304,7 +388,7 @@ def test_profile_load_is_canonical_private_and_does_not_touch_artifacts() -> Non
                 "processes": 32,
                 "timeout_seconds": 30,
             },
-            "model": "reviewer",
+            "model": "gpt-5.6-sol",
             "reasoning": "medium",
             "sandbox": {
                 "path": str(root / "missing-bwrap"),
@@ -345,7 +429,7 @@ def test_profile_contract_mismatch_names_only_the_expected_limit() -> None:
                 "processes": 32,
                 "timeout_seconds": 30,
             },
-            "model": "reviewer",
+            "model": "gpt-5.6-sol",
             "reasoning": "medium",
             "sandbox": {
                 "path": str(root / "sandbox"),
@@ -406,6 +490,24 @@ def test_reasoning_config_preserves_astral_unicode_as_valid_toml() -> None:
     reasoning = "medium😀"
     config = adapter._exact_config(reasoning)
     assert tomllib.loads(config[0]) == {"model_reasoning_effort": reasoning}
+
+
+def test_closed_catalog_and_config_remove_optional_tool_surfaces() -> None:
+    catalog = json.loads(adapter._CLOSED_MODEL_CATALOG)
+    assert len(catalog["models"]) == 1
+    model = catalog["models"][0]
+    assert model["slug"] == "gpt-5.6-sol"
+    assert model["apply_patch_tool_type"] is None
+    assert model["tool_mode"] is None
+    assert model["experimental_supported_tools"] == []
+
+    config = set(adapter._exact_config("medium"))
+    assert 'model_catalog_json="/runtime/model-catalog.json"' in config
+    assert "features.shell_tool=false" in config
+    assert "features.unified_exec=false" in config
+    assert "features.view_image=false" in config
+    assert "tools.update_plan.enabled=false" in config
+    assert "tools.experimental_request_user_input.enabled=false" in config
 
 
 def test_private_directories_and_bound_artifacts_fail_closed() -> None:
@@ -478,6 +580,15 @@ def test_failure_is_value_free_and_auth_configuration_disables_authority() -> No
     assert str(failure) == "runtime"
     assert "private" not in str(failure)
     config = adapter._exact_config("medium")
+    assert "features.shell_tool=false" in config
+    assert "features.unified_exec=false" in config
+    assert "agents.enabled=false" in config
+    assert "features.multi_agent=false" in config
+    assert "features.apps=false" in config
+    assert "features.plugins=false" in config
+    assert "features.browser_use=false" in config
+    assert "features.computer_use=false" in config
+    assert "features.hooks=false" in config
     assert 'web_search="disabled"' in config
     assert 'approval_policy="never"' in config
     assert 'shell_environment_policy.inherit="none"' in config
@@ -519,9 +630,61 @@ def test_timeout_and_cancel_are_typed_without_process_output(error, code) -> Non
     with tempfile.TemporaryDirectory() as temporary:
         reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
         artifact = adapter._BoundArtifact(10, "/proc/self/fd/10")
-        with patch.object(adapter.subprocess, "run", side_effect=error):
+        with patch.object(adapter, "_run_owned_command", side_effect=error):
             with pytest.raises(Exception, match=code):
-                reviewer._run_auth([], artifact, artifact, 11)
+                reviewer._run_auth([], artifact, artifact, 11, 90)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux process groups")
+def test_owned_command_uses_distinct_group_and_reaps_lingering_tree() -> None:
+    command = (
+        sys.executable,
+        "-c",
+        "import subprocess,sys; subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)']); print('done')",
+    )
+    with pytest.raises(Exception, match="runtime"):
+        adapter._run_owned_command(command, env={}, pass_fds=(), timeout=2)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux process groups")
+def test_owned_command_identity_capture_failure_reaps_spawned_tree() -> None:
+    original_popen = subprocess.Popen
+    with tempfile.TemporaryDirectory() as temporary:
+        marker = Path(temporary) / "child-pid"
+        spawned: list[subprocess.Popen[bytes]] = []
+
+        def popen(*args: Any, **kwargs: Any) -> subprocess.Popen[bytes]:
+            process = original_popen(*args, **kwargs)
+            spawned.append(process)
+            deadline = time.monotonic() + 5
+            while not marker.exists():
+                if time.monotonic() >= deadline:
+                    raise AssertionError("child marker unavailable")
+                time.sleep(0.01)
+            return process
+
+        command = (
+            sys.executable,
+            "-c",
+            "import pathlib,subprocess,sys,time; "
+            "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)']); "
+            f"pathlib.Path({str(marker)!r}).write_text(str(child.pid)); time.sleep(30)",
+        )
+        with (
+            patch.object(adapter.subprocess, "Popen", side_effect=popen),
+            patch.object(
+                adapter,
+                "_process_start_token",
+                side_effect=adapter.ContainedReviewerProcessError("runtime"),
+            ),
+            pytest.raises(adapter.ContainedReviewerProcessError, match="runtime"),
+        ):
+            adapter._run_owned_command(command, env={}, pass_fds=(), timeout=30)
+        child_pid = int(marker.read_text())
+    assert spawned[0].poll() is not None
+    assert not adapter._process_group_alive(spawned[0].pid)
+    with pytest.raises(ProcessLookupError):
+        os.kill(child_pid, 0)
 
 
 def test_fake_process_invocation_records_dispatch_before_output_and_cleans_job() -> (
@@ -920,188 +1083,6 @@ def test_sealed_image_copy_resists_callback_and_same_uid_mutation() -> None:
         payload = os.read(image.descriptor, 1_048_577)
         assert hashlib.sha256(payload).hexdigest() == image.digest
 
-        with (
-            tempfile.TemporaryDirectory() as temporary,
-            open(sys.executable, "rb") as interpreter,
-            open(os.devnull, "rb") as stdin,
-            tempfile.TemporaryFile() as stdout,
-            tempfile.TemporaryFile() as stderr,
-            open(os.devnull, "rb") as credential,
-        ):
-            reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
-            executable = adapter._BoundArtifact(
-                interpreter.fileno(),
-                f"/proc/self/fd/{interpreter.fileno()}",
-            )
-            command = [
-                executable.invocation_path,
-                "-c",
-                "import hashlib,sys;"
-                f" payload=open('{image.invocation_path}','rb').read();"
-                " raise SystemExit("
-                f"hashlib.sha256(payload).hexdigest()!='{image.digest}')",
-            ]
-
-            child_pid = -1
-
-            def attack_after_fork(_pid: int, _pgid: int, _token: str) -> None:
-                nonlocal child_pid
-                child_pid = _pid
-                attacker = os.open(image.invocation_path, os.O_WRONLY)
-                try:
-                    with pytest.raises(OSError):
-                        os.write(attacker, b"dispatch-callback-change")
-                    with pytest.raises(OSError):
-                        os.ftruncate(attacker, 0)
-                finally:
-                    os.close(attacker)
-
-            with (
-                patch.object(reviewer, "_limit_child"),
-                patch.object(
-                    adapter,
-                    "_sandbox_command_with_budget_fds",
-                    side_effect=lambda value, *_: value,
-                ),
-                patch.object(
-                    adapter,
-                    "_read_sandbox_child_pid",
-                    side_effect=lambda *_: child_pid,
-                ),
-                patch.object(adapter, "_apply_namespaced_process_limit"),
-            ):
-                returncode = reviewer._run_gated(
-                    command,
-                    executable,
-                    executable,
-                    stdin.fileno(),
-                    stdout.fileno(),
-                    stderr.fileno(),
-                    attack_after_fork,
-                    credential_descriptor=credential.fileno(),
-                    sealed_images=(image,),
-                )
-            assert returncode == 0
-
-
-@pytest.mark.skipif(
-    not (
-        sys.platform.startswith("linux")
-        and hasattr(os, "memfd_create")
-        and shutil.which("bwrap") is not None
-    ),
-    reason="Bubblewrap sealed-image transport proof requires Linux Bubblewrap",
-)
-def test_bubblewrap_reads_ordered_sealed_images_and_cannot_write_them() -> None:
-    request = _cover_request()
-    first = request.images[0]
-    second_payload = first.payload[:-1] + bytes([first.payload[-1] ^ 1])
-    second = contract._CoverReviewImage(
-        "cover_transport_ref_" + "b" * 64,
-        hashlib.sha256(second_payload).hexdigest(),
-        second_payload,
-    )
-    with adapter._sealed_cover_images((first, second)) as images:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            codex = root / "codex"
-            codex.write_text(
-                "#!/usr/bin/env sh\n"
-                "set -eu\n"
-                "for image in /images/01.png /images/02.png; do\n"
-                "    sha256sum \"$image\" | cut -d' ' -f1\n"
-                '    if printf x >"$image" 2>/dev/null; then\n'
-                "        exit 91\n"
-                "    fi\n"
-                "done\n",
-                encoding="utf-8",
-            )
-            os.chmod(codex, 0o700)
-            credential = root / "credential.json"
-            credential.write_bytes(b'{"synthetic":true}')
-            os.chmod(credential, 0o600)
-            job = root / "job"
-            provider = root / "provider"
-            for path in (job, provider):
-                path.mkdir(mode=0o700)
-            profile = replace(
-                _profile(root),
-                identity=replace(
-                    _identity(),
-                    memory_bytes=536_870_912,
-                    process_limit=32,
-                    file_bytes=1_048_576,
-                ),
-            )
-            reviewer = adapter.ContainedReviewerAdapter(profile)
-            with (
-                open(codex, "rb") as codex_file,
-                open(shutil.which("bwrap"), "rb") as sandbox_file,
-                open(os.devnull, "rb") as stdin,
-                tempfile.TemporaryFile() as stdout,
-                tempfile.TemporaryFile() as stderr,
-                open(credential, "rb") as credential_file,
-            ):
-                bound_codex = adapter._BoundArtifact(
-                    codex_file.fileno(), f"/proc/self/fd/{codex_file.fileno()}"
-                )
-                bound_sandbox = adapter._BoundArtifact(
-                    sandbox_file.fileno(), f"/proc/self/fd/{sandbox_file.fileno()}"
-                )
-                command = reviewer._sandbox_command(
-                    job,
-                    job / "result.json",
-                    tuple(image.descriptor for image in images),
-                    provider,
-                    bound_codex.invocation_path,
-                    bound_sandbox.invocation_path,
-                    f"/proc/self/fd/{credential_file.fileno()}",
-                )
-                stop_seeking = threading.Event()
-                interferers: list[threading.Thread] = []
-
-                def seek_shared_descriptors_to_eof(*_identity: object) -> None:
-                    for image in images:
-                        os.lseek(image.descriptor, 0, os.SEEK_END)
-
-                    def interfere() -> None:
-                        while not stop_seeking.is_set():
-                            for image in images:
-                                os.lseek(image.descriptor, 0, os.SEEK_END)
-
-                    interferer = threading.Thread(
-                        target=interfere,
-                        name="sealed-image-offset-interference",
-                        daemon=True,
-                    )
-                    interferers.append(interferer)
-                    interferer.start()
-
-                try:
-                    with patch.object(reviewer, "_limit_child"):
-                        returncode = reviewer._run_gated(
-                            command,
-                            bound_codex,
-                            bound_sandbox,
-                            stdin.fileno(),
-                            stdout.fileno(),
-                            stderr.fileno(),
-                            seek_shared_descriptors_to_eof,
-                            credential_descriptor=credential_file.fileno(),
-                            sealed_images=images,
-                        )
-                finally:
-                    stop_seeking.set()
-                    for interferer in interferers:
-                        interferer.join(timeout=5)
-                        assert not interferer.is_alive()
-                stdout.seek(0)
-                observed = stdout.read().decode("ascii").splitlines()
-                stderr.seek(0)
-                diagnostics = stderr.read().decode("utf-8", errors="replace")
-    assert returncode == 0, diagnostics
-    assert observed == [image.digest for image in images]
-
 
 @pytest.mark.parametrize(
     ("failure", "code"),
@@ -1123,8 +1104,6 @@ def test_gated_timeout_and_cancel_kill_the_captured_process_identity(
                     (20, 21),
                     (22, 23),
                     (24, 25),
-                    (26, 27),
-                    (28, 29),
                 ],
             ),
             patch.object(adapter.os, "fork", return_value=4321),
@@ -1133,8 +1112,6 @@ def test_gated_timeout_and_cancel_kill_the_captured_process_identity(
             patch.object(adapter.os, "write"),
             patch.object(adapter, "_process_start_token", return_value="9876"),
             patch.object(adapter, "_safe_start_token", return_value="9876"),
-            patch.object(adapter, "_read_sandbox_child_pid", return_value=5678),
-            patch.object(adapter, "_apply_namespaced_process_limit"),
             patch.object(adapter, "_wait_for_exit", side_effect=failure),
             patch.object(
                 adapter,
@@ -1168,18 +1145,14 @@ def test_outer_child_limits_defer_nproc_until_after_user_namespace() -> None:
     ]
 
 
-def test_budget_command_holds_bwrap_before_its_pid_one_fork() -> None:
+def test_review_path_routes_the_exact_bwrap_command_through_the_broker() -> None:
     command = ["/sandbox", "--unshare-user", "/runtime/codex", "exec"]
-    assert adapter._sandbox_command_with_budget_fds(command, 26, 29) == [
-        "/sandbox",
-        "--block-fd",
-        "26",
-        "--info-fd",
-        "29",
-        "--unshare-user",
-        "/runtime/codex",
-        "exec",
-    ]
+    assert adapter._resource_command(command) == (
+        sys.executable,
+        "-m",
+        "mechanical_librarian.adapters.reviewers.resource_exec",
+        *command,
+    )
     assert command == ["/sandbox", "--unshare-user", "/runtime/codex", "exec"]
 
 
@@ -1195,11 +1168,42 @@ def test_sandbox_child_identity_rejects_malformed_or_unsafe_info(
         os.write(write_descriptor, payload)
         os.close(write_descriptor)
         write_descriptor = -1
-        with pytest.raises(adapter.ContainedReviewerProcessError, match="spawn"):
-            adapter._read_sandbox_child_pid(
+        with pytest.raises(resource_budget.ReviewerResourceError):
+            resource_budget.read_sandbox_child_pid(
                 read_descriptor,
                 time.monotonic() + 1,
             )
+    finally:
+        os.close(read_descriptor)
+        if write_descriptor >= 0:
+            os.close(write_descriptor)
+
+
+def test_sandbox_child_identity_accepts_exact_pinned_bubblewrap_info() -> None:
+    payload = json.dumps(
+        {
+            "child-pid": 7,
+            "cgroup-namespace": 11,
+            "ipc-namespace": 12,
+            "mnt-namespace": 13,
+            "pid-namespace": 14,
+            "uts-namespace": 15,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    read_descriptor, write_descriptor = os.pipe()
+    try:
+        os.write(write_descriptor, payload)
+        os.close(write_descriptor)
+        write_descriptor = -1
+        assert (
+            resource_budget.read_sandbox_child_pid(
+                read_descriptor,
+                time.monotonic() + 1,
+            )
+            == 7
+        )
     finally:
         os.close(read_descriptor)
         if write_descriptor >= 0:
@@ -1212,8 +1216,8 @@ def test_sandbox_child_identity_rejects_oversized_info() -> None:
         os.write(write_descriptor, b"x" * (adapter.MAX_SANDBOX_INFO_BYTES + 1))
         os.close(write_descriptor)
         write_descriptor = -1
-        with pytest.raises(adapter.ContainedReviewerProcessError, match="spawn"):
-            adapter._read_sandbox_child_pid(
+        with pytest.raises(resource_budget.ReviewerResourceError):
+            resource_budget.read_sandbox_child_pid(
                 read_descriptor,
                 time.monotonic() + 1,
             )
@@ -1227,17 +1231,38 @@ def test_sandbox_child_identity_obeys_the_parent_deadline() -> None:
     read_descriptor, write_descriptor = os.pipe()
     try:
         with pytest.raises(TimeoutError):
-            adapter._read_sandbox_child_pid(read_descriptor, time.monotonic())
+            resource_budget.read_sandbox_child_pid(read_descriptor, time.monotonic())
     finally:
         os.close(read_descriptor)
         os.close(write_descriptor)
 
 
-def test_gated_late_sandbox_child_identity_is_a_spawn_failure() -> None:
+def test_invalid_broker_command_is_rejected_before_pipe_allocation() -> None:
     with tempfile.TemporaryDirectory() as temporary:
         reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
         artifact = adapter._BoundArtifact(10, "/proc/self/fd/10")
-        killed: list[tuple[int, int, str]] = []
+        with (
+            patch.object(adapter.os, "pipe") as pipe,
+            pytest.raises(adapter.ContainedReviewerProcessError, match="spawn"),
+        ):
+            reviewer._run_gated(
+                [],
+                artifact,
+                artifact,
+                1,
+                2,
+                3,
+                lambda *_: None,
+                credential_descriptor=4,
+            )
+    pipe.assert_not_called()
+
+
+def test_gated_dispatches_one_broker_identity_and_waits_for_its_exit() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
+        artifact = adapter._BoundArtifact(10, "/proc/self/fd/10")
+        dispatched: list[tuple[int, int, str]] = []
         with (
             patch.object(
                 adapter.os,
@@ -1246,8 +1271,6 @@ def test_gated_late_sandbox_child_identity_is_a_spawn_failure() -> None:
                     (20, 21),
                     (22, 23),
                     (24, 25),
-                    (26, 27),
-                    (28, 29),
                 ],
             ),
             patch.object(adapter.os, "fork", return_value=4321),
@@ -1255,92 +1278,6 @@ def test_gated_late_sandbox_child_identity_is_a_spawn_failure() -> None:
             patch.object(adapter.os, "read", return_value=b"R"),
             patch.object(adapter.os, "write"),
             patch.object(adapter, "_process_start_token", return_value="9876"),
-            patch.object(adapter, "_safe_start_token", return_value="9876"),
-            patch.object(
-                adapter,
-                "_read_sandbox_child_pid",
-                side_effect=TimeoutError,
-            ),
-            patch.object(
-                adapter,
-                "_kill_and_prove_dead",
-                side_effect=lambda pid, pgid, token: killed.append((pid, pgid, token)),
-            ),
-        ):
-            with pytest.raises(
-                adapter.ContainedReviewerProcessError,
-                match="spawn",
-            ):
-                reviewer._run_gated(
-                    ["/sandbox"],
-                    artifact,
-                    artifact,
-                    1,
-                    2,
-                    3,
-                    lambda *_: None,
-                    credential_descriptor=4,
-                )
-    assert killed == [(4321, 4321, "9876")]
-
-
-def test_invalid_budget_command_closes_every_allocated_descriptor() -> None:
-    with tempfile.TemporaryDirectory() as temporary:
-        reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
-        artifact = adapter._BoundArtifact(10, "/proc/self/fd/10")
-        descriptors = list(range(20, 30))
-        with (
-            patch.object(
-                adapter.os,
-                "pipe",
-                side_effect=[
-                    (20, 21),
-                    (22, 23),
-                    (24, 25),
-                    (26, 27),
-                    (28, 29),
-                ],
-            ),
-            patch.object(adapter, "_close_descriptors") as close_descriptors,
-        ):
-            with pytest.raises(adapter.ContainedReviewerProcessError, match="spawn"):
-                reviewer._run_gated(
-                    [],
-                    artifact,
-                    artifact,
-                    1,
-                    2,
-                    3,
-                    lambda *_: None,
-                    credential_descriptor=4,
-                )
-    close_descriptors.assert_called_once_with(descriptors)
-
-
-def test_gated_applies_exact_process_limit_to_namespaced_bwrap_child() -> None:
-    with tempfile.TemporaryDirectory() as temporary:
-        reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
-        artifact = adapter._BoundArtifact(10, "/proc/self/fd/10")
-        limit = reviewer._profile.identity.process_limit
-        with (
-            patch.object(
-                adapter.os,
-                "pipe",
-                side_effect=[
-                    (20, 21),
-                    (22, 23),
-                    (24, 25),
-                    (26, 27),
-                    (28, 29),
-                ],
-            ),
-            patch.object(adapter.os, "fork", return_value=4321),
-            patch.object(adapter.os, "close"),
-            patch.object(adapter.os, "read", return_value=b"R"),
-            patch.object(adapter.os, "write") as write,
-            patch.object(adapter, "_process_start_token", return_value="9876"),
-            patch.object(adapter, "_read_sandbox_child_pid", return_value=5678),
-            patch.object(adapter, "_apply_namespaced_process_limit") as apply_limit,
             patch.object(adapter, "_wait_for_exit", return_value=0),
             patch.object(adapter, "_child_spawn_failed", return_value=False),
             patch.object(adapter, "_reap_process_group"),
@@ -1353,27 +1290,42 @@ def test_gated_applies_exact_process_limit_to_namespaced_bwrap_child() -> None:
                     1,
                     2,
                     3,
-                    lambda *_: None,
+                    lambda *identity: dispatched.append(identity),
                     credential_descriptor=4,
                 )
                 == 0
             )
-    apply_limit.assert_called_once_with(5678, 4321, limit)
-    assert write.call_args_list[-1].args == (27, b"G")
+    assert dispatched == [(4321, 4321, "9876")]
 
 
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux prlimit proof")
 def test_namespaced_process_limit_is_applied_to_the_reported_group_member() -> None:
+    identities = {
+        4321: resource_budget.ProcessIdentity(4321, 4321, "1"),
+        4322: resource_budget.ProcessIdentity(4322, 4321, "2"),
+        5678: resource_budget.ProcessIdentity(5678, 4321, "3"),
+    }
     with (
-        patch.object(adapter.os, "getpgid", return_value=4321),
-        patch.object(adapter.resource, "prlimit") as apply_limit,
+        patch.object(
+            resource_budget,
+            "capture_process_identity",
+            side_effect=lambda pid: identities[pid],
+        ),
+        patch.object(resource_budget.resource, "prlimit") as apply_limit,
     ):
-        adapter._apply_namespaced_process_limit(5678, 4321, 32)
-    apply_limit.assert_called_once_with(
-        5678,
-        adapter.resource.RLIMIT_NPROC,
-        (32, 32),
-    )
+        resource_budget.apply_aggregate_budget(
+            identities[4321], identities[4322], identities[5678], 32
+        )
+    assert apply_limit.call_args_list == [
+        call(
+            5678,
+            resource_budget.resource.RLIMIT_AS,
+            (67_108_864, 872_415_232),
+        ),
+        call(5678, resource_budget.resource.RLIMIT_NPROC, (32, 32)),
+        call(4322, resource_budget.resource.RLIMIT_AS, (67_108_864,) * 2),
+        call(4321, resource_budget.resource.RLIMIT_AS, (67_108_864,) * 2),
+    ]
 
 
 def test_gated_fork_and_resource_failures_are_typed_spawn_failures() -> None:
@@ -1399,7 +1351,7 @@ def test_gated_fork_and_resource_failures_are_typed_spawn_failures() -> None:
             ) as caught,
         ):
             reviewer._run_gated(
-                [],
+                ["/sandbox"],
                 artifact,
                 artifact,
                 1,
@@ -1447,8 +1399,8 @@ def test_gated_fork_and_resource_failures_are_typed_spawn_failures() -> None:
 
 @pytest.mark.parametrize(
     "allocated",
-    (0, 1, 2, 3, 4),
-    ids=("first", "second", "third", "fourth", "fifth"),
+    (0, 1, 2),
+    ids=("first", "second", "third"),
 )
 def test_gated_pipe_allocation_failure_closes_every_acquired_descriptor(
     allocated: int,
@@ -1456,7 +1408,7 @@ def test_gated_pipe_allocation_failure_closes_every_acquired_descriptor(
     with tempfile.TemporaryDirectory() as temporary:
         reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
         artifact = adapter._BoundArtifact(10, "/proc/self/fd/10")
-        pairs = ((20, 21), (22, 23), (24, 25), (26, 27), (28, 29))
+        pairs = ((20, 21), (22, 23), (24, 25))
         closed: list[int] = []
         with (
             patch.object(
@@ -1470,7 +1422,7 @@ def test_gated_pipe_allocation_failure_closes_every_acquired_descriptor(
             ) as caught,
         ):
             reviewer._run_gated(
-                [],
+                ["/sandbox"],
                 artifact,
                 artifact,
                 1,
@@ -1481,93 +1433,6 @@ def test_gated_pipe_allocation_failure_closes_every_acquired_descriptor(
             )
     assert caught.value.code == "spawn"
     assert closed == [descriptor for pair in pairs[:allocated] for descriptor in pair]
-
-
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux fork proof")
-@pytest.mark.parametrize("failure", ("exec", "setup"))
-def test_actual_child_preexec_failures_report_spawn(failure: str) -> None:
-    with tempfile.TemporaryDirectory() as temporary:
-        reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
-        descriptors = [os.open("/dev/null", os.O_RDWR) for _ in range(4)]
-        try:
-            artifact = adapter._BoundArtifact(descriptors[0], "/missing-sandbox")
-            patched_isolation = (
-                patch.object(
-                    adapter,
-                    "_isolate_child_image_descriptors",
-                    side_effect=OSError("synthetic"),
-                )
-                if failure == "setup"
-                else nullcontext()
-            )
-            with (
-                patched_isolation,
-                patch.object(reviewer, "_limit_child"),
-                pytest.raises(
-                    adapter.ContainedReviewerProcessError, match="spawn"
-                ) as caught,
-            ):
-                reviewer._run_gated(
-                    ["contained-reviewer"],
-                    artifact,
-                    artifact,
-                    descriptors[1],
-                    descriptors[2],
-                    descriptors[3],
-                    lambda *_: None,
-                    credential_descriptor=descriptors[3],
-                )
-            assert caught.value.code == "spawn"
-        finally:
-            for descriptor in descriptors:
-                os.close(descriptor)
-
-
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux exec proof")
-def test_actual_child_exec_nonzero_remains_a_normal_returncode() -> None:
-    with (
-        tempfile.TemporaryDirectory() as temporary,
-        open(sys.executable, "rb") as executable,
-        open(os.devnull, "rb") as stdin,
-        tempfile.TemporaryFile() as stdout,
-        tempfile.TemporaryFile() as stderr,
-        open(os.devnull, "rb") as credential,
-    ):
-        reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
-        artifact = adapter._BoundArtifact(
-            executable.fileno(), f"/proc/self/fd/{executable.fileno()}"
-        )
-        child_pid = -1
-
-        def dispatched(pid: int, _pgid: int, _token: str) -> None:
-            nonlocal child_pid
-            child_pid = pid
-
-        with (
-            patch.object(reviewer, "_limit_child"),
-            patch.object(
-                adapter,
-                "_sandbox_command_with_budget_fds",
-                side_effect=lambda value, *_: value,
-            ),
-            patch.object(
-                adapter,
-                "_read_sandbox_child_pid",
-                side_effect=lambda *_: child_pid,
-            ),
-            patch.object(adapter, "_apply_namespaced_process_limit"),
-        ):
-            returncode = reviewer._run_gated(
-                [artifact.invocation_path, "-c", "raise SystemExit(17)"],
-                artifact,
-                artifact,
-                stdin.fileno(),
-                stdout.fileno(),
-                stderr.fileno(),
-                dispatched,
-                credential_descriptor=credential.fileno(),
-            )
-    assert returncode == 17
 
 
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux process proof")
@@ -1603,16 +1468,37 @@ def test_killed_direct_child_is_reaped_without_a_zombie() -> None:
 
 
 def test_cleanup_kills_group_and_proves_process_death() -> None:
+    identity = adapter.process_groups.ReviewerProcessGroup(12, 12, "34")
     with (
+        patch.object(
+            adapter.process_groups, "require_signal_identity", return_value=True
+        ) as safe,
         patch.object(adapter.os, "killpg") as kill,
-        patch.object(adapter, "_wait_for_exit", return_value=0),
-        patch.object(adapter, "_reap_process_group") as reap,
-        patch.object(adapter, "_process_identity_alive", return_value=False) as alive,
+        patch.object(adapter.process_groups, "wait_for_exit", return_value=0),
+        patch.object(adapter.process_groups, "reap_process_group") as reap,
+        patch.object(
+            adapter.process_groups, "process_identity_alive", return_value=False
+        ) as alive,
     ):
         adapter._kill_and_prove_dead(12, 12, "34")
-    kill.assert_called_once_with(12, adapter.signal.SIGKILL)
+    kill.assert_called_once_with(12, signal.SIGKILL)
+    safe.assert_called_once_with(identity)
     reap.assert_called_once_with(12, 5)
-    alive.assert_called_once_with(12, 12, "34")
+    alive.assert_called_once_with(identity)
+
+
+def test_cleanup_refuses_reused_live_group_before_signal() -> None:
+    with (
+        patch.object(
+            adapter.process_groups,
+            "require_signal_identity",
+            side_effect=adapter.process_groups.ReviewerProcessGroupError("runtime"),
+        ),
+        patch.object(adapter.os, "killpg") as kill,
+        pytest.raises(adapter.ContainedReviewerProcessError, match="runtime"),
+    ):
+        adapter._kill_and_prove_dead(12, 12, "34")
+    kill.assert_not_called()
 
 
 def test_live_schema_rejection_maps_to_closed_response_format_failure() -> None:

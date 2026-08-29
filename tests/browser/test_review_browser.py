@@ -14,6 +14,7 @@ from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any, Literal, cast
+from unittest.mock import Mock
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -42,6 +43,11 @@ from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
 )
 from mechanical_librarian.application.owner_settings import OwnerSettingsOperations
+from mechanical_librarian.application.reviewer_access import (
+    ReviewerAccessOperations,
+    ReviewerAccessView,
+    ReviewerEngineStatus,
+)
 from mechanical_librarian.domain.metadata_report import (
     FileFacts,
     MetadataReport,
@@ -127,7 +133,7 @@ def _report():
 
 _DEFAULT_SETTINGS_DOCUMENT = OwnerSettingsDocument.model_validate(
     {
-        "schema_version": "owner-settings-v1",
+        "schema_version": "owner-settings-v2",
         "revision": 1,
         "connections": [{"name": "primary", "endpoint": "https://library.invalid"}],
         "libraries": [
@@ -290,6 +296,19 @@ def _server(
     session_store = SQLiteReviewSessionRepository.open(
         database.with_name("review-sessions.sqlite")
     )
+    reviewer_access = Mock(spec=ReviewerAccessOperations)
+    reviewer_access.read.return_value = ReviewerAccessView(
+        revision=1,
+        mapping=None,
+        openrouter_key_configured=False,
+        codex=ReviewerEngineStatus(
+            engine="codex",
+            state="host_unsupported",
+            reason="headroom_below_1_gib",
+            host_headroom_bytes=536_870_912,
+        ),
+        openrouter=ReviewerEngineStatus(engine="openrouter", state="unconfigured"),
+    )
     app = create_transport_test_app(
         repository,
         ReviewWebConfiguration(
@@ -303,6 +322,7 @@ def _server(
         react_asset_loader=ReactAssetLoader(Path(os.environ["ML_REACT_ASSET_DIR"])),
         cover_considerations=cover_considerations,
         settings=settings,
+        reviewer_access=reviewer_access,
     )
     # The composed application, for a cohort that has to announce something the
     # server would announce rather than assert on what it answered.
@@ -377,7 +397,7 @@ def _setup_asset_server(
     class State:
         def read(self, _verifier: str) -> SetupStateDocument:
             return SetupStateDocument(
-                schema_version="setup-state-v1",
+                schema_version="setup-state-v2",
                 revision=1,
                 bootstrap_verifier_digest="0" * 64,
             )
@@ -2570,7 +2590,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
         certificate, key = _certificate(root)
         settings = OwnerSettingsDocument.model_validate(
             {
-                "schema_version": "owner-settings-v1",
+                "schema_version": "owner-settings-v2",
                 "revision": 1,
                 "connections": [
                     {
@@ -2947,18 +2967,30 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 timeout_input.fill("30")
 
                 compact_group.select_option("reviewer")
-                reviewer_checkbox = page.get_by_role(
-                    "checkbox", name="Use contained review for eligible cover work"
+                reviewer_choice = page.get_by_role(
+                    "button", name="Use dots-studio/dots-3-note-preview:free"
                 )
-                reviewer_metrics = reviewer_checkbox.evaluate(
-                    """element => ({
-                      glyph: element.getBoundingClientRect().toJSON(),
-                      target: element.closest('label').getBoundingClientRect().toJSON(),
-                    })"""
+                reviewer_metrics = reviewer_choice.evaluate(
+                    "element => element.getBoundingClientRect().toJSON()"
                 )
-                assert reviewer_metrics["glyph"]["width"] <= 20
-                assert reviewer_metrics["glyph"]["height"] <= 20
-                assert reviewer_metrics["target"]["height"] >= 44
+                assert reviewer_metrics["height"] >= 44
+                expect(
+                    page.get_by_text(
+                        "Evidence-qualified paid model on the delivered real-cover corpus:"
+                    )
+                ).to_be_visible()
+                expect(
+                    page.get_by_role("button", name="Use openai/gpt-4o-mini")
+                ).to_be_visible()
+                expect(
+                    page.get_by_text("Catalogue-capability-only free option:")
+                ).to_be_visible()
+                expect(
+                    page.get_by_text(
+                        "Less than 1 GiB of memory headroom is available. "
+                        "Free memory or raise the container limit."
+                    )
+                ).to_be_visible()
                 compact_group.select_option("server")
                 diagnostic_checkbox = page.get_by_role(
                     "checkbox", name="Record diagnostic timings"

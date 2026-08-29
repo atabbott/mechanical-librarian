@@ -4,6 +4,7 @@ import hashlib
 import sqlite3
 import threading
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
@@ -14,11 +15,18 @@ from mechanical_librarian.adapters.persistence.owner_settings import (
 from mechanical_librarian.adapters.persistence.review_sessions import (
     SQLiteReviewSessionRepository,
 )
+from mechanical_librarian.adapters.persistence.reviewer_access import (
+    ReviewerAccessStore,
+)
 from mechanical_librarian.adapters.persistence.schema import _create_schema
 from mechanical_librarian.adapters.persistence.setup_state import SetupStateStore
 from mechanical_librarian.application.review_web import OwnerSessionService
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 from mechanical_librarian.domain.owner_settings import OwnerSettingsError
+from mechanical_librarian.domain.reviewer_access import (
+    OpenRouterTaskSelection,
+    ReviewerAccessDocument,
+)
 from mechanical_librarian.domain.setup_state import SetupStateDocument, SetupStateError
 
 _BOOTSTRAP = "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$hash"
@@ -68,6 +76,198 @@ def _connected(store: SetupStateStore) -> SetupStateDocument:
         _BOOTSTRAP,
         {"connection.primary.key": "abs-secret"},
     )
+
+
+def _reviewer_ready(store: SetupStateStore) -> SetupStateDocument:
+    state = _connected(store)
+    for completed, changes in (
+        (["claim", "connect", "providers"], {}),
+        (
+            ["claim", "connect", "providers", "libraries"],
+            {
+                "libraries": [
+                    {
+                        "name": "books",
+                        "connection": "primary",
+                        "library_id": "books",
+                        "media_kind": "ebook",
+                        "mount": "books",
+                    }
+                ]
+            },
+        ),
+        (
+            ["claim", "connect", "providers", "libraries", "mounts"],
+            {"mounts": [{"library": "books", "state": "matched"}]},
+        ),
+    ):
+        state = store.write(
+            _next(state, completed_steps=completed, **changes), state.revision
+        )
+    return state
+
+
+def _configured_reviewer(store: ReviewerAccessStore) -> ReviewerAccessDocument:
+    return store.replace(
+        ReviewerAccessDocument(
+            schema_version="reviewer-access-v1",
+            revision=2,
+            cover_observation=OpenRouterTaskSelection(
+                engine="openrouter", model="provider/model"
+            ),
+        ),
+        1,
+        openrouter_key="reusable-secret",
+    )[0]
+
+
+def _reviewer_successor(
+    state: SetupStateDocument, outcome: Literal["skipped", "configured"]
+) -> SetupStateDocument:
+    return _next(
+        state,
+        completed_steps=[*state.completed_steps, "reviewer"],
+        reviewer_setup=outcome,
+    )
+
+
+def test_reviewer_transition_rejects_independent_connection_clear(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "setup.db"
+    first = sqlite3.connect(database, isolation_level=None)
+    _create_schema(first)
+    second = sqlite3.connect(database, isolation_level=None)
+    setup = SetupStateStore(first)
+    state = _reviewer_ready(setup)
+    reviewer = _configured_reviewer(ReviewerAccessStore(first))
+    ReviewerAccessStore(second).replace(
+        reviewer.model_copy(update={"revision": 3, "cover_observation": None}), 2
+    )
+
+    with pytest.raises(SetupStateError):
+        setup.transition_reviewer(
+            _reviewer_successor(state, "configured"),
+            state.revision,
+            2,
+            "configured",
+        )
+    assert setup.read().revision == state.revision
+
+
+def test_stale_skip_changes_neither_authority_and_preserves_key(tmp_path: Path) -> None:
+    database = tmp_path / "setup.db"
+    first = sqlite3.connect(database, isolation_level=None)
+    _create_schema(first)
+    second = sqlite3.connect(database, isolation_level=None)
+    setup = SetupStateStore(first)
+    state = _reviewer_ready(setup)
+    _configured_reviewer(ReviewerAccessStore(first))
+    SetupStateStore(second).write(_next(state), state.revision)
+
+    with pytest.raises(SetupStateError):
+        setup.transition_reviewer(
+            _reviewer_successor(state, "skipped"), state.revision, 2, "skipped"
+        )
+    document, key = ReviewerAccessStore(first).snapshot()
+    assert document.cover_observation is not None
+    assert key == "reusable-secret"
+
+
+def test_reviewer_transition_failure_rolls_back_both_authorities(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "setup.db"
+    connection = sqlite3.connect(database, isolation_level=None)
+    _create_schema(connection)
+    setup = SetupStateStore(connection)
+    state = _reviewer_ready(setup)
+    _configured_reviewer(ReviewerAccessStore(connection))
+    connection.execute(
+        "CREATE TRIGGER fail_reviewer_clear BEFORE UPDATE ON reviewer_access "
+        "BEGIN SELECT RAISE(ABORT,'failpoint'); END"
+    )
+
+    with pytest.raises(SetupStateError):
+        setup.transition_reviewer(
+            _reviewer_successor(state, "skipped"), state.revision, 2, "skipped"
+        )
+    assert setup.read() == state
+    document, key = ReviewerAccessStore(connection).snapshot()
+    assert document.cover_observation is not None
+    assert key == "reusable-secret"
+
+
+@pytest.mark.parametrize("owner", ("setup", "reviewer"))
+def test_same_connection_ports_serialize_whole_transactions(
+    tmp_path: Path, owner: str
+) -> None:
+    connection = sqlite3.connect(
+        tmp_path / "setup.db", isolation_level=None, check_same_thread=False
+    )
+    _create_schema(connection)
+    lock = threading.RLock()
+    setup = SetupStateStore(connection, lock)
+    reviewer_store = ReviewerAccessStore(connection, lock)
+    state = _reviewer_ready(setup)
+    reviewer = _configured_reviewer(reviewer_store)
+    entered = threading.Event()
+    release = threading.Event()
+    other_started = threading.Event()
+    other_done = threading.Event()
+    errors: list[BaseException] = []
+
+    def hold() -> int:
+        entered.set()
+        release.wait(timeout=2)
+        return 1
+
+    connection.create_function("hold_owner_transaction", 0, hold)
+    table = "owner_settings" if owner == "setup" else "reviewer_access"
+    connection.execute(
+        f"CREATE TRIGGER hold_owner BEFORE UPDATE ON {table} "
+        "BEGIN SELECT hold_owner_transaction(); END"
+    )
+
+    def owning_operation() -> None:
+        try:
+            if owner == "setup":
+                setup.transition_reviewer(
+                    _reviewer_successor(state, "skipped"), state.revision, 2, "skipped"
+                )
+            else:
+                reviewer_store.replace(
+                    reviewer.model_copy(
+                        update={"revision": 3, "cover_observation": None}
+                    ),
+                    2,
+                )
+        except BaseException as error:
+            errors.append(error)
+
+    def other_operation() -> None:
+        other_started.set()
+        try:
+            reviewer_store.snapshot() if owner == "setup" else setup.read()
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            other_done.set()
+
+    first = threading.Thread(target=owning_operation)
+    first.start()
+    assert entered.wait(timeout=2)
+    second = threading.Thread(target=other_operation)
+    second.start()
+    assert other_started.wait(timeout=2)
+    assert not other_done.wait(timeout=0.05)
+    release.set()
+    first.join(timeout=2)
+    second.join(timeout=2)
+
+    assert errors == []
+    assert other_done.is_set()
+    assert not connection.in_transaction
 
 
 def test_initialize_creates_the_only_verifier_free_resumable_setup_state() -> None:
@@ -195,12 +395,28 @@ def test_promotion_replaces_incomplete_state_with_normal_owner_authority() -> No
         completed_steps=["claim", "connect", "providers", "libraries", "mounts"],
         mounts=[{"library": "books", "state": "matched"}],
     )
-    store.write(state, 5, _BOOTSTRAP, {"connection.primary.key": "secret"})
+    state = store.write(state, 5, _BOOTSTRAP, {"connection.primary.key": "secret"})
+    store.write(
+        _next(
+            state,
+            completed_steps=[
+                "claim",
+                "connect",
+                "providers",
+                "libraries",
+                "mounts",
+                "reviewer",
+            ],
+            reviewer_setup="skipped",
+        ),
+        state.revision,
+        _BOOTSTRAP,
+    )
 
     store.promote(_BOOTSTRAP, _OWNER)
 
     encoded = connection.execute("SELECT document FROM owner_settings").fetchone()[0]
-    assert '"schema_version":"owner-settings-v1"' in encoded
+    assert '"schema_version":"owner-settings-v2"' in encoded
     assert connection.execute(
         "SELECT field_id,value FROM owner_setting_secrets ORDER BY field_id"
     ).fetchall() == [
@@ -251,9 +467,25 @@ def test_promotion_failpoint_retains_exact_resumable_state_and_retry_succeeds() 
         state.revision,
         _BOOTSTRAP,
     )
+    state = store.write(
+        _next(
+            state,
+            completed_steps=[
+                "claim",
+                "connect",
+                "providers",
+                "libraries",
+                "mounts",
+                "reviewer",
+            ],
+            reviewer_setup="skipped",
+        ),
+        state.revision,
+        _BOOTSTRAP,
+    )
     connection.execute(
         "CREATE TRIGGER fail_owner_promotion BEFORE UPDATE ON owner_settings "
-        "WHEN json_extract(NEW.document,'$.schema_version')='owner-settings-v1' "
+        "WHEN json_extract(NEW.document,'$.schema_version')='owner-settings-v2' "
         "BEGIN SELECT RAISE(ABORT,'failpoint'); END"
     )
 
@@ -295,7 +527,7 @@ def test_schema_admission_accepts_only_the_closed_incomplete_setup_document() ->
 def test_changing_a_recorded_step_removes_its_dependents() -> None:
     state = SetupStateDocument.model_validate(
         {
-            "schema_version": "setup-state-v1",
+            "schema_version": "setup-state-v2",
             "revision": 1,
             "bootstrap_verifier_digest": "0" * 64,
         }

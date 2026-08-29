@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
@@ -149,6 +150,17 @@ def test_container_definition_keeps_one_non_root_process_volume_and_port() -> No
     root = Path(__file__).parents[2]
     dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
     compose = (root / "compose.yaml").read_text(encoding="utf-8")
+    seccomp = json.loads(
+        (root / "config" / "seccomp" / "contained-reviewer.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    seccomp_bytes = (
+        root / "config" / "seccomp" / "contained-reviewer.json"
+    ).read_bytes()
+    seccomp_license = (
+        root / "config" / "seccomp" / "LICENSE.moby-profiles"
+    ).read_bytes()
     assert "USER 65532:65532" in dockerfile
     assert (
         'ENTRYPOINT ["/opt/mechanical-librarian/bin/mechanical-librarian-container"]'
@@ -159,9 +171,79 @@ def test_container_definition_keeps_one_non_root_process_volume_and_port() -> No
     assert "read_only: true" in compose
     assert "init: true" in compose
     assert "cap_drop:" in compose
+    assert "mem_limit: 2g" in compose
+    assert "memswap_limit: 2g" in compose
+    assert "mem_limit: 1g" not in compose
+    assert "memswap_limit: 1g" not in compose
+    assert "seccomp=./config/seccomp/contained-reviewer.json" in compose
+    assert seccomp["defaultAction"] == "SCMP_ACT_ERRNO"
+    assert (
+        hashlib.sha256(seccomp_bytes).hexdigest()
+        == "04151878f5bb17b00d216d552f8b8a8bc3683549517193e4f8d6501f1e7530ff"
+    )
+    assert (
+        hashlib.sha256(seccomp_license).hexdigest()
+        == "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    )
+    exact_rules = {
+        (
+            rule["names"][0],
+            rule["args"][0]["value"],
+            rule["args"][0]["valueTwo"],
+        )
+        for rule in seccomp["syscalls"]
+        if rule.get("comment", "").startswith("Allow only the exact")
+        or rule.get("comment", "").startswith("Allow the same exact")
+        or rule.get("comment", "").startswith("Allow Bubblewrap")
+    }
+    assert exact_rules == {
+        ("clone", 2_114_060_288, 1_040_318_464),
+        ("clone", 2_114_060_288, 2_114_060_288),
+    }
+    assert any(
+        rule["names"] == ["mount", "pivot_root", "umount2"]
+        and rule["action"] == "SCMP_ACT_ALLOW"
+        and rule.get("comment", "").startswith("Admit mount-namespace")
+        for rule in seccomp["syscalls"]
+    )
     assert compose.count("8443:8443") == 1
     assert compose.count("mechanical-librarian-data:/data") == 1
     assert "stop_grace_period: 610s" in compose
+
+
+def test_container_bundles_the_exact_verified_reviewer_artifacts() -> None:
+    dockerfile = (Path(__file__).parents[2] / "Dockerfile").read_text(encoding="utf-8")
+    assert 'package_version="0.147.0-linux-x64"' in dockerfile
+    assert 'package_version="0.147.0-linux-arm64"' in dockerfile
+    assert (
+        'expected_sha256="c969740cf8297e4c31905cd551efeb2c99af5080c12c236bdf825598b250139a"'
+        in dockerfile
+    )
+    assert (
+        'expected_sha256="4d09bf000597768dfa070b0e7c612f0fc258ac7fab364e570104ea625f918546"'
+        in dockerfile
+    )
+    assert 'npm pack "@openai/codex@$package_version"' in dockerfile
+    assert "--ignore-scripts --no-audit --no-fund" in dockerfile
+    assert 'echo "$expected_sha256  /tmp/codex/$archive" | sha256sum -c -' in dockerfile
+    assert 'test "$(/reviewer/bin/codex --version)" = "codex-cli 0.147.0"' in dockerfile
+    assert all(
+        value in dockerfile
+        for value in (
+            "sha256sum",
+            "bin/codex",
+            "bin/bwrap",
+            "LICENSE.codex",
+            "LICENSE.bubblewrap",
+        )
+    )
+    assert (
+        "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc" in dockerfile
+    )
+    assert (
+        "COPY --from=reviewer-build /reviewer /opt/mechanical-librarian/reviewer"
+        in dockerfile
+    )
 
 
 def test_container_lifecycle_qualifies_both_init_backed_application_runs() -> None:

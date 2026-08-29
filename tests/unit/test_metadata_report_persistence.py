@@ -454,6 +454,8 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("review_preparation_control",),
             ("review_preparation_scans",),
             ("review_preparation_work",),
+            ("reviewer_access",),
+            ("reviewer_access_secrets",),
             ("shadow_decision_outcomes",),
             ("shadow_outcome_field_facts",),
         ]
@@ -1421,3 +1423,23 @@ def test_current_pointer_scope_must_agree_with_decoded_report() -> None:
         with pytest.raises(MetadataReportError):
             repository.current("primary", "ebooks", "item-1", "a" * 64)
         repository.close()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "INSERT INTO reviewer_access VALUES(1,2,'{}')",
+        "INSERT INTO reviewer_access_secrets VALUES('unexpected','secret-key')",
+    ),
+)
+def test_startup_rejects_malformed_reviewer_access_content(
+    tmp_path: Path, mutation: str
+) -> None:
+    path = tmp_path / "reports.sqlite"
+    repository = open_repository(path)
+    repository.close()
+    with sqlite3.connect(path) as connection:
+        connection.execute("PRAGMA ignore_check_constraints=ON")
+        connection.execute(mutation)
+    with pytest.raises(MetadataReportError, match="reviewer access state"):
+        open_repository(path)

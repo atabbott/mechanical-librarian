@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, QueryObserver } from '@tanstack/react-query'
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -6,7 +6,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { PreparationView, ReviewHttp } from '../src/api/http'
 import type { LiveStreamState, LiveUpdate, LiveUpdateStream } from '../src/liveUpdates'
-import { createApplicationRouter } from '../src/router'
+import { coalesceMilliseconds } from '../src/liveInvalidation'
+import { createApplicationRouter, preparationQuery } from '../src/router'
 import { createHttp, renderRoute } from './fixtures'
 
 const reducedMotion = () => ({
@@ -773,7 +774,7 @@ describe('Application shell', () => {
       })
       const listeners = new Set<(update: LiveUpdate) => void>()
       const stateListeners = new Set<(state: LiveStreamState) => void>()
-      let streamState: LiveStreamState = 'live'
+      let streamState: LiveStreamState = 'connecting'
       const updates: LiveUpdateStream = {
         get state() {
           return streamState
@@ -820,6 +821,11 @@ describe('Application shell', () => {
         library: vi.mocked(http.getLibrary).mock.calls.length,
         preparation: vi.mocked(http.getPreparation).mock.calls.length,
       }
+      expect(before).toEqual({ attention: 1, library: 1, preparation: 1 })
+      await act(async () => {
+        streamState = 'live'
+        for (const listener of [...stateListeners]) listener(streamState)
+      })
 
       // Replay the fixed baseline's 98 preparation and 69 Library refresh
       // causes uniformly rather than in their original bursts. Uniform spacing
@@ -828,11 +834,11 @@ describe('Application shell', () => {
       const probeMilliseconds = 42 * 60 * 1_000
       const frames = [
         ...Array.from({ length: 98 }, (_, index) => ({
-          at: Math.floor(((index + 1) * probeMilliseconds) / 98),
+          at: Math.floor(((index + 1) * probeMilliseconds) / 99),
           topic: 'preparation' as const,
         })),
         ...Array.from({ length: 69 }, (_, index) => ({
-          at: Math.floor(((index + 1) * probeMilliseconds) / 69),
+          at: Math.floor(((index + 1) * probeMilliseconds) / 70),
           topic: 'library' as const,
         })),
       ].sort((left, right) => left.at - right.at)
@@ -842,7 +848,7 @@ describe('Application shell', () => {
           frame.at,
         )
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(probeMilliseconds)
+        await vi.advanceTimersByTimeAsync(probeMilliseconds + coalesceMilliseconds)
       })
       expect(vi.mocked(http.getAttention)).toHaveBeenCalledTimes(before.attention)
       expect(vi.mocked(http.getLibrary)).toHaveBeenCalledTimes(before.library)
@@ -857,6 +863,7 @@ describe('Application shell', () => {
         (afterIdle.library - before.library) +
         (afterIdle.preparation - before.preparation)
       expect(idleRequests).toBeLessThanOrEqual(Math.floor(237 / 10))
+      expect(afterIdle).toEqual({ attention: 1, library: 1, preparation: 21 })
 
       visibility = 'hidden'
       document.dispatchEvent(new Event('visibilitychange'))
@@ -885,6 +892,38 @@ describe('Application shell', () => {
       expect(vi.mocked(http.getPreparation)).toHaveBeenCalledTimes(afterIdle.preparation + 2)
     } finally {
       vi.useRealTimers()
+    }
+  })
+
+  it('does not refetch preparation when a delayed route observer joins the shell query', async () => {
+    let now = 0
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async (): Promise<PreparationView> => ({
+        schema_version: 'review-preparation-v1',
+        active: true,
+        actionable: false,
+        paused: false,
+        libraries: [],
+      })),
+    }
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const shellObserver = new QueryObserver(queryClient, preparationQuery(http, true))
+    const stopShell = shellObserver.subscribe(() => undefined)
+    let stopRoute: () => void = () => undefined
+    try {
+      await waitFor(() => expect(http.getPreparation).toHaveBeenCalledOnce())
+
+      now = 1_001
+      const routeObserver = new QueryObserver(queryClient, preparationQuery(http, true))
+      stopRoute = routeObserver.subscribe(() => undefined)
+
+      await waitFor(() => expect(http.getPreparation).toHaveBeenCalledOnce())
+    } finally {
+      stopRoute()
+      stopShell()
+      clock.mockRestore()
     }
   })
 

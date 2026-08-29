@@ -1,4 +1,4 @@
-# ADR-0062: Isolated audiobook inspector
+# ADR-0063: Isolated audiobook inspector
 
 - Status: accepted
 - Date: 2026-08-29
@@ -92,8 +92,8 @@ provider means to the review pipeline.
   grammar carried each observation: an embedded tag, a sidecar, or a path.
 - The stop is atomic with publication, so an audiobook neither stalls in a
   stage it cannot complete nor reports a provider failure that never happened.
-- The probe costs the image almost nothing: 3 MB on disk (261 MB to 264 MB) and
-  under 1 MB pulled (55,458,311 to 56,334,723 bytes compressed). The shipped
+- The probe costs the image almost nothing: 2 MB on disk (606 MB to 608 MB) and
+  under 1 MB pulled (163,578,661 to 164,479,005 bytes compressed). The shipped
   media parser contains no muxer, encoder, filter, device, or network protocol
   at all, and no demuxer or decoder outside the two admitted containers.
 
@@ -144,7 +144,8 @@ every capability that shares the uid.
 ### The distribution `ffmpeg` package
 
 Rejected on size, measured rather than estimated: `ffmpeg=7:5.1.9-0+deb12u1`
-grows the image by 556 MB (261 MB to 817 MB on disk, 149 MB compressed).
+grew the image by 556 MB against the base this slice was first measured on
+(261 MB to 817 MB on disk, 55 MB to 211 MB compressed).
 Debian's `ffprobe` links 213 shared objects including `libavdevice` and
 `libavfilter`, whose hard-dependency closure pulls LLVM, Mesa, and X11
 libraries. `--no-install-recommends` does not avoid it, and neither does

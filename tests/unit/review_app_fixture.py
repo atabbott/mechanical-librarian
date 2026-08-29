@@ -26,6 +26,7 @@ from mechanical_librarian.application.review_application import (
     compose_review_application,
 )
 from mechanical_librarian.application.review_pipeline import ReviewPreparationSupervisor
+from mechanical_librarian.application.reviewer_access import ReviewerAccessOperations
 from mechanical_librarian.interfaces.web import (
     create_review_app,
     load_owner_password_binding,
@@ -106,6 +107,7 @@ def create_transport_test_app(
     react_asset_loader: ReactAssetLoader | None = None,
     cover_considerations=None,
     settings: OwnerSettingsOperations | None = None,
+    reviewer_access: ReviewerAccessOperations | None = None,
     first_boot: bool = False,
     acknowledge_first_boot: Callable[[], None] | None = None,
 ):
@@ -142,6 +144,7 @@ def create_transport_test_app(
         operational_timer=operational_timer,
         cover_considerations=cover_considerations,
         settings=settings,
+        reviewer_access=reviewer_access,
         first_boot=first_boot,
         acknowledge_first_boot=acknowledge_first_boot,
     )

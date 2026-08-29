@@ -13,11 +13,11 @@ import {
   settingsSecretValid,
   settingsTextValid,
 } from '../src/api/http'
-import type { SettingsView, SettingsWrite } from '../src/api/http'
+import type { ReviewerAccessView, SettingsView, SettingsWrite } from '../src/api/http'
 import { createHttp, renderRoute } from './fixtures'
 
 const document: SettingsView['document'] = {
-  schema_version: 'owner-settings-v1',
+  schema_version: 'owner-settings-v2',
   revision: 3,
   connections: [{ adapter: 'audiobookshelf', endpoint: 'https://library.invalid', name: 'home' }],
   providers: [
@@ -55,7 +55,6 @@ const document: SettingsView['document'] = {
     diagnostic_timings_enabled: false,
     graceful_shutdown_seconds: 30,
     library_polling_interval_seconds: 900,
-    reviewer_enabled: false,
     session_lifetime_seconds: 2_592_000,
   },
   cover_preferences: {
@@ -102,6 +101,42 @@ const view = (authority: 'file' | 'store' = 'store'): SettingsView => ({
     { configured: true, field_id: 'provider.hardcover.key', indicator: 'Configured · ····abcd' },
   ],
 })
+
+const reviewerView: ReviewerAccessView = {
+  schema_version: 'reviewer-access-view-v1',
+  revision: 3,
+  mapping: null,
+  openrouter_key_configured: false,
+  codex: {
+    engine: 'codex',
+    state: 'failed',
+    reason: 'permission_or_profile',
+    model: null,
+    tier: null,
+    host_headroom_bytes: 2_147_483_648,
+  },
+  openrouter: {
+    engine: 'openrouter',
+    state: 'unconfigured',
+    reason: null,
+    model: null,
+    tier: null,
+    host_headroom_bytes: null,
+  },
+  recommendations: ['openai/gpt-4o-mini'],
+  candidates: [
+    {
+      model: 'dots-studio/dots-3-note-preview:free',
+      tier: 'free',
+      qualified: false,
+      evidence: 'catalogue_capability_only',
+      requests_per_minute: 20,
+      requests_per_day: '50 before $10 lifetime purchases; 1000 after',
+    },
+  ],
+  free_tier_caveat: '20 requests/minute; 50 or 1000 requests/day by account tier.',
+  data_use_caveat: 'Cover previews are sent to OpenRouter and its selected provider.',
+}
 
 describe('settings API field validation vocabulary', () => {
   it('matches the generated boundary at exact and unusual values', () => {
@@ -486,5 +521,448 @@ describe('owner settings route', () => {
     expect(timeout).toHaveAttribute('aria-invalid', 'true')
     expect(timeout).toHaveAccessibleDescription(/Request timeout must be from 1 to 60/)
     expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled()
+  })
+
+  it('renders wire recommendations, catalogue candidates, and manual model entry honestly', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view('file'))
+    http.getReviewerAccess = vi.fn(async () => reviewerView)
+    http.configureOpenRouter = vi.fn(async () => ({
+      ...reviewerView,
+      revision: 4,
+      mapping: {
+        engine: 'openrouter' as const,
+        model: 'dots-studio/dots-3-note-preview:free',
+      },
+      openrouter_key_configured: true,
+      openrouter: {
+        ...reviewerView.openrouter,
+        state: 'usable' as const,
+        model: 'dots-studio/dots-3-note-preview:free',
+        tier: 'free' as const,
+      },
+    }))
+    renderRoute('/settings?group=reviewer', http)
+
+    expect(await screen.findByText(/Evidence-qualified paid model/u)).toBeVisible()
+    expect(screen.getByText(/Catalogue-capability-only free option/u)).toBeVisible()
+    expect(screen.getByText(/20 requests\/minute/u)).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Restart device sign-in' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Use openai/gpt-4o-mini' }))
+    const model = screen.getByRole('textbox', { name: 'Model ID' })
+    expect(model).toHaveValue('openai/gpt-4o-mini')
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Use dots-studio/dots-3-note-preview:free',
+      }),
+    )
+    expect(model).toHaveValue('dots-studio/dots-3-note-preview:free')
+    await user.clear(model)
+    await user.type(model, 'manual/vision-model')
+    const key = screen.getByLabelText('API key')
+    await user.type(key, 'secret-key')
+    await user.click(screen.getByRole('button', { name: 'Validate and use OpenRouter' }))
+    await waitFor(() =>
+      expect(http.configureOpenRouter).toHaveBeenCalledWith({
+        expected_revision: 3,
+        api_key: 'secret-key',
+        model: 'manual/vision-model',
+      }),
+    )
+    expect(key).toHaveValue('')
+    expect(await screen.findByText('Status: usable')).toBeVisible()
+  })
+
+  it.each([
+    ['usable', null],
+    ['expired', null],
+    ['cancelled', null],
+    ['interrupted', 'restart_interrupted'],
+    ['failed', 'permission_or_profile'],
+  ] as const)('retains explicit Codex check terminal state %s', async (state, failure) => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => ({
+      ...reviewerView,
+      codex: { ...reviewerView.codex, state: 'configured' as const, reason: null },
+    }))
+    http.recheckCodex = vi.fn(async () => ({
+      state,
+      failure,
+      verification_url: null,
+      user_code: null,
+      expires_in_seconds: null,
+    }))
+    renderRoute('/settings?group=reviewer', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Check existing Codex sign-in' }))
+    expect(await screen.findByText(`Status: ${state}`)).toBeVisible()
+    expect(http.recheckCodex).toHaveBeenCalledOnce()
+    if (failure) expect(screen.getByRole('alert')).toBeVisible()
+  })
+
+  it('resumes an active Codex device flow after the Settings panel remounts', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => ({
+      ...reviewerView,
+      codex: { ...reviewerView.codex, state: 'waiting' as const },
+    }))
+    http.getCodexDevice = vi.fn(async () => ({
+      state: 'issued' as const,
+      failure: null,
+      verification_url: 'https://example.invalid/device',
+      user_code: 'ABCD-EFGH',
+      expires_in_seconds: 900,
+    }))
+
+    const { router } = renderRoute('/settings?group=reviewer', http)
+    expect(await screen.findByText('ABCD-EFGH')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Cancel sign-in' })).toBeVisible()
+    await act(async () => router.navigate({ to: '/library', search: { lens: 'all' } }))
+
+    await act(async () => router.navigate({ to: '/settings', search: { group: 'reviewer' } }))
+    expect(await screen.findByText('ABCD-EFGH')).toBeVisible()
+    expect(http.getCodexDevice).toHaveBeenCalledOnce()
+  })
+
+  it('announces OpenRouter validation before retaining its terminal result', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    let finish!: (value: ReviewerAccessView) => void
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => reviewerView)
+    http.configureOpenRouter = vi.fn(
+      async () => await new Promise<ReviewerAccessView>((resolve) => (finish = resolve)),
+    )
+    renderRoute('/settings?group=reviewer', http)
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Use dots-studio/dots-3-note-preview:free',
+      }),
+    )
+    await user.type(screen.getByLabelText('API key'), 'secret-key')
+    await user.click(screen.getByRole('button', { name: 'Validate and use OpenRouter' }))
+    expect(screen.getByText('Status: validating')).toBeVisible()
+    finish({
+      ...reviewerView,
+      revision: 4,
+      mapping: {
+        engine: 'openrouter',
+        model: 'dots-studio/dots-3-note-preview:free',
+      },
+      openrouter_key_configured: true,
+      openrouter: {
+        ...reviewerView.openrouter,
+        state: 'usable',
+        model: 'dots-studio/dots-3-note-preview:free',
+        tier: 'free',
+      },
+    })
+    expect(await screen.findByText('Status: usable')).toBeVisible()
+  })
+
+  it('uses the replacement deselection revision before Codex reselection', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const selected = {
+      ...reviewerView,
+      mapping: { engine: 'codex' as const },
+      codex: { ...reviewerView.codex, state: 'usable' as const, reason: null },
+    }
+    const deselected = {
+      ...selected,
+      revision: 4,
+      mapping: null,
+      codex: { ...selected.codex, state: 'ready' as const },
+    }
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => selected)
+    http.startCodexDevice = vi.fn(async () => ({
+      access: deselected,
+      device: {
+        state: 'waiting' as const,
+        failure: null,
+        verification_url: null,
+        user_code: null,
+        expires_in_seconds: null,
+      },
+    }))
+    http.getCodexDevice = vi.fn(async () => ({
+      state: 'usable' as const,
+      failure: null,
+      verification_url: null,
+      user_code: null,
+      expires_in_seconds: null,
+    }))
+    http.selectReviewer = vi.fn(async () => ({ ...selected, revision: 5 }))
+    renderRoute('/settings?group=reviewer', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Replace Codex sign-in' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm replace Codex sign-in' }))
+    expect(await screen.findByText(/Current selection:/u)).toHaveTextContent('No reviewer')
+    expect(await screen.findByText('Status: usable')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Use Codex for cover observations' }))
+    expect(http.selectReviewer).toHaveBeenCalledWith('codex', 4)
+  })
+
+  it.each([
+    ['ready', null, false, null],
+    [
+      'failed',
+      'permission_or_profile',
+      false,
+      'The installed Codex sign-in could not be validated. Replace the sign-in and retry.',
+    ],
+    ['expired', null, false, null],
+    [
+      'interrupted',
+      'restart_interrupted',
+      false,
+      'A prior sign-in was interrupted. Restart the sign-in flow.',
+    ],
+    [
+      'host_unsupported',
+      'host_evidence_unavailable',
+      true,
+      'Host memory evidence is unavailable. Fix the host or container memory reporting before using Codex.',
+    ],
+    [
+      'host_unsupported',
+      'cgroup_limit_below_1_gib',
+      true,
+      'The container memory limit is below 1 GiB. Increase it before using Codex.',
+    ],
+    [
+      'host_unsupported',
+      'headroom_below_1_gib',
+      true,
+      'Less than 1 GiB of memory headroom is available. Free memory or raise the container limit.',
+    ],
+  ] as const)(
+    'keeps mapped unhealthy Codex state %s manageable',
+    async (state, reason, hostUnsupported, expectedReason) => {
+      const user = userEvent.setup()
+      const http = createHttp()
+      http.getSettings = vi.fn(async () => view())
+      http.getReviewerAccess = vi.fn(async () => ({
+        ...reviewerView,
+        mapping: { engine: 'codex' as const },
+        codex: { ...reviewerView.codex, state, reason },
+      }))
+      renderRoute('/settings?group=reviewer', http)
+
+      const replace = await screen.findByRole('button', { name: 'Replace Codex sign-in' })
+      const clear = screen.getByRole('button', { name: 'Clear Codex sign-in' })
+      const check = screen.getByRole('button', { name: 'Check existing Codex sign-in' })
+      if (hostUnsupported) {
+        expect(replace).toBeDisabled()
+        expect(check).toBeDisabled()
+      } else {
+        expect(replace).toBeEnabled()
+        expect(check).toBeEnabled()
+      }
+      expect(clear).toBeEnabled()
+      expect(
+        screen.getByRole('button', { name: 'Use Codex for cover observations' }),
+      ).toBeDisabled()
+      if (expectedReason) {
+        expect(screen.getAllByRole('alert')).toHaveLength(1)
+        expect(screen.getByRole('alert')).toHaveTextContent(expectedReason)
+      } else {
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      }
+
+      await user.click(clear)
+      expect(screen.getByRole('button', { name: 'Confirm clear Codex sign-in' })).toHaveFocus()
+    },
+  )
+
+  it('shows one newer device failure instead of the persisted Codex reason', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => ({
+      ...reviewerView,
+      mapping: { engine: 'codex' as const },
+      codex: {
+        ...reviewerView.codex,
+        state: 'interrupted' as const,
+        reason: 'restart_interrupted' as const,
+      },
+    }))
+    http.recheckCodex = vi.fn(async () => ({
+      state: 'failed' as const,
+      failure: 'permission_or_profile' as const,
+      verification_url: null,
+      user_code: null,
+      expires_in_seconds: null,
+    }))
+    renderRoute('/settings?group=reviewer', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Check existing Codex sign-in' }))
+
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'The installed Codex sign-in could not be validated. Replace the sign-in and retry.',
+    )
+    expect(screen.queryByText(/prior sign-in was interrupted/u)).not.toBeInTheDocument()
+  })
+
+  it('keeps current host failure copy ahead of an older cached device failure', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => ({
+      ...reviewerView,
+      mapping: { engine: 'codex' as const },
+      codex: {
+        ...reviewerView.codex,
+        state: 'host_unsupported' as const,
+        reason: 'headroom_below_1_gib' as const,
+      },
+    }))
+    const { queryClient } = renderRoute('/settings?group=reviewer', http)
+    await screen.findByText('Status: host unsupported')
+
+    act(() => {
+      queryClient.setQueryData(['reviewer-access', 'codex-device'], {
+        state: 'failed',
+        failure: 'permission_or_profile',
+        verification_url: null,
+        user_code: null,
+        expires_in_seconds: null,
+      })
+    })
+
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Less than 1 GiB of memory headroom is available. Free memory or raise the container limit.',
+    )
+    expect(
+      screen.queryByText(/installed Codex sign-in could not be validated/u),
+    ).not.toBeInTheDocument()
+  })
+
+  it('evicts a checked usable device result after credential clear', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const configured = {
+      ...reviewerView,
+      codex: { ...reviewerView.codex, state: 'configured' as const, reason: null },
+    }
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => configured)
+    http.recheckCodex = vi.fn(async () => ({
+      state: 'usable' as const,
+      failure: null,
+      verification_url: null,
+      user_code: null,
+      expires_in_seconds: null,
+    }))
+    http.clearCodex = vi.fn(async () => ({
+      ...reviewerView,
+      codex: { ...reviewerView.codex, state: 'ready' as const, reason: null },
+    }))
+    renderRoute('/settings?group=reviewer', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Check existing Codex sign-in' }))
+    expect(await screen.findByText('Status: usable')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Clear Codex sign-in' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm clear Codex sign-in' }))
+    expect(await screen.findByText('Status: ready')).toBeVisible()
+    expect(
+      screen.queryByRole('button', { name: 'Use Codex for cover observations' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('requires confirmation before clearing a reviewer key and restores cancel focus', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const configured = {
+      ...reviewerView,
+      mapping: {
+        engine: 'openrouter' as const,
+        model: 'dots-studio/dots-3-note-preview:free',
+      },
+      openrouter_key_configured: true,
+      openrouter: {
+        ...reviewerView.openrouter,
+        state: 'configured' as const,
+        model: 'dots-studio/dots-3-note-preview:free',
+        tier: 'free' as const,
+      },
+    }
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => configured)
+    http.clearOpenRouter = vi.fn(async () => reviewerView)
+    renderRoute('/settings?group=reviewer', http)
+
+    const clear = await screen.findByRole('button', { name: 'Clear OpenRouter key' })
+    await user.click(clear)
+    expect(http.clearOpenRouter).not.toHaveBeenCalled()
+    const keep = screen.getByRole('button', { name: 'Keep OpenRouter key' })
+    expect(screen.getByRole('button', { name: 'Confirm clear OpenRouter key' })).toHaveFocus()
+    await user.click(keep)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Clear OpenRouter key' })).toHaveFocus(),
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Clear OpenRouter key' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm clear OpenRouter key' }))
+    await waitFor(() => expect(http.clearOpenRouter).toHaveBeenCalledWith(3))
+  })
+
+  it('requires confirmation before replacing a reviewer key and restores cancel focus', async () => {
+    const originalRequestFrame = window.requestAnimationFrame
+    const originalCancelFrame = window.cancelAnimationFrame
+    const frames = new Map<number, FrameRequestCallback>()
+    let nextFrame = 1
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      const frame = nextFrame
+      nextFrame += 1
+      frames.set(frame, callback)
+      return frame
+    })
+    vi.stubGlobal('cancelAnimationFrame', (frame: number) => frames.delete(frame))
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => ({
+      ...reviewerView,
+      mapping: {
+        engine: 'openrouter' as const,
+        model: 'dots-studio/dots-3-note-preview:free',
+      },
+      openrouter_key_configured: true,
+    }))
+    try {
+      renderRoute('/settings?group=reviewer', http)
+
+      await screen.findByRole('textbox', { name: 'Model ID' })
+      const key = screen.getByLabelText('API key')
+      await user.type(key, 'replacement-key')
+      expect(key).toHaveValue('replacement-key')
+      act(() => {
+        const pending = [...frames.values()]
+        frames.clear()
+        for (const frame of pending) frame(0)
+      })
+      expect(screen.getByLabelText('API key')).toBe(key)
+      expect(key).toHaveFocus()
+      expect(key).toHaveValue('replacement-key')
+      const replace = screen.getByRole('button', { name: 'Replace OpenRouter key' })
+      expect(replace).toBeEnabled()
+      await user.click(replace)
+      expect(http.configureOpenRouter).not.toHaveBeenCalled()
+      await user.click(screen.getByRole('button', { name: 'Keep existing OpenRouter key' }))
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Replace OpenRouter key' })).toHaveFocus(),
+      )
+    } finally {
+      vi.stubGlobal('requestAnimationFrame', originalRequestFrame)
+      vi.stubGlobal('cancelAnimationFrame', originalCancelFrame)
+    }
   })
 })

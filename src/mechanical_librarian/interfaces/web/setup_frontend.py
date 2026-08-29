@@ -196,6 +196,59 @@ SETUP_JS = (
         "const path=input(`path-${library.name}`);path.placeholder=",
         "const path=input(`path-${library.name}`);const evidence=discovered.find(item=>item.library_id===library.library_id);path.value=evidence?.service_path||'';path.placeholder=",
     )
+    .replace(
+        "['mounts','Check read-only mounts'],['kick_off','Kick off preparation']",
+        "['mounts','Check read-only mounts'],['reviewer','Choose reviewer'],['kick_off','Kick off preparation']",
+    )
+    .replace("} of 6`", "} of 7`")
+    .replace(
+        "let csrf=null;let state=null;const api=",
+        "let csrf=null;let state=null;let codexTerminal=null;const api=",
+    )
+    .replace(
+        "const recovery=code=>({",
+        "const recovery=code=>({invalid_key:'OpenRouter rejected this key. Replace it and validate again.',quota_exhausted:'OpenRouter credits are exhausted. Add credits, then retry.',rate_limited:'OpenRouter is rate limited. Wait, then retry.',model_unavailable:'That model is unavailable. Choose another vision model.',model_text_only:'That model cannot inspect covers. Choose an image-capable model.',malformed_response:'OpenRouter returned an invalid or oversized response. Retry later.',unreachable:'OpenRouter could not be reached. Check network access, then retry.',credential_clear_failed:'The credential could not be removed. Retry from Settings.',host_unsupported:'This host cannot safely run the contained Codex reviewer.',credential_unavailable:'Codex sign-in is unavailable. Test or replace it, then select Codex.',access_changed:'Reviewer access changed in another session. Reload before trying again.',reviewer_access_stale:'Reviewer access changed in another session. Reload before trying again.',reviewer_access_unavailable:'Reviewer access is temporarily unavailable. Retry this step.',",
+    )
+    .replace(
+        "const renderKickoff=()=>{",
+        "const renderReviewer=async()=>{const section=card('Choose an optional cover reviewer','Reviewer observations are advice only. Continue without one, or configure exactly one engine now; you can change this later in Settings.');const form=document.createElement('form');section.append(form);let access;try{access=await api('/api/setup/reviewer-access')}catch(e){error(form,e.message);return}const current=document.createElement('p');current.textContent=`Current selection: ${access.mapping?.engine||'No reviewer'}`;form.append(current);const skip=button('Continue without a reviewer',true);skip.type='button';skip.addEventListener('click',()=>mutate('/api/setup/reviewer',{expected_revision:state.revision,outcome:'skipped'},form));form.append(skip);const codex=document.createElement('div');codex.className='option';const codexHeading=document.createElement('h3');codexHeading.textContent='Codex device sign-in';const codexStatus=document.createElement('p');codexStatus.setAttribute('aria-live','polite');codexStatus.textContent=`Status: ${access.codex.state.replaceAll('_',' ')}`;codex.append(codexHeading,codexStatus);if(access.codex.state==='usable'||access.codex.state==='configured'){const use=button('Use Codex');use.type='button';use.addEventListener('click',async()=>{try{await api('/api/setup/reviewer/selection',{method:'POST',body:JSON.stringify({expected_revision:access.revision,engine:'codex'}),mutation:true});await mutate('/api/setup/reviewer',{expected_revision:state.revision,outcome:'configured'},form)}catch(e){error(form,e.message)}});codex.append(use)}else{const start=button(['expired','failed','cancelled','interrupted'].includes(access.codex.state)?'Restart device sign-in':'Start device sign-in');start.type='button';start.disabled=access.codex.state==='host_unsupported';start.addEventListener('click',async()=>{try{await api('/api/setup/reviewer/codex/device',{method:'POST',body:JSON.stringify({expected_revision:access.revision}),mutation:true});start.remove();const cancel=button('Cancel sign-in');cancel.type='button';cancel.addEventListener('click',async()=>{await api('/api/setup/reviewer/codex/device/cancel',{method:'POST',body:'{}',mutation:true});await render()});codex.append(cancel);let device;do{device=await api('/api/setup/reviewer/codex/device');codexStatus.textContent=`Status: ${device.state.replaceAll('_',' ')}`;let prompt=codex.querySelector('[data-device-prompt]');if(device.verification_url&&device.user_code){if(!prompt){prompt=document.createElement('p');prompt.dataset.devicePrompt='true';codex.append(prompt)}prompt.textContent=`Open ${device.verification_url} and enter ${device.user_code}.`}if(['starting','issued','waiting','validating'].includes(device.state))await new Promise(resolve=>setTimeout(resolve,1000))}while(['starting','issued','waiting','validating'].includes(device.state));await render()}catch(e){error(form,e.message)}});codex.append(start)}form.append(codex);const router=document.createElement('div');router.className='option';const routerHeading=document.createElement('h3');routerHeading.textContent='OpenRouter';const freeCaveat=document.createElement('p');freeCaveat.textContent=access.free_tier_caveat;const caveat=document.createElement('p');caveat.textContent=access.data_use_caveat;const recommendation=document.createElement('div');const recommendationStatus=document.createElement('p');recommendationStatus.textContent='No model recommendation is qualified by delivered real-cover evidence yet.';const candidateList=document.createElement('ul');for(const candidate of access.candidates){const item=document.createElement('li');const choose=button(`Use ${candidate.model}`);choose.type='button';choose.addEventListener('click',()=>{model.value=candidate.model;model.focus()});item.append(choose,document.createTextNode(` (${candidate.tier}; catalogue capability only, not yet qualified)`));candidateList.append(item)}recommendation.append(recommendationStatus,candidateList);const model=input('reviewer-model');model.placeholder=access.mapping?.engine==='openrouter'?access.mapping.model:'provider/model';model.maxLength=256;const key=input('reviewer-key','password');key.autocomplete='new-password';key.maxLength=2048;const save=button('Validate and use OpenRouter');save.type='button';save.addEventListener('click',async()=>{try{await api('/api/setup/reviewer/openrouter',{method:'POST',body:JSON.stringify({expected_revision:access.revision,api_key:key.value,model:model.value}),mutation:true});key.value='';await mutate('/api/setup/reviewer',{expected_revision:state.revision,outcome:'configured'},form)}catch(e){key.value='';error(form,e.message)}});router.append(routerHeading,freeCaveat,caveat,recommendation,field('Model ID',model),field('API key (write-only)',key),save);form.append(router)};const renderKickoff=()=>{",
+    )
+    .replace(
+        "mounts:renderMounts,kick_off:renderKickoff",
+        "mounts:renderMounts,reviewer:renderReviewer,kick_off:renderKickoff",
+    )
+    .replace(
+        "const recommendation=document.createElement('div');const recommendationStatus=document.createElement('p');recommendationStatus.textContent='No model recommendation is qualified by delivered real-cover evidence yet.';const candidateList=document.createElement('ul');for(const candidate of access.candidates){const item=document.createElement('li');const choose=button(`Use ${candidate.model}`);choose.type='button';choose.addEventListener('click',()=>{model.value=candidate.model;model.focus()});item.append(choose,document.createTextNode(` (${candidate.tier}; catalogue capability only, not yet qualified)`));candidateList.append(item)}recommendation.append(recommendationStatus,candidateList);const model=input('reviewer-model');model.placeholder=access.mapping?.engine==='openrouter'?access.mapping.model:'provider/model';model.maxLength=256;",
+        "const model=input('reviewer-model');model.placeholder=access.mapping?.engine==='openrouter'?access.mapping.model:'provider/model';model.maxLength=256;const recommendation=document.createElement('div');const recommendationStatus=document.createElement('p');recommendationStatus.textContent='Evidence-qualified paid model on the delivered real-cover corpus:';const recommendationList=document.createElement('ul');for(const recommended of access.recommendations){const item=document.createElement('li');const choose=button(`Use ${recommended}`);choose.type='button';choose.addEventListener('click',()=>{model.value=recommended;model.focus()});item.append(choose,document.createTextNode(' (paid; evidence-qualified on the delivered real-cover corpus)'));recommendationList.append(item)}const candidateStatus=document.createElement('p');candidateStatus.textContent='Catalogue-capability-only free option:';const candidateList=document.createElement('ul');for(const candidate of access.candidates){const item=document.createElement('li');const choose=button(`Use ${candidate.model}`);choose.type='button';choose.addEventListener('click',()=>{model.value=candidate.model;model.focus()});item.append(choose,document.createTextNode(` (${candidate.tier}; catalogue capability only, not yet qualified)`));candidateList.append(item)}recommendation.append(recommendationStatus,recommendationList,candidateStatus,candidateList);",
+    )
+    .replace(
+        "const codexStatus=document.createElement('p');codexStatus.setAttribute('aria-live','polite');codexStatus.textContent=`Status: ${access.codex.state.replaceAll('_',' ')}`;codex.append(codexHeading,codexStatus);if(access.codex.state==='usable'||access.codex.state==='configured')",
+        "const codexState=access.codex.state==='host_unsupported'?access.codex:(codexTerminal||access.codex);const codexStatus=document.createElement('p');codexStatus.setAttribute('aria-live','polite');codexStatus.textContent=`Status: ${codexState.state.replaceAll('_',' ')}`;codex.append(codexHeading,codexStatus);if(codexState.state==='usable'||codexState.state==='configured')",
+    )
+    .replace(
+        "['expired','failed','cancelled','interrupted'].includes(access.codex.state)?'Restart device sign-in':'Start device sign-in'",
+        "['expired','failed','cancelled','interrupted'].includes(codexState.state)?'Restart device sign-in':'Start device sign-in'",
+    )
+    .replace(
+        "start.disabled=access.codex.state==='host_unsupported'",
+        "start.disabled=codexState.state==='host_unsupported'",
+    )
+    .replace(
+        "else{const start=button(",
+        "else{const check=button('Check existing sign-in');check.type='button';check.disabled=codexState.state==='host_unsupported';check.addEventListener('click',async()=>{try{codexTerminal=await api('/api/setup/reviewer/codex/recheck',{method:'POST',body:'{}',mutation:true});await render()}catch(e){error(form,e.message)}});codex.append(check);const start=button(",
+    )
+    .replace(
+        "}while(['starting','issued','waiting','validating'].includes(device.state));await render()",
+        "}while(['starting','issued','waiting','validating'].includes(device.state));codexTerminal=device;await render()",
+    )
+    .replace(
+        "save.addEventListener('click',async()=>{try{await api('/api/setup/reviewer/openrouter'",
+        "save.addEventListener('click',async()=>{save.disabled=true;save.setAttribute('aria-live','polite');save.textContent='Validating OpenRouter…';try{await api('/api/setup/reviewer/openrouter'",
+    )
+    .replace(
+        "}catch(e){key.value='';error(form,e.message)}});router.append",
+        "}catch(e){key.value='';save.disabled=false;save.textContent='Validate and use OpenRouter';error(form,e.message)}});router.append",
+    )
 )
 
 __all__ = ["SETUP_CSS", "SETUP_HTML", "SETUP_JS"]

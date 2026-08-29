@@ -18,11 +18,16 @@ from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
+from mechanical_librarian.adapters.reviewers.codex_device_auth import (
+    CodexDeviceAuthManager,
+    CodexDeviceAuthState,
+)
+from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_pipeline import pipeline_scan_id
 from mechanical_librarian.bootstrap import composition
@@ -43,6 +48,166 @@ from mechanical_librarian.interfaces.web.runtime_dispatch import (
 
 async def _runtime_app(scope: object, receive: object, send: object) -> None:
     return None
+
+
+def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover() -> None:
+    repository = Mock()
+    settings = repository.owner_settings_store.return_value
+    settings.activate_runtime.return_value = (
+        SimpleNamespace(document=SimpleNamespace(pending_restart=())),
+        {},
+        "verifier",
+    )
+    repository.has_first_boot_preparation.return_value = False
+    session_store = Mock()
+    reviewer_access = Mock()
+    cover_considerations = Mock()
+    review_application = Mock()
+    review = ReviewWebConfiguration(
+        canonical_origin="https://library.invalid",
+        owner_password_hash_file="/data/owner.hash",
+    )
+    configuration = SimpleNamespace(review=review, libraries=())
+
+    with (
+        patch.object(composition, "open_repository", return_value=repository),
+        patch.object(
+            composition, "_open_review_session_store", return_value=session_store
+        ),
+        patch.object(
+            composition, "store_runtime_configuration", return_value=configuration
+        ),
+        patch.object(composition, "_store_first_preparation", return_value=False),
+        patch.object(
+            composition, "create_review_pipeline", return_value=Mock()
+        ) as create_pipeline,
+        patch.object(
+            composition.SQLiteProviderRecoveryStore, "open", return_value=Mock()
+        ),
+        patch.object(
+            composition, "owner_password_binding", return_value=(Mock(), Mock())
+        ),
+        patch.object(
+            composition, "_compose_reviewer_access", return_value=reviewer_access
+        ),
+        patch.object(
+            composition,
+            "_compose_cover_considerations",
+            return_value=cover_considerations,
+        ) as compose_cover,
+        patch.object(
+            composition,
+            "compose_review_application",
+            return_value=review_application,
+        ) as compose_application,
+        patch.object(composition, "create_review_app", return_value=_runtime_app),
+    ):
+        runtime, _configuration = composition.compose_store_runtime_generation(
+            ReviewBootstrap(
+                schema_version="review-bootstrap-v1",
+                canonical_origin="https://library.invalid",
+                tls_certificate_file="certificate",
+                tls_private_key_file="private-key",
+            ),
+            Path("application.sqlite3"),
+            Path("catalogue.sqlite3"),
+            Path("artifacts"),
+            repository_authority=object(),
+        )
+
+    assert create_pipeline.call_args.args[4] is reviewer_access
+    assert compose_cover.call_args.args[3] is reviewer_access
+    assert compose_application.call_args.kwargs["reviewer_access"] is reviewer_access
+    assert (
+        compose_application.call_args.kwargs["cover_considerations"]
+        is cover_considerations
+    )
+    runtime.start_dormant()
+    reviewer_access.activate_codex_lease.assert_not_called()
+    runtime.admit()
+    reviewer_access.activate_codex_lease.assert_called_once_with()
+    review_application.admit.assert_called_once_with()
+    runtime.close()
+    review_application.stop.assert_called_once_with()
+
+
+@pytest.mark.parametrize("failure", ("settings_dormant", "setup_commit"))
+def test_candidate_failure_preserves_active_codex_lease_owner(failure: str) -> None:
+    coordinator = composition._CodexAuthLeaseCoordinator()
+    predecessor_manager = Mock(spec=CodexDeviceAuthManager)
+    predecessor_manager.status.return_value = CodexDeviceAuthState("usable")
+    predecessor = composition._LazyCodexAuth(
+        lambda _current, _guard: predecessor_manager, coordinator
+    )
+    successor = composition._LazyCodexAuth(
+        lambda _current, _guard: Mock(spec=CodexDeviceAuthManager), coordinator
+    )
+    predecessor.activate_lease()
+    predecessor._manager = predecessor_manager
+    current = RuntimeGeneration(_runtime_app)
+    dispatcher = MutableRuntimeDispatcher(current)
+    dispatcher.start()
+
+    def start_dormant() -> None:
+        if failure == "settings_dormant":
+            raise RuntimeError("candidate start failed")
+
+    candidate = RuntimeGeneration(
+        _runtime_app,
+        start_dormant=start_dormant,
+        admit=successor.activate_lease,
+        close=successor.close,
+    )
+    if failure == "settings_dormant":
+        with pytest.raises(RuntimeError, match="candidate start failed"):
+            dispatcher.prepare(candidate)
+    else:
+        dispatcher.prepare(candidate)
+
+        def fail_commit() -> None:
+            raise RuntimeError("authority commit failed")
+
+        with pytest.raises(RuntimeError, match="authority commit failed"):
+            dispatcher.transition(current, candidate, fail_commit)
+
+    assert predecessor.status().state == "usable"
+    predecessor_manager.close.assert_not_called()
+    assert predecessor._lease is not None
+    assert coordinator.current(predecessor, predecessor._lease)
+
+
+def test_setup_runtime_reserves_codex_lease_until_admission() -> None:
+    repository = Mock()
+    reviewer_access = Mock()
+    setup_app = Mock()
+    bootstrap = ReviewBootstrap(
+        schema_version="review-bootstrap-v1",
+        canonical_origin="https://library.invalid",
+        tls_certificate_file="certificate",
+        tls_private_key_file="private-key",
+    )
+    with (
+        patch.object(
+            composition, "_compose_reviewer_access", return_value=reviewer_access
+        ),
+        patch.object(composition, "create_setup_app", return_value=setup_app),
+    ):
+        runtime, _activation = composition._compose_setup_runtime_generation(
+            bootstrap,
+            Path("application.sqlite3"),
+            Path("catalogue.sqlite3"),
+            Path("artifacts"),
+            repository,
+            Mock(),
+            initialize=False,
+        )
+
+    runtime.start_dormant()
+    reviewer_access.activate_codex_lease.assert_not_called()
+    runtime.admit()
+    reviewer_access.activate_codex_lease.assert_called_once_with()
+    runtime.close()
+    reviewer_access.close.assert_called_once_with()
 
 
 def test_store_runtime_activation_reuses_outer_control_authority_for_successors() -> (
@@ -423,7 +588,7 @@ def test_first_preparation_marker_survives_settings_edit_and_repository_reopen(
     assert not repository.has_first_boot_preparation()
     settings = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v1",
+            "schema_version": "owner-settings-v2",
             "revision": 1,
             "connections": [{"name": "primary", "endpoint": "https://library.invalid"}],
             "providers": [],

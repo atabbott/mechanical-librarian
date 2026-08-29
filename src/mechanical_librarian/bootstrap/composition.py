@@ -8,8 +8,10 @@ import os
 import stat
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
+from threading import Lock
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
 
 import uvicorn
@@ -70,7 +72,6 @@ from mechanical_librarian.adapters.persistence.provider_recovery import (
 from mechanical_librarian.adapters.persistence.review_sessions import (
     SQLiteReviewSessionRepository,
 )
-from mechanical_librarian.adapters.persistence.schema_adoption import adopt_schema
 from mechanical_librarian.adapters.private_recovery import (
     PrivateCoverRecoveryStore,
     require_private_directory,
@@ -93,11 +94,18 @@ from mechanical_librarian.adapters.providers.remote_cover import (
     RemoteCoverTimeout,
     fetch_remote_cover,
 )
+from mechanical_librarian.adapters.reviewers.codex_device_auth import (
+    CodexDeviceAuthError,
+    CodexDeviceAuthManager,
+)
 from mechanical_librarian.adapters.reviewers.contained_reviewer import (
     ContainedReviewerProcessError,
-    cover_reviewer_profile_contract_mismatch,
+    ContainedReviewerProfile,
+    load_contained_reviewer_profile_bytes,
+    prepare_contained_device_auth_command,
     read_contained_reviewer_profile,
 )
+from mechanical_librarian.adapters.reviewers.openrouter import OpenRouterReviewer
 from mechanical_librarian.application.batch import (
     BatchError,
     BatchSelection,
@@ -117,6 +125,7 @@ from mechanical_librarian.application.configuration import (
     ConfigurationError,
     MediaMountConfiguration,
     ProviderConnectionConfiguration,
+    ReviewWebConfiguration,
 )
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
@@ -202,6 +211,15 @@ from mechanical_librarian.application.review_pipeline_stages import (
     ReviewPipelineStages,
 )
 from mechanical_librarian.application.review_web import OwnerSessionService
+from mechanical_librarian.application.reviewer_access import (
+    CodexAuth,
+    ReviewerAccessOperations,
+)
+from mechanical_librarian.application.reviewer_contracts import CodexDeviceAuthState
+from mechanical_librarian.application.reviewer_host import (
+    ReviewerHostStatus,
+    reviewer_host_status,
+)
 from mechanical_librarian.application.setup_connection import (
     SetupConnectionOperation,
     SetupConnectionVerification,
@@ -305,7 +323,6 @@ if TYPE_CHECKING:
     from mechanical_librarian.application.configuration import (
         ApplicationConfiguration,
         LibraryConfiguration,
-        ReviewWebConfiguration,
         TargetConnectionConfiguration,
     )
     from mechanical_librarian.application.field_effects import CapabilityObserver
@@ -342,6 +359,7 @@ class _StoreRuntimeActivation:
         self._repository_authority = repository_authority
         self._dispatcher: MutableRuntimeDispatcher | None = None
         self._lock = threading.RLock()
+        self._codex_auth = _CodexAuthLeaseCoordinator()
 
     @property
     def dispatcher(self) -> MutableRuntimeDispatcher:
@@ -409,6 +427,9 @@ class _StoreRuntimeActivation:
         """Retire compatibility debt only after the initial generation woke."""
         view = self._settings_store.read()
         self._settings_store.acknowledge_runtime(view.document.revision)
+
+    def close(self) -> None:
+        self._codex_auth.close()
 
 
 class _PublicationReceiptRepository(Protocol):
@@ -1659,6 +1680,7 @@ def create_review_pipeline(
     database_path: Path,
     catalogue_path: Path,
     artifact_store_path: Path,
+    reviewer_access: ReviewerAccessOperations,
     database_authority: object | None = None,
     timing: StageTimer | None = None,
     private_root: Path | None = None,
@@ -1984,6 +2006,7 @@ def create_review_pipeline(
             artifact_store_path,
             # Callers reject an absent review configuration before composing.
             cast("ReviewWebConfiguration", configuration.review),
+            reviewer_access,
             provider_recovery=provider_recovery,
         )
 
@@ -2501,6 +2524,11 @@ def compose_store_runtime_generation(
         provider_recovery = SQLiteProviderRecoveryStore.open(
             private_root / "provider-recovery.sqlite"
         )
+        reviewer_access = _compose_reviewer_access(
+            repository,
+            review,
+            None if activation is None else activation._codex_auth,
+        )
         first_boot = first_boot or _store_first_preparation(
             "store",
             tuple(settings_view.document.pending_restart),
@@ -2511,6 +2539,7 @@ def compose_store_runtime_generation(
             database_path,
             catalogue_path,
             artifact_store_path,
+            reviewer_access,
             repository.authority,
             timing,
             private_root,
@@ -2567,6 +2596,13 @@ def compose_store_runtime_generation(
                 ),
             )
         )
+        cover_considerations = _compose_cover_considerations(
+            repository,
+            artifact_store_path,
+            review,
+            reviewer_access,
+            provider_recovery,
+        )
         try:
             owner_binding = owner_password_binding(encoded_verifier)
             review_application = compose_review_application(
@@ -2596,10 +2632,9 @@ def compose_store_runtime_generation(
                 field_application=field_application,
                 activity_projection=activity_projection,
                 close_activity_projection=close_activity_projection,
-                cover_considerations=_compose_cover_considerations(
-                    repository, artifact_store_path, review
-                ),
+                cover_considerations=cover_considerations,
                 settings=OwnerSettingsOperations(settings_store),
+                reviewer_access=reviewer_access,
                 settings_activation=None if activation is None else activation.activate,
                 first_boot=first_boot,
                 acknowledge_first_boot=repository.acknowledge_first_boot_preparation,
@@ -2615,13 +2650,17 @@ def compose_store_runtime_generation(
             finally:
                 session_store.close()
 
+        def admit_generation() -> None:
+            reviewer_access.activate_codex_lease()
+            review_application.admit()
+
         return (
             RuntimeGeneration(
                 create_review_app(review_application, review),
                 start_dormant=review_application.start_dormant,
                 stop_admission=review_application.stop_admission,
                 resume_admission=review_application.resume_admission,
-                admit=review_application.admit,
+                admit=admit_generation,
                 begin_drain=review_application.begin_drain,
                 close=close_generation,
                 shutdown_seconds=review.graceful_shutdown_seconds,
@@ -2718,16 +2757,34 @@ def _compose_setup_runtime_generation(
             lambda: journey.kick_off(expected_revision),
         )
 
+    reviewer_access = _compose_reviewer_access(
+        repository,
+        ReviewWebConfiguration(
+            canonical_origin=bootstrap.canonical_origin,
+            owner_password_hash_file="/data/.owner-verifier-store",
+            cover_reviewer_profile_file=bootstrap.cover_reviewer_profile_file,
+        ),
+        activation._codex_auth,
+    )
     setup_app = create_setup_app(
         sessions,
         state,
         verifier,
         connection=connection,
         journey=journey,
+        reviewer_access=reviewer_access,
         canonical_origin=bootstrap.canonical_origin,
         activate=activate_setup,
     )
-    return RuntimeGeneration(setup_app, shutdown_seconds=300), activation
+    return (
+        RuntimeGeneration(
+            setup_app,
+            admit=reviewer_access.activate_codex_lease,
+            close=reviewer_access.close,
+            shutdown_seconds=300,
+        ),
+        activation,
+    )
 
 
 def _reachable_setup_mount_names(
@@ -2869,6 +2926,7 @@ def run_review_server(
                     runtime.close()
                     raise
             finally:
+                activation.close()
                 if setup_session_store is not None:
                     setup_session_store.close()
                 control.close()
@@ -2918,6 +2976,7 @@ def run_review_server(
             provider_recovery = SQLiteProviderRecoveryStore.open(
                 private_root / "provider-recovery.sqlite"
             )
+            reviewer_access = _compose_reviewer_access(repository, review)
             first_boot = _store_first_preparation(
                 authority,
                 (),
@@ -2928,6 +2987,7 @@ def run_review_server(
                 database_path,
                 catalogue_path,
                 artifact_store_path,
+                reviewer_access,
                 repository.authority,
                 timing,
                 private_root,
@@ -2985,7 +3045,11 @@ def run_review_server(
                 )
             )
             cover_considerations = _compose_cover_considerations(
-                repository, artifact_store_path, review, provider_recovery
+                repository,
+                artifact_store_path,
+                review,
+                reviewer_access,
+                provider_recovery,
             )
             try:
                 review_application = compose_review_application(
@@ -3014,6 +3078,7 @@ def run_review_server(
                     close_activity_projection=close_activity_projection,
                     cover_considerations=cover_considerations,
                     settings=settings,
+                    reviewer_access=reviewer_access,
                     first_boot=first_boot,
                 )
             except BaseException:
@@ -3082,10 +3147,316 @@ def _store_first_preparation(
     )
 
 
+class _UnavailableCodexAuth:
+    def activate_lease(self) -> None:
+        return None
+
+    def _state(self) -> CodexDeviceAuthState:
+        return CodexDeviceAuthState("failed", failure="permission_or_profile")
+
+    start = status = cancel = clear = current_credential_status = _state
+    recheck_credential_status = _state
+
+    def passive_status(self) -> CodexDeviceAuthState:
+        return CodexDeviceAuthState("ready")
+
+    def close(self) -> None:
+        return None
+
+
+class _LazyCodexAuth:
+    """Do not touch the Codex profile or staging tree until Codex is requested."""
+
+    def __init__(
+        self,
+        factory: Callable[
+            [Callable[[], bool], Callable[[], AbstractContextManager[None]]],
+            CodexDeviceAuthManager,
+        ],
+        coordinator: _CodexAuthLeaseCoordinator,
+    ) -> None:
+        self._factory = factory
+        self._coordinator = coordinator
+        self._lock = Lock()
+        self._manager: CodexDeviceAuthManager | None = None
+        self._lease: int | None = None
+        self._retired = False
+
+    def activate_lease(self) -> None:
+        with self._lock:
+            if self._retired:
+                raise CodexDeviceAuthError("lease")
+        self._lease = self._coordinator.activate(self)
+
+    def _lease_current(self) -> bool:
+        lease = self._lease
+        return lease is not None and self._coordinator.current(self, lease)
+
+    def bind(self, loader: Callable[[], tuple[str, bytes]]) -> tuple[str, bytes]:
+        """Capture immutable review identity under the current short lease."""
+        if not self._lease_current():
+            self.activate_lease()
+        lease = cast("int", self._lease)
+        with self._coordinator.guard(self, lease):
+            return loader()
+
+    @contextmanager
+    def review_admission(self) -> Iterator[None]:
+        """Revalidate the captured generation after taking global activity."""
+        lease = cast("int", self._lease)
+        with self._coordinator.guard(self, lease):
+            yield
+
+    def _get(self) -> CodexDeviceAuthManager:
+        if not self._lease_current():
+            self.activate_lease()
+        with self._lock:
+            if self._manager is None:
+                self._manager = self._factory(
+                    self._lease_current,
+                    lambda: self._coordinator.guard(self, cast("int", self._lease)),
+                )
+            return self._manager
+
+    def _state(self, operation: str) -> CodexDeviceAuthState:
+        try:
+            return cast("CodexDeviceAuthState", getattr(self._get(), operation)())
+        except (
+            OSError,
+            ValueError,
+            CodexDeviceAuthError,
+            ContainedReviewerProcessError,
+        ):
+            return CodexDeviceAuthState("failed", failure="permission_or_profile")
+
+    def start(self) -> CodexDeviceAuthState:
+        return self._state("start")
+
+    def status(self) -> CodexDeviceAuthState:
+        return self._state("status")
+
+    def passive_status(self) -> CodexDeviceAuthState:
+        """Return an existing flow without constructing Codex authority."""
+        with self._lock:
+            manager = self._manager
+        return CodexDeviceAuthState("ready") if manager is None else manager.status()
+
+    def cancel(self) -> CodexDeviceAuthState:
+        return self._state("cancel")
+
+    def clear(self) -> CodexDeviceAuthState:
+        return self._get().clear()
+
+    def current_credential_status(self) -> CodexDeviceAuthState:
+        return self._state("current_credential_status")
+
+    def recheck_credential_status(self) -> CodexDeviceAuthState:
+        return self._state("recheck_credential_status")
+
+    def close(self) -> None:
+        self._mark_retired()
+        self._drain()
+        self._coordinator.release(self)
+
+    def _mark_retired(self) -> None:
+        with self._lock:
+            self._retired = True
+
+    def _drain(self) -> None:
+        with self._lock:
+            manager = self._manager
+        if manager is not None:
+            manager.close()
+
+
+class _CodexAuthLeaseCoordinator:
+    """Serialize one process-lifetime owner of a configured auth store."""
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._transition = Lock()
+        self._activity = Lock()
+        self._owner: _LazyCodexAuth | None = None
+        self._lease = 0
+        self._quarantined = False
+
+    def activate(self, owner: _LazyCodexAuth) -> int:
+        with self._transition:
+            with self._lock:
+                if self._quarantined:
+                    raise CodexDeviceAuthError("process")
+                if self._owner is owner:
+                    return self._lease
+                predecessor = self._owner
+                if predecessor is not None:
+                    predecessor._mark_retired()
+            if predecessor is not None:
+                try:
+                    predecessor._drain()
+                except Exception:
+                    with self._lock:
+                        if self._owner is predecessor:
+                            self._owner = None
+                            self._lease += 1
+                    raise
+            # A device flow can be pre-cancelled without this gate. A review
+            # cannot, so handoff waits for its complete broker tree to reap
+            # before changing lease authority.
+            with self._activity:
+                with self._lock:
+                    if self._quarantined:
+                        raise CodexDeviceAuthError("process")
+                    if self._owner not in {None, predecessor}:
+                        raise CodexDeviceAuthError("lease")
+                    self._lease += 1
+                    self._owner = owner
+                    return self._lease
+
+    def current(self, owner: _LazyCodexAuth, lease: int) -> bool:
+        with self._lock:
+            return (
+                not self._quarantined and self._owner is owner and self._lease == lease
+            )
+
+    @contextmanager
+    def activity(self) -> Iterator[None]:
+        """Admit exactly one Codex auth, recheck, or review process tree."""
+        with self._activity:
+            with self._lock:
+                if self._quarantined:
+                    raise CodexDeviceAuthError("process")
+            yield
+
+    @contextmanager
+    def guard(self, owner: _LazyCodexAuth, lease: int) -> Iterator[None]:
+        with self._lock:
+            if self._quarantined or self._owner is not owner or self._lease != lease:
+                raise CodexDeviceAuthError("lease")
+            yield
+
+    def quarantine(self) -> None:
+        """Permanently reject Codex admission after an unproved process teardown."""
+        with self._lock:
+            if not self._quarantined:
+                self._quarantined = True
+                self._lease += 1
+
+    def release(self, owner: _LazyCodexAuth) -> None:
+        with self._transition, self._activity, self._lock:
+            if self._owner is owner:
+                self._owner = None
+                self._lease += 1
+
+    def close(self) -> None:
+        with self._transition:
+            with self._lock:
+                owner = self._owner
+                if owner is not None:
+                    owner._mark_retired()
+            if owner is not None:
+                owner._drain()
+            with self._activity, self._lock:
+                if self._owner is owner:
+                    self._owner = None
+                    self._lease += 1
+
+
+def _compose_reviewer_access(
+    repository: SQLiteMetadataReportRepository,
+    review: ReviewWebConfiguration,
+    coordinator: _CodexAuthLeaseCoordinator | None = None,
+) -> ReviewerAccessOperations:
+    codex_auth: CodexAuth
+    codex_reviewer = run_cover_packet_reviewer
+    profile_file = review.cover_reviewer_profile_file
+    if profile_file is None:
+        codex_auth = _UnavailableCodexAuth()
+
+        def codex_host() -> ReviewerHostStatus:
+            return ReviewerHostStatus(False, "host_evidence_unavailable", None)
+
+        def codex_identity() -> tuple[str, bytes]:
+            raise RuntimeError("codex profile unavailable")
+
+    else:
+        active_coordinator = coordinator or _CodexAuthLeaseCoordinator()
+
+        def load_profile() -> tuple[bytes, ContainedReviewerProfile]:
+            payload = read_contained_reviewer_profile(Path(profile_file))
+            return payload, load_contained_reviewer_profile_bytes(payload)
+
+        def manager(
+            lease_current: Callable[[], bool],
+            lease_guard: Callable[[], AbstractContextManager[None]],
+        ) -> CodexDeviceAuthManager:
+            _payload, profile = load_profile()
+            return CodexDeviceAuthManager(
+                profile.auth_store_path,
+                lambda staging, action: prepare_contained_device_auth_command(
+                    profile, staging, action
+                ),
+                lease_current=lease_current,
+                lease_guard=lease_guard,
+                activity_guard=active_coordinator.activity,
+                quarantine_activity=active_coordinator.quarantine,
+            )
+
+        lazy_codex_auth = _LazyCodexAuth(manager, active_coordinator)
+        codex_auth = lazy_codex_auth
+        codex_host = reviewer_host_status
+
+        def codex_identity() -> tuple[str, bytes]:
+            payload, profile = load_profile()
+            return profile.identity.model, payload
+
+        def codex_reviewer(
+            profile_payload: bytes,
+            instruction_payload: bytes,
+            packet_payload: bytes,
+            schema_payload: bytes,
+            image_payloads: tuple[tuple[str, str, bytes], ...],
+        ) -> str:
+            with active_coordinator.activity():
+                with lazy_codex_auth.review_admission():
+                    pass
+                return run_cover_packet_reviewer(
+                    profile_payload,
+                    instruction_payload,
+                    packet_payload,
+                    schema_payload,
+                    image_payloads,
+                )
+
+        def codex_binding() -> tuple[
+            str,
+            bytes,
+            Callable[
+                [bytes, bytes, bytes, bytes, tuple[tuple[str, str, bytes], ...]],
+                str,
+            ],
+        ]:
+            model, payload = lazy_codex_auth.bind(codex_identity)
+            return model, payload, codex_reviewer
+
+    return ReviewerAccessOperations(
+        repository.reviewer_access_store(),
+        codex_auth=codex_auth,
+        codex_host=codex_host,
+        codex_identity=codex_identity,
+        codex_binding=(
+            codex_binding
+            if profile_file is not None
+            else lambda: (*codex_identity(), codex_reviewer)
+        ),
+        openrouter_factory=lambda key, model: OpenRouterReviewer(key, model),
+    )
+
+
 def _compose_cover_considerations(
     repository: SQLiteMetadataReportRepository,
     artifact_store_path: Path,
     review: ReviewWebConfiguration,
+    reviewer_access: ReviewerAccessOperations,
     provider_recovery: SQLiteProviderRecoveryStore | None = None,
 ) -> CoverConsiderationService:
     artifacts: CoverArtifactStore | None = None
@@ -3096,23 +3467,6 @@ def _compose_cover_considerations(
             artifacts = CoverArtifactStore(artifact_store_path, create=False)
         return artifacts
 
-    reviewer_unavailable_reason = None
-    try:
-        reviewer_profile = (
-            None
-            if review.cover_reviewer_profile_file is None
-            else read_contained_reviewer_profile(
-                Path(review.cover_reviewer_profile_file)
-            )
-        )
-        if reviewer_profile is not None:
-            reviewer_unavailable_reason = cover_reviewer_profile_contract_mismatch(
-                reviewer_profile
-            )
-    except ContainedReviewerProcessError:
-        # Never dispatch an unqualified profile. The shared consideration
-        # operation records the manual-comparison-unavailable terminal state.
-        reviewer_profile = None
     policy = CoverPolicy(
         avoid_promotional_text=review.cover_avoid_promotional_text,
         avoid_tie_in_branding=review.cover_avoid_tie_in_branding,
@@ -3130,13 +3484,9 @@ def _compose_cover_considerations(
         read_preview_digest=lambda digest: artifact_store().read_preview_digest(digest),
         clock=lambda: int(time.time()),
         policy=policy,
-        reviewer_profile=reviewer_profile,
-        reviewer=(
-            None
-            if reviewer_profile is None or reviewer_unavailable_reason is not None
-            else run_cover_packet_reviewer
-        ),
-        reviewer_unavailable_reason=reviewer_unavailable_reason,
+        reviewer_dispatch=reviewer_access.dispatch_cover_observation,
+        reviewer_identity=reviewer_access.current_cover_observation_identity,
+        reviewer_revision_current=reviewer_access.revision_is_current,
         bind_policy=bind_policy,
         provider_fetching=(
             None
@@ -3197,9 +3547,11 @@ def run_cover_review(
     if configuration.review is None:
         raise ConfigurationError("review configuration is unavailable")
     repository = open_repository(database_path, create=False)
+    reviewer_access: ReviewerAccessOperations | None = None
     try:
+        reviewer_access = _compose_reviewer_access(repository, configuration.review)
         considerations = _compose_cover_considerations(
-            repository, artifact_store_path, configuration.review
+            repository, artifact_store_path, configuration.review, reviewer_access
         )
         application = compose_review_application(
             state_owner=repository,
@@ -3215,6 +3567,7 @@ def run_cover_review(
             graceful_shutdown_seconds=1,
             close_state_owner=False,
             cover_considerations=considerations,
+            reviewer_access=reviewer_access,
         )
         if action == "history":
             return application.history(review_case_id)
@@ -3257,6 +3610,8 @@ def run_cover_review(
             "schema_version": "cover-review-cli-v1",
         }
     finally:
+        if reviewer_access is not None:
+            reviewer_access.close()
         repository.close()
 
 
@@ -3301,17 +3656,26 @@ def run_provider_recovery_once(
     store = SQLiteProviderRecoveryStore.open(
         _private_root(database_path) / "provider-recovery.sqlite"
     )
-    supervisor = create_review_pipeline(
-        configuration,
-        database_path,
-        catalogue_path,
-        artifact_store_path,
-        provider_recovery=store,
-    )
+    repository = open_repository(database_path, create=False)
+    reviewer_access: ReviewerAccessOperations | None = None
+    supervisor: ReviewPreparationSupervisor | None = None
     try:
+        reviewer_access = _compose_reviewer_access(repository, configuration.review)
+        supervisor = create_review_pipeline(
+            configuration,
+            database_path,
+            catalogue_path,
+            artifact_store_path,
+            reviewer_access,
+            provider_recovery=store,
+        )
         supervisor.recover_provider_once()
     finally:
-        supervisor.stop()
+        if supervisor is not None:
+            supervisor.stop()
+        if reviewer_access is not None:
+            reviewer_access.close()
+        repository.close()
 
 
 def run_policy_preview(
@@ -3371,7 +3735,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         cover_review_runner=run_cover_review,
         review_activity_runner=run_review_activity,
         provider_recovery_runner=run_provider_recovery_once,
-        schema_adoption_runner=adopt_schema,
     )
 
 
