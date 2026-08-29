@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import resource
 import selectors
 import signal
 import subprocess
@@ -12,6 +13,11 @@ import time
 from collections.abc import Callable
 from typing import IO, cast
 
+from mechanical_librarian.domain.audio_inspection import (
+    AudioInspection,
+    AudioInspectionLimits,
+    AudioInspectionOutcome,
+)
 from mechanical_librarian.domain.epub_inspection import (
     EpubInspection,
     EpubInspectionOutcome,
@@ -27,6 +33,20 @@ _WALL_SECONDS = 60.0
 _CHILD_MAX_SECONDS = 55.0
 _CHILD_MARGIN_SECONDS = 0.25
 _TERMINATION_GRACE_SECONDS = 2.0
+# The probe document is the whole audio child's input, so its ceiling plus the
+# rest of one context has to fit in a single bounded write.
+_AUDIO_CONTEXT_LIMIT = 12_582_912
+_PROBE_ADDRESS_SPACE = 512 * 1024 * 1024
+_PROBE_CPU_SECONDS = 30
+_PROBE_OPEN_FILES = 64
+# Resolved from a closed list rather than an inherited `PATH`: the child runs
+# under `_minimal_environment`, which carries no `PATH` at all, and the shipped
+# image installs the probe at exactly these locations.
+_PROBE_PATHS = (
+    "/usr/bin/ffprobe",
+    "/usr/local/bin/ffprobe",
+    "/opt/homebrew/bin/ffprobe",
+)
 
 
 def _group_exists(identifier: int) -> bool:
@@ -287,4 +307,324 @@ def _run_epub_opening_protocol(
                     stream.close()
 
 
-__all__ = ["run_epub_inspector_child"]
+class _ChildRun:
+    """One completed bounded child run, or the outcome that stopped it."""
+
+    __slots__ = ("stdout", "stderr", "return_code", "failure")
+
+    def __init__(
+        self,
+        *,
+        stdout: bytes = b"",
+        stderr: bytes = b"",
+        return_code: int = 0,
+        failure: AudioInspectionOutcome | None = None,
+    ) -> None:
+        self.stdout = stdout
+        self.stderr = stderr
+        self.return_code = return_code
+        self.failure = failure
+
+
+def _drain(
+    process: subprocess.Popen[bytes],
+    *,
+    stdout_limit: int,
+    stderr_limit: int,
+    wall_seconds: float,
+    cancelled: Callable[[], bool],
+) -> _ChildRun:
+    """Read one child's bounded streams under a wall clock and a cancellation.
+
+    The same controls the EPUB parent applies, factored out because the audio
+    capability runs two children in sequence and neither may inherit an
+    unbounded stream or an unbounded wait.
+    """
+    selector = selectors.DefaultSelector()
+    try:
+        assert process.stdout is not None and process.stderr is not None
+        os.set_blocking(process.stdout.fileno(), False)
+        os.set_blocking(process.stderr.fileno(), False)
+        stdout = bytearray()
+        stderr = bytearray()
+        selector.register(process.stdout, selectors.EVENT_READ, (stdout, stdout_limit))
+        selector.register(process.stderr, selectors.EVENT_READ, (stderr, stderr_limit))
+        deadline = time.monotonic() + wall_seconds
+        stream: IO[bytes] | None
+        while selector.get_map() or process.poll() is None:
+            if cancelled():
+                _stop(process)
+                return _ChildRun(failure=AudioInspectionOutcome.CANCELLATION)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                _stop(process)
+                return _ChildRun(failure=AudioInspectionOutcome.TIMEOUT)
+            for key, _ in selector.select(min(remaining, 0.1)):
+                stream = cast("IO[bytes]", key.fileobj)
+                buffer, maximum = key.data
+                try:
+                    value = os.read(
+                        stream.fileno(), min(16_384, maximum + 1 - len(buffer))
+                    )
+                except BlockingIOError:
+                    continue
+                if not value:
+                    selector.unregister(stream)
+                    continue
+                buffer.extend(value)
+                if len(buffer) > maximum:
+                    _stop(process)
+                    return _ChildRun(failure=AudioInspectionOutcome.RESOURCE_LIMIT)
+        return _ChildRun(
+            stdout=bytes(stdout),
+            stderr=bytes(stderr),
+            return_code=process.wait(timeout=_TERMINATION_GRACE_SECONDS),
+        )
+    finally:
+        selector.close()
+
+
+def _probe_limits() -> None:
+    """Bound the ffprobe child without the process cap the Python child uses.
+
+    ``RLIMIT_NPROC`` is deliberately absent. It is a per-uid ceiling on
+    processes *and* threads, and ffprobe is threaded, so installing the
+    ``bootstrap.audio_child`` value of 1 here would refuse every probe. That is
+    exactly why the parent harness runs ffprobe itself rather than letting the
+    Python child spawn it: the child's cap of 1 is kept intact, and the media
+    bytes are still parsed only inside an isolated, resource-bounded process.
+    """
+    for limit, value in (
+        (resource.RLIMIT_CORE, 0),
+        (resource.RLIMIT_NOFILE, _PROBE_OPEN_FILES),
+        (resource.RLIMIT_CPU, _PROBE_CPU_SECONDS),
+        (resource.RLIMIT_FSIZE, 0),
+    ):
+        current_soft, current_hard = resource.getrlimit(limit)
+        hard = (
+            value
+            if current_hard == resource.RLIM_INFINITY
+            else min(value, current_hard)
+        )
+        resource.setrlimit(limit, (min(value, hard), hard))
+    try:
+        current_soft, current_hard = resource.getrlimit(resource.RLIMIT_AS)
+        hard = (
+            _PROBE_ADDRESS_SPACE
+            if current_hard == resource.RLIM_INFINITY
+            else min(_PROBE_ADDRESS_SPACE, current_hard)
+        )
+        resource.setrlimit(resource.RLIMIT_AS, (min(_PROBE_ADDRESS_SPACE, hard), hard))
+    except ValueError:
+        # Same development-only compatibility branch `bootstrap.epub_child`
+        # documents: Darwin refuses an address-space limit below its framework
+        # reservations. Linux production must fail closed instead.
+        if sys.platform != "darwin":
+            raise
+
+
+def resolve_probe_path() -> str | None:
+    """Resolve the shipped probe binary without consulting an inherited PATH."""
+    for candidate in _PROBE_PATHS:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def run_probe_child(
+    descriptor: int,
+    limits: AudioInspectionLimits,
+    *,
+    cancelled: Callable[[], bool] = lambda: False,
+) -> tuple[bytes | None, AudioInspectionOutcome]:
+    """Parse one media file's container in the isolated probe child.
+
+    The parent runs this itself. The descriptor is passed through, never a
+    path, so the child reads exactly the file the parent opened and validated
+    and can never resolve a different one.
+    """
+    binary = resolve_probe_path()
+    if binary is None:
+        return None, AudioInspectionOutcome.INVALID_CONFIGURATION
+    process: subprocess.Popen[bytes] | None = None
+    try:
+        process = subprocess.Popen(
+            [
+                binary,
+                "-v",
+                "error",
+                "-threads",
+                "1",
+                "-export_all",
+                "1",
+                "-show_format",
+                "-show_chapters",
+                "-show_streams",
+                "-of",
+                "json",
+                f"/dev/fd/{descriptor}",
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            close_fds=True,
+            pass_fds=(descriptor,),
+            env=_minimal_environment(),
+            cwd="/",
+            start_new_session=True,
+            shell=False,
+            preexec_fn=_probe_limits,
+        )
+        run = _drain(
+            process,
+            stdout_limit=limits.probe_output_bytes,
+            stderr_limit=_STDERR_LIMIT,
+            wall_seconds=min(float(limits.wall_seconds), _WALL_SECONDS),
+            cancelled=cancelled,
+        )
+        if run.failure is not None:
+            return None, run.failure
+        if run.return_code != 0 or not run.stdout:
+            return None, AudioInspectionOutcome.PROBE_FAILURE
+        return run.stdout, AudioInspectionOutcome.SUCCESS
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None, AudioInspectionOutcome.PROBE_FAILURE
+    finally:
+        if process is not None:
+            _stop(process)
+            for stream in (process.stdout, process.stderr):
+                if stream is not None:
+                    stream.close()
+
+
+def run_audio_inspector_child(
+    descriptor: int,
+    expected_source: Fingerprint,
+    limits: AudioInspectionLimits,
+    *,
+    sidecars: tuple[tuple[str, str, int], ...] = (),
+    path_file: str = "",
+    path_folder: str | None = None,
+    cancelled: Callable[[], bool] = lambda: False,
+    logical_identity: str | None = None,
+) -> AudioInspection:
+    """Run F43's two-child audio capability behind one application-visible call."""
+
+    def failure(outcome: AudioInspectionOutcome) -> AudioInspection:
+        return AudioInspection(outcome, None)
+
+    if type(limits) is not AudioInspectionLimits:
+        return failure(AudioInspectionOutcome.INTERNAL_FAILURE)
+    probe, outcome = run_probe_child(descriptor, limits, cancelled=cancelled)
+    if probe is None:
+        return failure(outcome)
+    try:
+        probe_text = probe.decode("utf-8", "strict")
+    except UnicodeError:
+        return failure(AudioInspectionOutcome.PROBE_FAILURE)
+    context = json.dumps(
+        {
+            "capability": "audio",
+            "child_seconds": min(
+                float(limits.wall_seconds),
+                max(0.001, float(limits.wall_seconds) - _CHILD_MARGIN_SECONDS),
+            ),
+            "expected_source": {
+                "algorithm": expected_source.algorithm,
+                "digest": expected_source.digest,
+                "schema": expected_source.schema.value,
+            },
+            "limits": limits.to_data(),
+            "logical_identity": expected_source.digest
+            if logical_identity is None
+            else logical_identity,
+            "path": {"file": path_file, "folder": path_folder},
+            "probe": probe_text,
+            "sidecars": [
+                {"descriptor": value[2], "name": value[1], "surface": value[0]}
+                for value in sidecars[: limits.sidecar_documents]
+            ],
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    if len(context) > _AUDIO_CONTEXT_LIMIT:
+        return failure(AudioInspectionOutcome.RESOURCE_LIMIT)
+    control_read, control_write = os.pipe()
+    process: subprocess.Popen[bytes] | None = None
+    try:
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-I",
+                "-B",
+                "-m",
+                "mechanical_librarian.bootstrap.audio_child",
+                str(control_read),
+                str(os.getpid()),
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            close_fds=True,
+            pass_fds=(control_read, *(value[2] for value in sidecars)),
+            env=_minimal_environment(),
+            cwd="/",
+            start_new_session=True,
+            shell=False,
+        )
+        os.close(control_read)
+        control_read = -1
+        assert process.stdin is not None
+        process.stdin.write(context)
+        process.stdin.close()
+        run = _drain(
+            process,
+            stdout_limit=_STDOUT_LIMIT,
+            stderr_limit=_STDERR_LIMIT,
+            wall_seconds=min(float(limits.wall_seconds), _WALL_SECONDS),
+            cancelled=cancelled,
+        )
+        if run.failure is not None:
+            return failure(run.failure)
+        if run.return_code == 71:
+            return failure(AudioInspectionOutcome.RESOURCE_LIMIT)
+        payload = run.stdout
+        if (
+            run.return_code != 0
+            or run.stderr
+            or not payload.endswith(b"\n")
+            or payload.count(b"\n") != 1
+        ):
+            return failure(AudioInspectionOutcome.CHILD_FAILURE)
+        try:
+            report = AudioInspection.from_json(payload[:-1].decode("utf-8", "strict"))
+        except (EvidenceValueError, UnicodeError, ValueError):
+            return failure(AudioInspectionOutcome.CHILD_FAILURE)
+        if report.source is not None and report.source != expected_source:
+            return failure(AudioInspectionOutcome.CHILD_FAILURE)
+        return report
+    except (OSError, ValueError, subprocess.SubprocessError):
+        if process is not None:
+            _stop(process)
+        return failure(AudioInspectionOutcome.CHILD_FAILURE)
+    finally:
+        if control_read >= 0:
+            os.close(control_read)
+        try:
+            os.close(control_write)
+        except OSError:
+            pass
+        if process is not None:
+            _stop(process)
+            for stream in (process.stdin, process.stdout, process.stderr):
+                if stream is not None:
+                    stream.close()
+
+
+__all__ = [
+    "resolve_probe_path",
+    "run_audio_inspector_child",
+    "run_epub_inspector_child",
+    "run_probe_child",
+]
