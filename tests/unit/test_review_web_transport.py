@@ -1186,6 +1186,34 @@ def test_preparation_dismissal_is_authenticated_guarded_and_stale_safe(
     assert web.repository.dismissed_preparation_runs == [run_id]
 
 
+def test_preparation_dismissal_rejects_declared_and_streamed_oversized_bodies(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    path = "/api/v1/review-preparation/dismiss"
+    login = web.login()
+    headers = {**web.origin, "x-csrf-token": login["csrf_token"]}
+
+    declared = web.client.post(
+        path,
+        headers={**headers, "content-length": "2049"},
+        content=b"{}",
+    )
+    streamed = web.client.post(
+        path,
+        headers={**headers, "content-type": "application/json"},
+        content=iter((b'{"run_id":"', b"x" * 2048, b'"}')),
+    )
+
+    for response in (declared, streamed):
+        assert response.status_code == 413
+        assert response.headers["cache-control"] == "no-store, private"
+        assert response.json() == {
+            "schema_version": "review-error-v1",
+            "error": {"code": "body_too_large"},
+        }
+    assert web.repository.dismissed_preparation_runs == []
+
+
 def test_review_page_rotates_one_memory_only_csrf_token(
     web: ReviewWebContext[FakeReviewRepository],
 ) -> None:

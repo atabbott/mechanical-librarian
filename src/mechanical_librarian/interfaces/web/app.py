@@ -1518,6 +1518,7 @@ def create_review_app(
         maximum_bytes=2048,
         decision_maximum_bytes=8192,
         path_limits={
+            "/api/v1/review-preparation/dismiss": 2048,
             "/api/v1/reviewer-access/openrouter/refresh": 2048,
             # The write contract permits a 2,048-character key plus its
             # model, revision, and JSON framing.
@@ -2997,7 +2998,8 @@ def _register_browse_and_preparation_routes(
         "/api/v1/review-preparation/dismiss",
         response_model=_PreparationResponse,
         responses={
-            status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 409, 413, 422, 503)
         },
     )
     def dismiss_preparation(
