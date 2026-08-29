@@ -60,7 +60,15 @@ _STAGE_BUCKETS = (
         "projection",
         "w.state IN ('queued','delayed','running') AND w.stage='projection'",
     ),
-    ("ready", "w.state='complete'"),
+    # A prepared audiobook belongs here rather than nowhere: the eight buckets
+    # partition the scan, so leaving its work out of `failed` without counting
+    # it broke `total == sum(stages)`. Its evidence is recorded and there is
+    # nothing further to do with it, which is what `ready` says.
+    (
+        "ready",
+        "(w.state='complete' "
+        "OR (w.state='failed' AND w.failure_code IS 'local_evidence_only'))",
+    ),
     ("failed", _BLOCKED_SQL),
 )
 _STAGE_COUNT_SQL = ",".join(
