@@ -27,6 +27,11 @@ from mechanical_librarian.adapters.evidence_extractors.process import (
     run_probe_child,
 )
 from mechanical_librarian.domain.audio_inspection import (
+    MAX_CHAPTER_TITLE_CHARACTERS,
+    MAX_CHAPTERS,
+    MAX_PUBLIC_REPORT_BYTES,
+    AudioChapter,
+    AudioEmbeddedCover,
     AudioEvidenceSurface,
     AudioInspection,
     AudioInspectionField,
@@ -60,7 +65,6 @@ def _context(**overrides: object) -> dict[str, object]:
             "schema": "local-file-v1",
         },
         "limits": AudioInspectionLimits().to_data(),
-        "logical_identity": _DIGEST,
         "path": {"file": "book.m4b", "folder": None},
         "probe": _PROBE,
         "sidecars": [],
@@ -77,6 +81,7 @@ def _run(context: dict[str, object]) -> list[AudioInspection]:
         patch.object(child, "_read_context", return_value=context),
         patch.object(child, "_write_report", side_effect=written.append),
         patch.object(child.signal, "signal"),
+        patch.object(child.signal, "setitimer"),
     ):
         assert child.main(["10", "123"]) == 0
     return written
@@ -126,8 +131,6 @@ def test_an_unreadable_probe_retains_no_source_and_no_evidence() -> None:
     "overrides",
     (
         {"capability": "opening"},
-        {"logical_identity": "short"},
-        {"logical_identity": "Z" * 64},
         {"child_seconds": 0},
         {"child_seconds": 600.0},
         {"probe": 17},
@@ -177,6 +180,51 @@ def test_exhausted_memory_is_a_resource_limit_terminal() -> None:
     assert [value.outcome for value in written] == [
         AudioInspectionOutcome.RESOURCE_LIMIT
     ]
+
+
+def test_a_context_key_outside_the_closed_protocol_is_refused() -> None:
+    """The child reads exactly eight keys; a ninth is a protocol violation.
+
+    `logical_identity` was one such key until nothing bound it: the expected
+    source already names the payload the report is stamped with.
+    """
+    payload = json.dumps(_context(logical_identity=_DIGEST)).encode("utf-8")
+    stream = SimpleNamespace(buffer=SimpleNamespace(read=lambda maximum: payload))
+
+    with patch.object(child.sys, "stdin", stream):
+        with pytest.raises(ValueError):
+            child._read_context()
+
+
+def test_the_child_holds_its_own_deadline_over_the_interpretation() -> None:
+    """The child names its own timeout rather than waiting to be killed."""
+    armed: list[tuple[int, float]] = []
+
+    def arm(which: int, seconds: float) -> None:
+        armed.append((which, seconds))
+
+    written: list[AudioInspection] = []
+    with (
+        patch.object(child, "_install_parent_guard"),
+        patch.object(child, "_apply_limits"),
+        patch.object(child, "_read_context", return_value=_context()),
+        patch.object(child, "_write_report", side_effect=written.append),
+        patch.object(child, "interpret", side_effect=child._Expired),
+        patch.object(child.signal, "signal"),
+        patch.object(child.signal, "setitimer", side_effect=arm),
+    ):
+        assert child.main(["10", "123"]) == 0
+
+    assert written[0].outcome is AudioInspectionOutcome.TIMEOUT
+    assert written[0].source is None
+    assert armed[0] == (child.signal.ITIMER_REAL, 4.5)
+    # Disarmed on the way out, whatever the outcome was.
+    assert armed[-1] == (child.signal.ITIMER_REAL, 0)
+
+
+def test_the_deadline_signal_raises_rather_than_ending_the_process() -> None:
+    with pytest.raises(child._Expired):
+        child._expire(child.signal.SIGALRM, None)
 
 
 def test_a_context_larger_than_the_child_ceiling_is_refused_before_parsing() -> None:
@@ -365,3 +413,32 @@ def test_the_parent_guard_exits_a_child_that_was_already_reparented() -> None:
             child._install_parent_guard(10, threading.Event(), 999)
 
     exit_process.assert_called_once_with(70)
+
+
+def test_a_maximal_legal_inspection_survives_its_own_protocol() -> None:
+    """The ceiling has to hold the largest report this vocabulary admits.
+
+    A file may legally carry 1,024 chapters, each titled to the full width, in
+    characters that cost four bytes each.  At 512 KB the protocol refused its
+    own output, and the whole inspection was lost to a child failure.
+    """
+    wide = "\U0001d11e"
+    chapters = tuple(
+        AudioChapter(index + 1, index, index + 1, wide * MAX_CHAPTER_TITLE_CHARACTERS)
+        for index in range(MAX_CHAPTERS)
+    )
+    report = AudioInspection(
+        AudioInspectionOutcome.SUCCESS,
+        _SOURCE,
+        (),
+        chapters,
+        AudioEmbeddedCover(True, AudioEvidenceSurface.CONTAINER_STREAM),
+        True,
+    )
+    serialized = report.to_json()
+
+    assert len(serialized.encode("utf-8")) > 1_048_576
+    assert len(serialized.encode("utf-8")) <= MAX_PUBLIC_REPORT_BYTES
+    assert AudioInspection.from_json(serialized) == report
+    # And the child may write exactly what the protocol accepts.
+    assert len((serialized + "\n").encode("utf-8")) <= child._STDOUT_LIMIT

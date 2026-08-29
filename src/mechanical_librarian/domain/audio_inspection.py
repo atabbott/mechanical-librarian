@@ -23,7 +23,13 @@ from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
 
 AUDIO_INSPECTION_SCHEMA = "audio-inspection-v1"
 AUDIO_LIMIT_PROFILE = "audio-inspection-limits-v1"
-MAX_PUBLIC_REPORT_BYTES = 524_288
+# The retained report's own ceiling, and deliberately not a smaller one.  A
+# legal inspection of a file with 1,024 chapters titled to the full 280
+# characters serializes to about 1.2 MB before a single fact is added, so any
+# tighter cap refuses evidence this vocabulary admits and loses the whole
+# inspection.  A larger cap would be no use either: an audio section the
+# retained report cannot hold is evidence that can never be published.
+MAX_PUBLIC_REPORT_BYTES = 2_097_152
 MAX_CHAPTERS = 1_024
 MAX_CHAPTER_TITLE_CHARACTERS = 280
 MAX_FACTS = 256
@@ -45,19 +51,22 @@ _DECIMAL_SECONDS = re.compile(r"^\d{1,9}(?:\.\d{1,9})?$")
 
 
 class AudioInspectionOutcome(StrEnum):
-    INVALID_INVOCATION = "invalid_invocation"
+    """Exactly the states this capability can end in, and no others.
+
+    Every member below has a producer, and preparation maps every member onto
+    an owner-facing failure code.  The vocabulary deliberately does not mirror
+    ``EpubInspectionOutcome``: an unreachable member is a state no test can
+    reach and no mapping can be proven against.
+    """
+
     SUCCESS = "success"
     NO_APPLICABLE_EVIDENCE = "no_applicable_evidence"
     INVALID_CONFIGURATION = "invalid_configuration"
-    INVALID_REFERENCE = "invalid_reference"
     UNSUPPORTED_FORMAT = "unsupported_format"
-    ENCRYPTED = "encrypted"
     MALFORMED = "malformed"
-    INTEGRITY_FAILURE = "integrity_failure"
     RESOURCE_LIMIT = "resource_limit"
     TIMEOUT = "timeout"
     CANCELLATION = "cancellation"
-    UNSTABLE_SOURCE = "unstable_source"
     UNAVAILABLE_SOURCE = "unavailable_source"
     PROBE_FAILURE = "probe_failure"
     CHILD_FAILURE = "child_failure"

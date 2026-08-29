@@ -14,6 +14,7 @@ from collections.abc import Callable
 from typing import IO, cast
 
 from mechanical_librarian.domain.audio_inspection import (
+    MAX_PUBLIC_REPORT_BYTES,
     AudioInspection,
     AudioInspectionLimits,
     AudioInspectionOutcome,
@@ -27,6 +28,9 @@ from mechanical_librarian.domain.evidence_bounds import EvidenceValueError
 from mechanical_librarian.domain.identifiers import Fingerprint
 
 _STDOUT_LIMIT = 1_048_576
+# The audio child's report is bounded by the audio protocol rather than by the
+# EPUB one, and the two ceilings are not the same number.
+_AUDIO_STDOUT_LIMIT = MAX_PUBLIC_REPORT_BYTES + 1
 _STDERR_LIMIT = 65_536
 _CONTEXT_LIMIT = 65_536
 _WALL_SECONDS = 60.0
@@ -506,7 +510,6 @@ def run_audio_inspector_child(
     path_file: str = "",
     path_folder: str | None = None,
     cancelled: Callable[[], bool] = lambda: False,
-    logical_identity: str | None = None,
 ) -> AudioInspection:
     """Run F43's two-child audio capability behind one application-visible call."""
 
@@ -535,9 +538,6 @@ def run_audio_inspector_child(
                 "schema": expected_source.schema.value,
             },
             "limits": limits.to_data(),
-            "logical_identity": expected_source.digest
-            if logical_identity is None
-            else logical_identity,
             "path": {"file": path_file, "folder": path_folder},
             "probe": probe_text,
             "sidecars": [
@@ -580,7 +580,7 @@ def run_audio_inspector_child(
         process.stdin.close()
         run = _drain(
             process,
-            stdout_limit=_STDOUT_LIMIT,
+            stdout_limit=_AUDIO_STDOUT_LIMIT,
             stderr_limit=_STDERR_LIMIT,
             wall_seconds=min(float(limits.wall_seconds), _WALL_SECONDS),
             cancelled=cancelled,

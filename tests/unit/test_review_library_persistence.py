@@ -590,7 +590,7 @@ def test_real_sqlite_progress_reconciles_mixed_terminal_and_active_work() -> Non
         (
             "unsupported_media",
             "This media type is not supported for review preparation.",
-            "Use a supported EPUB edition, then scan this library again.",
+            "Use a supported media file, then scan this library again.",
         ),
         (
             "unreadable_media",
@@ -599,8 +599,8 @@ def test_real_sqlite_progress_reconciles_mixed_terminal_and_active_work() -> Non
         ),
         (
             "parser_refused",
-            "The EPUB could not be safely read within supported parsing limits.",
-            "Use an EPUB that meets the supported parsing limits, then scan this library again.",
+            "The media file could not be safely read within supported parsing limits.",
+            "Use a media file that meets the supported parsing limits, then scan this library again.",
         ),
         (
             "missing_required_input",

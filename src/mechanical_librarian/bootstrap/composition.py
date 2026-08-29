@@ -876,7 +876,6 @@ class _IsolatedAudioInspector:
                 sidecars=tuple(sidecars),
                 path_file=components[-1],
                 path_folder=components[-2] if len(components) > 1 else None,
-                logical_identity=digest,
             )
             if not inspection.outcome.succeeded:
                 raise AudioItemInspectionError(inspection.outcome)

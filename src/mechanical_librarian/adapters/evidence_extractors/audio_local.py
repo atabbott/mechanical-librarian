@@ -15,7 +15,9 @@ from dataclasses import dataclass
 
 from mechanical_librarian.domain.audio_inspection import (
     MAX_CHAPTERS,
+    MAX_DESCRIPTION_CHARACTERS,
     MAX_DURATION_MILLISECONDS,
+    MAX_OBSERVED_CHARACTERS,
     AudioChapter,
     AudioEmbeddedCover,
     AudioEvidenceSurface,
@@ -220,8 +222,8 @@ def interpret(
         return AudioInterpretation(AudioInspectionOutcome.MALFORMED)
     if type(probe) is not dict:
         return AudioInterpretation(AudioInspectionOutcome.MALFORMED)
-    container = _format_object(probe.get("format"))
-    if container is None:
+    container = probe.get("format")
+    if type(container) is not dict:
         return AudioInterpretation(AudioInspectionOutcome.UNSUPPORTED_FORMAT)
     streams = probe.get("streams")
     if type(streams) is not list or len(streams) > limits.streams:
@@ -272,7 +274,7 @@ class _Builder:
         text = _clean(observed)
         if text is None:
             return
-        support = text if key is None else _support(key, text)
+        support = text if key is None else _support(key, text, _text_bound(field))
         resolved = canonical if canonical is not None else text
         identity = (field.value, surface.value, text, role)
         if identity in self._seen:
@@ -345,10 +347,26 @@ class _Builder:
         return tuple(self._facts[: limits.MAX_FACTS])
 
 
-def _support(key: str, observed: str) -> str:
+def _text_bound(field: AudioInspectionField) -> int:
+    return (
+        MAX_DESCRIPTION_CHARACTERS
+        if field is AudioInspectionField.DESCRIPTION
+        else MAX_OBSERVED_CHARACTERS
+    )
+
+
+def _support(key: str, observed: str, maximum: int) -> str:
+    """Name the key an observation was read under, when there is room for it.
+
+    The observation itself is what the fact exists to carry, so a key that
+    would push the excerpt past its bound is dropped rather than allowed to
+    take the whole fact down with it.
+    """
     candidate = f"{key}: {observed}"
+    if len(candidate) > maximum:
+        return observed
     try:
-        validate_projection_text(candidate, "audio support", len(candidate))
+        validate_projection_text(candidate, "audio support", maximum)
     except EvidenceValueError:
         return observed
     return candidate
@@ -361,12 +379,6 @@ def _clean(value: object) -> str | None:
         return None
     text = " ".join(value.split())
     return text or None
-
-
-def _format_object(value: object) -> dict[str, object] | None:
-    if type(value) is not dict:
-        return None
-    return value
 
 
 def _tag_surface_for(container: dict[str, object]) -> AudioEvidenceSurface:
@@ -399,7 +411,9 @@ def _tag_facts(
     if type(tags) is not dict:
         return
     for index, (raw_key, value) in enumerate(sorted(tags.items())):
-        if index >= limits.tags or type(raw_key) is not str:
+        if index >= limits.tags:
+            break
+        if type(raw_key) is not str:
             continue
         if type(value) is str and len(value) > limits.tag_value_characters:
             continue

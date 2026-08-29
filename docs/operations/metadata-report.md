@@ -167,7 +167,10 @@ file, or the exported file and folder names. Chapters are a bounded structured
 section rather than claims, and the embedded cover is a presence fact that
 grants no cover authority. No provider is contacted for such a report: review
 preparation ends terminally with `local_evidence_only` in the same transaction
-that publishes it.
+that publishes it, and that transaction records the item's review package, so
+the work is browsed and searched by its evidence rather than by a failure. The
+code raises no operational incident, because nothing about it needs owner
+action.
 Multi-file audiobook items and audiobook libraries without a named read-only
 mount stay excluded, exactly as before. See
 [ADR-0062](../architecture/decisions/0062-isolated-audiobook-inspector.md).

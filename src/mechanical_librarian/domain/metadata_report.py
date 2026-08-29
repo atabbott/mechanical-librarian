@@ -211,10 +211,10 @@ class FieldSource(StrEnum):
     AUDIO_PATH = "audio_path"
 
 
-# Which local-claim bases each owner-facing source buckets.  ``EPUB`` keeps its
-# historical meaning -- everything the EPUB inspector reads -- and is expressed
-# here as the complement of the named sets so a basis added without a source
-# entry cannot silently vanish from `derive_field_results`.
+# Which local-claim bases each owner-facing source buckets.  This mapping is
+# the only definition of the set: `CLAIM_BASES` is derived from it below and
+# `LocalClaim` refuses any basis outside it, so a basis cannot exist without an
+# owner-facing source that `derive_field_results` will bucket it under.
 _SOURCE_CLAIM_BASES: Mapping[FieldSource, frozenset[str]] = MappingProxyType(
     {
         FieldSource.EPUB: frozenset({"opening_matter", "package_metadata"}),

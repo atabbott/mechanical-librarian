@@ -62,8 +62,10 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPipelineError,
     ReviewPipelineRepository,
     ReviewPreparationPipeline,
+    audio_inspection_failure_code,
     inspection_failure_code,
 )
+from mechanical_librarian.domain.audio_inspection import AudioInspectionOutcome
 from mechanical_librarian.domain.epub_inspection import EpubInspectionOutcome
 from mechanical_librarian.domain.metadata_report import (
     AUDIO_FILE_FORMATS,
@@ -236,6 +238,10 @@ class ReviewPipelineStages:
             if type(error.outcome) is EpubInspectionOutcome:
                 raise ReviewPipelineError(
                     inspection_failure_code(error.outcome)
+                ) from error
+            if type(error.outcome) is AudioInspectionOutcome:
+                raise ReviewPipelineError(
+                    audio_inspection_failure_code(error.outcome)
                 ) from error
             raise ReviewPipelineError("unknown") from error
         return MetadataReport.from_json(serialized).report_id, True

@@ -557,3 +557,47 @@ def test_oversized_tag_values_are_dropped_rather_than_truncated() -> None:
     )
 
     assert _values(interpretation, AudioInspectionField.CONTRIBUTOR) == set()
+
+
+@pytest.mark.parametrize("width", (270, 271, 279, 280))
+def test_a_long_observation_keeps_its_fact_even_without_room_for_its_key(
+    width: int,
+) -> None:
+    """The observation is the fact; the key naming it is what gives way.
+
+    A narrator at the full observed width leaves no room for the ``narrator: ``
+    prefix inside the same bound, and the fact must survive that rather than
+    being dropped whole.
+    """
+    narrator = "N" * width
+    interpretation = _read(_probe(tags={"narrator": narrator}))
+
+    supports = [
+        value.supporting_context
+        for value in interpretation.facts
+        if value.field is AudioInspectionField.CONTRIBUTOR
+    ]
+    assert supports == [
+        f"narrator: {narrator}" if len(narrator) + 10 <= 280 else narrator
+    ]
+
+
+def test_a_description_keeps_its_key_at_a_width_a_narrator_could_not() -> None:
+    """The bound is the field's own, not one width for every fact."""
+    description = "D" * 300
+    interpretation = _read(_probe(tags={"description": description}))
+
+    assert [
+        value.supporting_context
+        for value in interpretation.facts
+        if value.field is AudioInspectionField.DESCRIPTION
+    ] == [f"description: {description}"]
+
+
+def test_reading_stops_at_the_tag_limit_rather_than_scanning_past_it() -> None:
+    """The limit bounds the work, so it is where the loop ends."""
+    tags = {f"{index:04d}filler": "value" for index in range(8)}
+    tags["narrator"] = "Recorded Narrator"
+    interpretation = _read(_probe(tags=tags), limits=AudioInspectionLimits(tags=4))
+
+    assert _values(interpretation, AudioInspectionField.CONTRIBUTOR) == set()

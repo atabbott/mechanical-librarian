@@ -102,9 +102,6 @@ class ItemInspectionError(MetadataReportError):
 class AudioItemInspectionError(ItemInspectionError):
     """One audiobook item could not be inspected, with its closed outcome."""
 
-    def __init__(self, outcome: object = None) -> None:
-        super().__init__(outcome)
-
 
 class ArtifactAuthorityError(MetadataReportError):
     pass

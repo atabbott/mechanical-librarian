@@ -23,6 +23,7 @@ from mechanical_librarian.adapters.evidence_extractors.audio_local import (
     interpret,
 )
 from mechanical_librarian.domain.audio_inspection import (
+    MAX_PUBLIC_REPORT_BYTES,
     AudioEvidenceSurface,
     AudioInspection,
     AudioInspectionLimits,
@@ -34,7 +35,9 @@ _ADDRESS_SPACE = 256 * 1024 * 1024
 _CPU_SECONDS = 30
 _OPEN_FILES = 64
 _CONTEXT_LIMIT = 12_582_912
-_STDOUT_LIMIT = 1_048_576
+# One newline past the protocol's own ceiling, so exactly the largest report
+# `AudioInspection.from_json` accepts can also be written.
+_STDOUT_LIMIT = MAX_PUBLIC_REPORT_BYTES + 1
 
 
 def _apply_limits() -> None:
@@ -87,7 +90,6 @@ def _read_context() -> dict[str, object]:
             "child_seconds",
             "expected_source",
             "limits",
-            "logical_identity",
             "path",
             "probe",
             "sidecars",
@@ -168,6 +170,14 @@ def _sidecar_text(descriptor: int, maximum: int) -> str | None:
     return value.decode("utf-8", "replace")
 
 
+class _Expired(BaseException):
+    """The child's own deadline elapsed before interpretation finished."""
+
+
+def _expire(*_arguments: object) -> None:
+    raise _Expired()
+
+
 def _parent_watch(descriptor: int, done: threading.Event) -> None:
     try:
         while os.read(descriptor, 1):
@@ -228,20 +238,20 @@ def main(argv: list[str] | None = None) -> int:
         limits = _limits(context["limits"])
         expected = _fingerprint(context["expected_source"])
         child_seconds = context["child_seconds"]
-        logical_identity = context["logical_identity"]
         probe = context["probe"]
         if (
             type(child_seconds) is not float
             or not 0 < child_seconds <= float(limits.wall_seconds)
-            or type(logical_identity) is not str
-            or len(logical_identity) != 64
-            or any(
-                character not in "0123456789abcdef" for character in logical_identity
-            )
             or type(probe) is not str
             or len(probe) > limits.probe_output_bytes
         ):
             raise ValueError("invalid child context")
+        # The parent already holds a wall clock over this process.  This is the
+        # child's own copy of it, so an interpretation that runs away inside a
+        # bounded document still ends as a named timeout rather than waiting on
+        # a kill from outside.
+        signal.signal(signal.SIGALRM, _expire)
+        signal.setitimer(signal.ITIMER_REAL, child_seconds)
         result = interpret(
             probe,
             _sidecars(context["sidecars"], limits),
@@ -260,6 +270,12 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0
+    except _Expired:
+        try:
+            _write_report(AudioInspection(AudioInspectionOutcome.TIMEOUT, None))
+            return 0
+        except BaseException:
+            return 70
     except MemoryError:
         try:
             _write_report(AudioInspection(AudioInspectionOutcome.RESOURCE_LIMIT, None))
@@ -275,6 +291,10 @@ def main(argv: list[str] | None = None) -> int:
         except BaseException:
             return 70
     finally:
+        # Disarmed on every exit, including the reports written above: an
+        # alarm still pending when this process ends has nothing left to
+        # interrupt but the writing of the report itself.
+        signal.setitimer(signal.ITIMER_REAL, 0)
         done.set()
 
 
