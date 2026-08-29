@@ -2081,7 +2081,14 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                 // stays an article; a work whose evidence is addressable is a
                 // successful entry the owner can read.
                 const evidence = reportEvidenceUrl(work) !== null
-                const status = evidence
+                // Retained evidence is not by itself a clean outcome. Only the
+                // terminal audiobook disposition makes the recorded report the
+                // outcome; a later real failure over the same retained report
+                // is still a failure the owner has to see.
+                const recorded =
+                  evidence &&
+                  (work.preparation === null || work.preparation.status === 'local_evidence_only')
+                const status = recorded
                   ? 'Recorded evidence available'
                   : work.preparation
                     ? 'Preparation failed safely'
@@ -2107,7 +2114,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                       <span className="library-work-status">
                         <span
                           className={
-                            !evidence && (needsAttention || work.preparation)
+                            !recorded && (needsAttention || work.preparation)
                               ? 'needs-attention'
                               : 'handled'
                           }

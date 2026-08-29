@@ -315,6 +315,51 @@ describe('Library route', () => {
     expect(within(evidence).getByText('00:00:00 – 00:30:00')).toBeVisible()
   })
 
+  it('does not let a retained report hide the latest real preparation failure', async () => {
+    const firstWork = library.works[0]
+    if (!firstWork) throw new Error('library fixture requires one work')
+    const baseWork = { ...firstWork }
+    delete baseWork.reviewCaseId
+    const masked = {
+      ...baseWork,
+      id: 'library_work_masked',
+      workId: 'library_work_masked',
+      title: 'Retained work',
+      attentionCount: 0,
+      attention: 'no_attention_needed',
+      // Its earlier report is still browsable, but the latest attempt failed
+      // for a real reason the owner has to act on.
+      detailUrl: '/api/v1/library/report?connection=primary&library=ebooks&item=item-7',
+      detailKind: 'report' as const,
+      preparation: {
+        attempt: 1,
+        diagnosticReference: 'prep-masked-0123456789',
+        provider: 'hardcover-main',
+        reason: 'Provider credentials need owner attention.',
+        recovery: 'Update the configured provider credentials, then scan this library again.',
+        recoveryAttempt: 0,
+        stage: 'provider',
+        status: 'authentication',
+      },
+    }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getLibrary: vi.fn(async () => ({
+        lens: 'all' as const,
+        page: 1,
+        counts: { attention: 0, all: 1, clear: 1 },
+        works: [masked],
+      })),
+    }
+    renderRoute('/library?lens=all', http)
+
+    const row = await screen.findByRole('button', { name: /^Retained work\./u })
+    // Openable, because the evidence is real -- but not reported as a success.
+    expect(row).toHaveTextContent('Preparation failed safely')
+    expect(row).not.toHaveTextContent('Recorded evidence available')
+    expect(row.querySelector('.needs-attention')).not.toBeNull()
+  })
+
   it('keeps a current case selectable while exposing its terminal preparation diagnostic', async () => {
     const user = userEvent.setup()
     const firstWork = library.works[0]
