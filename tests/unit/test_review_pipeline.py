@@ -436,6 +436,96 @@ def test_terminal_trigger_replacement_starts_queued_and_reopens_current(
     reopened.close()
 
 
+def test_first_visible_run_restarts_completed_triggerless_scan_as_queued(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    ordinary = repository.request_review_scan(
+        "primary", "fiction", "lib-1", _PRODUCER, 100
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed',updated_at=101 "
+        "WHERE scan_id=?",
+        (ordinary.scan_id,),
+    )
+    repository._connection.commit()
+    assert repository.preparation_presentation(101) is None
+
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        102,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    presentation = repository.preparation_presentation(102)
+    enrollment_state = repository._connection.execute(
+        "SELECT cycle_state FROM review_preparation_presentation "
+        "WHERE row_kind='enrollment'"
+    ).fetchone()
+    repository.close()
+
+    assert presentation is not None
+    assert presentation.state is PreparationRunState.STARTING
+    assert presentation.completed_at is None
+    assert enrollment_state == ("queued",)
+    reopened = open_repository(application_path, create=False)
+    assert reopened.preparation_presentation(102) == presentation
+    reopened.close()
+
+
+def test_work_order_uses_unbounded_enrollment_ordinal(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    libraries = tuple((f"library-{index}", f"lib-{index}") for index in range(4))
+    for index, (library, library_id) in enumerate(libraries):
+        repository.request_review_scan(
+            "primary",
+            library,
+            library_id,
+            _PRODUCER,
+            100 + index,
+            trigger=PreparationTrigger.MANUAL_SCAN,
+        )
+    for index, (library, library_id) in enumerate(libraries):
+        discovery = repository.claim_review_pipeline_action(110 + index * 2)
+        assert discovery is not None
+        assert discovery.library == library
+        repository.complete_review_discovery(
+            discovery,
+            1,
+            f"{index + 1:064x}",
+            (
+                replace(
+                    _entry(f"item-{index}", f"{index + 11:064x}"),
+                    library=library,
+                    library_id=library_id,
+                    title=f"Enrollment {index}",
+                ),
+            ),
+            111 + index * 2,
+        )
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET state='running',updated_at=120"
+    )
+    refresh_preparation_presentation(repository._connection, 120)
+    presentation = repository.preparation_presentation(120)
+    work_ordinals = repository._connection.execute(
+        "SELECT enrollment_ordinal,trigger_ordinal FROM review_preparation_presentation "
+        "WHERE row_kind='work' ORDER BY enrollment_ordinal"
+    ).fetchall()
+    repository.close()
+
+    assert presentation is not None
+    assert presentation.triggers[0].accepted_count == 4
+    assert work_ordinals == [(0, None), (1, None), (2, None), (3, None)]
+    assert [book.name for book in presentation.active_books] == [
+        f"Enrollment {index}" for index in range(4)
+    ]
+
+
 @pytest.mark.parametrize(
     "terminal_failure", (False, True), ids=("rollover", "terminal-cancellation")
 )
@@ -890,8 +980,8 @@ def test_per_work_presentation_query_count_does_not_grow_with_run_population(
         snapshot_plans = tuple(
             row[3]
             for sql in (
-                "SELECT display_name,work_stage FROM review_preparation_presentation WHERE row_kind='work' AND run_id=? AND current_work_state='running' ORDER BY trigger_ordinal,ordinal,work_id LIMIT 5",
-                "SELECT display_name,work_outcome,updated_at FROM review_preparation_presentation WHERE row_kind='work' AND run_id=? AND work_outcome IS NOT NULL ORDER BY updated_at DESC,trigger_ordinal DESC,ordinal DESC,work_id DESC LIMIT 8",
+                "SELECT display_name,work_stage FROM review_preparation_presentation WHERE row_kind='work' AND run_id=? AND current_work_state='running' ORDER BY enrollment_ordinal,ordinal,work_id LIMIT 5",
+                "SELECT display_name,work_outcome,updated_at FROM review_preparation_presentation WHERE row_kind='work' AND run_id=? AND work_outcome IS NOT NULL ORDER BY updated_at DESC,enrollment_ordinal DESC,ordinal DESC,work_id DESC LIMIT 8",
                 "SELECT COUNT(*) FROM review_preparation_presentation WHERE row_kind='work' AND run_id=? AND work_outcome IS NOT NULL AND updated_at>=?",
             )
             for row in repository._connection.execute(
@@ -957,7 +1047,7 @@ def test_per_work_presentation_query_count_does_not_grow_with_run_population(
         "WHERE row_kind='enrollment'",
         "UPDATE review_preparation_presentation SET run_id='preparation_run_' || "
         "lower(hex(randomblob(32))) WHERE row_kind='trigger'",
-        "UPDATE review_preparation_presentation SET trigger_ordinal=9 "
+        "UPDATE review_preparation_presentation SET enrollment_ordinal=9 "
         "WHERE row_kind='work'",
         "UPDATE review_preparation_presentation SET cycle_id=(SELECT cycle_id FROM "
         "review_preparation_presentation WHERE row_kind='enrollment' AND ordinal=0) "

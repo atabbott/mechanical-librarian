@@ -58,6 +58,10 @@ def accept_preparation_trigger(
         PreparationRunState.COMPLETED_WITH_FAILURES.value,
         PreparationRunState.DISMISSED.value,
     }
+    restarting_terminal_scan = previous_scan_state in {
+        "completed",
+        "completed_with_failures",
+    }
     if current is None or replacing_terminal:
         previous = "" if current is None else cast(str, current[0])
         material = f"preparation-presentation-v1\0{previous}\0{trigger.value}\0{scan_id}\0{accepted_at}"
@@ -117,7 +121,9 @@ def accept_preparation_trigger(
                 else cycle_id,
                 cycle_id if active else None,
                 "queued"
-                if replacing_terminal or (active and enrollment is None)
+                if replacing_terminal
+                or restarting_terminal_scan
+                or (active and enrollment is None)
                 else (previous_scan_state or "queued"),
                 ordinal,
                 accepted_at,
@@ -162,7 +168,7 @@ def record_preparation_names(
     if run is None or enrolled is None:
         return
     run_id = cast(str, run[0])
-    cycle_id, trigger_ordinal = enrolled
+    cycle_id, enrollment_ordinal = enrolled
     selected = {entry.item_id: entry for entry in entries}
     rows = connection.execute(
         "SELECT work_id,item_id,ordinal,state FROM review_preparation_work "
@@ -175,10 +181,10 @@ def record_preparation_names(
             continue
         connection.execute(
             "INSERT INTO review_preparation_presentation("
-            "row_id,row_kind,run_id,scan_id,cycle_id,work_id,ordinal,trigger_ordinal,display_name,work_stage,current_work_state,updated_at) "
+            "row_id,row_kind,run_id,scan_id,cycle_id,work_id,ordinal,enrollment_ordinal,display_name,work_stage,current_work_state,updated_at) "
             "VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(row_id) DO UPDATE SET "
             "run_id=excluded.run_id,scan_id=excluded.scan_id,cycle_id=excluded.cycle_id,ordinal=excluded.ordinal,"
-            "trigger_ordinal=excluded.trigger_ordinal,display_name=excluded.display_name,"
+            "enrollment_ordinal=excluded.enrollment_ordinal,display_name=excluded.display_name,"
             "current_work_state=excluded.current_work_state,updated_at=excluded.updated_at",
             (
                 "work:" + work_id,
@@ -188,7 +194,7 @@ def record_preparation_names(
                 cycle_id,
                 work_id,
                 ordinal,
-                trigger_ordinal,
+                enrollment_ordinal,
                 entry.title,
                 "extraction",
                 current_state,
@@ -501,7 +507,7 @@ def preparation_presentation_snapshot(
         active_rows = connection.execute(
             "SELECT display_name,work_stage FROM review_preparation_presentation "
             "WHERE row_kind='work' AND run_id=? AND current_work_state='running' "
-            "ORDER BY trigger_ordinal,ordinal,work_id LIMIT 5",
+            "ORDER BY enrollment_ordinal,ordinal,work_id LIMIT 5",
             (run_id,),
         ).fetchall()
         active = tuple(
@@ -511,7 +517,7 @@ def preparation_presentation_snapshot(
         completion_rows = connection.execute(
             "SELECT display_name,work_outcome,updated_at FROM review_preparation_presentation "
             "WHERE row_kind='work' AND run_id=? AND work_outcome IS NOT NULL "
-            "ORDER BY updated_at DESC,trigger_ordinal DESC,ordinal DESC,work_id DESC LIMIT 8",
+            "ORDER BY updated_at DESC,enrollment_ordinal DESC,ordinal DESC,work_id DESC LIMIT 8",
             (run_id,),
         ).fetchall()
         started_at = cast(int, row[2])
@@ -625,7 +631,7 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                     "cycle_id",
                     "work_id",
                     "ordinal",
-                    "trigger_ordinal",
+                    "enrollment_ordinal",
                     "display_name",
                     "work_stage",
                     "current_work_state",
@@ -705,13 +711,13 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                 cycle_id,
                 work_id,
                 ordinal,
-                trigger_ordinal,
+                enrollment_ordinal,
                 row_id,
             ) in connection.execute(
-                "SELECT scan_id,cycle_id,work_id,ordinal,trigger_ordinal,row_id "
+                "SELECT scan_id,cycle_id,work_id,ordinal,enrollment_ordinal,row_id "
                 "FROM review_preparation_presentation WHERE row_kind='work'"
             ):
-                if enrollment_cycles.get((scan_id, cycle_id)) != trigger_ordinal:
+                if enrollment_cycles.get((scan_id, cycle_id)) != enrollment_ordinal:
                     raise ValueError("orphan presentation work cycle")
                 if row_id != "work:" + cast(str, work_id):
                     raise ValueError("noncanonical presentation work identity")

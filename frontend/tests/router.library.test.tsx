@@ -71,6 +71,17 @@ describe('Library route', () => {
     expect(screen.getByText('Private title')).toBeVisible()
     expect(screen.getByText('1.2 books/min')).toBeVisible()
     expect(screen.getByText('Finished title')).toBeVisible()
+    let releaseOlderFetch!: (value: Awaited<ReturnType<typeof http.getPreparation>>) => void
+    vi.mocked(http.getPreparation).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseOlderFetch = resolve
+        }),
+    )
+    act(() => {
+      void queryClient.refetchQueries({ queryKey: ['review-preparation'], exact: true })
+    })
+    await waitFor(() => expect(releaseOlderFetch).toBeTypeOf('function'))
     act(() => updates.setState('degraded'))
     expect(
       await screen.findByText(/Reconnecting · showing the last confirmed state/u),
@@ -97,6 +108,7 @@ describe('Library route', () => {
     await waitFor(() =>
       expect(screen.queryByText(/Reconnecting · showing the last confirmed state/u)).toBeNull(),
     )
+    act(() => releaseOlderFetch(confirmed))
 
     await user.click(screen.getByRole('button', { name: /^A Book\./u }))
     expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
@@ -113,6 +125,64 @@ describe('Library route', () => {
     })
     await waitFor(() =>
       expect(document.querySelector('.preparation-run-state')).toHaveClass('reported-change'),
+    )
+  })
+
+  it('retries a failed reconnect snapshot until current-epoch HTTP succeeds', async () => {
+    const http = createHttp()
+    const updates = createLiveStream()
+    const confirmed: PreparationView = {
+      schema_version: 'review-preparation-v2',
+      active: true,
+      actionable: false,
+      paused: false,
+      libraries: [],
+      connections: [],
+      presentation: {
+        run_id: `preparation_run_${'b'.repeat(64)}`,
+        state: 'starting',
+        triggers: [
+          {
+            trigger: 'manual_scan',
+            accepted_count: 1,
+            first_accepted_at: 100,
+            last_accepted_at: 100,
+          },
+        ],
+        passage: { read: 0, searches_finished: 0, compared: 0, checked: 0, ready: 0, failed: 0 },
+        active_books: [],
+        active_overflow: 0,
+        recent_completions: [],
+        throughput_per_minute: 0,
+        started_at: 100,
+        updated_at: 100,
+        completed_at: null,
+        total: 0,
+        dismissible: false,
+      },
+    }
+    http.getPreparation = vi
+      .fn<ReviewHttp['getPreparation']>()
+      .mockResolvedValueOnce(confirmed)
+      .mockRejectedValueOnce(new ApiError(503, 'unavailable'))
+      .mockResolvedValue(confirmed)
+    renderRoute('/library?lens=all', http, updates)
+
+    const summary = await screen.findByRole('button', { name: /Preparing your library/u })
+    expect(summary).toBeVisible()
+    await userEvent.click(summary)
+    expect(await screen.findByRole('heading', { name: 'Now preparing' })).toBeVisible()
+    act(() => updates.setState('degraded'))
+    expect(
+      await screen.findByText(/Reconnecting · showing the last confirmed state/u),
+    ).toBeVisible()
+    act(() => updates.setState('live'))
+
+    await waitFor(() => expect(http.getPreparation).toHaveBeenCalledTimes(2))
+    expect(screen.getByText(/Reconnecting · showing the last confirmed state/u)).toBeVisible()
+    await waitFor(() => expect(http.getPreparation).toHaveBeenCalledTimes(3), { timeout: 2_500 })
+    await waitFor(() =>
+      expect(screen.queryByText(/Reconnecting · showing the last confirmed state/u)).toBeNull(),
     )
   })
 
