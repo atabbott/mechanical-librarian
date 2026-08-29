@@ -50,8 +50,11 @@ provider means to the review pipeline.
    the `mov` and `mp3` demuxers -- the two container grammars behind the `m4b`,
    `m4a` and `mp3` files this library admits -- the `aac`, `mp3`, `mjpeg` and
    `png` decoders and parsers those containers carry, and the `file`, `pipe`
-   and `fd` protocols, builds the `ffprobe` target alone, and strips it. The
-   result is a 1,845,864-byte binary
+   and `fd` protocols, builds the `ffprobe` target alone, and strips it.
+   `--disable-x86asm` keeps an assembler out of the build's supply chain --
+   header reading uses no SIMD decode path, and the flag is a no-op on arm64 --
+   so both architectures build from the same inputs. The result is a
+   1,845,864-byte binary on arm64 and a 1,858,088-byte one on x86-64,
    copied into the final image at `/usr/local/bin/ffprobe`; the parent resolves
    it from a closed path list rather than an inherited `PATH`, which the child
    environment does not carry. `--disable-network` makes the zero-network
@@ -93,9 +96,10 @@ provider means to the review pipeline.
 - The stop is atomic with publication, so an audiobook neither stalls in a
   stage it cannot complete nor reports a provider failure that never happened.
 - The probe costs the image almost nothing: 2 MB on disk (606 MB to 608 MB) and
-  under 1 MB pulled (163,578,661 to 164,479,005 bytes compressed). The shipped
-  media parser contains no muxer, encoder, filter, device, or network protocol
-  at all, and no demuxer or decoder outside the two admitted containers.
+  under 1 MB pulled (163,578,661 to 164,479,033 bytes compressed, arm64). The
+  shipped media parser contains no muxer, encoder, filter, device, or network
+  protocol at all, and no demuxer or decoder outside the two admitted
+  containers.
 
 ### Negative
 

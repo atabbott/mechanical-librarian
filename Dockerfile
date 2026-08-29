@@ -23,12 +23,16 @@ RUN curl -fsSLO "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" \
     && echo "${FFMPEG_SHA256}  ffmpeg-${FFMPEG_VERSION}.tar.xz" | sha256sum -c - \
     && tar xf "ffmpeg-${FFMPEG_VERSION}.tar.xz"
 WORKDIR /src/ffmpeg-${FFMPEG_VERSION}
+# `--disable-x86asm` keeps an assembler out of the build's supply chain: reading
+# container headers uses no SIMD decode path, and the flag is a no-op on arm64,
+# so both architectures build from the same inputs.
 RUN ./configure \
         --disable-everything --disable-network --disable-autodetect --disable-doc \
         --disable-avdevice --disable-avfilter --disable-swscale --disable-swresample \
         --disable-postproc --disable-encoders --disable-muxers --disable-filters \
         --disable-indevs --disable-outdevs --disable-hwaccels --disable-bsfs \
         --disable-ffmpeg --disable-ffplay \
+        --disable-x86asm \
         --enable-ffprobe \
         --enable-demuxer=mov,mp3 \
         --enable-decoder=aac,mp3,mjpeg,png \
