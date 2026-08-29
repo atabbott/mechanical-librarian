@@ -57,6 +57,10 @@ class OpenRouterReviewer:
         self._client.close()
 
     def probe(self) -> OpenRouterAccountStatus:
+        status, _reasoning_supported = self._probe_capabilities()
+        return status
+
+    def _probe_capabilities(self) -> tuple[OpenRouterAccountStatus, bool]:
         key = self._json_request("GET", _KEY_PATH, _MAX_KEY_RESPONSE)
         data = key.get("data")
         if type(data) is not dict or type(data.get("is_free_tier")) is not bool:
@@ -85,12 +89,15 @@ class OpenRouterReviewer:
             raise OpenRouterReviewerError("model_text_only")
         if "structured_outputs" not in parameters:
             raise OpenRouterReviewerError("model_unavailable")
-        return OpenRouterAccountStatus(
-            tier="free" if data["is_free_tier"] else "paid",
-            model=self._model,
-            input_modalities=inputs,
-            output_modalities=outputs,
-            structured_outputs=True,
+        return (
+            OpenRouterAccountStatus(
+                tier="free" if data["is_free_tier"] else "paid",
+                model=self._model,
+                input_modalities=inputs,
+                output_modalities=outputs,
+                structured_outputs=True,
+            ),
+            "reasoning" in parameters,
         )
 
     def run(
@@ -113,7 +120,7 @@ class OpenRouterReviewer:
         request = admit_cover_review_request(
             instruction_text, packet_text, schema_text, images
         )
-        self.probe()
+        _status, reasoning_supported = self._probe_capabilities()
         content: list[dict[str, object]] = [
             {
                 "type": "text",
@@ -130,24 +137,27 @@ class OpenRouterReviewer:
             }
             for _reference, _digest, payload in images
         )
+        chat_body: dict[str, object] = {
+            "max_tokens": 8192,
+            "messages": [{"role": "user", "content": content}],
+            "model": self._model,
+            "provider": {"require_parameters": True},
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "cover_observation",
+                    "strict": True,
+                    "schema": schema_value,
+                },
+            },
+        }
+        if reasoning_supported:
+            chat_body["reasoning"] = {"effort": "minimal", "exclude": True}
         response = self._json_request(
             "POST",
             _CHAT_PATH,
             _MAX_CHAT_RESPONSE,
-            json_body={
-                "max_tokens": 4096,
-                "messages": [{"role": "user", "content": content}],
-                "model": self._model,
-                "provider": {"require_parameters": True},
-                "response_format": {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "cover_observation",
-                        "strict": True,
-                        "schema": schema_value,
-                    },
-                },
-            },
+            json_body=chat_body,
         )
         try:
             choices = response["choices"]

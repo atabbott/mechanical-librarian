@@ -18,7 +18,11 @@ def _key() -> dict[str, object]:
     return {"data": {"is_free_tier": True}}
 
 
-def _models(model: str = "example/vision") -> dict[str, object]:
+def _models(
+    model: str = "example/vision",
+    *,
+    supported_parameters: tuple[str, ...] = ("structured_outputs",),
+) -> dict[str, object]:
     return {
         "data": [
             {
@@ -27,7 +31,7 @@ def _models(model: str = "example/vision") -> dict[str, object]:
                     "input_modalities": ["text", "image"],
                     "output_modalities": ["text"],
                 },
-                "supported_parameters": ["structured_outputs"],
+                "supported_parameters": list(supported_parameters),
             }
         ]
     }
@@ -153,8 +157,9 @@ class _Request:
     digest: str = "a" * 64
 
 
-def test_one_run_performs_one_immediate_probe_then_one_chat_call(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("reasoning_supported", (True, False))
+def test_one_run_shapes_reasoning_from_one_immediate_probe_then_one_chat_call(
+    monkeypatch: pytest.MonkeyPatch, reasoning_supported: bool
 ) -> None:
     requests: list[httpx.Request] = []
 
@@ -163,11 +168,21 @@ def test_one_run_performs_one_immediate_probe_then_one_chat_call(
         if request.url.path == "/api/v1/key":
             return httpx.Response(200, json=_key())
         if request.url.path == "/api/v1/models":
-            return httpx.Response(200, json=_models())
+            parameters = (
+                ("structured_outputs", "reasoning")
+                if reasoning_supported
+                else ("structured_outputs",)
+            )
+            return httpx.Response(200, json=_models(supported_parameters=parameters))
         body = json.loads(request.content)
         assert body["model"] == "example/vision"
+        assert body["max_tokens"] == 8192
         assert body["provider"] == {"require_parameters": True}
         assert body["response_format"]["json_schema"]["strict"] is True
+        if reasoning_supported:
+            assert body["reasoning"] == {"effort": "minimal", "exclude": True}
+        else:
+            assert "reasoning" not in body
         return httpx.Response(
             200,
             json={
