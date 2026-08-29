@@ -1054,6 +1054,7 @@ class ReviewPreparationSupervisor:
         self._next_schedule_at: int | None = None
         self._schedule_paused = False
         self._schedule_waiting_for_action = False
+        self._pending_library_additions: dict[tuple[str, str], None] = {}
         self._admission = threading.Event()
         self._admission.set()
         self._startup_lock = threading.Lock()
@@ -1210,6 +1211,28 @@ class ReviewPreparationSupervisor:
         self._wake.set()
         return progress
 
+    def request_library_addition(
+        self, connection: str, library: str
+    ) -> PipelineProgress | None:
+        """Admit one configured library now or retain it across an owner pause."""
+        with self._schedule_lock:
+            try:
+                progress = self._pipeline.request(
+                    connection,
+                    library,
+                    trigger=PreparationTrigger.LIBRARY_ADDED,
+                )
+            except ReviewPipelineError as error:
+                if error.code != "paused":
+                    raise
+                self._pending_library_additions.setdefault((connection, library), None)
+                return None
+            self._pending_library_additions.pop((connection, library), None)
+            self._schedule_waiting_for_action = False
+            self._next_schedule_at = None
+        self._wake.set()
+        return progress
+
     def progress(self, connection: str, library: str) -> PipelineProgress | None:
         return self._pipeline.progress(connection, library)
 
@@ -1224,6 +1247,13 @@ class ReviewPreparationSupervisor:
         with self._schedule_lock:
             self._schedule_paused = paused
             if not paused:
+                for connection, library in tuple(self._pending_library_additions):
+                    self._pipeline.request(
+                        connection,
+                        library,
+                        trigger=PreparationTrigger.LIBRARY_ADDED,
+                    )
+                    del self._pending_library_additions[(connection, library)]
                 self._schedule_waiting_for_action = False
                 self._next_schedule_at = None
         if not paused:

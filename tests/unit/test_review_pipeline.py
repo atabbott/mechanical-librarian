@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -733,9 +734,7 @@ def test_successor_discovery_removes_orphaned_presentation_work(
     successor_entries = (
         (replace(entry, classification="ambiguous"),) if ineligible else ()
     )
-    repository.complete_review_discovery(
-        successor, 2, "b" * 64, successor_entries, 107
-    )
+    repository.complete_review_discovery(successor, 2, "b" * 64, successor_entries, 107)
     assert repository.claim_review_pipeline_action(108) is None
     presentation = repository.preparation_presentation(108)
     sidecar_work = repository._connection.execute(
@@ -755,7 +754,10 @@ def test_successor_discovery_removes_orphaned_presentation_work(
 
 @pytest.mark.parametrize(
     "title",
-    (pytest.param("x" * 2048, id="ascii"), pytest.param("界" * 682 + "ab", id="multibyte")),
+    (
+        pytest.param("x" * 2048, id="ascii"),
+        pytest.param("界" * 682 + "ab", id="multibyte"),
+    ),
 )
 def test_maximum_observed_title_survives_active_completion_and_reopen(
     application_path: Path, title: str
@@ -1120,7 +1122,11 @@ def test_completed_enrollment_restarts_exact_cycle_without_reaging_outcome(
     )
     refresh_preparation_presentation(repository._connection, 106)
     peer = repository.claim_review_pipeline_action(107)
-    assert peer is not None and peer.connection == "secondary" and peer.stage == "discovery"
+    assert (
+        peer is not None
+        and peer.connection == "secondary"
+        and peer.stage == "discovery"
+    )
     before = repository.preparation_presentation(110)
     old_cycle = repository._connection.execute(
         "SELECT cycle_id FROM review_preparation_presentation WHERE row_kind='enrollment' AND scan_id=?",
@@ -1417,6 +1423,63 @@ def test_nonhex_presentation_cycle_identity_fails_closed(
         open_repository(path, create=False)
 
 
+def test_unknown_presentation_row_kind_fails_closed_without_disclosure_or_repair(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "invalid-row-kind.sqlite3"
+    repository = open_repository(path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    repository.close()
+    private_row_kind = "private-owner-title-library"
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA ignore_check_constraints=ON")
+    connection.execute(
+        "UPDATE review_preparation_presentation SET row_kind=? "
+        "WHERE row_kind='trigger'",
+        (private_row_kind,),
+    )
+    connection.commit()
+    before_rows = tuple(
+        connection.execute(
+            "SELECT * FROM review_preparation_presentation ORDER BY row_id"
+        )
+    )
+    connection.close()
+    before_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+
+    with pytest.raises(
+        MetadataReportError, match="^database is unavailable or incompatible$"
+    ) as raised:
+        open_repository(path, create=False)
+
+    causes: list[str] = []
+    cause = raised.value.__cause__
+    while cause is not None:
+        causes.append(str(cause))
+        cause = cause.__cause__
+    assert private_row_kind not in str(raised.value)
+    assert all(private_row_kind not in value for value in causes)
+    assert causes == ["invalid presentation row kind"]
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == before_hash
+    connection = sqlite3.connect(path)
+    assert (
+        tuple(
+            connection.execute(
+                "SELECT * FROM review_preparation_presentation ORDER BY row_id"
+            )
+        )
+        == before_rows
+    )
+    connection.close()
+
+
 def test_pause_state_is_durable_and_does_not_remove_committed_work(
     application_path: Path,
 ) -> None:
@@ -1662,6 +1725,137 @@ def test_lifecycle_foreground_request_uses_one_clean_atomic_pause_boundary(
         assert reopened.review_pipeline_paused()
     finally:
         reopened.close()
+
+
+def test_supervisor_retains_paused_library_addition_and_admits_it_once_on_resume(
+    application_path: Path,
+) -> None:
+    owner = open_repository(application_path)
+    clock = [100]
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: open_repository(
+            application_path, create=False, authority=owner.authority
+        ),
+        libraries=(
+            ("primary", "fiction", "lib-1", _PRODUCER),
+            ("primary", "history", "lib-2", _PRODUCER),
+        ),
+        discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        clock=lambda: clock[0],
+    )
+    supervisor = ReviewPreparationSupervisor(pipeline, clock=lambda: clock[0])
+    supervisor.request("primary", "fiction", trigger=PreparationTrigger.MANUAL_SCAN)
+    supervisor.set_paused(True)
+
+    assert supervisor.request_library_addition("primary", "history") is None
+    assert supervisor.request_library_addition("primary", "history") is None
+    blocked = owner.preparation_presentation(clock[0])
+    assert blocked is not None
+    assert blocked.state is PreparationRunState.BLOCKED
+    assert not blocked.dismissible
+    assert owner.review_pipeline_progress("primary", "history") is None
+    assert tuple(supervisor._pending_library_additions) == (("primary", "history"),)
+
+    clock[0] = 101
+    supervisor.set_paused(False)
+    progress = owner.review_pipeline_progress("primary", "history")
+    resumed = owner.preparation_presentation(clock[0])
+    assert progress is not None and progress.state == "queued"
+    assert resumed is not None and resumed.state is PreparationRunState.STARTING
+    library_added = next(
+        item
+        for item in resumed.triggers
+        if item.trigger is PreparationTrigger.LIBRARY_ADDED
+    )
+    assert library_added.accepted_count == 1
+    assert owner._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_scans "
+        "WHERE connection_name='primary' AND library_name='history'"
+    ).fetchone() == (1,)
+    assert owner._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_presentation "
+        "WHERE row_kind='enrollment' AND connection_name='primary' "
+        "AND library_name='history'"
+    ).fetchone() == (1,)
+    assert supervisor._pending_library_additions == {}
+
+    clock[0] = 102
+    supervisor.set_paused(False)
+    unchanged = owner.preparation_presentation(clock[0])
+    owner.close()
+    assert unchanged is not None
+    assert (
+        next(
+            item
+            for item in unchanged.triggers
+            if item.trigger is PreparationTrigger.LIBRARY_ADDED
+        ).accepted_count
+        == 1
+    )
+
+
+def test_concurrent_library_addition_and_resume_share_one_admission() -> None:
+    resume_cleared_pause = threading.Event()
+    release_resume = threading.Event()
+
+    class PausedPipeline(_ScheduledPipeline):
+        libraries = (("primary", "added", "lib-2"),)
+
+        def request(self, connection, library, *, trigger=None):
+            if self.is_paused:
+                raise ReviewPipelineError("paused")
+            self.requests.append((connection, library))
+            return PipelineProgress(
+                "review_scan_" + "a" * 64,
+                connection,
+                library,
+                "queued",
+                0,
+                0,
+                0,
+                0,
+                False,
+            )
+
+        def set_paused(self, paused):
+            self.is_paused = paused
+            if not paused:
+                resume_cleared_pause.set()
+                assert release_resume.wait(1)
+
+    pipeline = PausedPipeline()
+    pipeline.is_paused = True
+    supervisor = ReviewPreparationSupervisor(pipeline)
+    assert supervisor.request_library_addition("primary", "added") is None
+    resume = threading.Thread(target=supervisor.set_paused, args=(False,))
+    resume.start()
+    assert resume_cleared_pause.wait(1)
+
+    supervisor.request_library_addition("primary", "added")
+    release_resume.set()
+    resume.join(1)
+
+    assert not resume.is_alive()
+    assert pipeline.requests == [("primary", "added")]
+    assert supervisor._pending_library_additions == {}
+
+
+def test_library_addition_does_not_retain_non_pause_failure() -> None:
+    class FailingPipeline(_ScheduledPipeline):
+        def request(self, connection, library, *, trigger=None):
+            raise ReviewPipelineError("persistence")
+
+    supervisor = ReviewPreparationSupervisor(FailingPipeline())
+
+    with pytest.raises(ReviewPipelineError, match="persistence"):
+        supervisor.request_library_addition("primary", "fiction")
+
+    assert supervisor._pending_library_additions == {}
 
 
 @pytest.mark.skipif(

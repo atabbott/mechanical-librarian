@@ -35,7 +35,6 @@ from mechanical_librarian.domain.owner_settings import (
     OwnerSettingsDocument,
     SettingsView,
 )
-from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
 from mechanical_librarian.infrastructure.first_boot import (
     FirstBootMode,
     select_first_boot_mode,
@@ -68,10 +67,13 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover() ->
     preparation.libraries = (
         ("primary", "fiction", "library-1"),
         ("primary", "history", "library-2"),
+        ("primary", "existing", "library-3"),
     )
-    preparation.progress.return_value = None
+    preparation.progress.side_effect = lambda _connection, library: (
+        object() if library == "existing" else None
+    )
     admission_events: list[str] = []
-    preparation.request.side_effect = lambda _connection, library, **_kwargs: (
+    preparation.request_library_addition.side_effect = lambda _connection, library: (
         admission_events.append(f"request:{library}")
     )
     review_application.admit.side_effect = lambda: admission_events.append("admit")
@@ -139,9 +141,15 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover() ->
     runtime.admit()
     reviewer_access.activate_codex_lease.assert_called_once_with()
     review_application.admit.assert_called_once_with()
-    assert preparation.request.call_args_list == [
-        call("primary", "fiction", trigger=PreparationTrigger.LIBRARY_ADDED),
-        call("primary", "history", trigger=PreparationTrigger.LIBRARY_ADDED),
+    assert preparation.request_library_addition.call_args_list == [
+        call("primary", "fiction"),
+        call("primary", "history"),
+    ]
+    preparation.request.assert_not_called()
+    assert preparation.progress.call_args_list == [
+        call("primary", "fiction"),
+        call("primary", "history"),
+        call("primary", "existing"),
     ]
     assert admission_events == ["request:fiction", "request:history", "admit"]
     runtime.close()

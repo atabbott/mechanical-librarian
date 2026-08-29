@@ -673,8 +673,11 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                 "SELECT * FROM review_preparation_presentation"
             ):
                 row_kind = cast(str, row[columns.index("row_kind")])
+                relevant = allowed.get(row_kind)
+                if relevant is None:
+                    raise ValueError("invalid presentation row kind")
                 if any(
-                    value is not None and column not in allowed[row_kind]
+                    value is not None and column not in relevant
                     for column, value in zip(columns, row, strict=True)
                 ):
                     raise ValueError("irrelevant presentation columns")
@@ -695,7 +698,9 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                 type(cycle_id) is not str
                 or len(cycle_id) != 82
                 or not cycle_id.startswith("preparation_cycle_")
-                or any(character not in "0123456789abcdef" for character in cycle_id[18:])
+                or any(
+                    character not in "0123456789abcdef" for character in cycle_id[18:]
+                )
                 for cycle_id in cycle_ids
             ):
                 raise ValueError("noncanonical presentation cycle identity")

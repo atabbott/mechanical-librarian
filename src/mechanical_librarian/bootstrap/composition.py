@@ -262,7 +262,6 @@ from mechanical_librarian.domain.metadata_report import (
     claim_scope,
 )
 from mechanical_librarian.domain.owner_settings import SettingsView
-from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
 from mechanical_librarian.domain.proposal_set import ProposalSet
 from mechanical_librarian.domain.setup_state import (
     SetupLibraryCandidate,
@@ -2655,11 +2654,7 @@ def compose_store_runtime_generation(
             if not first_boot:
                 for connection, library, _library_id in preparation.libraries:
                     if preparation.progress(connection, library) is None:
-                        preparation.request(
-                            connection,
-                            library,
-                            trigger=PreparationTrigger.LIBRARY_ADDED,
-                        )
+                        preparation.request_library_addition(connection, library)
             reviewer_access.activate_codex_lease()
             review_application.admit()
 
