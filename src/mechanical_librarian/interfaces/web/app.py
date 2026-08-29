@@ -624,6 +624,10 @@ class _LibraryWork(_ClosedModel):
     attention_count: int
     attention_state: str
     detail_url: str | None
+    # `case` opens a review case, `report` opens the recorded evidence of a
+    # work that has none, and `None` means there is nothing to open. Closed
+    # here so a client switches on the kind rather than on the URL's shape.
+    detail_kind: Literal["case", "report"] | None
     dispositions: list[str]
     item: str
     library: str

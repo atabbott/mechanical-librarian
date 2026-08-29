@@ -1615,11 +1615,13 @@ def test_complete_library_includes_current_report_without_review_lineage(
     item = response.json()["items"][0]
     assert item["review_case_id"] is None
     # No case to open, but the evidence is still addressable: the row points at
-    # the report it stands for rather than at nothing.
+    # the report it stands for rather than at nothing, and says which of the
+    # two it is rather than leaving a reader to guess from the URL's shape.
     assert (
         item["detail_url"]
         == "/api/v1/library/report?connection=primary&library=ebooks&item=item-1"
     )
+    assert item["detail_kind"] == "report"
     assert item["work_id"].startswith("library_work_")
     assert item["attention_state"] == "no_attention_needed"
     assert item["dispositions"] == []
@@ -2308,3 +2310,46 @@ def test_a_shaped_but_corrupt_document_is_refused_rather_than_projected(
         503,
         "unavailable",
     )
+
+
+def test_every_library_row_names_what_its_address_opens() -> None:
+    """The three shapes a row can have, and the one word that tells them apart.
+
+    A reader that inferred the kind from the URL -- a `/api/` prefix against a
+    `/review/` one -- would be silently re-orphaned by a route rename, which is
+    how this evidence became unreachable in the first place. The discriminator
+    is asserted here rather than only through the browser, so the joint is held
+    by the contract.
+    """
+    report = _report()
+    case = ReviewCase.create(evaluate_report(report), report)
+    terminal = json.dumps(
+        {
+            "attempt": 1,
+            "connection": "primary",
+            "failure_root": None,
+            "item": "item-3",
+            "lane": "extraction",
+            "library": "ebooks",
+            "recovery_attempt": 0,
+            "schema_version": "review-terminal-work-v1",
+            "status": "unreadable_media",
+            "work_id": "review_work_" + "c" * 64,
+        }
+    )
+
+    opened = _library_item(case.to_json(), report.to_json(), ())
+    recorded = _library_item(None, report.to_json(), ())
+    stopped = _library_item(None, terminal, ())
+
+    assert (opened["detail_kind"], opened["detail_url"]) == (
+        "case",
+        f"/review/{case.review_case_id}",
+    )
+    assert (recorded["detail_kind"], recorded["detail_url"]) == (
+        "report",
+        "/api/v1/library/report?connection=primary&library=ebooks&item=item-1",
+    )
+    # Preparation stopped before a report existed, so there is nothing to open
+    # and the row says so rather than offering an address that answers nothing.
+    assert (stopped["detail_kind"], stopped["detail_url"]) == (None, None)

@@ -105,6 +105,9 @@ def _work(
         "attention_count": attention,
         "attention_state": ("needs_attention" if attention else "no_attention_needed"),
         "detail_url": f"/review/{case}" if case else None,
+        # The row says what its address opens; every work in this cohort that
+        # has one has a review case behind it.
+        "detail_kind": "case" if case else None,
         "dispositions": dispositions,
         "preparation": preparation,
         "preparation_outcomes": preparation_outcomes or [],

@@ -49,11 +49,12 @@ type ChoiceProgress = {
 const authorLine = (work: LibraryWorkView) =>
   work.authors.length ? work.authors.join(', ') : 'Author details unavailable'
 // A work with a review case opens that case; one with only a published report
-// is addressed by the report itself, and the server says which by handing back
-// an API address rather than a `/review` one. Deciding it here keeps the row
-// and the panel agreeing on what is openable.
+// is addressed by the report itself, and the server names which rather than
+// leaving it to be read off the URL's shape -- a prefix sniff would silently
+// re-orphan this evidence the next time a route is renamed. Deciding it once
+// here keeps the row and the panel agreeing on what is openable.
 const reportEvidenceUrl = (work: LibraryWorkView) =>
-  !work.reviewCaseId && work.detailUrl?.startsWith('/api/') ? work.detailUrl : null
+  work.detailKind === 'report' ? work.detailUrl : null
 const chapterSpan = (start: number, end: number) => {
   const clock = (value: number) => {
     const seconds = Math.floor(value / 1000)

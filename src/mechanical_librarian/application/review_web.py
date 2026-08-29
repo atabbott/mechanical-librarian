@@ -1934,6 +1934,7 @@ def _library_item(
                     "attention_count": 0,
                     "attention_state": "no_attention_needed",
                     "detail_url": None,
+                    "detail_kind": None,
                     "dispositions": ["terminal_failure"],
                     "item": item,
                     "library": library,
@@ -2052,6 +2053,11 @@ def _library_item(
         "detail_url": f"/review/{case.review_case_id}"
         if case is not None
         else _report_detail_url(report.target),
+        # What the address is, said outright rather than left to be inferred
+        # from its shape. A reader that guessed from the URL prefix would be
+        # re-orphaned by a route rename, which is exactly how this evidence
+        # became unreachable in the first place.
+        "detail_kind": "case" if case is not None else "report",
         "dispositions": outcomes,
         "item": report.target.item,
         "library": report.target.library,

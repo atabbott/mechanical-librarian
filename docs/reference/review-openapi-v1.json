@@ -4197,6 +4197,21 @@
             "title": "Authors",
             "type": "array"
           },
+          "detail_kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "case",
+                  "report"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail Kind"
+          },
           "detail_url": {
             "anyOf": [
               {
@@ -4279,6 +4294,7 @@
           "attention_count",
           "attention_state",
           "detail_url",
+          "detail_kind",
           "dispositions",
           "item",
           "library",

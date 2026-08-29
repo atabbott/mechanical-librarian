@@ -39,6 +39,7 @@ export const library: LibraryView = {
       attentionCount: 1,
       attention: 'needs_attention',
       detailUrl: '/review/case-1',
+      detailKind: 'case' as const,
       preparation: null,
       preparationOutcomes: [],
     },

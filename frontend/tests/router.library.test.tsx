@@ -179,6 +179,9 @@ describe('Library route', () => {
       title: 'Preparation unavailable',
       attentionCount: 0,
       attention: 'no_attention_needed',
+      // Neither a case nor a report: there is nothing here to open.
+      detailUrl: null,
+      detailKind: null,
       preparation: {
         attempt: 1,
         diagnosticReference: 'prep-0123456789abcdef',
@@ -243,6 +246,7 @@ describe('Library route', () => {
       attentionCount: 0,
       attention: 'no_attention_needed',
       detailUrl,
+      detailKind: 'report' as const,
       summary: { state: 'no_decision_recorded', reason: 'No review decision is recorded.', fields: [] },
       // An audiobook's work ends `failed` because nothing follows its report.
       // The row must not read as a failure, and must open.

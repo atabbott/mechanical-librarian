@@ -235,10 +235,13 @@ export interface LibraryWorkView {
   mediaKind: string
   attentionCount: number
   attention: string
-  // The address of this work's recorded evidence. A work with a review case
+  // Where this work opens, and what opens there. A work with a review case
   // points at that case; a work with only a published report points at the
-  // report itself, which is the one route its evidence has.
+  // report itself, which is the one route its evidence has; a work that
+  // produced neither has nothing to open. The server names which, because
+  // reading it back off the URL's shape would break on a route rename.
   detailUrl: string | null
+  detailKind: 'case' | 'report' | null
   preparation: PreparationFailureView | null
   preparationOutcomes: readonly ProviderOutcomeView[]
   summary: WorkSummaryView | null
@@ -2049,6 +2052,15 @@ export const mapLibrary = (value: unknown): LibraryView => {
         attentionCount: integerValue(item.attention_count, 'attention_count'),
         attention: stringValue(item.attention_state, 'attention_state'),
         detailUrl: item.detail_url === null ? null : stringValue(item.detail_url, 'detail_url'),
+        detailKind: (() => {
+          // Read back through `unknown`, as `lens` above is: the DTO type says
+          // what the server promises, and this is the check that it kept it.
+          const kind: unknown = item.detail_kind
+          if (kind === null) return null
+          const named = stringValue(kind, 'detail_kind')
+          if (named !== 'case' && named !== 'report') throw new ApiError(502, 'invalid_detail_kind')
+          return named
+        })(),
         preparation,
         preparationOutcomes,
         summary,
