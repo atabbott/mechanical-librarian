@@ -168,6 +168,20 @@ a library-wide provider barrier.
   Series recovery is a closed full-match indicia vocabulary over already bounded
   selected front/rear resources; it has no filename, prose, catalogue, ranking,
   provider, decision, or write authority.
+- A mounted-media owner may provide a hostile audiobook, a hostile sidecar
+  document, or a hostile file or folder name. No media byte is parsed in
+  process: the parent runs `ffprobe` as its own isolated child over a passed
+  descriptor, with no network, no inherited `PATH`, an empty-but-minimal
+  environment, `cwd="/"`, its own session, and core, file-size, descriptor,
+  CPU, address-space, output, and wall-clock bounds. Its bounded JSON document
+  and each sidecar descriptor are then interpreted inside the same
+  descriptor-bound Python child the EPUB capability uses, whose process cap
+  stays at one. The interpretation itself is a closed recognition grammar —
+  never an XML or container parser — over already bounded text, and a sidecar
+  that is over-long or unreadable is dropped rather than truncated into a
+  fragment. Path evidence reads bare name components only, never a joined path.
+  Embedded cover art is recorded as presence and never acquired, decoded, or
+  elected.
 - A local actor may replace or corrupt configuration, secret, media, manifest,
   or SQLite
   files. No-follow descriptor binding, side-effect-free validation of existing
@@ -584,7 +598,7 @@ deadline, byte, and request-count authority. Attempt records are bounded and
 process-local. Provider adapters also count optional parser/schema rejections
 at their actual rejection points. The application canonically merges those
 counts once with the attempt categories and incomplete-outcome mapping for
-`metadata-report-v30`; provider, attempt ordinal, delay, elapsed time,
+`metadata-report-v31`; provider, attempt ordinal, delay, elapsed time,
 headers, bodies, and exception text are dropped. Application-created
 query-limit outcomes follow the same closed mapping and persist
 provider/lookup_construction/lookup without constructing or invoking a

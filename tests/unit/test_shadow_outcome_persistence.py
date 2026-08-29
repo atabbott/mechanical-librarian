@@ -2874,7 +2874,12 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
     ("later_candidate_index", "owner_final", "expected_kind", "expected_rows"),
     (
         (3, False, "automatic", 2),
-        (2, False, "automatic", 1),
+        # A later candidate must be better on the technical vector to
+        # supersede. Two reports of one item never share a rank key -- its last
+        # component is a reference derived from the report id -- so the
+        # not-better case has to be a genuinely smaller cover rather than an
+        # equal one, whose order would rest on report-id hashing alone.
+        (1, False, "automatic", 1),
         (3, True, "owner", 2),
     ),
 )

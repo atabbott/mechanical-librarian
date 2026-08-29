@@ -35,7 +35,9 @@ from mechanical_librarian.domain.failure_diagnostics import (
     diagnostics_are_canonical,
 )
 from mechanical_librarian.domain.metadata_report import (
+    AUDIO_FILE_FORMATS,
     MAX_CANDIDATES,
+    AudioFacts,
     ClaimKind,
     ClaimScope,
     DateLinkConfidence,
@@ -95,6 +97,10 @@ class ItemInspectionError(MetadataReportError):
     def __init__(self, outcome: object = None) -> None:
         super().__init__("EPUB inspection failed")
         self.outcome = outcome
+
+
+class AudioItemInspectionError(ItemInspectionError):
+    """One audiobook item could not be inspected, with its closed outcome."""
 
 
 class ArtifactAuthorityError(MetadataReportError):
@@ -644,6 +650,20 @@ class InspectionResult:
 
 
 @dataclass(frozen=True, slots=True)
+class AudioInspectionResult:
+    """One audiobook's closed local evidence set.
+
+    There is deliberately no ``cover_sources`` member. An audiobook file's
+    embedded art is recorded as presence inside ``audio`` and nothing here
+    acquires, decodes, or elects it.
+    """
+
+    content_digest: str
+    claims: tuple[LocalClaim, ...]
+    audio: AudioFacts
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderCoverDescriptor:
     provider: str
     kind: CoverSourceKind
@@ -751,6 +771,21 @@ class EpubInspector(Protocol):
     def inspect(
         self, mount: MediaMountConfiguration, relative_path: str, maximum_bytes: int
     ) -> InspectionResult: ...
+    def unchanged(
+        self,
+        mount: MediaMountConfiguration,
+        relative_path: str,
+        expected_digest: str,
+        maximum_bytes: int,
+    ) -> bool: ...
+
+
+class AudioInspector(Protocol):
+    """The one application-visible call behind F43's two isolated children."""
+
+    def inspect(
+        self, mount: MediaMountConfiguration, relative_path: str, maximum_bytes: int
+    ) -> AudioInspectionResult: ...
     def unchanged(
         self,
         mount: MediaMountConfiguration,
@@ -1133,6 +1168,7 @@ class GenerateMetadataReport:
         mount: MediaMountConfiguration | None,
         limits: ReportLimits,
         cover_observer: CoverObserver | None = None,
+        audio_inspector: AudioInspector | None = None,
         publication_authority_guard: Callable[[], None] | None = None,
         publication_receipt: Callable[[ReportRepository, MetadataReport], None]
         | None = None,
@@ -1148,6 +1184,7 @@ class GenerateMetadataReport:
         self._mount = mount
         self._limits = limits
         self._cover_observer = cover_observer
+        self._audio_inspector = audio_inspector
         self._publication_authority_guard = publication_authority_guard
         self._publication_receipt = publication_receipt
         self._require_singular_target = require_singular_target
@@ -1160,7 +1197,7 @@ class GenerateMetadataReport:
             raise UnsupportedMediaError("unsupported media")
         initial = self._safe_read(item)
         if (
-            initial.media_kind != "ebook"
+            initial.media_kind not in {"ebook", "audiobook"}
             or type(file_index) is not int
             or not 0 <= file_index < len(initial.files)
         ):
@@ -1171,10 +1208,24 @@ class GenerateMetadataReport:
             and selected.identity != expected_file_identity
         ):
             raise CurrentnessError("target file changed")
-        if selected.format != "epub":
+        audiobook = initial.media_kind == "audiobook"
+        if (
+            selected.format != "epub"
+            if not audiobook
+            # F43 admits exactly the singular-supported shape the catalogue
+            # admits: one audio file, in one of the container formats the
+            # isolated inspector understands, with an inspector composed for it.
+            else (
+                selected.format not in AUDIO_FILE_FORMATS
+                or len(initial.files) != 1
+                or self._audio_inspector is None
+            )
+        ):
             raise UnsupportedMediaError("unsupported media")
 
         repository: ReportRepository | None = None
+        local: InspectionResult | None = None
+        audio: AudioInspectionResult | None = None
         try:
             repository = self._repository_factory()
             current_document = repository.current_optional(
@@ -1188,11 +1239,20 @@ class GenerateMetadataReport:
 
             try:
                 with self._timing.measure("extraction", "none"):
-                    local = self._inspector.inspect(
-                        self._mount,
-                        selected.relative_path,
-                        self._limits.source_archive_bytes,
-                    )
+                    if audiobook:
+                        # ``self._audio_inspector`` was proved non-``None`` by
+                        # the media gate above.
+                        audio = cast("AudioInspector", self._audio_inspector).inspect(
+                            self._mount,
+                            selected.relative_path,
+                            self._limits.source_archive_bytes,
+                        )
+                    else:
+                        local = self._inspector.inspect(
+                            self._mount,
+                            selected.relative_path,
+                            self._limits.source_archive_bytes,
+                        )
             except MetadataReportError:
                 raise
             except Exception as error:
@@ -1235,7 +1295,26 @@ class GenerateMetadataReport:
         # Claims are evidence, not a set: retain the target observation first and
         # then the inspector's DOM/source occurrence order.  Content-addressed
         # references are deliberately not an ordering key.
-        combined_claims = (*target_title_claim, *local.claims)
+        extracted = (
+            audio.claims
+            if audio is not None
+            else cast("InspectionResult", local).claims
+        )
+        combined_claims = (*target_title_claim, *extracted)
+        if audio is not None:
+            return self._publish_audio_report(
+                repository,
+                item,
+                file_index,
+                selected,
+                initial,
+                audio,
+                combined_claims,
+                expected_current,
+            )
+        # ``local`` is the extraction result on every remaining path: the
+        # audiobook branch returned above and the gate admitted no third kind.
+        local = cast("InspectionResult", local)
         plan = metadata_discovery_plan(initial, combined_claims)
         observations: list[ProviderObservation] = []
         descriptors: list[ProviderCoverDescriptor] = []
@@ -1440,6 +1519,19 @@ class GenerateMetadataReport:
             # instead.
             _release_repository(repository, error)
             raise
+        return self._publish(repository, report, expected_current)
+
+    def _publish(
+        self,
+        repository: ReportRepository,
+        report: MetadataReport,
+        expected_current: str | None,
+    ) -> str:
+        """Revalidate, write, and read one assembled report back.
+
+        Shared by both media branches so an audiobook report is published under
+        exactly the currentness guard, receipt, and read-back an ebook one is.
+        """
         try:
 
             def currentness() -> bool:
@@ -1452,6 +1544,7 @@ class GenerateMetadataReport:
                     self._limits,
                     report,
                     require_singular=self._require_singular_target,
+                    audio_inspector=self._audio_inspector,
                 )
 
             persisted = (
@@ -1488,6 +1581,55 @@ class GenerateMetadataReport:
             if repository is not None:
                 repository.close()
 
+    def _publish_audio_report(
+        self,
+        repository: ReportRepository,
+        item: str,
+        file_index: int,
+        selected: TargetFile,
+        initial: TargetSnapshot,
+        audio: AudioInspectionResult,
+        combined_claims: tuple[LocalClaim, ...],
+        expected_current: str | None,
+    ) -> str:
+        """Publish one audiobook report that terminates at local extraction.
+
+        No ``ProviderBinding`` is read, no discovery plan is built, and no
+        provider is constructed or dispatched: F43 slice 1 publishes exactly
+        what the isolated inspector read off the file, and the domain refuses
+        an audio report that carries a provider observation at all.
+        """
+        reasons = tuple(
+            sorted(
+                {f"{claim.basis}_{claim.kind.value}" for claim in audio.claims}
+                or {"no_local_audio_claims"}
+            )
+        )
+        try:
+            report = MetadataReport.create(
+                target=TargetFacts(
+                    self._connection.name,
+                    self._library.name,
+                    item,
+                    initial.fields,
+                ),
+                file=FileFacts(
+                    file_index,
+                    selected.identity,
+                    audio.content_digest,
+                    selected.format,
+                ),
+                local_claims=combined_claims,
+                local_reasons=reasons,
+                providers=(),
+                field_results=derive_field_results(combined_claims),
+                audio=audio.audio,
+            )
+        except Exception as error:
+            _release_repository(repository, error)
+            raise
+        return self._publish(repository, report, expected_current)
+
     def _safe_read(self, item: str) -> TargetSnapshot:
         try:
             value = self._target.read(item)
@@ -1512,6 +1654,7 @@ def require_report_current(
     report: MetadataReport,
     *,
     require_singular: bool = False,
+    audio_inspector: AudioInspector | None = None,
 ) -> bool:
     """Revalidate the exact target, media, and ABS cover bound to a report."""
     if (
@@ -1519,6 +1662,11 @@ def require_report_current(
         or type(report) is not MetadataReport
         or type(limits) is not ReportLimits
     ):
+        raise CurrentnessError("target or media changed")
+    audiobook = report.file.format in AUDIO_FILE_FORMATS
+    if audiobook and audio_inspector is None:
+        # A composition that cannot re-read the media it published a report
+        # from cannot demonstrate currentness for it.
         raise CurrentnessError("target or media changed")
     try:
         final = target.read(report.target.item)
@@ -1535,13 +1683,17 @@ def require_report_current(
         value for value in final.files if value.identity == report.file.identity
     )
     if (
-        final.media_kind != "ebook"
+        final.media_kind != ("audiobook" if audiobook else "ebook")
         or final.title != report.target.current_title
         or final.fields != report.target.fields
-        or (require_singular and len(final.files) != 1)
+        or ((require_singular or audiobook) and len(final.files) != 1)
         or len(matches) != 1
-        or matches[0].format != "epub"
-        or not inspector.unchanged(
+        or matches[0].format != report.file.format
+        or not (
+            # ``audio_inspector`` was proved non-``None`` above for an
+            # audiobook report.
+            cast("AudioInspector", audio_inspector) if audiobook else inspector
+        ).unchanged(
             mount,
             matches[0].relative_path,
             report.file.content_digest,
@@ -1582,6 +1734,9 @@ def require_report_current(
 
 
 __all__ = [
+    "AudioInspectionResult",
+    "AudioInspector",
+    "AudioItemInspectionError",
     "CoverObserver",
     "CoverReadError",
     "CoverSourceChangedError",

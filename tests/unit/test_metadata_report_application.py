@@ -32,8 +32,14 @@ from mechanical_librarian.application.metadata_report import (
     TargetFile,
     TargetSnapshot,
     UnsupportedMediaError,
+    require_report_current,
 )
 from mechanical_librarian.application.operations import StageTimer, StageTiming
+from mechanical_librarian.domain.audio_inspection import (
+    AudioChapter,
+    AudioEmbeddedCover,
+    AudioEvidenceSurface,
+)
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
     CoverSource,
@@ -48,8 +54,11 @@ from mechanical_librarian.domain.failure_diagnostics import (
     FailureStage,
 )
 from mechanical_librarian.domain.metadata_report import (
+    AudioFacts,
     ClaimKind,
     ClaimScope,
+    FieldSource,
+    FieldState,
     FileFacts,
     LocalClaim,
     MetadataReport,
@@ -62,9 +71,11 @@ from mechanical_librarian.domain.metadata_report import (
     default_target_fields,
 )
 from tests.support.metadata_report_doubles import (
+    FakeAudioInspector,
     FakeInspector,
     FakeReportRepository,
     FakeTarget,
+    audio_result,
 )
 
 
@@ -996,3 +1007,206 @@ def test_currentness_covers_every_target_destination() -> None:
         service.run("item-1", 0)
     assert repository.values == {}
     assert repository.closed
+
+
+def _audiobook_service(
+    target: FakeTarget,
+    repository: FakeReportRepository,
+    audio_inspector: FakeAudioInspector | None,
+    *,
+    activity: list[str] | None = None,
+) -> GenerateMetadataReport:
+    recorded = [] if activity is None else activity
+    return GenerateMetadataReport(
+        target=target,
+        inspector=FakeInspector(InspectionResult("c" * 64, ())),
+        repository_factory=lambda: cast(ReportRepository, repository),
+        providers=(
+            ProviderBinding("catalogue", True, lambda: recorded.append("provider")),  # type: ignore[return-value]  # reason: a sentinel factory the audiobook path must never invoke, so it never has to yield a provider.
+        ),
+        connection=TargetConnectionConfiguration(
+            "primary", "https://example.invalid", "/private/target"
+        ),
+        library=LibraryConfiguration(
+            "audio", "primary", "library-id", "audiobook", "audiobooks", ("catalogue",)
+        ),
+        mount=MediaMountConfiguration("audiobooks", "/media", "/library", True),
+        limits=ReportLimits(),
+        audio_inspector=audio_inspector,
+    )
+
+
+def test_audiobook_publishes_local_evidence_and_dispatches_no_provider() -> None:
+    selected = TargetFile("a" * 64, "book.m4b", "m4b")
+    target = FakeTarget(
+        [
+            TargetSnapshot("audiobook", "Recorded title", (selected,)),
+            TargetSnapshot("audiobook", "Recorded title", (selected,)),
+        ]
+    )
+    audio_inspector = FakeAudioInspector(
+        audio_result(
+            (
+                (ClaimKind.ASIN, "B0CW1KL2QD", "embedded_tag", None),
+                (
+                    ClaimKind.CONTRIBUTOR,
+                    "Recorded Narrator",
+                    "embedded_tag",
+                    "narrator",
+                ),
+                (ClaimKind.DURATION, "43200.000", "embedded_tag", None),
+                (ClaimKind.PERFORMANCE_TYPE, "unabridged", "sidecar", None),
+                (ClaimKind.SERIES, "Discworld", "path", None),
+            ),
+            chapters=(AudioChapter(1, 0, 10_000, "One"),),
+            embedded_cover=AudioEmbeddedCover(
+                True, AudioEvidenceSurface.CONTAINER_STREAM
+            ),
+        )
+    )
+    repository = FakeReportRepository()
+    activity: list[str] = []
+
+    published = MetadataReport.from_json(
+        _audiobook_service(target, repository, audio_inspector, activity=activity).run(
+            "item-1", 0
+        )
+    )
+
+    assert activity == []
+    assert audio_inspector.inspections == 1
+    assert published.providers == ()
+    assert published.cover_sources == ()
+    assert published.file.format == "m4b"
+    assert published.audio is not None
+    assert published.audio.embedded_cover.present is True
+    assert [value.ordinal for value in published.audio.chapters] == [1]
+    assert published.local_reasons == (
+        "embedded_tag_asin",
+        "embedded_tag_contributor",
+        "embedded_tag_duration",
+        "path_series",
+        "sidecar_performance_type",
+    )
+    duration = next(
+        value for value in published.field_results if value.kind is ClaimKind.DURATION
+    )
+    assert {(value.source, value.state) for value in duration.sources} == {
+        (FieldSource.EPUB, FieldState.ABSENT),
+        (FieldSource.TARGET_METADATA, FieldState.UNSUPPORTED),
+        (FieldSource.AUDIO_TAG, FieldState.VALID),
+        (FieldSource.AUDIO_SIDECAR, FieldState.ABSENT),
+        (FieldSource.AUDIO_PATH, FieldState.ABSENT),
+    }
+    series = next(
+        value for value in published.field_results if value.kind is ClaimKind.SERIES
+    )
+    assert (FieldSource.AUDIO_PATH, FieldState.VALID) in {
+        (value.source, value.state) for value in series.sources
+    }
+
+
+def test_an_audiobook_without_local_evidence_still_publishes_a_named_reason() -> None:
+    selected = TargetFile("a" * 64, "book.m4b", "m4b")
+    target = FakeTarget(
+        [
+            TargetSnapshot("audiobook", "Recorded title", (selected,)),
+            TargetSnapshot("audiobook", "Recorded title", (selected,)),
+        ]
+    )
+    repository = FakeReportRepository()
+
+    published = MetadataReport.from_json(
+        _audiobook_service(target, repository, FakeAudioInspector(audio_result())).run(
+            "item-1", 0
+        )
+    )
+
+    assert published.local_reasons == ("no_local_audio_claims",)
+    assert published.audio is not None
+    assert published.audio.chapters == ()
+
+
+@pytest.mark.parametrize(
+    ("files", "inspector_present"),
+    (
+        (
+            (
+                TargetFile("a" * 64, "part-1.m4b", "m4b"),
+                TargetFile("b" * 64, "part-2.m4b", "m4b"),
+            ),
+            True,
+        ),
+        ((TargetFile("a" * 64, "book.wav", "wav"),), True),
+        ((TargetFile("a" * 64, "book.m4b", "m4b"),), False),
+    ),
+    ids=("multi-file", "unsupported-format", "no-composed-inspector"),
+)
+def test_audiobook_shapes_outside_the_slice_stay_unsupported(
+    files: tuple[TargetFile, ...], inspector_present: bool
+) -> None:
+    target = FakeTarget([TargetSnapshot("audiobook", "Recorded title", files)])
+    audio_inspector = FakeAudioInspector(audio_result()) if inspector_present else None
+    repository = FakeReportRepository()
+
+    with pytest.raises(UnsupportedMediaError):
+        _audiobook_service(target, repository, audio_inspector).run("item-1", 0)
+
+    assert repository.values == {}
+    assert audio_inspector is None or audio_inspector.inspections == 0
+
+
+def test_audiobook_currentness_reruns_the_audio_inspector_not_the_epub_one() -> None:
+    selected = TargetFile("a" * 64, "book.m4b", "m4b")
+    target = FakeTarget(
+        [
+            TargetSnapshot("audiobook", "Recorded title", (selected,)),
+            TargetSnapshot("audiobook", "Recorded title", (selected,)),
+        ]
+    )
+    epub_inspector = FakeInspector(InspectionResult("c" * 64, ()))
+    audio_inspector = FakeAudioInspector(audio_result())
+
+    assert require_report_current(
+        target,
+        epub_inspector,
+        MediaMountConfiguration("audiobooks", "/media", "/library", True),
+        ReportLimits(),
+        MetadataReport.create(
+            target=TargetFacts(
+                "primary", "audio", "item-1", default_target_fields("Recorded title")
+            ),
+            file=FileFacts(0, "a" * 64, "d" * 64, "m4b"),
+            local_claims=(),
+            local_reasons=("no_local_audio_claims",),
+            providers=(),
+            audio=AudioFacts(),
+        ),
+        audio_inspector=audio_inspector,
+    )
+    assert audio_inspector.verifications == 1
+    assert epub_inspector.verifications == 0
+
+
+def test_an_audiobook_report_cannot_prove_currentness_without_its_inspector() -> None:
+    report = MetadataReport.create(
+        target=TargetFacts(
+            "primary", "audio", "item-1", default_target_fields("Recorded title")
+        ),
+        file=FileFacts(0, "a" * 64, "d" * 64, "m4b"),
+        local_claims=(),
+        local_reasons=("no_local_audio_claims",),
+        providers=(),
+        audio=AudioFacts(),
+    )
+    target = FakeTarget([TargetSnapshot("audiobook", "Recorded title", ())])
+
+    with pytest.raises(CurrentnessError):
+        require_report_current(
+            target,
+            FakeInspector(InspectionResult("c" * 64, ())),
+            MediaMountConfiguration("audiobooks", "/media", "/library", True),
+            ReportLimits(),
+            report,
+        )
+    assert target.calls == 0

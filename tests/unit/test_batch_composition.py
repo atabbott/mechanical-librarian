@@ -39,6 +39,7 @@ def test_review_receipt_keeps_complete_mixed_provider_report_for_proposal():
     action = SimpleNamespace(action_id="work")
     report = SimpleNamespace(
         report_id="report-current",
+        file=SimpleNamespace(format="epub"),
         providers=(
             SimpleNamespace(
                 provider="hardcover", status=ProviderStatus.CANDIDATES, lanes=()
@@ -74,6 +75,61 @@ def test_review_receipt_keeps_complete_mixed_provider_report_for_proposal():
     receipt(repository, report)
     repository.complete_review_extraction_publication.assert_called_once_with(
         action, "report-current", unittest.mock.ANY, 0, None, False, None
+    )
+
+
+def test_review_receipt_ends_an_audiobook_report_at_its_local_evidence():
+    config = ApplicationConfiguration(
+        (
+            TargetConnectionConfiguration(
+                "primary", "https://example.invalid", "/target"
+            ),
+        ),
+        (
+            LibraryConfiguration(
+                "audio", "primary", "library", "audiobook", "media", ()
+            ),
+        ),
+        (MediaMountConfiguration("media", "/media", "/books", True),),
+        (),
+    )
+    service = unittest.mock.Mock()
+    service.run.return_value = "report"
+    action = SimpleNamespace(action_id="work")
+    report = SimpleNamespace(
+        report_id="report-current",
+        file=SimpleNamespace(format="m4b"),
+        providers=(),
+    )
+    repository = unittest.mock.Mock()
+    with (
+        patch.object(composition, "CoverArtifactStore"),
+        patch.object(composition, "AudiobookshelfItemReader"),
+        patch.object(
+            composition, "GenerateMetadataReport", return_value=service
+        ) as generate,
+    ):
+        assert "report" == composition.run_metadata_report_loaded(
+            config,
+            Path("/reports"),
+            Path("/artifacts"),
+            "primary",
+            "audio",
+            "item",
+            0,
+            review_action=action,
+            pipeline_repository=repository,
+        )
+    receipt = generate.call_args.kwargs["publication_receipt"]
+    receipt(repository, report)
+    repository.complete_review_extraction_publication.assert_called_once_with(
+        action,
+        "report-current",
+        unittest.mock.ANY,
+        0,
+        "local_evidence_only",
+        False,
+        None,
     )
 
 

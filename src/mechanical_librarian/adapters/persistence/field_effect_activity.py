@@ -2779,10 +2779,16 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         connection=provider_root,
                     )
                 )
+            # An audiobook ends failed because its preparation has nowhere
+            # further to go, not because anything went wrong: its report is
+            # published and projected.  Left in, every audiobook in the
+            # library would be a distinct incident asking the owner to act,
+            # and together they would fill the window this query bounds.
             terminal_failures = self._connection.execute(
                 "SELECT work_id,stage,attempt,recovery_attempt,failure_code "
                 "FROM review_preparation_work WHERE state='failed' "
                 "AND failure_code IS NOT NULL "
+                "AND failure_code != 'local_evidence_only' "
                 "ORDER BY updated_at DESC,work_id LIMIT 256"
             ).fetchall()
             for work_id, stage, attempt, recovery_attempt, code in terminal_failures:

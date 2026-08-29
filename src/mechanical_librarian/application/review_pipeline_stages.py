@@ -62,10 +62,16 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPipelineError,
     ReviewPipelineRepository,
     ReviewPreparationPipeline,
+    audio_inspection_failure_code,
     inspection_failure_code,
 )
+from mechanical_librarian.domain.audio_inspection import AudioInspectionOutcome
 from mechanical_librarian.domain.epub_inspection import EpubInspectionOutcome
-from mechanical_librarian.domain.metadata_report import MetadataReport, ProviderStatus
+from mechanical_librarian.domain.metadata_report import (
+    AUDIO_FILE_FORMATS,
+    MetadataReport,
+    ProviderStatus,
+)
 from mechanical_librarian.domain.proposal_set import ProposalSet
 from mechanical_librarian.domain.review_case import (
     ReviewAdmissionResult,
@@ -233,6 +239,10 @@ class ReviewPipelineStages:
                 raise ReviewPipelineError(
                     inspection_failure_code(error.outcome)
                 ) from error
+            if type(error.outcome) is AudioInspectionOutcome:
+                raise ReviewPipelineError(
+                    audio_inspection_failure_code(error.outcome)
+                ) from error
             raise ReviewPipelineError("unknown") from error
         return MetadataReport.from_json(serialized).report_id, True
 
@@ -292,6 +302,14 @@ class ReviewPipelineStages:
         value = MetadataReport.from_json(
             cast("ReviewStageRepository", pipeline_repository).get(report_id)
         )
+        if value.file.format in AUDIO_FILE_FORMATS:
+            # An audiobook's preparation already ended terminally in the
+            # transaction that published its report, so it never reaches this
+            # stage. This is the guard for the one thing that must not happen
+            # if it somehow did: contacting providers for a report that was
+            # published with none, and recording recovery observations that no
+            # provider produced.
+            raise ReviewPipelineError("local_evidence_only")
         record_provider_recovery_observations(
             self._recovery_observer,
             value,

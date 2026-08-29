@@ -13,6 +13,7 @@ from mechanical_librarian.application.catalogue import (
 )
 from mechanical_librarian.application.metadata_report import CredentialError
 from mechanical_librarian.application.operations import StageTimer
+from mechanical_librarian.domain.audio_inspection import AudioInspectionOutcome
 from mechanical_librarian.domain.epub_inspection import EpubInspectionOutcome
 from mechanical_librarian.domain.metadata_report import ProviderStatus
 
@@ -24,6 +25,7 @@ __all__ = [
     "ReviewPreparationPipeline",
     "ReviewPreparationSupervisor",
     "TargetConnectionCondition",
+    "audio_inspection_failure_code",
     "preparation_failure_reference",
     "inspection_failure_code",
 ]
@@ -117,6 +119,40 @@ def inspection_failure_code(outcome: EpubInspectionOutcome) -> str:
         EpubInspectionOutcome.INVALID_CONFIGURATION,
         EpubInspectionOutcome.CHILD_FAILURE,
         EpubInspectionOutcome.INTERNAL_FAILURE,
+    }:
+        return "internal_failure"
+    raise ReviewPipelineError("state")
+
+
+def audio_inspection_failure_code(outcome: AudioInspectionOutcome) -> str:
+    """Name an audiobook inspection outcome in the owner-facing vocabulary.
+
+    Every member of the outcome vocabulary is answered here.  A missing probe
+    binary is a deployment fault rather than anything an owner configured, so
+    it lands with the other internal failures instead of borrowing the
+    provider-configuration meaning.
+    """
+    if outcome in {
+        AudioInspectionOutcome.SUCCESS,
+        AudioInspectionOutcome.NO_APPLICABLE_EVIDENCE,
+    }:
+        return "success"
+    if outcome is AudioInspectionOutcome.UNSUPPORTED_FORMAT:
+        return "unsupported_media"
+    if outcome is AudioInspectionOutcome.UNAVAILABLE_SOURCE:
+        return "unreadable_media"
+    if outcome in {
+        AudioInspectionOutcome.MALFORMED,
+        AudioInspectionOutcome.PROBE_FAILURE,
+        AudioInspectionOutcome.RESOURCE_LIMIT,
+        AudioInspectionOutcome.TIMEOUT,
+        AudioInspectionOutcome.CANCELLATION,
+    }:
+        return "parser_refused"
+    if outcome in {
+        AudioInspectionOutcome.INVALID_CONFIGURATION,
+        AudioInspectionOutcome.CHILD_FAILURE,
+        AudioInspectionOutcome.INTERNAL_FAILURE,
     }:
         return "internal_failure"
     raise ReviewPipelineError("state")

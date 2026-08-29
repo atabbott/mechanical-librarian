@@ -768,3 +768,87 @@ def test_each_material_review_source_dimension_changes_fingerprint(
             "primary", _library(), None, summary, detail
         ).source_fingerprint
     )
+
+
+def _audio_item(files: object) -> dict[str, object]:
+    return {
+        "id": "item-1",
+        "libraryId": "library-1",
+        "updatedAt": 1,
+        "media": {
+            "metadata": {"title": "Recorded title", "authors": [{"name": "Ada"}]},
+            "audioFiles": files,
+        },
+    }
+
+
+def _audio_record(name: str = "book.m4b", extension: str = ".m4b") -> dict[str, object]:
+    return {
+        "ino": "inode",
+        "metadata": {"relPath": name, "size": 7, "ext": extension},
+    }
+
+
+def test_a_mounted_single_file_audiobook_is_singular_supported() -> None:
+    entry = catalogue_entry(
+        "primary",
+        _library("audio"),
+        MediaMountConfiguration("audiobooks", "/media", "/library", True),
+        {"id": "item-1", "libraryId": "library-1", "updatedAt": 1},
+        _audio_item([_audio_record()]),
+    )
+
+    assert (entry.classification, entry.eligible, entry.has_ebook) == (
+        "singular-supported",
+        True,
+        False,
+    )
+    assert (entry.format, entry.mount, entry.service_path) == (
+        "m4b",
+        "audiobooks",
+        "book.m4b",
+    )
+
+
+@pytest.mark.parametrize(
+    ("mount", "files"),
+    (
+        pytest.param(None, [_audio_record()], id="unmounted"),
+        pytest.param(
+            MediaMountConfiguration("audiobooks", "/media", "/library", True),
+            [_audio_record("part-1.m4b"), _audio_record("part-2.m4b")],
+            id="multi-file",
+        ),
+        pytest.param(
+            MediaMountConfiguration("audiobooks", "/media", "/library", True),
+            [_audio_record("book.wav", ".wav")],
+            id="unsupported-format",
+        ),
+        pytest.param(
+            MediaMountConfiguration("audiobooks", "/media", "/library", True),
+            [],
+            id="no-audio-file",
+        ),
+        pytest.param(
+            MediaMountConfiguration("audiobooks", "/media", "/library", True),
+            "not-a-list",
+            id="not-a-list",
+        ),
+    ),
+)
+def test_audiobook_shapes_outside_the_slice_stay_uneligible_without_attention(
+    mount: MediaMountConfiguration | None, files: object
+) -> None:
+    entry = catalogue_entry(
+        "primary",
+        _library("audio"),
+        mount,
+        {"id": "item-1", "libraryId": "library-1", "updatedAt": 1},
+        _audio_item(files),
+    )
+
+    assert (entry.classification, entry.eligible, entry.has_ebook) == (
+        "none",
+        False,
+        False,
+    )

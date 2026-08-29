@@ -191,9 +191,14 @@ generation. Proposal evaluation replays it, so a later configuration edit
 cannot silently reinterpret an already active generation; another explicit
 activation establishes any new resolution.
 
-An ebook library requires a named read-only mount. Audiobook libraries may
-coexist and use `mount: null`, but `metadata-report` rejects their items before
-parser/provider/publication activity.
+An ebook library requires a named read-only mount. An audiobook library may
+give a named read-only mount too: with one, each of its single-audio-file items
+is prepared as a local-evidence report and stops there, with no provider
+contacted. An audiobook library that keeps `mount: null`, and any multi-file
+audiobook item, is rejected before parser/provider/publication activity exactly
+as before. Reading that local evidence requires the `ffprobe` binary the
+shipped image builds and carries; a deployment without it records no audiobook
+evidence.
 
 Every provider has explicit enablement and one of exactly three built-in adapter
 values:

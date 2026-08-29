@@ -35,6 +35,7 @@ from mechanical_librarian.domain.evidence_bounds import (
     validate_projection_text,
 )
 from mechanical_librarian.domain.metadata_report import (
+    AUDIO_FILE_FORMATS,
     MAX_CONTRIBUTIONS,
     MAX_DESCRIPTION_CHARACTERS,
     MAX_SCALAR_CHARACTERS,
@@ -256,16 +257,19 @@ def _snapshot(
     if len(files_source) > 128:
         raise MetadataReportError("target response is invalid")
     files = tuple(_file(value, service_path, root) for value in files_source)
+    audio_source = media.get("audioFiles")
+    if files:
+        media_kind = "ebook"
+    elif type(audio_source) is list:
+        media_kind = "audiobook"
+        if len(audio_source) > 128:
+            raise MetadataReportError("target response is invalid")
+        files = _audio_files(audio_source, service_path, root)
+    else:
+        media_kind = "unsupported"
     identities = tuple(value.identity for value in files)
     if len(set(identities)) != len(identities):
         raise MetadataReportError("target file identities are duplicated")
-    media_kind = (
-        "ebook"
-        if files
-        else "audiobook"
-        if type(media.get("audioFiles")) is list
-        else "unsupported"
-    )
     cover_path = root.get("coverPath")
     cover = None
     if cover_path is not None:
@@ -515,6 +519,34 @@ def _file(
     except ValueError as error:
         raise MetadataReportError(str(error)) from None
     return TargetFile(location.identity, location.relative_path, location.format)
+
+
+def _audio_files(
+    source: list[Any], service_path: str, item: object
+) -> tuple[TargetFile, ...]:
+    """Surface the item's audio tracks, or none of them.
+
+    An audio record that does not resolve to one agreed service-relative path
+    in a supported format makes the whole set unusable rather than a shorter
+    one: a report is bound to a file *index*, so silently dropping a member
+    would renumber the survivors and bind a report to a different track. This
+    is deliberately not an error -- an unusable audiobook item still reads,
+    and simply has no file a report can be prepared from.
+    """
+    values: list[TargetFile] = []
+    for value in source:
+        try:
+            location = normalize_ebook_location(
+                value, service_path=service_path, item=item
+            )
+        except ValueError:
+            return ()
+        if location.format not in AUDIO_FILE_FORMATS:
+            return ()
+        values.append(
+            TargetFile(location.identity, location.relative_path, location.format)
+        )
+    return tuple(values)
 
 
 def _bounded_body(

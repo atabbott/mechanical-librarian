@@ -10,8 +10,17 @@ import unicodedata
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Any, Self, TypedDict, cast
+from types import MappingProxyType
+from typing import Any, Mapping, Self, TypedDict, cast
 
+from mechanical_librarian.domain.audio_inspection import (
+    MAX_CHAPTERS as MAX_AUDIO_CHAPTERS,
+)
+from mechanical_librarian.domain.audio_inspection import (
+    AudioChapter,
+    AudioEmbeddedCover,
+    AudioEvidenceSurface,
+)
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
     CoverContext,
@@ -54,7 +63,7 @@ from mechanical_librarian.domain.work_identity import (
     work_title_transformation_lineage_from_data,
 )
 
-REPORT_SCHEMA = "metadata-report-v30"
+REPORT_SCHEMA = "metadata-report-v31"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v5"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -133,6 +142,8 @@ class ClaimKind(StrEnum):
     IMPRINT = "imprint"
     GENRE = "genre"
     TAG = "tag"
+    DURATION = "duration"
+    PERFORMANCE_TYPE = "performance_type"
 
 
 class ProviderEvidenceKind(StrEnum):
@@ -195,6 +206,27 @@ class FieldState(StrEnum):
 class FieldSource(StrEnum):
     EPUB = "epub"
     TARGET_METADATA = "target_metadata"
+    AUDIO_TAG = "audio_tag"
+    AUDIO_SIDECAR = "audio_sidecar"
+    AUDIO_PATH = "audio_path"
+
+
+# Which local-claim bases each owner-facing source buckets.  This mapping is
+# the only definition of the set: `CLAIM_BASES` is derived from it below and
+# `LocalClaim` refuses any basis outside it, so a basis cannot exist without an
+# owner-facing source that `derive_field_results` will bucket it under.
+_SOURCE_CLAIM_BASES: Mapping[FieldSource, frozenset[str]] = MappingProxyType(
+    {
+        FieldSource.EPUB: frozenset({"opening_matter", "package_metadata"}),
+        FieldSource.TARGET_METADATA: frozenset({"target_metadata"}),
+        FieldSource.AUDIO_TAG: frozenset({"embedded_tag"}),
+        FieldSource.AUDIO_SIDECAR: frozenset({"sidecar"}),
+        FieldSource.AUDIO_PATH: frozenset({"path"}),
+    }
+)
+CLAIM_BASES = frozenset(
+    basis for bases in _SOURCE_CLAIM_BASES.values() for basis in bases
+)
 
 
 class TargetDestination(StrEnum):
@@ -873,6 +905,46 @@ def default_target_fields(title: str | None) -> tuple[TargetField, ...]:
     return tuple(values)
 
 
+AUDIO_FILE_FORMATS = frozenset({"m4b", "m4a", "mp3"})
+SUPPORTED_FILE_FORMATS = frozenset({"epub"}) | AUDIO_FILE_FORMATS
+
+
+@dataclass(frozen=True, slots=True)
+class AudioFacts:
+    """The bounded structured audio section of one audiobook report.
+
+    Chapters are structure, not claims: they name no target field, are never
+    compared, and can never become a proposal.  The embedded cover is a
+    presence fact for the same reason -- it grants no acquisition authority and
+    is deliberately not a ``CoverSource``.
+    """
+
+    chapters: tuple[AudioChapter, ...] = ()
+    chapters_truncated: bool = False
+    embedded_cover: AudioEmbeddedCover = AudioEmbeddedCover(False)
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.chapters) is not tuple
+            or len(self.chapters) > MAX_AUDIO_CHAPTERS
+            or any(type(value) is not AudioChapter for value in self.chapters)
+            or type(self.chapters_truncated) is not bool
+            or type(self.embedded_cover) is not AudioEmbeddedCover
+        ):
+            raise ReportValueError("audio facts are invalid")
+        if tuple(value.ordinal for value in self.chapters) != tuple(
+            range(1, len(self.chapters) + 1)
+        ):
+            raise ReportValueError("audio chapter ordinals are invalid")
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "chapters": [value.to_data() for value in self.chapters],
+            "chapters_truncated": self.chapters_truncated,
+            "embedded_cover": self.embedded_cover.to_data(),
+        }
+
+
 @dataclass(frozen=True, slots=True)
 class FileFacts:
     selected_index: int
@@ -891,7 +963,7 @@ class FileFacts:
             or _DIGEST.fullmatch(self.content_digest) is None
         ):
             raise ReportValueError("selected file identity is invalid")
-        if self.format != "epub":
+        if self.format not in SUPPORTED_FILE_FORMATS:
             raise ReportValueError("selected file format is unsupported")
 
     def to_data(self) -> dict[str, object]:
@@ -990,7 +1062,7 @@ class LocalClaim:
             "not_applicable",
         }:
             raise ReportValueError("claim applicability is invalid")
-        if self.basis not in {"opening_matter", "package_metadata", "target_metadata"}:
+        if self.basis not in CLAIM_BASES:
             raise ReportValueError("claim basis is invalid")
         if self.checksum not in {
             "valid_isbn_10",
@@ -2434,6 +2506,7 @@ class MetadataReport:
     cover_sources: tuple[CoverSource, ...] = ()
     schema_version: str = REPORT_SCHEMA
     comparison_version: str = COMPARISON_VERSION
+    audio: AudioFacts | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -2442,6 +2515,11 @@ class MetadataReport:
             or type(self.file) is not FileFacts
         ):
             raise ReportValueError("report identity or target is invalid")
+        is_audio = self.file.format in AUDIO_FILE_FORMATS
+        if (
+            self.audio is not None and type(self.audio) is not AudioFacts
+        ) or is_audio != (self.audio is not None):
+            raise ReportValueError("audio section does not match the selected file")
         if self.schema_version != REPORT_SCHEMA:
             raise ReportValueError("report schema is unsupported")
         if self.comparison_version != COMPARISON_VERSION:
@@ -2473,6 +2551,13 @@ class MetadataReport:
             type(value) is not ProviderObservation for value in self.providers
         ):
             raise ReportValueError("provider observations are invalid")
+        # F43 terminates an audiobook report at local extraction. No provider is
+        # constructed, dispatched, or recorded for one, so a provider
+        # observation on an audio report is a composition fault rather than a
+        # provider outcome, and the report refuses it here rather than letting
+        # it reach a proposal.
+        if is_audio and self.providers:
+            raise ReportValueError("audio report cannot carry provider observations")
         names = tuple(value.provider for value in self.providers)
         if names != tuple(sorted(set(names))):
             raise ReportValueError("provider observations are not in canonical order")
@@ -2663,6 +2748,7 @@ class MetadataReport:
         field_results: tuple[FieldResult, ...] | None = None,
         identifier_evidence: tuple[IdentifierEvidence, ...] | None = None,
         cover_sources: tuple[CoverSource, ...] = (),
+        audio: AudioFacts | None = None,
     ) -> Self:
         local_status = (
             "candidate"
@@ -2707,6 +2793,7 @@ class MetadataReport:
             results,
             identifiers,
             cover_sources,
+            audio,
         )
         data.pop("report_id")
         identity = (
@@ -2723,6 +2810,7 @@ class MetadataReport:
             results,
             identifiers,
             cover_sources,
+            audio=audio,
         )
 
     def _identity_data(self) -> dict[str, object]:
@@ -2742,6 +2830,7 @@ class MetadataReport:
             self.field_results,
             self.identifier_evidence,
             self.cover_sources,
+            self.audio,
         )
 
     def to_json(self) -> str:
@@ -2797,21 +2886,19 @@ def derive_field_results(
     )
 
     def source_state(kind: ClaimKind, source: FieldSource) -> FieldState:
+        # The ABS-asserted surface is title-only by construction: `LocalClaim`
+        # refuses a `target_metadata` basis for any other kind. Reporting that
+        # as `unsupported` rather than `absent` keeps "this surface cannot
+        # carry the field" distinct from "this surface carried nothing".
         if source is FieldSource.TARGET_METADATA and kind is not ClaimKind.TITLE:
             return FieldState.UNSUPPORTED
-        basis = "target_metadata" if source is FieldSource.TARGET_METADATA else None
+        bases = _SOURCE_CLAIM_BASES[source]
         return next(
             (
                 state
                 for state in precedence
                 if any(
-                    claim.kind is kind
-                    and claim.state is state
-                    and (
-                        (claim.basis == basis)
-                        if basis is not None
-                        else claim.basis != "target_metadata"
-                    )
+                    claim.kind is kind and claim.state is state and claim.basis in bases
                     for claim in local_claims
                 )
             ),
@@ -3162,6 +3249,10 @@ def claim_scope(
             ClaimKind.PUBLISHER,
             ClaimKind.IMPRINT,
             ClaimKind.LANGUAGE,
+            # A running time and a performance treatment are properties of one
+            # recorded manifestation, never of the work it renders.
+            ClaimKind.DURATION,
+            ClaimKind.PERFORMANCE_TYPE,
         }
         else ClaimScope.WORK
     )
@@ -4006,6 +4097,12 @@ def _comparison_value(kind: ClaimKind, value: str) -> str:
     if kind is ClaimKind.DESCRIPTION:
         _projection_text(value, "comparison description", MAX_DESCRIPTION_CHARACTERS)
         return " ".join(unicodedata.normalize("NFC", value).split()).casefold()
+    if kind in {ClaimKind.DURATION, ClaimKind.PERFORMANCE_TYPE}:
+        # Both already arrive in exactly one canonical spelling -- a
+        # millisecond-precision seconds string and a closed token -- so the
+        # title normaliser, which is written for prose, must not touch them.
+        _projection_text(value, "comparison audio value", MAX_SCALAR_CHARACTERS)
+        return value
     return normalize_title(value).casefold()
 
 
@@ -4020,8 +4117,10 @@ def _report_data(
     field_results: tuple[FieldResult, ...],
     identifier_evidence: tuple[IdentifierEvidence, ...],
     cover_sources: tuple[CoverSource, ...],
+    audio: AudioFacts | None = None,
 ) -> dict[str, object]:
     return {
+        "audio": None if audio is None else audio.to_data(),
         "file": file.to_data(),
         "field_results": [value.to_data() for value in field_results],
         "identifier_evidence": [value.to_data() for value in identifier_evidence],
@@ -4043,6 +4142,7 @@ def _report_from_data(value: object) -> MetadataReport:
     root = _object(
         value,
         {
+            "audio",
             "comparison_version",
             "covers",
             "field_results",
@@ -4103,7 +4203,45 @@ def _report_from_data(value: object) -> MetadataReport:
         covers,
         root["schema_version"],
         root["comparison_version"],
+        _audio_facts_from_data(root["audio"]),
     )
+
+
+def _audio_facts_from_data(value: object) -> AudioFacts | None:
+    if value is None:
+        return None
+    item = _object(value, {"chapters", "chapters_truncated", "embedded_cover"})
+    cover = _object(item["embedded_cover"], {"present", "surface"})
+    try:
+        return AudioFacts(
+            tuple(
+                _audio_chapter_from_data(chapter) for chapter in _list(item["chapters"])
+            ),
+            item["chapters_truncated"],
+            AudioEmbeddedCover(
+                cover["present"],
+                None
+                if cover["surface"] is None
+                else AudioEvidenceSurface(cover["surface"]),
+            ),
+        )
+    except ValueError as error:
+        raise ReportValueError("audio facts are invalid") from error
+
+
+def _audio_chapter_from_data(value: object) -> AudioChapter:
+    item = _object(
+        value, {"end_milliseconds", "ordinal", "start_milliseconds", "title"}
+    )
+    try:
+        return AudioChapter(
+            item["ordinal"],
+            item["start_milliseconds"],
+            item["end_milliseconds"],
+            item["title"],
+        )
+    except ValueError as error:
+        raise ReportValueError("audio chapter is invalid") from error
 
 
 def _target_field_from_data(value: object) -> TargetField:
@@ -4728,6 +4866,10 @@ __all__ = [
     "IdentifierEvidenceBasis",
     "IdentifierRelation",
     "MAX_REPORT_BYTES",
+    "AUDIO_FILE_FORMATS",
+    "SUPPORTED_FILE_FORMATS",
+    "CLAIM_BASES",
+    "AudioFacts",
     "MetadataReport",
     "ProviderCandidate",
     "ProviderClaim",

@@ -81,6 +81,7 @@ _FAILURE_CODES = frozenset(
         "missing_required_input",
         "malformed_retained_data",
         "internal_failure",
+        "local_evidence_only",
         "unknown",
     )
 )
@@ -1015,7 +1016,18 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             or type(recovery_delay_seconds) is not int
             or not 0 <= recovery_delay_seconds <= 86_400
             or provider_failure_code
-            not in {None, "provider", "configuration", "authentication", "transient"}
+            not in {
+                None,
+                "provider",
+                "configuration",
+                "authentication",
+                "transient",
+                # Not a provider disposition at all: the report is complete and
+                # published, and F43 grants an audiobook nothing beyond it, so
+                # the work ends here rather than queueing a proposal that has
+                # no comparison to evaluate.
+                "local_evidence_only",
+            }
             or type(claim_next) is not bool
             or (
                 provider_failure_root is not None
@@ -1058,6 +1070,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             terminal_failure = provider_failure_code in {
                 "authentication",
                 "configuration",
+                "local_evidence_only",
             }
             updated = self._connection.execute(
                 "UPDATE review_preparation_work SET stage=?,state=?,attempt=0,"
@@ -1076,6 +1089,26 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             ).rowcount
         if updated != 1:
             raise MetadataReportError("review preparation state changed")
+        if provider_failure_code == "local_evidence_only":
+            # Publication registers this row itself only when nothing follows
+            # it, and the pipeline always passes a disposition.  An ebook
+            # acquires its package later, at proposal or admission; an
+            # audiobook reaches neither stage, so the row it is browsed and
+            # searched by has to be written here or never.
+            registered = self._connection.execute(
+                "INSERT INTO current_review_packages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,checkpoint,outcome) "
+                "SELECT connection_name,library_name,item_id,NULL,report_id,NULL,NULL,'report_only' "
+                "FROM metadata_reports WHERE report_id=? "
+                "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET "
+                "proposal_set_id=NULL,report_id=excluded.report_id,review_case_id=NULL,checkpoint=NULL,outcome='report_only'",
+                (report_id,),
+            ).rowcount
+            if registered != 1:
+                # The row is selected from the report this call was handed, so
+                # writing nothing means that report is not there: exactly the
+                # unreachable-evidence failure this registration exists to
+                # prevent, and it must not pass silently.
+                raise MetadataReportError("review preparation state changed")
         transition_row = self._connection.execute(
             "SELECT transition_id,report_id FROM metadata_policy_transition_items "
             "WHERE work_id=? AND state='pending'",

@@ -21,10 +21,14 @@ from mechanical_librarian.adapters.cover_artifacts import (
     CoverDecodeTimeout,
     decode_cover,
 )
+from mechanical_librarian.adapters.evidence_extractors.audio_local import (
+    sidecar_surface,
+)
 from mechanical_librarian.adapters.evidence_extractors.epub_cover import (
     read_declared_cover,
 )
 from mechanical_librarian.adapters.evidence_extractors.process import (
+    run_audio_inspector_child,
     run_epub_inspector_child,
 )
 from mechanical_librarian.adapters.field_effect_authority import (
@@ -140,6 +144,8 @@ from mechanical_librarian.application.metadata_policy import (
 )
 from mechanical_librarian.application.metadata_report import (
     ArtifactAuthorityError,
+    AudioInspectionResult,
+    AudioItemInspectionError,
     CoverReadError,
     CoverSourceChangedError,
     CoverTimeoutError,
@@ -220,6 +226,10 @@ from mechanical_librarian.application.setup_connection import (
 )
 from mechanical_librarian.application.setup_journey import SetupJourneyOperation
 from mechanical_librarian.bootstrap.contained_reviewer import run_cover_packet_reviewer
+from mechanical_librarian.domain.audio_inspection import (
+    AudioInspectionLimits,
+    AudioInspectionOutcome,
+)
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverProvenance,
@@ -239,6 +249,8 @@ from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
 )
 from mechanical_librarian.domain.metadata_report import (
+    AUDIO_FILE_FORMATS,
+    AudioFacts,
     ClaimKind,
     ClaimScope,
     FieldState,
@@ -261,6 +273,7 @@ from mechanical_librarian.infrastructure.first_boot import FirstBootMode
 from mechanical_librarian.infrastructure.local_media import (
     LocalMediaError,
     LocalMediaLimitError,
+    list_local_media_siblings,
     open_local_media,
     sha256_descriptor,
 )
@@ -856,6 +869,144 @@ class _IsolatedEpubInspector:
                 os.close(opened.descriptor)
 
 
+class _IsolatedAudioInspector:
+    """Compose F43's audiobook capability behind one ``inspect`` call.
+
+    The mount, the sibling listing, and every descriptor are opened here; the
+    probe and the interpretation both happen in isolated children, and this
+    object never reads a media or sidecar byte itself.
+    """
+
+    def inspect(
+        self, mount: MediaMountConfiguration, relative_path: str, maximum_bytes: int
+    ) -> AudioInspectionResult:
+        opened = None
+        sidecars: list[tuple[str, str, int]] = []
+        try:
+            opened = open_local_media(mount.container_path, relative_path)
+            digest = sha256_descriptor(
+                opened.descriptor, opened.length, maximum=maximum_bytes
+            )
+            source = Fingerprint("sha256", SchemaVersion("local-file-v1"), digest)
+            components = relative_path.split("/")
+            sidecars = _open_audio_sidecars(mount, relative_path, components[-1])
+            inspection = run_audio_inspector_child(
+                opened.descriptor,
+                source,
+                AudioInspectionLimits(source_bytes=_audio_source_bytes(maximum_bytes)),
+                sidecars=tuple(sidecars),
+                path_file=components[-1],
+                path_folder=components[-2] if len(components) > 1 else None,
+            )
+            if not inspection.outcome.succeeded:
+                raise AudioItemInspectionError(inspection.outcome)
+            claims = tuple(
+                LocalClaim.create(
+                    kind=ClaimKind(fact.field.value),
+                    observed=fact.observed_value,
+                    canonical=fact.canonical_value,
+                    excerpt=fact.supporting_context,
+                    applicability="not_applicable",
+                    basis=fact.basis,
+                    checksum="not_applicable",
+                    applicability_basis="not_applicable",
+                    state=FieldState(fact.state),
+                    role=fact.role,
+                    occurrence=occurrence,
+                )
+                for occurrence, fact in enumerate(inspection.facts, 1)
+            )
+            return AudioInspectionResult(
+                digest,
+                claims,
+                AudioFacts(
+                    inspection.chapters,
+                    inspection.chapters_truncated,
+                    inspection.embedded_cover,
+                ),
+            )
+        except MetadataReportError:
+            raise
+        except LocalMediaLimitError as error:
+            raise AudioItemInspectionError(
+                AudioInspectionOutcome.RESOURCE_LIMIT
+            ) from error
+        except (LocalMediaError, OSError) as error:
+            raise AudioItemInspectionError(
+                AudioInspectionOutcome.UNAVAILABLE_SOURCE
+            ) from error
+        except ValueError as error:
+            raise AudioItemInspectionError(
+                AudioInspectionOutcome.INTERNAL_FAILURE
+            ) from error
+        finally:
+            for _surface, _name, descriptor in sidecars:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+            if opened is not None:
+                os.close(opened.descriptor)
+
+    def unchanged(
+        self,
+        mount: MediaMountConfiguration,
+        relative_path: str,
+        expected_digest: str,
+        maximum_bytes: int,
+    ) -> bool:
+        opened = None
+        try:
+            opened = open_local_media(mount.container_path, relative_path)
+            return (
+                sha256_descriptor(
+                    opened.descriptor, opened.length, maximum=maximum_bytes
+                )
+                == expected_digest
+            )
+        except (LocalMediaError, OSError, ValueError):
+            return False
+        finally:
+            if opened is not None:
+                os.close(opened.descriptor)
+
+
+def _audio_source_bytes(maximum_bytes: int) -> int:
+    """Fit the configured EPUB archive ceiling to the audio limit's own cap."""
+    caps = AudioInspectionLimits.HARD_CAPS["source_bytes"]
+    return max(1, min(int(maximum_bytes), caps))
+
+
+def _open_audio_sidecars(
+    mount: MediaMountConfiguration, relative_path: str, media_name: str
+) -> list[tuple[str, str, int]]:
+    """Open the supported sidecars beside one audio file, and nothing else.
+
+    A sidecar that cannot be opened is simply absent evidence: the audiobook's
+    own container is the primary surface, and one unreadable neighbour must not
+    deny the owner the rest of the set.
+    """
+    directory = relative_path.rsplit("/", 1)[0] if "/" in relative_path else ""
+    try:
+        names = list_local_media_siblings(mount.container_path, relative_path)
+    except LocalMediaError:
+        return []
+    opened: list[tuple[str, str, int]] = []
+    for name in names:
+        if len(opened) >= AudioInspectionLimits().sidecar_documents:
+            break
+        surface = sidecar_surface(name, media_name)
+        if surface is None:
+            continue
+        reference = f"{directory}/{name}" if directory else name
+        try:
+            sibling = open_local_media(mount.container_path, reference)
+        except LocalMediaError:
+            continue
+        opened.append((surface.value, name, sibling.descriptor))
+    return opened
+
+
 class _CoverEvidenceObserver:
     """Acquire the one declared ABS cover inside the slice's bounded envelope.
 
@@ -1359,6 +1510,7 @@ def run_metadata_report_loaded(
     service = GenerateMetadataReport(
         target=target,
         inspector=_IsolatedEpubInspector(artifacts),
+        audio_inspector=_IsolatedAudioInspector(),
         repository_factory=repository_factory,
         providers=tuple(bindings),
         connection=connection,
@@ -1379,7 +1531,13 @@ def run_metadata_report_loaded(
                 report.report_id,
                 int(time.time()),
                 0,
-                None,
+                # An audiobook's local evidence is the whole of its preparation:
+                # the work ends terminally here, in the same transaction that
+                # published the report, rather than queueing stages that have
+                # no provider comparison to work from.
+                "local_evidence_only"
+                if report.file.format in AUDIO_FILE_FORMATS
+                else None,
                 review_claim_next,
                 None,
             )
@@ -1427,6 +1585,7 @@ def _require_report_current_loaded(
         mount,
         configuration.limits,
         report,
+        audio_inspector=_IsolatedAudioInspector(),
     )
     for source in report.cover_sources:
         if source.artifact is not None:

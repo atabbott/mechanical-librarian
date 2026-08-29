@@ -1,3 +1,47 @@
+# The audiobook inspector parses no media bytes itself: it runs `ffprobe` as an
+# isolated, resource-bounded child. That probe is built here from a
+# checksum-pinned upstream release rather than installed from the distribution,
+# for three reasons. Network support is compiled out, so the slice's
+# zero-network invariant is a property of the binary rather than of the sandbox
+# around it. The enabled set is exactly the two admitted containers and the
+# codecs they carry, so a payload outside that envelope is refused as an
+# extraction failure instead of being demuxed by a component the library never
+# reads -- `ffprobe` sniffs by content, not by extension, and the distribution
+# package's `libavfilter` and `libavdevice` closure, which drags in LLVM, Mesa,
+# and X11, never exists at all. In
+# exchange this project owns the pin: a CVE in FFmpeg is answered by bumping
+# `FFMPEG_VERSION` and `FFMPEG_SHA256` here, not by a base-image rebuild.
+FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS probe-build
+ARG FFMPEG_VERSION=7.1.5
+ARG FFMPEG_SHA256=de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends \
+        ca-certificates curl gcc libc6-dev make pkg-config xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+RUN curl -fsSLO "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" \
+    && echo "${FFMPEG_SHA256}  ffmpeg-${FFMPEG_VERSION}.tar.xz" | sha256sum -c - \
+    && tar xf "ffmpeg-${FFMPEG_VERSION}.tar.xz"
+WORKDIR /src/ffmpeg-${FFMPEG_VERSION}
+# `--disable-x86asm` keeps an assembler out of the build's supply chain: reading
+# container headers uses no SIMD decode path, and the flag is a no-op on arm64,
+# so both architectures build from the same inputs.
+RUN ./configure \
+        --disable-everything --disable-network --disable-autodetect --disable-doc \
+        --disable-avdevice --disable-avfilter --disable-swscale --disable-swresample \
+        --disable-postproc --disable-encoders --disable-muxers --disable-filters \
+        --disable-indevs --disable-outdevs --disable-hwaccels --disable-bsfs \
+        --disable-ffmpeg --disable-ffplay \
+        --disable-x86asm \
+        --enable-ffprobe \
+        --enable-demuxer=mov,mp3 \
+        --enable-decoder=aac,mp3,mjpeg,png \
+        --enable-parser=aac,mpegaudio,mjpeg,png \
+        --enable-protocol=file,pipe,fd \
+    && make -j"$(nproc)" ffprobe \
+    && strip ffprobe \
+    && install -m 0755 ffprobe /usr/local/bin/ffprobe
+
 FROM node:24.19.0-bookworm-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03 AS frontend-build
 WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json ./frontend/
@@ -84,7 +128,9 @@ RUN /opt/mechanical-librarian/bin/python \
     /reviewer-proof/bin/codex
 
 FROM python:3.14.7-slim-bookworm@sha256:416f0db2a2b561945630cef9877a7ea0581b27449eb9fd9df42f03e1b74b5b63
-RUN groupadd --system --gid 65532 librarian \
+COPY --from=probe-build /usr/local/bin/ffprobe /usr/local/bin/ffprobe
+RUN /usr/local/bin/ffprobe -version \
+    && groupadd --system --gid 65532 librarian \
     && useradd --system --uid 65532 --gid librarian --home-dir /nonexistent --shell /usr/sbin/nologin librarian \
     && install -d -o librarian -g librarian -m 0700 /data
 COPY --from=build /opt/mechanical-librarian /opt/mechanical-librarian

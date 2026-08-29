@@ -39,6 +39,11 @@ from mechanical_librarian.application.metadata_report import (
     TargetFile,
     TargetSnapshot,
 )
+from mechanical_librarian.domain.audio_inspection import (
+    AudioChapter,
+    AudioEmbeddedCover,
+    AudioEvidenceSurface,
+)
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverProvenance,
@@ -56,6 +61,7 @@ from mechanical_librarian.domain.failure_diagnostics import (
 )
 from mechanical_librarian.domain.metadata_report import (
     MAX_REPORT_BYTES,
+    AudioFacts,
     ClaimKind,
     ClaimScope,
     Comparison,
@@ -929,6 +935,8 @@ def test_closed_claim_vocabulary_is_exact() -> None:
         "imprint",
         "genre",
         "tag",
+        "duration",
+        "performance_type",
     }
 
 
@@ -977,6 +985,9 @@ def test_field_results_are_complete_canonical_and_separate_from_claims() -> None
             (
                 FieldSourceResult(FieldSource.EPUB, FieldState.ABSENT),
                 FieldSourceResult(FieldSource.TARGET_METADATA, FieldState.VALID),
+                FieldSourceResult(FieldSource.AUDIO_TAG, FieldState.ABSENT),
+                FieldSourceResult(FieldSource.AUDIO_SIDECAR, FieldState.ABSENT),
+                FieldSourceResult(FieldSource.AUDIO_PATH, FieldState.ABSENT),
             ),
         )
         if value.kind is ClaimKind.TITLE
@@ -1661,3 +1672,142 @@ def test_safe_observed_titles_preserve_exact_text_and_canonicalize_claims(
     assert report.local_claims[0].canonical == canonical
     assert report.report_id == replay.report_id
     assert MetadataReport.from_json(report.to_json()) == report
+
+
+def _audio_claim(
+    kind: ClaimKind,
+    observed: str,
+    basis: str = "embedded_tag",
+    role: str | None = None,
+) -> LocalClaim:
+    return LocalClaim.create(
+        kind=kind,
+        observed=observed,
+        canonical=observed,
+        excerpt=observed,
+        applicability="not_applicable",
+        basis=basis,
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        role=role,
+        occurrence=1,
+    )
+
+
+_EMPTY_AUDIO_FACTS = AudioFacts()
+
+
+def _audio_report(
+    claims: tuple[LocalClaim, ...] = (),
+    *,
+    providers: tuple[ProviderObservation, ...] = (),
+    audio: AudioFacts | None = _EMPTY_AUDIO_FACTS,
+    file_format: str = "m4b",
+) -> MetadataReport:
+    return MetadataReport.create(
+        target=TargetFacts(
+            "primary", "audio", "item-1", default_target_fields("Recorded title")
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64, file_format),
+        local_claims=claims,
+        local_reasons=("no_local_audio_claims",) if not claims else ("embedded_tag",),
+        providers=providers,
+        audio=audio,
+    )
+
+
+def test_an_audio_report_refuses_any_provider_observation() -> None:
+    with pytest.raises(ReportValueError):
+        _audio_report(
+            providers=(
+                ProviderObservation(
+                    "catalogue", ProviderStatus.NO_MATCH, "adapter", "generation"
+                ),
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    ("file_format", "audio"),
+    (
+        ("m4b", None),
+        ("epub", AudioFacts()),
+    ),
+    ids=("audio-file-without-section", "ebook-with-audio-section"),
+)
+def test_the_audio_section_must_match_the_selected_file(
+    file_format: str, audio: AudioFacts | None
+) -> None:
+    with pytest.raises(ReportValueError):
+        _audio_report(audio=audio, file_format=file_format)
+
+
+def test_an_audio_report_round_trips_its_structured_section() -> None:
+    report = _audio_report(
+        (_audio_claim(ClaimKind.DURATION, "43200.000"),),
+        audio=AudioFacts(
+            (AudioChapter(1, 0, 10_000, "One"), AudioChapter(2, 10_000, 20_000)),
+            True,
+            AudioEmbeddedCover(True, AudioEvidenceSurface.CONTAINER_STREAM),
+        ),
+    )
+
+    reopened = MetadataReport.from_json(report.to_json())
+
+    assert reopened.to_json() == report.to_json()
+    assert reopened.audio is not None
+    assert reopened.audio.chapters_truncated is True
+    assert reopened.audio.embedded_cover.present is True
+    assert [value.title for value in reopened.audio.chapters] == ["One", None]
+
+
+@pytest.mark.parametrize(
+    "chapters",
+    (
+        (AudioChapter(2, 0, 1_000),),
+        (AudioChapter(1, 0, 1_000), AudioChapter(3, 1_000, 2_000)),
+    ),
+    ids=("first-ordinal", "gap"),
+)
+def test_audio_chapter_ordinals_must_be_contiguous(
+    chapters: tuple[AudioChapter, ...],
+) -> None:
+    with pytest.raises(ReportValueError):
+        AudioFacts(chapters)
+
+
+def test_an_embedded_cover_is_never_a_cover_source() -> None:
+    report = _audio_report(
+        audio=AudioFacts(
+            embedded_cover=AudioEmbeddedCover(
+                True, AudioEvidenceSurface.CONTAINER_STREAM
+            )
+        )
+    )
+
+    assert report.cover_sources == ()
+    assert report.audio is not None
+    assert report.audio.embedded_cover.present is True
+
+
+def test_an_isbn_shaped_asin_is_retained_as_local_evidence() -> None:
+    report = _audio_report((_audio_claim(ClaimKind.ASIN, "0641977697", "path"),))
+
+    assert [value.observed for value in report.local_claims] == ["0641977697"]
+    assert MetadataReport.from_json(report.to_json()).local_claims == (
+        report.local_claims
+    )
+
+
+def test_an_abs_asserted_field_other_than_title_is_still_refused() -> None:
+    with pytest.raises(ReportValueError):
+        _audio_claim(ClaimKind.ASIN, "B0CW1KL2QD", "target_metadata")
+
+
+@pytest.mark.parametrize(
+    "kind",
+    (ClaimKind.DURATION, ClaimKind.PERFORMANCE_TYPE),
+    ids=("duration", "performance"),
+)
+def test_recorded_manifestation_fields_are_edition_scoped(kind: ClaimKind) -> None:
+    assert claim_scope(kind) is ClaimScope.EDITION

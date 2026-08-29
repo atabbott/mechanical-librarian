@@ -35,13 +35,17 @@ from mechanical_librarian.application.configuration import (
     TargetConnectionConfiguration,
 )
 from mechanical_librarian.application.metadata_report import (
+    AudioItemInspectionError,
     CredentialError,
     ItemInspectionError,
     MetadataReportError,
     TargetNotFoundError,
     UnsupportedMediaError,
 )
-from mechanical_librarian.application.operations import StageTimer
+from mechanical_librarian.application.operations import (
+    StageTimer,
+    operational_incidents,
+)
 from mechanical_librarian.application.proposal_sets import (
     CreateProposalSet,
     ProposalCurrentnessError,
@@ -63,17 +67,24 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPipelineRepository,
     ReviewPreparationPipeline,
     ReviewPreparationSupervisor,
+    audio_inspection_failure_code,
 )
 from mechanical_librarian.application.review_pipeline_stages import ReviewPipelineStages
 from mechanical_librarian.application.review_web import BrowseReviewLibrary
+from mechanical_librarian.domain.audio_inspection import AudioInspectionOutcome
 from mechanical_librarian.domain.epub_inspection import EpubInspectionOutcome
 from mechanical_librarian.domain.metadata_report import (
+    AudioFacts,
+    FileFacts,
     MetadataReport,
     ProviderObservation,
     ProviderStatus,
+    TargetFacts,
+    default_target_fields,
 )
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.provider_recovery import MAX_TIMESTAMP
+from mechanical_librarian.domain.review_browse import browse_report
 from tests.support.review_cases import _report
 
 _PRODUCER = "f" * 64
@@ -627,7 +638,7 @@ def test_composed_currentness_preserves_target_connection_errors(
     repository.publish_proposal(proposal)
     repository.close()
 
-    def current(target, *_args):
+    def current(target, *_args, **_keywords):
         target.read("item-1")
         return True
 
@@ -747,7 +758,7 @@ def test_store_credentials_reach_proposal_and_admission_currentness(
         def __init__(self, *, client_factory, **_arguments) -> None:
             self.client_factory = client_factory
 
-    def current(target, *_arguments) -> bool:
+    def current(target, *_arguments, **_keywords) -> bool:
         assert target.client_factory() is client
         return True
 
@@ -4891,3 +4902,289 @@ def test_shutdown_deadline_retains_active_worker_and_durable_claim() -> None:
     supervisor.stop()
     assert repository.completed == ["slow"]
     assert supervisor._threads == ()
+
+
+@pytest.mark.parametrize(
+    ("outcome", "code"),
+    (
+        (AudioInspectionOutcome.SUCCESS, "success"),
+        (AudioInspectionOutcome.NO_APPLICABLE_EVIDENCE, "success"),
+        (AudioInspectionOutcome.UNSUPPORTED_FORMAT, "unsupported_media"),
+        (AudioInspectionOutcome.UNAVAILABLE_SOURCE, "unreadable_media"),
+        (AudioInspectionOutcome.MALFORMED, "parser_refused"),
+        (AudioInspectionOutcome.PROBE_FAILURE, "parser_refused"),
+        (AudioInspectionOutcome.RESOURCE_LIMIT, "parser_refused"),
+        (AudioInspectionOutcome.TIMEOUT, "parser_refused"),
+        (AudioInspectionOutcome.CANCELLATION, "parser_refused"),
+        (AudioInspectionOutcome.INVALID_CONFIGURATION, "internal_failure"),
+        (AudioInspectionOutcome.CHILD_FAILURE, "internal_failure"),
+        (AudioInspectionOutcome.INTERNAL_FAILURE, "internal_failure"),
+    ),
+)
+def test_every_audio_inspection_outcome_reaches_the_owner_with_a_name(
+    outcome: AudioInspectionOutcome, code: str
+) -> None:
+    """No audiobook failure may fall through to the unnamed `unknown` code.
+
+    A missing probe binary, a refused container, and an unreadable file are
+    three different things to an owner, and each has to say which it was.
+    """
+    assert audio_inspection_failure_code(outcome) == code
+
+
+def test_the_audio_outcome_vocabulary_is_exactly_what_the_mapping_answers() -> None:
+    assert {
+        audio_inspection_failure_code(value) for value in AudioInspectionOutcome
+    } == {
+        "success",
+        "unsupported_media",
+        "unreadable_media",
+        "parser_refused",
+        "internal_failure",
+    }
+
+
+def test_an_audiobook_inspection_failure_is_named_at_the_extraction_stage() -> None:
+    """The stage translates the audio vocabulary, as it already does for EPUB."""
+
+    def unreachable(*_arguments: object, **_keywords: object) -> None:
+        raise AssertionError
+
+    def refuse(*_arguments: object, **_keywords: object) -> str:
+        raise AudioItemInspectionError(AudioInspectionOutcome.INVALID_CONFIGURATION)
+
+    stages = ReviewPipelineStages(
+        configuration=ApplicationConfiguration((), (), (), ()),
+        catalogue=unreachable,
+        catalogue_reader=cast("CatalogueReader", unreachable),
+        probe_connection=unreachable,
+        connections=frozenset(),
+        repository_factory=unreachable,
+        recover_artifacts=lambda: None,
+        generate_report=refuse,
+        create_proposal_set=unreachable,
+        admit_review_case=unreachable,
+        cover_considerations=unreachable,
+        recovery_observer=cast("ProviderFailureObserver", unreachable),
+        drain_outbox=unreachable,
+        discovery_lock=threading.Lock(),
+        clock=lambda: 7,
+    )
+
+    with (
+        patch.object(stages, "_require_eligible_entry", lambda _action: None),
+        pytest.raises(ReviewPipelineError) as raised,
+    ):
+        stages.extract(
+            cast("ReviewPipelineRepository", object()),
+            cast("PipelineAction", object()),
+            False,
+        )
+
+    assert raised.value.code == "internal_failure"
+
+
+def test_a_terminal_stop_that_registers_no_package_refuses_to_pass_silently(
+    application_path: Path,
+) -> None:
+    """The unreachable-evidence failure must not become a quiet no-op.
+
+    A foreign key already keeps a report the pipeline never published out of
+    this call, so the guard sits behind it.  Lifting that key is the only way
+    to reach the state it exists for, and the guard is what stops that state
+    from producing a work with no package and no complaint.
+    """
+    repository = open_repository(application_path)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_audio_entry("item", "1" * 64),), 12
+    )
+    extraction = repository.claim_review_pipeline_action(13)
+    assert extraction is not None
+
+    repository._connection.execute("PRAGMA foreign_keys=OFF")
+    repository._connection.execute("BEGIN")
+    with pytest.raises(MetadataReportError):
+        repository.complete_review_extraction_publication(
+            extraction, "report_" + "c" * 64, 14, 0, "local_evidence_only"
+        )
+    packages = repository._connection.execute(
+        "SELECT COUNT(*) FROM current_review_packages"
+    ).fetchone()
+    repository._connection.execute("ROLLBACK")
+    repository.close()
+
+    assert packages == (0,)
+
+
+def test_the_provider_stage_refuses_an_audiobook_report_it_should_never_see() -> None:
+    def unreachable(*_arguments: object, **_keywords: object) -> None:
+        raise AssertionError
+
+    report = MetadataReport.create(
+        target=TargetFacts(
+            "primary", "audio", "item-1", default_target_fields("Recorded title")
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=(),
+        local_reasons=("no_local_audio_claims",),
+        providers=(),
+        audio=AudioFacts(),
+    )
+
+    class _Repository:
+        def get(self, report_id: str) -> str:
+            assert report_id == report.report_id
+            return report.to_json()
+
+    stages = ReviewPipelineStages(
+        configuration=ApplicationConfiguration((), (), (), ()),
+        catalogue=unreachable,
+        catalogue_reader=cast("CatalogueReader", unreachable),
+        probe_connection=unreachable,
+        connections=frozenset(),
+        repository_factory=unreachable,
+        recover_artifacts=unreachable,
+        generate_report=unreachable,
+        create_proposal_set=unreachable,
+        admit_review_case=unreachable,
+        cover_considerations=unreachable,
+        recovery_observer=cast("ProviderFailureObserver", unreachable),
+        drain_outbox=unreachable,
+        discovery_lock=threading.Lock(),
+        clock=lambda: 7,
+    )
+
+    with pytest.raises(ReviewPipelineError) as raised:
+        stages.providers(
+            cast("ReviewPipelineRepository", _Repository()), report.report_id
+        )
+
+    assert raised.value.code == "local_evidence_only"
+
+
+def test_an_ebook_report_still_reaches_the_provider_stage() -> None:
+    def unreachable(*_arguments: object, **_keywords: object) -> None:
+        raise AssertionError
+
+    report = _report()
+
+    class _Repository:
+        def get(self, _report_id: str) -> str:
+            return report.to_json()
+
+    observations: list[object] = []
+    stages = ReviewPipelineStages(
+        configuration=ApplicationConfiguration((), (), (), ()),
+        catalogue=unreachable,
+        catalogue_reader=cast("CatalogueReader", unreachable),
+        probe_connection=unreachable,
+        connections=frozenset(),
+        repository_factory=unreachable,
+        recover_artifacts=unreachable,
+        generate_report=unreachable,
+        create_proposal_set=unreachable,
+        admit_review_case=unreachable,
+        cover_considerations=unreachable,
+        recovery_observer=cast("ProviderFailureObserver", observations.append),
+        drain_outbox=unreachable,
+        discovery_lock=threading.Lock(),
+        clock=lambda: 7,
+    )
+
+    assert (
+        stages.providers(
+            cast("ReviewPipelineRepository", _Repository()), report.report_id
+        )
+        == ()
+    )
+
+
+def _audio_entry(item_id: str, file_identity: str) -> CatalogueEntry:
+    return CatalogueEntry(
+        "primary",
+        "fiction",
+        "lib-1",
+        item_id,
+        1,
+        "Recorded work",
+        ("Example Author",),
+        False,
+        False,
+        "singular-supported",
+        file_identity,
+        f"/{item_id}.m4b",
+        "m4b",
+        "audiobooks",
+    )
+
+
+def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
+    application_path: Path,
+) -> None:
+    """Preparation stops in the transaction that published the report.
+
+    The ordinary ladder runs extraction straight to `proposal`; the `provider`
+    stage is only reached by a terminal extraction disposition or a retry
+    successor. An audiobook has neither a provider comparison nor a proposal to
+    evaluate, so its work ends here rather than queueing stages that cannot
+    complete.
+    """
+    report = MetadataReport.create(
+        target=TargetFacts(
+            "primary", "fiction", "item", default_target_fields("Recorded work")
+        ),
+        file=FileFacts(0, "1" * 64, "b" * 64, "m4b"),
+        local_claims=(),
+        local_reasons=("no_local_audio_claims",),
+        providers=(),
+        audio=AudioFacts(),
+    )
+
+    repository = open_repository(application_path)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_audio_entry("item", report.file.identity),), 12
+    )
+    extraction = repository.claim_review_pipeline_action(13)
+    assert extraction is not None
+    repository.publish(
+        report,
+        lambda: True,
+        None,
+        lambda value, published: value.complete_review_extraction_publication(
+            extraction, published.report_id, 14, 0, "local_evidence_only"
+        ),
+    )
+    work = repository._connection.execute(
+        "SELECT stage,state,failure_code,failure_root FROM review_preparation_work"
+    ).fetchone()
+    retained = MetadataReport.from_json(repository.get(report.report_id))
+    browsed = repository.list_current_review_case_documents(None, 10, 0, None)
+    found = repository.count_current_review_cases("Recorded work")
+    incidents = operational_incidents(repository.operational_snapshot())
+    remaining = repository.claim_review_pipeline_action(15)
+    repository.close()
+
+    assert work == ("provider", "failed", "local_evidence_only", None)
+    assert remaining is None
+    assert retained.schema_version == "metadata-report-v31"
+    assert retained.audio is not None
+    assert retained.providers == ()
+    # The evidence is what the owner browses: a report, not a terminal card.
+    assert len(browsed) == 1
+    case_document, report_document = browsed[0]
+    assert case_document is None
+    assert browse_report(report_document)["audio"] is not None
+    assert found == (1, 0)
+    # And a stop that is not a fault raises no incident, so the status surface
+    # keeps answering for every other library.
+    assert [value for value in incidents if value.kind == "owner_action_required"] == []
+    assert not any(
+        value.kind not in {"healthy_activity", "automatic_recovery"}
+        for value in incidents
+    )

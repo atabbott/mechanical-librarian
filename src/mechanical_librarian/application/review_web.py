@@ -1313,8 +1313,11 @@ def _choice_observation(evidence: dict[str, str | None]) -> str:
         "dict[object, str]",
         {
             "authors": "Contributors",
+            "contributor": "Narration credit",
             "description": "Description",
+            "duration": "Running time",
             "isbn": "ISBN",
+            "performance_type": "Performance",
             "publication_date": "Publication date",
             "series": "Series membership",
             "title": "Title",
@@ -1696,15 +1699,15 @@ _TERMINAL_PREPARATION_GUIDANCE: dict[str, tuple[str, str]] = {
     ),
     "unsupported_media": (
         "This media type is not supported for review preparation.",
-        "Use a supported EPUB edition, then scan this library again.",
+        "Use a supported media file, then scan this library again.",
     ),
     "unreadable_media": (
         "The local media file could not be read.",
         "Restore a readable media file in the library, then scan this library again.",
     ),
     "parser_refused": (
-        "The EPUB could not be safely read within supported parsing limits.",
-        "Use an EPUB that meets the supported parsing limits, then scan this library again.",
+        "The media file could not be safely read within supported parsing limits.",
+        "Use a media file that meets the supported parsing limits, then scan this library again.",
     ),
     "missing_required_input": (
         "Required preparation input is unavailable.",
@@ -1717,6 +1720,10 @@ _TERMINAL_PREPARATION_GUIDANCE: dict[str, tuple[str, str]] = {
     "internal_failure": (
         "Preparation stopped before a usable review package was produced.",
         "No owner action is currently available.",
+    ),
+    "local_evidence_only": (
+        "This audiobook's local evidence was recorded; no review package follows it yet.",
+        "No owner action is needed. The recorded evidence is shown on this work.",
     ),
     "unknown": (
         "Preparation failed; no safe detail is available.",
