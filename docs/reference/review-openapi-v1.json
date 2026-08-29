@@ -521,24 +521,6 @@
                 "requests_per_day": "50 before $10 lifetime purchases; 1000 after",
                 "requests_per_minute": 20,
                 "tier": "free"
-              },
-              {
-                "evidence": "catalogue_capability_only",
-                "model": "mistralai/ministral-3b-2512",
-                "qualified": false,
-                "tier": "paid"
-              },
-              {
-                "evidence": "catalogue_capability_only",
-                "model": "google/gemma-3-12b-it",
-                "qualified": false,
-                "tier": "paid"
-              },
-              {
-                "evidence": "catalogue_capability_only",
-                "model": "mistralai/mistral-small-3.2-24b-instruct",
-                "qualified": false,
-                "tier": "paid"
               }
             ],
             "items": {
@@ -593,7 +575,9 @@
             "type": "boolean"
           },
           "recommendations": {
-            "default": [],
+            "default": [
+              "openai/gpt-4o-mini"
+            ],
             "items": {
               "type": "string"
             },

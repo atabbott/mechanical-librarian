@@ -34,6 +34,10 @@ const reviewerAccessPayload = (overrides: Record<string, unknown> = {}) => ({
 })
 
 describe('reviewer access transport vocabulary', () => {
+  it('preserves a closed provider-local recommendation', () => {
+    expect(mapReviewerAccess(reviewerAccessPayload({ recommendations: ['openai/gpt-4o-mini'] })).recommendations).toEqual(['openai/gpt-4o-mini'])
+  })
+
   it.each(['invalid_key', 'quota_exhausted', 'rate_limited', 'model_unavailable', 'model_text_only', 'malformed_response', 'unreachable'] as const)('preserves the closed %s refusal', (state) => {
     const mapped = mapReviewerAccess(reviewerAccessPayload({ openrouter: {
       engine: 'openrouter', state, reason: state, model: 'provider/model', tier: null, host_headroom_bytes: null,
@@ -44,6 +48,7 @@ describe('reviewer access transport vocabulary', () => {
   it.each([
     ['cross-engine reason', { codex: { engine: 'codex', state: 'failed', reason: 'invalid_key', model: null, tier: null, host_headroom_bytes: 1 } }],
     ['hostile model', { mapping: { engine: 'openrouter', model: 'provider/model\nBearer secret' } }],
+    ['hostile recommendation', { recommendations: ['provider/model\nBearer secret'] }],
     ['extra mapping field', { mapping: { engine: 'codex', model: 'invented' } }],
     ['non-integer headroom', { codex: { engine: 'codex', state: 'ready', reason: null, model: null, tier: null, host_headroom_bytes: '1' } }],
     ['qualified candidate', { candidates: [{ model: 'provider/model', tier: 'paid', qualified: true, evidence: 'catalogue_capability_only', requests_per_minute: null, requests_per_day: null }] }],

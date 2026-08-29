@@ -94,11 +94,12 @@ OpenRouter uses only `https://openrouter.ai/api/v1/chat/completions`, the exact
 selected model, strict structured output with required parameters, bounded
 responses, and no redirects or arbitrary endpoint. Ordinary Settings reads do
 not probe the network; explicit refresh and dispatch use typed redacted failure
-states. Model catalogue entries are evidence, not durable recommendations. No
-recommendation is qualified because no live-key end-to-end call was authorized.
-The UI may show the bounded delivery-time catalogue candidates and documented
-free-tier caps, but labels them unqualified until the private real-cover receipt
-exists. OpenRouter response streams are consumed in bounded chunks.
+states. GPT-4o Mini is the one recommendation qualified by the delivered
+real-cover corpus: it completed all 39 invocations and 111 observations with the
+exact schema and taxonomy, without a systematic dimension collapse. The UI also
+shows the bounded delivery-time free catalogue candidate and documented free-tier
+caps, but labels that entry catalogue-capability-only. OpenRouter response streams
+are consumed in bounded chunks.
 
 Codex profile parsing, staging recovery, and device-manager construction are
 lazy: no-reviewer and OpenRouter operation do not touch them. Runtime generation

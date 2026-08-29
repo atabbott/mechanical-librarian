@@ -135,18 +135,13 @@ class ReviewerAccessView(_Closed):
     openrouter_key_configured: StrictBool
     codex: ReviewerEngineStatus
     openrouter: ReviewerEngineStatus
-    recommendations: tuple[StrictStr, ...] = ()
+    recommendations: tuple[StrictStr, ...] = ("openai/gpt-4o-mini",)
     candidates: tuple[OpenRouterRecommendation, ...] = (
         OpenRouterRecommendation(
             model="dots-studio/dots-3-note-preview:free",
             tier="free",
             requests_per_minute=20,
             requests_per_day="50 before $10 lifetime purchases; 1000 after",
-        ),
-        OpenRouterRecommendation(model="mistralai/ministral-3b-2512", tier="paid"),
-        OpenRouterRecommendation(model="google/gemma-3-12b-it", tier="paid"),
-        OpenRouterRecommendation(
-            model="mistralai/mistral-small-3.2-24b-instruct", tier="paid"
         ),
     )
     free_tier_caveat: StrictStr = (

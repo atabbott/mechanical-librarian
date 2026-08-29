@@ -324,6 +324,74 @@ describe('shipped first-run setup script', () => {
     expect(within(results).queryByText(/^books: matched$/u)).toBeNull()
   })
 
+  it('renders reviewer recommendations, the free catalogue option, and manual entry', async () => {
+    const fetch = vi.fn(async (request: RequestInfo | URL) => {
+      if (requestUrl(request) === '/api/setup/reviewer-access')
+        return response({
+          schema_version: 'reviewer-access-view-v1',
+          revision: 3,
+          mapping: null,
+          openrouter_key_configured: false,
+          codex: {
+            engine: 'codex',
+            state: 'host_unsupported',
+            reason: 'insufficient_headroom',
+            model: null,
+            tier: null,
+            host_headroom_bytes: 512,
+          },
+          openrouter: {
+            engine: 'openrouter',
+            state: 'unconfigured',
+            reason: null,
+            model: null,
+            tier: null,
+            host_headroom_bytes: null,
+          },
+          recommendations: ['openai/gpt-4o-mini'],
+          candidates: [
+            {
+              model: 'dots-studio/dots-3-note-preview:free',
+              tier: 'free',
+              qualified: false,
+              evidence: 'catalogue_capability_only',
+              requests_per_minute: 20,
+              requests_per_day: '50 before $10 lifetime purchases; 1000 after',
+            },
+          ],
+          free_tier_caveat:
+            '20 requests/minute; 50 requests/day before $10 in lifetime purchases or 1000 after.',
+          data_use_caveat: 'Cover previews are sent to the selected provider.',
+        })
+      return response(
+        setupState('reviewer', {
+          completed_steps: ['claim', 'connect', 'providers', 'libraries', 'mounts'],
+        }),
+      )
+    })
+    vi.stubGlobal('fetch', fetch)
+    runSetup()
+
+    expect(await screen.findByText(/Evidence-qualified paid model/u)).toBeVisible()
+    expect(screen.getByText(/Catalogue-capability-only free option/u)).toBeVisible()
+    expect(
+      screen.getByText(
+        '20 requests/minute; 50 requests/day before $10 in lifetime purchases or 1000 after.',
+      ),
+    ).toBeVisible()
+    expect(screen.getByText('Cover previews are sent to the selected provider.')).toBeVisible()
+    const model = screen.getByLabelText('Model ID')
+    fireEvent.click(screen.getByRole('button', { name: 'Use openai/gpt-4o-mini' }))
+    expect(model).toHaveValue('openai/gpt-4o-mini')
+    expect(model).toHaveFocus()
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Use dots-studio/dots-3-note-preview:free' }),
+    )
+    expect(model).toHaveValue('dots-studio/dots-3-note-preview:free')
+    fireEvent.input(model, { target: { value: 'manual/vision-model' } })
+    expect(model).toHaveValue('manual/vision-model')
+  })
+
   it.each([
     ['Your work is ready', 1, false, false, 'Open the workspace while preparation continues.'],
     [

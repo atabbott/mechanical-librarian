@@ -123,7 +123,7 @@ const reviewerView: ReviewerAccessView = {
     tier: null,
     host_headroom_bytes: null,
   },
-  recommendations: [],
+  recommendations: ['openai/gpt-4o-mini'],
   candidates: [
     {
       model: 'dots-studio/dots-3-note-preview:free',
@@ -523,7 +523,7 @@ describe('owner settings route', () => {
     expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled()
   })
 
-  it('keeps reviewer access owner-managed under file settings and labels candidates honestly', async () => {
+  it('renders wire recommendations, catalogue candidates, and manual model entry honestly', async () => {
     const user = userEvent.setup()
     const http = createHttp()
     http.getSettings = vi.fn(async () => view('file'))
@@ -545,16 +545,21 @@ describe('owner settings route', () => {
     }))
     renderRoute('/settings?group=reviewer', http)
 
-    expect(await screen.findByText(/No model recommendation is qualified/u)).toBeVisible()
+    expect(await screen.findByText(/Evidence-qualified paid model/u)).toBeVisible()
+    expect(screen.getByText(/Catalogue-capability-only free option/u)).toBeVisible()
     expect(screen.getByText(/20 requests\/minute/u)).toBeVisible()
     expect(screen.getByRole('button', { name: 'Restart device sign-in' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Use openai/gpt-4o-mini' }))
+    const model = screen.getByRole('textbox', { name: 'Model ID' })
+    expect(model).toHaveValue('openai/gpt-4o-mini')
     await user.click(
       screen.getByRole('button', {
         name: 'Use dots-studio/dots-3-note-preview:free',
       }),
     )
-    const model = screen.getByRole('textbox', { name: 'Model ID' })
     expect(model).toHaveValue('dots-studio/dots-3-note-preview:free')
+    await user.clear(model)
+    await user.type(model, 'manual/vision-model')
     const key = screen.getByLabelText('API key')
     await user.type(key, 'secret-key')
     await user.click(screen.getByRole('button', { name: 'Validate and use OpenRouter' }))
@@ -562,7 +567,7 @@ describe('owner settings route', () => {
       expect(http.configureOpenRouter).toHaveBeenCalledWith({
         expected_revision: 3,
         api_key: 'secret-key',
-        model: 'dots-studio/dots-3-note-preview:free',
+        model: 'manual/vision-model',
       }),
     )
     expect(key).toHaveValue('')

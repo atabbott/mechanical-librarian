@@ -150,7 +150,12 @@ def test_generic_reads_only_use_cheap_codex_host_evidence() -> None:
         return ReviewerHostStatus(True, None, 2 * 1024**3)
 
     operations._codex_host = codex_host
-    assert operations.read().mapping is None
+    initial = operations.read()
+    assert initial.mapping is None
+    assert initial.recommendations == ("openai/gpt-4o-mini",)
+    assert tuple(candidate.model for candidate in initial.candidates) == (
+        "dots-studio/dots-3-note-preview:free",
+    )
     operations.configure_openrouter(
         expected_revision=1, api_key="secret-key", model="example/vision"
     )

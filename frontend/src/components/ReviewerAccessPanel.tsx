@@ -355,7 +355,18 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
           <p>Choose a vision model that currently supports strict structured output.</p>
           <p>{view.free_tier_caveat}</p>
           <p>{view.data_use_caveat}</p>
-          <p>No model recommendation is qualified by delivered real-cover evidence yet.</p>
+          <p>Evidence-qualified paid model on the delivered real-cover corpus:</p>
+          <ul>
+            {view.recommendations.map((recommendation) => (
+              <li key={recommendation}>
+                <button type="button" onClick={() => setModel(recommendation)}>
+                  Use {recommendation}
+                </button>{' '}
+                (paid; evidence-qualified on the delivered real-cover corpus)
+              </li>
+            ))}
+          </ul>
+          <p>Catalogue-capability-only free option:</p>
           <ul>
             {view.candidates.map((candidate) => (
               <li key={candidate.model}>
