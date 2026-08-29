@@ -1567,6 +1567,8 @@ const preparationPresentation = (value: unknown) => {
   const runId = stringValue(value.run_id, 'preparation_run_id')
   if (!/^preparation_run_[0-9a-f]{64}$/u.test(runId))
     throw new ApiError(502, 'invalid_preparation_run_id')
+  const state = stringValue(value.state, 'preparation_state')
+  const terminal = ['completed_clean', 'completed_with_failures', 'dismissed'].includes(state)
   if (
     ![
       'starting',
@@ -1575,7 +1577,7 @@ const preparationPresentation = (value: unknown) => {
       'completed_clean',
       'completed_with_failures',
       'dismissed',
-    ].includes(stringValue(value.state, 'preparation_state')) ||
+    ].includes(state) ||
     !record(value.passage) ||
     !Array.isArray(value.triggers) ||
     !Array.isArray(value.active_books) ||
@@ -1634,9 +1636,20 @@ const preparationPresentation = (value: unknown) => {
       throw new ApiError(502, 'invalid_preparation_trigger')
   }
   const total = integerValue(value.total, 'preparation_total')
+  const activeOverflow = integerValue(value.active_overflow, 'preparation_active_overflow')
+  const startedAt = integerValue(value.started_at, 'preparation_started_at')
+  const updatedAt = integerValue(value.updated_at, 'preparation_updated_at')
+  const completedAt =
+    value.completed_at === null
+      ? null
+      : integerValue(value.completed_at, 'preparation_completed_at')
   if (
     Object.values(passage).some((count) => count > total) ||
-    passage.ready + passage.failed > total
+    passage.ready + passage.failed > total ||
+    value.active_books.length + activeOverflow > total ||
+    updatedAt < startedAt ||
+    (terminal && (completedAt === null || completedAt < startedAt)) ||
+    (!terminal && completedAt !== null)
   )
     throw new ApiError(502, 'invalid_preparation_passage_total')
   for (const active of value.active_books) {
@@ -1655,9 +1668,6 @@ const preparationPresentation = (value: unknown) => {
       throw new ApiError(502, 'invalid_preparation_completion')
     integerValue(completion.completed_at, 'preparation_completion_completed_at')
   }
-  for (const field of ['active_overflow', 'started_at', 'updated_at', 'total'])
-    integerValue(value[field], `preparation_${field}`)
-  if (value.completed_at !== null) integerValue(value.completed_at, 'preparation_completed_at')
 }
 export const mapPreparation = (value: unknown): PreparationView => {
   if (

@@ -395,6 +395,47 @@ def test_only_accepted_owner_trigger_creates_or_replaces_visible_run(
     ]
 
 
+def test_terminal_trigger_replacement_starts_queued_and_reopens_current(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    first = repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed',updated_at=101 "
+        "WHERE scan_id=?",
+        (first.scan_id,),
+    )
+    refresh_preparation_presentation(repository._connection, 101)
+    terminal = repository.preparation_presentation(101)
+    assert terminal is not None and terminal.dismissible
+
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        102,
+        trigger=PreparationTrigger.LIBRARY_ADDED,
+    )
+    replacement = repository.preparation_presentation(102)
+    repository.close()
+
+    assert replacement is not None
+    assert replacement.run_id != terminal.run_id
+    assert replacement.state is PreparationRunState.STARTING
+    assert replacement.completed_at is None
+    reopened = open_repository(application_path, create=False)
+    assert reopened.preparation_presentation(102) == replacement
+    reopened.close()
+
+
 @pytest.mark.parametrize(
     "terminal_failure", (False, True), ids=("rollover", "terminal-cancellation")
 )
@@ -464,7 +505,102 @@ def test_accepted_successor_cycle_settles_once_and_reopens_exact_current(
     assert cycles[0] == cycles[2]
     reopened = open_repository(application_path, create=False)
     assert reopened.preparation_presentation(107) == expected
+    if not terminal_failure:
+        successor_discovery = reopened.claim_review_pipeline_action(108)
+        assert successor_discovery is not None
+        reopened.complete_review_discovery(
+            successor_discovery,
+            2,
+            "b" * 64,
+            (_entry("item", "2" * 64),),
+            109,
+        )
+        running = reopened.claim_review_pipeline_action(110)
+        assert running is not None and running.stage == "extraction"
+        active = reopened.preparation_presentation(110)
+        assert active is not None
+        assert [book.name for book in active.active_books] == ["Synthetic work"]
+        assert active.passage.ready == 1
+        assert active.recent_completions[0].outcome == "ready"
     reopened.close()
+
+
+def test_terminal_enrollment_is_excluded_from_triggerless_full_reconciliation(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    scan_a = repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    repository.request_review_scan(
+        "primary",
+        "history",
+        "lib-2",
+        _PRODUCER,
+        101,
+        trigger=PreparationTrigger.LIBRARY_ADDED,
+    )
+    discovery_a = repository.claim_review_pipeline_action(102)
+    assert discovery_a is not None and discovery_a.library == "fiction"
+    repository.complete_review_discovery(
+        discovery_a, 1, "a" * 64, (_entry("a", "1" * 64),), 103
+    )
+    discovery_b = repository.claim_review_pipeline_action(104)
+    assert discovery_b is not None and discovery_b.library == "history"
+    repository.complete_review_discovery(
+        discovery_b,
+        1,
+        "b" * 64,
+        (replace(_entry("b", "2" * 64), library="history", library_id="lib-2"),),
+        105,
+    )
+    work_a = repository._connection.execute(
+        "SELECT work_id FROM review_preparation_work WHERE scan_id=?",
+        (scan_a.scan_id,),
+    ).fetchone()[0]
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET stage='complete',state='complete',updated_at=106 "
+        "WHERE work_id=?",
+        (work_a,),
+    )
+    refresh_preparation_work(repository._connection, work_a, 106)
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed',updated_at=107 WHERE scan_id=?",
+        (scan_a.scan_id,),
+    )
+    refresh_preparation_run_state(repository._connection, 107)
+    before = repository.preparation_presentation(107)
+    before_work = repository._connection.execute(
+        "SELECT work_stage,current_work_state,work_outcome,updated_at "
+        "FROM review_preparation_presentation WHERE row_id=?",
+        ("work:" + work_a,),
+    ).fetchone()
+    assert before is not None and before.state is PreparationRunState.RUNNING
+
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 108)
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET stage='extraction',state='running',updated_at=109 "
+        "WHERE work_id=?",
+        (work_a,),
+    )
+    refresh_preparation_presentation(repository._connection, 109)
+    after = repository.preparation_presentation(109)
+    after_work = repository._connection.execute(
+        "SELECT work_stage,current_work_state,work_outcome,updated_at "
+        "FROM review_preparation_presentation WHERE row_id=?",
+        ("work:" + work_a,),
+    ).fetchone()
+    repository.close()
+
+    assert after is not None
+    assert after_work == before_work
+    assert after.passage == before.passage
+    assert after.recent_completions == before.recent_completions
 
 
 def test_preparation_projection_bounds_private_names_and_preserves_outcomes(
@@ -754,7 +890,7 @@ def test_per_work_presentation_query_count_does_not_grow_with_run_population(
         snapshot_plans = tuple(
             row[3]
             for sql in (
-                "SELECT display_name,work_stage FROM review_preparation_presentation WHERE row_kind='work' AND run_id=? AND current_work_state='running' AND work_outcome IS NULL ORDER BY trigger_ordinal,ordinal,work_id LIMIT 5",
+                "SELECT display_name,work_stage FROM review_preparation_presentation WHERE row_kind='work' AND run_id=? AND current_work_state='running' ORDER BY trigger_ordinal,ordinal,work_id LIMIT 5",
                 "SELECT display_name,work_outcome,updated_at FROM review_preparation_presentation WHERE row_kind='work' AND run_id=? AND work_outcome IS NOT NULL ORDER BY updated_at DESC,trigger_ordinal DESC,ordinal DESC,work_id DESC LIMIT 8",
                 "SELECT COUNT(*) FROM review_preparation_presentation WHERE row_kind='work' AND run_id=? AND work_outcome IS NOT NULL AND updated_at>=?",
             )
@@ -806,20 +942,43 @@ def test_per_work_presentation_query_count_does_not_grow_with_run_population(
 @pytest.mark.parametrize(
     "mutation",
     (
-        "UPDATE review_preparation_presentation SET completed_at=123 "
-        "WHERE row_kind='trigger'",
+        "UPDATE review_preparation_presentation SET first_accepted_at=123 WHERE row_kind='run'",
+        "UPDATE review_preparation_presentation SET ready=1 WHERE row_kind='trigger'",
+        "UPDATE review_preparation_presentation SET searches_finished=1 WHERE row_kind='trigger'",
+        "UPDATE review_preparation_presentation SET started_at=1 WHERE row_kind='trigger'",
+        "UPDATE review_preparation_presentation SET ready=1 WHERE row_kind='enrollment'",
+        "UPDATE review_preparation_presentation SET started_at=1 WHERE row_kind='enrollment'",
+        "UPDATE review_preparation_presentation SET ready=1 WHERE row_kind='work'",
+        "UPDATE review_preparation_presentation SET started_at=1 WHERE row_kind='work'",
+        "UPDATE review_preparation_presentation SET row_id='work:invented' WHERE row_kind='work'",
+        "UPDATE review_preparation_presentation SET connection_name='other' WHERE row_kind='enrollment'",
+        "UPDATE review_preparation_presentation SET pending_cycle_id=cycle_id WHERE row_kind='enrollment' AND ordinal=0",
         "UPDATE review_preparation_presentation SET ordinal=2 "
         "WHERE row_kind='enrollment'",
         "UPDATE review_preparation_presentation SET run_id='preparation_run_' || "
         "lower(hex(randomblob(32))) WHERE row_kind='trigger'",
         "UPDATE review_preparation_presentation SET trigger_ordinal=9 "
         "WHERE row_kind='work'",
+        "UPDATE review_preparation_presentation SET cycle_id=(SELECT cycle_id FROM "
+        "review_preparation_presentation WHERE row_kind='enrollment' AND ordinal=0) "
+        "WHERE row_kind='enrollment' AND ordinal=1",
     ),
     ids=(
-        "irrelevant-column",
+        "run-trigger-column",
+        "trigger-passage-column",
+        "trigger-search-column",
+        "trigger-run-column",
+        "enrollment-passage-column",
+        "enrollment-run-column",
+        "work-passage-column",
+        "work-run-column",
+        "work-row-identity",
+        "enrollment-target",
+        "equal-current-pending-cycle",
         "noncanonical-ordinal",
         "foreign-run",
         "work-enrollment-ordinal",
+        "duplicate-enrollment-cycle",
     ),
 )
 def test_exact_current_presentation_rows_fail_closed(
@@ -839,6 +998,14 @@ def test_exact_current_presentation_rows_fail_closed(
     assert discovery is not None
     repository.complete_review_discovery(
         discovery, 1, "a" * 64, (_entry("item", "1" * 64),), 102
+    )
+    repository.request_review_scan(
+        "primary",
+        "history",
+        "lib-2",
+        _PRODUCER,
+        103,
+        trigger=PreparationTrigger.LIBRARY_ADDED,
     )
     repository.close()
 

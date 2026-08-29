@@ -234,36 +234,28 @@ export const usePreparation = () => {
   const streamState = useLiveStream()
   const live = streamState === 'live'
   const previousSnapshot = useRef<string | null>(null)
-  const reconnectBaseline = useRef<number | null>(null)
+  const reconnectEpoch = useRef(0)
   const reconnectRefreshRequested = useRef(false)
   const [reconnectDebt, setReconnectDebt] = useState(false)
   const query = useQuery(preparationQuery(http, live))
+  const refetchPreparation = query.refetch
   useEffect(() => {
     if (streamState === 'degraded' && updates?.hasBeenLive === true) {
-      reconnectBaseline.current = query.dataUpdatedAt
+      reconnectEpoch.current += 1
       reconnectRefreshRequested.current = false
       queueMicrotask(() => setReconnectDebt(true))
       return
     }
     if (streamState === 'live' && reconnectDebt && !reconnectRefreshRequested.current) {
       reconnectRefreshRequested.current = true
-      void queryClient.invalidateQueries({ queryKey: ['review-preparation'] })
+      const epoch = reconnectEpoch.current
+      void refetchPreparation({ cancelRefetch: false }).then((result) => {
+        if (epoch !== reconnectEpoch.current || !result.isSuccess) return
+        reconnectRefreshRequested.current = false
+        queueMicrotask(() => setReconnectDebt(false))
+      })
     }
-  }, [query.dataUpdatedAt, queryClient, reconnectDebt, streamState, updates?.hasBeenLive])
-  useEffect(() => {
-    if (
-      reconnectDebt &&
-      streamState === 'live' &&
-      reconnectBaseline.current !== null &&
-      query.dataUpdatedAt > reconnectBaseline.current &&
-      query.isSuccess &&
-      !query.isFetching
-    ) {
-      reconnectBaseline.current = null
-      reconnectRefreshRequested.current = false
-      queueMicrotask(() => setReconnectDebt(false))
-    }
-  }, [query.dataUpdatedAt, query.isFetching, query.isSuccess, reconnectDebt, streamState])
+  }, [reconnectDebt, refetchPreparation, streamState, updates?.hasBeenLive])
   const reconnecting = reconnectDebt
   // TanStack Query retains the last successful snapshot while a refetch is in
   // flight or the stream is degraded.  Frames never write this cache, so this

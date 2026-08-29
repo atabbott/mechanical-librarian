@@ -53,11 +53,12 @@ def accept_preparation_trigger(
     current = connection.execute(
         "SELECT run_id,state FROM review_preparation_presentation WHERE row_id='run'"
     ).fetchone()
-    if current is None or current[1] in {
+    replacing_terminal = current is not None and current[1] in {
         PreparationRunState.COMPLETED_CLEAN.value,
         PreparationRunState.COMPLETED_WITH_FAILURES.value,
         PreparationRunState.DISMISSED.value,
-    }:
+    }
+    if current is None or replacing_terminal:
         previous = "" if current is None else cast(str, current[0])
         material = f"preparation-presentation-v1\0{previous}\0{trigger.value}\0{scan_id}\0{accepted_at}"
         run_id = "preparation_run_" + hashlib.sha256(material.encode()).hexdigest()
@@ -109,10 +110,14 @@ def accept_preparation_trigger(
                 scan_id,
                 connection_name,
                 library_name,
-                None if active else cycle_id,
+                enrollment[0]
+                if active and enrollment is not None
+                else None
+                if active
+                else cycle_id,
                 cycle_id if active else None,
                 "queued"
-                if active and enrollment is None
+                if replacing_terminal or (active and enrollment is None)
                 else (previous_scan_state or "queued"),
                 ordinal,
                 accepted_at,
@@ -195,7 +200,7 @@ def record_preparation_names(
         "SELECT COUNT(*) FROM review_preparation_presentation AS work "
         "WHERE work.row_kind='work' AND work.run_id=?)),active_count=("
         "SELECT COUNT(*) FROM review_preparation_presentation AS work WHERE work.row_kind='work' "
-        "AND work.run_id=? AND work.current_work_state='running' AND work.work_outcome IS NULL),updated_at=? "
+        "AND work.run_id=? AND work.current_work_state='running'),updated_at=? "
         "WHERE row_id='run' AND run_id=?",
         (run_id, run_id, updated_at, run_id),
     )
@@ -205,14 +210,13 @@ def record_preparation_names(
 def refresh_preparation_presentation(
     connection: sqlite3.Connection, updated_at: int
 ) -> None:
-    if (
-        connection.execute(
-            "SELECT 1 FROM review_preparation_presentation WHERE row_id='run'"
-        ).fetchone()
-        is not None
-    ):
-        _adopt_enrollment_states(connection, updated_at)
+    run = connection.execute(
+        "SELECT run_id FROM review_preparation_presentation WHERE row_id='run'"
+    ).fetchone()
+    if run is not None:
         _refresh_preparation_presentation(connection, updated_at)
+        _adopt_enrollment_states(connection, updated_at)
+        _refresh_run_state(connection, cast(str, run[0]), updated_at)
 
 
 def refresh_preparation_run_state(
@@ -316,8 +320,8 @@ def refresh_preparation_work(
         "WHERE row_id=?",
         (high_stage, authoritative[1], outcome, outcome_at, "work:" + work_id),
     )
-    old_active = presentation[4] == "running" and old_outcome is None
-    new_active = authoritative[1] == "running" and outcome is None
+    old_active = presentation[4] == "running"
+    new_active = authoritative[1] == "running"
     connection.execute(
         "UPDATE review_preparation_presentation SET updated_at=?,active_count=active_count+?,read=read+?,"
         "searches_finished=searches_finished+?,compared=compared+?,checked=checked+?,"
@@ -349,6 +353,7 @@ def _refresh_preparation_presentation(
         "JOIN review_preparation_work AS work ON work.work_id=presentation.work_id "
         "JOIN review_preparation_presentation AS enrollment ON enrollment.row_kind='enrollment' "
         "AND enrollment.scan_id=presentation.scan_id AND enrollment.cycle_id=presentation.cycle_id "
+        "AND enrollment.cycle_state NOT IN ('completed','completed_with_failures') "
         "WHERE presentation.row_kind='work' AND presentation.run_id=?",
         (run_id,),
     ).fetchall()
@@ -392,7 +397,7 @@ def _refresh_preparation_presentation(
         max(cast(int, run[index + 2]), observed[index]) for index in range(6)
     )
     active_count = sum(
-        current_state == "running" and outcome is None
+        current_state == "running"
         for _row_id, _old_stage, outcome, _old_updated_at, _current_stage, current_state, _work_updated_at in work_rows
     )
     connection.execute(
@@ -495,7 +500,7 @@ def preparation_presentation_snapshot(
         )
         active_rows = connection.execute(
             "SELECT display_name,work_stage FROM review_preparation_presentation "
-            "WHERE row_kind='work' AND run_id=? AND current_work_state='running' AND work_outcome IS NULL "
+            "WHERE row_kind='work' AND run_id=? AND current_work_state='running' "
             "ORDER BY trigger_ordinal,ordinal,work_id LIMIT 5",
             (run_id,),
         ).fetchall()
@@ -580,34 +585,104 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                 (run_id,),
             ).fetchone()[0]:
                 raise ValueError("foreign presentation run")
-            if connection.execute(
-                "SELECT COUNT(*) FROM review_preparation_presentation WHERE "
-                "(row_kind='run' AND (connection_name IS NOT NULL OR library_name IS NOT NULL OR cycle_state IS NOT NULL OR trigger_ordinal IS NOT NULL OR accepted_count IS NOT NULL)) OR "
-                "(row_kind='trigger' AND (connection_name IS NOT NULL OR library_name IS NOT NULL OR cycle_state IS NOT NULL OR completed_at IS NOT NULL OR active_count IS NOT NULL OR read IS NOT NULL)) OR "
-                "(row_kind='enrollment' AND (trigger_ordinal IS NOT NULL OR completed_at IS NOT NULL OR active_count IS NOT NULL OR first_accepted_at IS NOT NULL OR read IS NOT NULL)) OR "
-                "(row_kind='work' AND (connection_name IS NOT NULL OR library_name IS NOT NULL OR cycle_state IS NOT NULL OR completed_at IS NOT NULL OR active_count IS NOT NULL OR first_accepted_at IS NOT NULL OR read IS NOT NULL))"
-            ).fetchone()[0]:
-                raise ValueError("irrelevant presentation columns")
+            common = {"row_id", "row_kind", "run_id", "updated_at"}
+            allowed = {
+                "run": common
+                | {
+                    "state",
+                    "started_at",
+                    "completed_at",
+                    "total",
+                    "active_count",
+                    "read",
+                    "searches_finished",
+                    "compared",
+                    "checked",
+                    "ready",
+                    "failed",
+                },
+                "trigger": common
+                | {
+                    "trigger",
+                    "trigger_ordinal",
+                    "accepted_count",
+                    "first_accepted_at",
+                    "last_accepted_at",
+                },
+                "enrollment": common
+                | {
+                    "scan_id",
+                    "connection_name",
+                    "library_name",
+                    "cycle_id",
+                    "pending_cycle_id",
+                    "cycle_state",
+                    "ordinal",
+                },
+                "work": common
+                | {
+                    "scan_id",
+                    "cycle_id",
+                    "work_id",
+                    "ordinal",
+                    "trigger_ordinal",
+                    "display_name",
+                    "work_stage",
+                    "current_work_state",
+                    "work_outcome",
+                },
+            }
+            columns = tuple(
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info(review_preparation_presentation)"
+                )
+            )
+            for row in connection.execute(
+                "SELECT * FROM review_preparation_presentation"
+            ):
+                row_kind = cast(str, row[columns.index("row_kind")])
+                if any(
+                    value is not None and column not in allowed[row_kind]
+                    for column, value in zip(columns, row, strict=True)
+                ):
+                    raise ValueError("irrelevant presentation columns")
             enrollments = connection.execute(
-                "SELECT scan_id,cycle_id,pending_cycle_id,ordinal,row_id FROM review_preparation_presentation "
+                "SELECT scan_id,cycle_id,pending_cycle_id,ordinal,row_id,connection_name,library_name "
+                "FROM review_preparation_presentation "
                 "WHERE row_kind='enrollment' ORDER BY ordinal"
             ).fetchall()
             if [row[3] for row in enrollments] != list(range(len(enrollments))):
                 raise ValueError("noncanonical enrollment ordinals")
-            for scan_id, _cycle_id, _pending, _ordinal, row_id in enrollments:
+            cycle_ids = [
+                cycle_id
+                for row in enrollments
+                for cycle_id in row[1:3]
+                if cycle_id is not None
+            ]
+            if len(cycle_ids) != len(set(cycle_ids)):
+                raise ValueError("noncanonical presentation cycles")
+            for (
+                scan_id,
+                _cycle_id,
+                _pending,
+                _ordinal,
+                row_id,
+                connection_name,
+                library_name,
+            ) in enrollments:
                 if (
                     row_id
                     != "enrollment:"
                     + hashlib.sha256(cast(str, scan_id).encode()).hexdigest()
                 ):
                     raise ValueError("noncanonical enrollment identity")
-                if (
-                    connection.execute(
-                        "SELECT 1 FROM review_preparation_scans WHERE scan_id=?",
-                        (scan_id,),
-                    ).fetchone()
-                    is None
-                ):
+                target = connection.execute(
+                    "SELECT connection_name,library_name FROM review_preparation_scans "
+                    "WHERE scan_id=?",
+                    (scan_id,),
+                ).fetchone()
+                if target != (connection_name, library_name):
                     raise ValueError("orphan enrollment")
             trigger_rows = connection.execute(
                 "SELECT trigger,trigger_ordinal FROM review_preparation_presentation "
@@ -631,12 +706,15 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                 work_id,
                 ordinal,
                 trigger_ordinal,
+                row_id,
             ) in connection.execute(
-                "SELECT scan_id,cycle_id,work_id,ordinal,trigger_ordinal "
+                "SELECT scan_id,cycle_id,work_id,ordinal,trigger_ordinal,row_id "
                 "FROM review_preparation_presentation WHERE row_kind='work'"
             ):
                 if enrollment_cycles.get((scan_id, cycle_id)) != trigger_ordinal:
                     raise ValueError("orphan presentation work cycle")
+                if row_id != "work:" + cast(str, work_id):
+                    raise ValueError("noncanonical presentation work identity")
                 authoritative = connection.execute(
                     "SELECT scan_id,ordinal FROM review_preparation_work WHERE work_id=?",
                     (work_id,),
@@ -645,7 +723,7 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                     raise ValueError("noncanonical presentation work")
             observed_active = connection.execute(
                 "SELECT COUNT(*) FROM review_preparation_presentation WHERE row_kind='work' "
-                "AND current_work_state='running' AND work_outcome IS NULL"
+                "AND current_work_state='running'"
             ).fetchone()[0]
             if active_count != observed_active:
                 raise ValueError("invalid active count")

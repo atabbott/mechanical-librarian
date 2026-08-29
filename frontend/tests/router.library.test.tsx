@@ -57,6 +57,8 @@ describe('Library route', () => {
         dismissible: false,
       },
     }
+    const confirmedPresentation = confirmed.presentation
+    if (!confirmedPresentation) throw new Error('preparation fixture requires a presentation')
     http.getPreparation = vi.fn(async () => confirmed)
     const { queryClient } = renderRoute('/library?lens=all', http, updates)
 
@@ -84,6 +86,13 @@ describe('Library route', () => {
     act(() => updates.setState('live'))
     expect(screen.getByText(/Reconnecting · showing the last confirmed state/u)).toBeVisible()
     await waitFor(() => expect(releaseRefresh).toBeTypeOf('function'))
+    act(() => {
+      queryClient.setQueryData(['review-preparation'], {
+        ...confirmed,
+        presentation: { ...confirmedPresentation, updated_at: 999 },
+      })
+    })
+    expect(screen.getByText(/Reconnecting · showing the last confirmed state/u)).toBeVisible()
     await act(async () => releaseRefresh(confirmed))
     await waitFor(() =>
       expect(screen.queryByText(/Reconnecting · showing the last confirmed state/u)).toBeNull(),
@@ -96,12 +105,10 @@ describe('Library route', () => {
     expect(await screen.findByRole('heading', { name: 'Now preparing' })).toBeVisible()
     expect(document.querySelector('.preparation-run-state')).not.toHaveClass('reported-change')
 
-    const laterPresentation = confirmed.presentation
-    if (!laterPresentation) throw new Error('preparation fixture requires a presentation')
     act(() => {
       queryClient.setQueryData(['review-preparation'], {
         ...confirmed,
-        presentation: { ...laterPresentation, updated_at: 102 },
+        presentation: { ...confirmedPresentation, updated_at: 102 },
       })
     })
     await waitFor(() =>
