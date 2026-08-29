@@ -51,6 +51,8 @@ describe('reviewer access transport vocabulary', () => {
     ['hostile recommendation', { recommendations: ['provider/model\nBearer secret'] }],
     ['extra mapping field', { mapping: { engine: 'codex', model: 'invented' } }],
     ['non-integer headroom', { codex: { engine: 'codex', state: 'ready', reason: null, model: null, tier: null, host_headroom_bytes: '1' } }],
+    ['array candidate model', { candidates: [{ model: ['provider/model'], tier: 'free', qualified: false, evidence: 'catalogue_capability_only', requests_per_minute: null, requests_per_day: null }] }],
+    ['array candidate tier', { candidates: [{ model: 'provider/model', tier: ['free'], qualified: false, evidence: 'catalogue_capability_only', requests_per_minute: null, requests_per_day: null }] }],
     ['qualified candidate', { candidates: [{ model: 'provider/model', tier: 'paid', qualified: true, evidence: 'catalogue_capability_only', requests_per_minute: null, requests_per_day: null }] }],
     ['extra top-level field', { invented: true }],
   ])('rejects %s', (_label, overrides) => {

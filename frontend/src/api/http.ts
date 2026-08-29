@@ -1311,8 +1311,10 @@ export const mapReviewerAccess = (value: unknown): ReviewerAccessView => {
           'requests_per_minute',
           'requests_per_day',
         ]) ||
-        !openRouterModel.test(String(item.model)) ||
-        !['free', 'paid'].includes(String(item.tier)) ||
+        typeof item.model !== 'string' ||
+        !openRouterModel.test(item.model) ||
+        typeof item.tier !== 'string' ||
+        !['free', 'paid'].includes(item.tier) ||
         item.qualified !== false ||
         item.evidence !== 'catalogue_capability_only' ||
         !(
