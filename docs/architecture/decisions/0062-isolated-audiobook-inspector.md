@@ -57,10 +57,11 @@ provider means to the review pipeline.
 4. **An audiobook report terminates at local extraction.** No
    `ProviderBinding` is read, no discovery plan is built, and no provider is
    constructed or dispatched. The domain refuses an audio report that carries a
-   provider observation at all, and the review pipeline stops such a report at
-   its provider stage with the terminal, non-retryable code
-   `local_evidence_only`, projected to the owner as recorded evidence rather
-   than as a failure.
+   provider observation at all, and review preparation ends in the same
+   transaction that publishes the report, with the terminal, non-retryable code
+   `local_evidence_only` projected to the owner as recorded evidence rather
+   than as a failure. The provider stage refuses such a report as a guard, for
+   the case it is reached by a path that does not exist today.
 
 ## Consequences
 
@@ -72,9 +73,8 @@ provider means to the review pipeline.
   ffmpeg's, not this project's.
 - The evidence set is closed and per-surface attributed, so an owner sees which
   grammar carried each observation: an embedded tag, a sidecar, or a path.
-- The pipeline stop is explicit at the first stage that already holds the
-  report, so an audiobook neither stalls nor reports a provider failure that
-  never happened.
+- The stop is atomic with publication, so an audiobook neither stalls in a
+  stage it cannot complete nor reports a provider failure that never happened.
 
 ### Negative
 

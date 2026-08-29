@@ -4897,7 +4897,7 @@ def test_shutdown_deadline_retains_active_worker_and_durable_claim() -> None:
     assert supervisor._threads == ()
 
 
-def test_provider_stage_stops_an_audiobook_report_at_its_local_evidence() -> None:
+def test_the_provider_stage_refuses_an_audiobook_report_it_should_never_see() -> None:
     def unreachable(*_arguments: object, **_keywords: object) -> None:
         raise AssertionError
 
@@ -4978,3 +4978,75 @@ def test_an_ebook_report_still_reaches_the_provider_stage() -> None:
         )
         == ()
     )
+
+
+def _audio_entry(item_id: str, file_identity: str) -> CatalogueEntry:
+    return CatalogueEntry(
+        "primary",
+        "fiction",
+        "lib-1",
+        item_id,
+        1,
+        "Recorded work",
+        ("Example Author",),
+        False,
+        False,
+        "singular-supported",
+        file_identity,
+        f"/{item_id}.m4b",
+        "m4b",
+        "audiobooks",
+    )
+
+
+def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
+    application_path: Path,
+) -> None:
+    """Preparation stops in the transaction that published the report.
+
+    The ordinary ladder runs extraction straight to `proposal`; the `provider`
+    stage is only reached by a terminal extraction disposition or a retry
+    successor. An audiobook has neither a provider comparison nor a proposal to
+    evaluate, so its work ends here rather than queueing stages that cannot
+    complete.
+    """
+    report = MetadataReport.create(
+        target=TargetFacts(
+            "primary", "fiction", "item", default_target_fields("Recorded work")
+        ),
+        file=FileFacts(0, "1" * 64, "b" * 64, "m4b"),
+        local_claims=(),
+        local_reasons=("no_local_audio_claims",),
+        providers=(),
+        audio=AudioFacts(),
+    )
+
+    repository = open_repository(application_path)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_audio_entry("item", report.file.identity),), 12
+    )
+    extraction = repository.claim_review_pipeline_action(13)
+    assert extraction is not None
+    repository.publish(
+        report,
+        lambda: True,
+        None,
+        lambda value, published: value.complete_review_extraction_publication(
+            extraction, published.report_id, 14, 0, "local_evidence_only"
+        ),
+    )
+    work = repository._connection.execute(
+        "SELECT stage,state,failure_code,failure_root FROM review_preparation_work"
+    ).fetchone()
+    retained = MetadataReport.from_json(repository.get(report.report_id))
+    remaining = repository.claim_review_pipeline_action(15)
+    repository.close()
+
+    assert work == ("provider", "failed", "local_evidence_only", None)
+    assert remaining is None
+    assert retained.schema_version == "metadata-report-v31"
+    assert retained.audio is not None
+    assert retained.providers == ()

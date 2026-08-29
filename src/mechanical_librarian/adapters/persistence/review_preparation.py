@@ -1016,7 +1016,18 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             or type(recovery_delay_seconds) is not int
             or not 0 <= recovery_delay_seconds <= 86_400
             or provider_failure_code
-            not in {None, "provider", "configuration", "authentication", "transient"}
+            not in {
+                None,
+                "provider",
+                "configuration",
+                "authentication",
+                "transient",
+                # Not a provider disposition at all: the report is complete and
+                # published, and F43 grants an audiobook nothing beyond it, so
+                # the work ends here rather than queueing a proposal that has
+                # no comparison to evaluate.
+                "local_evidence_only",
+            }
             or type(claim_next) is not bool
             or (
                 provider_failure_root is not None
@@ -1059,6 +1070,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             terminal_failure = provider_failure_code in {
                 "authentication",
                 "configuration",
+                "local_evidence_only",
             }
             updated = self._connection.execute(
                 "UPDATE review_preparation_work SET stage=?,state=?,attempt=0,"

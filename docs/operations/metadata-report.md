@@ -54,11 +54,14 @@ provider call.
   library explicitly.
 - The target secret and each enabled referenced provider secret are owner-only
   regular files.
-- Ebook libraries map to a read-only media mount.
-- The selected item is an ebook and the selected file is EPUB.
+- Ebook libraries map to a read-only media mount. An audiobook library may map
+  to one too.
+- The selected item is an ebook whose selected file is EPUB, or an audiobook
+  whose one and only file is `m4b`, `m4a`, or `mp3`.
 
-Audiobook and non-EPUB targets fail before EPUB inspection, provider
-construction, provider credential access, egress, or report publication.
+Every other target — a multi-file audiobook, an unmounted audiobook library, a
+non-EPUB ebook file — fails before inspection, provider construction, provider
+credential access, egress, or report publication.
 
 Linux production retains the no-follow root-to-parent chain and opens the
 database through a private verified hard-link alias while holding the
@@ -162,8 +165,9 @@ chapters, and whether the file carries embedded cover art — each attributed to
 the surface it was read from: an embedded tag, a sidecar document beside the
 file, or the exported file and folder names. Chapters are a bounded structured
 section rather than claims, and the embedded cover is a presence fact that
-grants no cover authority. No provider is contacted for such a report, and its
-review preparation ends at the provider stage with `local_evidence_only`.
+grants no cover authority. No provider is contacted for such a report: review
+preparation ends terminally with `local_evidence_only` in the same transaction
+that publishes it.
 Multi-file audiobook items and audiobook libraries without a named read-only
 mount stay excluded, exactly as before. See
 [ADR-0062](../architecture/decisions/0062-isolated-audiobook-inspector.md).

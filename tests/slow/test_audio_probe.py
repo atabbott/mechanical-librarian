@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -24,7 +25,10 @@ from mechanical_librarian.adapters.evidence_extractors.process import (
     resolve_probe_path,
 )
 from mechanical_librarian.application.configuration import MediaMountConfiguration
-from mechanical_librarian.application.metadata_report import AudioItemInspectionError
+from mechanical_librarian.application.metadata_report import (
+    AudioInspectionResult,
+    AudioItemInspectionError,
+)
 from mechanical_librarian.bootstrap.composition import _IsolatedAudioInspector
 from mechanical_librarian.domain.audio_inspection import AudioInspectionOutcome
 from mechanical_librarian.domain.metadata_report import ClaimKind
@@ -53,18 +57,18 @@ def _mount(root: Path) -> MediaMountConfiguration:
     return MediaMountConfiguration("audiobooks", str(root), "/library", True)
 
 
-def _inspect(root: Path, relative_path: str):
+def _inspect(root: Path, relative_path: str) -> AudioInspectionResult:
     return _IsolatedAudioInspector().inspect(
         _mount(root), relative_path, _MAXIMUM_BYTES
     )
 
 
-def _claims(result) -> set[tuple[str, str, str | None]]:
+def _claims(result: AudioInspectionResult) -> set[tuple[str, str, str]]:
     return {(value.kind.value, value.observed, value.basis) for value in result.claims}
 
 
 @pytest.fixture
-def media_root() -> Path:
+def media_root() -> Iterator[Path]:
     _require_probe()
     with tempfile.TemporaryDirectory() as temporary:
         yield Path(temporary).resolve()

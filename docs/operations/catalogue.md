@@ -14,7 +14,7 @@ Later service drift is outside the generation's bounded observation window.
 
 The catalogue inspector emits deterministic JSON rows with `eligible`,
 `ineligible`, `ebook`, or `audio` facets and supports exact scoped lookup. List
-output never contains a path. Exact lookup can include the service-relative EPUB path; operation
+output never contains a path. Exact lookup can include the service-relative media path; operation
 errors remain value-free and logs must redact titles, authors, identities, paths,
 and credentials.
 

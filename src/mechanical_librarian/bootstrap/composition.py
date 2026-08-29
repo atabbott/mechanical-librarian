@@ -231,6 +231,7 @@ from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
 )
 from mechanical_librarian.domain.metadata_report import (
+    AUDIO_FILE_FORMATS,
     AudioFacts,
     ClaimKind,
     ClaimScope,
@@ -1510,7 +1511,13 @@ def run_metadata_report_loaded(
                 report.report_id,
                 int(time.time()),
                 0,
-                None,
+                # An audiobook's local evidence is the whole of its preparation:
+                # the work ends terminally here, in the same transaction that
+                # published the report, rather than queueing stages that have
+                # no provider comparison to work from.
+                "local_evidence_only"
+                if report.file.format in AUDIO_FILE_FORMATS
+                else None,
                 review_claim_next,
                 None,
             )

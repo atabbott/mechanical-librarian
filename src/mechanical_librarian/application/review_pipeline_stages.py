@@ -297,14 +297,12 @@ class ReviewPipelineStages:
             cast("ReviewStageRepository", pipeline_repository).get(report_id)
         )
         if value.file.format in AUDIO_FILE_FORMATS:
-            # F43 slice 1 publishes a closed local evidence set for an
-            # audiobook and grants nothing beyond it: no provider was
-            # constructed or dispatched, so there is no comparison a proposal
-            # could be evaluated from and no package a review case could
-            # admit. The stop is explicit and terminal at the first stage that
-            # already holds the report, so the owner sees why the work ends
-            # where it does rather than seeing it stall or fail as if a
-            # provider had been tried.
+            # An audiobook's preparation already ended terminally in the
+            # transaction that published its report, so it never reaches this
+            # stage. This is the guard for the one thing that must not happen
+            # if it somehow did: contacting providers for a report that was
+            # published with none, and recording recovery observations that no
+            # provider produced.
             raise ReviewPipelineError("local_evidence_only")
         record_provider_recovery_observations(
             self._recovery_observer,
