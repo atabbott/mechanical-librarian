@@ -2353,3 +2353,41 @@ def test_every_library_row_names_what_its_address_opens() -> None:
     # Preparation stopped before a report existed, so there is nothing to open
     # and the row says so rather than offering an address that answers nothing.
     assert (stopped["detail_kind"], stopped["detail_url"]) == (None, None)
+
+
+def test_a_package_row_pointing_at_another_work_serves_no_evidence(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    """The report must be the report of the work that was asked for.
+
+    `current_review_packages` names a report by id, and the report names its
+    own target. Nothing made the two agree here, so a row corrupted to point
+    at another work's canonical report would have served that work's ASIN,
+    narrator and description under this item's name -- evidence attributed to
+    the wrong book, which is worse than no evidence at all. The browse path
+    already compares the two; this is the same comparison.
+    """
+    stranger = MetadataReport.create(
+        target=TargetFacts(
+            "primary", "ebooks", "someone-else", default_target_fields("Other work")
+        ),
+        file=FileFacts(0, "9" * 64, "8" * 64),
+        local_claims=(),
+        local_reasons=("no_opening_claims",),
+        providers=(),
+    )
+
+    def crossed(_connection: str, _library: str, _item: str) -> str | None:
+        return stranger.to_json()
+
+    web.repository.read_current_report_document = crossed  # type: ignore[method-assign,assignment]
+    web.login()
+
+    response = web.client.get(
+        "/api/v1/library/report?connection=primary&library=ebooks&item=item-1"
+    )
+
+    assert (response.status_code, response.json()["error"]["code"]) == (
+        503,
+        "unavailable",
+    )

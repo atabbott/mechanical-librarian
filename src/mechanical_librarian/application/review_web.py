@@ -1100,11 +1100,21 @@ class BrowseReviewLibrary:
             # would have projected arbitrary evidence as recorded fact. This
             # is the same reconstruction `_library_item` performs before it
             # projects a caseless row.
-            MetadataReport.from_json(document)
+            recorded = MetadataReport.from_json(document)
             report = browse_report(document)
-            return _report_detail(report)
         except Exception as error:
             raise ReviewWebError("unavailable") from error
+        target = recorded.target
+        if (target.connection, target.library, target.item) != (
+            connection,
+            library,
+            item,
+        ):
+            # The package row is a pointer, and a pointer can be wrong. Serving
+            # what it reached would attribute another work's evidence to this
+            # one under the identity the owner asked about.
+            raise ReviewWebError("unavailable")
+        return _report_detail(report)
 
 
 def _report_detail_url(target: TargetFacts) -> str:
