@@ -282,7 +282,7 @@ that archive contains the vendored Bubblewrap sources and `codex-rs/bwrap`
 build recipe corresponding to the distributed binary. Both licences, the
 source archive, installed binaries, and metadata are covered by the image's
 checksum manifest. These artifacts receive only the closed device-authentication and contained
-cover-observation authority in ADR-0061. Changing their version, architecture
+cover-observation authority in ADR-0062. Changing their version, architecture
 set, source, licence, or checksum requires an ordinary tracked dependency and
 security review; no runtime updater or Renovate rule owns them.
 
