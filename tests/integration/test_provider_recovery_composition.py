@@ -5,6 +5,7 @@ import sqlite3
 import tempfile
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
 import pytest
@@ -34,6 +35,10 @@ from mechanical_librarian.application.metadata_report import (
 )
 from mechanical_librarian.application.provider_recovery_runner import RecoveryRun
 from mechanical_librarian.application.review_pipeline import ReviewPipelineError
+from mechanical_librarian.application.reviewer_access import (
+    ReviewerAccessApplicationError,
+    ReviewerAccessOperations,
+)
 from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -48,6 +53,23 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.provider_recovery import ProviderRecoveryJob
 from tests.support.proposal_evidence import _claim, _provider
+
+
+class _ReviewerAccess:
+    def dispatch_cover_observation(self):
+        raise ReviewerAccessApplicationError("not_configured")
+
+    def current_cover_observation_identity(self):
+        return None
+
+    def revision_is_current(self, _revision: int) -> bool:
+        return True
+
+
+def _reviewer_access(
+    _database: Path, _configuration: ApplicationConfiguration
+) -> ReviewerAccessOperations:
+    return cast("ReviewerAccessOperations", _ReviewerAccess())
 
 
 class _TargetReader:
@@ -178,6 +200,7 @@ def test_retained_outbox_failure_does_not_skip_an_eligible_recovery_run() -> Non
                 database,
                 root / "catalogue.sqlite",
                 root / "artifacts",
+                _reviewer_access(database, configuration),
                 provider_recovery=recovery,
             )
             with pytest.raises(ReviewPipelineError, match="persistence"):
@@ -266,6 +289,7 @@ def test_generation_rollback_rejects_before_cutover_delivery() -> None:
                 database,
                 root / "catalogue.sqlite",
                 root / "artifacts",
+                _reviewer_access(database, configuration),
                 provider_recovery=recovery,
             )
         assert metadata_before == database.read_bytes()
@@ -487,6 +511,7 @@ def test_restart_delivers_generation_cutover_once_after_dormant_health(
                 database,
                 root / "catalogue.sqlite",
                 root / "artifacts",
+                _reviewer_access(database, generation_two),
                 provider_recovery=recovery,
             )
             supervisor.recover_provider_once()
@@ -762,6 +787,7 @@ def test_three_work_shared_failure_then_real_f22_cutover() -> None:
                 database,
                 root / "catalogue.sqlite",
                 root / "artifacts",
+                _reviewer_access(database, configuration),
                 provider_recovery=recovery,
             )
             supervisor.recover_provider_once()

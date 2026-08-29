@@ -214,6 +214,53 @@ def test_provider_recovery_refuses_absent_review_configuration() -> None:
     pipeline.assert_not_called()
 
 
+def test_provider_recovery_uses_one_explicit_owner_reviewer_authority() -> None:
+    review = object()
+    recovery = Mock()
+    repository = Mock()
+    reviewer_access = Mock()
+    supervisor = Mock()
+    with (
+        patch(
+            "mechanical_librarian.bootstrap.composition.load_configuration_file",
+            return_value=SimpleNamespace(review=review),
+        ),
+        patch(
+            "mechanical_librarian.bootstrap.composition.SQLiteProviderRecoveryStore.open",
+            return_value=recovery,
+        ),
+        patch(
+            "mechanical_librarian.bootstrap.composition._private_root",
+            return_value=Path("/private"),
+        ),
+        patch(
+            "mechanical_librarian.bootstrap.composition.open_repository",
+            return_value=repository,
+        ),
+        patch(
+            "mechanical_librarian.bootstrap.composition._compose_reviewer_access",
+            return_value=reviewer_access,
+        ) as compose_access,
+        patch(
+            "mechanical_librarian.bootstrap.composition.create_review_pipeline",
+            return_value=supervisor,
+        ) as compose_pipeline,
+    ):
+        run_provider_recovery_once(
+            Path("/config.json"),
+            Path("/database.sqlite3"),
+            Path("/catalogue.sqlite3"),
+            Path("/artifacts"),
+        )
+
+    compose_access.assert_called_once_with(repository, review)
+    assert compose_pipeline.call_args.args[4] is reviewer_access
+    supervisor.recover_provider_once.assert_called_once_with()
+    supervisor.stop.assert_called_once_with()
+    reviewer_access.close.assert_called_once_with()
+    repository.close.assert_called_once_with()
+
+
 def test_show_and_select_delegate_closed_values() -> None:
     runner = Mock(return_value={"schema_version": "cover-consideration-v3"})
     output = io.StringIO()
@@ -370,6 +417,7 @@ def _cover_detail() -> dict[str, object]:
 
 
 def _run(repository: Mock, application: Mock, *arguments: object) -> object:
+    reviewer_access = Mock()
     with (
         patch(
             "mechanical_librarian.bootstrap.composition.load_configuration_file",
@@ -384,17 +432,23 @@ def _run(repository: Mock, application: Mock, *arguments: object) -> object:
             return_value=object(),
         ),
         patch(
+            "mechanical_librarian.bootstrap.composition._compose_reviewer_access",
+            return_value=reviewer_access,
+        ),
+        patch(
             "mechanical_librarian.bootstrap.composition.compose_review_application",
             return_value=application,
         ),
     ):
-        return run_cover_review(
+        result = run_cover_review(
             Path("/config.json"),
             Path("/database.sqlite3"),
             Path("/artifacts"),
             _CASE,
             *arguments,
         )
+    reviewer_access.close.assert_called_once_with()
+    return result
 
 
 @pytest.mark.parametrize(

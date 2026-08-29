@@ -45,6 +45,9 @@ class _Auth:
         self.status_calls += 1
         return CodexDeviceAuthState(self.state)
 
+    def passive_status(self):
+        return CodexDeviceAuthState(self.state)
+
     def cancel(self):
         self.state = "cancelled"
         return CodexDeviceAuthState("cancelled")
@@ -124,6 +127,7 @@ def _operations(
         ReviewerAccessStore(connection),
         codex_auth=auth,
         codex_host=lambda: ReviewerHostStatus(True, None, 2 * 1024**3),
+        codex_identity=lambda: ("gpt-5.4", b"codex-profile"),
         codex_binding=codex_binding,
         openrouter_factory=lambda key, model: _OpenRouter(
             key, model, openrouter_calls, openrouter_fail
@@ -163,6 +167,18 @@ def test_generic_reads_only_use_cheap_codex_host_evidence() -> None:
     assert auth.status_calls == 0
     assert auth.current_calls == 0
     assert host_calls == ["host", "host", "host"]
+    assert codex == []
+
+
+def test_generic_read_reports_an_existing_flow_without_credential_work() -> None:
+    operations, auth, _openrouter, codex = _operations(auth_state="waiting")
+
+    view = operations.read()
+
+    assert view.mapping is None
+    assert view.codex.state == "waiting"
+    assert auth.status_calls == 0
+    assert auth.current_calls == 0
     assert codex == []
 
 
@@ -404,3 +420,21 @@ def test_a_b_a_replacement_cannot_make_captured_dispatch_current_again() -> None
         "openrouter",
         "example/model-a",
     )
+
+
+def test_runner_construction_failure_preserves_selected_identity() -> None:
+    operations, _auth, _openrouter, _codex = _operations()
+    operations.configure_openrouter(
+        expected_revision=1, api_key="secret-key", model="example/model"
+    )
+    operations._openrouter_factory = lambda _key, _model: (_ for _ in ()).throw(
+        RuntimeError("private provider detail")
+    )
+
+    with pytest.raises(ReviewerAccessApplicationError) as caught:
+        operations.dispatch_cover_observation()
+
+    assert caught.value.code == "unreachable"
+    assert caught.value.identity is not None
+    assert caught.value.identity[:3] == (2, "openrouter", "example/model")
+    assert "private provider detail" not in str(caught.value)

@@ -47,6 +47,9 @@ from mechanical_librarian.application.cover_policy import (
 from mechanical_librarian.application.cover_policy import (
     SCHEMA_VERSION as POLICY_REPORT_SCHEMA_VERSION,
 )
+from mechanical_librarian.application.reviewer_access import (
+    ReviewerAccessApplicationError,
+)
 from mechanical_librarian.application.reviewer_contracts import ReviewerDispatch
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
@@ -138,6 +141,9 @@ class _ObservationRequest:
     reviewer_failure: dict[str, object] | None = None
     reviewer_access_revision: int | None = None
     replay_reference: str | None = None
+    reviewer_engine: str | None = None
+    reviewer_model: str | None = None
+    reviewer_profile: bytes | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -332,16 +338,22 @@ class CoverConsiderationService:
                 "attempts": [],
                 "code": str(getattr(error, "code", "unavailable")),
             }
-        dynamic_identity = (
-            None
-            if binding is None
-            else (
-                binding.access_revision,
-                binding.engine,
-                binding.model,
-                binding.profile,
+            dynamic_identity = (
+                error.identity
+                if isinstance(error, ReviewerAccessApplicationError)
+                else None
             )
-        )
+        else:
+            dynamic_identity = (
+                None
+                if binding is None
+                else (
+                    binding.access_revision,
+                    binding.engine,
+                    binding.model,
+                    binding.profile,
+                )
+            )
         replay_reference = self._replay_reference(dynamic_identity)
         replay_digest = self._replay_digest(
             review_case_id,
@@ -358,8 +370,11 @@ class CoverConsiderationService:
             ),
             binding,
             failure,
-            None if binding is None else binding.access_revision,
+            None if dynamic_identity is None else dynamic_identity[0],
             replay_reference,
+            None if dynamic_identity is None else dynamic_identity[1],
+            None if dynamic_identity is None else dynamic_identity[2],
+            None if dynamic_identity is None else dynamic_identity[3],
         )
 
     def observe(self, request: _ObservationRequest) -> _ReviewerEvidence:
@@ -372,6 +387,9 @@ class CoverConsiderationService:
                 None,
                 "unavailable",
                 request.reviewer_failure,
+                request.reviewer_engine,
+                request.reviewer_model,
+                request.reviewer_profile,
                 reviewer_access_revision=request.reviewer_access_revision,
                 replay_reference=request.replay_reference,
             )
@@ -424,6 +442,11 @@ class CoverConsiderationService:
                 profile = binding.profile
                 reviewer = binding.runner
             except Exception as error:
+                identity = (
+                    error.identity
+                    if isinstance(error, ReviewerAccessApplicationError)
+                    else None
+                )
                 return _ReviewerEvidence(
                     replay_digest,
                     None,
@@ -432,6 +455,15 @@ class CoverConsiderationService:
                         "attempts": [],
                         "code": str(getattr(error, "code", "unavailable")),
                     },
+                    None if identity is None else identity[1],
+                    None if identity is None else identity[2],
+                    None if identity is None else identity[3],
+                    None if identity is None else identity[0],
+                    (
+                        replay_reference
+                        if identity is None
+                        else self._replay_reference(identity)
+                    ),
                 )
         if profile is None or reviewer is None:
             return _ReviewerEvidence(replay_digest, None, "unavailable", None)

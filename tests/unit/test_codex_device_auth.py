@@ -1179,6 +1179,14 @@ def test_lazy_production_wrapper_propagates_clear_failure() -> None:
         lazy.clear()
 
 
+def test_lazy_passive_status_does_not_construct_codex_authority() -> None:
+    factory = Mock()
+    lazy = _LazyCodexAuth(factory, _CodexAuthLeaseCoordinator())
+
+    assert lazy.passive_status() == CodexDeviceAuthState("ready")
+    factory.assert_not_called()
+
+
 def test_restart_cleans_private_staging_and_reports_interruption(
     tmp_path: Path,
 ) -> None:

@@ -1223,6 +1223,51 @@ def test_malformed_case_decision_body_is_bounded_before_validation(
     assert b"private" not in streamed.content
 
 
+_REVIEWER_MUTATIONS = (
+    ("post", "/api/v1/reviewer-access/openrouter/refresh"),
+    ("put", "/api/v1/reviewer-access/openrouter"),
+    ("delete", "/api/v1/reviewer-access/openrouter"),
+    ("put", "/api/v1/reviewer-access/selection"),
+    ("post", "/api/v1/reviewer-access/codex/device"),
+    ("post", "/api/v1/reviewer-access/codex/recheck"),
+    ("post", "/api/v1/reviewer-access/codex/device/cancel"),
+    ("delete", "/api/v1/reviewer-access/codex"),
+)
+
+
+@pytest.mark.parametrize(("method", "path"), _REVIEWER_MUTATIONS)
+def test_reviewer_mutation_bodies_are_bounded_before_json_parsing(
+    web: ReviewWebContext[FakeReviewRepository], method: str, path: str
+) -> None:
+    private = b'"api_key":"' + b"s" * 4_100 + b'"'
+    response = web.client.request(
+        method,
+        path,
+        headers={**web.origin, "Content-Type": "application/json"},
+        content=(chunk for chunk in (b"{" + private[:2_000], private[2_000:] + b"}")),
+    )
+
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "body_too_large"
+    assert b"api_key" not in response.content
+
+
+def test_openrouter_body_limit_admits_the_largest_valid_key_envelope(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    response = web.client.put(
+        "/api/v1/reviewer-access/openrouter",
+        headers={**web.origin, "Content-Type": "application/json"},
+        json={
+            "api_key": "s" * 2_048,
+            "expected_revision": 1,
+            "model": "provider/model",
+        },
+    )
+
+    assert response.status_code != 413
+
+
 def test_origin_host_proxy_expiry_and_throttle_fail_closed(
     web: ReviewWebContext[FakeReviewRepository],
 ) -> None:
@@ -1634,6 +1679,8 @@ def test_openapi_is_deterministic_and_secret_free(
     assert response_statuses[
         ("post", "/api/v1/review-cases/{review_case_id}/decisions")
     ] == {"200", "400", "401", "403", "404", "409", "413", "422", "503"}
+    for operation in _REVIEWER_MUTATIONS:
+        assert "413" in response_statuses[operation]
     for path in (
         "/api/v1/review-cases/{review_case_id}",
         "/api/v1/review-cases/{review_case_id}/successor",

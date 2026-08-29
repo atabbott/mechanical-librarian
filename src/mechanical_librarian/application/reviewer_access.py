@@ -46,9 +46,14 @@ ReviewerAccessFailure = Literal[
 class ReviewerAccessApplicationError(RuntimeError):
     """Value-free owner-facing reviewer-access refusal."""
 
-    def __init__(self, code: ReviewerAccessFailure) -> None:
+    def __init__(
+        self,
+        code: ReviewerAccessFailure,
+        identity: tuple[int, str, str, bytes] | None = None,
+    ) -> None:
         super().__init__(code)
         self.code = code
+        self.identity = identity
 
 
 class ReviewerAccessRepositoryError(RuntimeError):
@@ -77,6 +82,8 @@ class CodexAuth(Protocol):
     def activate_lease(self) -> None: ...
 
     def start(self) -> CodexDeviceAuthState: ...
+
+    def passive_status(self) -> CodexDeviceAuthState: ...
 
     def status(self) -> CodexDeviceAuthState: ...
 
@@ -256,9 +263,16 @@ class ReviewerAccessOperations:
             # Generic access reads remain engine-neutral and cannot initialize
             # CODEX_HOME, parse the contained profile, or inspect credentials.
             host = self._codex_host()
+            flow = self._codex_auth.passive_status()
             codex_status = ReviewerEngineStatus(
                 engine="codex",
-                state="ready" if host.available else "host_unsupported",
+                state=(
+                    "host_unsupported"
+                    if not host.available
+                    else flow.state
+                    if flow.state in {"starting", "issued", "waiting", "validating"}
+                    else "ready"
+                ),
                 reason=None if host.available else host.reason,
                 host_headroom_bytes=host.headroom_bytes,
             )
@@ -460,20 +474,43 @@ class ReviewerAccessOperations:
         if selection is None:
             raise ReviewerAccessApplicationError("not_configured")
         if isinstance(selection, CodexTaskSelection):
+            try:
+                model, profile = self._codex_identity()
+            except Exception:
+                raise ReviewerAccessApplicationError("credential_unavailable") from None
+            identity = (document.revision, "codex", model, profile)
             if not self._codex_host().available:
-                raise ReviewerAccessApplicationError("host_unsupported")
+                raise ReviewerAccessApplicationError("host_unsupported", identity)
             if self._codex_auth.recheck_credential_status().state != "usable":
-                raise ReviewerAccessApplicationError("credential_unavailable")
-            model, profile, runner = self._codex_binding()
+                raise ReviewerAccessApplicationError("credential_unavailable", identity)
+            try:
+                bound_model, bound_profile, runner = self._codex_binding()
+            except Exception:
+                raise ReviewerAccessApplicationError(
+                    "credential_unavailable", identity
+                ) from None
             if not self._repository.revision_is_current(document.revision):
-                raise ReviewerAccessApplicationError("access_changed")
-            return ReviewerDispatch(document.revision, "codex", model, profile, runner)
+                raise ReviewerAccessApplicationError("access_changed", identity)
+            return ReviewerDispatch(
+                document.revision, "codex", bound_model, bound_profile, runner
+            )
+        identity = (
+            document.revision,
+            "openrouter",
+            selection.model,
+            openrouter_profile(selection.model),
+        )
         if key is None:
-            raise ReviewerAccessApplicationError("credential_unavailable")
-        dispatch = self._openrouter_dispatch(document.revision, key, selection.model)
+            raise ReviewerAccessApplicationError("credential_unavailable", identity)
+        try:
+            dispatch = self._openrouter_dispatch(
+                document.revision, key, selection.model
+            )
+        except Exception:
+            raise ReviewerAccessApplicationError("unreachable", identity) from None
         if not self._repository.revision_is_current(document.revision):
             dispatch.close()
-            raise ReviewerAccessApplicationError("access_changed")
+            raise ReviewerAccessApplicationError("access_changed", identity)
         return dispatch
 
     def current_cover_observation_identity(

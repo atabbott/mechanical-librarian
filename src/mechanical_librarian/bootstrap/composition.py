@@ -97,7 +97,6 @@ from mechanical_librarian.adapters.reviewers.codex_device_auth import (
 from mechanical_librarian.adapters.reviewers.contained_reviewer import (
     ContainedReviewerProcessError,
     ContainedReviewerProfile,
-    cover_reviewer_profile_contract_mismatch,
     load_contained_reviewer_profile_bytes,
     prepare_contained_device_auth_command,
     read_contained_reviewer_profile,
@@ -1522,6 +1521,7 @@ def create_review_pipeline(
     database_path: Path,
     catalogue_path: Path,
     artifact_store_path: Path,
+    reviewer_access: ReviewerAccessOperations,
     database_authority: object | None = None,
     timing: StageTimer | None = None,
     private_root: Path | None = None,
@@ -1847,6 +1847,7 @@ def create_review_pipeline(
             artifact_store_path,
             # Callers reject an absent review configuration before composing.
             cast("ReviewWebConfiguration", configuration.review),
+            reviewer_access,
             provider_recovery=provider_recovery,
         )
 
@@ -2364,6 +2365,11 @@ def compose_store_runtime_generation(
         provider_recovery = SQLiteProviderRecoveryStore.open(
             private_root / "provider-recovery.sqlite"
         )
+        reviewer_access = _compose_reviewer_access(
+            repository,
+            review,
+            None if activation is None else activation._codex_auth,
+        )
         first_boot = first_boot or _store_first_preparation(
             "store",
             tuple(settings_view.document.pending_restart),
@@ -2374,6 +2380,7 @@ def compose_store_runtime_generation(
             database_path,
             catalogue_path,
             artifact_store_path,
+            reviewer_access,
             repository.authority,
             timing,
             private_root,
@@ -2430,17 +2437,12 @@ def compose_store_runtime_generation(
                 ),
             )
         )
-        reviewer_access = _compose_reviewer_access(
-            repository,
-            review,
-            None if activation is None else activation._codex_auth,
-        )
         cover_considerations = _compose_cover_considerations(
             repository,
             artifact_store_path,
             review,
-            provider_recovery,
             reviewer_access,
+            provider_recovery,
         )
         try:
             owner_binding = owner_password_binding(encoded_verifier)
@@ -2815,6 +2817,7 @@ def run_review_server(
             provider_recovery = SQLiteProviderRecoveryStore.open(
                 private_root / "provider-recovery.sqlite"
             )
+            reviewer_access = _compose_reviewer_access(repository, review)
             first_boot = _store_first_preparation(
                 authority,
                 (),
@@ -2825,6 +2828,7 @@ def run_review_server(
                 database_path,
                 catalogue_path,
                 artifact_store_path,
+                reviewer_access,
                 repository.authority,
                 timing,
                 private_root,
@@ -2881,13 +2885,12 @@ def run_review_server(
                     ),
                 )
             )
-            reviewer_access = _compose_reviewer_access(repository, review)
             cover_considerations = _compose_cover_considerations(
                 repository,
                 artifact_store_path,
                 review,
-                provider_recovery,
                 reviewer_access,
+                provider_recovery,
             )
             try:
                 review_application = compose_review_application(
@@ -2995,6 +2998,9 @@ class _UnavailableCodexAuth:
     start = status = cancel = clear = current_credential_status = _state
     recheck_credential_status = _state
 
+    def passive_status(self) -> CodexDeviceAuthState:
+        return CodexDeviceAuthState("ready")
+
     def close(self) -> None:
         return None
 
@@ -3069,6 +3075,12 @@ class _LazyCodexAuth:
 
     def status(self) -> CodexDeviceAuthState:
         return self._state("status")
+
+    def passive_status(self) -> CodexDeviceAuthState:
+        """Return an existing flow without constructing Codex authority."""
+        with self._lock:
+            manager = self._manager
+        return CodexDeviceAuthState("ready") if manager is None else manager.status()
 
     def cancel(self) -> CodexDeviceAuthState:
         return self._state("cancel")
@@ -3285,8 +3297,8 @@ def _compose_cover_considerations(
     repository: SQLiteMetadataReportRepository,
     artifact_store_path: Path,
     review: ReviewWebConfiguration,
+    reviewer_access: ReviewerAccessOperations,
     provider_recovery: SQLiteProviderRecoveryStore | None = None,
-    reviewer_access: ReviewerAccessOperations | None = None,
 ) -> CoverConsiderationService:
     artifacts: CoverArtifactStore | None = None
 
@@ -3296,23 +3308,6 @@ def _compose_cover_considerations(
             artifacts = CoverArtifactStore(artifact_store_path, create=False)
         return artifacts
 
-    reviewer_unavailable_reason = None
-    try:
-        reviewer_profile = (
-            None
-            if reviewer_access is not None or review.cover_reviewer_profile_file is None
-            else read_contained_reviewer_profile(
-                Path(review.cover_reviewer_profile_file)
-            )
-        )
-        if reviewer_profile is not None:
-            reviewer_unavailable_reason = cover_reviewer_profile_contract_mismatch(
-                reviewer_profile
-            )
-    except ContainedReviewerProcessError:
-        # Never dispatch an unqualified profile. The shared consideration
-        # operation records the manual-comparison-unavailable terminal state.
-        reviewer_profile = None
     policy = CoverPolicy(
         avoid_promotional_text=review.cover_avoid_promotional_text,
         avoid_tie_in_branding=review.cover_avoid_tie_in_branding,
@@ -3330,26 +3325,9 @@ def _compose_cover_considerations(
         read_preview_digest=lambda digest: artifact_store().read_preview_digest(digest),
         clock=lambda: int(time.time()),
         policy=policy,
-        reviewer_profile=reviewer_profile,
-        reviewer=(
-            None
-            if reviewer_profile is None or reviewer_unavailable_reason is not None
-            else run_cover_packet_reviewer
-        ),
-        reviewer_dispatch=(
-            None
-            if reviewer_access is None
-            else reviewer_access.dispatch_cover_observation
-        ),
-        reviewer_identity=(
-            None
-            if reviewer_access is None
-            else reviewer_access.current_cover_observation_identity
-        ),
-        reviewer_revision_current=(
-            None if reviewer_access is None else reviewer_access.revision_is_current
-        ),
-        reviewer_unavailable_reason=reviewer_unavailable_reason,
+        reviewer_dispatch=reviewer_access.dispatch_cover_observation,
+        reviewer_identity=reviewer_access.current_cover_observation_identity,
+        reviewer_revision_current=reviewer_access.revision_is_current,
         bind_policy=bind_policy,
         provider_fetching=(
             None
@@ -3410,9 +3388,11 @@ def run_cover_review(
     if configuration.review is None:
         raise ConfigurationError("review configuration is unavailable")
     repository = open_repository(database_path, create=False)
+    reviewer_access: ReviewerAccessOperations | None = None
     try:
+        reviewer_access = _compose_reviewer_access(repository, configuration.review)
         considerations = _compose_cover_considerations(
-            repository, artifact_store_path, configuration.review
+            repository, artifact_store_path, configuration.review, reviewer_access
         )
         application = compose_review_application(
             state_owner=repository,
@@ -3428,6 +3408,7 @@ def run_cover_review(
             graceful_shutdown_seconds=1,
             close_state_owner=False,
             cover_considerations=considerations,
+            reviewer_access=reviewer_access,
         )
         if action == "history":
             return application.history(review_case_id)
@@ -3470,6 +3451,8 @@ def run_cover_review(
             "schema_version": "cover-review-cli-v1",
         }
     finally:
+        if reviewer_access is not None:
+            reviewer_access.close()
         repository.close()
 
 
@@ -3514,17 +3497,26 @@ def run_provider_recovery_once(
     store = SQLiteProviderRecoveryStore.open(
         _private_root(database_path) / "provider-recovery.sqlite"
     )
-    supervisor = create_review_pipeline(
-        configuration,
-        database_path,
-        catalogue_path,
-        artifact_store_path,
-        provider_recovery=store,
-    )
+    repository = open_repository(database_path, create=False)
+    reviewer_access: ReviewerAccessOperations | None = None
+    supervisor: ReviewPreparationSupervisor | None = None
     try:
+        reviewer_access = _compose_reviewer_access(repository, configuration.review)
+        supervisor = create_review_pipeline(
+            configuration,
+            database_path,
+            catalogue_path,
+            artifact_store_path,
+            reviewer_access,
+            provider_recovery=store,
+        )
         supervisor.recover_provider_once()
     finally:
-        supervisor.stop()
+        if supervisor is not None:
+            supervisor.stop()
+        if reviewer_access is not None:
+            reviewer_access.close()
+        repository.close()
 
 
 def run_policy_preview(

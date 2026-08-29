@@ -1461,6 +1461,17 @@ def create_review_app(
         BodyLimitMiddleware,
         maximum_bytes=2048,
         decision_maximum_bytes=8192,
+        path_limits={
+            "/api/v1/reviewer-access/openrouter/refresh": 2048,
+            # The write contract permits a 2,048-character key plus its
+            # model, revision, and JSON framing.
+            "/api/v1/reviewer-access/openrouter": 4096,
+            "/api/v1/reviewer-access/selection": 2048,
+            "/api/v1/reviewer-access/codex/device": 2048,
+            "/api/v1/reviewer-access/codex/recheck": 2048,
+            "/api/v1/reviewer-access/codex/device/cancel": 2048,
+            "/api/v1/reviewer-access/codex": 2048,
+        },
     )
 
     @app.middleware("http")
@@ -1727,7 +1738,8 @@ def _register_reviewer_access_routes(
         "/api/v1/reviewer-access/openrouter/refresh",
         response_model=ReviewerAccessView,
         responses={
-            status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 409, 413, 422, 503)
         },
     )
     def refresh_openrouter(
@@ -1771,7 +1783,8 @@ def _register_reviewer_access_routes(
         "/api/v1/reviewer-access/openrouter",
         response_model=ReviewerAccessView,
         responses={
-            status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 409, 413, 422, 503)
         },
     )
     def clear_openrouter(
@@ -1791,7 +1804,8 @@ def _register_reviewer_access_routes(
         "/api/v1/reviewer-access/selection",
         response_model=ReviewerAccessView,
         responses={
-            status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 409, 413, 422, 503)
         },
     )
     def select_reviewer(
@@ -1814,7 +1828,8 @@ def _register_reviewer_access_routes(
         "/api/v1/reviewer-access/codex/device",
         response_model=_CodexDeviceStartResponse,
         responses={
-            status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 409, 413, 422, 503)
         },
     )
     def start_codex_device(
@@ -1858,7 +1873,8 @@ def _register_reviewer_access_routes(
         "/api/v1/reviewer-access/codex/recheck",
         response_model=_CodexDeviceAuthResponse,
         responses={
-            status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 409, 413, 422, 503)
         },
     )
     def recheck_codex(
@@ -1875,7 +1891,8 @@ def _register_reviewer_access_routes(
         "/api/v1/reviewer-access/codex/device/cancel",
         response_model=_CodexDeviceAuthResponse,
         responses={
-            status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 409, 413, 422, 503)
         },
     )
     def cancel_codex_device(
@@ -1892,7 +1909,8 @@ def _register_reviewer_access_routes(
         "/api/v1/reviewer-access/codex",
         response_model=ReviewerAccessView,
         responses={
-            status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 409, 413, 422, 503)
         },
     )
     def clear_codex(

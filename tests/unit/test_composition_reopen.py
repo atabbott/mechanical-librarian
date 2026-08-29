@@ -78,7 +78,9 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover() ->
             composition, "store_runtime_configuration", return_value=configuration
         ),
         patch.object(composition, "_store_first_preparation", return_value=False),
-        patch.object(composition, "create_review_pipeline", return_value=Mock()),
+        patch.object(
+            composition, "create_review_pipeline", return_value=Mock()
+        ) as create_pipeline,
         patch.object(
             composition.SQLiteProviderRecoveryStore, "open", return_value=Mock()
         ),
@@ -113,7 +115,8 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover() ->
             repository_authority=object(),
         )
 
-    assert compose_cover.call_args.args[-1] is reviewer_access
+    assert create_pipeline.call_args.args[4] is reviewer_access
+    assert compose_cover.call_args.args[3] is reviewer_access
     assert compose_application.call_args.kwargs["reviewer_access"] is reviewer_access
     assert (
         compose_application.call_args.kwargs["cover_considerations"]

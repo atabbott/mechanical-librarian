@@ -15,6 +15,9 @@ from mechanical_librarian.application.cover_consideration import (
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.review_web import _needs_attention
+from mechanical_librarian.application.reviewer_access import (
+    ReviewerAccessApplicationError,
+)
 from mechanical_librarian.application.reviewer_contracts import ReviewerDispatch
 from tests.unit.test_cover_packets import (
     _observer_result,
@@ -74,6 +77,37 @@ def test_dynamic_dispatch_binds_engine_model_profile_schema_and_candidate(
     assert {row["candidate_reference"] for row in observation["observations"]} == {
         candidate["reference"] for candidate in persisted["candidates"]
     }
+
+
+def test_failed_dynamic_dispatch_preserves_current_owner_identity(case: _Case) -> None:
+    identity = (7, "openrouter", "example/vision", b"openrouter-profile")
+
+    def unavailable() -> ReviewerDispatch:
+        raise ReviewerAccessApplicationError("unreachable", identity)
+
+    service = CoverConsiderationService(
+        case.store,
+        read_preview=lambda artifact, _variant: case.payload_by_artifact[artifact],
+        read_preview_digest=lambda digest: case.payload_by_preview[digest],
+        clock=lambda: case.now,
+        reviewer_dispatch=unavailable,
+        reviewer_identity=lambda: identity,
+        reviewer_revision_current=lambda revision: revision == 7,
+    )
+    case_id = "review_case_" + "8" * 64
+    request = service.prepare_observation(case_id, case.report.to_json())
+    evidence = service.observe(request)
+    projected = service.ensure(
+        case_id,
+        case.report.to_json(),
+        case.proposal,
+        reviewer_evidence=evidence,
+    )
+
+    assert projected["reviewer_status"] == "unavailable"
+    assert projected["reviewer_engine"] == "openrouter"
+    assert projected["reviewer_model"] == "example/vision"
+    assert projected["reviewer_access_revision"] == 7
 
 
 class _Store:

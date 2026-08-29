@@ -603,6 +603,31 @@ describe('owner settings route', () => {
     if (failure) expect(screen.getByRole('alert')).toBeVisible()
   })
 
+  it('resumes an active Codex device flow after the Settings panel remounts', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => ({
+      ...reviewerView,
+      codex: { ...reviewerView.codex, state: 'waiting' as const },
+    }))
+    http.getCodexDevice = vi.fn(async () => ({
+      state: 'issued' as const,
+      failure: null,
+      verification_url: 'https://example.invalid/device',
+      user_code: 'ABCD-EFGH',
+      expires_in_seconds: 900,
+    }))
+
+    const { router } = renderRoute('/settings?group=reviewer', http)
+    expect(await screen.findByText('ABCD-EFGH')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Cancel sign-in' })).toBeVisible()
+    await act(async () => router.navigate({ to: '/library', search: { lens: 'all' } }))
+
+    await act(async () => router.navigate({ to: '/settings', search: { group: 'reviewer' } }))
+    expect(await screen.findByText('ABCD-EFGH')).toBeVisible()
+    expect(http.getCodexDevice).toHaveBeenCalledOnce()
+  })
+
   it('announces OpenRouter validation before retaining its terminal result', async () => {
     const user = userEvent.setup()
     const http = createHttp()
