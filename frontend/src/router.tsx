@@ -193,6 +193,10 @@ export const preparationQuery = (http: ReviewHttp, live = false) =>
     queryFn: ({ signal }) => http.getPreparation(signal),
     staleTime: 1_000,
     retry: false,
+    // The shell's always-mounted observer owns this singleton snapshot. Lazy
+    // route consumers subscribe to that same query and must not turn a slow
+    // route/chunk mount into a second startup read once the snapshot is stale.
+    refetchOnMount: false,
     // The cadence survives only as the degraded fallback. While the stream is
     // up the snapshot is refetched when preparation actually advances, which is
     // both sooner than 1.5 seconds and, for an idle library, never.
