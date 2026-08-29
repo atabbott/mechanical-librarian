@@ -1242,7 +1242,24 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       : (preparationState.data?.presentation ?? null)
   const preparationSelected = presentation !== null && search.preparation === presentation.run_id
   const presentationVersion = presentation
-    ? `${presentation.run_id}:${String(presentation.updated_at)}:${presentation.state}`
+    ? JSON.stringify({
+        run_id: presentation.run_id,
+        state: presentation.state,
+        triggers: presentation.triggers.map(({ trigger, accepted_count }) => ({
+          trigger,
+          accepted_count,
+        })),
+        passage: presentation.passage,
+        active_books: presentation.active_books,
+        active_overflow: presentation.active_overflow,
+        recent_completions: presentation.recent_completions.map(({ name, outcome }) => ({
+          name,
+          outcome,
+        })),
+        throughput_per_minute: presentation.throughput_per_minute,
+        total: presentation.total,
+        dismissible: presentation.dismissible,
+      })
     : null
   const adoptedPresentationVersion = useRef<string | null>(null)
   const [animatedPresentationVersion, setAnimatedPresentationVersion] = useState<string | null>(

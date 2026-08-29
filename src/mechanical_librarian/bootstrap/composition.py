@@ -2652,8 +2652,6 @@ def compose_store_runtime_generation(
                 session_store.close()
 
         def admit_generation() -> None:
-            reviewer_access.activate_codex_lease()
-            review_application.admit()
             if not first_boot:
                 for connection, library, _library_id in preparation.libraries:
                     if preparation.progress(connection, library) is None:
@@ -2662,6 +2660,8 @@ def compose_store_runtime_generation(
                             library,
                             trigger=PreparationTrigger.LIBRARY_ADDED,
                         )
+            reviewer_access.activate_codex_lease()
+            review_application.admit()
 
         return (
             RuntimeGeneration(

@@ -175,6 +175,17 @@ def record_preparation_names(
         "WHERE scan_id=? ORDER BY ordinal,work_id",
         (scan_id,),
     ).fetchall()
+    current_work_ids = {work_id for work_id, _item_id, _ordinal, _state in rows}
+    for (presentation_work_id,) in connection.execute(
+        "SELECT work_id FROM review_preparation_presentation WHERE row_kind='work' "
+        "AND scan_id=? AND cycle_id=?",
+        (scan_id, cycle_id),
+    ).fetchall():
+        if presentation_work_id not in current_work_ids:
+            connection.execute(
+                "DELETE FROM review_preparation_presentation WHERE row_id=?",
+                ("work:" + presentation_work_id,),
+            )
     for work_id, item_id, ordinal, current_state in rows:
         entry = selected.get(item_id)
         if entry is None:
@@ -431,7 +442,9 @@ def _refresh_run_state(
             "WHERE condition.state IN ('paused','checking') AND EXISTS("
             "SELECT 1 FROM review_preparation_presentation AS enrollment "
             "WHERE enrollment.row_kind='enrollment' AND enrollment.run_id=? "
-            "AND enrollment.connection_name=condition.connection_name) LIMIT 1",
+            "AND enrollment.connection_name=condition.connection_name "
+            "AND (enrollment.pending_cycle_id IS NOT NULL OR "
+            "enrollment.cycle_state NOT IN ('completed','completed_with_failures'))) LIMIT 1",
             (run_id,),
         ).fetchone()
         is not None
@@ -666,6 +679,14 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                 for cycle_id in row[1:3]
                 if cycle_id is not None
             ]
+            if any(
+                type(cycle_id) is not str
+                or len(cycle_id) != 82
+                or not cycle_id.startswith("preparation_cycle_")
+                or any(character not in "0123456789abcdef" for character in cycle_id[18:])
+                for cycle_id in cycle_ids
+            ):
+                raise ValueError("noncanonical presentation cycle identity")
             if len(cycle_ids) != len(set(cycle_ids)):
                 raise ValueError("noncanonical presentation cycles")
             for (

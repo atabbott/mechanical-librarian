@@ -87,6 +87,22 @@ describe('Library route', () => {
       await screen.findByText(/Reconnecting · showing the last confirmed state/u),
     ).toBeVisible()
     expect(screen.getByText('Private title')).toBeVisible()
+    const changedDuringOutage = {
+      ...confirmed,
+      presentation: {
+        ...confirmedPresentation,
+        active_books: [{ name: 'Unconfirmed title', stage: 'Checking metadata' }],
+        updated_at: 102,
+      },
+    }
+    act(() => {
+      queryClient.setQueryData(['review-preparation'], changedDuringOutage)
+      releaseOlderFetch(changedDuringOutage)
+    })
+    expect(screen.getByText('Private title')).toBeVisible()
+    expect(screen.queryByText('Unconfirmed title')).toBeNull()
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 1_600)))
+    expect(http.getPreparation).toHaveBeenCalledTimes(2)
     let releaseRefresh!: (value: Awaited<ReturnType<typeof http.getPreparation>>) => void
     vi.mocked(http.getPreparation).mockImplementationOnce(
       () =>
@@ -104,11 +120,17 @@ describe('Library route', () => {
       })
     })
     expect(screen.getByText(/Reconnecting · showing the last confirmed state/u)).toBeVisible()
-    await act(async () => releaseRefresh(confirmed))
+    act(() => updates.setState('degraded'))
+    await act(async () => releaseRefresh(changedDuringOutage))
+    expect(screen.getByText('Private title')).toBeVisible()
+    expect(screen.queryByText('Unconfirmed title')).toBeNull()
+    act(() => updates.setState('live'))
     await waitFor(() =>
       expect(screen.queryByText(/Reconnecting · showing the last confirmed state/u)).toBeNull(),
     )
-    act(() => releaseOlderFetch(confirmed))
+    expect(screen.getByText('Private title')).toBeVisible()
+    expect(document.querySelector('.preparation-run-state')).not.toHaveClass('reported-change')
+    expect(http.getPreparation).toHaveBeenCalledTimes(4)
 
     await user.click(screen.getByRole('button', { name: /^A Book\./u }))
     expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
@@ -123,9 +145,30 @@ describe('Library route', () => {
         presentation: { ...confirmedPresentation, updated_at: 102 },
       })
     })
+    expect(document.querySelector('.preparation-run-state')).not.toHaveClass('reported-change')
+    const semanticChange = {
+      ...confirmed,
+      presentation: {
+        ...confirmedPresentation,
+        passage: { ...confirmedPresentation.passage, ready: 2 },
+        updated_at: 103,
+      },
+    }
+    act(() => {
+      queryClient.setQueryData(['review-preparation'], semanticChange)
+    })
     await waitFor(() =>
       expect(document.querySelector('.preparation-run-state')).toHaveClass('reported-change'),
     )
+    await waitFor(
+      () =>
+        expect(document.querySelector('.preparation-run-state')).not.toHaveClass('reported-change'),
+      { timeout: 1_000 },
+    )
+    act(() => {
+      queryClient.setQueryData(['review-preparation'], semanticChange)
+    })
+    expect(document.querySelector('.preparation-run-state')).not.toHaveClass('reported-change')
   })
 
   it('retries a failed reconnect snapshot until current-epoch HTTP succeeds', async () => {

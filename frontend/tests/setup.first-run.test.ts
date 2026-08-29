@@ -393,13 +393,21 @@ describe('shipped first-run setup script', () => {
   })
 
   it.each([
-    ['Preparation continues', 1, false, false, 'Open the workspace while preparation continues.'],
+    [
+      'Preparation continues',
+      1,
+      false,
+      false,
+      'Open the workspace while preparation continues.',
+      false,
+    ],
     [
       'Preparation needs attention',
       0,
       false,
       true,
       'Open the workspace to review recovery while preparation remains safely paused.',
+      false,
     ],
     [
       'Preparation is complete',
@@ -407,6 +415,7 @@ describe('shipped first-run setup script', () => {
       true,
       false,
       'Open the workspace to review the completed preparation record.',
+      false,
     ],
     [
       'Preparation is complete',
@@ -414,6 +423,7 @@ describe('shipped first-run setup script', () => {
       true,
       false,
       'Open the workspace to review the completed preparation record.',
+      false,
     ],
     [
       'Preparation is complete',
@@ -421,10 +431,12 @@ describe('shipped first-run setup script', () => {
       true,
       true,
       'Open the workspace to review the completed preparation record.',
+      false,
     ],
+    ['Preparation was dismissed', 0, true, false, 'Open the ordinary workspace.', true],
   ] as const)(
     'offers the setup bridge at %s without navigating',
-    async (title, ready, terminal, actionable, expectedCopy) => {
+    async (title, ready, terminal, actionable, expectedCopy, dismissed = false) => {
       const previousSetInterval = globalThis.setInterval
       const previousClearInterval = globalThis.clearInterval
       vi.stubGlobal(
@@ -445,13 +457,15 @@ describe('shipped first-run setup script', () => {
             first_boot_complete: terminal,
             presentation: {
               run_id: `preparation_run_${'a'.repeat(64)}`,
-              state: terminal
-                ? actionable
-                  ? 'completed_with_failures'
-                  : 'completed_clean'
-                : actionable
-                  ? 'blocked'
-                  : 'running',
+              state: dismissed
+                ? 'dismissed'
+                : terminal
+                  ? actionable
+                    ? 'completed_with_failures'
+                    : 'completed_clean'
+                  : actionable
+                    ? 'blocked'
+                    : 'running',
               passage: {
                 read: 1,
                 searches_finished: 1,
@@ -494,7 +508,9 @@ describe('shipped first-run setup script', () => {
       expect(screen.getByText(expectedCopy)).toBeVisible()
       expect(screen.getByRole('link', { name: 'Open workspace' })).toHaveAttribute(
         'href',
-        `/library?lens=all&preparation=preparation_run_${'a'.repeat(64)}`,
+        dismissed
+          ? '/library?lens=all'
+          : `/library?lens=all&preparation=preparation_run_${'a'.repeat(64)}`,
       )
       expect(screen.queryByRole('button', { name: 'Change' })).toBeNull()
       expect(screen.queryAllByRole('button')).toHaveLength(0)

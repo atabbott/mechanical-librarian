@@ -18,7 +18,7 @@ from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 import pytest
 
@@ -65,8 +65,16 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover() ->
     cover_considerations = Mock()
     review_application = Mock()
     preparation = Mock()
-    preparation.libraries = (("primary", "fiction", "library-1"),)
+    preparation.libraries = (
+        ("primary", "fiction", "library-1"),
+        ("primary", "history", "library-2"),
+    )
     preparation.progress.return_value = None
+    admission_events: list[str] = []
+    preparation.request.side_effect = lambda _connection, library, **_kwargs: (
+        admission_events.append(f"request:{library}")
+    )
+    review_application.admit.side_effect = lambda: admission_events.append("admit")
     review = ReviewWebConfiguration(
         canonical_origin="https://library.invalid",
         owner_password_hash_file="/data/owner.hash",
@@ -131,9 +139,11 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover() ->
     runtime.admit()
     reviewer_access.activate_codex_lease.assert_called_once_with()
     review_application.admit.assert_called_once_with()
-    preparation.request.assert_called_once_with(
-        "primary", "fiction", trigger=PreparationTrigger.LIBRARY_ADDED
-    )
+    assert preparation.request.call_args_list == [
+        call("primary", "fiction", trigger=PreparationTrigger.LIBRARY_ADDED),
+        call("primary", "history", trigger=PreparationTrigger.LIBRARY_ADDED),
+    ]
+    assert admission_events == ["request:fiction", "request:history", "admit"]
     runtime.close()
     review_application.stop.assert_called_once_with()
 

@@ -693,6 +693,106 @@ def test_terminal_enrollment_is_excluded_from_triggerless_full_reconciliation(
     assert after.recent_completions == before.recent_completions
 
 
+@pytest.mark.parametrize("ineligible", (False, True), ids=("removed", "ineligible"))
+def test_successor_discovery_removes_orphaned_presentation_work(
+    application_path: Path, ineligible: bool
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    entry = _entry("item", "1" * 64)
+    repository.complete_review_discovery(discovery, 1, "a" * 64, (entry,), 102)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        103,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    work_id = repository._connection.execute(
+        "SELECT work_id FROM review_preparation_work"
+    ).fetchone()[0]
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET stage='complete',state='complete',updated_at=104 "
+        "WHERE work_id=?",
+        (work_id,),
+    )
+    refresh_preparation_work(repository._connection, work_id, 104)
+    assert repository.claim_review_pipeline_action(105) is None
+    successor = repository.claim_review_pipeline_action(106)
+    assert successor is not None and successor.stage == "discovery"
+    successor_entries = (
+        (replace(entry, classification="ambiguous"),) if ineligible else ()
+    )
+    repository.complete_review_discovery(
+        successor, 2, "b" * 64, successor_entries, 107
+    )
+    assert repository.claim_review_pipeline_action(108) is None
+    presentation = repository.preparation_presentation(108)
+    sidecar_work = repository._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_presentation WHERE row_kind='work'"
+    ).fetchone()[0]
+    repository.close()
+
+    assert presentation is not None
+    assert presentation.passage.ready == 1
+    assert presentation.total == 1
+    assert presentation.active_books == ()
+    assert sidecar_work == 0
+    reopened = open_repository(application_path, create=False)
+    assert reopened.preparation_presentation(108) == presentation
+    reopened.close()
+
+
+def test_multibyte_observed_title_survives_presentation_commit_and_reopen(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    title = "界" * 400
+    repository.complete_review_discovery(
+        discovery,
+        1,
+        "a" * 64,
+        (replace(_entry("item", "1" * 64), title=title),),
+        102,
+    )
+    expected = repository.preparation_presentation(102)
+    persisted = repository._connection.execute(
+        "SELECT display_name FROM review_preparation_presentation WHERE row_kind='work'"
+    ).fetchone()
+    repository.close()
+
+    assert expected is not None
+    assert persisted == (title,)
+    reopened = open_repository(application_path, create=False)
+    actual = reopened.preparation_presentation(102)
+    reopened_title = reopened._connection.execute(
+        "SELECT display_name FROM review_preparation_presentation WHERE row_kind='work'"
+    ).fetchone()
+    reopened.close()
+    assert actual == expected
+    assert reopened_title == (title,)
+
+
 def test_preparation_projection_bounds_private_names_and_preserves_outcomes(
     application_path: Path,
 ) -> None:
@@ -913,6 +1013,56 @@ def test_preparation_blocking_is_scoped_to_enrolled_connections(
     assert enrolled.state is PreparationRunState.BLOCKED
 
 
+def test_completed_enrollment_connection_condition_does_not_block_active_peer(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    first = repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    second = repository.request_review_scan(
+        "secondary",
+        "history",
+        "lib-2",
+        _PRODUCER,
+        101,
+        trigger=PreparationTrigger.LIBRARY_ADDED,
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed',updated_at=102 WHERE scan_id=?",
+        (first.scan_id,),
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='discovering',updated_at=102 WHERE scan_id=?",
+        (second.scan_id,),
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_presentation SET cycle_state='completed',updated_at=102 "
+        "WHERE row_kind='enrollment' AND scan_id=?",
+        (first.scan_id,),
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_presentation SET cycle_state='discovering',updated_at=102 "
+        "WHERE row_kind='enrollment' AND scan_id=?",
+        (second.scan_id,),
+    )
+    repository._connection.execute(
+        "INSERT INTO review_preparation_connection_conditions VALUES("
+        "'primary','unavailable','paused',1,1,103)"
+    )
+    refresh_preparation_run_state(repository._connection, 103)
+    presentation = repository.preparation_presentation(103)
+    repository.close()
+
+    assert presentation is not None
+    assert presentation.state is PreparationRunState.RUNNING
+
+
 def test_per_work_presentation_query_count_does_not_grow_with_run_population(
     tmp_path: Path,
 ) -> None:
@@ -1102,6 +1252,57 @@ def test_exact_current_presentation_rows_fail_closed(
     connection = sqlite3.connect(path)
     connection.execute("PRAGMA ignore_check_constraints=ON")
     connection.execute(mutation)
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(
+        MetadataReportError, match="database is unavailable or incompatible"
+    ):
+        open_repository(path, create=False)
+
+
+@pytest.mark.parametrize("column", ("cycle_id", "pending_cycle_id"))
+def test_nonhex_presentation_cycle_identity_fails_closed(
+    tmp_path: Path, column: str
+) -> None:
+    path = tmp_path / f"invalid-{column}.sqlite3"
+    repository = open_repository(path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry("item", "1" * 64),), 102
+    )
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        103,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    repository.close()
+
+    invalid = "preparation_cycle_" + "a" * 63 + "g"
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA ignore_check_constraints=ON")
+    connection.execute(
+        f"UPDATE review_preparation_presentation SET {column}=? "
+        "WHERE row_kind='enrollment'",
+        (invalid,),
+    )
+    if column == "cycle_id":
+        connection.execute(
+            "UPDATE review_preparation_presentation SET cycle_id=? WHERE row_kind='work'",
+            (invalid,),
+        )
     connection.commit()
     connection.close()
 

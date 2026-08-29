@@ -8,7 +8,7 @@ import {
   createRouter,
   useRouterState,
 } from '@tanstack/react-router'
-import { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import type { createMemoryHistory } from '@tanstack/react-router'
 import { ApiError, BuildMismatchError, SessionExpiredError } from './api/http'
@@ -189,10 +189,18 @@ const activityQuery = (http: ReviewHttp, search: ActivitySearch) =>
     staleTime: 4_000,
     retry: false,
   })
-export const preparationQuery = (http: ReviewHttp, live = false) =>
+export const preparationQuery = (
+  http: ReviewHttp,
+  fallbackPolling = false,
+  onConfirmed?: (value: PreparationView) => void,
+) =>
   queryOptions({
     queryKey: ['review-preparation'] as const,
-    queryFn: ({ signal }) => http.getPreparation(signal),
+    queryFn: async ({ signal }) => {
+      const value = await http.getPreparation(signal)
+      onConfirmed?.(value)
+      return value
+    },
     staleTime: 1_000,
     retry: false,
     // The shell's always-mounted observer owns this singleton snapshot. Lazy
@@ -203,7 +211,7 @@ export const preparationQuery = (http: ReviewHttp, live = false) =>
     // up the snapshot is refetched when preparation actually advances, which is
     // both sooner than 1.5 seconds and, for an idle library, never.
     refetchInterval: (result) => {
-      if (live) return false
+      if (!fallbackPolling) return false
       const value = result.state.data
       return value?.active || value?.actionable || value?.paused ? 1_500 : 15_000
     },
@@ -232,6 +240,8 @@ export const useLiveStream = () => {
 interface PreparationReconnect {
   epoch: number
   state: 'clear' | 'debt' | 'refreshing' | 'retry'
+  transport: 'unknown' | 'live' | 'degraded'
+  frozen?: PreparationView
 }
 const preparationReconnectKey = ['review-preparation-reconnect'] as const
 
@@ -240,34 +250,73 @@ export const usePreparation = () => {
   const streamState = useLiveStream()
   const live = streamState === 'live'
   const previousSnapshot = useRef<string | null>(null)
-  const query = useQuery(preparationQuery(http, live))
   const reconnectQuery = useQuery({
     queryKey: preparationReconnectKey,
-    queryFn: (): Promise<PreparationReconnect> => Promise.resolve({ epoch: 0, state: 'clear' }),
+    queryFn: (): Promise<PreparationReconnect> =>
+      Promise.resolve({ epoch: 0, state: 'clear', transport: 'unknown' }),
     enabled: false,
-    initialData: { epoch: 0, state: 'clear' } satisfies PreparationReconnect,
+    initialData: {
+      epoch: 0,
+      state: 'clear',
+      transport: 'unknown',
+    } satisfies PreparationReconnect,
   })
+  const recordConfirmed = useCallback(
+    (value: PreparationView) => {
+      queryClient.setQueryData<PreparationReconnect>(preparationReconnectKey, (current) =>
+        current?.state === 'clear' ? { ...current, frozen: value } : current,
+      )
+    },
+    [queryClient],
+  )
+  const query = useQuery(
+    preparationQuery(http, !live && updates?.hasBeenLive !== true, recordConfirmed),
+  )
   const refetchPreparation = query.refetch
   useEffect(() => {
     if (streamState !== 'degraded' || updates?.hasBeenLive !== true) return
+    void queryClient.cancelQueries(
+      { queryKey: ['review-preparation'], exact: true },
+      { silent: true },
+    )
     queryClient.setQueryData<PreparationReconnect>(preparationReconnectKey, (current) =>
-      current?.state === 'clear'
-        ? { epoch: current.epoch + 1, state: 'debt' }
-        : (current ?? { epoch: 1, state: 'debt' }),
+      current?.transport === 'degraded'
+        ? current
+        : {
+            epoch: (current?.epoch ?? 0) + 1,
+            state: 'debt',
+            transport: 'degraded',
+            ...(current?.frozen === undefined ? {} : { frozen: current.frozen }),
+          },
     )
   }, [queryClient, streamState, updates?.hasBeenLive])
   useEffect(() => {
+    if (streamState !== 'live') return
+    queryClient.setQueryData<PreparationReconnect>(preparationReconnectKey, (current) =>
+      current?.transport === 'live'
+        ? current
+        : { ...(current ?? { epoch: 0, state: 'clear' }), transport: 'live' },
+    )
+  }, [queryClient, streamState])
+  useEffect(() => {
     const epoch = reconnectQuery.data.epoch
-    if (streamState !== 'live' || reconnectQuery.data.state !== 'debt') return
+    if (
+      streamState !== 'live' ||
+      reconnectQuery.data.transport !== 'live' ||
+      reconnectQuery.data.state !== 'debt'
+    )
+      return
     const claim = { won: false }
     queryClient.setQueryData<PreparationReconnect>(preparationReconnectKey, (current) => {
-      if (current?.epoch !== epoch || current.state !== 'debt') return current
+      if (current?.epoch !== epoch || current.transport !== 'live' || current.state !== 'debt')
+        return current
       claim.won = true
-      return { epoch, state: 'refreshing' }
+      return { ...current, state: 'refreshing' }
     })
     if (!claim.won) return
     void (async () => {
       let successful: boolean
+      let confirmed: PreparationView | undefined
       try {
         await queryClient.cancelQueries(
           { queryKey: ['review-preparation'], exact: true },
@@ -275,22 +324,32 @@ export const usePreparation = () => {
         )
         const result = await refetchPreparation({ cancelRefetch: true })
         successful = result.isSuccess
+        if (result.isSuccess) confirmed = result.data
       } catch {
         successful = false
       }
       if (successful) {
         queryClient.setQueryData<PreparationReconnect>(preparationReconnectKey, (current) =>
-          current?.epoch === epoch ? { epoch, state: 'clear' } : current,
+          current?.epoch === epoch && current.transport === 'live' && current.state === 'refreshing'
+            ? {
+                epoch,
+                state: 'clear',
+                transport: 'live',
+                ...(confirmed === undefined ? {} : { frozen: confirmed }),
+              }
+            : current,
         )
         return
       }
       queryClient.setQueryData<PreparationReconnect>(preparationReconnectKey, (current) =>
-        current?.epoch === epoch ? { epoch, state: 'retry' } : current,
+        current?.epoch === epoch && current.transport === 'live' && current.state === 'refreshing'
+          ? { ...current, state: 'retry' }
+          : current,
       )
       window.setTimeout(() => {
         queryClient.setQueryData<PreparationReconnect>(preparationReconnectKey, (current) =>
-          current?.epoch === epoch && current.state === 'retry'
-            ? { epoch, state: 'debt' }
+          current?.epoch === epoch && current.transport === 'live' && current.state === 'retry'
+            ? { ...current, state: 'debt' }
             : current,
         )
       }, 1_500)
@@ -300,7 +359,7 @@ export const usePreparation = () => {
   // TanStack Query retains the last successful snapshot while a refetch is in
   // flight or the stream is degraded.  Frames never write this cache, so this
   // is the last server-confirmed state rather than a client-side catch-up.
-  const data = query.data
+  const data = reconnecting ? reconnectQuery.data.frozen : query.data
   const snapshot = data ? JSON.stringify(data) : null
   useEffect(() => {
     if (snapshot === null) return
