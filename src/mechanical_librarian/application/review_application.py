@@ -60,6 +60,7 @@ from mechanical_librarian.domain.owner_settings import (
 )
 from mechanical_librarian.domain.preparation_presentation import (
     PreparationPresentation,
+    PreparationPresentationError,
     PreparationTrigger,
 )
 
@@ -1056,8 +1057,8 @@ class ReviewApplication:
                     run_id, self._clock()
                 )
             )
-        except Exception as error:
-            code = "blocked" if "not dismissible" in str(error) else "stale"
+        except PreparationPresentationError as error:
+            code = "blocked" if error.code == "not_dismissible" else "stale"
             raise ReviewApplicationError(code) from error
         self._updates.publish("preparation")
         return self.preparation()

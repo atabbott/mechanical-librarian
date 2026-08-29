@@ -57,7 +57,10 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
     TargetSeries,
 )
-from mechanical_librarian.domain.preparation_presentation import PreparationPresentation
+from mechanical_librarian.domain.preparation_presentation import (
+    PreparationPresentation,
+    PreparationPresentationError,
+)
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.review_field_classification import (
@@ -155,16 +158,19 @@ class FakeReviewRepository:
         self.library_attention_counts: dict[str, int] = {}
         self.preparation_presentation_value: PreparationPresentation | None = None
         self.dismissed_preparation_runs: list[str] = []
+        self.dismiss_preparation_error: Exception | None = None
 
     def preparation_presentation(self, _now: int) -> PreparationPresentation | None:
         return self.preparation_presentation_value
 
     def dismiss_preparation_presentation(self, run_id: str, _dismissed_at: int) -> None:
+        if self.dismiss_preparation_error is not None:
+            raise self.dismiss_preparation_error
         presentation = self.preparation_presentation_value
         if presentation is None or presentation.run_id != run_id:
-            raise RuntimeError("preparation presentation is stale")
+            raise PreparationPresentationError("stale")
         if not presentation.dismissible:
-            raise RuntimeError("preparation presentation is not dismissible")
+            raise PreparationPresentationError("not_dismissible")
         self.dismissed_preparation_runs.append(run_id)
         self.preparation_presentation_value = None
 

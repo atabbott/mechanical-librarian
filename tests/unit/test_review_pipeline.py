@@ -21,6 +21,8 @@ import mechanical_librarian.bootstrap.composition as composition
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.preparation_presentation import (
     refresh_preparation_presentation,
+    refresh_preparation_run_state,
+    refresh_preparation_work,
 )
 from mechanical_librarian.adapters.persistence.review_preparation import (
     _FAILURE_CODES,
@@ -85,7 +87,10 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     default_target_fields,
 )
-from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
+from mechanical_librarian.domain.preparation_presentation import (
+    PreparationRunState,
+    PreparationTrigger,
+)
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.provider_recovery import MAX_TIMESTAMP
 from mechanical_librarian.domain.review_browse import browse_report
@@ -476,16 +481,205 @@ def test_preparation_projection_exposes_five_active_names_and_overflow(
             "epub",
             "books",
         )
-        for index in range(7)
+        for index in range(9)
     )
     repository.complete_review_discovery(discovery, 1, "a" * 64, entries, 102)
+    work = repository._connection.execute(
+        "SELECT work_id FROM review_preparation_work ORDER BY ordinal"
+    ).fetchall()
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET state='delayed',retry_not_before=999 "
+        "WHERE work_id=?",
+        (work[1][0],),
+    )
+    repository._connection.executemany(
+        "UPDATE review_preparation_work SET stage='provider',state='running',updated_at=103 "
+        "WHERE work_id=?",
+        work[2:],
+    )
+    refresh_preparation_presentation(repository._connection, 103)
     presentation = repository.preparation_presentation(102)
     repository.close()
     assert presentation is not None
     assert [item.name for item in presentation.active_books] == [
-        f"Private book {index:02}" for index in range(5)
+        f"Private book {index:02}" for index in range(2, 7)
     ]
     assert presentation.active_overflow == 2
+
+
+def test_preparation_failures_preserve_actual_passage_and_first_completion_time(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    entries = tuple(
+        CatalogueEntry(
+            "primary",
+            "fiction",
+            "lib-1",
+            f"item-{index}",
+            1,
+            f"Private failure {index}",
+            (),
+            True,
+            False,
+            "singular-supported",
+            f"{index + 1:064x}",
+            f"/failure-{index}.epub",
+            "epub",
+            "books",
+        )
+        for index in range(2)
+    )
+    repository.complete_review_discovery(discovery, 1, "a" * 64, entries, 102)
+    work = repository._connection.execute(
+        "SELECT work_id FROM review_preparation_work ORDER BY ordinal"
+    ).fetchall()
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET stage='extraction',state='failed',updated_at=103 WHERE work_id=?",
+        (work[0][0],),
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET stage='provider',state='failed',updated_at=104 WHERE work_id=?",
+        (work[1][0],),
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed_with_failures',updated_at=105"
+    )
+    refresh_preparation_presentation(repository._connection, 105)
+    first = repository.preparation_presentation(105)
+    refresh_preparation_presentation(repository._connection, 120)
+    later = repository.preparation_presentation(120)
+    repository.close()
+
+    assert first is not None and later is not None
+    assert first.passage.to_data() == {
+        "read": 1,
+        "searches_finished": 0,
+        "compared": 0,
+        "checked": 0,
+        "ready": 0,
+        "failed": 2,
+    }
+    assert first.completed_at == 105
+    assert later.completed_at == 105
+
+
+def test_preparation_blocking_is_scoped_to_enrolled_connections(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    repository._connection.execute(
+        "INSERT INTO review_preparation_connection_conditions VALUES("
+        "'secondary','unavailable','paused',1,1,101)"
+    )
+    refresh_preparation_run_state(repository._connection, 101)
+    unrelated = repository.preparation_presentation(101)
+    repository._connection.execute(
+        "INSERT INTO review_preparation_connection_conditions VALUES("
+        "'primary','unavailable','paused',1,1,102)"
+    )
+    refresh_preparation_run_state(repository._connection, 102)
+    enrolled = repository.preparation_presentation(102)
+    repository.close()
+
+    assert unrelated is not None
+    assert unrelated.state is PreparationRunState.STARTING
+    assert enrolled is not None
+    assert enrolled.state is PreparationRunState.BLOCKED
+
+
+def test_per_work_presentation_query_count_does_not_grow_with_run_population(
+    tmp_path: Path,
+) -> None:
+    def measured(population: int) -> tuple[int, tuple[str, ...]]:
+        repository = open_repository(tmp_path / f"population-{population}.sqlite3")
+        repository.request_review_scan(
+            "primary",
+            "fiction",
+            "lib-1",
+            _PRODUCER,
+            100,
+            trigger=PreparationTrigger.MANUAL_SCAN,
+        )
+        discovery = repository.claim_review_pipeline_action(101)
+        assert discovery is not None
+        entries = tuple(
+            CatalogueEntry(
+                "primary",
+                "fiction",
+                "lib-1",
+                f"item-{index}",
+                1,
+                f"Synthetic book {index}",
+                (),
+                True,
+                False,
+                "singular-supported",
+                f"{index + 1:064x}",
+                f"/book-{index}.epub",
+                "epub",
+                "books",
+            )
+            for index in range(population)
+        )
+        repository.complete_review_discovery(discovery, 1, "a" * 64, entries, 102)
+        work_id = repository._connection.execute(
+            "SELECT work_id FROM review_preparation_work ORDER BY ordinal LIMIT 1"
+        ).fetchone()[0]
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET state='running',updated_at=103 WHERE work_id=?",
+            (work_id,),
+        )
+        statements: list[str] = []
+        repository._connection.set_trace_callback(statements.append)
+        refresh_preparation_work(repository._connection, work_id, 103)
+        repository._connection.set_trace_callback(None)
+        exact_work_plan = tuple(
+            row[3]
+            for row in repository._connection.execute(
+                "EXPLAIN QUERY PLAN SELECT run_id,work_stage,work_outcome "
+                "FROM review_preparation_presentation WHERE row_id=? AND row_kind='work'",
+                ("work:" + work_id,),
+            )
+        )
+        trigger_plan = tuple(
+            row[3]
+            for row in repository._connection.execute(
+                "EXPLAIN QUERY PLAN SELECT COUNT(*) "
+                "FROM review_preparation_presentation AS trigger "
+                "JOIN review_preparation_scans AS scan ON scan.scan_id=trigger.scan_id "
+                "WHERE trigger.row_kind='trigger' AND trigger.run_id=?",
+                (repository.preparation_presentation(103).run_id,),
+            )
+        )
+        repository.close()
+        return len(statements), exact_work_plan + trigger_plan
+
+    small_count, small_plan = measured(1)
+    large_count, large_plan = measured(2_000)
+    assert large_count == small_count
+    assert large_count <= 10
+    assert any("sqlite_autoindex_review_preparation_presentation_1" in row for row in small_plan)
+    assert any("review_preparation_presentation_run" in row for row in small_plan)
+    assert large_plan == small_plan
 
 
 def test_pause_state_is_durable_and_does_not_remove_committed_work(

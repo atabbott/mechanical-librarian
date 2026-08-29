@@ -302,6 +302,10 @@ _REVIEW_PREPARATION_PRESENTATION_SQL = (
     "(row_kind='trigger' AND trigger IS NOT NULL AND scan_id IS NOT NULL AND connection_name IS NOT NULL AND library_name IS NOT NULL AND ordinal IS NOT NULL AND state IS NULL AND work_id IS NULL AND display_name IS NULL) OR "
     "(row_kind='work' AND scan_id IS NOT NULL AND work_id IS NOT NULL AND ordinal IS NOT NULL AND display_name IS NOT NULL AND work_stage IS NOT NULL AND trigger IS NULL AND state IS NULL)))"
 )
+_REVIEW_PREPARATION_PRESENTATION_RUN_INDEX_SQL = (
+    "CREATE INDEX review_preparation_presentation_run "
+    "ON review_preparation_presentation(run_id,row_kind,ordinal)"
+)
 _REVIEW_CONNECTION_CONDITIONS_SQL = (
     "CREATE TABLE review_preparation_connection_conditions ("
     "connection_name TEXT PRIMARY KEY NOT NULL CHECK(typeof(connection_name)='text' AND length(CAST(connection_name AS BLOB)) BETWEEN 1 AND 64 AND connection_name NOT GLOB '*[^a-z0-9_-]*' AND substr(connection_name,1,1) GLOB '[a-z]'), "
@@ -687,6 +691,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
         _SETUP_REVIEW_CONTROL_ROW,
     )
     connection.execute(_REVIEW_PREPARATION_PRESENTATION_SQL)
+    connection.execute(_REVIEW_PREPARATION_PRESENTATION_RUN_INDEX_SQL)
     connection.execute(_REVIEW_CONNECTION_CONDITIONS_SQL)
     connection.execute(_REVIEW_WORK_SQL)
     connection.execute(_METADATA_POLICY_TRANSITION_ITEMS_SQL)
@@ -859,6 +864,11 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
             ("index", "sqlite_autoindex_review_preparation_presentation_1", None),
             ("index", "sqlite_autoindex_review_preparation_work_1", None),
             ("index", "sqlite_autoindex_review_preparation_work_2", None),
+            (
+                "index",
+                "review_preparation_presentation_run",
+                _REVIEW_PREPARATION_PRESENTATION_RUN_INDEX_SQL,
+            ),
             (
                 "index",
                 "review_preparation_work_aged_claim",

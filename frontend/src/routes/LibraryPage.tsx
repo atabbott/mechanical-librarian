@@ -151,10 +151,12 @@ const PreparationDetail = ({
   const outcomeTotal = presentation.passage.ready + presentation.passage.failed
   return (
     <div className="preparation-detail">
-      <header tabIndex={-1} data-route-focus="true">
+      <header>
         <div>
-          <h2>Preparing your library</h2>
-          <p>The run that began in setup continues here while ready works remain selectable.</p>
+          <h2 tabIndex={-1} data-route-focus="true">
+            Preparing your library
+          </h2>
+          <p>Preparation continues here while ready works remain selectable.</p>
         </div>
         <strong>{String(presentation.passage.ready)} ready</strong>
       </header>
@@ -1727,6 +1729,15 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
 
   const routeIdentity = `${search.lens}:${search.q ?? ''}:${search.cursor ?? ''}:${search.attentionCursor ?? ''}:${search.preview ?? ''}:${search.work ?? ''}:${search.field ?? ''}:${search.attention ?? ''}:${search.preparation ?? ''}`
   useRouteReadyFocus(routeIdentity)
+  useEffect(() => {
+    if (!preparationSelected) return
+    const frame = requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLElement>('.preparation-detail [data-route-focus]')
+        ?.focus({ preventScroll: true })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [preparationSelected, presentation?.run_id])
   const selectedDetailReady =
     !preparationSelected &&
     Boolean(search.preview) &&

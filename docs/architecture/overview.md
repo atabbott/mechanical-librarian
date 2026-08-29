@@ -117,8 +117,9 @@ derived projection maintained on that existing connection and inside the same
 scan/work transactions; it does not claim work, schedule activity, or open a
 second store. Accepted owner triggers extend the visible nonterminal run and
 replace a terminal one, while ordinary discovery has no presentation call.
-Pipeline restart and every authoritative claim/advance/failure boundary replay
-monotonic passage high water from scan/work rows. The separate catalogue database stores one
+Each authoritative claim/advance/failure boundary advances only its affected
+presentation row and run counters; bounded startup/recovery reconciliation
+replays monotonic high water across the run. The separate catalogue database stores one
 exact-current `catalogue-v2` schema. The final report database, catalogue
 database, configuration, artifacts, and manifest each recognize only absent or
 their exact current pre-release state. Prior and intermediate schemas are

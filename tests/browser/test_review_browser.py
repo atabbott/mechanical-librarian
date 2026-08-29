@@ -63,6 +63,11 @@ from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.setup_state import SetupStateDocument
 from mechanical_librarian.interfaces.web.react_assets import ReactAssetLoader
 from mechanical_librarian.interfaces.web.setup import create_setup_app
+from mechanical_librarian.interfaces.web.setup_frontend import (
+    SETUP_CSS,
+    SETUP_HTML,
+    SETUP_JS,
+)
 from tests.support.ports import ReservedPort, bind_loopback
 from tests.support.proposal_evidence import _fields as _bibliographic_fields
 from tests.support.review_web_doubles import FakeActivityApplication
@@ -291,6 +296,7 @@ def _server(
             for index in range(7)
         )
         repository.complete_review_discovery(discovery, 1, "e" * 64, entries, 992)
+        assert repository.claim_review_pipeline_action(993) is not None
     # A cohort large enough that a whole-Library projection is measurably
     # slower than one exact-case read. #635's acceptance is about what the
     # next field waits on, and one work cannot tell those two apart.
@@ -2273,6 +2279,137 @@ def test_z_compact_uncached_library_detail_keeps_visible_focus() -> None:
             browser.close()
 
 
+def test_setup_to_library_preparation_handoff_focuses_and_announces_destination() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        with (
+            sync_playwright() as playwright,
+            closing(ReservedPort()) as reserved_port,
+            _server(
+                database=root / "review.sqlite3",
+                hash_path=hash_path,
+                certificate=certificate,
+                key=key,
+                port=reserved_port,
+                preparation=True,
+            ) as (origin, _case_id),
+        ):
+            browser = playwright.chromium.launch(headless=True)
+            for reduced in (False, True):
+                context = browser.new_context(
+                    ignore_https_errors=True,
+                    viewport={"width": 390, "height": 844},
+                    reduced_motion="reduce" if reduced else "no-preference",
+                )
+                page = context.new_page()
+                page.route("**/favicon.ico", lambda route: route.fulfill(status=204))
+                _login(page, origin)
+                setup_url = origin + "/setup-handoff"
+                page.route(
+                    setup_url,
+                    lambda route: route.fulfill(
+                        content_type="text/html", body=SETUP_HTML
+                    ),
+                )
+                page.route(
+                    origin + "/assets/setup.css",
+                    lambda route: route.fulfill(
+                        content_type="text/css", body=SETUP_CSS
+                    ),
+                )
+                page.route(
+                    origin + "/assets/setup.js",
+                    lambda route: route.fulfill(
+                        content_type="text/javascript", body=SETUP_JS
+                    ),
+                )
+
+                def setup_api(route) -> None:
+                    path = urlparse(route.request.url).path
+                    if path == "/api/setup/state":
+                        route.fulfill(
+                            json={
+                                "csrf_token": "synthetic-csrf",
+                                "next_step": "kick_off",
+                                "completed_steps": [
+                                    "claim",
+                                    "connect",
+                                    "providers",
+                                    "libraries",
+                                    "mounts",
+                                ],
+                                "revision": 6,
+                                "providers": [],
+                                "libraries": [],
+                                "mounts": [],
+                            }
+                        )
+                    elif path == "/api/setup/kick-off":
+                        route.fulfill(
+                            json={"message": "Preparation continues in the workspace."}
+                        )
+                    else:
+                        route.fulfill(status=404, json={"error": "not_found"})
+
+                page.route("**/api/setup/**", setup_api)
+                page.goto(setup_url)
+                page.get_by_role("button", name="Kick off preparation").click()
+                handoff = page.get_by_role("link", name="Open workspace")
+                expect(handoff).to_have_attribute(
+                    "href", re.compile(r"preparation=preparation_run_[0-9a-f]{64}")
+                )
+                source_names = page.evaluate(
+                    "[getComputedStyle(document.querySelector('.masthead')).viewTransitionName,"
+                    "getComputedStyle(document.querySelector('#setup-ledger')).viewTransitionName,"
+                    "getComputedStyle(document.querySelector('.step-card')).viewTransitionName]"
+                )
+                has_navigation_rule = page.evaluate(
+                    "Array.from(document.styleSheets).some(sheet=>Array.from(sheet.cssRules).some(rule=>rule.cssText.startsWith('@view-transition')))"
+                )
+                assert has_navigation_rule
+                assert source_names == (
+                    ["none", "none", "none"]
+                    if reduced
+                    else [
+                        "mechanical-librarian-brand",
+                        "works-index",
+                        "preparation-detail",
+                    ]
+                )
+
+                handoff.click()
+                page.wait_for_url(re.compile(r"/library\?.*preparation="))
+                heading = page.get_by_role("heading", name="Preparing your library")
+                expect(heading).to_be_focused()
+                expect(page.locator(".preparation-run-state")).to_have_text(
+                    "Preparation continues"
+                )
+                expect(page.locator(".workspace-detail")).to_have_attribute(
+                    "aria-live", "polite"
+                )
+                destination_names = page.evaluate(
+                    "[getComputedStyle(document.querySelector('.masthead')).viewTransitionName,"
+                    "getComputedStyle(document.querySelector('.library-works')).viewTransitionName,"
+                    "getComputedStyle(document.querySelector('.preparation-detail')).viewTransitionName]"
+                )
+                assert destination_names == (
+                    ["none", "none", "none"]
+                    if reduced
+                    else [
+                        "mechanical-librarian-brand",
+                        "works-index",
+                        "preparation-detail",
+                    ]
+                )
+                context.close()
+            browser.close()
+
+
 def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -2450,7 +2587,41 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
             page.route(
                 "**/api/v1/review-preparation",
                 lambda route: route.fulfill(
-                    json={"libraries": [], "active": True, "paused": False}
+                    json={
+                        "libraries": [],
+                        "active": True,
+                        "paused": False,
+                        "actionable": False,
+                        "presentation": {
+                            "run_id": "preparation_run_" + "a" * 64,
+                            "state": "running",
+                            "passage": {
+                                "read": 9,
+                                "searches_finished": 8,
+                                "compared": 7,
+                                "checked": 6,
+                                "ready": 1,
+                                "failed": 1,
+                            },
+                            "active_books": [
+                                {
+                                    "name": f"Private setup book {index}",
+                                    "stage": "Comparing candidates",
+                                }
+                                for index in range(5)
+                            ],
+                            "active_overflow": 2,
+                            "recent_completions": [
+                                {
+                                    "name": "Recently ready",
+                                    "outcome": "ready",
+                                    "completed_at": 99,
+                                }
+                            ],
+                            "throughput_per_minute": 1.2,
+                            "total": 10,
+                        },
+                    }
                 ),
             )
             with (
@@ -2592,6 +2763,19 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     page.get_by_role("heading", name="Kick off preparation")
                 ).to_be_visible()
                 page.get_by_role("button", name="Kick off preparation").click()
+                expect(page.get_by_role("heading", name="Now preparing")).to_be_visible()
+                expect(page.get_by_text("Private setup book 0")).to_be_visible()
+                expect(page.get_by_text("2 more active books follow in this run.")).to_be_visible()
+                expect(
+                    page.get_by_role("heading", name="How many books made it this far?")
+                ).to_be_visible()
+                expect(page.get_by_text("1.2 books/min")).to_be_visible()
+                expect(page.get_by_text("Recently ready · Ready")).to_be_visible()
+                for width, height in ((1440, 900), (390, 844)):
+                    page.set_viewport_size({"width": width, "height": height})
+                    assert page.evaluate(
+                        "document.documentElement.scrollWidth <= window.innerWidth"
+                    )
                 handoff = page.get_by_role("link", name="Open workspace")
                 expect(handoff).to_be_visible()
                 expect(handoff).to_have_class(re.compile(r"\bprimary\b"))

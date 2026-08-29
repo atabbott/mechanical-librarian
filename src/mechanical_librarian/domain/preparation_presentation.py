@@ -9,6 +9,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Literal
+
+
+class PreparationPresentationError(RuntimeError):
+    """One expected owner-action rejection with a closed identity."""
+
+    def __init__(self, code: Literal["stale", "not_dismissible"]) -> None:
+        super().__init__(code)
+        self.code = code
 
 
 class PreparationRunState(StrEnum):
@@ -65,7 +74,7 @@ class PreparationPassage:
             self.searches_finished,
             self.compared,
             self.checked,
-            self.ready + self.failed,
+            self.ready,
         )
         if any(type(value) is not int or value < 0 for value in values):
             raise ValueError("preparation passage is invalid")
@@ -204,7 +213,19 @@ class PreparationPresentation:
                 self.state not in TERMINAL_PREPARATION_STATES
                 and self.completed_at is not None
             )
-            or self.passage.read > self.total
+            or any(
+                value > self.total
+                for value in (
+                    self.passage.read,
+                    self.passage.searches_finished,
+                    self.passage.compared,
+                    self.passage.checked,
+                    self.passage.ready,
+                    self.passage.failed,
+                )
+            )
+            or self.passage.ready + self.passage.failed > self.total
+            or len(self.active_books) + self.active_overflow > self.total
         ):
             raise ValueError("preparation presentation is invalid")
 

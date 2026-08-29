@@ -46,6 +46,8 @@ def _presentation(
     state: PreparationRunState = PreparationRunState.RUNNING,
     active: tuple[PreparationActiveBook, ...] = (),
     completions: tuple[PreparationCompletion, ...] = (),
+    passage: PreparationPassage | None = None,
+    total: int = 2,
 ) -> PreparationPresentation:
     return PreparationPresentation(
         run_id="preparation_run_" + "a" * 64,
@@ -59,7 +61,7 @@ def _presentation(
                 100,
             ),
         ),
-        passage=PreparationPassage(2, 1, 1, 1, 1, 0),
+        passage=passage or PreparationPassage(2, 1, 1, 1, 1, 0),
         active_books=active,
         active_overflow=0,
         recent_completions=completions,
@@ -74,7 +76,7 @@ def _presentation(
             PreparationRunState.DISMISSED,
         }
         else None,
-        total=2,
+        total=total,
     )
 
 
@@ -97,3 +99,13 @@ def test_only_completed_presentation_is_dismissible() -> None:
     assert not _presentation().dismissible
     assert _presentation(state=PreparationRunState.COMPLETED_CLEAN).dismissible
     assert _presentation(state=PreparationRunState.COMPLETED_WITH_FAILURES).dismissible
+
+
+def test_failed_outcomes_are_independent_but_all_counts_are_bounded_by_total() -> None:
+    early_failures = PreparationPassage(2, 1, 1, 0, 0, 2)
+    assert _presentation(passage=early_failures).passage.failed == 2
+
+    with pytest.raises(ValueError, match="presentation is invalid"):
+        _presentation(passage=PreparationPassage(2, 1, 1, 1, 1, 2))
+    with pytest.raises(ValueError, match="presentation is invalid"):
+        _presentation(passage=PreparationPassage(3, 1, 1, 1, 1, 0), total=2)

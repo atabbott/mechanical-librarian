@@ -1168,6 +1168,12 @@ def test_preparation_dismissal_is_authenticated_guarded_and_stale_safe(
     assert blocked.status_code == 409
     assert blocked.json()["error"]["code"] == "blocked"
 
+    web.repository.dismiss_preparation_error = RuntimeError("database unavailable")
+    unavailable = web.client.post(path, headers=headers, json={"run_id": run_id})
+    assert unavailable.status_code == 503
+    assert unavailable.json()["error"]["code"] == "persistence"
+    web.repository.dismiss_preparation_error = None
+
     web.repository.preparation_presentation_value = _preparation_presentation(
         PreparationRunState.COMPLETED_WITH_FAILURES
     )

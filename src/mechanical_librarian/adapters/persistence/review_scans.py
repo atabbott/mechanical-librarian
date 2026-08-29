@@ -25,6 +25,7 @@ from typing import cast
 from mechanical_librarian.adapters.persistence.preparation_presentation import (
     accept_preparation_trigger,
     refresh_preparation_presentation,
+    refresh_preparation_run_state,
 )
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.application.metadata_report import MetadataReportError
@@ -386,7 +387,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 "UPDATE review_preparation_control SET paused=?,updated_at=? WHERE singleton=1",
                 (paused, updated_at),
             )
-            refresh_preparation_presentation(self._connection, updated_at)
+            refresh_preparation_run_state(self._connection, updated_at)
             transaction.commit()
         except sqlite3.Error as error:
             raise MetadataReportError(
@@ -673,7 +674,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                     updated_at,
                 ),
             )
-            refresh_preparation_presentation(self._connection, updated_at)
+            refresh_preparation_run_state(self._connection, updated_at)
             transaction.commit()
         except sqlite3.Error as error:
             transaction.rollback()
