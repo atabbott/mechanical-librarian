@@ -46,13 +46,18 @@ provider means to the review pipeline.
    filesystem, socket, or process.
 2. **`ffprobe` is built from a checksum-pinned upstream release.** A builder
    stage fetches FFmpeg 7.1.5, verifies its SHA-256 against a pinned value and
-   hard-fails on mismatch, configures with `--disable-everything` plus only the
-   demuxers, decoders, parsers, and protocols this library reads, builds the
-   `ffprobe` target alone, and strips it. The result is a 1,976,960-byte binary
+   hard-fails on mismatch, configures with `--disable-everything` plus exactly
+   the `mov`, `mp3` and `aac` demuxers, the `aac`, `mp3`, `mjpeg` and `png`
+   decoders and parsers, and the `file`, `pipe` and `fd` protocols, builds the
+   `ffprobe` target alone, and strips it. The result is a 1,845,864-byte binary
    copied into the final image at `/usr/local/bin/ffprobe`; the parent resolves
    it from a closed path list rather than an inherited `PATH`, which the child
    environment does not carry. `--disable-network` makes the zero-network
-   invariant a property of the binary rather than of the sandbox around it.
+   invariant a property of the binary rather than of the sandbox around it, and
+   the enabled set closes the grammar: `ffprobe` sniffs by content rather than
+   by extension, so a payload outside the three admitted containers is refused
+   as an extraction failure instead of being demuxed by a component nothing
+   here reads.
 3. **Chapters and embedded art are structure, not claims.** Embedded chapters
    are a bounded section on the report (at most 1,024, contiguous ordinals,
    millisecond boundaries, projection-validated titles, an explicit truncation
@@ -64,9 +69,14 @@ provider means to the review pipeline.
    constructed or dispatched. The domain refuses an audio report that carries a
    provider observation at all, and review preparation ends in the same
    transaction that publishes the report, with the terminal, non-retryable code
-   `local_evidence_only` projected to the owner as recorded evidence rather
-   than as a failure. The provider stage refuses such a report as a guard, for
-   the case it is reached by a path that does not exist today.
+   `local_evidence_only`. That transaction also registers the item's
+   `report_only` review package, which is what the owner browses and searches
+   the work by; an ebook acquires the same row later, at proposal or admission,
+   and an audiobook reaches neither stage. The code is excluded from the
+   operational signal query, because a stop that publishes a complete report is
+   not a fault for an owner to act on. The provider stage refuses such a report
+   as a guard, for the case it is reached by a path that does not exist
+   today.
 
 ## Consequences
 
@@ -81,8 +91,9 @@ provider means to the review pipeline.
 - The stop is atomic with publication, so an audiobook neither stalls in a
   stage it cannot complete nor reports a provider failure that never happened.
 - The probe costs the image almost nothing: 3 MB on disk (261 MB to 264 MB) and
-  under 1 MB pulled (55.5 MB to 56.5 MB compressed). The shipped media parser
-  contains no muxer, encoder, filter, device, or network protocol at all.
+  under 1 MB pulled (55,458,311 to 56,336,949 bytes compressed). The shipped
+  media parser contains no muxer, encoder, filter, device, or network protocol
+  at all, and no demuxer or decoder outside the three admitted containers.
 
 ### Negative
 
@@ -93,8 +104,12 @@ provider means to the review pipeline.
 - Container qualification compiles FFmpeg. The container-image job builds on a
   fresh runner with no layer cache, so the compile runs once per qualification
   run.
-- A deployment without the probe binary produces no audiobook evidence. That
-  is a typed `invalid_configuration` outcome rather than a partial report.
+- A deployment without the probe binary produces no audiobook evidence. The
+  inspection ends with the typed `invalid_configuration` outcome rather than a
+  partial report, and preparation records it as `internal_failure` — the same
+  code the EPUB vocabulary gives that outcome — rather than as the unnamed
+  `unknown`. Every other audio outcome is named the same way, so no audiobook
+  failure reaches an owner without saying which one it was.
 
 ### Neutral or deferred
 

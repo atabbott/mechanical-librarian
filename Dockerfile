@@ -3,10 +3,12 @@
 # checksum-pinned upstream release rather than installed from the distribution,
 # for three reasons. Network support is compiled out, so the slice's
 # zero-network invariant is a property of the binary rather than of the sandbox
-# around it. Only the demuxers, decoders, and parsers this library actually
-# reads are compiled in, so the shipped attack surface is the audiobook
-# grammar and nothing else -- and the distribution package's `libavfilter` and
-# `libavdevice` closure, which drags in LLVM, Mesa, and X11, never exists. In
+# around it. The enabled set is exactly the three admitted containers and the
+# codecs they carry, so a payload outside that envelope is refused as an
+# extraction failure instead of being demuxed by a component the library never
+# reads -- `ffprobe` sniffs by content, not by extension, and the distribution
+# package's `libavfilter` and `libavdevice` closure, which drags in LLVM, Mesa,
+# and X11, never exists at all. In
 # exchange this project owns the pin: a CVE in FFmpeg is answered by bumping
 # `FFMPEG_VERSION` and `FFMPEG_SHA256` here, not by a base-image rebuild.
 FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS probe-build
@@ -28,9 +30,9 @@ RUN ./configure \
         --disable-indevs --disable-outdevs --disable-hwaccels --disable-bsfs \
         --disable-ffmpeg --disable-ffplay \
         --enable-ffprobe \
-        --enable-demuxer=mov,mp3,aac,flac,ogg,wav,asf \
-        --enable-decoder=aac,mp3,flac,vorbis,mjpeg,png \
-        --enable-parser=aac,mpegaudio,flac,vorbis,mjpeg,png \
+        --enable-demuxer=mov,mp3,aac \
+        --enable-decoder=aac,mp3,mjpeg,png \
+        --enable-parser=aac,mpegaudio,mjpeg,png \
         --enable-protocol=file,pipe,fd \
     && make -j"$(nproc)" ffprobe \
     && strip ffprobe \
