@@ -586,34 +586,44 @@ def _json_sidecar_facts(builder: _Builder, sidecar: AudioSidecar) -> None:
         field = _JSON_KEYS.get(key)
         if field is None:
             continue
-        for observed in _json_values(field, value)[:16]:
-            if field is AudioInspectionField.SERIES_SEQUENCE and not _is_sequence(
+        for resolved, observed in _json_values(field, value)[:16]:
+            if resolved is AudioInspectionField.SERIES_SEQUENCE and not _is_sequence(
                 observed
             ):
                 continue
             builder.add(
-                field,
+                resolved,
                 sidecar.surface,
                 observed,
                 key=raw_key.strip().lower(),
-                role="narrator" if field is AudioInspectionField.CONTRIBUTOR else None,
+                role="narrator"
+                if resolved is AudioInspectionField.CONTRIBUTOR
+                else None,
             )
 
 
-def _json_values(field: AudioInspectionField, value: object) -> list[object]:
-    if type(value) is list:
-        values: list[object] = []
-        for item in value:
-            if type(item) is dict:
-                values.append(item.get("name"))
-                if field is AudioInspectionField.SERIES:
-                    sequence = item.get("sequence")
-                    if sequence is not None:
-                        values.append(sequence)
-            else:
-                values.append(item)
-        return values
-    return [value]
+def _json_values(
+    field: AudioInspectionField, value: object
+) -> list[tuple[AudioInspectionField, object]]:
+    """Flatten one sidecar value, naming the field each element belongs to.
+
+    A series entry states its own position, so that element is a sequence
+    rather than another series name.
+    """
+    if type(value) is not list:
+        return [(field, value)]
+    values: list[tuple[AudioInspectionField, object]] = []
+    for item in value:
+        if type(item) is not dict:
+            values.append((field, item))
+            continue
+        values.append((field, item.get("name")))
+        sequence = (
+            item.get("sequence") if field is AudioInspectionField.SERIES else None
+        )
+        if sequence is not None:
+            values.append((AudioInspectionField.SERIES_SEQUENCE, sequence))
+    return values
 
 
 def _decode_entities(value: str) -> str:
