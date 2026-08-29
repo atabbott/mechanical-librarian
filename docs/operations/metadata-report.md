@@ -168,9 +168,16 @@ section rather than claims, and the embedded cover is a presence fact that
 grants no cover authority. No provider is contacted for such a report: review
 preparation ends terminally with `local_evidence_only` in the same transaction
 that publishes it, and that transaction records the item's review package, so
-the work is browsed and searched by its evidence rather than by a failure. The
-code raises no operational incident, because nothing about it needs owner
-action.
+the work is browsed and searched by its evidence rather than by a failure. That
+package row is also the address of the report: the library row links to a
+read-only detail view of the recorded evidence, which is the only way to read
+it for a work that has no review case. The code raises no operational incident,
+counts toward nothing an owner is asked to unblock, and does not mark its scan
+as having failed — a prepared audiobook counted as a failure would discard
+every absence its scan staged, including a disappeared ebook's in a
+mixed-format library. Its digest is bounded by `audio_source_bytes` rather than
+the EPUB archive limit, and its catalogue fingerprint follows the audio file's
+own revision, so playing an audiobook does not re-prepare it.
 Multi-file audiobook items and audiobook libraries without a named read-only
 mount stay excluded, exactly as before. See
 [ADR-0063](../architecture/decisions/0063-isolated-audiobook-inspector.md).

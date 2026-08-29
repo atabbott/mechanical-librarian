@@ -77,11 +77,39 @@ provider means to the review pipeline.
    `local_evidence_only`. That transaction also registers the item's
    `report_only` review package, which is what the owner browses and searches
    the work by; an ebook acquires the same row later, at proposal or admission,
-   and an audiobook reaches neither stage. The code is excluded from the
-   operational signal query, because a stop that publishes a complete report is
-   not a fault for an owner to act on. The provider stage refuses such a report
-   as a guard, for the case it is reached by a path that does not exist
+   and an audiobook reaches neither stage. The provider stage refuses such a
+   report as a guard, for the case it is reached by a path that does not exist
    today.
+5. **A failure-that-isn't is excluded everywhere failures are counted.** The
+   work row ends `failed` because nothing follows the report, so
+   `local_evidence_only` is excluded from the operational signal query, from
+   the scan drain that decides whether a scan's staged absences are committed
+   or discarded, and from the blocked count an owner reads. Excluding it on
+   one surface only is worse than not excluding it at all: one prepared
+   audiobook would settle the whole scan as `completed_with_failures`, and
+   every absence that scan staged — a disappeared ebook among them, in a
+   mixed-format library — would be discarded unread on every pass.
+6. **Recorded evidence is addressable without a review case.** An audiobook
+   acquires no review case, so the `report_only` package row is what addresses
+   its report: a read-only detail route keyed by connection, library and item
+   serves the current document through the same browse validation the library
+   page uses. Evidence that is recorded and retained but unreachable is not
+   evidence an owner has.
+7. **The audio source ceiling is its own setting.** An audiobook is read by
+   header rather than whole, and is routinely larger than any EPUB, so the
+   digest bound is `audio_source_bytes` (8 GiB by default, 16 GiB maximum,
+   which is the domain's immutable inspection cap) rather than the EPUB
+   archive limit, which would refuse a routine multi-hour recording outright.
+   It is a per-field default on a closed model, so a `config-v6` document
+   written before the key existed still validates and needs no increment.
+8. **The catalogue fingerprint follows the audio file, not the item.**
+   Audiobookshelf advances an item's `updatedAt` on playback, so an audio
+   item whose fingerprint fell back to that timestamp was re-prepared —
+   re-hashing gigabytes — because somebody listened to it. The single audio
+   file's own revision is the material signal, and it is read exactly as an
+   EPUB's is. The cover-path fallback stays scoped to the formats whose cover
+   bytes this build acquires; an audiobook's art is recorded as presence and
+   never acquired, so it earns no dependency on a timestamp playback moves.
 
 ## Consequences
 
@@ -129,6 +157,14 @@ provider means to the review pipeline.
   qualification job (`gha` cache in the workflow) would remove the repeat
   compile cost, and is a delivery-contract change explicitly outside this
   slice.
+- Publication hashes the source twice. The currentness guard inside the publish
+  transaction re-reads the file to prove it did not change since inspection,
+  which for an audiobook is a second multi-gigabyte digest taken microseconds
+  after the first, with no provider phase between them. Reusing the digest
+  `inspect` computed would make the guard tautological rather than cheap, and
+  narrowing it to the media paths that have no provider phase changes what the
+  guard proves for three independent callers. That is a decision of its own,
+  not a bounded edit, and is left for a later record.
 - Multi-file audiobooks and unmounted audiobook libraries stay excluded exactly
   as before this slice, and remain a later decision.
 - Provider discovery, enrichment, and any write authority for audiobooks stay
