@@ -4989,7 +4989,7 @@
         "additionalProperties": false,
         "properties": {
           "name": {
-            "maxLength": 1024,
+            "maxLength": 2048,
             "minLength": 1,
             "title": "Name",
             "type": "string"
@@ -5015,7 +5015,7 @@
             "type": "integer"
           },
           "name": {
-            "maxLength": 1024,
+            "maxLength": 2048,
             "minLength": 1,
             "title": "Name",
             "type": "string"

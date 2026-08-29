@@ -616,6 +616,13 @@ describe('ReviewApiClient', () => {
     }
     const base = { schema_version: 'review-preparation-v2', active: true, actionable: false, paused: false, libraries: [], connections: [], presentation }
     expect(mapPreparation(base).presentation?.passage.ready).toBe(1)
+    const maximumName = 'x'.repeat(2048)
+    expect(mapPreparation({ ...base, presentation: { ...presentation, active_books: [{ name: maximumName, stage: 'Reading' }], recent_completions: [{ name: maximumName, outcome: 'ready', completed_at: 101 }] } }).presentation?.active_books[0]?.name).toBe(maximumName)
+    const maximumMultibyteName = `${'界'.repeat(682)}ab`
+    expect(new TextEncoder().encode(maximumMultibyteName)).toHaveLength(2048)
+    expect(mapPreparation({ ...base, presentation: { ...presentation, active_books: [{ name: maximumMultibyteName, stage: 'Reading' }], recent_completions: [{ name: maximumMultibyteName, outcome: 'ready', completed_at: 101 }] } }).presentation?.recent_completions[0]?.name).toBe(maximumMultibyteName)
+    expect(() => mapPreparation({ ...base, presentation: { ...presentation, active_books: [{ name: `${maximumName}x`, stage: 'Reading' }] } })).toThrow('invalid_preparation_active_name')
+    expect(() => mapPreparation({ ...base, presentation: { ...presentation, recent_completions: [{ name: `${maximumName}x`, outcome: 'ready', completed_at: 101 }] } })).toThrow('invalid_preparation_completion_name')
     expect(() => mapPreparation({ ...base, presentation: { ...presentation, passage: { ...presentation.passage, checked: 1, ready: 2 } } })).toThrow('invalid_preparation_passage_order')
     expect(mapPreparation({ ...base, presentation: { ...presentation, passage: { read: 1, searches_finished: 0, compared: 0, checked: 0, ready: 0, failed: 1 } } }).presentation?.passage.failed).toBe(1)
     expect(() => mapPreparation({ ...base, presentation: { ...presentation, updated_at: 99 } })).toThrow('invalid_preparation_passage_total')

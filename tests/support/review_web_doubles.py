@@ -60,6 +60,7 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.preparation_presentation import (
     PreparationPresentation,
     PreparationPresentationError,
+    PreparationTrigger,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
@@ -637,6 +638,7 @@ class FakePreparation:
     def __init__(self) -> None:
         self.is_paused = False
         self.status_calls = 0
+        self.requests: list[tuple[str, str, PreparationTrigger]] = []
 
     def attach_updates(self, announce: object) -> None:
         return None
@@ -673,7 +675,14 @@ class FakePreparation:
             ),
         )
 
-    def request(self, connection: str, library: str):
+    def request(
+        self,
+        connection: str,
+        library: str,
+        *,
+        trigger: PreparationTrigger,
+    ):
+        self.requests.append((connection, library, trigger))
         return self.progress(connection, library)
 
     def status(self):

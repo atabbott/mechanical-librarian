@@ -879,12 +879,12 @@ class _PreparationPassage(_ClosedModel):
 
 
 class _PreparationActiveBook(_ClosedModel):
-    name: StrictStr = Field(min_length=1, max_length=1024)
+    name: StrictStr = Field(min_length=1, max_length=2048)
     stage: str
 
 
 class _PreparationCompletion(_ClosedModel):
-    name: StrictStr = Field(min_length=1, max_length=1024)
+    name: StrictStr = Field(min_length=1, max_length=2048)
     outcome: Literal["ready", "failed"]
     completed_at: int = Field(ge=0)
 

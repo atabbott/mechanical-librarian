@@ -437,16 +437,23 @@ describe('shipped first-run setup script', () => {
   ] as const)(
     'offers the setup bridge at %s without navigating',
     async (title, ready, terminal, actionable, expectedCopy, dismissed = false) => {
-      const previousSetInterval = globalThis.setInterval
-      const previousClearInterval = globalThis.clearInterval
+      const previousSetTimeout = globalThis.setTimeout
+      const previousClearTimeout = globalThis.clearTimeout
+      let firstPollScheduled = false
       vi.stubGlobal(
-        'setInterval',
-        vi.fn((callback: () => void) => {
-          queueMicrotask(callback)
-          return 1
+        'setTimeout',
+        vi.fn((callback: () => void, delay?: number) => {
+          if (delay === 1_500) {
+            if (!firstPollScheduled) {
+              firstPollScheduled = true
+              queueMicrotask(callback)
+            }
+            return 1
+          }
+          return previousSetTimeout(callback, delay)
         }),
       )
-      vi.stubGlobal('clearInterval', vi.fn())
+      vi.stubGlobal('clearTimeout', vi.fn())
       const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
         const url = requestUrl(request)
         if (url === '/api/setup/kick-off' && init?.method === 'POST')
@@ -520,25 +527,111 @@ describe('shipped first-run setup script', () => {
         [...completedRows].every((row) => row.querySelector('span')?.textContent === '✓'),
       ).toBe(true)
       expect(ledger.querySelector('[aria-current]')).toBeNull()
-      vi.stubGlobal('setInterval', previousSetInterval)
-      vi.stubGlobal('clearInterval', previousClearInterval)
+      vi.stubGlobal('setTimeout', previousSetTimeout)
+      vi.stubGlobal('clearTimeout', previousClearTimeout)
     },
   )
+
+  it('serializes preparation polling, retains reconnect state, and stops on terminal adoption', async () => {
+    const previousSetTimeout = globalThis.setTimeout
+    const timers: (() => Promise<void>)[] = []
+    vi.stubGlobal(
+      'setTimeout',
+      vi.fn((callback: () => void | Promise<void>, delay?: number) => {
+        if (delay === 1_500) {
+          timers.push(async () => await callback())
+          return timers.length
+        }
+        return previousSetTimeout(() => void callback(), delay)
+      }),
+    )
+    let releaseFailure!: (value: Response) => void
+    const heldFailure = new Promise<Response>((resolve) => {
+      releaseFailure = resolve
+    })
+    let preparationReads = 0
+    let inFlight = 0
+    let maximumInFlight = 0
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(request)
+      if (url === '/api/setup/kick-off' && init?.method === 'POST')
+        return response({ message: 'Restarting into the normal workspace.' })
+      if (url === '/api/v1/review-preparation') {
+        preparationReads += 1
+        inFlight += 1
+        maximumInFlight = Math.max(maximumInFlight, inFlight)
+        const result =
+          preparationReads === 1
+            ? await heldFailure
+            : response({
+                presentation: {
+                  run_id: `preparation_run_${'a'.repeat(64)}`,
+                  state: 'completed_clean',
+                  passage: {
+                    read: 1,
+                    searches_finished: 1,
+                    compared: 1,
+                    checked: 1,
+                    ready: 1,
+                    failed: 0,
+                  },
+                  active_books: [],
+                  active_overflow: 0,
+                  recent_completions: [],
+                  throughput_per_minute: 1,
+                  total: 1,
+                },
+              })
+        inFlight -= 1
+        return result
+      }
+      return response(
+        setupState('kick_off', {
+          completed_steps: ['claim', 'connect', 'providers', 'libraries', 'mounts'],
+        }),
+      )
+    })
+    vi.stubGlobal('fetch', fetch)
+    runSetup()
+    fireEvent.click(await screen.findByRole('button', { name: 'Kick off preparation' }))
+    await waitFor(() => expect(timers).toHaveLength(1))
+
+    const first = timers.shift()
+    if (!first) throw new Error('first preparation poll missing')
+    const pending = first()
+    expect(timers).toHaveLength(0)
+    expect(inFlight).toBe(1)
+    releaseFailure(response({ error: 'unavailable' }, 503))
+    await pending
+    expect(screen.getByText(/Reconnecting · showing the last confirmed state/u)).toBeVisible()
+    expect(timers).toHaveLength(1)
+
+    const retry = timers.shift()
+    if (!retry) throw new Error('preparation retry missing')
+    await retry()
+    expect(await screen.findByRole('heading', { name: 'Preparation is complete' })).toBeVisible()
+    expect(timers).toHaveLength(0)
+    expect(maximumInFlight).toBe(1)
+  })
 
   it('stops polling and offers normal sign-in when the one-hour setup session expires', async () => {
     const claimedAt = new Date('2026-08-25T10:00:00Z')
     let now = claimedAt.getTime()
     vi.spyOn(Date, 'now').mockImplementation(() => now)
+    const previousSetTimeout = globalThis.setTimeout
     let poll: (() => Promise<void>) | undefined
     vi.stubGlobal(
-      'setInterval',
-      vi.fn((callback: () => Promise<void>) => {
-        poll = callback
-        return 1
+      'setTimeout',
+      vi.fn((callback: () => void | Promise<void>, delay?: number) => {
+        if (delay === 1_500) {
+          poll = async () => await callback()
+          return 1
+        }
+        return previousSetTimeout(() => void callback(), delay)
       }),
     )
     const clear = vi.fn()
-    vi.stubGlobal('clearInterval', clear)
+    vi.stubGlobal('clearTimeout', clear)
     const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
       const url = requestUrl(request)
       if (url === '/api/setup/kick-off' && init?.method === 'POST')

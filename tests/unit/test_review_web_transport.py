@@ -14,6 +14,7 @@ import tempfile
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -52,6 +53,8 @@ from mechanical_librarian.bootstrap.composition import run_review_server
 from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
 from mechanical_librarian.domain.preparation_presentation import (
+    PreparationActiveBook,
+    PreparationCompletion,
     PreparationPassage,
     PreparationPresentation,
     PreparationRunState,
@@ -1241,6 +1244,27 @@ def test_review_page_rotates_one_memory_only_csrf_token(
         json=payload,
     )
     assert accepted.status_code == 200, accepted.text
+
+
+@pytest.mark.parametrize("name", ("x" * 2048, "界" * 682 + "ab"))
+def test_preparation_http_preserves_maximum_display_names(
+    web: ReviewWebContext[FakeReviewRepository], name: str
+) -> None:
+    assert len(name.encode("utf-8")) == 2048
+    presentation = _preparation_presentation(PreparationRunState.RUNNING)
+    web.repository.preparation_presentation_value = replace(
+        presentation,
+        active_books=(PreparationActiveBook(name, "Reading from library"),),
+        recent_completions=(PreparationCompletion(name, "ready", 101),),
+    )
+    web.login()
+
+    response = web.client.get("/api/v1/review-preparation")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.json()["presentation"]["active_books"][0]["name"] == name
+    assert response.json()["presentation"]["recent_completions"][0]["name"] == name
 
 
 def test_authenticated_page_preserves_csrf_rotation_persistence_failure(

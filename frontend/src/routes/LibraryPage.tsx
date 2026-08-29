@@ -1256,7 +1256,6 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
           name,
           outcome,
         })),
-        throughput_per_minute: presentation.throughput_per_minute,
         total: presentation.total,
         dismissible: presentation.dismissible,
       })

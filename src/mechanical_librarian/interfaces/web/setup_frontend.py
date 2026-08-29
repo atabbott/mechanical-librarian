@@ -122,24 +122,8 @@ SETUP_JS = (
         "media_kind:'book'",
     )
     .replace(
-        "Preparation will begin in the workspace.",
-        "Preparation will begin in the workspace.",
-    )
-    .replace(
         "const renderKickoff=()=>{",
         "const renderPreparation=(host,visible)=>{host.replaceChildren();host.className='setup-preparation';const stateLine=document.createElement('p');stateLine.setAttribute('role','status');const stateCopy={starting:'Preparation is starting',running:'Preparation continues',blocked:'Preparation needs recovery',completed_clean:'Preparation is complete',completed_with_failures:'Preparation completed with failures',dismissed:'Preparation dismissed'};stateLine.textContent=visible?stateCopy[visible.state]||'Preparation continues':'Preparation is starting';host.append(stateLine);if(!visible)return stateLine.textContent;const active=document.createElement('section');const activeHeading=document.createElement('h3');activeHeading.textContent='Now preparing';active.append(activeHeading);const books=Array.isArray(visible.active_books)?visible.active_books.slice(0,5):[];if(books.length){const list=document.createElement('ol');list.className='setup-active';for(const book of books){const item=document.createElement('li');const name=document.createElement('strong');name.textContent=book.name;const stage=document.createElement('small');stage.textContent=book.stage;item.append(name,stage);list.append(item)}active.append(list)}else{const empty=document.createElement('p');empty.textContent='No book is active at the last confirmed refresh.';active.append(empty)}if(visible.active_overflow){const overflow=document.createElement('p');overflow.textContent=`${visible.active_overflow} more active books follow in this run.`;active.append(overflow)}const passage=document.createElement('section');const passageHeading=document.createElement('h3');passageHeading.textContent='How many books made it this far?';const measures=document.createElement('dl');measures.className='setup-passage';for(const [field,label] of [['read','Read from library'],['searches_finished','Searches finished'],['compared','Candidates compared'],['checked','Metadata checked'],['ready','Ready for review'],['failed','Could not finish']]){const row=document.createElement('div');const term=document.createElement('dt');term.textContent=label;const value=document.createElement('dd');value.textContent=String(visible.passage?.[field]??0);row.append(term,value);measures.append(row)}passage.append(passageHeading,measures);if(typeof visible.throughput_per_minute==='number'){const throughput=document.createElement('p');throughput.textContent=`${visible.throughput_per_minute.toFixed(1)} books/min`;passage.append(throughput)}host.append(active,passage);const recent=Array.isArray(visible.recent_completions)?visible.recent_completions.slice(0,8):[];if(recent.length){const recentSection=document.createElement('section');const recentHeading=document.createElement('h3');recentHeading.textContent='Recent completions';const recentList=document.createElement('ul');recentList.className='setup-completions';for(const completion of recent){const item=document.createElement('li');item.textContent=`${completion.name} · ${completion.outcome==='ready'?'Ready':'Could not finish'}`;recentList.append(item)}recentSection.append(recentHeading,recentList);host.append(recentSection)}return stateLine.textContent};const renderKickoff=()=>{",
-    )
-    .replace(
-        "const copy=document.createElement('p');copy.textContent=result.message;",
-        "const copy=document.createElement('p');copy.textContent='Preparation continues safely in the normal workspace.';const safety=document.createElement('p');safety.className='notice';safety.textContent=result.message;",
-    )
-    .replace(
-        "const progress=document.createElement('p');progress.className='notice';progress.textContent='Waiting for the normal workspace…';section.append(heading,copy,progress);",
-        "const progress=document.createElement('div');renderPreparation(progress,null);const open=document.createElement('a');open.href='/library?lens=all';open.textContent='Open workspace';section.append(heading,copy,safety,progress,open);",
-    )
-    .replace(
-        "const open=document.createElement('a');open.href='/library?lens=all';open.textContent='Open workspace';section.append(open);",
-        "open.textContent='Open workspace';",
     )
     .replace(
         "Choose metadata providers','Mechanical Librarian gets better results when it can compare more sources. Connect as many providers as you reasonably can; you can add or change them later.",
@@ -156,38 +140,6 @@ SETUP_JS = (
     .replace(
         "Select one or more book libraries.",
         "Select one or more book libraries.",
-    )
-    .replace(
-        "open.textContent='Open workspace';",
-        "open.className='primary workspace-handoff';open.textContent='Open workspace';",
-    )
-    .replace(
-        "const visible=preparation.presentation;",
-        "const visible=preparation.presentation;if(visible?.run_id)open.href=`/library?lens=all&preparation=${encodeURIComponent(visible.run_id)}`;",
-    )
-    .replace(
-        "progress.textContent=`${ready} ready · ${failed} could not finish · ${checked} of ${total} checked`;",
-        "const confirmed=renderPreparation(progress,visible);announce(confirmed);",
-    )
-    .replace(
-        "}catch{}},1500)",
-        "}catch{const confirmed=progress.querySelector('[role=status]');if(confirmed){confirmed.textContent='Reconnecting · showing the last confirmed state';announce('Reconnecting to preparation progress')}}},1500)",
-    )
-    .replace(
-        "const bridge=setInterval", "let bridgeShown=false;const bridge=setInterval"
-    )
-    .replace(
-        "if(ready>0||complete||needsAttention){clearInterval(bridge);",
-        "if((ready>0||complete||needsAttention)&&!bridgeShown){bridgeShown=true;",
-    )
-    .replace(
-        "const needsAttention=preparation.actionable||preparation.paused;if(ready>0||preparation.first_boot_complete||needsAttention)",
-        "const complete=['completed_clean','completed_with_failures'].includes(visible?.state);const needsAttention=visible?.state==='blocked'||preparation.actionable||preparation.paused;if(ready>0||complete||needsAttention)",
-    )
-    .replace("preparation.first_boot_complete", "complete")
-    .replace(
-        ":preparation.first_boot_complete?(preparation.actionable?'No work became ready. Open the workspace to review the failures and recovery.':'Preparation finished without ready work. Open the workspace to continue.'):'Open the workspace to review the paused connection and use Check connection again.'",
-        ":preparation.first_boot_complete?(preparation.actionable?'No work became ready. Open the workspace to review the failures and recovery.':'Preparation finished without ready work. Open the workspace to continue.'):'Open the workspace to review the paused connection and use Check connection again.'",
     )
     .replace(
         "section.append(eyebrow,heading,copy)", "section.append(heading,eyebrow,copy)"
@@ -212,8 +164,6 @@ SETUP_JS = (
         "name:row.querySelector('input[type=text]').value",
         "name:row.dataset.name",
     )
-    .replace("Your work is ready", "Your work is ready")
-    .replace("Preparation is complete", "Preparation is complete")
     .replace("unmatched:", "missing:")
     .replace("unobservable:", "unavailable:")
     .replace(
@@ -295,7 +245,7 @@ SETUP_JS = (
     )
 )
 
-_AUTHORED_PREPARATION_KICKOFF = r"""const renderKickoff=()=>{const section=card('Kick off preparation','Preparation will begin in the workspace.');const notice=document.createElement('p');notice.className='notice';notice.textContent='Nothing in your library changes. Writes stay off until you turn them on in Activity.';const form=document.createElement('form');form.append(notice,button('Kick off preparation',true));form.addEventListener('submit',async event=>{event.preventDefault();try{const result=await api('/api/setup/kick-off',{method:'POST',body:JSON.stringify({expected_revision:state.revision}),mutation:true});section.replaceChildren();const heading=document.createElement('h2');heading.tabIndex=-1;heading.textContent='Preparation is starting';const copy=document.createElement('p');copy.textContent='Preparation continues safely in the normal workspace.';const safety=document.createElement('p');safety.className='notice';safety.textContent=result.message;const progress=document.createElement('div');renderPreparation(progress,null);section.append(heading,copy,safety,progress);heading.focus({preventScroll:true});let open=null;let announcedState=null;const finishLedger=()=>{for(const row of ledger.querySelectorAll('.ledger-row')){row.removeAttribute('aria-current');row.querySelector('span').textContent='✓';row.querySelector('button')?.remove()}};const bridge=setInterval(async()=>{try{const response=await fetch('/api/v1/review-preparation',{credentials:'same-origin'});if(response.status===401){clearInterval(bridge);finishLedger();heading.textContent='Sign in to continue';copy.textContent='Your setup sign-in expired while preparation continued safely. Sign in to the workspace to see live progress.';progress.textContent='Preparation continues in the normal workspace.';const signIn=document.createElement('a');signIn.href='/library?lens=all';signIn.textContent='Sign in to workspace';section.append(signIn);heading.focus({preventScroll:true});return}if(!response.ok)throw new Error('unavailable');const preparation=await response.json();const visible=preparation.presentation;const confirmed=renderPreparation(progress,visible);if(visible?.run_id&&!open){open=document.createElement('a');open.className='primary workspace-handoff';open.textContent='Open workspace';section.append(open)}const dismissed=visible?.state==='dismissed';if(open)open.href=dismissed?'/library?lens=all':`/library?lens=all&preparation=${encodeURIComponent(visible.run_id)}`;if(visible){finishLedger();const terminal=['completed_clean','completed_with_failures','dismissed'].includes(visible.state);heading.textContent=visible.state==='blocked'?'Preparation needs attention':dismissed?'Preparation was dismissed':terminal?'Preparation is complete':'Preparation continues';copy.textContent=visible.state==='blocked'?'Open the workspace to review recovery while preparation remains safely paused.':dismissed?'Open the ordinary workspace.':terminal?'Open the workspace to review the completed preparation record.':'Open the workspace while preparation continues.';if(confirmed!==announcedState){announcedState=confirmed;announce(confirmed)}if(terminal)clearInterval(bridge)}}catch{const confirmed=progress.querySelector('[role=status]');if(confirmed){confirmed.textContent='Reconnecting · showing the last confirmed state';announce('Reconnecting to preparation progress')}}},1500)}catch(e){error(form,e.message)}});section.append(form)}"""
+_AUTHORED_PREPARATION_KICKOFF = r"""const renderKickoff=()=>{const section=card('Kick off preparation','Preparation will begin in the workspace.');const notice=document.createElement('p');notice.className='notice';notice.textContent='Nothing in your library changes. Writes stay off until you turn them on in Activity.';const form=document.createElement('form');form.append(notice,button('Kick off preparation',true));form.addEventListener('submit',async event=>{event.preventDefault();try{const result=await api('/api/setup/kick-off',{method:'POST',body:JSON.stringify({expected_revision:state.revision}),mutation:true});section.replaceChildren();const heading=document.createElement('h2');heading.tabIndex=-1;heading.textContent='Preparation is starting';const copy=document.createElement('p');copy.textContent='Preparation continues safely in the normal workspace.';const safety=document.createElement('p');safety.className='notice';safety.textContent=result.message;const progress=document.createElement('div');renderPreparation(progress,null);section.append(heading,copy,safety,progress);heading.focus({preventScroll:true});let open=null;let announcedState=null;let stopped=false;let timer=null;const finishLedger=()=>{for(const row of ledger.querySelectorAll('.ledger-row')){row.removeAttribute('aria-current');row.querySelector('span').textContent='✓';row.querySelector('button')?.remove()}};const stop=()=>{stopped=true;if(timer!==null)clearTimeout(timer)};const poll=async()=>{try{const response=await fetch('/api/v1/review-preparation',{credentials:'same-origin'});if(response.status===401){stop();finishLedger();heading.textContent='Sign in to continue';copy.textContent='Your setup sign-in expired while preparation continued safely. Sign in to the workspace to see live progress.';progress.textContent='Preparation continues in the normal workspace.';const signIn=document.createElement('a');signIn.href='/library?lens=all';signIn.textContent='Sign in to workspace';section.append(signIn);heading.focus({preventScroll:true});return}if(!response.ok)throw new Error('unavailable');const preparation=await response.json();const visible=preparation.presentation;const confirmed=renderPreparation(progress,visible);if(visible?.run_id&&!open){open=document.createElement('a');open.className='primary workspace-handoff';open.textContent='Open workspace';section.append(open)}const dismissed=visible?.state==='dismissed';if(open)open.href=dismissed?'/library?lens=all':`/library?lens=all&preparation=${encodeURIComponent(visible.run_id)}`;if(visible){finishLedger();const terminal=['completed_clean','completed_with_failures','dismissed'].includes(visible.state);heading.textContent=visible.state==='blocked'?'Preparation needs attention':dismissed?'Preparation was dismissed':terminal?'Preparation is complete':'Preparation continues';copy.textContent=visible.state==='blocked'?'Open the workspace to review recovery while preparation remains safely paused.':dismissed?'Open the ordinary workspace.':terminal?'Open the workspace to review the completed preparation record.':'Open the workspace while preparation continues.';if(confirmed!==announcedState){announcedState=confirmed;announce(confirmed)}if(terminal)stop()}}catch{const confirmed=progress.querySelector('[role=status]');if(confirmed){confirmed.textContent='Reconnecting · showing the last confirmed state';announce('Reconnecting to preparation progress')}}finally{if(!stopped)timer=setTimeout(poll,1500)}};timer=setTimeout(poll,1500)}catch(e){error(form,e.message)}});section.append(form)}"""
 
 
 def _install_authored_preparation_kickoff(source: str) -> str:

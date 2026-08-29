@@ -146,12 +146,24 @@ describe('Library route', () => {
       })
     })
     expect(document.querySelector('.preparation-run-state')).not.toHaveClass('reported-change')
+    act(() => {
+      queryClient.setQueryData(['review-preparation'], {
+        ...confirmed,
+        presentation: {
+          ...confirmedPresentation,
+          throughput_per_minute: 9.9,
+          updated_at: 103,
+        },
+      })
+    })
+    await waitFor(() => expect(screen.getByText('9.9 books/min')).toBeVisible())
+    expect(document.querySelector('.preparation-run-state')).not.toHaveClass('reported-change')
     const semanticChange = {
       ...confirmed,
       presentation: {
         ...confirmedPresentation,
         passage: { ...confirmedPresentation.passage, ready: 2 },
-        updated_at: 103,
+        updated_at: 104,
       },
     }
     act(() => {

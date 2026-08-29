@@ -1654,12 +1654,12 @@ const preparationPresentation = (value: unknown) => {
     throw new ApiError(502, 'invalid_preparation_passage_total')
   for (const active of value.active_books) {
     if (!record(active)) throw new ApiError(502, 'invalid_preparation_active_book')
-    boundedStringValue(active.name, 'preparation_active_name', 1024)
+    boundedStringValue(active.name, 'preparation_active_name', 2048)
     boundedStringValue(active.stage, 'preparation_active_stage', 64)
   }
   for (const completion of value.recent_completions) {
     if (!record(completion)) throw new ApiError(502, 'invalid_preparation_completion')
-    boundedStringValue(completion.name, 'preparation_completion_name', 1024)
+    boundedStringValue(completion.name, 'preparation_completion_name', 2048)
     if (
       !['ready', 'failed'].includes(
         stringValue(completion.outcome, 'preparation_completion_outcome'),

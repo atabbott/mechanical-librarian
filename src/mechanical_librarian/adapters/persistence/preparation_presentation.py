@@ -105,7 +105,8 @@ def accept_preparation_trigger(
             "row_id,row_kind,run_id,scan_id,connection_name,library_name,cycle_id,pending_cycle_id,cycle_state,ordinal,updated_at) "
             "VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(row_id) DO UPDATE SET "
             "run_id=excluded.run_id,connection_name=excluded.connection_name,library_name=excluded.library_name,"
-            "cycle_id=COALESCE(review_preparation_presentation.cycle_id,excluded.cycle_id),"
+            "cycle_id=CASE WHEN review_preparation_presentation.cycle_state IN ('completed','completed_with_failures') "
+            "THEN excluded.cycle_id ELSE COALESCE(review_preparation_presentation.cycle_id,excluded.cycle_id) END,"
             "pending_cycle_id=excluded.pending_cycle_id,cycle_state=excluded.cycle_state,updated_at=excluded.updated_at",
             (
                 enrollment_id,
@@ -196,7 +197,9 @@ def record_preparation_names(
             "VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(row_id) DO UPDATE SET "
             "run_id=excluded.run_id,scan_id=excluded.scan_id,cycle_id=excluded.cycle_id,ordinal=excluded.ordinal,"
             "enrollment_ordinal=excluded.enrollment_ordinal,display_name=excluded.display_name,"
-            "current_work_state=excluded.current_work_state,updated_at=excluded.updated_at",
+            "current_work_state=excluded.current_work_state,updated_at=CASE "
+            "WHEN review_preparation_presentation.work_outcome IS NULL THEN excluded.updated_at "
+            "ELSE review_preparation_presentation.updated_at END",
             (
                 "work:" + work_id,
                 "work",
@@ -301,7 +304,7 @@ def refresh_preparation_work(
     if presentation is None:
         return
     authoritative = connection.execute(
-        "SELECT stage,state,updated_at FROM review_preparation_work WHERE work_id=?",
+        "SELECT stage,state,updated_at,failure_code FROM review_preparation_work WHERE work_id=?",
         (work_id,),
     ).fetchone()
     if authoritative is None:
@@ -312,12 +315,17 @@ def refresh_preparation_work(
         _refresh_run_state(connection, cast(str, presentation[0]), updated_at)
         return
     old_stage = cast(str, presentation[1])
-    new_stage = "projection" if authoritative[0] == "complete" else authoritative[0]
+    report_only = authoritative[3] == "local_evidence_only"
+    new_stage = (
+        "projection"
+        if authoritative[0] == "complete" or report_only
+        else authoritative[0]
+    )
     high_stage = max((old_stage, new_stage), key=lambda value: _STAGE_ORDER[value])
     old_outcome = cast(str | None, presentation[2])
     observed_outcome = (
         "ready"
-        if authoritative[1] == "complete"
+        if authoritative[1] == "complete" or report_only
         else "failed"
         if authoritative[1] in {"failed", "stale"}
         else None
@@ -518,9 +526,12 @@ def preparation_presentation_snapshot(
             )
         )
         active_rows = connection.execute(
-            "SELECT display_name,work_stage FROM review_preparation_presentation "
-            "WHERE row_kind='work' AND run_id=? AND current_work_state='running' "
-            "ORDER BY enrollment_ordinal,ordinal,work_id LIMIT 5",
+            "SELECT presentation.display_name,authoritative.stage FROM review_preparation_presentation AS presentation "
+            "INDEXED BY review_preparation_presentation_active CROSS JOIN review_preparation_work AS authoritative "
+            "ON authoritative.work_id=presentation.work_id "
+            "WHERE presentation.row_kind='work' AND presentation.run_id=? "
+            "AND presentation.current_work_state='running' AND authoritative.state='running' "
+            "ORDER BY presentation.enrollment_ordinal,presentation.ordinal,presentation.work_id LIMIT 5",
             (run_id,),
         ).fetchall()
         active = tuple(

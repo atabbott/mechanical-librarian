@@ -753,9 +753,14 @@ def test_successor_discovery_removes_orphaned_presentation_work(
     reopened.close()
 
 
-def test_multibyte_observed_title_survives_presentation_commit_and_reopen(
-    application_path: Path,
+@pytest.mark.parametrize(
+    "title",
+    (pytest.param("x" * 2048, id="ascii"), pytest.param("界" * 682 + "ab", id="multibyte")),
+)
+def test_maximum_observed_title_survives_active_completion_and_reopen(
+    application_path: Path, title: str
 ) -> None:
+    assert len(title.encode("utf-8")) == 2048
     repository = open_repository(application_path)
     repository.request_review_scan(
         "primary",
@@ -767,7 +772,6 @@ def test_multibyte_observed_title_survives_presentation_commit_and_reopen(
     )
     discovery = repository.claim_review_pipeline_action(101)
     assert discovery is not None
-    title = "界" * 400
     repository.complete_review_discovery(
         discovery,
         1,
@@ -775,16 +779,28 @@ def test_multibyte_observed_title_survives_presentation_commit_and_reopen(
         (replace(_entry("item", "1" * 64), title=title),),
         102,
     )
-    expected = repository.preparation_presentation(102)
+    work = repository.claim_review_pipeline_action(103)
+    assert work is not None and work.stage == "extraction"
+    active = repository.preparation_presentation(103)
+    assert active is not None and active.active_books[0].name == title
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET stage='complete',state='complete',updated_at=104 "
+        "WHERE work_id=?",
+        (work.action_id,),
+    )
+    refresh_preparation_work(repository._connection, work.action_id, 104)
+    repository._connection.commit()
+    expected = repository.preparation_presentation(104)
     persisted = repository._connection.execute(
         "SELECT display_name FROM review_preparation_presentation WHERE row_kind='work'"
     ).fetchone()
     repository.close()
 
     assert expected is not None
+    assert expected.recent_completions[0].name == title
     assert persisted == (title,)
     reopened = open_repository(application_path, create=False)
-    actual = reopened.preparation_presentation(102)
+    actual = reopened.preparation_presentation(104)
     reopened_title = reopened._connection.execute(
         "SELECT display_name FROM review_preparation_presentation WHERE row_kind='work'"
     ).fetchone()
@@ -1063,6 +1079,95 @@ def test_completed_enrollment_connection_condition_does_not_block_active_peer(
     assert presentation.state is PreparationRunState.RUNNING
 
 
+def test_completed_enrollment_restarts_exact_cycle_without_reaging_outcome(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    first = repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    repository.request_review_scan(
+        "secondary",
+        "history",
+        "lib-2",
+        _PRODUCER,
+        101,
+        trigger=PreparationTrigger.LIBRARY_ADDED,
+    )
+    discovery = repository.claim_review_pipeline_action(102)
+    assert discovery is not None and discovery.connection == "primary"
+    entry = _entry("item", "1" * 64)
+    repository.complete_review_discovery(discovery, 1, "a" * 64, (entry,), 103)
+    work_id = repository._connection.execute(
+        "SELECT work_id FROM review_preparation_work WHERE scan_id=?", (first.scan_id,)
+    ).fetchone()[0]
+    work = repository.claim_review_pipeline_work(work_id, 104)
+    assert work is not None and work.stage == "extraction"
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET stage='complete',state='complete',updated_at=105 "
+        "WHERE work_id=?",
+        (work.action_id,),
+    )
+    refresh_preparation_work(repository._connection, work.action_id, 105)
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed',updated_at=106 WHERE scan_id=?",
+        (first.scan_id,),
+    )
+    refresh_preparation_presentation(repository._connection, 106)
+    peer = repository.claim_review_pipeline_action(107)
+    assert peer is not None and peer.connection == "secondary" and peer.stage == "discovery"
+    before = repository.preparation_presentation(110)
+    old_cycle = repository._connection.execute(
+        "SELECT cycle_id FROM review_preparation_presentation WHERE row_kind='enrollment' AND scan_id=?",
+        (first.scan_id,),
+    ).fetchone()[0]
+
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        108,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    successor = repository.claim_review_pipeline_action(109)
+    assert successor is not None and successor.connection == "primary"
+    repository.complete_review_discovery(successor, 2, "b" * 64, (entry,), 110)
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET stage='extraction',state='queued',updated_at=110 "
+        "WHERE work_id=?",
+        (work.action_id,),
+    )
+    active_work = repository.claim_review_pipeline_work(work.action_id, 111)
+    assert active_work is not None and active_work.connection == "primary"
+    after = repository.preparation_presentation(110)
+    new_cycle = repository._connection.execute(
+        "SELECT cycle_id FROM review_preparation_presentation WHERE row_kind='enrollment' AND scan_id=?",
+        (first.scan_id,),
+    ).fetchone()[0]
+    retained = repository._connection.execute(
+        "SELECT work_outcome,updated_at FROM review_preparation_presentation WHERE row_kind='work'"
+    ).fetchone()
+    repository._connection.commit()
+    repository.close()
+
+    assert before is not None and after is not None
+    assert old_cycle != new_cycle
+    assert after.state is PreparationRunState.RUNNING
+    assert after.active_books[0].stage == "Reading from library"
+    assert retained == ("ready", 105)
+    assert after.recent_completions == before.recent_completions
+    assert after.throughput_per_minute == before.throughput_per_minute
+    reopened = open_repository(application_path, create=False)
+    assert reopened.preparation_presentation(110) == after
+    reopened.close()
+
+
 def test_per_work_presentation_query_count_does_not_grow_with_run_population(
     tmp_path: Path,
 ) -> None:
@@ -1130,7 +1235,7 @@ def test_per_work_presentation_query_count_does_not_grow_with_run_population(
         snapshot_plans = tuple(
             row[3]
             for sql in (
-                "SELECT display_name,work_stage FROM review_preparation_presentation WHERE row_kind='work' AND run_id=? AND current_work_state='running' ORDER BY enrollment_ordinal,ordinal,work_id LIMIT 5",
+                "SELECT presentation.display_name,authoritative.stage FROM review_preparation_presentation AS presentation INDEXED BY review_preparation_presentation_active CROSS JOIN review_preparation_work AS authoritative ON authoritative.work_id=presentation.work_id WHERE presentation.row_kind='work' AND presentation.run_id=? AND presentation.current_work_state='running' AND authoritative.state='running' ORDER BY presentation.enrollment_ordinal,presentation.ordinal,presentation.work_id LIMIT 5",
                 "SELECT display_name,work_outcome,updated_at FROM review_preparation_presentation WHERE row_kind='work' AND run_id=? AND work_outcome IS NOT NULL ORDER BY updated_at DESC,enrollment_ordinal DESC,ordinal DESC,work_id DESC LIMIT 8",
                 "SELECT COUNT(*) FROM review_preparation_presentation WHERE row_kind='work' AND run_id=? AND work_outcome IS NOT NULL AND updated_at>=?",
             )
@@ -6144,7 +6249,14 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
     )
 
     repository = open_repository(application_path)
-    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        10,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
     discovery = repository.claim_review_pipeline_action(11)
     assert discovery is not None
     repository.complete_review_discovery(
@@ -6168,10 +6280,17 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
     found = repository.count_current_review_cases("Recorded work")
     incidents = operational_incidents(repository.operational_snapshot())
     remaining = repository.claim_review_pipeline_action(15)
+    presentation = repository.preparation_presentation(15)
     repository.close()
 
     assert work == ("provider", "failed", "local_evidence_only", None)
     assert remaining is None
+    assert presentation is not None
+    assert presentation.state is PreparationRunState.COMPLETED_CLEAN
+    assert presentation.passage.ready == 1
+    assert presentation.passage.failed == 0
+    assert presentation.recent_completions[0].outcome == "ready"
+    assert presentation.throughput_per_minute > 0
     assert retained.schema_version == "metadata-report-v31"
     assert retained.audio is not None
     assert retained.providers == ()
@@ -6188,3 +6307,68 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
         value.kind not in {"healthy_activity", "automatic_recovery"}
         for value in incidents
     )
+    reopened = open_repository(application_path, create=False)
+    assert reopened.preparation_presentation(15) == presentation
+    reopened.close()
+
+
+def test_audiobook_publication_refreshes_before_interleaved_claim_next(
+    application_path: Path,
+) -> None:
+    report = MetadataReport.create(
+        target=TargetFacts(
+            "primary", "fiction", "item", default_target_fields("Recorded work")
+        ),
+        file=FileFacts(0, "1" * 64, "b" * 64, "m4b"),
+        local_claims=(),
+        local_reasons=("no_local_audio_claims",),
+        providers=(),
+        audio=AudioFacts(),
+    )
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        10,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(12)
+    assert discovery is not None and discovery.connection == "primary"
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_audio_entry("item", report.file.identity),), 13
+    )
+    extraction = repository.claim_review_pipeline_action(14)
+    assert extraction is not None and extraction.stage == "extraction"
+    repository.request_review_scan(
+        "secondary",
+        "history",
+        "lib-2",
+        _PRODUCER,
+        14,
+        trigger=PreparationTrigger.LIBRARY_ADDED,
+    )
+    repository.publish(
+        report,
+        lambda: True,
+        None,
+        lambda value, published: value.complete_review_extraction_publication(
+            extraction,
+            published.report_id,
+            15,
+            0,
+            "local_evidence_only",
+            claim_next=True,
+        ),
+    )
+
+    presentation = repository.preparation_presentation(15)
+    claimed = repository.take_review_pipeline_claim()
+    repository.close()
+
+    assert presentation is not None
+    assert presentation.passage.ready == 1
+    assert presentation.passage.failed == 0
+    assert claimed is not None
+    assert claimed.connection == "secondary" and claimed.stage == "discovery"

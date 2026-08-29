@@ -1158,6 +1158,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 self._refresh_metadata_policy_transition(
                     transition_row[0], completed_at
                 )
+        refresh_preparation_work(self._connection, action.action_id, completed_at)
         self._review_pipeline_claim = (
             self.claim_review_pipeline_action(completed_at) if claim_next else None
         )
