@@ -254,6 +254,54 @@ repository-authored synthetic structures.
 - **Hypothesis** generates bounded in-memory parser and configuration test
   cases only.
 
+## Contained-reviewer image artifacts
+
+The supported image includes two executable files extracted from the exact
+platform package for `@openai/codex` 0.147.0. The Docker build maps only
+`amd64` and `arm64`, downloads the matching npm registry tarball without
+lifecycle scripts, verifies its SHA-256 before extraction, checks the native
+Codex version, and copies only Codex plus the package's paired Bubblewrap into
+the runtime image. Node, npm, the package wrapper, code-mode host, shell, and
+search resources do not enter the runtime closure.
+
+| Target | Registry version | Tarball SHA-256 |
+| --- | --- | --- |
+| `linux/amd64` | `0.147.0-linux-x64` | `c969740cf8297e4c31905cd551efeb2c99af5080c12c236bdf825598b250139a` |
+| `linux/arm64` | `0.147.0-linux-arm64` | `4d09bf000597768dfa070b0e7c612f0fc258ac7fab364e570104ea625f918546` |
+
+The Codex package declares Apache-2.0. The image includes the exact licence from
+the upstream `rust-v0.147.0` tag, checksum
+`d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc`,
+alongside package metadata. The paired Bubblewrap 0.11.2 source declares
+LGPL-2.0-or-later and carries its upstream `COPYING` file, checksum
+`b7993225104d90ddd8024fd838faf300bea5e83d91203eab98e29512acebd69c`.
+The image retains the complete source archive for exact Codex commit
+`be6e8eac029b183056b7e4402879f15d2c85f61b`, checksum
+`f0513d22bd932c53dd4eb267cc30d24b75c6dd6a72865178f092fb8913b9d6f1`;
+that archive contains the vendored Bubblewrap sources and `codex-rs/bwrap`
+build recipe corresponding to the distributed binary. Both licences, the
+source archive, installed binaries, and metadata are covered by the image's
+checksum manifest. These artifacts receive only the closed device-authentication and contained
+cover-observation authority in ADR-0062. Changing their version, architecture
+set, source, licence, or checksum requires an ordinary tracked dependency and
+security review; no runtime updater or Renovate rule owns them.
+
+The supported Compose file also loads
+`config/seccomp/contained-reviewer.json`, a derivative of Moby
+`profiles/seccomp` `seccomp/v0.2.3` default profile. The exact upstream
+document has SHA-256
+`536529b665dd0972c37bfb569f5d4ac8a53592e7b00752bc39ff063ca9864c74`;
+the checked-in derivative has SHA-256
+`04151878f5bb17b00d216d552f8b8a8bc3683549517193e4f8d6501f1e7530ff`.
+Its three appended rules admit only the two traced Bubblewrap clone masks and
+the mount, pivot-root, and unmount calls used to construct the nested filesystem.
+The inner post-construction filter is application-owned rather than an outer
+Docker-profile admission. Docker's other default syscall admissions and
+denials remain unchanged. Moby Profiles is Apache-2.0; the exact tagged licence,
+SHA-256
+`cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30`,
+is retained beside the derivative.
+
 ## Frontend build graph
 
 Node and its bundled npm are required exactly and neither enters the runtime

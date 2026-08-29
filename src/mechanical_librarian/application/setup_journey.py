@@ -1,4 +1,4 @@
-"""Application operations for the closed six-step first-run ledger."""
+"""Application operations for the closed seven-step first-run ledger."""
 
 from __future__ import annotations
 
@@ -38,6 +38,14 @@ class SetupJourneyRepository(Protocol):
         owner_verifier: str,
         expected_revision: int | None = None,
     ) -> None: ...
+
+    def transition_reviewer(
+        self,
+        document: SetupStateDocument,
+        expected_revision: int,
+        reviewer_revision: int,
+        outcome: Literal["skipped", "configured"],
+    ) -> SetupStateDocument: ...
 
 
 class SetupLibraryDiscovery(Protocol):
@@ -230,6 +238,35 @@ class SetupJourneyOperation:
             update={"revision": current.revision + 1}
         )
         return self._write(changed, current.revision)
+
+    def reviewer(
+        self,
+        expected_revision: int,
+        reviewer_revision: int,
+        outcome: Literal["skipped", "configured"],
+    ) -> SetupStateDocument:
+        current = self._current(expected_revision, "reviewer")
+        successor = SetupStateDocument.model_validate(
+            {
+                **current.model_dump(),
+                "revision": current.revision + 1,
+                "completed_steps": [
+                    "claim",
+                    "connect",
+                    "providers",
+                    "libraries",
+                    "mounts",
+                    "reviewer",
+                ],
+                "reviewer_setup": outcome,
+            }
+        )
+        try:
+            return self._repository.transition_reviewer(
+                successor, current.revision, reviewer_revision, outcome
+            )
+        except SetupStateError:
+            raise SetupJourneyError("stale") from None
 
     def kick_off(self, expected_revision: int) -> None:
         current = self.validate_kick_off(expected_revision)

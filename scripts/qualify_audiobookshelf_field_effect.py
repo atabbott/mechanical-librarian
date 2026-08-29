@@ -70,6 +70,7 @@ from mechanical_librarian.application.field_effects import GuardedFieldApplicati
 from mechanical_librarian.application.review_application import (
     compose_review_application,
 )
+from mechanical_librarian.application.reviewer_access import ReviewerAccessOperations
 from mechanical_librarian.bootstrap.composition import (
     compose_continuous_guarded_application,
     create_review_pipeline,
@@ -158,13 +159,14 @@ def _installed_consent_grants(
 def _compose_review_client(
     repository: object,
     review: object,
+    reviewer_access: ReviewerAccessOperations,
     preparation: object,
     continuous: object,
     policy_libraries: tuple[tuple[str, dict[str, object] | None], ...],
     artifact_store_path: Path,
 ) -> TestClient:
     cover_considerations = composition._compose_cover_considerations(
-        repository, artifact_store_path, review
+        repository, artifact_store_path, review, reviewer_access
     )
     password_binding = load_owner_password_binding(
         Path(review.owner_password_hash_file)
@@ -193,6 +195,7 @@ def _compose_review_client(
         policy_libraries=policy_libraries,
         field_application=continuous,
         cover_considerations=cover_considerations,
+        reviewer_access=reviewer_access,
     )
     return TestClient(
         create_review_app(application, review),
@@ -1237,11 +1240,15 @@ def _installed_continuous_qualification(
         provider_recovery = composition.SQLiteProviderRecoveryStore.open(
             composition._private_root(database) / "provider-recovery.sqlite"
         )
+        reviewer_access = composition._compose_reviewer_access(
+            bound_repository, configuration.review
+        )
         preparation = create_review_pipeline(
             configuration,
             database,
             catalogue,
             artifacts,
+            reviewer_access,
             bound_repository.authority,
             provider_recovery=provider_recovery,
         )
@@ -1256,6 +1263,7 @@ def _installed_continuous_qualification(
         client = _compose_review_client(
             bound_repository,
             configuration.review,
+            reviewer_access,
             preparation,
             continuous,
             tuple(

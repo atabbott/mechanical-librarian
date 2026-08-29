@@ -61,6 +61,10 @@ from mechanical_librarian.adapters.persistence.review_projections import (
 from mechanical_librarian.adapters.persistence.review_scans import (
     SQLiteReviewScanRepository,
 )
+from mechanical_librarian.adapters.persistence.reviewer_access import (
+    ReviewerAccessStore,
+    ReviewerAccessStoreError,
+)
 from mechanical_librarian.adapters.persistence.schema import (
     _create_schema,
     _provider_recovery_outbox_id,
@@ -202,6 +206,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             ),
         )
         self._owner_settings = OwnerSettingsStore(connection)
+        self._reviewer_access = ReviewerAccessStore(
+            connection, self._setup_serialization_lock
+        )
         self._review_scans = SQLiteReviewScanRepository(connection)
         self._field_effects = SQLiteFieldEffectRepository(
             connection,
@@ -1632,6 +1639,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         supersedes_id: str | None,
         occurred_at: int,
         preparation_kind: str = "automatic_prepared",
+        reviewer_access_revision: int | None = None,
     ) -> str:
         return self._cover_considerations.record_cover_consideration(
             document,
@@ -1641,6 +1649,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             supersedes_id=supersedes_id,
             occurred_at=occurred_at,
             preparation_kind=preparation_kind,
+            reviewer_access_revision=reviewer_access_revision,
         )
 
     def record_cover_consideration_outcome(
@@ -1850,6 +1859,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
 
     def owner_settings_store(self) -> OwnerSettingsStore:
         return self._owner_settings
+
+    def reviewer_access_store(self) -> ReviewerAccessStore:
+        return self._reviewer_access
 
     def setup_state_store(self) -> SetupStateStore:
         """The setup-only composition is the sole caller of this incomplete-state port."""
@@ -2158,6 +2170,10 @@ def open_repository(
         repository = SQLiteMetadataReportRepository(
             connection, binding, (information.st_dev, information.st_ino)
         )
+        try:
+            repository.reviewer_access_store().snapshot()
+        except ReviewerAccessStoreError as error:
+            raise MetadataReportError("reviewer access state is unavailable") from error
         connection = None
         binding = None
         return repository

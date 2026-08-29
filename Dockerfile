@@ -12,22 +12,83 @@ RUN cd frontend \
     && npm run typecheck \
     && npm run build
 
+FROM node:24.19.0-bookworm-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03 AS reviewer-build
+ARG TARGETARCH
+RUN set -eu; \
+    case "$TARGETARCH" in \
+      amd64) \
+        package_version="0.147.0-linux-x64"; \
+        archive="openai-codex-0.147.0-linux-x64.tgz"; \
+        triple="x86_64-unknown-linux-musl"; \
+        expected_sha256="c969740cf8297e4c31905cd551efeb2c99af5080c12c236bdf825598b250139a" \
+        ;; \
+      arm64) \
+        package_version="0.147.0-linux-arm64"; \
+        archive="openai-codex-0.147.0-linux-arm64.tgz"; \
+        triple="aarch64-unknown-linux-musl"; \
+        expected_sha256="4d09bf000597768dfa070b0e7c612f0fc258ac7fab364e570104ea625f918546" \
+        ;; \
+      *) echo "unsupported reviewer architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    mkdir -p /tmp/codex /reviewer/bin /reviewer/metadata; \
+    npm pack "@openai/codex@$package_version" \
+      --ignore-scripts --no-audit --no-fund --pack-destination /tmp/codex \
+      >/dev/null; \
+    echo "$expected_sha256  /tmp/codex/$archive" | sha256sum -c -; \
+    tar -xzf "/tmp/codex/$archive" -C /tmp/codex; \
+    test "$(node -p "require('/tmp/codex/package/package.json').version")" = "$package_version"; \
+    test "$(node -p "require('/tmp/codex/package/vendor/$triple/codex-package.json').version")" = "0.147.0"; \
+    install -m 0555 "/tmp/codex/package/vendor/$triple/bin/codex" /reviewer/bin/codex; \
+    install -m 0555 "/tmp/codex/package/vendor/$triple/codex-resources/bwrap" /reviewer/bin/bwrap; \
+    install -m 0444 /tmp/codex/package/package.json /reviewer/metadata/npm-package.json; \
+    install -m 0444 "/tmp/codex/package/vendor/$triple/codex-package.json" /reviewer/metadata/codex-package.json; \
+    test "$(/reviewer/bin/codex --version)" = "codex-cli 0.147.0"; \
+    /reviewer/bin/bwrap --version > /reviewer/metadata/bubblewrap-version.txt
+ADD --checksum=sha256:f0513d22bd932c53dd4eb267cc30d24b75c6dd6a72865178f092fb8913b9d6f1 \
+    --chmod=0444 \
+    https://codeload.github.com/openai/codex/tar.gz/be6e8eac029b183056b7e4402879f15d2c85f61b \
+    /reviewer/source/codex-be6e8eac029b183056b7e4402879f15d2c85f61b.tar.gz
+RUN set -eu; \
+    source_root="codex-be6e8eac029b183056b7e4402879f15d2c85f61b"; \
+    tar -xOf /reviewer/source/codex-be6e8eac029b183056b7e4402879f15d2c85f61b.tar.gz \
+      "$source_root/LICENSE" > /reviewer/LICENSE.codex; \
+    tar -xOf /reviewer/source/codex-be6e8eac029b183056b7e4402879f15d2c85f61b.tar.gz \
+      "$source_root/codex-rs/vendor/bubblewrap/COPYING" > /reviewer/LICENSE.bubblewrap; \
+    chmod 0555 /reviewer/source; \
+    chmod 0444 /reviewer/LICENSE.codex /reviewer/LICENSE.bubblewrap; \
+    echo "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc  /reviewer/LICENSE.codex" | sha256sum -c -; \
+    echo "b7993225104d90ddd8024fd838faf300bea5e83d91203eab98e29512acebd69c  /reviewer/LICENSE.bubblewrap" | sha256sum -c -; \
+    cd /reviewer; \
+    sha256sum \
+      bin/codex \
+      bin/bwrap \
+      LICENSE.codex \
+      LICENSE.bubblewrap \
+      source/codex-be6e8eac029b183056b7e4402879f15d2c85f61b.tar.gz \
+      > metadata/SHA256SUMS
+
 FROM python:3.14.7-slim-bookworm@sha256:416f0db2a2b561945630cef9877a7ea0581b27449eb9fd9df42f03e1b74b5b63 AS build
 COPY --from=ghcr.io/astral-sh/uv:0.12.5@sha256:e85be844203885286c60ffad8a858d48afb6c5a5c237ca0e67f12e74b8f174b1 /uv /usr/local/bin/uv
 WORKDIR /build
 COPY pyproject.toml setup.py uv.lock README.md LICENSE ./
 COPY scripts/build_frontend.py ./scripts/build_frontend.py
+COPY scripts/verify_contained_reviewer_tool_inventory.py ./scripts/verify_contained_reviewer_tool_inventory.py
 COPY src ./src
 COPY --from=frontend-build /build/frontend/dist /frontend-dist
 RUN ML_FRONTEND_PREBUILT_DIR=/frontend-dist \
     UV_PROJECT_ENVIRONMENT=/opt/mechanical-librarian \
     uv sync --frozen --no-dev --no-editable
+COPY --from=reviewer-build /reviewer /reviewer-proof
+RUN /opt/mechanical-librarian/bin/python \
+    scripts/verify_contained_reviewer_tool_inventory.py \
+    /reviewer-proof/bin/codex
 
 FROM python:3.14.7-slim-bookworm@sha256:416f0db2a2b561945630cef9877a7ea0581b27449eb9fd9df42f03e1b74b5b63
 RUN groupadd --system --gid 65532 librarian \
     && useradd --system --uid 65532 --gid librarian --home-dir /nonexistent --shell /usr/sbin/nologin librarian \
     && install -d -o librarian -g librarian -m 0700 /data
 COPY --from=build /opt/mechanical-librarian /opt/mechanical-librarian
+COPY --from=reviewer-build /reviewer /opt/mechanical-librarian/reviewer
 USER 65532:65532
 EXPOSE 8443
 VOLUME ["/data"]

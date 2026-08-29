@@ -50,15 +50,12 @@ deletion, repair, import, schema-migration, or backward-compatibility authority.
 An existing database must match the installed increment's exact current schema
 before any writable connection or mutation.
 
-The named offline `schema-adopt` commands are the pre-release exceptions to
-exact-current startup. Each rejects a live-build target that differs from its
-literal plan target before path access, then validates one literal predecessor
-and target schema contract against the bound database. Plans may rebuild only
-their declared reconstructible derived objects or discard the dedicated
-session store's expendable digests and bounded throttle timestamps under
-exclusive, owner-only backup-protected authority. They receive no
-configuration, credentials, network, provider, reviewer, media, target,
-decision, canonical-row write, import, repair, or arbitrary-SQL authority.
+This build has no offline schema-adoption command. Earlier exact-predecessor
+plans are retired because reviewer-access and owner-state tables change the
+current application schema. Older state is rejected before mutation and needs
+a clean rebuild; no configuration, credential, network, provider, reviewer,
+media, target, decision, canonical-row, import, repair, or arbitrary-SQL
+authority is created for upgrading it.
 
 Foreground batch manifests are private immutable operator artifacts. Preview and
 read bind bounded regular no-follow descriptors under a private parent, validate
@@ -473,6 +470,70 @@ activation prepares an isolated candidate before
 persistence; failure leaves the authoritative revision and admitting generation
 unchanged. After CAS commit, the new generation governs the next admitted unit
 while requests already admitted to the predecessor drain against it.
+
+Reviewer access is separate application authority in both settings modes. Its
+public document contains only task mapping, exact model, revision, secret
+presence, and closed status; the OpenRouter key is a write-only `SecretStr` at
+the HTTP boundary and a separate validated database row. Dispatch snapshots the
+mapping revision and required secret together in one SQLite statement, releases
+the owner-operation gate before network work, and the consideration write verifies
+the same revision inside its SQLite transaction. An A-B-A replacement therefore
+cannot make old evidence current. Provider response bodies and raw errors never
+enter the status grammar, logs, or persisted failure identity.
+
+OpenRouter egress is fixed to `https://openrouter.ai`: key and model capability
+checks precede the one exact-model chat-completions request. Redirect and
+ambient proxy inheritance are disabled. Every response stream is consumed in
+bounded chunks up to its endpoint-specific cap plus one rejection byte,
+including when `Content-Length` is absent or false. Cover previews, the sealed
+packet, instruction, and strict schema are the only model inputs; no target
+credential or write authority crosses this boundary.
+
+Codex setup reads the deployment-owned contained profile only when a Codex
+status, setup, selection, or dispatch action requires it. Device flow uses a
+private staged `CODEX_HOME`; bounded stdout chunks are parsed through the exact
+URL/code grammar. Owner cancellation, expiry, runtime cutover, and shutdown
+stop the exact process group with TERM, a bounded wait, KILL when needed, a
+death check, thread join, and staging cleanup. Generation teardown does not
+delete an already validated installed credential. A replacement sign-in first
+deselects an active Codex mapping at a new access revision. Installation and
+cancellation serialize at the final commit, and a newly installed credential is
+not dispatchable until the owner explicitly selects Codex again.
+
+The outer container retains its non-root user, read-only root, dropped
+capabilities, no-new-privileges, PID ceiling, and memory ceiling while its
+checked-in seccomp profile admits Bubblewrap's two exact namespace-clone flag
+sets and mount-namespace construction. The
+profile remains deny-by-default and does not admit an arbitrary clone flag set;
+the kernel rejects the mount calls before entry to the admitted user namespace.
+The nested PID namespace mounts no procfs, because hardened container runtimes
+may reject a new proc mount and binding the outer procfs would expose sibling
+processes. A synthetic `/proc/self/exe` symlink resolves only to the sealed
+`/runtime/codex` binding required by the pinned CLI.
+
+An immutable architecture-specific seccomp program installed after namespace
+construction denies `unshare`, `setns`, process-creating `fork`, `vfork`,
+`clone3`, and non-thread `clone` calls while permitting `CLONE_THREAD`.
+The nested filesystem binds only the six required device nodes and does not use
+Bubblewrap's devpts-producing `--dev` option, so setup needs no second user
+namespace.
+Authentication, credential recheck, and observation share one activity gate.
+Their broker, outer Bubblewrap supervisor, namespace PID 1, and sole Codex
+payload have respective 64, 64, 64, and 832 MiB address-space ceilings, exactly
+the contained profile's 1 GiB contract.
+
+The Codex observation invocation binds a sealed local model catalogue that has
+no apply-patch or code-mode selector, so remote model metadata cannot add those
+tools. It disables shell, unified execution, agents,
+apps, plugins, browser/computer use, hooks, web search, and every other optional
+model tool named by its strict pinned configuration, including view-image,
+plan, and owner-input. Because no model-callable
+process tool remains, the CLI uses internal `danger-full-access` mode inside
+the outer Bubblewrap sandbox rather than attempting a second Bubblewrap layer.
+The label describes only the skipped inner CLI sandbox: the process still sees
+only the outer sandbox's sealed Codex binary, read-only credential, private job
+directory, bounded images, selected system files, and network needed for the
+one reviewer request.
 
 Disabled providers cause no client construction or egress. Disabling also
 removes their library associations; enabling them again does not recreate those

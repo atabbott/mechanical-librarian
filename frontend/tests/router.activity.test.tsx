@@ -1488,6 +1488,45 @@ describe('Activity route', () => {
     )
   })
 
+  it('keeps Page jump focus when the current Activity date range is chosen', async () => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async (search: ActivitySearch) =>
+        activity({
+          ledger: {
+            event_type: search.eventType,
+            page: search.page,
+            page_count: 3,
+            page_size: search.pageSize,
+            query: search.q ?? null,
+            range_days: search.rangeDays,
+            total: 75,
+          },
+        }),
+      ),
+    }
+    const { router } = renderRoute('/activity?rangeDays=90', http)
+
+    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    const navigate = vi.spyOn(router, 'navigate')
+    const requests = vi.mocked(http.getActivity).mock.calls.length
+    const dateRange = screen.getByRole('combobox', { name: 'Activity date range' })
+    await user.click(dateRange)
+    await user.click(screen.getByRole('option', { name: 'Last 90 days' }))
+
+    expect(dateRange).toHaveFocus()
+    expect(navigate).not.toHaveBeenCalled()
+    expect(http.getActivity).toHaveBeenCalledTimes(requests)
+
+    const page = screen.getByRole('spinbutton', { name: 'Activity page number' })
+    await user.click(page)
+    await user.clear(page)
+    await user.type(page, '2{Escape}')
+    expect(page).toHaveValue(1)
+    expect(page).toHaveFocus()
+  })
+
   it('does not let an unmounted Activity focus callback target a fresh Activity route', async () => {
     const frames = new Map<number, FrameRequestCallback>()
     let nextFrame = 1

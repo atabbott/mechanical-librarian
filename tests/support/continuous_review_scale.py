@@ -74,6 +74,7 @@ from mechanical_librarian.application.review_pipeline import (
 )
 from mechanical_librarian.bootstrap.composition import (
     _compose_cover_considerations,
+    _compose_reviewer_access,
     _load_batch_credentials,
     compose_continuous_guarded_application,
     compose_field_effect_activity_projection,
@@ -694,6 +695,7 @@ def _start_deterministic_installed_server(
     )
     settings_projection = file_settings_projection(configuration, credentials)
     activity_repository = topology.open_activity_projection()
+    reviewer_access = _compose_reviewer_access(web_state_owner, review)
     try:
         activity_projection = compose_field_effect_activity_projection(
             configuration, activity_repository, recovery
@@ -735,8 +737,9 @@ def _start_deterministic_installed_server(
             activity_projection=activity_projection,
             close_activity_projection=activity_repository.close,
             cover_considerations=_compose_cover_considerations(
-                web_state_owner, artifacts, review
+                web_state_owner, artifacts, review, reviewer_access
             ),
+            reviewer_access=reviewer_access,
             settings=OwnerSettingsOperations(
                 FileOwnerSettingsRepository(
                     settings_projection.document, settings_projection.secrets

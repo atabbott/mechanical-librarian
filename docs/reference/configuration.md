@@ -33,11 +33,9 @@ visitor creates the owner password in the ordinary application. Ports,
 volume/bind mounts, owner-password
 recovery, and proxy/TLS deployment remain outside the Settings API.
 
-The offline `owner-settings-v1` adoption is the sole exception to ordinary
-exact-current startup. It accepts only the documented exact predecessor,
-preserves every canonical row, adds the first-preparation acknowledgement as
-unacknowledged, and requires an owner-only verified backup. A successful run
-reports `Upgrade Passed`; it is not a general migration or repair path.
+This build has no exception to ordinary exact-current startup. Its new owner
+and reviewer state requires a clean rebuild, and the previous offline adoption
+command is retired rather than retargeted.
 
 Authenticated owners use the lazy `/settings` route and revision-CAS
 `GET`/`PATCH /api/v1/settings` API. Reads are private and return only a short
@@ -273,12 +271,23 @@ container retains at most 256 local stage-duration and wait-class records in
 its private data area. They contain no work values and are advisory diagnostics,
 not durable audit truth.
 
-`cover_reviewer_profile_file` is optional. When absent, installed cover review
-uses the fully supported model-free manual path. When present, it must be an
-absolute owner-only regular no-follow file containing the already-qualified
-contained-reviewer profile; its exact bytes bind every observation. During
-ordinary review preparation, a configured qualified reviewer performs one
-bounded advisory comparison before the review package becomes visible. An
+`cover_reviewer_profile_file` is optional deployment authority. When absent,
+Codex is unavailable but the model-free path and owner-managed OpenRouter
+choice remain available. When present, it must be an absolute owner-only
+regular no-follow file containing the already-qualified contained-reviewer
+profile; its exact bytes bind every Codex observation. The browser never owns
+this path. The supported container profile binds the image-supplied executable
+paths:
+`/opt/mechanical-librarian/reviewer/bin/codex` and
+`/opt/mechanical-librarian/reviewer/bin/bwrap`. Their architecture-specific
+digests are recorded inside the image at
+`/opt/mechanical-librarian/reviewer/metadata/SHA256SUMS`. Browser and
+application-owned settings cannot substitute another executable; deployment
+authority remains responsible for the profile itself. Application state
+independently owns the exact task-to-engine/model
+mapping and credential presence. During ordinary review preparation, the one
+selected usable reviewer performs one bounded advisory comparison before the
+review package becomes visible. An
 absent, unready, unavailable, refusing, malformed, or failed reviewer records
 the same safe manual-comparison state instead; it never selects, downloads,
 queues, applies, or writes a cover. The three `cover_*` booleans form the
@@ -289,7 +298,10 @@ considers and selects under the current policy.
 When the fixed contained-reviewer resource contract changes, explicitly
 regenerate and requalify this private canonical profile through the provisioning
 procedure that created it, then replace the configured file and restart. The
-application never rewrites, migrates, or version-upgrades a profile.
+application never rewrites, migrates, or version-upgrades a profile. Codex
+credentials live only in its contained private auth store. OpenRouter keys are
+write-only application secrets and are never returned by setup, Settings,
+exports, diagnostics, or public documentation.
 
 There are no provider defaults, inheritance, overrides, weights, priorities,
 configurable fallback rules, environment substitutions, or undocumented

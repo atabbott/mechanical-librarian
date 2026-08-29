@@ -90,20 +90,13 @@ def store_runtime_configuration(
         library_polling_interval_seconds=document.server.library_polling_interval_seconds,
         graceful_shutdown_seconds=document.server.graceful_shutdown_seconds,
         diagnostic_timings_enabled=document.server.diagnostic_timings_enabled,
-        cover_reviewer_profile_file=(
-            bootstrap.cover_reviewer_profile_file
-            if document.server.reviewer_enabled
-            else None
-        ),
+        # The deployment owns the executable profile; application state owns
+        # whether Codex is selected for any task.
+        cover_reviewer_profile_file=bootstrap.cover_reviewer_profile_file,
         cover_avoid_promotional_text=document.cover_preferences.avoid_promotional_text,
         cover_avoid_tie_in_branding=document.cover_preferences.avoid_tie_in_branding,
         cover_prefer_minimal_composition=document.cover_preferences.prefer_minimal_composition,
     )
-    if (
-        document.server.reviewer_enabled
-        and bootstrap.cover_reviewer_profile_file is None
-    ):
-        raise ConfigurationError("review bootstrap is unavailable")
     return ApplicationConfiguration(
         connections=tuple(
             TargetConnectionConfiguration(

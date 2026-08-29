@@ -11,7 +11,8 @@ effect gate passes.
 The 0.17.0 configuration and first-run checkpoint runs one authenticated owner
 workspace. A first visitor creates the owner password, connects Audiobookshelf,
 selects book libraries and optional metadata providers, verifies read-only
-mounts, and starts preparation without restarting the container. Settings is a
+mounts, optionally configures one cover reviewer, and starts preparation
+without restarting the container. Settings is a
 primary workspace destination, and store-managed changes take effect as soon as
 they are saved; deploy-managed TLS, listener, proxy, and
 mount values remain outside browser authority. The workspace prepares exact-current
@@ -32,10 +33,21 @@ preview, and contained-reviewer scenarios remain available through the typed
 source workbench against disposable or explicitly approved private test state.
 They are not installed runtime commands and cannot bridge to production targets.
 
-Ordinary startup supports only absent or exact-current pre-release state. The
-named offline `owner-settings-v1` adoption accepts only its documented exact
-predecessors; every other earlier database, manifest, configuration schema, or
-retired command is rejected rather than interpreted.
+Ordinary startup supports only absent or exact-current pre-release state. This
+build retires the previous offline schema-adoption plans and command; every
+earlier database, manifest, configuration schema, or retired command is
+rejected rather than interpreted and the application state needs a clean
+rebuild.
+
+The owner may continue without a reviewer or select exactly one engine for
+`cover_observation`: contained Codex device sign-in or an owner-supplied
+write-only OpenRouter key and exact model ID. Reviews remain advisory and never
+receive target credentials or write authority. OpenRouter sends bounded cover
+previews to its fixed API origin and the selected provider; owners should check
+current tier, capability, cost, and data-use terms. `openai/gpt-4o-mini` is the
+single paid recommendation qualified on the delivered real-cover corpus. The
+displayed free catalogue candidate remains capability-only and unqualified;
+owners may instead enter any valid provider-local model ID.
 
 The installed command surface contains the authenticated `review-serve`
 workspace, single-policy `policy-preview`, owner-directed `cover-review`, and

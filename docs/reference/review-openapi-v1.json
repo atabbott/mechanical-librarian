@@ -1,6 +1,21 @@
 {
   "components": {
     "schemas": {
+      "CodexTaskSelection": {
+        "additionalProperties": false,
+        "properties": {
+          "engine": {
+            "const": "codex",
+            "title": "Engine",
+            "type": "string"
+          }
+        },
+        "required": [
+          "engine"
+        ],
+        "title": "CodexTaskSelection",
+        "type": "object"
+      },
       "CoverPreferenceSettings": {
         "additionalProperties": false,
         "properties": {
@@ -220,6 +235,86 @@
         "title": "OpenLibraryProviderSettings",
         "type": "object"
       },
+      "OpenRouterRecommendation": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "const": "catalogue_capability_only",
+            "default": "catalogue_capability_only",
+            "title": "Evidence",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "qualified": {
+            "const": false,
+            "default": false,
+            "title": "Qualified",
+            "type": "boolean"
+          },
+          "requests_per_day": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requests Per Day"
+          },
+          "requests_per_minute": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requests Per Minute"
+          },
+          "tier": {
+            "enum": [
+              "free",
+              "paid"
+            ],
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model",
+          "tier"
+        ],
+        "title": "OpenRouterRecommendation",
+        "type": "object"
+      },
+      "OpenRouterTaskSelection": {
+        "additionalProperties": false,
+        "properties": {
+          "engine": {
+            "const": "openrouter",
+            "title": "Engine",
+            "type": "string"
+          },
+          "model": {
+            "maxLength": 256,
+            "minLength": 3,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}/[A-Za-z0-9][A-Za-z0-9._-]{0,190}(?::[A-Za-z0-9][A-Za-z0-9._-]{0,31})?$",
+            "title": "Model",
+            "type": "string"
+          }
+        },
+        "required": [
+          "engine",
+          "model"
+        ],
+        "title": "OpenRouterTaskSelection",
+        "type": "object"
+      },
       "OwnerSettingsDocument": {
         "additionalProperties": false,
         "properties": {
@@ -315,7 +410,7 @@
             "type": "integer"
           },
           "schema_version": {
-            "const": "owner-settings-v1",
+            "const": "owner-settings-v2",
             "title": "Schema Version",
             "type": "string"
           },
@@ -325,7 +420,6 @@
               "diagnostic_timings_enabled": false,
               "graceful_shutdown_seconds": 30,
               "library_polling_interval_seconds": 900,
-              "reviewer_enabled": false,
               "session_lifetime_seconds": 2592000
             }
           }
@@ -413,6 +507,208 @@
           }
         },
         "title": "ReportLimitSettings",
+        "type": "object"
+      },
+      "ReviewerAccessView": {
+        "additionalProperties": false,
+        "properties": {
+          "candidates": {
+            "default": [
+              {
+                "evidence": "catalogue_capability_only",
+                "model": "dots-studio/dots-3-note-preview:free",
+                "qualified": false,
+                "requests_per_day": "50 before $10 lifetime purchases; 1000 after",
+                "requests_per_minute": 20,
+                "tier": "free"
+              }
+            ],
+            "items": {
+              "$ref": "#/components/schemas/OpenRouterRecommendation"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "codex": {
+            "$ref": "#/components/schemas/ReviewerEngineStatus"
+          },
+          "data_use_caveat": {
+            "default": "OpenRouter and the selected endpoint may process submitted cover previews; review current provider data policies before use.",
+            "title": "Data Use Caveat",
+            "type": "string"
+          },
+          "free_tier_caveat": {
+            "default": "OpenRouter currently documents free-model caps of 20 requests/minute and 50 requests/day before $10 in lifetime purchases, or 1,000/day after; provider limits may change.",
+            "title": "Free Tier Caveat",
+            "type": "string"
+          },
+          "mapping": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "codex": "#/components/schemas/CodexTaskSelection",
+                    "openrouter": "#/components/schemas/OpenRouterTaskSelection"
+                  },
+                  "propertyName": "engine"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CodexTaskSelection"
+                  },
+                  {
+                    "$ref": "#/components/schemas/OpenRouterTaskSelection"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mapping"
+          },
+          "openrouter": {
+            "$ref": "#/components/schemas/ReviewerEngineStatus"
+          },
+          "openrouter_key_configured": {
+            "title": "Openrouter Key Configured",
+            "type": "boolean"
+          },
+          "recommendations": {
+            "default": [
+              "openai/gpt-4o-mini"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "title": "Recommendations",
+            "type": "array"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "schema_version": {
+            "const": "reviewer-access-view-v1",
+            "default": "reviewer-access-view-v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "revision",
+          "mapping",
+          "openrouter_key_configured",
+          "codex",
+          "openrouter"
+        ],
+        "title": "ReviewerAccessView",
+        "type": "object"
+      },
+      "ReviewerEngineStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "engine": {
+            "enum": [
+              "codex",
+              "openrouter"
+            ],
+            "title": "Engine",
+            "type": "string"
+          },
+          "host_headroom_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host Headroom Bytes"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "host_evidence_unavailable",
+                  "cgroup_limit_below_1_gib",
+                  "headroom_below_1_gib",
+                  "permission_or_profile",
+                  "permission_or_process",
+                  "protocol_or_process",
+                  "restart_interrupted",
+                  "not_selected",
+                  "invalid_key",
+                  "quota_exhausted",
+                  "rate_limited",
+                  "model_unavailable",
+                  "model_text_only",
+                  "malformed_response",
+                  "unreachable"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "state": {
+            "enum": [
+              "ready",
+              "starting",
+              "issued",
+              "waiting",
+              "validating",
+              "usable",
+              "expired",
+              "cancelled",
+              "failed",
+              "interrupted",
+              "host_unsupported",
+              "unconfigured",
+              "configured",
+              "invalid_key",
+              "quota_exhausted",
+              "rate_limited",
+              "model_unavailable",
+              "model_text_only",
+              "malformed_response",
+              "unreachable"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "tier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tier"
+          }
+        },
+        "required": [
+          "engine",
+          "state"
+        ],
+        "title": "ReviewerEngineStatus",
         "type": "object"
       },
       "SecretPresence": {
@@ -505,11 +801,6 @@
             "minimum": 60.0,
             "title": "Library Polling Interval Seconds",
             "type": "integer"
-          },
-          "reviewer_enabled": {
-            "default": false,
-            "title": "Reviewer Enabled",
-            "type": "boolean"
           },
           "session_lifetime_seconds": {
             "default": 2592000,
@@ -1993,6 +2284,100 @@
         "title": "_ChoiceEvidence",
         "type": "object"
       },
+      "_CodexDeviceAuthResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_in_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires In Seconds"
+          },
+          "failure": {
+            "anyOf": [
+              {
+                "enum": [
+                  "permission_or_profile",
+                  "permission_or_process",
+                  "protocol_or_process",
+                  "restart_interrupted"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure"
+          },
+          "state": {
+            "enum": [
+              "ready",
+              "configured",
+              "starting",
+              "issued",
+              "waiting",
+              "validating",
+              "usable",
+              "expired",
+              "cancelled",
+              "failed",
+              "interrupted"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "user_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Code"
+          },
+          "verification_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verification Url"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "_CodexDeviceAuthResponse",
+        "type": "object"
+      },
+      "_CodexDeviceStartResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "access": {
+            "$ref": "#/components/schemas/ReviewerAccessView"
+          },
+          "device": {
+            "$ref": "#/components/schemas/_CodexDeviceAuthResponse"
+          }
+        },
+        "required": [
+          "access",
+          "device"
+        ],
+        "title": "_CodexDeviceStartResponse",
+        "type": "object"
+      },
       "_CoverAutomaticDecisionProjection": {
         "additionalProperties": false,
         "properties": {
@@ -2267,6 +2652,43 @@
             "title": "Ready",
             "type": "boolean"
           },
+          "reviewer_access_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewer Access Revision"
+          },
+          "reviewer_engine": {
+            "anyOf": [
+              {
+                "enum": [
+                  "codex",
+                  "openrouter"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewer Engine"
+          },
+          "reviewer_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewer Model"
+          },
           "reviewer_status": {
             "title": "Reviewer Status",
             "type": "string"
@@ -2283,7 +2705,7 @@
             "title": "Reviewer Unavailable Reason"
           },
           "schema_version": {
-            "const": "cover-consideration-v2",
+            "const": "cover-consideration-v3",
             "title": "Schema Version",
             "type": "string"
           },
@@ -2315,6 +2737,9 @@
           "policy_reference",
           "provider_fetching",
           "ready",
+          "reviewer_engine",
+          "reviewer_model",
+          "reviewer_access_revision",
           "reviewer_status",
           "reviewer_unavailable_reason",
           "schema_version",
@@ -3901,6 +4326,36 @@
         "title": "_LoginRequest",
         "type": "object"
       },
+      "_OpenRouterWriteRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "api_key": {
+            "format": "password",
+            "title": "Api Key",
+            "type": "string",
+            "writeOnly": true
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "model": {
+            "maxLength": 256,
+            "minLength": 3,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}/[A-Za-z0-9][A-Za-z0-9._-]{0,190}(?::[A-Za-z0-9][A-Za-z0-9._-]{0,31})?$",
+            "title": "Model",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "api_key",
+          "model"
+        ],
+        "title": "_OpenRouterWriteRequest",
+        "type": "object"
+      },
       "_OperationalIncident": {
         "additionalProperties": false,
         "properties": {
@@ -5131,6 +5586,49 @@
           "uncertainty"
         ],
         "title": "_ReviewField",
+        "type": "object"
+      },
+      "_ReviewerRevisionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "title": "_ReviewerRevisionRequest",
+        "type": "object"
+      },
+      "_ReviewerSelectionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "engine": {
+            "anyOf": [
+              {
+                "const": "codex",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "engine"
+        ],
+        "title": "_ReviewerSelectionRequest",
         "type": "object"
       },
       "_RichCasePreviewResponse": {
@@ -10486,6 +10984,970 @@
           }
         ],
         "summary": "Request Review Scan"
+      }
+    },
+    "/api/v1/reviewer-access": {
+      "get": {
+        "operationId": "reviewer_access_api_v1_reviewer_access_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewerAccessView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Reviewer Access"
+      }
+    },
+    "/api/v1/reviewer-access/codex": {
+      "delete": {
+        "operationId": "clear_codex_api_v1_reviewer_access_codex_delete",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_ReviewerRevisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewerAccessView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Clear Codex"
+      }
+    },
+    "/api/v1/reviewer-access/codex/device": {
+      "get": {
+        "operationId": "codex_device_status_api_v1_reviewer_access_codex_device_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_CodexDeviceAuthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Codex Device Status"
+      },
+      "post": {
+        "operationId": "start_codex_device_api_v1_reviewer_access_codex_device_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_ReviewerRevisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_CodexDeviceStartResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Start Codex Device"
+      }
+    },
+    "/api/v1/reviewer-access/codex/device/cancel": {
+      "post": {
+        "operationId": "cancel_codex_device_api_v1_reviewer_access_codex_device_cancel_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_CodexDeviceAuthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Cancel Codex Device"
+      }
+    },
+    "/api/v1/reviewer-access/codex/recheck": {
+      "post": {
+        "operationId": "recheck_codex_api_v1_reviewer_access_codex_recheck_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_CodexDeviceAuthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Recheck Codex"
+      }
+    },
+    "/api/v1/reviewer-access/openrouter": {
+      "delete": {
+        "operationId": "clear_openrouter_api_v1_reviewer_access_openrouter_delete",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_ReviewerRevisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewerAccessView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Clear Openrouter"
+      },
+      "put": {
+        "operationId": "write_openrouter_api_v1_reviewer_access_openrouter_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_OpenRouterWriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewerAccessView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Write Openrouter"
+      }
+    },
+    "/api/v1/reviewer-access/openrouter/refresh": {
+      "post": {
+        "operationId": "refresh_openrouter_api_v1_reviewer_access_openrouter_refresh_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewerAccessView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Refresh Openrouter"
+      }
+    },
+    "/api/v1/reviewer-access/selection": {
+      "put": {
+        "operationId": "select_reviewer_api_v1_reviewer_access_selection_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_ReviewerSelectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewerAccessView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Select Reviewer"
       }
     },
     "/api/v1/session/login": {

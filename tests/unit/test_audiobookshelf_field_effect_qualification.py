@@ -94,6 +94,7 @@ def test_installed_qualification_composes_application_before_fastapi(
         graceful_shutdown_seconds=5,
     )
     preparation = Mock()
+    reviewer_access = Mock()
     continuous = Mock()
     cover_considerations = Mock()
     application = object()
@@ -124,6 +125,7 @@ def test_installed_qualification_composes_application_before_fastapi(
         result = _compose_review_client(
             repository,
             review,
+            reviewer_access,
             preparation,
             continuous,
             (("books", None),),
@@ -135,8 +137,9 @@ def test_installed_qualification_composes_application_before_fastapi(
     assert compose.call_args.kwargs["session_digest"]("token") == "d" * 64
     compose.assert_called_once()
     assert compose.call_args.kwargs["cover_considerations"] is cover_considerations
+    assert compose.call_args.kwargs["reviewer_access"] is reviewer_access
     compose_covers.assert_called_once_with(
-        repository, Path("/synthetic/artifacts"), review
+        repository, Path("/synthetic/artifacts"), review, reviewer_access
     )
     create.assert_called_once_with(application, review)
     assert list(tmp_path.iterdir()) == []

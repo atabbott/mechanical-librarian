@@ -35,6 +35,9 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
     open_repository,
 )
+from mechanical_librarian.adapters.reviewers.contained_reviewer import (
+    cover_reviewer_profile_contract_mismatch,
+)
 from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
@@ -42,6 +45,7 @@ from mechanical_librarian.application.configuration import (
     ReviewWebConfiguration,
     TargetConnectionConfiguration,
 )
+from mechanical_librarian.application.contained_reviewer_contract import COVER_MODEL
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
@@ -58,6 +62,9 @@ from mechanical_librarian.application.review_web import (
     BrowseReviewLibrary,
     InspectCurrentReviewCase,
 )
+from mechanical_librarian.application.reviewer_access import ReviewerAccessOperations
+from mechanical_librarian.application.reviewer_contracts import CodexDeviceAuthState
+from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
 from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.domain.activity_records import readable_activity_event
 from mechanical_librarian.domain.automatic_decision import (
@@ -99,6 +106,10 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase, ReviewTransition
+from mechanical_librarian.domain.reviewer_access import (
+    CodexTaskSelection,
+    ReviewerAccessDocument,
+)
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 from mechanical_librarian.interfaces.web.app import (
     _HistoryResponse,
@@ -133,6 +144,70 @@ from tests.unit.test_cover_packets import (
 from tests.unit.test_cover_packets import (
     _source as _cover_source,
 )
+
+
+class _UsableCodexAuth:
+    def activate_lease(self) -> None:
+        return None
+
+    def _usable(self) -> CodexDeviceAuthState:
+        return CodexDeviceAuthState("usable")
+
+    start = status = passive_status = current_credential_status = _usable
+    recheck_credential_status = _usable
+
+    def cancel(self) -> CodexDeviceAuthState:
+        return CodexDeviceAuthState("cancelled")
+
+    def clear(self) -> CodexDeviceAuthState:
+        return CodexDeviceAuthState("ready")
+
+    def close(self) -> None:
+        return None
+
+
+def _test_reviewer_access(
+    repository, review: ReviewWebConfiguration | None = None
+) -> ReviewerAccessOperations:
+    selected_review = review or _pipeline_configuration().review
+    assert selected_review is not None
+    if selected_review.cover_reviewer_profile_file is None:
+        return composition._compose_reviewer_access(repository, selected_review)
+    store = repository.reviewer_access_store()
+    document, _configured = store.read()
+    if document.cover_observation is None:
+        store.replace(
+            ReviewerAccessDocument(
+                schema_version="reviewer-access-v1",
+                revision=document.revision + 1,
+                cover_observation=CodexTaskSelection(engine="codex"),
+            ),
+            document.revision,
+        )
+
+    def identity() -> tuple[str, bytes]:
+        payload = composition.read_contained_reviewer_profile(
+            Path(selected_review.cover_reviewer_profile_file)
+        )
+        mismatch = cover_reviewer_profile_contract_mismatch(payload)
+        if mismatch is not None:
+            raise RuntimeError(mismatch)
+        return COVER_MODEL, payload
+
+    def binding():
+        model, payload = identity()
+        return model, payload, composition.run_cover_packet_reviewer
+
+    return ReviewerAccessOperations(
+        store,
+        codex_auth=_UsableCodexAuth(),
+        codex_host=lambda: ReviewerHostStatus(True, None, 2 * 1024**3),
+        codex_identity=identity,
+        codex_binding=binding,
+        openrouter_factory=lambda _key, _model: (_ for _ in ()).throw(
+            AssertionError("OpenRouter is not selected")
+        ),
+    )
 
 
 def _case(repository):
@@ -878,7 +953,7 @@ def test_atomic_cover_preparation_excludes_sibling_drift_and_rolls_back_every_po
                 "replay_digest": "e" * 64,
                 "report_id": report_id,
                 "review_case_id": review_case_id,
-                "schema_version": "cover-consideration-v2",
+                "schema_version": "cover-consideration-v3",
                 "supersedes_id": None,
             },
             separators=(",", ":"),
@@ -935,7 +1010,7 @@ def test_manual_cover_predecessor_drift_rolls_back_and_releases_the_writer_lock(
                     "replay_digest": suffix * 64,
                     "report_id": report_id,
                     "review_case_id": review_case_id,
-                    "schema_version": "cover-consideration-v2",
+                    "schema_version": "cover-consideration-v3",
                     "supersedes_id": supersedes_id,
                 },
                 separators=(",", ":"),
@@ -2190,6 +2265,7 @@ def test_composed_projection_succeeds_replays_and_reports_stale() -> None:
             database,
             root / "catalogue.sqlite",
             root / "artifacts",
+            _test_reviewer_access(repository),
             database_authority=repository.authority,
             provider_recovery=provider_recovery,
         )
@@ -2255,9 +2331,8 @@ def test_composed_projection_prepares_one_qualified_cover_advice_before_f22() ->
                 "read_contained_reviewer_profile",
                 return_value=b"synthetic-profile",
             ),
-            patch.object(
-                composition,
-                "cover_reviewer_profile_contract_mismatch",
+            patch(
+                "tests.unit.test_shadow_outcome_persistence.cover_reviewer_profile_contract_mismatch",
                 return_value=None,
             ),
             patch.object(
@@ -2271,6 +2346,12 @@ def test_composed_projection_prepares_one_qualified_cover_advice_before_f22() ->
                 database,
                 root / "catalogue.sqlite",
                 root / "artifacts",
+                _test_reviewer_access(
+                    repository,
+                    _pipeline_configuration(
+                        cover_reviewer_profile_file="/run/synthetic-profile"
+                    ).review,
+                ),
                 database_authority=repository.authority,
                 provider_recovery=recovery,
             )
@@ -2390,6 +2471,7 @@ def test_composed_projection_without_reviewer_persists_unavailable_before_f22() 
             database,
             root / "catalogue.sqlite",
             root / "artifacts",
+            _test_reviewer_access(repository),
             database_authority=repository.authority,
             provider_recovery=recovery,
         )
@@ -2419,7 +2501,10 @@ def test_composed_projection_without_reviewer_persists_unavailable_before_f22() 
             source_report_id=report.report_id,
         )
         considerations = composition._compose_cover_considerations(
-            repository, root / "artifacts", _pipeline_configuration().review
+            repository,
+            root / "artifacts",
+            _pipeline_configuration().review,
+            _test_reviewer_access(repository),
         )
         _assert_manual_cover_surface(repository, case_id, considerations, "unavailable")
         assert (1,) == repository._connection.execute(
@@ -2470,6 +2555,7 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
             database,
             root / "catalogue.sqlite",
             root / "artifacts",
+            _test_reviewer_access(repository),
             database_authority=repository.authority,
             provider_recovery=recovery,
         )
@@ -2652,7 +2738,10 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
         repository.close()
         repository = open_repository(database)
         reopened_covers = composition._compose_cover_considerations(
-            repository, root / "artifacts", _pipeline_configuration().review
+            repository,
+            root / "artifacts",
+            _pipeline_configuration().review,
+            _test_reviewer_access(repository),
         )
         reopened_web = InspectCurrentReviewCase(repository, reopened_covers)
         owner_detail = reopened_web.run(automatic.review_case_id)
@@ -2837,6 +2926,7 @@ def test_later_cover_case_only_supersedes_automatic_with_a_strictly_better_rank(
             database,
             root / "catalogue.sqlite",
             root / "artifacts",
+            _test_reviewer_access(repository),
             database_authority=repository.authority,
             provider_recovery=recovery,
         )
@@ -2906,7 +2996,10 @@ def test_later_cover_case_only_supersedes_automatic_with_a_strictly_better_rank(
             item for item in later_case.proposals if item["destination"] == "cover"
         )
         considerations = composition._compose_cover_considerations(
-            repository, root / "artifacts", _pipeline_configuration().review
+            repository,
+            root / "artifacts",
+            _pipeline_configuration().review,
+            _test_reviewer_access(repository),
         )
         considerations.ensure(
             later_case_id,
@@ -3043,7 +3136,7 @@ def test_cover_automatic_admission_abstains_before_unready_authority() -> None:
         repository.close()
 
 
-def test_composed_projection_reports_stale_profile_contract_before_dispatch() -> None:
+def test_composed_projection_reports_selected_profile_refusal_before_dispatch() -> None:
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         profile = root / "profile.json"
@@ -3064,7 +3157,7 @@ def test_composed_projection_reports_stale_profile_contract_before_dispatch() ->
                         "processes": 32,
                         "timeout_seconds": 30,
                     },
-                    "model": "reviewer",
+                    "model": COVER_MODEL,
                     "reasoning": "medium",
                     "sandbox": {
                         "path": str(root / "sandbox"),
@@ -3090,6 +3183,12 @@ def test_composed_projection_reports_stale_profile_contract_before_dispatch() ->
             database,
             root / "catalogue.sqlite",
             root / "artifacts",
+            _test_reviewer_access(
+                repository,
+                _pipeline_configuration(
+                    cover_reviewer_profile_file=str(profile)
+                ).review,
+            ),
             database_authority=repository.authority,
             provider_recovery=recovery,
         )
@@ -3107,17 +3206,23 @@ def test_composed_projection_reports_stale_profile_contract_before_dispatch() ->
         assert document is not None
         value = json.loads(document)
         assert value["reviewer_status"] == "unavailable"
-        assert value["reviewer_failure"] is None
+        assert value["reviewer_failure"] == {
+            "attempts": [],
+            "code": "credential_unavailable",
+        }
         projected = composition._compose_cover_considerations(
             repository,
             root / "artifacts",
             _pipeline_configuration(cover_reviewer_profile_file=str(profile)).review,
+            _test_reviewer_access(
+                repository,
+                _pipeline_configuration(
+                    cover_reviewer_profile_file=str(profile)
+                ).review,
+            ),
         ).current(case_id)
         assert projected is not None
-        assert (
-            projected["reviewer_unavailable_reason"]
-            == "profile contract requires memory_bytes=1073741824"
-        )
+        assert projected["reviewer_status"] == "unavailable"
         dispatch.assert_not_called()
         supervisor.stop()
         repository.close()
@@ -3153,9 +3258,8 @@ def test_composed_projection_contains_reviewer_failures_before_f22(reviewer) -> 
             patch.object(
                 composition, "read_contained_reviewer_profile", return_value=b"profile"
             ),
-            patch.object(
-                composition,
-                "cover_reviewer_profile_contract_mismatch",
+            patch(
+                "tests.unit.test_shadow_outcome_persistence.cover_reviewer_profile_contract_mismatch",
                 return_value=None,
             ),
             patch.object(
@@ -3167,6 +3271,12 @@ def test_composed_projection_contains_reviewer_failures_before_f22(reviewer) -> 
                 database,
                 root / "catalogue.sqlite",
                 root / "artifacts",
+                _test_reviewer_access(
+                    repository,
+                    _pipeline_configuration(
+                        cover_reviewer_profile_file="/run/profile"
+                    ).review,
+                ),
                 database_authority=repository.authority,
                 provider_recovery=recovery,
             )
@@ -3189,9 +3299,8 @@ def test_composed_projection_contains_reviewer_failures_before_f22(reviewer) -> 
                 "read_contained_reviewer_profile",
                 return_value=b"profile",
             ),
-            patch.object(
-                composition,
-                "cover_reviewer_profile_contract_mismatch",
+            patch(
+                "tests.unit.test_shadow_outcome_persistence.cover_reviewer_profile_contract_mismatch",
                 return_value=None,
             ),
         ):
@@ -3201,8 +3310,14 @@ def test_composed_projection_contains_reviewer_failures_before_f22(reviewer) -> 
                 _pipeline_configuration(
                     cover_reviewer_profile_file="/run/profile"
                 ).review,
+                _test_reviewer_access(
+                    repository,
+                    _pipeline_configuration(
+                        cover_reviewer_profile_file="/run/profile"
+                    ).review,
+                ),
             )
-        _assert_manual_cover_surface(repository, case_id, considerations, "failed")
+            _assert_manual_cover_surface(repository, case_id, considerations, "failed")
         assert (1,) == repository._connection.execute(
             "SELECT count(*) FROM provider_recovery_outbox"
         ).fetchone()
@@ -3232,9 +3347,8 @@ def test_composed_projection_stale_after_observation_does_not_publish() -> None:
             patch.object(
                 composition, "read_contained_reviewer_profile", return_value=b"profile"
             ),
-            patch.object(
-                composition,
-                "cover_reviewer_profile_contract_mismatch",
+            patch(
+                "tests.unit.test_shadow_outcome_persistence.cover_reviewer_profile_contract_mismatch",
                 return_value=None,
             ),
             patch.object(composition, "run_cover_packet_reviewer", side_effect=drift),
@@ -3244,6 +3358,12 @@ def test_composed_projection_stale_after_observation_does_not_publish() -> None:
                 database,
                 root / "catalogue.sqlite",
                 root / "artifacts",
+                _test_reviewer_access(
+                    repository,
+                    _pipeline_configuration(
+                        cover_reviewer_profile_file="/run/profile"
+                    ).review,
+                ),
                 database_authority=repository.authority,
                 provider_recovery=recovery,
             )
@@ -3285,6 +3405,7 @@ def test_composed_projection_cover_persistence_failure_does_not_publish() -> Non
             database,
             root / "catalogue.sqlite",
             root / "artifacts",
+            _test_reviewer_access(repository),
             database_authority=repository.authority,
             provider_recovery=recovery,
         )
@@ -3345,6 +3466,7 @@ def test_composed_projection_records_a_broken_factory_without_cover_effects() ->
             database,
             root / "catalogue.sqlite",
             root / "artifacts",
+            _test_reviewer_access(repository),
             database_authority=repository.authority,
             provider_recovery=recovery,
         )
@@ -3388,6 +3510,7 @@ def test_composed_cover_replay_reuses_exact_binding_and_profile_change_supersede
             root / "provider-recovery.sqlite"
         )
         calls: list[object] = []
+        profile_payload = [b"profile-1"]
 
         def reviewer(*args):
             calls.append(args)
@@ -3397,11 +3520,10 @@ def test_composed_cover_replay_reuses_exact_binding_and_profile_change_supersede
             patch.object(
                 composition,
                 "read_contained_reviewer_profile",
-                side_effect=(b"profile-1", b"profile-1", b"profile-2"),
+                side_effect=lambda _path: profile_payload[0],
             ),
-            patch.object(
-                composition,
-                "cover_reviewer_profile_contract_mismatch",
+            patch(
+                "tests.unit.test_shadow_outcome_persistence.cover_reviewer_profile_contract_mismatch",
                 return_value=None,
             ),
             patch.object(
@@ -3413,6 +3535,12 @@ def test_composed_cover_replay_reuses_exact_binding_and_profile_change_supersede
                 database,
                 root / "catalogue.sqlite",
                 root / "artifacts",
+                _test_reviewer_access(
+                    repository,
+                    _pipeline_configuration(
+                        cover_reviewer_profile_file="/run/profile-1"
+                    ).review,
+                ),
                 database_authority=repository.authority,
                 provider_recovery=recovery,
             )
@@ -3433,13 +3561,26 @@ def test_composed_cover_replay_reuses_exact_binding_and_profile_change_supersede
                 _pipeline_configuration(
                     cover_reviewer_profile_file="/run/profile-1"
                 ).review,
+                _test_reviewer_access(
+                    repository,
+                    _pipeline_configuration(
+                        cover_reviewer_profile_file="/run/profile-1"
+                    ).review,
+                ),
             ).ensure(case_id, report.to_json(), {"proposal_id": cover_proposal_id})
+            profile_payload[0] = b"profile-2"
             successor = composition._compose_cover_considerations(
                 repository,
                 root / "artifacts",
                 _pipeline_configuration(
                     cover_reviewer_profile_file="/run/profile-2"
                 ).review,
+                _test_reviewer_access(
+                    repository,
+                    _pipeline_configuration(
+                        cover_reviewer_profile_file="/run/profile-2"
+                    ).review,
+                ),
             ).ensure(case_id, report.to_json(), {"proposal_id": cover_proposal_id})
         assert 2 == len(calls)
         assert json.loads(first)["consideration_id"] == replay["consideration_id"]
@@ -3467,6 +3608,7 @@ def test_composed_projection_without_cover_skips_advice_and_completes_f22() -> N
             database,
             root / "catalogue.sqlite",
             root / "artifacts",
+            _test_reviewer_access(repository),
             database_authority=repository.authority,
             provider_recovery=recovery,
         )
@@ -3586,6 +3728,7 @@ def test_review_posture_composed_stale_projection_restarts_instead_of_completing
             database,
             root / "catalogue.sqlite",
             root / "artifacts",
+            _test_reviewer_access(repository),
             database_authority=repository.authority,
             provider_recovery=provider_recovery,
         )
