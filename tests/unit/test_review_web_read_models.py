@@ -2108,21 +2108,24 @@ def test_an_audiobooks_recorded_evidence_is_reachable_from_the_library(
     )
     assert body["media_kind"] == "m4b"
     evidence = {
-        (value["kind"], value["role"], value["value"]) for value in body["evidence"]
+        (value["kind"], value["role"], value["value"], value["state"])
+        for value in body["evidence"]
     }
     assert {
-        ("asin", None, "B0CW1KL2QD"),
-        ("contributor", "narrator", "Recorded Narrator"),
-        ("description", None, "A recorded summary."),
-        ("duration", None, "43200.000"),
-        ("language", None, "eng"),
-        ("performance_type", None, "unabridged"),
-        ("series", None, "Discworld"),
-        ("series_sequence", None, "3"),
+        ("asin", None, "B0CW1KL2QD", "valid"),
+        ("contributor", "narrator", "Recorded Narrator", "valid"),
+        ("description", None, "A recorded summary.", "valid"),
+        ("duration", None, "43200.000", "valid"),
+        ("language", None, "eng", "valid"),
+        ("performance_type", None, "unabridged", "valid"),
+        ("series", None, "Discworld", "valid"),
+        ("series_sequence", None, "3", "valid"),
     } <= evidence
-    # Every claim states where it came from, so the owner reads evidence
-    # rather than an assertion.
+    # Every claim states where it came from and what the extraction made of
+    # it, so the owner reads evidence rather than an assertion -- and a
+    # malformed or oversized claim cannot render as a sound one.
     assert all(value["basis"] for value in body["evidence"])
+    assert body["evidence_truncated"] is False
     assert body["chapters"] == [
         {
             "end_milliseconds": 1_800_000,
@@ -2137,3 +2140,67 @@ def test_an_audiobooks_recorded_evidence_is_reachable_from_the_library(
         "present": True,
         "surface": "container_stream",
     }
+
+
+def _claim_rich_report(count: int) -> MetadataReport:
+    return MetadataReport.create(
+        target=TargetFacts(
+            "primary", "ebooks", "item-8", default_target_fields("Crowded work")
+        ),
+        file=FileFacts(0, "c" * 64, "d" * 64),
+        local_claims=tuple(
+            LocalClaim.create(
+                kind=ClaimKind.SUBJECT,
+                observed=f"Subject {index:04d}",
+                canonical=f"Subject {index:04d}",
+                excerpt=f"Subject {index:04d}",
+                applicability="not_applicable",
+                basis="opening_matter",
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+                scope=ClaimScope.WORK,
+                occurrence=index,
+            )
+            for index in range(1, count + 1)
+        ),
+        local_reasons=("opening_matter_subject",),
+        providers=(),
+    )
+
+
+@pytest.mark.parametrize(
+    ("claims", "returned", "truncated"),
+    (
+        pytest.param(1_024, 1_024, False, id="at-the-bound"),
+        pytest.param(1_025, 1_024, True, id="past-the-bound"),
+    ),
+)
+def test_a_claim_rich_report_is_truncated_rather_than_refused(
+    web: ReviewWebContext[FakeReviewRepository],
+    claims: int,
+    returned: int,
+    truncated: bool,
+) -> None:
+    """Nothing but the report's byte ceiling caps how many claims it carries.
+
+    A transport bound on the evidence list would therefore be a number the
+    domain never agreed to, and the work that exceeded it would answer 500
+    instead of showing its evidence.  The projection truncates in the report's
+    own order and says so.
+    """
+    report = _claim_rich_report(claims)
+    web.repository.browse_without_cases.append(report)
+    web.login()
+
+    response = web.client.get("/api/v1/library/primary/ebooks/item-8/report")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["evidence"]) == returned
+    assert body["evidence_truncated"] is truncated
+    # The kept prefix is the report's own, so two reads agree on what was cut.
+    assert [value["value"] for value in body["evidence"][:3]] == [
+        "Subject 0001",
+        "Subject 0002",
+        "Subject 0003",
+    ]

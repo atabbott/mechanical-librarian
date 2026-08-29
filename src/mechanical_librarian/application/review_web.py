@@ -1114,6 +1114,11 @@ def _report_detail_url(target: TargetFacts) -> str:
     )
 
 
+# The same bound the report's own chapter section carries, for the same
+# reason: a page an owner reads is bounded, and what it left out is stated.
+_EVIDENCE_CEILING = 1_024
+
+
 def _report_detail(report: dict[str, object]) -> dict[str, object]:
     """Read the closed report envelope into the owner-facing evidence view."""
     target = report["target"]
@@ -1134,6 +1139,7 @@ def _report_detail(report: dict[str, object]) -> dict[str, object]:
     cover = None if audio is None else audio.get("embedded_cover")
     if type(chapters) is not list or (cover is not None and type(cover) is not dict):
         raise ReviewWebError("unavailable")
+    recorded = [value for value in claims if type(value) is dict]
     return {
         "chapters": [
             {
@@ -1155,17 +1161,28 @@ def _report_detail(report: dict[str, object]) -> dict[str, object]:
             "present": bool(cover is not None and cover.get("present")),
             "surface": None if cover is None else cover.get("surface"),
         },
+        # Truncated rather than bounded by a count the domain does not impose:
+        # nothing caps a report's claims but the report's own byte ceiling, so
+        # a claim-rich work would otherwise exceed whatever number the
+        # transport declared and fail the whole read.  The order is the
+        # report's, so the kept prefix is the same one every time, and the
+        # flag says so rather than letting the page imply completeness -- the
+        # idiom the chapter section beside it already uses.
         "evidence": [
             {
                 "basis": value["basis"],
                 "excerpt": value["excerpt"],
                 "kind": value["kind"],
                 "role": value["role"],
+                # A claim the extraction marked malformed or oversized reads
+                # exactly like a valid one without this, which is the one
+                # thing an owner reading evidence must not be shown.
+                "state": value["state"],
                 "value": value["canonical"] or value["observed"],
             }
-            for value in claims
-            if type(value) is dict
+            for value in recorded[:_EVIDENCE_CEILING]
         ],
+        "evidence_truncated": len(recorded) > _EVIDENCE_CEILING,
         "item": target["item"],
         "library": target["library"],
         "connection": target["connection"],

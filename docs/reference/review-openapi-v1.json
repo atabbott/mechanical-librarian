@@ -5445,9 +5445,13 @@
             "items": {
               "$ref": "#/components/schemas/_ReportEvidence"
             },
-            "maxItems": 512,
+            "maxItems": 1024,
             "title": "Evidence",
             "type": "array"
+          },
+          "evidence_truncated": {
+            "title": "Evidence Truncated",
+            "type": "boolean"
           },
           "item": {
             "maxLength": 512,
@@ -5486,6 +5490,7 @@
           "connection",
           "embedded_cover",
           "evidence",
+          "evidence_truncated",
           "item",
           "library",
           "media_kind",
@@ -5552,6 +5557,11 @@
             ],
             "title": "Role"
           },
+          "state": {
+            "maxLength": 32,
+            "title": "State",
+            "type": "string"
+          },
           "value": {
             "maxLength": 1024,
             "title": "Value",
@@ -5562,6 +5572,7 @@
           "basis",
           "excerpt",
           "kind",
+          "state",
           "value"
         ],
         "title": "_ReportEvidence",

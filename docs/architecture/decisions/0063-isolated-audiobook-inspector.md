@@ -164,7 +164,11 @@ provider means to the review pipeline.
   `inspect` computed would make the guard tautological rather than cheap, and
   narrowing it to the media paths that have no provider phase changes what the
   guard proves for three independent callers. That is a decision of its own,
-  not a bounded edit, and is left for a later record.
+  not a bounded edit, and is left for a later record. That record should weigh
+  the middle ground: `open_local_media` already fstats the file at inspection
+  time, so the `(dev, ino, size, mtime_ns)` identity tuple is a near-free
+  currentness signal that is not tautological the way reusing the digest
+  would be.
 - Multi-file audiobooks and unmounted audiobook libraries stay excluded exactly
   as before this slice, and remain a later decision.
 - Provider discovery, enrichment, and any write authority for audiobooks stay

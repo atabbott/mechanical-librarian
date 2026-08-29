@@ -5167,6 +5167,9 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
     browsed = repository.list_current_review_case_documents(None, 10, 0, None)
     found = repository.count_current_review_cases("Recorded work")
     incidents = operational_incidents(repository.operational_snapshot())
+    addressed = repository.read_current_report_document("primary", "fiction", "item")
+    with pytest.raises(MetadataReportError) as absent:
+        repository.read_current_report_document("primary", "fiction", "no-such-item")
     remaining = repository.claim_review_pipeline_action(15)
     repository.close()
 
@@ -5180,6 +5183,11 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
     case_document, report_document = browsed[0]
     assert case_document is None
     assert browse_report(report_document)["audio"] is not None
+    # And addressable by the identity of the package row that lists it, which
+    # is the only route to an audiobook's evidence: it has no review case.
+    assert MetadataReport.from_json(addressed).schema_version == "metadata-report-v31"
+    assert browse_report(addressed)["audio"] is not None
+    assert str(absent.value) == "review report is unavailable"
     assert found == (1, 0)
     # And a stop that is not a fault raises no incident, so the status surface
     # keeps answering for every other library.

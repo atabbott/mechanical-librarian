@@ -653,6 +653,7 @@ class _ReportEvidence(_ClosedModel):
     excerpt: str = Field(max_length=1024)
     kind: str = Field(max_length=64)
     role: str | None = Field(default=None, max_length=64)
+    state: str = Field(max_length=32)
     value: str = Field(max_length=1024)
 
 
@@ -661,7 +662,11 @@ class _ReportDetailResponse(_ClosedModel):
     chapters_truncated: bool
     connection: str = Field(max_length=512)
     embedded_cover: _ReportEmbeddedCover
-    evidence: list[_ReportEvidence] = Field(max_length=512)
+    # Nothing in the domain caps a report's claim count -- only the report's
+    # own byte ceiling does -- so the projection truncates to this bound and
+    # says it did, rather than the transport refusing a claim-rich work.
+    evidence: list[_ReportEvidence] = Field(max_length=1024)
+    evidence_truncated: bool
     item: str = Field(max_length=512)
     library: str = Field(max_length=512)
     media_kind: str = Field(max_length=32)
