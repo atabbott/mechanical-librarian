@@ -268,6 +268,17 @@ class ReviewPipelineRepository(Protocol):
         trigger: PreparationTrigger | None = None,
     ) -> PipelineProgress: ...
 
+    def request_library_addition(
+        self,
+        connection: str,
+        library: str,
+        library_id: str,
+        producer_fingerprint: str,
+        requested_at: int,
+    ) -> PipelineProgress | None: ...
+
+    def deferred_library_additions(self) -> tuple[tuple[str, str], ...]: ...
+
     def review_pipeline_progress(
         self, connection: str, library: str
     ) -> PipelineProgress | None: ...
@@ -526,6 +537,30 @@ class ReviewPreparationPipeline:
         progress = self._with_foreground_repository(request)
         self._announce("preparation", None)
         return progress
+
+    def request_library_addition(
+        self, connection: str, library: str
+    ) -> PipelineProgress | None:
+        selected = self._libraries.get((connection, library))
+        if selected is None:
+            raise ReviewPipelineError("library")
+        library_id, producer_fingerprint = selected
+        progress = self._with_foreground_repository(
+            lambda repository: repository.request_library_addition(
+                connection,
+                library,
+                library_id,
+                producer_fingerprint,
+                self._clock(),
+            )
+        )
+        self._announce("preparation", None)
+        return progress
+
+    def deferred_library_additions(self) -> tuple[tuple[str, str], ...]:
+        return self._with_foreground_repository(
+            lambda repository: repository.deferred_library_additions()
+        )
 
     def progress(self, connection: str, library: str) -> PipelineProgress | None:
         if (connection, library) not in self._libraries:
@@ -1054,7 +1089,6 @@ class ReviewPreparationSupervisor:
         self._next_schedule_at: int | None = None
         self._schedule_paused = False
         self._schedule_waiting_for_action = False
-        self._pending_library_additions: dict[tuple[str, str], None] = {}
         self._admission = threading.Event()
         self._admission.set()
         self._startup_lock = threading.Lock()
@@ -1214,20 +1248,9 @@ class ReviewPreparationSupervisor:
     def request_library_addition(
         self, connection: str, library: str
     ) -> PipelineProgress | None:
-        """Admit one configured library now or retain it across an owner pause."""
+        """Atomically admit or durably defer one configured library addition."""
         with self._schedule_lock:
-            try:
-                progress = self._pipeline.request(
-                    connection,
-                    library,
-                    trigger=PreparationTrigger.LIBRARY_ADDED,
-                )
-            except ReviewPipelineError as error:
-                if error.code != "paused":
-                    raise
-                self._pending_library_additions.setdefault((connection, library), None)
-                return None
-            self._pending_library_additions.pop((connection, library), None)
+            progress = self._pipeline.request_library_addition(connection, library)
             self._schedule_waiting_for_action = False
             self._next_schedule_at = None
         self._wake.set()
@@ -1247,13 +1270,16 @@ class ReviewPreparationSupervisor:
         with self._schedule_lock:
             self._schedule_paused = paused
             if not paused:
-                for connection, library in tuple(self._pending_library_additions):
-                    self._pipeline.request(
-                        connection,
-                        library,
-                        trigger=PreparationTrigger.LIBRARY_ADDED,
-                    )
-                    del self._pending_library_additions[(connection, library)]
+                configured = {item[:2] for item in self.libraries}
+                deferred = self._pipeline.deferred_library_additions()
+                if any(target not in configured for target in deferred):
+                    raise ReviewPipelineError("configuration")
+                for connection, library in deferred:
+                    if (
+                        self._pipeline.request_library_addition(connection, library)
+                        is not None
+                    ):
+                        self._wake.set()
                 self._schedule_waiting_for_action = False
                 self._next_schedule_at = None
         if not paused:

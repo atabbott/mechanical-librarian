@@ -117,6 +117,9 @@ derived projection maintained on that existing connection and inside the same
 scan/work transactions; it does not claim work, schedule activity, or open a
 second store. Accepted owner triggers extend the visible nonterminal run and
 replace a terminal one, while ordinary discovery has no presentation call.
+An accepted library addition during an owner pause remains a bounded sidecar
+enrollment: it is visible as blocked immediately and becomes an ordinary scan
+atomically after resume, without creating claimable work while paused.
 Each authoritative claim/advance/failure boundary advances only its affected
 presentation row and run counters; bounded startup/recovery reconciliation
 replays monotonic high water across the run. The separate catalogue database stores one

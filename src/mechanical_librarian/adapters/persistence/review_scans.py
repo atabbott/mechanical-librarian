@@ -24,6 +24,7 @@ from typing import cast
 
 from mechanical_librarian.adapters.persistence.preparation_presentation import (
     accept_preparation_trigger,
+    defer_preparation_library_addition,
     refresh_preparation_presentation,
     refresh_preparation_run_state,
 )
@@ -90,6 +91,65 @@ class SQLiteReviewScanRepository(ConnectionScoped):
         first_boot: bool = False,
         trigger: PreparationTrigger | None = None,
     ) -> PipelineProgress:
+        progress = self._request_review_scan(
+            connection,
+            library,
+            library_id,
+            producer_fingerprint,
+            requested_at,
+            first_boot=first_boot,
+            trigger=trigger,
+            defer_when_paused=False,
+        )
+        if progress is None:
+            raise MetadataReportError("review preparation state is invalid")
+        return progress
+
+    def request_library_addition(
+        self,
+        connection: str,
+        library: str,
+        library_id: str,
+        producer_fingerprint: str,
+        requested_at: int,
+    ) -> PipelineProgress | None:
+        return self._request_review_scan(
+            connection,
+            library,
+            library_id,
+            producer_fingerprint,
+            requested_at,
+            first_boot=False,
+            trigger=PreparationTrigger.LIBRARY_ADDED,
+            defer_when_paused=True,
+        )
+
+    def deferred_library_additions(self) -> tuple[tuple[str, str], ...]:
+        try:
+            return tuple(
+                self._connection.execute(
+                    "SELECT connection_name,library_name "
+                    "FROM review_preparation_presentation "
+                    "WHERE row_kind='deferred_enrollment' ORDER BY ordinal"
+                )
+            )
+        except sqlite3.Error as error:
+            raise MetadataReportError(
+                "review preparation persistence failed"
+            ) from error
+
+    def _request_review_scan(
+        self,
+        connection: str,
+        library: str,
+        library_id: str,
+        producer_fingerprint: str,
+        requested_at: int,
+        *,
+        first_boot: bool,
+        trigger: PreparationTrigger | None,
+        defer_when_paused: bool,
+    ) -> PipelineProgress | None:
         if (
             any(
                 type(value) is not str or not 1 <= len(value) <= 128
@@ -115,6 +175,12 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             if control is None:
                 raise MetadataReportError("review preparation control is unavailable")
             if bool(control[0]):
+                if defer_when_paused:
+                    defer_preparation_library_addition(
+                        self._connection, connection, library, requested_at
+                    )
+                    transaction.commit()
+                    return None
                 raise ReviewPipelineError("paused")
             row = self._connection.execute(
                 "SELECT scan_id,state,producer_fingerprint,rescan_requested FROM review_preparation_scans "

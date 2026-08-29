@@ -960,6 +960,25 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             trigger=trigger,
         )
 
+    def request_library_addition(
+        self,
+        connection: str,
+        library: str,
+        library_id: str,
+        producer_fingerprint: str,
+        requested_at: int,
+    ) -> PipelineProgress | None:
+        return self._review_scans.request_library_addition(
+            connection,
+            library,
+            library_id,
+            producer_fingerprint,
+            requested_at,
+        )
+
+    def deferred_library_additions(self) -> tuple[tuple[str, str], ...]:
+        return self._review_scans.deferred_library_additions()
+
     def preparation_presentation(self, now: int) -> PreparationPresentation | None:
         return preparation_presentation_snapshot(self._connection, now)
 

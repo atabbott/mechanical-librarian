@@ -5,7 +5,6 @@ import asyncio
 import pytest
 
 from mechanical_librarian.application.review_pipeline import (
-    ReviewPipelineError,
     ReviewPreparationSupervisor,
 )
 from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
@@ -173,18 +172,24 @@ def test_post_commit_paused_library_addition_keeps_successor_available_until_res
         def __init__(self) -> None:
             self.paused = True
             self.requests: list[tuple[str, str, PreparationTrigger | None]] = []
+            self.deferred: tuple[tuple[str, str], ...] = ()
 
-        def request(
+        def request_library_addition(
             self,
             connection: str,
             library: str,
-            *,
-            trigger: PreparationTrigger | None = None,
-        ) -> object:
+        ) -> object | None:
             if self.paused:
-                raise ReviewPipelineError("paused")
-            self.requests.append((connection, library, trigger))
+                self.deferred = ((connection, library),)
+                return None
+            self.requests.append(
+                (connection, library, PreparationTrigger.LIBRARY_ADDED)
+            )
+            self.deferred = ()
             return object()
+
+        def deferred_library_additions(self) -> tuple[tuple[str, str], ...]:
+            return self.deferred
 
         def set_paused(self, paused: bool) -> None:
             self.paused = paused

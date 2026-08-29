@@ -39,6 +39,103 @@ _STAGE_COPY = {
 }
 
 
+def deferred_preparation_enrollment_id(connection: str, library: str) -> str:
+    material = f"{connection}\0{library}"
+    return "deferred_enrollment:" + hashlib.sha256(material.encode()).hexdigest()
+
+
+def _visible_preparation_run(
+    connection: sqlite3.Connection,
+    trigger: PreparationTrigger,
+    identity: str,
+    accepted_at: int,
+) -> tuple[str, bool]:
+    current = connection.execute(
+        "SELECT run_id,state FROM review_preparation_presentation WHERE row_id='run'"
+    ).fetchone()
+    replacing_terminal = current is not None and current[1] in {
+        PreparationRunState.COMPLETED_CLEAN.value,
+        PreparationRunState.COMPLETED_WITH_FAILURES.value,
+        PreparationRunState.DISMISSED.value,
+    }
+    if current is None or replacing_terminal:
+        previous = "" if current is None else cast(str, current[0])
+        material = f"preparation-presentation-v1\0{previous}\0{trigger.value}\0{identity}\0{accepted_at}"
+        run_id = "preparation_run_" + hashlib.sha256(material.encode()).hexdigest()
+        connection.execute("DELETE FROM review_preparation_presentation")
+        connection.execute(
+            "INSERT INTO review_preparation_presentation("
+            "row_id,row_kind,run_id,state,started_at,updated_at,total,active_count,read,searches_finished,compared,checked,ready,failed) "
+            "VALUES('run','run',?,'starting',?,?,0,0,0,0,0,0,0,0)",
+            (run_id, accepted_at, accepted_at),
+        )
+        return run_id, replacing_terminal
+    return cast(str, current[0]), False
+
+
+def _record_preparation_trigger(
+    connection: sqlite3.Connection,
+    run_id: str,
+    trigger: PreparationTrigger,
+    accepted_at: int,
+) -> None:
+    trigger_ordinal = tuple(PreparationTrigger).index(trigger)
+    connection.execute(
+        "INSERT INTO review_preparation_presentation("
+        "row_id,row_kind,run_id,trigger,trigger_ordinal,accepted_count,first_accepted_at,last_accepted_at,updated_at) "
+        "VALUES(?,?,?,?,?,1,?,?,?) ON CONFLICT(row_id) DO UPDATE SET "
+        "accepted_count=accepted_count+1,last_accepted_at=excluded.last_accepted_at,updated_at=excluded.updated_at",
+        (
+            f"trigger:{trigger.value}",
+            "trigger",
+            run_id,
+            trigger.value,
+            trigger_ordinal,
+            accepted_at,
+            accepted_at,
+            accepted_at,
+        ),
+    )
+
+
+def defer_preparation_library_addition(
+    connection: sqlite3.Connection,
+    connection_name: str,
+    library_name: str,
+    accepted_at: int,
+) -> None:
+    """Accept one paused library addition without creating claimable work."""
+    row_id = deferred_preparation_enrollment_id(connection_name, library_name)
+    run_id, _replacing_terminal = _visible_preparation_run(
+        connection,
+        PreparationTrigger.LIBRARY_ADDED,
+        row_id,
+        accepted_at,
+    )
+    if (
+        connection.execute(
+            "SELECT 1 FROM review_preparation_presentation "
+            "WHERE row_id=? AND row_kind='deferred_enrollment'",
+            (row_id,),
+        ).fetchone()
+        is None
+    ):
+        ordinal = connection.execute(
+            "SELECT COUNT(*) FROM review_preparation_presentation "
+            "WHERE row_kind IN ('enrollment','deferred_enrollment')"
+        ).fetchone()[0]
+        connection.execute(
+            "INSERT INTO review_preparation_presentation("
+            "row_id,row_kind,run_id,connection_name,library_name,ordinal,updated_at) "
+            "VALUES(?,'deferred_enrollment',?,?,?,?,?)",
+            (row_id, run_id, connection_name, library_name, ordinal, accepted_at),
+        )
+        _record_preparation_trigger(
+            connection, run_id, PreparationTrigger.LIBRARY_ADDED, accepted_at
+        )
+    _refresh_run_state(connection, run_id, accepted_at)
+
+
 def accept_preparation_trigger(
     connection: sqlite3.Connection,
     trigger: PreparationTrigger,
@@ -50,31 +147,26 @@ def accept_preparation_trigger(
     previous_rescan_requested: bool = False,
 ) -> None:
     """Extend the visible nonterminal run or atomically replace its terminal run."""
-    current = connection.execute(
-        "SELECT run_id,state FROM review_preparation_presentation WHERE row_id='run'"
-    ).fetchone()
-    replacing_terminal = current is not None and current[1] in {
-        PreparationRunState.COMPLETED_CLEAN.value,
-        PreparationRunState.COMPLETED_WITH_FAILURES.value,
-        PreparationRunState.DISMISSED.value,
-    }
+    deferred = (
+        connection.execute(
+            "SELECT run_id,ordinal FROM review_preparation_presentation "
+            "WHERE row_id=? AND row_kind='deferred_enrollment'",
+            (deferred_preparation_enrollment_id(connection_name, library_name),),
+        ).fetchone()
+        if trigger is PreparationTrigger.LIBRARY_ADDED
+        else None
+    )
     restarting_terminal_scan = previous_scan_state in {
         "completed",
         "completed_with_failures",
     }
-    if current is None or replacing_terminal:
-        previous = "" if current is None else cast(str, current[0])
-        material = f"preparation-presentation-v1\0{previous}\0{trigger.value}\0{scan_id}\0{accepted_at}"
-        run_id = "preparation_run_" + hashlib.sha256(material.encode()).hexdigest()
-        connection.execute("DELETE FROM review_preparation_presentation")
-        connection.execute(
-            "INSERT INTO review_preparation_presentation("
-            "row_id,row_kind,run_id,state,started_at,updated_at,total,active_count,read,searches_finished,compared,checked,ready,failed) "
-            "VALUES('run','run',?,'starting',?,?,0,0,0,0,0,0,0,0)",
-            (run_id, accepted_at, accepted_at),
+    if deferred is None:
+        run_id, replacing_terminal = _visible_preparation_run(
+            connection, trigger, scan_id, accepted_at
         )
     else:
-        run_id = cast(str, current[0])
+        run_id = cast(str, deferred[0])
+        replacing_terminal = False
     enrollment_id = "enrollment:" + hashlib.sha256(scan_id.encode()).hexdigest()
     enrollment = connection.execute(
         "SELECT cycle_id,pending_cycle_id,cycle_state,ordinal FROM review_preparation_presentation "
@@ -94,11 +186,16 @@ def accept_preparation_trigger(
         material = f"preparation-cycle-v1\0{run_id}\0{scan_id}\0{accepted_at}\0{previous_scan_state or 'new'}"
         cycle_id = "preparation_cycle_" + hashlib.sha256(material.encode()).hexdigest()
         ordinal = (
-            connection.execute(
-                "SELECT COUNT(*) FROM review_preparation_presentation WHERE row_kind='enrollment'"
-            ).fetchone()[0]
-            if enrollment is None
-            else enrollment[3]
+            deferred[1]
+            if deferred is not None
+            else (
+                connection.execute(
+                    "SELECT COUNT(*) FROM review_preparation_presentation "
+                    "WHERE row_kind IN ('enrollment','deferred_enrollment')"
+                ).fetchone()[0]
+                if enrollment is None
+                else enrollment[3]
+            )
         )
         connection.execute(
             "INSERT INTO review_preparation_presentation("
@@ -130,23 +227,13 @@ def accept_preparation_trigger(
                 accepted_at,
             ),
         )
-        trigger_ordinal = tuple(PreparationTrigger).index(trigger)
-        connection.execute(
-            "INSERT INTO review_preparation_presentation("
-            "row_id,row_kind,run_id,trigger,trigger_ordinal,accepted_count,first_accepted_at,last_accepted_at,updated_at) "
-            "VALUES(?,?,?,?,?,1,?,?,?) ON CONFLICT(row_id) DO UPDATE SET "
-            "accepted_count=accepted_count+1,last_accepted_at=excluded.last_accepted_at,updated_at=excluded.updated_at",
-            (
-                f"trigger:{trigger.value}",
-                "trigger",
-                run_id,
-                trigger.value,
-                trigger_ordinal,
-                accepted_at,
-                accepted_at,
-                accepted_at,
-            ),
-        )
+        if deferred is None:
+            _record_preparation_trigger(connection, run_id, trigger, accepted_at)
+        else:
+            connection.execute(
+                "DELETE FROM review_preparation_presentation WHERE row_id=?",
+                (deferred_preparation_enrollment_id(connection_name, library_name),),
+            )
     else:
         return
     _refresh_run_state(connection, run_id, accepted_at)
@@ -447,6 +534,8 @@ def _refresh_run_state(
     blocked = (
         connection.execute(
             "SELECT 1 FROM review_preparation_control WHERE singleton=1 AND paused=1 UNION ALL "
+            "SELECT 1 FROM review_preparation_presentation AS deferred "
+            "WHERE deferred.row_kind='deferred_enrollment' AND deferred.run_id=? UNION ALL "
             "SELECT 1 FROM review_preparation_connection_conditions AS condition "
             "WHERE condition.state IN ('paused','checking') AND EXISTS("
             "SELECT 1 FROM review_preparation_presentation AS enrollment "
@@ -454,7 +543,7 @@ def _refresh_run_state(
             "AND enrollment.connection_name=condition.connection_name "
             "AND (enrollment.pending_cycle_id IS NOT NULL OR "
             "enrollment.cycle_state NOT IN ('completed','completed_with_failures'))) LIMIT 1",
-            (run_id,),
+            (run_id, run_id),
         ).fetchone()
         is not None
     )
@@ -463,8 +552,10 @@ def _refresh_run_state(
             "SELECT COUNT(*) FROM review_preparation_presentation AS enrollment "
             "WHERE enrollment.row_kind='enrollment' AND enrollment.run_id=? "
             "HAVING COUNT(*)>0 AND SUM(enrollment.pending_cycle_id IS NOT NULL OR "
-            "enrollment.cycle_state NOT IN ('completed','completed_with_failures'))=0",
-            (run_id,),
+            "enrollment.cycle_state NOT IN ('completed','completed_with_failures'))=0 "
+            "AND NOT EXISTS(SELECT 1 FROM review_preparation_presentation AS deferred "
+            "WHERE deferred.row_kind='deferred_enrollment' AND deferred.run_id=?)",
+            (run_id, run_id),
         ).fetchone()
         is not None
     )
@@ -650,6 +741,8 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                     "cycle_state",
                     "ordinal",
                 },
+                "deferred_enrollment": common
+                | {"connection_name", "library_name", "ordinal"},
                 "work": common
                 | {
                     "scan_id",
@@ -686,8 +779,26 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                 "FROM review_preparation_presentation "
                 "WHERE row_kind='enrollment' ORDER BY ordinal"
             ).fetchall()
-            if [row[3] for row in enrollments] != list(range(len(enrollments))):
+            deferred = connection.execute(
+                "SELECT connection_name,library_name,ordinal,row_id "
+                "FROM review_preparation_presentation "
+                "WHERE row_kind='deferred_enrollment' ORDER BY ordinal"
+            ).fetchall()
+            ordinals = sorted(
+                [row[3] for row in enrollments] + [row[2] for row in deferred]
+            )
+            if ordinals != list(range(len(ordinals))):
                 raise ValueError("noncanonical enrollment ordinals")
+            if any(
+                type(connection_name) is not str
+                or type(library_name) is not str
+                or not 1 <= len(connection_name) <= 128
+                or not 1 <= len(library_name) <= 128
+                or row_id
+                != deferred_preparation_enrollment_id(connection_name, library_name)
+                for connection_name, library_name, _ordinal, row_id in deferred
+            ):
+                raise ValueError("noncanonical deferred enrollment")
             cycle_ids = [
                 cycle_id
                 for row in enrollments
@@ -772,7 +883,11 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
             if active_count != observed_active:
                 raise ValueError("invalid active count")
             preparation_presentation_snapshot(connection, 0)
-        except (TypeError, ValueError, sqlite3.Error) as error:
+        except (TypeError, ValueError, sqlite3.Error):
+            invalid = True
+        else:
+            invalid = False
+        if invalid:
             raise MetadataReportError(
                 "database is unavailable or incompatible"
-            ) from error
+            ) from None
