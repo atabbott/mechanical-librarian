@@ -22,6 +22,7 @@ from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
     TargetCover,
     TargetNotFoundError,
+    TargetSnapshot,
 )
 from mechanical_librarian.domain.metadata_report import (
     MAX_CONTRIBUTIONS,
@@ -995,3 +996,121 @@ def test_credential_and_private_path_target_titles_fail_without_raw_values(
     with pytest.raises(MetadataReportError) as raised:
         reader.read("item-1")
     assert hostile not in str(raised.value)
+
+
+def _audiobook_snapshot(media: dict[str, object]) -> TargetSnapshot:
+    payload = {
+        "id": "item-1",
+        "libraryId": "library-id",
+        "isInvalid": False,
+        "isMissing": False,
+        "mediaType": "book",
+        "media": {"metadata": {"title": "Recorded title"}, **media},
+    }
+    return AudiobookshelfItemReader(
+        client_factory=lambda: httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json=payload,
+                )
+            )
+        ),
+        endpoint="https://example.invalid",
+        library_id="library-id",
+        service_path="/library",
+        maximum_bytes=65_536,
+    ).read("item-1")
+
+
+def _audio_file(
+    name: str, extension: str = ".m4b", inode: str = "inode-1"
+) -> dict[str, object]:
+    return {
+        "ino": inode,
+        "metadata": {
+            "relPath": name,
+            "path": f"/library/{name}",
+            "size": 1,
+            "ext": extension,
+        },
+    }
+
+
+def test_an_item_with_only_audio_files_reads_as_an_audiobook() -> None:
+    snapshot = _audiobook_snapshot({"audioFiles": [_audio_file("book.m4b")]})
+
+    assert snapshot.media_kind == "audiobook"
+    assert [(value.relative_path, value.format) for value in snapshot.files] == [
+        ("book.m4b", "m4b")
+    ]
+
+
+def test_every_audio_track_is_surfaced_so_a_multi_file_item_can_be_refused() -> None:
+    snapshot = _audiobook_snapshot(
+        {
+            "audioFiles": [
+                _audio_file("part-1.m4b", inode="inode-1"),
+                _audio_file("part-2.m4b", inode="inode-2"),
+            ]
+        }
+    )
+
+    assert snapshot.media_kind == "audiobook"
+    assert len(snapshot.files) == 2
+
+
+@pytest.mark.parametrize(
+    "audio_files",
+    (
+        [_audio_file("book.wav", ".wav")],
+        [_audio_file("book.m4b"), _audio_file("book.wav", ".wav", "inode-2")],
+        [{"ino": "inode-1", "metadata": {"size": 1}}],
+        ["not-a-record"],
+    ),
+    ids=("unsupported", "mixed", "unresolvable", "not-a-mapping"),
+)
+def test_an_audio_set_with_any_unusable_track_surfaces_no_file(
+    audio_files: list[object],
+) -> None:
+    snapshot = _audiobook_snapshot({"audioFiles": audio_files})
+
+    assert snapshot.media_kind == "audiobook"
+    assert snapshot.files == ()
+
+
+def test_an_ebook_file_still_wins_over_an_audio_set() -> None:
+    snapshot = _audiobook_snapshot(
+        {
+            "ebookFile": {
+                "ebookFormat": "epub",
+                "ino": "inode-9",
+                "metadata": {
+                    "relPath": "book.epub",
+                    "path": "/library/book.epub",
+                    "size": 1,
+                },
+            },
+            "audioFiles": [_audio_file("book.m4b")],
+        }
+    )
+
+    assert snapshot.media_kind == "ebook"
+    assert [value.format for value in snapshot.files] == ["epub"]
+
+
+def test_an_item_with_neither_ebook_nor_audio_files_stays_unsupported() -> None:
+    assert _audiobook_snapshot({}).media_kind == "unsupported"
+
+
+def test_an_audio_set_beyond_the_bound_is_refused() -> None:
+    with pytest.raises(MetadataReportError):
+        _audiobook_snapshot(
+            {
+                "audioFiles": [
+                    _audio_file(f"part-{index}.m4b", inode=f"inode-{index}")
+                    for index in range(129)
+                ]
+            }
+        )

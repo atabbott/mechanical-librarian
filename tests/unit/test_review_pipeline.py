@@ -68,9 +68,13 @@ from mechanical_librarian.application.review_pipeline_stages import ReviewPipeli
 from mechanical_librarian.application.review_web import BrowseReviewLibrary
 from mechanical_librarian.domain.epub_inspection import EpubInspectionOutcome
 from mechanical_librarian.domain.metadata_report import (
+    AudioFacts,
+    FileFacts,
     MetadataReport,
     ProviderObservation,
     ProviderStatus,
+    TargetFacts,
+    default_target_fields,
 )
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.provider_recovery import MAX_TIMESTAMP
@@ -4891,3 +4895,86 @@ def test_shutdown_deadline_retains_active_worker_and_durable_claim() -> None:
     supervisor.stop()
     assert repository.completed == ["slow"]
     assert supervisor._threads == ()
+
+
+def test_provider_stage_stops_an_audiobook_report_at_its_local_evidence() -> None:
+    def unreachable(*_arguments: object, **_keywords: object) -> None:
+        raise AssertionError
+
+    report = MetadataReport.create(
+        target=TargetFacts(
+            "primary", "audio", "item-1", default_target_fields("Recorded title")
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=(),
+        local_reasons=("no_local_audio_claims",),
+        providers=(),
+        audio=AudioFacts(),
+    )
+
+    class _Repository:
+        def get(self, report_id: str) -> str:
+            assert report_id == report.report_id
+            return report.to_json()
+
+    stages = ReviewPipelineStages(
+        configuration=ApplicationConfiguration((), (), (), ()),
+        catalogue=unreachable,
+        catalogue_reader=cast("CatalogueReader", unreachable),
+        probe_connection=unreachable,
+        connections=frozenset(),
+        repository_factory=unreachable,
+        recover_artifacts=unreachable,
+        generate_report=unreachable,
+        create_proposal_set=unreachable,
+        admit_review_case=unreachable,
+        cover_considerations=unreachable,
+        recovery_observer=cast("ProviderFailureObserver", unreachable),
+        drain_outbox=unreachable,
+        discovery_lock=threading.Lock(),
+        clock=lambda: 7,
+    )
+
+    with pytest.raises(ReviewPipelineError) as raised:
+        stages.providers(
+            cast("ReviewPipelineRepository", _Repository()), report.report_id
+        )
+
+    assert raised.value.code == "local_evidence_only"
+
+
+def test_an_ebook_report_still_reaches_the_provider_stage() -> None:
+    def unreachable(*_arguments: object, **_keywords: object) -> None:
+        raise AssertionError
+
+    report = _report()
+
+    class _Repository:
+        def get(self, _report_id: str) -> str:
+            return report.to_json()
+
+    observations: list[object] = []
+    stages = ReviewPipelineStages(
+        configuration=ApplicationConfiguration((), (), (), ()),
+        catalogue=unreachable,
+        catalogue_reader=cast("CatalogueReader", unreachable),
+        probe_connection=unreachable,
+        connections=frozenset(),
+        repository_factory=unreachable,
+        recover_artifacts=unreachable,
+        generate_report=unreachable,
+        create_proposal_set=unreachable,
+        admit_review_case=unreachable,
+        cover_considerations=unreachable,
+        recovery_observer=cast("ProviderFailureObserver", observations.append),
+        drain_outbox=unreachable,
+        discovery_lock=threading.Lock(),
+        clock=lambda: 7,
+    )
+
+    assert (
+        stages.providers(
+            cast("ReviewPipelineRepository", _Repository()), report.report_id
+        )
+        == ()
+    )

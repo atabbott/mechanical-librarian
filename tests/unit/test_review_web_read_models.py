@@ -1941,3 +1941,26 @@ def test_case_detail_reports_write_consent_it_never_asked_the_read_model_for(
     detail = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}")
     assert detail.status_code == 200, detail.text
     assert detail.json()["writes_consented"] is consented
+
+
+@pytest.mark.parametrize(
+    ("kind", "value", "expected"),
+    (
+        ("contributor", "Recorded Narrator", "Narration credit: Recorded Narrator"),
+        ("duration", "43200.000", "Running time: 43200.000"),
+        ("performance_type", "unabridged", "Performance: unabridged"),
+    ),
+)
+def test_audio_observations_are_labelled_for_the_owner(
+    kind: str, value: str, expected: str
+) -> None:
+    assert (
+        _choice_observation(
+            {
+                "fact": json.dumps({"kind": kind, "value": value}),
+                "provider": None,
+                "source": "local_claim",
+            }
+        )
+        == expected
+    )

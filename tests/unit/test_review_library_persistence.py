@@ -618,6 +618,11 @@ def test_real_sqlite_progress_reconciles_mixed_terminal_and_active_work() -> Non
             "No owner action is currently available.",
         ),
         (
+            "local_evidence_only",
+            "This audiobook's local evidence was recorded; no review package follows it yet.",
+            "No owner action is needed. The recorded evidence is shown on this work.",
+        ),
+        (
             "unknown",
             "Preparation failed; no safe detail is available.",
             "No owner action is currently available.",
