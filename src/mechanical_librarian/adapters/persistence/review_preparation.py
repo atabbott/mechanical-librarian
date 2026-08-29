@@ -263,9 +263,16 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 pending_manual_return = self._has_pending_field_effect_manual_return(
                     scan_id
                 )
+                # An audiobook ends `failed` because its preparation is
+                # complete, not because it went wrong.  Counted here it would
+                # decide the whole scan: every absence staged by that scan is
+                # discarded unread, so a disappeared item -- an ebook among
+                # them -- is never reconciled in a library that holds one
+                # audiobook.
                 failures = self._connection.execute(
                     "SELECT COUNT(*) FROM review_preparation_work "
-                    "WHERE scan_id=? AND state='failed'",
+                    "WHERE scan_id=? AND state='failed' "
+                    "AND failure_code IS NOT 'local_evidence_only'",
                     (scan_id,),
                 ).fetchone()[0]
                 stale = self._connection.execute(

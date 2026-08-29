@@ -5188,3 +5188,144 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
         value.kind not in {"healthy_activity", "automatic_recovery"}
         for value in incidents
     )
+
+
+def test_a_prepared_audiobook_leaves_a_mixed_library_scan_clean(
+    application_path: Path,
+) -> None:
+    """A completed audiobook must not decide the scan that carried it.
+
+    Its work ends `failed` because nothing follows the report, and counted as
+    a failure it settled the whole scan: the state the owner reads, the
+    absences the scan staged, and the count that asks to unblock something.
+    One audiobook in a mixed library therefore made absence reconciliation
+    permanently unreachable for the ebooks beside it.  The three surfaces are
+    asserted together because the leak reached all three.
+    """
+    departed = _report("Departed work", "d", "d")
+    present = MetadataReport.create(
+        target=TargetFacts(
+            "primary", "ebooks", "item-2", default_target_fields("Present work")
+        ),
+        file=FileFacts(0, "e" * 64, "e" * 64),
+        local_claims=(),
+        local_reasons=("no_opening_claims",),
+        providers=(),
+    )
+    audiobook = MetadataReport.create(
+        target=TargetFacts(
+            "primary", "ebooks", "audio-1", default_target_fields("Recorded work")
+        ),
+        file=FileFacts(0, "1" * 64, "1" * 64, "m4b"),
+        local_claims=(),
+        local_reasons=("no_local_audio_claims",),
+        providers=(),
+        audio=AudioFacts(),
+    )
+    survivors = (
+        replace(_audio_entry("audio-1", audiobook.file.identity), library="ebooks"),
+        replace(_entry("item-2", present.file.identity), library="ebooks"),
+    )
+    reports = {
+        "audio-1": audiobook,
+        "item-2": present,
+    }
+
+    repository = open_repository(application_path)
+    repository.publish(departed, lambda: True)
+    departed_proposal = evaluate_report(departed)
+    repository.publish_proposal(departed_proposal)
+    repository.admit_review_case(departed_proposal)
+    repository.request_review_scan("primary", "ebooks", "lib-1", _PRODUCER, 10)
+
+    clock = 11
+    generation = 0
+    while clock < 400:
+        action = repository.claim_review_pipeline_action(clock)
+        clock += 1
+        if action is None:
+            if (
+                repository._connection.execute(
+                    "SELECT state FROM review_preparation_scans"
+                )
+                .fetchone()[0]
+                .startswith("completed")
+            ):
+                break
+            continue
+        if action.stage == "discovery":
+            generation += 1
+            repository.complete_review_discovery(
+                action, generation, "a" * 64, survivors, clock
+            )
+        elif action.stage == "extraction":
+            report = reports[cast(str, action.item_id)]
+
+            def bind(
+                value: object,
+                published: MetadataReport,
+                claimed: PipelineAction = action,
+                completed_at: int = clock,
+                audio: bool = report.audio is not None,
+            ) -> None:
+                writer = cast("ReviewPipelineRepository", value)
+                if audio:
+                    writer.complete_review_extraction_publication(
+                        claimed,
+                        published.report_id,
+                        completed_at,
+                        0,
+                        "local_evidence_only",
+                    )
+                else:
+                    writer.advance_review_pipeline_action(
+                        claimed, published.report_id, completed_at
+                    )
+
+            repository.publish(report, lambda: True, None, bind)
+        elif action.stage == "provider":
+            repository.advance_review_pipeline_action(action, None, clock)
+        elif action.stage == "proposal":
+            proposal = evaluate_report(reports[cast(str, action.item_id)])
+            repository.publish_proposal(proposal)
+            repository.advance_review_pipeline_action(
+                action, proposal.proposal_set_id, clock
+            )
+        elif action.stage == "admission":
+            admitted = json.loads(
+                repository.admit_review_case(
+                    evaluate_report(reports[cast(str, action.item_id)])
+                )
+            )
+            repository.advance_review_pipeline_action(
+                action, admitted.get("review_case_id"), clock
+            )
+        else:  # pragma: no cover - the ladder above is exhaustive here
+            raise AssertionError(action.stage)
+
+    scan_state = repository._connection.execute(
+        "SELECT state FROM review_preparation_scans"
+    ).fetchone()
+    progress = repository.review_pipeline_progress("primary", "ebooks")
+    pointer = repository._connection.execute(
+        "SELECT review_case_id,outcome FROM current_review_case_lineages "
+        "WHERE item_id='item-1'"
+    ).fetchone()
+    packages = repository._connection.execute(
+        "SELECT item_id,outcome FROM current_review_packages ORDER BY item_id"
+    ).fetchall()
+    staged = repository._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_absences"
+    ).fetchone()
+    repository.close()
+
+    # The scan the audiobook rode in on is clean, ...
+    assert scan_state == ("completed",)
+    # ... the disappeared ebook was reconciled rather than discarded unread, ...
+    assert pointer == (None, "tombstoned")
+    assert staged == (0,)
+    assert [item for item, _outcome in packages] == ["audio-1", "item-2"]
+    # ... and nothing asks the owner to unblock a work that is already done.
+    assert progress is not None
+    assert progress.blocked == 0
+    assert dict(progress.stages)["failed"] == 0
