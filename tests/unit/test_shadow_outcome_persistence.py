@@ -42,6 +42,7 @@ from mechanical_librarian.application.configuration import (
     ReviewWebConfiguration,
     TargetConnectionConfiguration,
 )
+from mechanical_librarian.application.contained_reviewer_contract import COVER_MODEL
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
@@ -3064,7 +3065,7 @@ def test_composed_projection_reports_stale_profile_contract_before_dispatch() ->
                         "processes": 32,
                         "timeout_seconds": 30,
                     },
-                    "model": "reviewer",
+                    "model": COVER_MODEL,
                     "reasoning": "medium",
                     "sandbox": {
                         "path": str(root / "sandbox"),
