@@ -11,9 +11,14 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal
 
-from mechanical_librarian.domain.validation import bounded_utf8_text
+from mechanical_librarian.domain.validation import (
+    bounded_utf8_text,
+    non_negative_integer,
+    prefixed_hex_identity,
+)
 
 _preparation_display_name = bounded_utf8_text(2048)
+_preparation_run_identity = prefixed_hex_identity("preparation_run_")
 
 
 class PreparationPresentationError(RuntimeError):
@@ -69,9 +74,7 @@ class PreparationPassage:
     failed: int
 
     def __post_init__(self) -> None:
-        if any(
-            type(value) is not int or value < 0 for value in (self.ready, self.failed)
-        ):
+        if any(not non_negative_integer(value) for value in (self.ready, self.failed)):
             raise ValueError("preparation passage is invalid")
         values = (
             self.read,
@@ -80,7 +83,7 @@ class PreparationPassage:
             self.checked,
             self.ready,
         )
-        if any(type(value) is not int or value < 0 for value in values):
+        if any(not non_negative_integer(value) for value in values):
             raise ValueError("preparation passage is invalid")
         if any(values[index + 1] > values[index] for index in range(len(values) - 1)):
             raise ValueError("preparation passage is unordered")
@@ -107,7 +110,7 @@ class PreparationTriggerRecord:
         if (
             type(self.trigger) is not PreparationTrigger
             or any(
-                type(value) is not int or value < 0
+                not non_negative_integer(value)
                 for value in (
                     self.accepted_count,
                     self.first_accepted_at,
@@ -185,13 +188,7 @@ class PreparationPresentation:
 
     def __post_init__(self) -> None:
         if (
-            type(self.run_id) is not str
-            or not self.run_id.startswith("preparation_run_")
-            or len(self.run_id) != len("preparation_run_") + 64
-            or any(
-                character not in "0123456789abcdef"
-                for character in self.run_id.removeprefix("preparation_run_")
-            )
+            not _preparation_run_identity(self.run_id)
             or type(self.state) is not PreparationRunState
             or not self.triggers
             or len(self.triggers) > len(PreparationTrigger)
@@ -203,14 +200,14 @@ class PreparationPresentation:
             or type(self.throughput_per_minute) is not float
             or self.throughput_per_minute < 0
             or any(
-                type(value) is not int or value < 0
+                not non_negative_integer(value)
                 for value in (self.started_at, self.updated_at, self.total)
             )
             or self.updated_at < self.started_at
             or (
                 self.completed_at is not None
                 and (
-                    type(self.completed_at) is not int
+                    not non_negative_integer(self.completed_at)
                     or self.completed_at < self.started_at
                 )
             )

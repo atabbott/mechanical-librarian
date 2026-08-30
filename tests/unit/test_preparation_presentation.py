@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from mechanical_librarian.domain.preparation_presentation import (
@@ -115,6 +117,19 @@ def test_only_completed_presentation_is_dismissible() -> None:
     assert not _presentation().dismissible
     assert _presentation(state=PreparationRunState.COMPLETED_CLEAN).dismissible
     assert _presentation(state=PreparationRunState.COMPLETED_WITH_FAILURES).dismissible
+
+
+@pytest.mark.parametrize(
+    "run_id",
+    (
+        "preparation_run_" + "a" * 63,
+        "preparation_run_" + "A" * 64,
+        _StrSubclass("preparation_run_" + "a" * 64),
+    ),
+)
+def test_presentation_rejects_noncanonical_run_identity(run_id: str) -> None:
+    with pytest.raises(ValueError, match="preparation presentation is invalid"):
+        replace(_presentation(), run_id=run_id)
 
 
 def test_failed_outcomes_are_independent_but_all_counts_are_bounded_by_total() -> None:

@@ -528,15 +528,68 @@ def refresh_preparation_run_state(
 
 
 def mark_preparation_recovery(connection: sqlite3.Connection, scan_id: str) -> None:
-    """Retain visible high water while one exact enrolled cycle is rebound."""
-    connection.execute(
+    """Bind retained high water to its authoritative work inside recovery."""
+    enrollment_id = "enrollment:" + hashlib.sha256(scan_id.encode()).hexdigest()
+    enrollment = connection.execute(
+        "SELECT cycle_id FROM review_preparation_presentation WHERE row_id=? "
+        "AND row_kind='enrollment' AND scan_id=? AND cycle_id IS NOT NULL "
+        "AND cycle_state NOT IN ('completed','completed_with_failures')",
+        (enrollment_id, scan_id),
+    ).fetchone()
+    if enrollment is None:
+        return
+    cycle_id = cast(str, enrollment[0])
+    authoritative = connection.execute(
+        "UPDATE review_preparation_work AS authoritative SET "
+        "presentation_recovery_cycle_id=?,"
+        "presentation_recovery_stage=presentation.work_stage,"
+        "presentation_recovery_outcome=presentation.work_outcome "
+        "FROM review_preparation_presentation AS presentation "
+        "WHERE authoritative.scan_id=? "
+        "AND presentation.row_id='work:'||authoritative.work_id "
+        "AND NOT (presentation.work_stage='extraction' AND presentation.work_outcome IS NULL)",
+        (cycle_id, scan_id),
+    )
+    presentation = connection.execute(
         "UPDATE review_preparation_presentation SET "
-        "recovery_high_water_stage=work_stage,recovery_high_water_outcome=work_outcome,"
-        "current_work_state='queued' WHERE row_kind='work' AND scan_id=? "
-        "AND EXISTS(SELECT 1 FROM review_preparation_presentation AS enrollment "
-        "WHERE enrollment.row_kind='enrollment' AND enrollment.scan_id=? "
-        "AND enrollment.cycle_id=review_preparation_presentation.cycle_id)",
-        (scan_id, scan_id),
+        "recovery_high_water_stage=work_stage,recovery_high_water_outcome=work_outcome "
+        "WHERE scan_id=? "
+        "AND NOT (work_stage='extraction' AND work_outcome IS NULL)",
+        (scan_id,),
+    )
+    if authoritative.rowcount != presentation.rowcount:
+        raise MetadataReportError("review preparation persistence failed") from None
+
+
+def _retained_recovery_diverges(
+    observed_stage: str,
+    observed_outcome: str | None,
+    retained_stage: str | None,
+    retained_outcome: str | None,
+) -> bool:
+    """Report whether an authoritative observation remains below retained truth."""
+    return retained_stage is not None and (
+        _STAGE_ORDER[observed_stage] < _STAGE_ORDER[retained_stage]
+        or (retained_outcome is not None and observed_outcome != retained_outcome)
+    )
+
+
+def _clear_preparation_recovery(
+    connection: sqlite3.Connection, scan_id: str, cycle_id: str | None
+) -> None:
+    """Remove both halves of one exact cycle's recovery witness."""
+    if cycle_id is None:
+        return
+    connection.execute(
+        "UPDATE review_preparation_work SET presentation_recovery_cycle_id=NULL,"
+        "presentation_recovery_stage=NULL,presentation_recovery_outcome=NULL "
+        "WHERE scan_id=? AND presentation_recovery_cycle_id=?",
+        (scan_id, cycle_id),
+    )
+    connection.execute(
+        "UPDATE review_preparation_presentation SET recovery_high_water_stage=NULL,"
+        "recovery_high_water_outcome=NULL WHERE row_kind='work' AND scan_id=? AND cycle_id=?",
+        (scan_id, cycle_id),
     )
 
 
@@ -549,6 +602,7 @@ def _adopt_enrollment_states(connection: sqlite3.Connection, updated_at: int) ->
     ).fetchall()
     for row_id, scan_id, cycle_id, pending_cycle_id, cycle_state, scan_state in rows:
         if pending_cycle_id is not None and scan_state == "queued":
+            _clear_preparation_recovery(connection, scan_id, cycle_id)
             connection.execute(
                 "UPDATE review_preparation_presentation SET cycle_id=? "
                 "WHERE row_kind='work' AND scan_id=? AND cycle_id=?",
@@ -563,6 +617,7 @@ def _adopt_enrollment_states(connection: sqlite3.Connection, updated_at: int) ->
             "completed",
             "completed_with_failures",
         }:
+            _clear_preparation_recovery(connection, scan_id, cycle_id)
             connection.execute(
                 "UPDATE review_preparation_presentation SET pending_cycle_id=NULL,"
                 "cycle_state=?,updated_at=? WHERE row_id=?",
@@ -572,6 +627,8 @@ def _adopt_enrollment_states(connection: sqlite3.Connection, updated_at: int) ->
             "completed",
             "completed_with_failures",
         }:
+            if scan_state in {"completed", "completed_with_failures"}:
+                _clear_preparation_recovery(connection, scan_id, cycle_id)
             connection.execute(
                 "UPDATE review_preparation_presentation SET cycle_state=?,updated_at=? WHERE row_id=?",
                 (scan_state, updated_at, row_id),
@@ -598,7 +655,7 @@ def refresh_preparation_work(
     """Advance one enrolled work's high water in a fixed number of queries."""
     presentation = connection.execute(
         "SELECT work.run_id,work.work_stage,work.work_outcome,work.updated_at,work.current_work_state,work.completion_sequence,"
-        "work.recovery_high_water_stage,work.recovery_high_water_outcome "
+        "work.recovery_high_water_stage,work.recovery_high_water_outcome,work.cycle_id "
         "FROM review_preparation_presentation AS work JOIN review_preparation_presentation AS enrollment "
         "ON enrollment.row_kind='enrollment' AND enrollment.scan_id=work.scan_id "
         "AND enrollment.cycle_id=work.cycle_id AND enrollment.cycle_state NOT IN ('completed','completed_with_failures') "
@@ -608,7 +665,9 @@ def refresh_preparation_work(
     if presentation is None:
         return
     authoritative = connection.execute(
-        "SELECT stage,state,updated_at,failure_code FROM review_preparation_work WHERE work_id=?",
+        "SELECT stage,state,updated_at,failure_code,scan_id,presentation_recovery_cycle_id,"
+        "presentation_recovery_stage,presentation_recovery_outcome "
+        "FROM review_preparation_work WHERE work_id=?",
         (work_id,),
     ).fetchone()
     if authoritative is None:
@@ -625,10 +684,34 @@ def refresh_preparation_work(
     old_outcome = cast(str | None, presentation[2])
     outcome = old_outcome or observed_outcome
     marker_stage, marker_outcome = presentation[6:8]
-    recovered = marker_stage is not None and (
-        _STAGE_ORDER[new_stage] >= _STAGE_ORDER[marker_stage]
-        and (marker_outcome is None or observed_outcome == marker_outcome)
+    witness_cycle, witness_stage, witness_outcome = authoritative[5:8]
+    witnessed = witness_cycle is not None
+    if (marker_stage is not None) != witnessed or (
+        witnessed
+        and (
+            witness_cycle != presentation[8]
+            or witness_stage != marker_stage
+            or witness_outcome != marker_outcome
+        )
+    ):
+        raise MetadataReportError("review preparation persistence failed") from None
+    recovered = witnessed and not _retained_recovery_diverges(
+        new_stage, observed_outcome, marker_stage, marker_outcome
     )
+    if recovered:
+        connection.execute(
+            "UPDATE review_preparation_work SET presentation_recovery_cycle_id=NULL,"
+            "presentation_recovery_stage=NULL,presentation_recovery_outcome=NULL "
+            "WHERE work_id=?",
+            (work_id,),
+        )
+    elif witnessed:
+        marker_stage, marker_outcome = high_stage, outcome
+        connection.execute(
+            "UPDATE review_preparation_work SET presentation_recovery_stage=?,"
+            "presentation_recovery_outcome=? WHERE work_id=?",
+            (marker_stage, marker_outcome, work_id),
+        )
     outcome_at = presentation[3] if old_outcome is not None else authoritative[2]
     completion_sequence = presentation[5]
     if old_outcome is None and outcome is not None:
@@ -698,8 +781,10 @@ def _refresh_preparation_presentation(
     _delete_preparation_work_rows(connection, run_id, orphaned)
     work_rows = connection.execute(
         "SELECT presentation.row_id,presentation.work_stage,presentation.work_outcome,presentation.updated_at,presentation.completion_sequence,"
-        "presentation.recovery_high_water_stage,presentation.recovery_high_water_outcome,"
-        "work.stage,work.state,work.updated_at,work.failure_code FROM review_preparation_presentation AS presentation "
+        "presentation.recovery_high_water_stage,presentation.recovery_high_water_outcome,presentation.cycle_id,"
+        "work.work_id,work.stage,work.state,work.updated_at,work.failure_code,"
+        "work.presentation_recovery_cycle_id,work.presentation_recovery_stage,work.presentation_recovery_outcome "
+        "FROM review_preparation_presentation AS presentation "
         "JOIN review_preparation_work AS work ON work.work_id=presentation.work_id "
         "JOIN review_preparation_presentation AS enrollment ON enrollment.row_kind='enrollment' "
         "AND enrollment.scan_id=presentation.scan_id AND enrollment.cycle_id=presentation.cycle_id "
@@ -722,10 +807,15 @@ def _refresh_preparation_presentation(
             _completion_sequence,
             _marker_stage,
             _marker_outcome,
+            _cycle_id,
+            _work_id,
             current_stage,
             current_state,
             _work_updated_at,
             failure_code,
+            _witness_cycle,
+            _witness_stage,
+            _witness_outcome,
         ) in work_rows
     )
     if new_completion_count > _SQLITE_INTEGER_MAXIMUM - 1 - completion_count:
@@ -739,20 +829,48 @@ def _refresh_preparation_presentation(
         completion_sequence,
         marker_stage,
         marker_outcome,
+        cycle_id,
+        work_id,
         current_stage,
         current_state,
         work_updated_at,
         failure_code,
+        witness_cycle,
+        witness_stage,
+        witness_outcome,
     ) in work_rows:
         current_stage, observed_outcome = _presentation_observation(
             current_stage, current_state, failure_code
         )
         stage = max((old_stage, current_stage), key=lambda value: _STAGE_ORDER[value])
         outcome = old_outcome or observed_outcome
-        recovered = marker_stage is not None and (
-            _STAGE_ORDER[current_stage] >= _STAGE_ORDER[marker_stage]
-            and (marker_outcome is None or observed_outcome == marker_outcome)
+        witnessed = witness_cycle is not None
+        if (marker_stage is not None) != witnessed or (
+            witnessed
+            and (
+                witness_cycle != cycle_id
+                or witness_stage != marker_stage
+                or witness_outcome != marker_outcome
+            )
+        ):
+            raise MetadataReportError("review preparation persistence failed") from None
+        recovered = witnessed and not _retained_recovery_diverges(
+            current_stage, observed_outcome, marker_stage, marker_outcome
         )
+        if recovered:
+            connection.execute(
+                "UPDATE review_preparation_work SET presentation_recovery_cycle_id=NULL,"
+                "presentation_recovery_stage=NULL,presentation_recovery_outcome=NULL "
+                "WHERE work_id=?",
+                (work_id,),
+            )
+        elif witnessed:
+            marker_stage, marker_outcome = stage, outcome
+            connection.execute(
+                "UPDATE review_preparation_work SET presentation_recovery_stage=?,"
+                "presentation_recovery_outcome=? WHERE work_id=?",
+                (marker_stage, marker_outcome, work_id),
+            )
         if old_outcome is None and outcome is not None:
             completion_sequence = next_completion_sequence
             next_completion_sequence += 1
@@ -783,7 +901,7 @@ def _refresh_preparation_presentation(
     )
     active_count = sum(
         current_state == "running"
-        for _row_id, _old_stage, outcome, _old_updated_at, _completion_sequence, _marker_stage, _marker_outcome, _current_stage, current_state, _work_updated_at, _failure_code in work_rows
+        for _row_id, _old_stage, outcome, _old_updated_at, _completion_sequence, _marker_stage, _marker_outcome, _cycle_id, _work_id, _current_stage, current_state, _work_updated_at, _failure_code, _witness_cycle, _witness_stage, _witness_outcome in work_rows
     )
     connection.execute(
         "UPDATE review_preparation_presentation SET total=?,read=?,searches_finished=?,"
@@ -1413,6 +1531,7 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
             }
             retained_passage = [0, 0, 0, 0, 0, 0]
             work_count = 0
+            witnessed_work_ids: set[str] = set()
             for (
                 scan_id,
                 cycle_id,
@@ -1439,7 +1558,9 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                 if row_id != "work:" + cast(str, work_id):
                     raise ValueError("noncanonical presentation work identity")
                 authoritative = connection.execute(
-                    "SELECT scan_id,ordinal,stage,state,updated_at,failure_code "
+                    "SELECT scan_id,ordinal,stage,state,updated_at,failure_code,"
+                    "presentation_recovery_cycle_id,presentation_recovery_stage,"
+                    "presentation_recovery_outcome "
                     "FROM review_preparation_work WHERE work_id=?",
                     (work_id,),
                 ).fetchone()
@@ -1460,14 +1581,42 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                     presentation_rank = _STAGE_ORDER[work_stage]
                     observed_rank = _STAGE_ORDER[observed_stage]
                     recovery = recovery_stage is not None
-                    if recovery and (
-                        recovery_stage != work_stage
-                        or recovery_outcome != work_outcome
-                        or current_state != "queued"
-                        or authoritative[3] != "queued"
-                        or observed_rank >= presentation_rank
+                    witness_cycle, witness_stage, witness_outcome = authoritative[6:9]
+                    witnessed = witness_cycle is not None
+                    if (
+                        (witness_cycle is None) != (witness_stage is None)
+                        or (witness_cycle is None and witness_outcome is not None)
+                        or recovery != witnessed
+                        or (
+                            witnessed
+                            and (
+                                enrollment[2]
+                                or not preparation_cycle_identity(witness_cycle)
+                                or witness_cycle != cycle_id
+                                or type(witness_stage) is not str
+                                or witness_stage not in _STAGE_ORDER
+                                or witness_stage != recovery_stage
+                                or (
+                                    witness_outcome is not None
+                                    and type(witness_outcome) is not str
+                                )
+                                or witness_outcome not in {None, "ready", "failed"}
+                                or witness_outcome != recovery_outcome
+                                or recovery_stage != work_stage
+                                or recovery_outcome != work_outcome
+                                or current_state != authoritative[3]
+                                or not _retained_recovery_diverges(
+                                    observed_stage,
+                                    observed_outcome,
+                                    recovery_stage,
+                                    recovery_outcome,
+                                )
+                            )
+                        )
                     ):
                         raise ValueError("invalid preparation recovery high water")
+                    if witnessed:
+                        witnessed_work_ids.add(cast(str, work_id))
                     if (
                         (presentation_rank < observed_rank and not enrollment[2])
                         or (
@@ -1496,6 +1645,16 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                 retained_passage[4] += work_outcome == "ready"
                 retained_passage[5] += work_outcome == "failed"
                 work_count += 1
+            if any(
+                work_id not in witnessed_work_ids
+                for (work_id,) in connection.execute(
+                    "SELECT work_id FROM review_preparation_work WHERE "
+                    "presentation_recovery_cycle_id IS NOT NULL OR "
+                    "presentation_recovery_stage IS NOT NULL OR "
+                    "presentation_recovery_outcome IS NOT NULL"
+                )
+            ):
+                raise ValueError("orphan preparation recovery witness")
             if (
                 any(
                     actual < minimum

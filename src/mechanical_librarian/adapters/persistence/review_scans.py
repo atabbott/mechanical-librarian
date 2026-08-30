@@ -40,6 +40,10 @@ from mechanical_librarian.application.review_pipeline import (
     pipeline_scan_id,
 )
 from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
+from mechanical_librarian.domain.validation import (
+    non_negative_integer,
+    prefixed_hex_identity,
+)
 
 # The eight buckets #641 names, expressed once over the two persisted columns
 # that decide them. Order is the order an owner reads them in: the work has not
@@ -69,6 +73,7 @@ _STAGE_COUNT_SQL = ",".join(
 
 
 _EMPTY_STAGES = tuple((name, 0) for name, _predicate in _STAGE_BUCKETS)
+_preparation_fingerprint = prefixed_hex_identity("")
 
 
 def _stages(row: tuple[object, ...], offset: int) -> tuple[tuple[str, int], ...]:
@@ -156,14 +161,8 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 type(value) is not str or not 1 <= len(value) <= 128
                 for value in (connection, library, library_id)
             )
-            or type(producer_fingerprint) is not str
-            or len(producer_fingerprint) != 64
-            or any(
-                character not in "0123456789abcdef"
-                for character in producer_fingerprint
-            )
-            or type(requested_at) is not int
-            or requested_at < 0
+            or not _preparation_fingerprint(producer_fingerprint)
+            or not non_negative_integer(requested_at)
             or (trigger is not None and type(trigger) is not PreparationTrigger)
         ):
             raise MetadataReportError("review preparation request is invalid")
@@ -552,8 +551,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
         if (
             type(libraries) is not tuple
             or len(libraries) > 128
-            or type(updated_at) is not int
-            or updated_at < 0
+            or not non_negative_integer(updated_at)
             or any(
                 type(item) is not tuple
                 or len(item) != 4
@@ -562,7 +560,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                     for value in item[:3]
                 )
                 or len(item[3]) != 64
-                or any(character not in "0123456789abcdef" for character in item[3])
+                or not _preparation_fingerprint(item[3])
                 for item in libraries
             )
         ):
@@ -744,10 +742,13 @@ class SQLiteReviewScanRepository(ConnectionScoped):
         except BaseException as error:
             transaction.rollback()
             if isinstance(error, sqlite3.Error):
-                raise MetadataReportError(
-                    "review preparation recovery failed"
-                ) from None
-            raise
+                sqlite_failure = True
+            else:
+                raise
+        else:
+            sqlite_failure = False
+        if sqlite_failure:
+            raise MetadataReportError("review preparation recovery failed") from None
 
     def target_connection_conditions(self) -> tuple[TargetConnectionCondition, ...]:
         try:

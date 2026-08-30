@@ -275,7 +275,10 @@ work that has no coherent package is represented separately with safe recovery
 context and cannot create a review case.
 
 Claims are persisted before work. Restart changes discovering and running
-claims back to queued without inventing a result. Two fixed claimers have no
+claims back to queued without inventing a result. When changed configuration
+also resets work to extraction, the authoritative work row witnesses the exact
+presentation cycle and retained stage/outcome until ordinary progress catches
+up; marker and witness are committed and cleared together. Two fixed claimers have no
 library-wide stage barrier, while catalogue publication and each shared
 provider pacer serialize their own global state. A complete enumeration stages
 candidates for either the fixed

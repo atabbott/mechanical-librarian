@@ -89,7 +89,10 @@ Settings additions persist their bounded presentation-only intent in the same
 writer transaction as the new revision and secrets. Worker admission follows
 only after publication and an all-or-nothing intent drain; startup validation
 rejects stale target/revision bindings, recovery markers, and noncanonical
-completion authority without reflecting corrupted values.
+completion authority without reflecting corrupted values. A recovery marker is
+valid only with its exact-current authoritative work-cycle witness; this is a
+semantic consistency boundary, not cryptographic tamper evidence. Earlier
+pre-release schema state requires a clean rebuild and is never repaired.
 Target TLS, authentication, authorization, and unavailable observations
 are connection-scoped durable conditions with only a closed code, state, epoch,
 and affected-work count. Owner recovery is CSRF-bound and probes the configured

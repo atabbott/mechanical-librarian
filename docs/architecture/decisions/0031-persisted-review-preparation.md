@@ -95,6 +95,8 @@ apply plan, or write a target or media file.
 ### Positive
 
 - Restart and duplicate requests cannot lose or duplicate durable work.
+- Restart recovery retains owner-visible high water only while the exact
+  authoritative work cycle carries its matching semantic witness.
 - A slow work does not impose a library-wide stage barrier.
 - Existing report, proposal, admission, provider-pacing, and review contracts
   remain the only semantic authorities.
@@ -105,7 +107,7 @@ apply plan, or write a target or media file.
 ### Negative
 
 - The exact-current pre-release database schema changes and older stores need a
-  clean rebuild.
+  clean rebuild; recovery witnesses are validated without migration or repair.
 - `review-serve` now requires explicit catalogue and artifact-store paths.
 - Two long-lived worker threads and operational SQLite rows exist while the
   review server is running.

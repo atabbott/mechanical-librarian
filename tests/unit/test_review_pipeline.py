@@ -24,12 +24,16 @@ from mechanical_librarian.adapters.persistence.metadata_reports import open_repo
 from mechanical_librarian.adapters.persistence.preparation_presentation import (
     _completion_sequence_count,
     deferred_preparation_enrollment_id,
+    mark_preparation_recovery,
     refresh_preparation_presentation,
     refresh_preparation_run_state,
     refresh_preparation_work,
 )
 from mechanical_librarian.adapters.persistence.review_preparation import (
     _FAILURE_CODES,
+)
+from mechanical_librarian.adapters.persistence.review_scans import (
+    SQLiteReviewScanRepository,
 )
 from mechanical_librarian.adapters.persistence.schema import _REVIEW_WORK_SQL
 from mechanical_librarian.application.catalogue import (
@@ -102,6 +106,18 @@ from mechanical_librarian.domain.review_browse import browse_report
 from tests.support.review_cases import _report
 
 _PRODUCER = "f" * 64
+
+
+class _ReviewText(str):
+    pass
+
+
+class _ReviewInteger(int):
+    pass
+
+
+class _UnsizedFingerprint:
+    pass
 
 
 def _install_settings_authority(repository: object) -> None:
@@ -437,6 +453,44 @@ def test_only_accepted_owner_trigger_creates_or_replaces_visible_run(
     assert [item.trigger for item in replacement.triggers] == [
         PreparationTrigger.LIBRARY_ADDED
     ]
+
+
+def test_review_scan_request_reuses_exact_bounded_validation(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 0)
+
+    for connection, requested_at in (
+        (_ReviewText("primary"), 1),
+        ("x" * 129, 1),
+        ("primary", True),
+        ("primary", _ReviewInteger(1)),
+        ("primary", -1),
+    ):
+        with pytest.raises(
+            MetadataReportError, match="^review preparation request is invalid$"
+        ):
+            repository.request_review_scan(
+                connection, "other", "lib-2", _PRODUCER, requested_at
+            )
+    repository.close()
+
+
+def test_review_scope_preserves_short_circuit_and_unsized_failure_identity() -> None:
+    assert SQLiteReviewScanRepository._validated_library_scope(
+        (("界" * 128, "界" * 128, "界" * 128, _PRODUCER),), 0
+    )
+    with pytest.raises(
+        MetadataReportError, match="review preparation scope is invalid"
+    ):
+        SQLiteReviewScanRepository._validated_library_scope(
+            (("", "fiction", "lib-1", _UnsizedFingerprint()),), 0
+        )
+    with pytest.raises(TypeError):
+        SQLiteReviewScanRepository._validated_library_scope(
+            (("primary", "fiction", "lib-1", _UnsizedFingerprint()),), 0
+        )
 
 
 def test_terminal_trigger_replacement_starts_queued_and_reopens_current(
@@ -2330,6 +2384,45 @@ def test_recovery_rolls_back_unexpected_failure_and_releases_writer(
         )
 
     assert raised.value is fault
+    assert repository._connection.in_transaction is False
+    assert (
+        tuple(repository._connection.execute("SELECT * FROM review_preparation_scans"))
+        == before
+    )
+    second = sqlite3.connect(application_path, timeout=0)
+    second.execute("BEGIN IMMEDIATE")
+    second.rollback()
+    second.close()
+    repository.close()
+
+
+def test_recovery_translates_sqlite_failure_without_private_context(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 100)
+    action = repository.claim_review_pipeline_action(101)
+    assert action is not None
+    before = tuple(
+        repository._connection.execute("SELECT * FROM review_preparation_scans")
+    )
+
+    with (
+        patch(
+            "mechanical_librarian.adapters.persistence.review_scans.refresh_preparation_presentation",
+            side_effect=sqlite3.OperationalError("/private/library/database.sqlite3"),
+        ),
+        pytest.raises(
+            MetadataReportError, match="^review preparation recovery failed$"
+        ) as raised,
+    ):
+        repository.recover_review_pipeline(
+            (("primary", "fiction", "lib-1", _PRODUCER),)
+        )
+
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert "/private/library" not in str(raised.value)
     assert repository._connection.in_transaction is False
     assert (
         tuple(repository._connection.execute("SELECT * FROM review_preparation_scans"))
@@ -4947,29 +5040,246 @@ def test_recovery_high_water_reopens_and_clears_when_authority_catches_up(
         (("primary", "fiction", "lib-2", changed_producer),)
     )
     marked = repository._connection.execute(
-        "SELECT work_stage,current_work_state,recovery_high_water_stage,"
-        "recovery_high_water_outcome FROM review_preparation_presentation "
-        "WHERE row_kind='work'"
+        "SELECT presentation.work_stage,presentation.current_work_state,"
+        "presentation.recovery_high_water_stage,presentation.recovery_high_water_outcome,"
+        "authoritative.presentation_recovery_cycle_id,"
+        "authoritative.presentation_recovery_stage,authoritative.presentation_recovery_outcome "
+        "FROM review_preparation_presentation AS presentation "
+        "JOIN review_preparation_work AS authoritative USING(work_id) "
+        "WHERE presentation.row_kind='work'"
     ).fetchone()
     repository.close()
 
     reopened = open_repository(application_path, create=False)
-    assert marked == ("provider", "queued", "provider", None)
+    assert marked[:4] == ("provider", "queued", "provider", None)
+    assert marked[4] is not None and marked[5:] == ("provider", None)
     rediscovery = reopened.claim_review_pipeline_action(105)
     assert rediscovery is not None and rediscovery.stage == "discovery"
     reopened.complete_review_discovery(
         rediscovery, 2, "b" * 64, (replace(entry, library_id="lib-2"),), 106
     )
+    retained = reopened._connection.execute(
+        "SELECT presentation_recovery_stage,presentation_recovery_outcome "
+        "FROM review_preparation_work"
+    ).fetchone()
+    reopened.close()
+
+    assert retained == ("provider", None)
+    reopened = open_repository(application_path, create=False)
     extraction = reopened.claim_review_pipeline_action(107)
     assert extraction is not None and extraction.stage == "extraction"
     reopened.advance_review_pipeline_action(extraction, None, 108)
     caught_up = reopened._connection.execute(
-        "SELECT work_stage,recovery_high_water_stage,recovery_high_water_outcome "
-        "FROM review_preparation_presentation WHERE row_kind='work'"
+        "SELECT presentation.work_stage,presentation.recovery_high_water_stage,"
+        "presentation.recovery_high_water_outcome,authoritative.presentation_recovery_cycle_id,"
+        "authoritative.presentation_recovery_stage,authoritative.presentation_recovery_outcome "
+        "FROM review_preparation_presentation AS presentation "
+        "JOIN review_preparation_work AS authoritative USING(work_id) "
+        "WHERE presentation.row_kind='work'"
     ).fetchone()
     reopened.close()
 
-    assert caught_up == ("provider", None, None)
+    assert caught_up == ("provider", None, None, None, None, None)
+
+
+def test_recovery_witness_retains_a_failed_outcome_across_reopen(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery,
+        1,
+        "a" * 64,
+        (_entry("failed", "7" * 64), _entry("pending", "8" * 64)),
+        102,
+    )
+    extraction = repository.claim_review_pipeline_action(103)
+    assert extraction is not None and extraction.stage == "extraction"
+    repository.advance_review_pipeline_action(extraction, None, 104)
+    provider = repository.claim_review_pipeline_action(105)
+    assert provider is not None and provider.stage == "provider"
+    repository.fail_review_pipeline_action(provider, "provider", False, 106)
+    repository.recover_review_pipeline((("primary", "fiction", "lib-2", "d" * 64),))
+    retained = repository._connection.execute(
+        "SELECT presentation.work_stage,presentation.work_outcome,"
+        "presentation.recovery_high_water_stage,presentation.recovery_high_water_outcome,"
+        "authoritative.presentation_recovery_stage,"
+        "authoritative.presentation_recovery_outcome "
+        "FROM review_preparation_presentation AS presentation "
+        "JOIN review_preparation_work AS authoritative USING(work_id) "
+        "WHERE presentation.row_kind='work' AND presentation.work_outcome='failed'"
+    ).fetchone()
+    repository.close()
+
+    assert retained == (
+        "provider",
+        "failed",
+        "provider",
+        "failed",
+        "provider",
+        "failed",
+    )
+    reopened = open_repository(application_path, create=False)
+    assert reopened.preparation_presentation(107) is not None
+    reopened.close()
+
+
+def _seed_recovery_witness(path: Path) -> None:
+    repository = open_repository(path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry("recovery", "7" * 64),), 102
+    )
+    extraction = repository.claim_review_pipeline_action(103)
+    assert extraction is not None
+    repository.advance_review_pipeline_action(extraction, None, 104)
+    repository.recover_review_pipeline((("primary", "fiction", "lib-2", "d" * 64),))
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "UPDATE review_preparation_work SET presentation_recovery_cycle_id=NULL,"
+        "presentation_recovery_stage=NULL,presentation_recovery_outcome=NULL",
+        "UPDATE review_preparation_presentation SET recovery_high_water_stage=NULL,"
+        "recovery_high_water_outcome=NULL WHERE row_kind='work'",
+        "UPDATE review_preparation_work SET presentation_recovery_cycle_id=NULL,"
+        "presentation_recovery_stage=NULL,presentation_recovery_outcome=NULL;"
+        "UPDATE review_preparation_presentation SET recovery_high_water_stage=NULL,"
+        "recovery_high_water_outcome=NULL WHERE row_kind='work'",
+        "UPDATE review_preparation_work SET presentation_recovery_cycle_id=NULL",
+        "UPDATE review_preparation_work SET presentation_recovery_cycle_id='preparation_cycle_'||printf('%064x',2)",
+        "UPDATE review_preparation_work SET presentation_recovery_stage='proposal'",
+        "UPDATE review_preparation_work SET presentation_recovery_outcome='ready'",
+        "UPDATE review_preparation_presentation SET recovery_high_water_stage='proposal' "
+        "WHERE row_kind='work'",
+        "UPDATE review_preparation_work SET stage='provider',state='queued'",
+        "UPDATE review_preparation_work SET stage='proposal',state='queued'",
+        "UPDATE review_preparation_work SET presentation_recovery_stage=1.5",
+        "UPDATE review_preparation_work SET presentation_recovery_cycle_id='private-cycle'",
+        "UPDATE review_preparation_work SET scan_id='review_scan_'||printf('%064x',9)",
+    ),
+    ids=(
+        "marker-only",
+        "witness-only",
+        "progression-without-witness",
+        "partial-witness",
+        "wrong-cycle",
+        "stage-disagreement",
+        "outcome-disagreement",
+        "pair-disagreement",
+        "unnecessary-pair",
+        "marker-below-authority",
+        "real-stage",
+        "malformed-cycle",
+        "wrong-scan-association",
+    ),
+)
+def test_recovery_witness_corruption_fails_closed_without_repair(
+    tmp_path: Path, mutation: str
+) -> None:
+    path = tmp_path / "invalid-recovery-witness.sqlite3"
+    _seed_recovery_witness(path)
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA ignore_check_constraints=ON")
+    if ";" in mutation:
+        connection.executescript(mutation)
+    else:
+        connection.execute(mutation)
+    connection.commit()
+    connection.close()
+
+    _assert_presentation_reopen_refuses_without_mutation(path)
+
+
+def test_recovery_marking_uses_two_set_based_linear_statements(tmp_path: Path) -> None:
+    def measured(population: int) -> tuple[int, int, tuple[str, ...]]:
+        repository = open_repository(tmp_path / f"recovery-scale-{population}.sqlite3")
+        progress = repository.request_review_scan(
+            "primary",
+            "fiction",
+            "lib-1",
+            _PRODUCER,
+            100,
+            trigger=PreparationTrigger.MANUAL_SCAN,
+        )
+        discovery = repository.claim_review_pipeline_action(101)
+        assert discovery is not None
+        repository.complete_review_discovery(
+            discovery,
+            1,
+            "a" * 64,
+            tuple(
+                _entry(f"Book {index}", f"{index:064x}")
+                for index in range(1, population + 1)
+            ),
+            102,
+        )
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET stage='provider',state='queued'"
+        )
+        repository._connection.execute(
+            "UPDATE review_preparation_presentation SET work_stage='provider' "
+            "WHERE row_kind='work'"
+        )
+        repository._connection.commit()
+        statements: list[str] = []
+        vm_steps = 0
+
+        def count_step() -> int:
+            nonlocal vm_steps
+            vm_steps += 1
+            return 0
+
+        repository._connection.set_trace_callback(statements.append)
+        repository._connection.set_progress_handler(count_step, 1)
+        mark_preparation_recovery(repository._connection, progress.scan_id)
+        repository._connection.set_progress_handler(None, 0)
+        repository._connection.set_trace_callback(None)
+        updates = tuple(
+            statement
+            for statement in statements
+            if statement.startswith("UPDATE review_")
+        )
+        repository._connection.rollback()
+        plan = tuple(
+            row[3]
+            for statement in updates
+            for row in repository._connection.execute("EXPLAIN QUERY PLAN " + statement)
+        )
+        repository.close()
+        return len(updates), vm_steps, plan
+
+    small_count, small_steps, small_plan = measured(1)
+    large_count, large_steps, large_plan = measured(2_000)
+    assert small_count == large_count == 2
+    assert small_plan == large_plan
+    assert all("TEMP B-TREE" not in row for row in large_plan)
+    assert large_steps <= small_steps + 200 * 2_000, (
+        small_steps,
+        large_steps,
+        large_plan,
+    )
 
 
 def test_third_crashed_stage_is_terminal_instead_of_overflowing_claim(
