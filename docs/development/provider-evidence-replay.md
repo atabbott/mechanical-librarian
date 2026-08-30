@@ -42,11 +42,16 @@ uv run python scripts/qualify_provider_evidence_replay.py replay \
   --output-directory ABSOLUTE_EMPTY_PRIVATE_REPLAY_DIRECTORY
 ```
 
-All private parents must already exist, belong to the current owner, and grant
-no group or other access. Inputs must be regular, owner-only, singly linked
-files with no database sidecars. Output directories must be empty. The command
-creates fixed names exclusively and never overwrites or deletes an incumbent.
-An interrupted or ambiguous run requires explicit private recovery before a new
+The checkout must have no tracked or untracked change at the named head. Ignored
+private qualification artifacts remain outside that source identity.
+
+Input leaves and output directories must belong to the current owner and grant
+no group or other access. A configuration's complete ancestor chain must contain
+no symlink or group/world-writable non-sticky directory, and the descriptor-bound
+document that passed those checks is the document parsed. Database inputs must
+also have no sidecars. Output directories must be empty. The command creates
+fixed names exclusively and never overwrites or deletes an incumbent. An
+interrupted or ambiguous run requires explicit private recovery before a new
 directory is used.
 
 ## Selection and outputs
@@ -76,9 +81,11 @@ name and adapter, canonical request, exact bounded response stream, capture
 time, private source seed, and live/current report and proposal digests. Replay
 also binds its source head and resulting database digest.
 
-A changed configured provider name/adapter or canonical current request yields a
-provider-scoped `provider_contract_changed` or `request_contract_changed`
-invalidation. Replay continues only with unaffected providers for that report.
+A removed or changed configured provider name/adapter, a newly enabled provider
+without captured evidence, or a changed canonical current request yields a
+provider-scoped `provider_contract_changed`, `provider_evidence_missing`, or
+`request_contract_changed` invalidation. Replay continues only with unaffected
+providers for that report.
 Malformed, oversized, noncanonical, tampered, unsafe, or endpoint-unconfined
 evidence fails the whole command. At the exact capture head, any otherwise
 unexplained report/proposal difference fails rather than being reclassified as
