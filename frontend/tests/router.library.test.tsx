@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider, QueryObserver } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -154,9 +154,9 @@ describe('Library route', () => {
       },
     }
     act(() => {
-      queryClient.setQueryData(['review-preparation'], changedDuringOutage)
       releaseOlderFetch(changedDuringOutage)
     })
+    expect(queryClient.getQueryData(['review-preparation'])).toBe(confirmed)
     expect(screen.getByText('Private title')).toBeVisible()
     expect(screen.queryByText('Unconfirmed title')).toBeNull()
     await act(async () => new Promise((resolve) => window.setTimeout(resolve, 1_600)))
@@ -171,15 +171,10 @@ describe('Library route', () => {
     act(() => updates.setState('live'))
     expect(screen.getByText(/Reconnecting · showing the last confirmed state/u)).toBeVisible()
     await waitFor(() => expect(releaseRefresh).toBeTypeOf('function'))
-    act(() => {
-      queryClient.setQueryData(['review-preparation'], {
-        ...confirmed,
-        presentation: { ...confirmedPresentation, updated_at: 999 },
-      })
-    })
     expect(screen.getByText(/Reconnecting · showing the last confirmed state/u)).toBeVisible()
     act(() => updates.setState('degraded'))
     await act(async () => releaseRefresh(changedDuringOutage))
+    expect(queryClient.getQueryData(['review-preparation'])).toBe(confirmed)
     expect(screen.getByText('Private title')).toBeVisible()
     expect(screen.queryByText('Unconfirmed title')).toBeNull()
     act(() => updates.setState('live'))
@@ -255,7 +250,7 @@ describe('Library route', () => {
   })
 
   it.each(['pointer', 'Enter', 'Space'])(
-    'adopts one reconnecting dismissal by %s without refetching and restores the selected work',
+    'adopts one reconnecting dismissal by %s before its one reconciliation read settles',
     async (interaction) => {
       const user = userEvent.setup()
       const http = createHttp()
@@ -266,7 +261,16 @@ describe('Library route', () => {
         ...confirmed,
         presentation: { ...confirmed.presentation, state: 'dismissed', dismissible: false },
       }
-      http.getPreparation = vi.fn(async () => confirmed)
+      let releaseReconciliation!: (value: PreparationView) => void
+      http.getPreparation = vi
+        .fn<ReviewHttp['getPreparation']>()
+        .mockResolvedValueOnce(confirmed)
+        .mockImplementation(
+          () =>
+            new Promise((resolve) => {
+              releaseReconciliation = resolve
+            }),
+        )
       http.dismissPreparation = vi.fn(async () => dismissed)
       const { queryClient, router } = renderRoute(
         '/library?lens=all&preview=case-1&field=title',
@@ -286,9 +290,9 @@ describe('Library route', () => {
         confirmationGeneration: number
         state: string
         transport: string
-        frozen?: PreparationView
       }>(['review-preparation-reconnect'])
       const readsBeforeDismissal = vi.mocked(http.getPreparation).mock.calls.length
+      const invalidateQueries = vi.spyOn(queryClient, 'invalidateQueries')
 
       const dismissButton = screen.getByRole('button', { name: 'Dismiss preparation' })
       if (interaction === 'pointer') await user.click(dismissButton)
@@ -305,14 +309,10 @@ describe('Library route', () => {
       expect(queryClient.getQueryData(['review-preparation-reconnect'])).toEqual({
         ...reconnectBefore,
         epoch: (reconnectBefore?.epoch ?? 0) + 1,
-        confirmationGeneration: (reconnectBefore?.confirmationGeneration ?? 0) + 1,
+        confirmationGeneration: (reconnectBefore?.confirmationGeneration ?? 0) + 2,
         state: 'clear',
-        frozen: dismissed,
       })
-      expect(
-        queryClient.getQueryData<{ frozen?: PreparationView }>(['review-preparation-reconnect'])
-          ?.frozen,
-      ).toBe(dismissed)
+      expect(releaseReconciliation).toBeTypeOf('function')
       await waitFor(() =>
         expect(router.state.location.search).toEqual({
           lens: 'all',
@@ -324,141 +324,156 @@ describe('Library route', () => {
       if (interaction === 'pointer')
         await waitFor(() => expect(workHeading.closest('[data-route-focus]')).toHaveFocus())
       expect(screen.getByRole('button', { name: /Choose current value/u })).toBeEnabled()
-      expect(http.getPreparation).toHaveBeenCalledTimes(readsBeforeDismissal)
+      expect(http.getPreparation).toHaveBeenCalledTimes(readsBeforeDismissal + 1)
+      await act(async () => releaseReconciliation(dismissed))
+      expect(queryClient.getQueryData(['review-preparation'])).toBe(dismissed)
+      expect(http.getPreparation).toHaveBeenCalledTimes(readsBeforeDismissal + 1)
+      expect(invalidateQueries).not.toHaveBeenCalled()
+      expect(document.querySelector('.reported-change')).toBeNull()
     },
   )
 
   it.each([
     ['same-run', false],
     ['different-run', true],
-  ])('dismissal invalidates a held %s reconnect response', async (_case, differentRun) => {
-    vi.useFakeTimers({ shouldAdvanceTime: true })
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
-    const http = createHttp()
-    const updates = createLiveStream()
-    const runId = `preparation_run_${'d'.repeat(64)}`
-    const confirmed = terminalPreparation(runId)
-    const dismissed: PreparationView = {
-      ...confirmed,
-      presentation: { ...confirmed.presentation, state: 'dismissed', dismissible: false },
-    }
-    const successor = terminalPreparation(`preparation_run_${'b'.repeat(64)}`, 103)
-    let releaseReconnect!: (value: PreparationView) => void
-    http.getPreparation = vi
-      .fn<ReviewHttp['getPreparation']>()
-      .mockResolvedValueOnce(confirmed)
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            releaseReconnect = resolve
-          }),
+  ])(
+    'dismissal fences a held %s reconnect response before one read adopts a successor',
+    async (_case, differentRun) => {
+      const user = userEvent.setup()
+      const http = createHttp()
+      const updates = createLiveStream()
+      const runId = `preparation_run_${'d'.repeat(64)}`
+      const confirmed = terminalPreparation(runId)
+      const dismissed: PreparationView = {
+        ...confirmed,
+        presentation: { ...confirmed.presentation, state: 'dismissed', dismissible: false },
+      }
+      const successor = terminalPreparation(`preparation_run_${'b'.repeat(64)}`, 103)
+      let releaseReconnect!: (value: PreparationView) => void
+      http.getPreparation = vi
+        .fn<ReviewHttp['getPreparation']>()
+        .mockResolvedValueOnce(confirmed)
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              releaseReconnect = resolve
+            }),
+        )
+        .mockResolvedValue(successor)
+      http.dismissPreparation = vi.fn(async () => dismissed)
+      const { queryClient, router } = renderRoute(
+        '/library?lens=all&preview=case-1&field=title',
+        http,
+        updates,
       )
-      .mockResolvedValue(successor)
-    http.dismissPreparation = vi.fn(async () => dismissed)
-    const { queryClient, router } = renderRoute(
-      '/library?lens=all&preview=case-1&field=title',
-      http,
-      updates,
-    )
 
-    expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
-    await user.click(screen.getByRole('button', { name: /Preparing your library/u }))
-    act(() => updates.setState('degraded'))
-    expect(
-      await screen.findByText(/Reconnecting · showing the last confirmed state/u),
-    ).toBeVisible()
-    act(() => updates.setState('live'))
-    await waitFor(() => expect(releaseReconnect).toBeTypeOf('function'))
-    const reconnectBefore = queryClient.getQueryData<{
-      epoch: number
-      confirmationGeneration: number
-      state: string
-      transport: string
-      frozen?: PreparationView
-    }>(['review-preparation-reconnect'])
-    expect(reconnectBefore).toMatchObject({ state: 'refreshing', transport: 'live' })
-    const cancelQueries = vi.spyOn(queryClient, 'cancelQueries')
-    const invalidateQueries = vi.spyOn(queryClient, 'invalidateQueries')
-    const observedPairs: [PreparationView | undefined, PreparationView | undefined][] = []
-    const observer = new QueryObserver<PreparationView>(queryClient, {
-      queryKey: ['review-preparation'],
-    })
-    const unsubscribe = observer.subscribe(() => {
-      const primary = queryClient.getQueryData<PreparationView>(['review-preparation'])
-      const frozen = queryClient.getQueryData<{ frozen?: PreparationView }>([
-        'review-preparation-reconnect',
-      ])?.frozen
-      if (
-        primary === dismissed ||
-        frozen === dismissed ||
-        primary === successor ||
-        frozen === successor
-      )
-        observedPairs.push([primary, frozen])
-    })
-
-    try {
+      expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
+      await user.click(screen.getByRole('button', { name: /Preparing your library/u }))
+      act(() => updates.setState('degraded'))
+      expect(
+        await screen.findByText(/Reconnecting · showing the last confirmed state/u),
+      ).toBeVisible()
+      act(() => updates.setState('live'))
+      await waitFor(() => expect(releaseReconnect).toBeTypeOf('function'))
+      const reconnectBefore = queryClient.getQueryData<{
+        epoch: number
+        confirmationGeneration: number
+        state: string
+        transport: string
+      }>(['review-preparation-reconnect'])
+      expect(reconnectBefore).toMatchObject({ state: 'refreshing', transport: 'live' })
+      const cancelQueries = vi.spyOn(queryClient, 'cancelQueries')
+      const invalidateQueries = vi.spyOn(queryClient, 'invalidateQueries')
       await user.click(screen.getByRole('button', { name: 'Dismiss preparation' }))
-      await waitFor(() => expect(queryClient.getQueryData(['review-preparation'])).toBe(dismissed))
+      await waitFor(() => expect(queryClient.getQueryData(['review-preparation'])).toBe(successor))
       const reconnectAfter = queryClient.getQueryData<{
         epoch: number
         confirmationGeneration: number
         state: string
         transport: string
-        frozen?: PreparationView
       }>(['review-preparation-reconnect'])
       expect(reconnectAfter).toEqual({
         epoch: (reconnectBefore?.epoch ?? 0) + 1,
-        confirmationGeneration: (reconnectBefore?.confirmationGeneration ?? 0) + 1,
+        confirmationGeneration: (reconnectBefore?.confirmationGeneration ?? 0) + 2,
         state: 'clear',
         transport: 'live',
-        frozen: dismissed,
       })
-      expect(reconnectAfter?.frozen).toBe(dismissed)
       expect(cancelQueries).toHaveBeenCalledTimes(1)
       expect(cancelQueries).toHaveBeenCalledWith(
         { queryKey: ['review-preparation'], exact: true },
         { silent: true },
       )
 
-      await act(async () => {
-        releaseReconnect(differentRun ? successor : confirmed)
-        await vi.advanceTimersByTimeAsync(1_600)
-      })
-      expect(queryClient.getQueryData(['review-preparation'])).toBe(dismissed)
-      expect(
-        queryClient.getQueryData<{ frozen?: PreparationView }>(['review-preparation-reconnect'])
-          ?.frozen,
-      ).toBe(dismissed)
-      expect(screen.queryByRole('button', { name: /Preparing your library/u })).toBeNull()
-      expect(screen.queryByRole('heading', { name: 'Now preparing' })).toBeNull()
-      expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
-      expect(screen.getByRole('button', { name: /Choose current value/u })).toBeEnabled()
+      await act(async () => releaseReconnect(differentRun ? successor : confirmed))
+      expect(queryClient.getQueryData(['review-preparation'])).toBe(successor)
+      expect(screen.getByRole('button', { name: /Preparing your library/u })).toBeVisible()
       expect(screen.queryByText(/Reconnecting/u)).toBeNull()
       expect(document.querySelector('.reported-change')).toBeNull()
       expect(router.state.location.search).toEqual({
         lens: 'all',
         preview: 'case-1',
         field: 'title',
+        preparation: runId,
       })
       expect(http.dismissPreparation).toHaveBeenCalledTimes(1)
-      expect(http.getPreparation).toHaveBeenCalledTimes(2)
+      expect(http.getPreparation).toHaveBeenCalledTimes(3)
       expect(invalidateQueries).not.toHaveBeenCalled()
+    },
+  )
 
-      act(() => updates.announce({ sequence: 1, subject: null, topic: 'preparation' }))
-      await waitFor(() => expect(http.getPreparation).toHaveBeenCalledTimes(3))
-      await waitFor(() => expect(queryClient.getQueryData(['review-preparation'])).toBe(successor))
-      expect(
-        queryClient.getQueryData<{ frozen?: PreparationView }>(['review-preparation-reconnect'])
-          ?.frozen,
-      ).toBe(successor)
-      expect(screen.getByRole('button', { name: /Preparing your library/u })).toBeVisible()
-      expect(observedPairs.every(([primary, frozen]) => primary === frozen)).toBe(true)
-    } finally {
+  it.each([
+    ['live', 'refreshing'],
+    ['degraded', 'debt'],
+    ['unknown', 'clear'],
+  ] as const)(
+    'retains the dismissed snapshot when its %s reconciliation read fails',
+    async (transport, expectedState) => {
+      const user = userEvent.setup()
+      const http = createHttp()
+      const updates = transport === 'unknown' ? undefined : createLiveStream()
+      const runId = `preparation_run_${'d'.repeat(64)}`
+      const confirmed = terminalPreparation(runId)
+      const dismissed: PreparationView = {
+        ...confirmed,
+        presentation: { ...confirmed.presentation, state: 'dismissed', dismissible: false },
+      }
+      let releaseRetry: ((value: PreparationView) => void) | undefined
+      http.getPreparation = vi
+        .fn<ReviewHttp['getPreparation']>()
+        .mockResolvedValueOnce(confirmed)
+        .mockRejectedValueOnce(new ApiError(503, 'unavailable'))
+        .mockImplementation(
+          () =>
+            new Promise((resolve) => {
+              releaseRetry = resolve
+            }),
+        )
+      http.dismissPreparation = vi.fn(async () => dismissed)
+      const { queryClient } = renderRoute('/library?lens=all', http, updates)
+      await user.click(await screen.findByRole('button', { name: /Preparing your library/u }))
+      expect(await screen.findByText('Preparation completed with failures')).toBeVisible()
+      if (transport === 'degraded') act(() => updates?.setState('degraded'))
+      const observedStates: string[] = []
+      const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
+        if (event.query.queryHash !== '["review-preparation-reconnect"]') return
+        const state = event.query.state.data as { state?: string } | undefined
+        if (state?.state !== undefined) observedStates.push(state.state)
+      })
+
+      await user.click(screen.getByRole('button', { name: 'Dismiss preparation' }))
+      await waitFor(() =>
+        expect(
+          queryClient.getQueryData<{ state: string }>(['review-preparation-reconnect'])?.state,
+        ).toBe(expectedState),
+      )
+      expect(queryClient.getQueryData(['review-preparation'])).toBe(dismissed)
+      expect(observedStates).toContain(transport === 'unknown' ? 'clear' : 'debt')
+      expect(http.getPreparation).toHaveBeenCalledTimes(transport === 'live' ? 3 : 2)
+
       unsubscribe()
-      vi.useRealTimers()
-    }
-  })
+      if (releaseRetry !== undefined) await act(async () => releaseRetry?.(dismissed))
+    },
+  )
 
   it('adopts a deferred dismissal without overriding later route ownership', async () => {
     const user = userEvent.setup()
@@ -470,7 +485,10 @@ describe('Library route', () => {
       presentation: { ...confirmed.presentation, state: 'dismissed', dismissible: false },
     }
     let releaseDismissal!: (value: PreparationView) => void
-    http.getPreparation = vi.fn(async () => confirmed)
+    http.getPreparation = vi
+      .fn<ReviewHttp['getPreparation']>()
+      .mockResolvedValueOnce(confirmed)
+      .mockResolvedValue(dismissed)
     http.dismissPreparation = vi.fn<ReviewHttp['dismissPreparation']>(
       () =>
         new Promise<PreparationView>((resolve) => {
@@ -507,7 +525,10 @@ describe('Library route', () => {
       presentation: { ...confirmed.presentation, state: 'dismissed', dismissible: false },
     }
     let releaseDismissal!: (value: PreparationView) => void
-    http.getPreparation = vi.fn(async () => confirmed)
+    http.getPreparation = vi
+      .fn<ReviewHttp['getPreparation']>()
+      .mockResolvedValueOnce(confirmed)
+      .mockResolvedValue(dismissed)
     http.dismissPreparation = vi.fn<ReviewHttp['dismissPreparation']>(
       () =>
         new Promise<PreparationView>((resolve) => {
@@ -547,7 +568,10 @@ describe('Library route', () => {
     }
     let releaseDismissal!: (value: PreparationView) => void
     let releaseLibrary!: (value: LibraryView) => void
-    http.getPreparation = vi.fn(async () => confirmed)
+    http.getPreparation = vi
+      .fn<ReviewHttp['getPreparation']>()
+      .mockResolvedValueOnce(confirmed)
+      .mockResolvedValue(dismissed)
     http.dismissPreparation = vi.fn<ReviewHttp['dismissPreparation']>(
       () =>
         new Promise<PreparationView>((resolve) => {
@@ -638,18 +662,10 @@ describe('Library route', () => {
     const later = terminalPreparation(runId, 102)
     act(() => {
       queryClient.setQueryData(['review-preparation'], later)
-      queryClient.setQueryData<{ frozen?: PreparationView }>(
-        ['review-preparation-reconnect'],
-        (current) => ({ ...current, frozen: later }),
-      )
       releaseOlder(dismissed)
     })
     await waitFor(() => expect(http.dismissPreparation).toHaveBeenCalledTimes(3))
     expect(queryClient.getQueryData(['review-preparation'])).toBe(later)
-    expect(
-      queryClient.getQueryData<{ frozen?: PreparationView }>(['review-preparation-reconnect'])
-        ?.frozen,
-    ).toBe(later)
     expect(router.state.location.search).toMatchObject({
       preview: 'case-1',
       field: 'title',

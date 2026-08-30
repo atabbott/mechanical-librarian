@@ -250,7 +250,6 @@ interface PreparationReconnect {
   confirmationGeneration: number
   state: 'clear' | 'debt' | 'refreshing' | 'retry'
   transport: 'unknown' | 'live' | 'degraded'
-  frozen?: PreparationView
 }
 const preparationReconnectKey = ['review-preparation-reconnect'] as const
 
@@ -294,6 +293,7 @@ export const usePreparation = () => {
     return (value: PreparationView) => {
       const current = queryClient.getQueryData<PreparationReconnect>(preparationReconnectKey)
       if (current?.confirmationGeneration !== confirmationGeneration) return false
+      queryClient.setQueryData(['review-preparation'], value)
       queryClient.setQueryData<PreparationReconnect>(preparationReconnectKey, (reconnect) =>
         reconnect?.confirmationGeneration !== confirmationGeneration
           ? reconnect
@@ -305,10 +305,8 @@ export const usePreparation = () => {
                 reconnect.state === 'refreshing'
                   ? 'clear'
                   : reconnect.state,
-              frozen: value,
             },
       )
-      queryClient.setQueryData(['review-preparation'], value)
       return true
     }
   }, [queryClient])
@@ -330,7 +328,6 @@ export const usePreparation = () => {
             confirmationGeneration: (current?.confirmationGeneration ?? 0) + 1,
             state: 'debt',
             transport: 'degraded',
-            ...(current?.frozen === undefined ? {} : { frozen: current.frozen }),
           },
     )
   }, [queryClient, streamState, updates?.hasBeenLive])
@@ -410,7 +407,7 @@ export const usePreparation = () => {
   // TanStack Query retains the last successful snapshot while a refetch is in
   // flight or the stream is degraded.  Frames never write this cache, so this
   // is the last server-confirmed state rather than a client-side catch-up.
-  const data = reconnecting ? reconnectQuery.data.frozen : query.data
+  const data = query.data
   const snapshot = data ? JSON.stringify(data) : null
   useEffect(() => {
     if (snapshot === null) return
@@ -420,6 +417,7 @@ export const usePreparation = () => {
     }
     if (previousSnapshot.current === snapshot) return
     previousSnapshot.current = snapshot
+    if (data?.presentation?.state === 'dismissed') return
     // Only while polling. A snapshot that changed used to be the only sign that
     // a work might have been published, so every poll that saw a difference
     // rebuilt the Library and the attention rail. With a stream, the cutover
@@ -430,23 +428,21 @@ export const usePreparation = () => {
       queryClient.invalidateQueries({ queryKey: ['library'] }),
       queryClient.invalidateQueries({ queryKey: ['attention'] }),
     ])
-  }, [live, queryClient, snapshot])
+  }, [data?.presentation?.state, live, queryClient, snapshot])
   const adoptDismissal = useCallback(
     async (runId: string, value: PreparationView) => {
       const dismissed = value.presentation
       if (dismissed?.run_id !== runId || dismissed.state !== 'dismissed') return false
-      const responseIsStale = () =>
-        [
-          queryClient.getQueryData<PreparationView>(['review-preparation']),
-          queryClient.getQueryData<PreparationReconnect>(preparationReconnectKey)?.frozen,
-        ].some((candidate) => {
-          const current = candidate?.presentation
-          return (
-            current !== undefined &&
-            current !== null &&
-            (current.run_id !== runId || current.updated_at > dismissed.updated_at)
-          )
-        })
+      const responseIsStale = () => {
+        const current = queryClient.getQueryData<PreparationView>([
+          'review-preparation',
+        ])?.presentation
+        return (
+          current !== undefined &&
+          current !== null &&
+          (current.run_id !== runId || current.updated_at > dismissed.updated_at)
+        )
+      }
       if (responseIsStale()) return false
       let dismissalEpoch = 0
       let dismissalGeneration = 0
@@ -476,15 +472,39 @@ export const usePreparation = () => {
         responseIsStale()
       )
         return false
+      queryClient.setQueryData(['review-preparation'], value)
       queryClient.setQueryData<PreparationReconnect>(preparationReconnectKey, (current) =>
         current?.epoch !== dismissalEpoch || current.confirmationGeneration !== dismissalGeneration
           ? current
-          : { ...current, state: 'clear', frozen: value },
+          : { ...current, state: 'clear' },
       )
-      queryClient.setQueryData(['review-preparation'], value)
+      const reconciliation = refetchPreparation({ cancelRefetch: true })
+      const reconciliationGeneration =
+        queryClient.getQueryData<PreparationReconnect>(
+          preparationReconnectKey,
+        )?.confirmationGeneration
+      void (async () => {
+        let failed: boolean
+        try {
+          failed = !(await reconciliation).isSuccess
+        } catch {
+          failed = true
+        }
+        if (!failed) return
+        queryClient.setQueryData<PreparationReconnect>(preparationReconnectKey, (current) => {
+          if (
+            current?.epoch !== dismissalEpoch ||
+            current.confirmationGeneration !== reconciliationGeneration ||
+            current.state !== 'clear' ||
+            current.transport === 'unknown'
+          )
+            return current
+          return { ...current, state: 'debt' }
+        })
+      })()
       return true
     },
-    [queryClient],
+    [queryClient, refetchPreparation],
   )
   return { data, queryClient, http, live, reconnecting, adoptDismissal }
 }
