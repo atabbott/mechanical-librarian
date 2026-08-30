@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 import mechanical_librarian.adapters.persistence.qualification_state_bridge as bridge
+from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.qualification_state_bridge import (
@@ -736,13 +737,13 @@ def test_postpublication_cleanup_failure_requires_recovery(
     source, backup, output = _paths(tmp_path)
     _create_source(source)
     _accept_synthetic_source(monkeypatch, source)
-    real_close = bridge._LinuxDatabaseBinding.close
+    real_close = _LinuxDatabaseBinding.close
 
-    def fail_after_close(binding: bridge._LinuxDatabaseBinding) -> None:
+    def fail_after_close(binding: _LinuxDatabaseBinding) -> None:
         real_close(binding)
         raise MetadataReportError("synthetic cleanup failure")
 
-    monkeypatch.setattr(bridge._LinuxDatabaseBinding, "close", fail_after_close)
+    monkeypatch.setattr(_LinuxDatabaseBinding, "close", fail_after_close)
     with pytest.raises(QualificationStateBridgeRecoveryRequired):
         bridge.bridge_qualification_state(
             source, backup, output, RETAINED_LIBRARY_V26_TO_V31
