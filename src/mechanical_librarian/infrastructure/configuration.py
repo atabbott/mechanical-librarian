@@ -156,9 +156,10 @@ class _KeylessAudioProviderInput(_Closed):
     contact_email: Literal[None] = None
 
 
-# Audnexus and AudioSilo restate Audible's CDN asset, so only these two carry a
-# real cover switch, and it defaults on: an audiobook's art is the corroborating
-# surface a recording without an identifier is left with.  The fields are spelt
+# Audnexus and AudioSilo restate Audible's CDN asset, so only the Audible
+# catalog and iTunes Search carry a real cover switch, and it defaults on: an
+# audiobook's art is the corroborating surface a recording without an
+# identifier is left with.  The fields are spelt
 # out rather than inherited because widening a closed `Literal[False]` in a
 # subclass would be an unsound override of the pair above.
 class _CoverBearingAudioProviderInput(_Closed):
