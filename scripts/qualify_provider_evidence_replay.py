@@ -22,10 +22,12 @@ from typing import Any
 
 import httpx
 
+from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
-from mechanical_librarian.adapters.persistence.schema import (
-    _validate_existing_read_only,
+from mechanical_librarian.adapters.persistence.qualification_state_bridge import (
+    _connect_read_only,
 )
+from mechanical_librarian.adapters.persistence.schema import _validate_schema
 from mechanical_librarian.adapters.providers.google_books_metadata import (
     GoogleBooksMetadataProvider,
     GoogleBooksPacer,
@@ -131,7 +133,7 @@ def digest(payload: bytes) -> str:
 
 
 def private_write(path: Path, payload: bytes) -> None:
-    require_private_directory(path.parent)
+    expected_parent = require_private_directory(path.parent)
     flags = (
         os.O_WRONLY
         | os.O_CREAT
@@ -141,11 +143,32 @@ def private_write(path: Path, payload: bytes) -> None:
     )
     if not getattr(os, "O_NOFOLLOW", 0):
         raise ReplayFailure("no_follow_unavailable")
+    parent = -1
+    descriptor = -1
     try:
-        descriptor = os.open(path, flags, 0o600)
-    except OSError as error:
-        raise ReplayFailure("private_output_unavailable") from error
-    try:
+        try:
+            parent = os.open(
+                path.parent,
+                os.O_RDONLY
+                | os.O_DIRECTORY
+                | os.O_CLOEXEC
+                | getattr(os, "O_NOFOLLOW", 0),
+            )
+        except OSError as error:
+            raise ReplayFailure("private_output_unavailable") from error
+        actual_parent = os.fstat(parent)
+        if (
+            (actual_parent.st_dev, actual_parent.st_ino)
+            != (expected_parent.st_dev, expected_parent.st_ino)
+            or not stat.S_ISDIR(actual_parent.st_mode)
+            or actual_parent.st_uid != os.geteuid()
+            or actual_parent.st_mode & 0o077
+        ):
+            raise ReplayFailure("private_authority_changed")
+        try:
+            descriptor = os.open(path.name, flags, 0o600, dir_fd=parent)
+        except OSError as error:
+            raise ReplayFailure("private_output_unavailable") from error
         offset = 0
         while offset < len(payload):
             written = os.write(descriptor, payload[offset:])
@@ -154,8 +177,12 @@ def private_write(path: Path, payload: bytes) -> None:
             offset += written
         os.fchmod(descriptor, 0o600)
         os.fsync(descriptor)
+        os.fsync(parent)
     finally:
-        os.close(descriptor)
+        if descriptor >= 0:
+            os.close(descriptor)
+        if parent >= 0:
+            os.close(parent)
 
 
 def _private_stat(path: Path, *, directory: bool) -> os.stat_result:
@@ -172,6 +199,16 @@ def _private_stat(path: Path, *, directory: bool) -> os.stat_result:
     ):
         raise ReplayFailure("private_authority_unsafe")
     return value
+
+
+def _require_private_regular(value: os.stat_result) -> None:
+    if (
+        not stat.S_ISREG(value.st_mode)
+        or value.st_uid != os.geteuid()
+        or value.st_nlink != 1
+        or value.st_mode & 0o077
+    ):
+        raise ReplayFailure("private_authority_unsafe")
 
 
 def require_private_file(path: Path) -> os.stat_result:
@@ -195,6 +232,7 @@ def read_private(path: Path, maximum: int) -> bytes:
         raise ReplayFailure("private_input_unavailable") from error
     try:
         actual = os.fstat(descriptor)
+        _require_private_regular(actual)
         if (actual.st_dev, actual.st_ino) != (expected.st_dev, expected.st_ino):
             raise ReplayFailure("private_authority_changed")
         payload = bytearray()
@@ -206,10 +244,12 @@ def read_private(path: Path, maximum: int) -> bytes:
         if len(payload) > maximum:
             raise ReplayFailure("private_document_oversized")
         final = os.fstat(descriptor)
-        if (final.st_dev, final.st_ino, final.st_size) != (
+        _require_private_regular(final)
+        if (final.st_dev, final.st_ino, final.st_size, final.st_mode) != (
             actual.st_dev,
             actual.st_ino,
             actual.st_size,
+            actual.st_mode,
         ):
             raise ReplayFailure("private_authority_changed")
         return bytes(payload)
@@ -267,21 +307,45 @@ def require_environment(repository: Path, expected_head: str) -> None:
         raise ReplayFailure("source_repository_invalid")
 
 
-def require_database_source(path: Path) -> None:
-    require_private_file(path)
+def _source_connection(
+    path: Path,
+) -> tuple[sqlite3.Connection, _LinuxDatabaseBinding | None, int]:
+    expected = require_private_file(path)
     for suffix in ("-journal", "-shm", "-wal"):
         if Path(str(path) + suffix).exists():
             raise ReplayFailure("source_database_sidecar")
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     if not nofollow:
         raise ReplayFailure("no_follow_unavailable")
+    descriptor = -1
+    binding: _LinuxDatabaseBinding | None = None
+    connection: sqlite3.Connection | None = None
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | nofollow)
-        try:
-            _validate_existing_read_only(path, descriptor)
-        finally:
+        actual = os.fstat(descriptor)
+        if (
+            (actual.st_dev, actual.st_ino) != (expected.st_dev, expected.st_ino)
+            or not stat.S_ISREG(actual.st_mode)
+            or actual.st_uid != os.geteuid()
+            or actual.st_nlink != 1
+            or actual.st_mode & 0o077
+        ):
+            raise ReplayFailure("source_database_changed")
+        if sys.platform.startswith("linux"):
+            binding = _LinuxDatabaseBinding.create(path, descriptor)
+            descriptor = -1
+            binding.require_current()
+        bound_descriptor = binding.descriptor if binding is not None else descriptor
+        connection = _connect_read_only(path, bound_descriptor, binding)
+        _validate_schema(connection)
+        return connection, binding, descriptor
+    except Exception as error:
+        if connection is not None:
+            connection.close()
+        if binding is not None:
+            binding.close()
+        elif descriptor >= 0:
             os.close(descriptor)
-    except (OSError, sqlite3.Error) as error:
         raise ReplayFailure("source_database_invalid") from error
 
 
@@ -295,8 +359,7 @@ def require_empty_output(path: Path) -> None:
 
 
 def load_reports(database: Path, report_ids: tuple[str, ...]) -> list[MetadataReport]:
-    require_database_source(database)
-    connection = sqlite3.connect(f"file:{database}?mode=ro&immutable=1", uri=True)
+    connection, binding, descriptor = _source_connection(database)
     try:
         rows = []
         for report_id in report_ids:
@@ -307,8 +370,14 @@ def load_reports(database: Path, report_ids: tuple[str, ...]) -> list[MetadataRe
             if row is None:
                 raise ReplayFailure("selected_report_unavailable")
             rows.append(row)
+        if binding is not None:
+            binding.require_current()
     finally:
         connection.close()
+        if binding is not None:
+            binding.close()
+        elif descriptor >= 0:
+            os.close(descriptor)
     return [MetadataReport.from_json(row[0]) for row in rows]
 
 
@@ -1134,15 +1203,18 @@ def private_digest(path: Path) -> str:
     value = hashlib.sha256()
     try:
         actual = os.fstat(descriptor)
+        _require_private_regular(actual)
         if (actual.st_dev, actual.st_ino) != (expected.st_dev, expected.st_ino):
             raise ReplayFailure("private_authority_changed")
         while block := os.read(descriptor, 1_048_576):
             value.update(block)
         final = os.fstat(descriptor)
-        if (final.st_dev, final.st_ino, final.st_size) != (
+        _require_private_regular(final)
+        if (final.st_dev, final.st_ino, final.st_size, final.st_mode) != (
             actual.st_dev,
             actual.st_ino,
             actual.st_size,
+            actual.st_mode,
         ):
             raise ReplayFailure("private_authority_changed")
     finally:
