@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import tracemalloc
+from _thread import RLock
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack
 from dataclasses import replace
@@ -3155,6 +3156,335 @@ def test_pause_mutation_failure_rolls_back_releases_writer_and_retries(
     reopened = open_repository(application_path, create=False)
     assert reopened.review_pipeline_paused()
     reopened.close()
+
+
+class _AcceptedBoundaryInterruption:
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        boundary: str,
+        fault: BaseException | sqlite3.Error,
+        *,
+        accept: bool = True,
+        cleanup_fault: BaseException | None = None,
+        cleanup_execute_fault: BaseException | None = None,
+    ) -> None:
+        self.connection = connection
+        self.boundary = boundary
+        self.fault = fault
+        self.accept = accept
+        self.cleanup_fault = cleanup_fault
+        self.cleanup_execute_fault = cleanup_execute_fault
+        self.accepted = False
+        self.rollback_calls = 0
+
+    @property
+    def in_transaction(self) -> bool:
+        return self.connection.in_transaction
+
+    def execute(self, sql: str, parameters: tuple[object, ...] = ()) -> sqlite3.Cursor:
+        if sql == self.boundary and not self.accepted:
+            if self.accept:
+                self.connection.execute(sql, parameters)
+            self.accepted = True
+            raise self.fault
+        cursor = self.connection.execute(sql, parameters)
+        if sql.startswith("ROLLBACK TO SAVEPOINT") and self.cleanup_execute_fault:
+            cleanup = self.cleanup_execute_fault
+            self.cleanup_execute_fault = None
+            raise cleanup
+        return cursor
+
+    def rollback(self) -> None:
+        self.rollback_calls += 1
+        self.connection.rollback()
+        if self.cleanup_fault is not None:
+            raise self.cleanup_fault
+
+
+class _RecordingRLock:
+    def __init__(self) -> None:
+        self.lock = threading.RLock()
+        self.release_calls = 0
+
+    def acquire(self, blocking: bool = True) -> bool:
+        return self.lock.acquire(blocking=blocking)
+
+    def release(self) -> None:
+        self.release_calls += 1
+        self.lock.release()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize(
+    ("deferred", "boundary"),
+    ((False, "BEGIN IMMEDIATE"), (True, "BEGIN")),
+)
+def test_transaction_scope_unwinds_accepted_outer_acquisition_interruption(
+    application_path: Path,
+    deferred: bool,
+    boundary: str,
+    fault_type: type[BaseException],
+) -> None:
+    connection = sqlite3.connect(application_path)
+    fault = fault_type("private accepted outer boundary")
+    proxy = _AcceptedBoundaryInterruption(connection, boundary, fault)
+    lock = _RecordingRLock()
+    scope = TransactionScope(
+        cast(sqlite3.Connection, proxy),
+        "accepted_outer",
+        deferred=deferred,
+        serialization_lock=cast(RLock, lock),
+    )
+
+    with pytest.raises(fault_type) as raised:
+        scope.begin()
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert not scope.started and not connection.in_transaction
+    assert proxy.rollback_calls == 1
+    assert lock.release_calls == 1
+    assert lock.acquire(blocking=False)
+    lock.release()
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+    connection.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+def test_transaction_scope_unwinds_only_accepted_nested_savepoint(
+    application_path: Path, fault_type: type[BaseException]
+) -> None:
+    connection = sqlite3.connect(application_path)
+    connection.execute("CREATE TABLE nested_boundary(value TEXT NOT NULL)")
+    connection.execute("BEGIN IMMEDIATE")
+    connection.execute("INSERT INTO nested_boundary VALUES('outer-before')")
+    fault = fault_type("private accepted nested boundary")
+    proxy = _AcceptedBoundaryInterruption(connection, "", fault)
+    lock = _RecordingRLock()
+    scope = TransactionScope(
+        cast(sqlite3.Connection, proxy),
+        "accepted_nested",
+        serialization_lock=cast(RLock, lock),
+    )
+    proxy.boundary = f"SAVEPOINT {scope._savepoint}"
+
+    with pytest.raises(fault_type) as raised:
+        scope.begin()
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert not scope.started and scope.nested and connection.in_transaction
+    assert lock.release_calls == 1
+    assert tuple(connection.execute("SELECT value FROM nested_boundary")) == (
+        ("outer-before",),
+    )
+    connection.execute("INSERT INTO nested_boundary VALUES('outer-after')")
+    connection.commit()
+    assert lock.acquire(blocking=False)
+    lock.release()
+    assert tuple(connection.execute("SELECT value FROM nested_boundary")) == (
+        ("outer-before",),
+        ("outer-after",),
+    )
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+    connection.close()
+
+
+def test_transaction_scope_nested_cleanup_fault_cannot_replace_interruption(
+    application_path: Path,
+) -> None:
+    connection = sqlite3.connect(application_path)
+    connection.execute("BEGIN IMMEDIATE")
+    fault = KeyboardInterrupt("private nested acquisition boundary")
+    cleanup = SystemExit("private nested cleanup replacement")
+    proxy = _AcceptedBoundaryInterruption(
+        connection, "", fault, cleanup_execute_fault=cleanup
+    )
+    scope = TransactionScope(cast(sqlite3.Connection, proxy), "nested_cleanup")
+    proxy.boundary = f"SAVEPOINT {scope._savepoint}"
+
+    with pytest.raises(KeyboardInterrupt) as raised:
+        scope.begin()
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert connection.in_transaction
+    connection.execute("CREATE TABLE nested_cleanup(value INTEGER)")
+    connection.commit()
+    connection.close()
+
+
+def test_transaction_scope_failed_nested_acquisition_preserves_existing_savepoint(
+    application_path: Path,
+) -> None:
+    connection = sqlite3.connect(application_path)
+    connection.execute("CREATE TABLE nested_existing(value TEXT NOT NULL)")
+    connection.execute("BEGIN IMMEDIATE")
+    connection.execute("SAVEPOINT accepted_nested")
+    connection.execute("INSERT INTO nested_existing VALUES('outer')")
+    ordinary = sqlite3.OperationalError("ordinary nested begin failure")
+    proxy = _AcceptedBoundaryInterruption(connection, "", ordinary, accept=False)
+    scope = TransactionScope(cast(sqlite3.Connection, proxy), "accepted_nested")
+    proxy.boundary = f"SAVEPOINT {scope._savepoint}"
+
+    with pytest.raises(sqlite3.OperationalError) as raised:
+        scope.begin()
+
+    assert raised.value is ordinary
+    assert connection.in_transaction
+    connection.execute("ROLLBACK TO SAVEPOINT accepted_nested")
+    connection.execute("RELEASE SAVEPOINT accepted_nested")
+    assert tuple(connection.execute("SELECT * FROM nested_existing")) == ()
+    connection.commit()
+    connection.close()
+
+
+def test_transaction_scope_preserves_acquisition_and_cleanup_error_surfaces(
+    application_path: Path,
+) -> None:
+    connection = sqlite3.connect(application_path)
+    ordinary = sqlite3.OperationalError("ordinary begin failure")
+    before = _AcceptedBoundaryInterruption(
+        connection, "BEGIN IMMEDIATE", ordinary, accept=False
+    )
+    with pytest.raises(sqlite3.OperationalError) as raised:
+        TransactionScope(cast(sqlite3.Connection, before), "not_accepted").begin()
+    assert raised.value is ordinary
+    assert not connection.in_transaction
+
+    fault = KeyboardInterrupt("private accepted cleanup boundary")
+    cleanup = SystemExit("private cleanup replacement")
+    accepted = _AcceptedBoundaryInterruption(
+        connection,
+        "BEGIN IMMEDIATE",
+        fault,
+        cleanup_fault=cleanup,
+    )
+    with pytest.raises(KeyboardInterrupt) as interrupted:
+        TransactionScope(cast(sqlite3.Connection, accepted), "cleanup").begin()
+    assert interrupted.value is fault
+    assert interrupted.value.__cause__ is None
+    assert interrupted.value.__context__ is None
+    assert not connection.in_transaction
+    connection.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize("stage", ("proposal", "admission", "projection"))
+def test_pipeline_output_begin_unwinds_accepted_interruption_before_caller_ownership(
+    application_path: Path,
+    stage: str,
+    fault_type: type[BaseException],
+) -> None:
+    owner = open_repository(application_path)
+    fault = fault_type(f"private accepted {stage} output boundary")
+    proxy = _AcceptedBoundaryInterruption(owner._connection, "BEGIN IMMEDIATE", fault)
+    owner._review_preparation._connection = cast(sqlite3.Connection, proxy)
+
+    class Repository:
+        rollback_calls = 0
+
+        def guard_target_connection(self, _action, _checked_at):
+            return True
+
+        def begin_review_pipeline_output(self) -> None:
+            owner.begin_review_pipeline_output()
+
+        def rollback_review_pipeline_output(self) -> None:
+            self.rollback_calls += 1
+            owner.rollback_review_pipeline_output()
+
+    repository = Repository()
+    identifiers: dict[str, str] = {"report_id": "report-1"}
+    if stage in {"admission", "projection"}:
+        identifiers["proposal_set_id"] = "proposal-1"
+    if stage == "projection":
+        identifiers["review_case_id"] = "case-1"
+    action = PipelineAction(
+        "action-1",
+        "scan-1",
+        stage,
+        1,
+        "primary",
+        "ebooks",
+        "library-id",
+        _PRODUCER,
+        1,
+        "a" * 64,
+        "item-1",
+        "b" * 64,
+        0,
+        source_fingerprint="c" * 64,
+        **identifiers,
+    )
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: cast(ReviewPipelineRepository, repository),
+        libraries=(("primary", "ebooks", "library-id", _PRODUCER),),
+        discover=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        clock=lambda: 1,
+    )
+
+    with pytest.raises(fault_type) as raised:
+        pipeline._run_claimed_action(
+            cast(ReviewPipelineRepository, repository), action, claim_next=False
+        )
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert not owner._connection.in_transaction
+    assert proxy.rollback_calls == 1
+    assert repository.rollback_calls == 0
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+    owner.close()
+
+
+def test_pipeline_output_begin_preserves_sqlite_and_cleanup_error_surfaces(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    ordinary = sqlite3.OperationalError("ordinary output begin failure")
+    before = _AcceptedBoundaryInterruption(
+        repository._connection, "BEGIN IMMEDIATE", ordinary, accept=False
+    )
+    repository._review_preparation._connection = cast(sqlite3.Connection, before)
+    with pytest.raises(
+        MetadataReportError, match="review preparation persistence failed"
+    ) as raised:
+        repository.begin_review_pipeline_output()
+    assert raised.value.__cause__ is ordinary
+    assert not repository._connection.in_transaction
+
+    fault = KeyboardInterrupt("private accepted output cleanup boundary")
+    cleanup = SystemExit("private output cleanup replacement")
+    accepted = _AcceptedBoundaryInterruption(
+        repository._connection,
+        "BEGIN IMMEDIATE",
+        fault,
+        cleanup_fault=cleanup,
+    )
+    repository._review_preparation._connection = cast(sqlite3.Connection, accepted)
+    with pytest.raises(KeyboardInterrupt) as interrupted:
+        repository.begin_review_pipeline_output()
+    assert interrupted.value is fault
+    assert interrupted.value.__cause__ is None
+    assert interrupted.value.__context__ is None
+    assert not repository._connection.in_transaction
+    repository.close()
 
 
 def _f32_transaction_operation(

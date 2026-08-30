@@ -1,8 +1,8 @@
 """One re-entrant SQLite transaction scope shared by every persistence module.
 
 The scope owns begin, commit, and rollback mechanics and nothing else. It never
-catches, translates, or re-raises an exception: every ``except`` block keeps its
-own error identity at its own call site.
+translates an exception. Acquisition cleanup re-raises the exact original
+object; every caller keeps its own error identity and translation surface.
 
 An outermost scope uses a real transaction; a scope entered while the connection
 is already in a transaction uses a ``SAVEPOINT`` instead, so a nested repository
@@ -41,7 +41,7 @@ class TransactionScope:
         serialization_lock: RLock | None = None,
     ) -> None:
         self._connection = connection
-        self._savepoint = savepoint
+        self._savepoint = f"{savepoint}_{id(self):x}"
         self._deferred = deferred
         self._lock = serialization_lock
         self._nested = False
@@ -59,20 +59,49 @@ class TransactionScope:
 
     def begin(self) -> None:
         """Start this scope, nesting on a savepoint inside an open transaction."""
+        lock_owned = False
         if self._lock is not None:
             self._lock.acquire()
+            lock_owned = True
+        boundary_issued = False
+        failure: BaseException | None = None
         try:
             self._nested = self._connection.in_transaction
+            boundary_issued = True
             if self._nested:
                 self._connection.execute(f"SAVEPOINT {self._savepoint}")
             elif self._deferred:
                 self._connection.execute("BEGIN")
             else:
                 self._connection.execute("BEGIN IMMEDIATE")
-        except BaseException:
-            if self._lock is not None:
-                self._lock.release()
-            raise
+        except BaseException as error:
+            failure = error
+            if boundary_issued and self._nested:
+                for statement in (
+                    f"ROLLBACK TO SAVEPOINT {self._savepoint}",
+                    f"RELEASE SAVEPOINT {self._savepoint}",
+                ):
+                    try:
+                        self._connection.execute(statement)
+                    except BaseException:
+                        pass
+            elif boundary_issued:
+                try:
+                    acquired = self._connection.in_transaction
+                except BaseException:
+                    acquired = False
+                if acquired:
+                    try:
+                        self._connection.rollback()
+                    except BaseException:
+                        pass
+            if lock_owned and self._lock is not None:
+                try:
+                    self._lock.release()
+                except BaseException:
+                    pass
+        if failure is not None:
+            raise failure from None
         self._started = True
 
     def commit(self) -> None:

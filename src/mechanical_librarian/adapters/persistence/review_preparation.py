@@ -1037,14 +1037,28 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         raise interruption from None
 
     def begin_review_pipeline_output(self) -> None:
+        if self._connection.in_transaction:
+            raise MetadataReportError("review preparation state is invalid")
+        failure: BaseException | None = None
         try:
-            if self._connection.in_transaction:
-                raise MetadataReportError("review preparation state is invalid")
             self._connection.execute("BEGIN IMMEDIATE")
-        except sqlite3.Error as error:
+        except BaseException as error:
+            try:
+                acquired = self._connection.in_transaction
+            except BaseException:
+                acquired = False
+            if acquired:
+                try:
+                    self._connection.rollback()
+                except BaseException:
+                    pass
+            failure = error
+        if isinstance(failure, sqlite3.Error):
             raise MetadataReportError(
                 "review preparation persistence failed"
-            ) from error
+            ) from failure
+        if failure is not None:
+            raise failure from None
 
     def take_review_pipeline_claim(self) -> PipelineAction | None:
         action = self._review_pipeline_claim
