@@ -16,7 +16,7 @@ from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBind
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.qualification_state_bridge import (
-    RETAINED_LIBRARY_V26_TO_V31,
+    RETAINED_LIBRARY_V26_TO_V32,
     QualificationStateBridgeRecoveryRequired,
 )
 from mechanical_librarian.domain.cover_evidence import (
@@ -217,11 +217,11 @@ def test_exact_predecessor_builds_fresh_current_state_without_mutating_source(
     source_before = _digest(source)
 
     result = bridge.bridge_qualification_state(
-        source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+        source, backup, output, RETAINED_LIBRARY_V26_TO_V32
     )
 
     assert result == {
-        "plan": RETAINED_LIBRARY_V26_TO_V31,
+        "plan": RETAINED_LIBRARY_V26_TO_V32,
         "status": "bridged",
         "reports": 1,
         "selectively_invalidated": 0,
@@ -235,7 +235,7 @@ def test_exact_predecessor_builds_fresh_current_state_without_mutating_source(
     connection = sqlite3.connect(f"file:{output}?mode=ro", uri=True)
     document = connection.execute("SELECT document FROM metadata_reports").fetchone()[0]
     report = MetadataReport.from_json(document)
-    assert report.schema_version == "metadata-report-v31"
+    assert report.schema_version == "metadata-report-v32"
     assert connection.execute("SELECT count(*) FROM proposal_sets").fetchone() == (0,)
     assert connection.execute("SELECT count(*) FROM review_cases").fetchone() == (0,)
     assert connection.execute(
@@ -262,7 +262,7 @@ def test_missing_work_dispatch_lineage_is_selectively_invalidated(
     _accept_synthetic_source(monkeypatch, source)
 
     result = bridge.bridge_qualification_state(
-        source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+        source, backup, output, RETAINED_LIBRARY_V26_TO_V32
     )
 
     assert result["selectively_invalidated"] == 1
@@ -306,7 +306,7 @@ def test_malformed_cover_dependent_on_invalidated_provider_is_rejected(
         MetadataReportError, match="qualification-state source is incompatible"
     ):
         bridge.bridge_qualification_state(
-            source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V32
         )
 
     assert not backup.exists()
@@ -322,7 +322,7 @@ def test_artifact_bearing_cover_is_invalidated_without_mutating_source(
     source_before = _digest(source)
 
     result = bridge.bridge_qualification_state(
-        source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+        source, backup, output, RETAINED_LIBRARY_V26_TO_V32
     )
 
     assert result["selectively_invalidated"] == 1
@@ -346,12 +346,12 @@ def test_exact_output_and_backup_make_rerun_idempotent(
     _create_source(source)
     _accept_synthetic_source(monkeypatch, source)
     bridge.bridge_qualification_state(
-        source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+        source, backup, output, RETAINED_LIBRARY_V26_TO_V32
     )
     before = (_digest(source), _digest(backup), _digest(output))
 
     result = bridge.bridge_qualification_state(
-        source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+        source, backup, output, RETAINED_LIBRARY_V26_TO_V32
     )
 
     assert result["status"] == "already-current"
@@ -365,14 +365,14 @@ def test_durable_temp_is_reconciled_after_ambiguous_publication(
     _create_source(source)
     _accept_synthetic_source(monkeypatch, source)
     bridge.bridge_qualification_state(
-        source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+        source, backup, output, RETAINED_LIBRARY_V26_TO_V32
     )
     temp = output.with_name(f".{output.name}.qualification-state-bridge.tmp")
     os.link(output, temp)
     output.unlink()
 
     result = bridge.bridge_qualification_state(
-        source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+        source, backup, output, RETAINED_LIBRARY_V26_TO_V32
     )
 
     assert result["status"] == "bridged"
@@ -387,7 +387,7 @@ def test_existing_output_temp_cleanup_failure_requires_recovery(
     _create_source(source)
     _accept_synthetic_source(monkeypatch, source)
     bridge.bridge_qualification_state(
-        source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+        source, backup, output, RETAINED_LIBRARY_V26_TO_V32
     )
     temp = output.with_name(f".{output.name}.qualification-state-bridge.tmp")
     os.link(output, temp)
@@ -405,7 +405,7 @@ def test_existing_output_temp_cleanup_failure_requires_recovery(
     monkeypatch.setattr(bridge.os, "unlink", fail_temp_unlink)
     with pytest.raises(QualificationStateBridgeRecoveryRequired):
         bridge.bridge_qualification_state(
-            source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V32
         )
 
     assert output.exists()
@@ -423,7 +423,7 @@ def test_unknown_source_contract_fails_before_backup_or_output(
         MetadataReportError, match="qualification-state source is incompatible"
     ):
         bridge.bridge_qualification_state(
-            source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V32
         )
 
     assert _digest(source) == before
@@ -442,7 +442,7 @@ def test_source_sidecars_are_rejected_before_backup(
 
     with pytest.raises(MetadataReportError):
         bridge.bridge_qualification_state(
-            source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V32
         )
 
     assert not backup.exists()
@@ -464,7 +464,7 @@ def test_closed_wal_source_is_rejected_before_backup_or_output(
 
     with pytest.raises(MetadataReportError):
         bridge.bridge_qualification_state(
-            source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V32
         )
 
     assert _digest(source) == source_before
@@ -491,7 +491,7 @@ def test_semantically_changed_source_document_fails_before_backup(
         MetadataReportError, match="qualification-state source is incompatible"
     ):
         bridge.bridge_qualification_state(
-            source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V32
         )
 
     assert not backup.exists()
@@ -518,7 +518,7 @@ def test_inconsistent_retained_local_status_fails_before_backup(
         MetadataReportError, match="qualification-state source is incompatible"
     ):
         bridge.bridge_qualification_state(
-            source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V32
         )
 
     assert not backup.exists()
@@ -559,7 +559,7 @@ def test_forged_current_pointer_is_rejected_before_backup(
         MetadataReportError, match="qualification-state source is incompatible"
     ):
         bridge.bridge_qualification_state(
-            source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V32
         )
 
     assert not backup.exists()
@@ -579,7 +579,7 @@ def test_unknown_existing_output_is_never_overwritten(
 
     with pytest.raises(MetadataReportError):
         bridge.bridge_qualification_state(
-            source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V32
         )
 
     assert output.read_bytes() == b"not a database"
@@ -596,7 +596,7 @@ def test_changed_exact_schema_output_is_not_accepted_as_current(
     _create_source(source, document=_v26_document(nonartifact_cover=True))
     _accept_synthetic_source(monkeypatch, source)
     bridge.bridge_qualification_state(
-        source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+        source, backup, output, RETAINED_LIBRARY_V26_TO_V32
     )
     with sqlite3.connect(output) as connection:
         if mutation == "review-package":
@@ -618,7 +618,7 @@ def test_changed_exact_schema_output_is_not_accepted_as_current(
         MetadataReportError, match="qualification-state output is incompatible"
     ):
         bridge.bridge_qualification_state(
-            source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V32
         )
 
     assert output.exists()
@@ -635,7 +635,7 @@ def test_frozen_target_contract_is_checked_before_filesystem_access(
         match="qualification-state bridge is unavailable for this build",
     ):
         bridge.bridge_qualification_state(
-            source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V32
         )
 
     assert not source.exists()
@@ -671,14 +671,14 @@ def test_symlink_and_non_owner_only_sources_are_rejected(
 
     with pytest.raises(MetadataReportError):
         bridge.bridge_qualification_state(
-            symlink, backup, output, RETAINED_LIBRARY_V26_TO_V31
+            symlink, backup, output, RETAINED_LIBRARY_V26_TO_V32
         )
     source.chmod(0o644)
     with pytest.raises(
         MetadataReportError, match="qualification-state source is not owner-only"
     ):
         bridge.bridge_qualification_state(
-            source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V32
         )
 
     assert not backup.exists()
@@ -699,7 +699,7 @@ def test_mismatched_backup_collision_fails_without_output(
         MetadataReportError, match="qualification-state backup identity changed"
     ):
         bridge.bridge_qualification_state(
-            source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V32
         )
 
     assert _digest(source) == before
@@ -735,7 +735,7 @@ def test_byte_identical_backup_inode_replacement_is_rejected_before_publication(
         MetadataReportError, match="qualification-state backup identity changed"
     ):
         bridge.bridge_qualification_state(
-            source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V32
         )
 
     assert replaced
@@ -759,7 +759,7 @@ def test_backup_write_failure_removes_partial_backup_and_preserves_source(
         MetadataReportError, match="qualification-state backup is unavailable"
     ):
         bridge.bridge_qualification_state(
-            source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V32
         )
 
     assert _digest(source) == before
@@ -791,7 +791,7 @@ def test_backup_close_failure_still_unlinks_partial_and_requires_recovery(
     try:
         with pytest.raises(QualificationStateBridgeRecoveryRequired):
             bridge.bridge_qualification_state(
-                source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+                source, backup, output, RETAINED_LIBRARY_V26_TO_V32
             )
     finally:
         if backup_descriptor >= 0:
@@ -817,7 +817,7 @@ def test_interrupted_reconstruction_removes_partial_output(
     monkeypatch.setattr(bridge, "_insert_bridge_data", interrupt)
     with pytest.raises(KeyboardInterrupt):
         bridge.bridge_qualification_state(
-            source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V32
         )
 
     temp = output.with_name(f".{output.name}.qualification-state-bridge.tmp")
@@ -848,7 +848,7 @@ def test_postpublication_failure_requires_recovery(
     monkeypatch.setattr(bridge, "_validate_output", fail_final)
     with pytest.raises(QualificationStateBridgeRecoveryRequired):
         bridge.bridge_qualification_state(
-            source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V32
         )
 
     assert output.exists()
@@ -873,7 +873,7 @@ def test_postpublication_cleanup_failure_requires_recovery(
     monkeypatch.setattr(_LinuxDatabaseBinding, "close", fail_after_close)
     with pytest.raises(QualificationStateBridgeRecoveryRequired):
         bridge.bridge_qualification_state(
-            source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V32
         )
 
     assert output.exists()
@@ -898,7 +898,7 @@ def test_postlink_identity_failure_requires_recovery(
     monkeypatch.setattr(bridge, "_require_named_identity", fail_output_identity)
     with pytest.raises(QualificationStateBridgeRecoveryRequired):
         bridge.bridge_qualification_state(
-            source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V32
         )
 
     assert output.exists()
@@ -925,7 +925,7 @@ def test_interruption_immediately_after_publication_requires_recovery(
     monkeypatch.setattr(bridge, "_publish_temp", interrupt_after_publication)
     with pytest.raises(QualificationStateBridgeRecoveryRequired):
         bridge.bridge_qualification_state(
-            source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V32
         )
 
     assert output.exists()
@@ -956,7 +956,7 @@ def test_postpublication_byte_identical_output_replacement_requires_recovery(
     monkeypatch.setattr(bridge, "_validate_output", replace_before_output_validation)
     with pytest.raises(QualificationStateBridgeRecoveryRequired):
         bridge.bridge_qualification_state(
-            source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V32
         )
 
     assert replaced
@@ -990,7 +990,7 @@ def test_path_recheck_failure_never_reports_success(
         MetadataReportError, match="qualification-state source pathname changed"
     ):
         bridge.bridge_qualification_state(
-            source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V32
         )
 
     assert backup.exists()
@@ -1004,7 +1004,7 @@ def test_existing_output_path_replacement_never_reports_success(
     _create_source(source)
     _accept_synthetic_source(monkeypatch, source)
     bridge.bridge_qualification_state(
-        source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+        source, backup, output, RETAINED_LIBRARY_V26_TO_V32
     )
     displaced = output.with_name("displaced-output.sqlite3")
     real_validate = bridge._validate_output
@@ -1025,7 +1025,7 @@ def test_existing_output_path_replacement_never_reports_success(
     monkeypatch.setattr(bridge, "_validate_output", replace_after_validation)
     with pytest.raises(MetadataReportError):
         bridge.bridge_qualification_state(
-            source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V32
         )
 
     assert replaced
@@ -1050,7 +1050,7 @@ def test_backup_directory_entry_is_durable_before_output_creation(
     monkeypatch.setattr(bridge.os, "fsync", record_fsync)
 
     bridge.bridge_qualification_state(
-        source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+        source, backup, output, RETAINED_LIBRARY_V26_TO_V32
     )
 
     assert directory_synced_before_output
@@ -1070,7 +1070,7 @@ def test_live_source_parent_authority_is_rejected_without_waiting(
         fcntl.flock(parent, fcntl.LOCK_EX | fcntl.LOCK_NB)
         with pytest.raises(MetadataReportError):
             bridge.bridge_qualification_state(
-                source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+                source, backup, output, RETAINED_LIBRARY_V26_TO_V32
             )
     finally:
         fcntl.flock(parent, fcntl.LOCK_UN)
@@ -1097,7 +1097,7 @@ def test_stale_private_binding_is_rejected_before_backup(
 
     with pytest.raises(MetadataReportError):
         bridge.bridge_qualification_state(
-            source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V32
         )
 
     assert not backup.exists()
@@ -1111,7 +1111,7 @@ def test_installed_command_reports_public_safe_result() -> None:
     result = main(
         [
             "qualification-state-bridge",
-            RETAINED_LIBRARY_V26_TO_V31,
+            RETAINED_LIBRARY_V26_TO_V32,
             "--database",
             "source.sqlite3",
             "--backup",
@@ -1120,7 +1120,7 @@ def test_installed_command_reports_public_safe_result() -> None:
             "current.sqlite3",
         ],
         qualification_state_bridge_runner=lambda *_: {
-            "plan": RETAINED_LIBRARY_V26_TO_V31,
+            "plan": RETAINED_LIBRARY_V26_TO_V32,
             "status": "bridged",
             "reports": 1,
             "selectively_invalidated": 0,
@@ -1143,7 +1143,7 @@ def test_installed_command_distinguishes_recovery() -> None:
     result = main(
         [
             "qualification-state-bridge",
-            RETAINED_LIBRARY_V26_TO_V31,
+            RETAINED_LIBRARY_V26_TO_V32,
             "--database",
             "source.sqlite3",
             "--backup",

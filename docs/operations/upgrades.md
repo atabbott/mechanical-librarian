@@ -21,7 +21,7 @@ directory offline if it has historical value, then start this build with an
 absent application database and artifact store and repeat first-run setup.
 
 Maintainers have one separate qualification-only command:
-`qualification-state-bridge retained-library-v26-to-v31`. It accepts only the
+`qualification-state-bridge retained-library-v26-to-v32`. It accepts only the
 exact retained #744 test schema, an existing complete owner-only clone, an
 independent backup path, and an absent output path under the same private
 directory. It leaves the source untouched, verifies the backup, rebuilds a

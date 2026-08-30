@@ -66,7 +66,7 @@ _COMMANDS: dict[str, tuple[tuple[str, str], ...]] = {
 
 _POSITIONALS: dict[str, tuple[str, ...]] = {
     "cover-review": ("show",),
-    "qualification-state-bridge": ("retained-library-v26-to-v31",),
+    "qualification-state-bridge": ("retained-library-v26-to-v32",),
 }
 
 # What each runner must receive for a complete invocation, including the two
@@ -102,7 +102,7 @@ _DELEGATED: dict[str, tuple[object, ...]] = {
         Path("/state.sqlite3"),
         Path("/backup.sqlite3"),
         Path("/current.sqlite3"),
-        "retained-library-v26-to-v31",
+        "retained-library-v26-to-v32",
     ),
 }
 

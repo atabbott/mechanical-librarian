@@ -97,7 +97,7 @@ command are retired. This does not weaken ordinary absent-or-exact-current
 startup or create a generic conversion seam.
 
 Issue #938 restores only the maintainer qualification boundary above. Its
-`retained-library-v26-to-v31` plan reads the exact retained #744 checkpoint,
+`retained-library-v26-to-v32` plan reads the exact retained #744 checkpoint,
 re-derives current reports, invalidates provider observations that predate
 mandatory work-dispatch lineage, their dependent covers, and artifact-bearing
 cover references whose complete private store was not verified, and creates

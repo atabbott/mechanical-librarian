@@ -6836,9 +6836,7 @@ def test_terminal_recovery_reconciles_current_outcome_without_reaging_completion
     repository.close()
 
     expected_outcome = (
-        "ready"
-        if state == "complete" or failure_code == "evidence_only"
-        else "failed"
+        "ready" if state == "complete" or failure_code == "evidence_only" else "failed"
     )
     assert settled == (expected_outcome, state, completed_at, 1, None, None)
     assert counters == (1, 1, 1, "completed_with_failures")
