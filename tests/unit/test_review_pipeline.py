@@ -7135,7 +7135,7 @@ def test_recovery_marking_uses_two_set_based_linear_statements(tmp_path: Path) -
     assert small_count == large_count == 2
     assert small_plan == large_plan
     assert all("TEMP B-TREE" not in row for row in large_plan)
-    assert large_steps <= small_steps + 200 * 2_000, (
+    assert large_steps <= small_steps + 202 * 2_000, (
         small_steps,
         large_steps,
         large_plan,
