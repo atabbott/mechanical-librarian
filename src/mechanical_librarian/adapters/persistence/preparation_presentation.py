@@ -1265,6 +1265,8 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                 "read,searches_finished,compared,checked,ready,failed,completion_count "
                 "FROM review_preparation_presentation WHERE row_id='run'"
             ).fetchone()
+            if stored_run_state == PreparationRunState.DISMISSED.value:
+                raise ValueError("persisted dismissed presentation")
             if connection.execute(
                 "SELECT COUNT(*) FROM review_preparation_presentation WHERE run_id<>?",
                 (run_id,),

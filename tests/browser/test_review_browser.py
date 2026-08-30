@@ -2581,15 +2581,31 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                 handoff_href = handoff.get_attribute("href")
                 assert handoff_href is not None
                 run_id = parse_qs(urlparse(handoff_href).query)["preparation"][0]
-                presentation_state = {"value": "running"}
+                presentation_state: dict[str, str | None] = {"value": "running"}
+                preparation_requests = {"count": 0}
 
                 def preparation_api(
                     route,
                     _request,
                     state_ref=presentation_state,
                     expected_run_id=run_id,
+                    requests=preparation_requests,
                 ) -> None:
                     state = state_ref["value"]
+                    requests["count"] += 1
+                    if state is None:
+                        route.fulfill(
+                            json={
+                                "schema_version": "review-preparation-v2",
+                                "active": False,
+                                "actionable": False,
+                                "paused": False,
+                                "libraries": [],
+                                "connections": [],
+                                "presentation": None,
+                            }
+                        )
+                        return
                     terminal = state in {
                         "completed_clean",
                         "completed_with_failures",
@@ -2809,6 +2825,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                     expect(page.get_by_role("heading", name="Works")).to_be_visible()
                     expect(page.locator(".library-work-row").first).to_be_enabled()
                 if not reduced:
+                    presentation_state["value"] = "running"
                     page.goto(setup_url)
                     page.get_by_role("button", name="Kick off preparation").click()
                     handoff = page.get_by_role("link", name="Open workspace")
@@ -2835,6 +2852,17 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                     assert page.locator("#setup-handoff-motion").evaluate(
                         "element => element.disabled"
                     )
+                    presentation_state["value"] = None
+                    page.get_by_role(
+                        "heading", name="Preparation is no longer available"
+                    ).wait_for()
+                    expect(handoff).to_have_attribute("href", "/library?lens=all")
+                    expect(page.get_by_text("Reconnecting", exact=False)).to_have_count(
+                        0
+                    )
+                    requests_after_null = preparation_requests["count"]
+                    page.wait_for_timeout(1600)
+                    assert preparation_requests["count"] == requests_after_null
                 assert console_errors == []
                 assert page_errors == []
                 setup_client.close()

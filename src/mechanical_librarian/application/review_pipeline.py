@@ -1197,10 +1197,16 @@ class ReviewPreparationSupervisor:
                 raise
             self._threads = threads
             self._wake.set()
-        except Exception:
+        except BaseException as error:
             if not observation_closed and not self._threads:
-                self._pipeline.close_observation()
-            raise
+                try:
+                    self._pipeline.close_observation()
+                except BaseException:
+                    pass
+            failure = error
+        else:
+            return
+        raise failure from None
 
     def start_dormant(self) -> None:
         """Start both lanes behind a closed claim-admission latch."""

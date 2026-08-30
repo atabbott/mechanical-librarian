@@ -970,6 +970,56 @@ def test_refresh_removes_unfinished_orphaned_presentation_work(
     repository.close()
 
 
+def test_reopen_refuses_persisted_dismissed_presentation_without_repair(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry("private-title", "1" * 64),), 102
+    )
+    work_id = repository._connection.execute(
+        "SELECT work_id FROM review_preparation_work"
+    ).fetchone()[0]
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET stage='complete',state='complete',updated_at=103 "
+        "WHERE work_id=?",
+        (work_id,),
+    )
+    refresh_preparation_work(repository._connection, work_id, 103)
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed',updated_at=104"
+    )
+    refresh_preparation_presentation(repository._connection, 104)
+    repository._connection.commit()
+    repository.close()
+
+    connection = sqlite3.connect(application_path)
+    connection.execute(
+        "UPDATE review_preparation_presentation SET state='dismissed' WHERE row_id='run'"
+    )
+    connection.commit()
+    connection.close()
+    before = application_path.read_bytes()
+
+    with pytest.raises(
+        MetadataReportError, match="^database is unavailable or incompatible$"
+    ) as raised:
+        open_repository(application_path, create=False)
+
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert application_path.read_bytes() == before
+
+
 def test_successor_rediscovery_does_not_rename_terminal_completion(
     application_path: Path,
 ) -> None:
@@ -8780,6 +8830,27 @@ def test_supervisor_closes_preopened_observation_when_start_fails() -> None:
         supervisor.start()
 
     assert pipeline.events == ["open", "resume", "recover", "close"]
+    assert supervisor._threads == ()
+
+
+@pytest.mark.parametrize("stage", ("recover", "drain_library_additions"))
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+def test_supervisor_closes_preopened_observation_after_start_interruption(
+    stage: str, fault_type: type[BaseException]
+) -> None:
+    pipeline = _LifecyclePipeline()
+    supervisor = ReviewPreparationSupervisor(pipeline)
+    fault = fault_type("private startup sentinel")
+
+    with (
+        patch.object(pipeline, stage, side_effect=fault),
+        pytest.raises(fault_type) as raised,
+    ):
+        supervisor.start()
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert pipeline.events.count("close") == 1
     assert supervisor._threads == ()
 
 
