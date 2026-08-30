@@ -86,40 +86,39 @@ class SetupStateStore(ConnectionScoped):
         except (SetupStateError, sqlite3.Error) as error:
             transaction.rollback()
             raise SetupStateError("setup state is unavailable") from error
+        except BaseException as error:
+            transaction.rollback()
+            raise error from None
         return document
 
     def read(self, bootstrap_verifier: str | None = None) -> SetupStateDocument:
-        lock = self._serialization_lock
-        if lock is not None:
-            lock.acquire()
-        try:
+        def read() -> SetupStateDocument:
             document = self._read()
             if document.bootstrap_verifier_digest != _UNCLAIMED_VERIFIER_DIGEST:
                 raise SetupStateError("setup state is unavailable")
             return document
-        finally:
-            if lock is not None:
-                lock.release()
+
+        return self._serialized(read)
 
     def is_exact_schema_only(self) -> bool:
         """Admit only the seeded schema left before first setup-state commit."""
-        lock = self._serialization_lock
-        if lock is not None:
-            lock.acquire()
-        try:
-            return self._setup_rows_are_closed() and all(
-                self._connection.execute(f'SELECT 1 FROM "{table}" LIMIT 1').fetchone()
-                is None
-                for table in (
-                    "owner_settings",
-                    "owner_setting_secrets",
+
+        def inspect() -> bool:
+            try:
+                return self._setup_rows_are_closed() and all(
+                    self._connection.execute(
+                        f'SELECT 1 FROM "{table}" LIMIT 1'
+                    ).fetchone()
+                    is None
+                    for table in (
+                        "owner_settings",
+                        "owner_setting_secrets",
+                    )
                 )
-            )
-        except sqlite3.Error:
-            return False
-        finally:
-            if lock is not None:
-                lock.release()
+            except sqlite3.Error:
+                return False
+
+        return self._serialized(inspect)
 
     def use_secret(
         self,
@@ -128,26 +127,25 @@ class SetupStateStore(ConnectionScoped):
         consumer: Callable[[str], _T],
     ) -> _T:
         """Pass one admitted secret directly to its setup-only infrastructure consumer."""
-        lock = self._serialization_lock
-        if lock is not None:
-            lock.acquire()
-        try:
-            document = self.read()
-            if field_id not in document.secret_fields():
-                raise SetupStateError("setup state is unavailable")
-            rows = self._connection.execute(
-                "SELECT value FROM owner_setting_secrets WHERE field_id=?", (field_id,)
-            ).fetchall()
-            if len(rows) != 1 or type(rows[0][0]) is not str:
-                raise SetupStateError("setup state is unavailable")
-            return consumer(rows[0][0])
-        except SetupStateError:
-            raise
-        except sqlite3.Error as error:
-            raise SetupStateError("setup state is unavailable") from error
-        finally:
-            if lock is not None:
-                lock.release()
+
+        def use() -> _T:
+            try:
+                document = self.read()
+                if field_id not in document.secret_fields():
+                    raise SetupStateError("setup state is unavailable")
+                rows = self._connection.execute(
+                    "SELECT value FROM owner_setting_secrets WHERE field_id=?",
+                    (field_id,),
+                ).fetchall()
+                if len(rows) != 1 or type(rows[0][0]) is not str:
+                    raise SetupStateError("setup state is unavailable")
+                return consumer(rows[0][0])
+            except SetupStateError:
+                raise
+            except sqlite3.Error as error:
+                raise SetupStateError("setup state is unavailable") from error
+
+        return self._serialized(use)
 
     def write(
         self,
@@ -230,6 +228,9 @@ class SetupStateStore(ConnectionScoped):
         except (SetupStateError, sqlite3.Error) as error:
             transaction.rollback()
             raise SetupStateError("setup state is unavailable") from error
+        except BaseException as error:
+            transaction.rollback()
+            raise error from None
         return document
 
     def transition_reviewer(
@@ -310,6 +311,9 @@ class SetupStateStore(ConnectionScoped):
         except (SetupStateError, ValueError, sqlite3.Error) as error:
             transaction.rollback()
             raise SetupStateError("setup state is unavailable") from error
+        except BaseException as error:
+            transaction.rollback()
+            raise error from None
 
     def claim_owner(
         self,
@@ -372,62 +376,64 @@ class SetupStateStore(ConnectionScoped):
         except sqlite3.Error as error:
             transaction.rollback()
             raise SetupStateError("setup state is unavailable") from error
+        except BaseException as error:
+            transaction.rollback()
+            raise error from None
 
     def use_owner_verifier(self, consumer: Callable[[str], _T]) -> _T:
         """Keep the established verifier inside the persistence boundary."""
-        lock = self._serialization_lock
-        if lock is not None:
-            lock.acquire()
-        try:
-            document = self._read()
-            if not document.claimed:
-                raise SetupStateError("setup state is unavailable")
-            rows = self._connection.execute(
-                "SELECT value FROM owner_setting_secrets "
-                "WHERE field_id='owner.password.verifier'"
-            ).fetchall()
-            if len(rows) != 1 or type(rows[0][0]) is not str:
-                raise SetupStateError("setup state is unavailable")
-            return consumer(rows[0][0])
-        except sqlite3.Error as error:
-            raise SetupStateError("setup state is unavailable") from error
-        finally:
-            if lock is not None:
-                lock.release()
+
+        def use() -> _T:
+            try:
+                document = self._read()
+                if not document.claimed:
+                    raise SetupStateError("setup state is unavailable")
+                rows = self._connection.execute(
+                    "SELECT value FROM owner_setting_secrets "
+                    "WHERE field_id='owner.password.verifier'"
+                ).fetchall()
+                if len(rows) != 1 or type(rows[0][0]) is not str:
+                    raise SetupStateError("setup state is unavailable")
+                return consumer(rows[0][0])
+            except sqlite3.Error as error:
+                raise SetupStateError("setup state is unavailable") from error
+
+        return self._serialized(use)
 
     def activation_snapshot(
         self, expected_revision: int
     ) -> tuple[SettingsView, dict[str, str], str]:
         """Project a complete dormant runtime candidate without committing it."""
-        lock = self._serialization_lock
-        if lock is not None:
-            lock.acquire()
-        try:
-            state = self._read()
-            if state.revision != expected_revision or state.next_step() != "kick_off":
-                raise SetupStateError("setup state is stale")
-            document = state.complete_owner_document()
-            values = dict(
-                self._connection.execute(
-                    "SELECT field_id,value FROM owner_setting_secrets"
+
+        def snapshot() -> tuple[SettingsView, dict[str, str], str]:
+            try:
+                state = self._read()
+                if (
+                    state.revision != expected_revision
+                    or state.next_step() != "kick_off"
+                ):
+                    raise SetupStateError("setup state is stale")
+                document = state.complete_owner_document()
+                values = dict(
+                    self._connection.execute(
+                        "SELECT field_id,value FROM owner_setting_secrets"
+                    )
                 )
-            )
-            verifier = values.get("owner.password.verifier")
-            if type(verifier) is not str or not verifier.startswith("$argon2id$"):
-                raise SetupStateError("setup state is unavailable")
-            credentials = {
-                name: value
-                for name, value in values.items()
-                if name in document.secret_fields()
-            }
-            if not document.required_secret_fields().issubset(credentials):
-                raise SetupStateError("setup state is unavailable")
-            return _settings_view(document, values), credentials, verifier
-        except sqlite3.Error as error:
-            raise SetupStateError("setup state is unavailable") from error
-        finally:
-            if lock is not None:
-                lock.release()
+                verifier = values.get("owner.password.verifier")
+                if type(verifier) is not str or not verifier.startswith("$argon2id$"):
+                    raise SetupStateError("setup state is unavailable")
+                credentials = {
+                    name: value
+                    for name, value in values.items()
+                    if name in document.secret_fields()
+                }
+                if not document.required_secret_fields().issubset(credentials):
+                    raise SetupStateError("setup state is unavailable")
+                return _settings_view(document, values), credentials, verifier
+            except sqlite3.Error as error:
+                raise SetupStateError("setup state is unavailable") from error
+
+        return self._serialized(snapshot)
 
     def promote(
         self,
@@ -497,6 +503,9 @@ class SetupStateStore(ConnectionScoped):
         except (SetupStateError, sqlite3.Error) as error:
             transaction.rollback()
             raise SetupStateError("setup state is unavailable") from error
+        except BaseException as error:
+            transaction.rollback()
+            raise error from None
 
     def _read(self) -> SetupStateDocument:
         try:

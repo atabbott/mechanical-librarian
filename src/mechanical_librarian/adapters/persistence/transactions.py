@@ -18,10 +18,13 @@ from __future__ import annotations
 import sqlite3
 import sys
 from _thread import RLock
-from typing import TYPE_CHECKING, Protocol, cast
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Protocol, TypeVar, cast
 
 if TYPE_CHECKING:
     from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
+
+_T = TypeVar("_T")
 
 
 class _RecursionDepth(Protocol):
@@ -105,6 +108,22 @@ def _release_lock_increment(
         return lock.depth() == prior_depth, failure
     except BaseException as error:
         return False, failure or error
+
+
+def _acquire_lock_increment(lock: _SerializationLock) -> int:
+    """Acquire one recursion increment or balance it before preserving failure."""
+    prior_depth = lock.depth()
+    try:
+        lock.acquire()
+    except BaseException as error:
+        try:
+            accepted = lock.depth() == prior_depth + 1
+        except BaseException:
+            accepted = False
+        if accepted:
+            _release_lock_increment(lock, prior_depth)
+        raise error from None
+    return prior_depth
 
 
 def _missing_savepoint(error: BaseException, savepoint: str) -> bool:
@@ -216,18 +235,8 @@ class TransactionScope:
         """Start this scope, using a savepoint when nested or explicitly required."""
         lock_depth = 0
         if self._lock is not None:
-            lock_depth = self._lock.depth()
+            lock_depth = _acquire_lock_increment(self._lock)
             self._lock_depth = lock_depth
-            try:
-                self._lock.acquire()
-            except BaseException as error:
-                try:
-                    accepted = self._lock.depth() > lock_depth
-                except BaseException:
-                    accepted = False
-                if accepted:
-                    _release_lock_increment(self._lock, lock_depth)
-                raise error from None
         boundary_issued = False
         failure: BaseException | None = None
         try:
@@ -362,3 +371,23 @@ class ConnectionScoped:
             deferred=deferred,
             serialization_lock=self._serialization_lock,
         )
+
+    def _serialized(self, operation: Callable[[], _T]) -> _T:
+        """Run one non-transactional operation under the shared depth authority."""
+        lock = self._serialization_lock
+        if lock is None:
+            return operation()
+        prior_depth = _acquire_lock_increment(lock)
+        try:
+            result = operation()
+        except BaseException as error:
+            _release_lock_increment(lock, prior_depth)
+            raise error from None
+        balanced, release_error = _release_lock_increment(lock, prior_depth)
+        if not balanced:
+            if release_error is not None:
+                raise release_error from None
+            raise RuntimeError("transaction serialization release failed") from None
+        if release_error is not None:
+            raise release_error from None
+        return result

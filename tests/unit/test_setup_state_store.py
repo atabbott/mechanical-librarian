@@ -5,7 +5,7 @@ import sqlite3
 import threading
 from _thread import RLock
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal, Never, cast
 
 import pytest
 
@@ -21,6 +21,7 @@ from mechanical_librarian.adapters.persistence.reviewer_access import (
 )
 from mechanical_librarian.adapters.persistence.schema import _create_schema
 from mechanical_librarian.adapters.persistence.setup_state import SetupStateStore
+from mechanical_librarian.adapters.persistence.transactions import TransactionScope
 from mechanical_librarian.application.review_web import OwnerSessionService
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 from mechanical_librarian.domain.owner_settings import OwnerSettingsError
@@ -35,17 +36,32 @@ _OWNER = "$argon2id$v=19$m=65536,t=3,p=4$b3duZXI$hash"
 
 
 class _PostReleaseInterruptionLock:
-    def __init__(self, fault: BaseException) -> None:
+    def __init__(
+        self,
+        fault: BaseException,
+        *,
+        before_effect: bool = False,
+        fault_depth: int = 1,
+    ) -> None:
         self.lock = RLock()
         self.fault = fault
+        self.before_effect = before_effect
+        self.fault_depth = fault_depth
         self.armed = False
 
     def acquire(self) -> None:
         self.lock.acquire()
 
     def release(self) -> None:
+        if (
+            self.armed
+            and self.lock._recursion_count() == self.fault_depth
+            and self.before_effect
+        ):
+            self.armed = False
+            raise self.fault
         self.lock.release()
-        if self.armed and self.lock._recursion_count() == 0:
+        if self.armed and self.lock._recursion_count() == self.fault_depth - 1:
             self.armed = False
             raise self.fault
 
@@ -83,6 +99,24 @@ def _claimed(store: SetupStateStore, state: SetupStateDocument) -> SetupStateDoc
     )
 
 
+def _assert_lock_available(lock: _PostReleaseInterruptionLock) -> None:
+    acquired = threading.Event()
+
+    def contend() -> None:
+        with lock.lock:
+            acquired.set()
+
+    contender = threading.Thread(target=contend)
+    contender.start()
+    assert acquired.wait(1)
+    contender.join(timeout=1)
+    assert not contender.is_alive()
+
+
+def _interrupt(fault: BaseException) -> Never:
+    raise fault
+
+
 def test_setup_write_propagates_post_commit_process_control() -> None:
     connection = sqlite3.connect(":memory:", isolation_level=None)
     _create_schema(connection)
@@ -100,17 +134,117 @@ def test_setup_write_propagates_post_commit_process_control() -> None:
     assert raised.value.__cause__ is None and raised.value.__context__ is None
     assert setup.read(_BOOTSTRAP) == successor
     assert lock._recursion_count() == 0
-    acquired = threading.Event()
+    _assert_lock_available(lock)
+    connection.close()
 
-    def contend() -> None:
-        with lock.lock:
-            acquired.set()
 
-    contender = threading.Thread(target=contend)
-    contender.start()
-    assert acquired.wait(1)
-    contender.join(timeout=1)
-    assert not contender.is_alive()
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize(
+    "owner", ("initialize", "write", "transition_reviewer", "claim_owner", "promote")
+)
+def test_setup_transaction_owners_rollback_process_control(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    owner: str,
+    fault_type: type[BaseException],
+) -> None:
+    database = tmp_path / f"setup-{owner}.sqlite3"
+    connection = sqlite3.connect(database, isolation_level=None)
+    _create_schema(connection)
+    lock = _PostReleaseInterruptionLock(SystemExit("unused"))
+    store = SetupStateStore(connection, cast(RLock, lock))
+    state = store.initialize(_BOOTSTRAP) if owner != "initialize" else None
+    fault = fault_type(f"private {owner} body")
+    before = list(connection.iterdump())
+
+    if owner == "initialize":
+        original_execute = connection.execute
+
+        class _InterruptedConnection:
+            @property
+            def in_transaction(self) -> bool:
+                return connection.in_transaction
+
+            def execute(
+                self, sql: str, parameters: tuple[object, ...] = ()
+            ) -> sqlite3.Cursor:
+                if sql == "SELECT 1 FROM owner_settings":
+                    _interrupt(fault)
+                return original_execute(sql, parameters)
+
+            def __getattr__(self, name: str) -> object:
+                return getattr(connection, name)
+
+        store._connection = cast(sqlite3.Connection, _InterruptedConnection())
+    else:
+        assert state is not None
+        monkeypatch.setattr(store, "_read", lambda: _interrupt(fault))
+
+    def operation() -> object:
+        if owner == "initialize":
+            return store.initialize(_BOOTSTRAP)
+        assert state is not None
+        if owner == "write":
+            return store.write(_next(state), state.revision, _BOOTSTRAP)
+        if owner == "transition_reviewer":
+            return store.transition_reviewer(_next(state), state.revision, 1, "skipped")
+        if owner == "claim_owner":
+            return store.claim_owner(
+                expected_revision=state.revision, owner_verifier=_OWNER
+            )
+        store.promote(_BOOTSTRAP, _OWNER, state.revision)
+        return None
+
+    with pytest.raises(fault_type) as raised:
+        operation()
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert not connection.in_transaction
+    assert list(connection.iterdump()) == before
+    assert lock._recursion_count() == 0
+    _assert_lock_available(lock)
+    second = sqlite3.connect(database, isolation_level=None, timeout=0)
+    second.execute("BEGIN IMMEDIATE")
+    second.rollback()
+    second.close()
+    connection.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize("before_effect", (False, True))
+def test_nested_setup_secret_release_unwinds_owning_transaction(
+    fault_type: type[BaseException], before_effect: bool
+) -> None:
+    connection = sqlite3.connect(":memory:", isolation_level=None)
+    _create_schema(connection)
+    fault = fault_type("private nested setup secret release")
+    lock = _PostReleaseInterruptionLock(
+        fault, before_effect=before_effect, fault_depth=2
+    )
+    store = SetupStateStore(connection, cast(RLock, lock))
+    state = store.initialize(_BOOTSTRAP)
+    state = _claimed(store, state)
+    before = list(connection.iterdump())
+    transaction = TransactionScope(
+        connection, "nested_setup_secret", serialization_lock=cast(RLock, lock)
+    )
+    transaction.begin()
+    lock.armed = True
+
+    with pytest.raises(fault_type) as raised:
+        try:
+            store.use_owner_verifier(lambda value: value)
+        except BaseException as error:
+            transaction.rollback()
+            raise error from None
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert not connection.in_transaction
+    assert list(connection.iterdump()) == before
+    assert lock._recursion_count() == 0
+    _assert_lock_available(lock)
     connection.close()
 
 

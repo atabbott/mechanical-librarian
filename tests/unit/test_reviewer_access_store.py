@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+from _thread import RLock
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Never, cast
 
 import pytest
 
@@ -12,6 +14,8 @@ from mechanical_librarian.adapters.persistence.reviewer_access import (
     ReviewerAccessStore,
     ReviewerAccessStoreError,
 )
+from mechanical_librarian.adapters.persistence.schema import _create_schema
+from mechanical_librarian.adapters.persistence.transactions import TransactionScope
 from mechanical_librarian.domain.reviewer_access import (
     OpenRouterTaskSelection,
     ReviewerAccessDocument,
@@ -43,6 +47,54 @@ def _store() -> ReviewerAccessStore:
         ),
     )
     return ReviewerAccessStore(connection)
+
+
+class _ReleaseInterruptionLock:
+    def __init__(
+        self, fault: BaseException, *, before_effect: bool, fault_depth: int
+    ) -> None:
+        self.lock = RLock()
+        self.fault = fault
+        self.before_effect = before_effect
+        self.fault_depth = fault_depth
+        self.armed = False
+
+    def acquire(self) -> None:
+        self.lock.acquire()
+
+    def release(self) -> None:
+        if (
+            self.armed
+            and self.before_effect
+            and self.lock._recursion_count() == self.fault_depth
+        ):
+            self.armed = False
+            raise self.fault
+        self.lock.release()
+        if self.armed and self.lock._recursion_count() == self.fault_depth - 1:
+            self.armed = False
+            raise self.fault
+
+    def _recursion_count(self) -> int:
+        return self.lock._recursion_count()
+
+
+def _interrupt(fault: BaseException) -> Never:
+    raise fault
+
+
+def _assert_lock_available(lock: _ReleaseInterruptionLock) -> None:
+    acquired = threading.Event()
+
+    def contend() -> None:
+        with lock.lock:
+            acquired.set()
+
+    contender = threading.Thread(target=contend)
+    contender.start()
+    assert acquired.wait(1)
+    contender.join(timeout=1)
+    assert not contender.is_alive()
 
 
 @contextmanager
@@ -90,6 +142,120 @@ def test_atomic_replace_and_clear_never_expose_the_openrouter_secret() -> None:
     cleared, configured = store.replace(_document(3), 2, clear_openrouter_key=True)
     assert cleared.revision == 3
     assert configured is False
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+def test_reviewer_replace_body_process_control_rolls_back(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fault_type: type[BaseException],
+) -> None:
+    database = tmp_path / "reviewer.sqlite3"
+    connection = sqlite3.connect(database, isolation_level=None)
+    _create_schema(connection)
+    lock = _ReleaseInterruptionLock(
+        SystemExit("unused"), before_effect=False, fault_depth=1
+    )
+    store = ReviewerAccessStore(connection, cast(RLock, lock))
+    fault = fault_type("private reviewer body")
+    before = list(connection.iterdump())
+    monkeypatch.setattr(store, "_read", lambda: _interrupt(fault))
+
+    with pytest.raises(fault_type) as raised:
+        store.replace(_document(2), 1, openrouter_key="secret-key")
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert not connection.in_transaction
+    assert list(connection.iterdump()) == before
+    assert lock._recursion_count() == 0
+    _assert_lock_available(lock)
+    second = sqlite3.connect(database, isolation_level=None, timeout=0)
+    second.execute("BEGIN IMMEDIATE")
+    second.rollback()
+    second.close()
+    connection.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize("before_effect", (False, True))
+def test_reviewer_replace_commit_release_propagates_process_control(
+    fault_type: type[BaseException], before_effect: bool
+) -> None:
+    connection = sqlite3.connect(":memory:", isolation_level=None)
+    connection.execute(
+        "CREATE TABLE reviewer_access (singleton INTEGER PRIMARY KEY CHECK(singleton=1),revision INTEGER NOT NULL,document TEXT NOT NULL)"
+    )
+    connection.execute(
+        "CREATE TABLE reviewer_access_secrets (field_id TEXT PRIMARY KEY,value TEXT NOT NULL)"
+    )
+    connection.execute(
+        "INSERT INTO reviewer_access(singleton,revision,document) VALUES(1,1,?)",
+        (
+            '{"cover_observation":null,"revision":1,"schema_version":"reviewer-access-v1"}',
+        ),
+    )
+    fault = fault_type("private reviewer commit release")
+    lock = _ReleaseInterruptionLock(fault, before_effect=before_effect, fault_depth=1)
+    store = ReviewerAccessStore(connection, cast(RLock, lock))
+    lock.armed = True
+
+    with pytest.raises(fault_type) as raised:
+        store.replace(_document(2), 1, openrouter_key="secret-key")
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert not connection.in_transaction
+    assert store.read() == (_document(2), True)
+    assert lock._recursion_count() == 0
+    _assert_lock_available(lock)
+    connection.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize("before_effect", (False, True))
+def test_nested_reviewer_read_release_preserves_outer_authority(
+    fault_type: type[BaseException], before_effect: bool
+) -> None:
+    connection = sqlite3.connect(":memory:", isolation_level=None)
+    connection.execute(
+        "CREATE TABLE reviewer_access (singleton INTEGER PRIMARY KEY CHECK(singleton=1),revision INTEGER NOT NULL,document TEXT NOT NULL)"
+    )
+    connection.execute(
+        "CREATE TABLE reviewer_access_secrets (field_id TEXT PRIMARY KEY,value TEXT NOT NULL)"
+    )
+    connection.execute(
+        "INSERT INTO reviewer_access(singleton,revision,document) VALUES(1,1,?)",
+        (
+            '{"cover_observation":null,"revision":1,"schema_version":"reviewer-access-v1"}',
+        ),
+    )
+    fault = fault_type("private nested reviewer read release")
+    lock = _ReleaseInterruptionLock(fault, before_effect=before_effect, fault_depth=2)
+    store = ReviewerAccessStore(connection, cast(RLock, lock))
+    transaction = TransactionScope(
+        connection, "nested_reviewer_read", serialization_lock=cast(RLock, lock)
+    )
+    transaction.begin()
+    connection.execute(
+        "INSERT INTO reviewer_access_secrets(field_id,value) VALUES('openrouter.api_key','secret-key')"
+    )
+    lock.armed = True
+
+    with pytest.raises(fault_type) as raised:
+        try:
+            store.read()
+        except BaseException as error:
+            transaction.rollback()
+            raise error from None
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert not connection.in_transaction
+    assert connection.execute("SELECT * FROM reviewer_access_secrets").fetchall() == []
+    assert lock._recursion_count() == 0
+    _assert_lock_available(lock)
+    connection.close()
 
 
 def test_compare_and_swap_refuses_a_lost_writer() -> None:
