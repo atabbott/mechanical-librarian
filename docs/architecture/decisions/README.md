@@ -77,6 +77,7 @@ context and consequences rather than reproducing code.
 | [0061](0061-audiobook-provider-posture.md) | accepted | Admit keyless audiobook providers with the anonymous Audible catalog primary |
 | [0062](0062-owner-managed-reviewer-access.md) | accepted | Keep reviewer access owner-managed and task-scoped |
 | [0063](0063-isolated-audiobook-inspector.md) | accepted | Read audiobook evidence through two isolated children |
+| [0064](0064-audiobook-provider-evidence-vocabularies.md) | accepted | Admit audiobook provider evidence vocabularies and corroboration rules |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

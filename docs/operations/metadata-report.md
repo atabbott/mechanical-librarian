@@ -50,7 +50,7 @@ provider call.
 - The container runs under a dedicated Unix identity with no untrusted
   same-identity processes. Privileged and hostile same-identity filesystem
   mutation is outside the supported unprivileged exclusion boundary.
-- The configuration uses `config-v6` and names the requested connection and
+- The configuration uses `config-v7` and names the requested connection and
   library explicitly.
 - The target secret and each enabled referenced provider secret are owner-only
   regular files.
@@ -153,8 +153,8 @@ source order. Front and rear subtitle/publisher/imprint canonical values share
 NFC and whitespace normalization. Rear position does not increase authority.
 Provider comparisons link only claims with the same role; no publisher/imprint
 hierarchy is inferred. The exact-current persisted report and database
-discriminator is `metadata-report-v31`. Every earlier report discriminator,
-including immediate prior `metadata-report-v30`, remains offline and requires a
+discriminator is `metadata-report-v32`. Every earlier report discriminator,
+including immediate prior `metadata-report-v31`, remains offline and requires a
 clean current database under ADR-0013.
 
 An audiobook item in a mounted audiobook library, with exactly one audio file

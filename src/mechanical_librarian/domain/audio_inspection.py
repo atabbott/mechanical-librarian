@@ -43,11 +43,16 @@ MAX_CANONICAL_CHARACTERS = 512
 # exists so a hostile container cannot state a duration no arithmetic below
 # can hold, not to judge a recording.
 MAX_DURATION_MILLISECONDS = 604_800_000
+# One directory entry name, at the filesystem's own component ceiling.  The
+# manifest records names the sibling listing already proved are single
+# components, so nothing wider can reach it.
+MAX_SIDECAR_NAME_CHARACTERS = 255
 
 _FIELD_STATES = frozenset(
     {"valid", "malformed", "oversized", "unsupported", "untyped", "inapplicable"}
 )
 _DECIMAL_SECONDS = re.compile(r"^\d{1,9}(?:\.\d{1,9})?$")
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
 class AudioInspectionOutcome(StrEnum):
@@ -273,6 +278,35 @@ class AudioEmbeddedCover:
 
     def __repr__(self) -> str:
         return "AudioEmbeddedCover(<redacted>)"
+
+
+@dataclass(frozen=True, repr=False)
+class AudioSidecarDigest:
+    """One recognized sidecar present beside the audio file when it was read.
+
+    The pair is a currentness witness rather than evidence: the digest names
+    the exact bytes an observation was interpreted from, so a sidecar that is
+    added, removed, or edited after publication makes the report stale.
+    """
+
+    name: str
+    digest: str
+
+    def __post_init__(self) -> None:
+        if type(self.digest) is not str or _SHA256.fullmatch(self.digest) is None:
+            raise ValueError("audio sidecar digest is malformed")
+        try:
+            validate_projection_text(
+                self.name, "audio sidecar name", MAX_SIDECAR_NAME_CHARACTERS
+            )
+        except EvidenceValueError as error:
+            raise ValueError("audio sidecar name is malformed") from error
+
+    def to_data(self) -> dict[str, object]:
+        return {"digest": self.digest, "name": self.name}
+
+    def __repr__(self) -> str:
+        return "AudioSidecarDigest(<redacted>)"
 
 
 @dataclass(frozen=True, repr=False)
@@ -552,7 +586,9 @@ __all__ = [
     "AudioInspectionLimits",
     "AudioInspectionOutcome",
     "AudioPerformanceType",
+    "AudioSidecarDigest",
     "MAX_CHAPTERS",
     "MAX_PUBLIC_REPORT_BYTES",
+    "MAX_SIDECAR_NAME_CHARACTERS",
     "normalize_duration_seconds",
 ]

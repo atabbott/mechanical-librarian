@@ -13,6 +13,13 @@
   missing current provenance; ordinary startup and user upgrades stay
   absent-or-exact-current. (#938)
 
+- Admit the audiobook provider vocabularies: ASIN discovery lanes with
+  marketplace provenance, bounded chapter-structure evidence, a duration
+  agreement band, and closed corroboration rules over runtime, chapter cuts,
+  and cover hashes. An audiobook report now also records every sidecar it read,
+  so an edited one makes it stale. Requires a clean database
+  (`metadata-report-v32`) and a `config-v7` file. (#749)
+
 - The container-image qualification job restores unchanged Docker layers from
   the repository Actions cache instead of rebuilding every stage per run; base
   images stay governed by the Dockerfile's digest pins. (#930)

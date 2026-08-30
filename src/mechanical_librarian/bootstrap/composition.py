@@ -10,6 +10,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import AbstractContextManager, contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
@@ -232,6 +233,7 @@ from mechanical_librarian.bootstrap.contained_reviewer import run_cover_packet_r
 from mechanical_librarian.domain.audio_inspection import (
     AudioInspectionLimits,
     AudioInspectionOutcome,
+    AudioSidecarDigest,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
@@ -884,7 +886,7 @@ class _IsolatedAudioInspector:
         self, mount: MediaMountConfiguration, relative_path: str, maximum_bytes: int
     ) -> AudioInspectionResult:
         opened = None
-        sidecars: list[tuple[str, str, int]] = []
+        sidecars: list[_OpenedSidecar] = []
         try:
             opened = open_local_media(mount.container_path, relative_path)
             digest = sha256_descriptor(
@@ -897,7 +899,9 @@ class _IsolatedAudioInspector:
                 opened.descriptor,
                 source,
                 AudioInspectionLimits(source_bytes=_audio_source_bytes(maximum_bytes)),
-                sidecars=tuple(sidecars),
+                sidecars=tuple(
+                    (value.surface, value.name, value.descriptor) for value in sidecars
+                ),
                 path_file=components[-1],
                 path_folder=components[-2] if len(components) > 1 else None,
             )
@@ -926,6 +930,7 @@ class _IsolatedAudioInspector:
                     inspection.chapters,
                     inspection.chapters_truncated,
                     inspection.embedded_cover,
+                    _sidecar_manifest(sidecars),
                 ),
             )
         except MetadataReportError:
@@ -943,11 +948,7 @@ class _IsolatedAudioInspector:
                 AudioInspectionOutcome.INTERNAL_FAILURE
             ) from error
         finally:
-            for _surface, _name, descriptor in sidecars:
-                try:
-                    os.close(descriptor)
-                except OSError:
-                    pass
+            _close_sidecars(sidecars)
             if opened is not None:
                 os.close(opened.descriptor)
 
@@ -957,21 +958,64 @@ class _IsolatedAudioInspector:
         relative_path: str,
         expected_digest: str,
         maximum_bytes: int,
+        expected_sidecars: tuple[AudioSidecarDigest, ...] = (),
     ) -> bool:
+        """Re-prove the audio file *and* the sidecar set it was read with.
+
+        Digesting the selected file alone proved only one of the two surfaces
+        an audiobook's evidence comes from.  The candidate set is re-derived
+        through the same function `inspect` uses, so a sidecar added, removed,
+        or edited since publication is a change here rather than a silently
+        stale report.
+        """
         opened = None
+        sidecars: list[_OpenedSidecar] = []
         try:
             opened = open_local_media(mount.container_path, relative_path)
-            return (
+            if (
                 sha256_descriptor(
                     opened.descriptor, opened.length, maximum=maximum_bytes
                 )
-                == expected_digest
+                != expected_digest
+            ):
+                return False
+            sidecars = _open_audio_sidecars(
+                mount, relative_path, relative_path.rsplit("/", 1)[-1]
             )
+            return _sidecar_manifest(sidecars) == tuple(expected_sidecars)
         except (LocalMediaError, OSError, ValueError):
             return False
         finally:
+            _close_sidecars(sidecars)
             if opened is not None:
                 os.close(opened.descriptor)
+
+
+@dataclass(frozen=True)
+class _OpenedSidecar:
+    """One recognized sidecar, open and already digested by the parent."""
+
+    surface: str
+    name: str
+    descriptor: int
+    digest: str
+
+
+def _sidecar_manifest(
+    sidecars: list[_OpenedSidecar],
+) -> tuple[AudioSidecarDigest, ...]:
+    return tuple(
+        AudioSidecarDigest(value.name, value.digest)
+        for value in sorted(sidecars, key=lambda value: value.name)
+    )
+
+
+def _close_sidecars(sidecars: list[_OpenedSidecar]) -> None:
+    for value in sidecars:
+        try:
+            os.close(value.descriptor)
+        except OSError:
+            pass
 
 
 def _audio_source_bytes(maximum_bytes: int) -> int:
@@ -982,21 +1026,28 @@ def _audio_source_bytes(maximum_bytes: int) -> int:
 
 def _open_audio_sidecars(
     mount: MediaMountConfiguration, relative_path: str, media_name: str
-) -> list[tuple[str, str, int]]:
-    """Open the supported sidecars beside one audio file, and nothing else.
+) -> list[_OpenedSidecar]:
+    """Derive, open, and digest the supported sidecars beside one audio file.
 
-    A sidecar that cannot be opened is simply absent evidence: the audiobook's
-    own container is the primary surface, and one unreadable neighbour must not
-    deny the owner the rest of the set.
+    This is the single candidate-set derivation: inspection passes the
+    descriptors to the isolated child, and revalidation compares the digests.
+    Two derivations would be two answers to "which documents is this evidence
+    made of", and only one of them could be right.
+
+    A sidecar that cannot be opened, read, or projected is simply absent
+    evidence: the audiobook's own container is the primary surface, and one
+    unreadable neighbour must not deny the owner the rest of the set. It is
+    absent identically on both paths because both call this.
     """
+    limits = AudioInspectionLimits()
     directory = relative_path.rsplit("/", 1)[0] if "/" in relative_path else ""
     try:
         names = list_local_media_siblings(mount.container_path, relative_path)
     except LocalMediaError:
         return []
-    opened: list[tuple[str, str, int]] = []
+    opened: list[_OpenedSidecar] = []
     for name in names:
-        if len(opened) >= AudioInspectionLimits().sidecar_documents:
+        if len(opened) >= limits.sidecar_documents:
             break
         surface = sidecar_surface(name, media_name)
         if surface is None:
@@ -1006,7 +1057,23 @@ def _open_audio_sidecars(
             sibling = open_local_media(mount.container_path, reference)
         except LocalMediaError:
             continue
-        opened.append((surface.value, name, sibling.descriptor))
+        try:
+            digest = sha256_descriptor(
+                sibling.descriptor, sibling.length, maximum=limits.sidecar_bytes
+            )
+            entry = _OpenedSidecar(surface.value, name, sibling.descriptor, digest)
+        except (LocalMediaError, OSError, ValueError):
+            os.close(sibling.descriptor)
+            continue
+        try:
+            AudioSidecarDigest(entry.name, entry.digest)
+        except ValueError:
+            # A name the retained report cannot project is a name the manifest
+            # cannot carry, so the document is not part of the candidate set on
+            # either path rather than on one of them.
+            os.close(sibling.descriptor)
+            continue
+        opened.append(entry)
     return opened
 
 

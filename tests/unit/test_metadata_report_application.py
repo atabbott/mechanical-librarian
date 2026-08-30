@@ -39,6 +39,7 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioChapter,
     AudioEmbeddedCover,
     AudioEvidenceSurface,
+    AudioSidecarDigest,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
@@ -1156,6 +1157,108 @@ def test_audiobook_shapes_outside_the_slice_stay_unsupported(
 
     assert repository.values == {}
     assert audio_inspector is None or audio_inspector.inspections == 0
+
+
+_SIDECARS = (
+    AudioSidecarDigest("book.opf", "1" * 64),
+    AudioSidecarDigest("metadata.json", "2" * 64),
+)
+
+
+def _audiobook_with_sidecars() -> tuple[
+    FakeTarget, FakeReportRepository, FakeAudioInspector, MetadataReport
+]:
+    selected = TargetFile("a" * 64, "book.m4b", "m4b")
+    target = FakeTarget(
+        [
+            TargetSnapshot("audiobook", "Recorded title", (selected,)),
+            TargetSnapshot("audiobook", "Recorded title", (selected,)),
+        ]
+    )
+    audio_inspector = FakeAudioInspector(audio_result(sidecars=_SIDECARS))
+    repository = FakeReportRepository()
+    published = MetadataReport.from_json(
+        _audiobook_service(target, repository, audio_inspector).run("item-1", 0)
+    )
+    return target, repository, audio_inspector, published
+
+
+def test_a_published_audiobook_report_records_the_sidecars_it_read() -> None:
+    """The manifest is a currentness witness, and it must survive the document.
+
+    A pair recorded in memory and lost on serialization would leave
+    revalidation with nothing to compare against, which is the defect this
+    manifest exists to close.
+    """
+    _, _, _, published = _audiobook_with_sidecars()
+    assert published.audio is not None
+    assert _SIDECARS == published.audio.sidecars
+    assert MetadataReport.from_json(published.to_json()) == published
+    assert [
+        {"digest": "1" * 64, "name": "book.opf"},
+        {"digest": "2" * 64, "name": "metadata.json"},
+    ] == cast(dict, published.to_data()["audio"])["sidecars"]
+
+
+@pytest.mark.parametrize(
+    "current",
+    [
+        pytest.param((), id="every_sidecar_removed"),
+        pytest.param(_SIDECARS[:1], id="one_sidecar_removed"),
+        pytest.param(
+            (*_SIDECARS, AudioSidecarDigest("book.nfo", "3" * 64)), id="sidecar_added"
+        ),
+        pytest.param(
+            (AudioSidecarDigest("book.opf", "9" * 64), _SIDECARS[1]),
+            id="sidecar_edited",
+        ),
+    ],
+)
+def test_a_changed_sidecar_set_makes_an_audiobook_report_stale(
+    current: tuple[AudioSidecarDigest, ...],
+) -> None:
+    """The audio file is byte-identical in every case here.
+
+    Before the manifest existed each of these published a second report
+    against evidence that had already changed, because only the selected file
+    was ever re-digested.
+    """
+    target, _, audio_inspector, published = _audiobook_with_sidecars()
+    audio_inspector.current_sidecars = current
+    target.snapshots.append(TargetSnapshot("audiobook", "Recorded title", ()))
+    target.calls = 0
+    target.snapshots[0] = TargetSnapshot(
+        "audiobook", "Recorded title", (TargetFile("a" * 64, "book.m4b", "m4b"),)
+    )
+
+    with pytest.raises(CurrentnessError):
+        require_report_current(
+            target,
+            FakeInspector(InspectionResult("c" * 64, ())),
+            MediaMountConfiguration("audiobooks", "/media", "/library", True),
+            ReportLimits(),
+            published,
+            audio_inspector=audio_inspector,
+        )
+
+
+def test_an_unchanged_audiobook_stays_current_with_its_sidecars_intact() -> None:
+    target, _, audio_inspector, published = _audiobook_with_sidecars()
+    target.calls = 0
+    target.snapshots[0] = TargetSnapshot(
+        "audiobook", "Recorded title", (TargetFile("a" * 64, "book.m4b", "m4b"),)
+    )
+    verifications = audio_inspector.verifications
+
+    assert require_report_current(
+        target,
+        FakeInspector(InspectionResult("c" * 64, ())),
+        MediaMountConfiguration("audiobooks", "/media", "/library", True),
+        ReportLimits(),
+        published,
+        audio_inspector=audio_inspector,
+    )
+    assert audio_inspector.verifications == verifications + 1
 
 
 def test_audiobook_currentness_reruns_the_audio_inspector_not_the_epub_one() -> None:

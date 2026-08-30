@@ -16,6 +16,7 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.domain.audio_inspection import (
     AudioChapter,
     AudioEmbeddedCover,
+    AudioSidecarDigest,
 )
 from mechanical_librarian.domain.metadata_report import (
     AudioFacts,
@@ -63,15 +64,28 @@ class FakeAudioInspector:
         self.inspections = 0
         self.verifications = 0
         self.ceilings: list[int] = []
+        # What the mount holds now, which starts as what inspection read and
+        # can be reassigned to stage a sidecar added, removed, or edited since.
+        self.current_sidecars = result.audio.sidecars
 
     def inspect(self, mount, relative_path, maximum_bytes):
         self.inspections += 1
         self.ceilings.append(maximum_bytes)
         return self.result
 
-    def unchanged(self, mount, relative_path, expected_digest, maximum_bytes):
+    def unchanged(
+        self,
+        mount,
+        relative_path,
+        expected_digest,
+        maximum_bytes,
+        expected_sidecars=(),
+    ):
         self.verifications += 1
-        return expected_digest == self.result.content_digest
+        return (
+            expected_digest == self.result.content_digest
+            and tuple(expected_sidecars) == self.current_sidecars
+        )
 
 
 _NO_EMBEDDED_COVER = AudioEmbeddedCover(False)
@@ -84,6 +98,7 @@ def audio_result(
     chapters: tuple[AudioChapter, ...] = (),
     chapters_truncated: bool = False,
     embedded_cover: AudioEmbeddedCover = _NO_EMBEDDED_COVER,
+    sidecars: tuple[AudioSidecarDigest, ...] = (),
 ) -> AudioInspectionResult:
     """Build one audiobook evidence set from ``(kind, value, basis, role)`` facts."""
     return AudioInspectionResult(
@@ -103,7 +118,7 @@ def audio_result(
             )
             for occurrence, (kind, value, basis, role) in enumerate(facts, 1)
         ),
-        AudioFacts(chapters, chapters_truncated, embedded_cover),
+        AudioFacts(chapters, chapters_truncated, embedded_cover, sidecars),
     )
 
 

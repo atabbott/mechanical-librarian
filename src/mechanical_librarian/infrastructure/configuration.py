@@ -6,7 +6,7 @@ import json
 import os
 import stat
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, get_args
 
 from pydantic import (
     AfterValidator,
@@ -76,6 +76,12 @@ ContactEmail = Annotated[
 ]
 
 
+Marketplace = Literal["us", "uk", "de", "fr", "au", "in", "ca", "jp", "it", "es"]
+# The same closed set the domain names, in the same US-first order. A test
+# holds the two together, because a `Literal` cannot be built from the tuple.
+_MARKETPLACE_DEFAULT: list[Marketplace] = list(get_args(Marketplace))
+
+
 class _Closed(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -138,6 +144,64 @@ class DisabledGoogleBooksProviderInput(_ProviderInput):
     contact_email: Literal[None] = None
 
 
+# ADR-0061 admits every audiobook provider keyless: no key exists for them even
+# as an optional upgrade, so the four pairs below carry `secret_file: None` and
+# no credential surface of any kind, exactly as Open Library's disabled form
+# does. This build acquires no audiobook cover bytes, so `cover_enabled` is
+# closed shut on them too.
+class _KeylessAudioProviderInput(_Closed):
+    name: Name
+    cover_enabled: Literal[False]
+    secret_file: Literal[None]
+    contact_email: Literal[None] = None
+
+
+class EnabledAudibleCatalogProviderInput(_KeylessAudioProviderInput):
+    adapter: Literal["audible_catalog"]
+    enabled: Literal[True]
+    # The resolution order for one ASIN. 27 of the reference library's 103
+    # known ASINs resolve outside the US marketplace, so the fallback set is
+    # configuration rather than a constant, and it defaults to all of them.
+    marketplaces: Annotated[
+        list[Marketplace], Field(min_length=1, max_length=len(_MARKETPLACE_DEFAULT))
+    ] = _MARKETPLACE_DEFAULT
+
+
+class DisabledAudibleCatalogProviderInput(_KeylessAudioProviderInput):
+    adapter: Literal["audible_catalog"]
+    enabled: Literal[False]
+
+
+class EnabledAudnexusProviderInput(_KeylessAudioProviderInput):
+    adapter: Literal["audnexus"]
+    enabled: Literal[True]
+
+
+class DisabledAudnexusProviderInput(_KeylessAudioProviderInput):
+    adapter: Literal["audnexus"]
+    enabled: Literal[False]
+
+
+class EnabledAudioSiloProviderInput(_KeylessAudioProviderInput):
+    adapter: Literal["audiosilo"]
+    enabled: Literal[True]
+
+
+class DisabledAudioSiloProviderInput(_KeylessAudioProviderInput):
+    adapter: Literal["audiosilo"]
+    enabled: Literal[False]
+
+
+class EnabledItunesSearchProviderInput(_KeylessAudioProviderInput):
+    adapter: Literal["itunes_search"]
+    enabled: Literal[True]
+
+
+class DisabledItunesSearchProviderInput(_KeylessAudioProviderInput):
+    adapter: Literal["itunes_search"]
+    enabled: Literal[False]
+
+
 class ProviderInput(
     RootModel[
         EnabledHardcoverProviderInput
@@ -146,6 +210,14 @@ class ProviderInput(
         | DisabledOpenLibraryProviderInput
         | EnabledGoogleBooksProviderInput
         | DisabledGoogleBooksProviderInput
+        | EnabledAudibleCatalogProviderInput
+        | DisabledAudibleCatalogProviderInput
+        | EnabledAudnexusProviderInput
+        | DisabledAudnexusProviderInput
+        | EnabledAudioSiloProviderInput
+        | DisabledAudioSiloProviderInput
+        | EnabledItunesSearchProviderInput
+        | DisabledItunesSearchProviderInput
     ]
 ):
     pass
@@ -182,9 +254,9 @@ class LimitsInput(_Closed):
     source_archive_bytes: Annotated[StrictInt, Field(ge=1024, le=268_435_456)] = (
         268_435_456
     )
-    # A per-field default on a closed model: a `config-v6` document written
-    # before this key existed still validates and takes the default, so the
-    # audio ceiling needs no schema increment.
+    # A per-field default on a closed model: a document written before this key
+    # existed still validates and takes the default, so the audio ceiling
+    # needed no schema increment of its own.
     audio_source_bytes: Annotated[StrictInt, Field(ge=1024, le=17_179_869_184)] = (
         8_589_934_592
     )
@@ -216,7 +288,7 @@ class ReviewInput(_Closed):
 
 
 class ConfigurationInput(_Closed):
-    schema_version: Literal["config-v6"]
+    schema_version: Literal["config-v7"]
     provider_recovery_generation: Annotated[StrictInt, Field(ge=1)]
     connections: Annotated[list[ConnectionInput], Field(min_length=1, max_length=32)]
     libraries: Annotated[list[LibraryInput], Field(min_length=1, max_length=128)]
@@ -275,10 +347,7 @@ def load_configuration_document(payload: bytes) -> ApplicationConfiguration:
             ),
             tuple(
                 sorted(
-                    (
-                        ProviderConnectionConfiguration(**item.model_dump())
-                        for item in value.providers
-                    ),
+                    (_provider_connection(item) for item in value.providers),
                     key=lambda item: item.name,
                 )
             ),
@@ -320,6 +389,13 @@ def load_configuration_file(path: Path) -> ApplicationConfiguration:
         raise
     except (OSError, UnicodeError, ValueError, ValidationError, RecursionError):
         raise ConfigurationError("configuration document is invalid") from None
+
+
+def _provider_connection(value: ProviderInput) -> ProviderConnectionConfiguration:
+    """Read one validated provider input into its immutable domain value."""
+    fields = dict(value.model_dump())
+    marketplaces = fields.pop("marketplaces", ())
+    return ProviderConnectionConfiguration(**fields, marketplaces=tuple(marketplaces))
 
 
 def configuration_schema_json() -> str:

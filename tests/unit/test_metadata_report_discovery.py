@@ -19,6 +19,7 @@ from mechanical_librarian.application.configuration import (
     TargetConnectionConfiguration,
 )
 from mechanical_librarian.application.metadata_report import (
+    MAX_ASIN_DISCOVERY_LANES,
     GenerateMetadataReport,
     InspectionResult,
     MetadataDiscoveryLane,
@@ -31,6 +32,7 @@ from mechanical_librarian.application.metadata_report import (
     ReportRepository,
     TargetFile,
     TargetSnapshot,
+    audiobook_discovery_plan,
     metadata_discovery_plan,
     metadata_lookup,
     provider_observation,
@@ -197,6 +199,149 @@ def test_lookup_prefers_one_isbn_family_and_otherwise_requires_complete_target_a
     }
 
 
+def _audio_target(title: str | None, authors: tuple[str, ...]) -> TargetSnapshot:
+    populated = (
+        TargetField(TargetDestination.AUTHORS, TargetFieldState.VALUE, authors)
+        if authors
+        else TargetField(TargetDestination.AUTHORS, TargetFieldState.MISSING)
+    )
+    fields = tuple(
+        populated if field.destination is TargetDestination.AUTHORS else field
+        for field in default_target_fields(title)
+    )
+    return TargetSnapshot("audiobook", title, (), fields=fields)
+
+
+def _audio_claim(kind: ClaimKind, value: str, occurrence: int = 1) -> LocalClaim:
+    return LocalClaim.create(
+        kind=kind,
+        observed=value,
+        canonical=value,
+        excerpt=value,
+        applicability="not_applicable",
+        basis="embedded_tag",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        occurrence=occurrence,
+    )
+
+
+def _target_title_claim(title: str) -> LocalClaim:
+    return LocalClaim.create(
+        kind=ClaimKind.TITLE,
+        observed=title,
+        canonical=title,
+        excerpt=title,
+        applicability="not_applicable",
+        basis="target_metadata",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.WORK,
+    )
+
+
+def test_audiobook_plan_builds_one_lane_per_distinct_canonical_asin() -> None:
+    """Two surfaces naming one ASIN are one lookup; two ASINs are two.
+
+    An ISBN-10-shaped ASIN is admitted beside a `B0`-shaped one because
+    ADR-0061 measured seventeen genuine ones on the reference library, and a
+    prefix filter would have refused every one of them.
+    """
+    target = _audio_target("The Recording", ("Ada Author",))
+    claims = (
+        _target_title_claim("The Recording"),
+        _audio_claim(ClaimKind.ASIN, "B002V1BFKM", 1),
+        _audio_claim(ClaimKind.ASIN, "b002v1bfkm", 2),
+        _audio_claim(ClaimKind.ASIN, "0743563123", 3),
+    )
+    plan = audiobook_discovery_plan(target, claims)
+    assert not plan.overflow
+    assert [ProviderQueryKind.ASIN, ProviderQueryKind.ASIN] == [
+        lane.kind for lane in plan.lanes
+    ]
+    assert {"B002V1BFKM", "0743563123"} == {lane.canonical_asin for lane in plan.lanes}
+    shared = next(lane for lane in plan.lanes if lane.canonical_asin == "B002V1BFKM")
+    assert 2 == len(shared.input_references)
+    assert plan == audiobook_discovery_plan(target, claims)
+
+
+def test_audiobook_plan_searches_only_when_no_identifier_is_present() -> None:
+    target = _audio_target("The Recording", ("Ada Author",))
+    identified = audiobook_discovery_plan(
+        target,
+        (
+            _target_title_claim("The Recording"),
+            _audio_claim(ClaimKind.ASIN, "B002V1BFKM"),
+        ),
+    )
+    assert [ProviderQueryKind.ASIN] == [lane.kind for lane in identified.lanes]
+    unidentified = audiobook_discovery_plan(
+        target, (_target_title_claim("The Recording"),)
+    )
+    assert [ProviderQueryKind.WORK] == [lane.kind for lane in unidentified.lanes]
+    assert ("Ada Author",) == unidentified.lanes[0].authors
+    assert () == audiobook_discovery_plan(_audio_target(None, ()), ()).lanes
+
+
+def test_audiobook_plan_refuses_an_unbounded_identifier_fan_out() -> None:
+    target = _audio_target("The Recording", ("Ada Author",))
+    claims = (
+        _target_title_claim("The Recording"),
+        *(
+            _audio_claim(ClaimKind.ASIN, f"B00{index:07d}", index + 1)
+            for index in range(MAX_ASIN_DISCOVERY_LANES + 1)
+        ),
+    )
+    overflowed = audiobook_discovery_plan(target, claims)
+    assert overflowed.overflow
+    assert () == overflowed.lanes
+
+
+def test_asin_lane_requires_one_canonical_identifier_and_nothing_else() -> None:
+    identity = "lane_" + "0" * 64
+    reference = "local_" + "1" * 64
+    assert (
+        ProviderQueryKind.ASIN
+        == MetadataDiscoveryLane(
+            identity,
+            ProviderQueryKind.ASIN,
+            (reference,),
+            canonical_asin="B002V1BFKM",
+        ).kind
+    )
+    for keywords in (
+        {},
+        {"canonical_asin": "b002v1bfkm"},
+        {"canonical_asin": "B002V1BFK"},
+        {"canonical_asin": "B002V1BFKM", "matched_family": "9780306406157"},
+        {"canonical_asin": "B002V1BFKM", "title": "The Recording"},
+        {"canonical_asin": "B002V1BFKM", "canonical_isbns": ("9780306406157",)},
+    ):
+        with pytest.raises(MetadataReportError):
+            MetadataDiscoveryLane(
+                identity, ProviderQueryKind.ASIN, (reference,), **keywords
+            )
+    with pytest.raises(MetadataReportError):
+        MetadataDiscoveryLane(
+            identity, ProviderQueryKind.ASIN, (), canonical_asin="B002V1BFKM"
+        )
+
+
+def test_a_plan_refuses_two_lanes_for_one_asin() -> None:
+    claim = _audio_claim(ClaimKind.ASIN, "B002V1BFKM")
+    lanes = tuple(
+        MetadataDiscoveryLane(
+            f"lane_{index}" + "0" * 63,
+            ProviderQueryKind.ASIN,
+            (claim.reference,),
+            canonical_asin="B002V1BFKM",
+        )
+        for index in (1, 2)
+    )
+    with pytest.raises(MetadataReportError):
+        MetadataDiscoveryPlan((claim,), lanes)
+
+
 def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
     title = LocalClaim.create(
         kind=ClaimKind.TITLE,
@@ -329,7 +474,7 @@ def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
             "stage": "lookup",
         }
     ]
-    assert "metadata-report-v31" == report.schema_version
+    assert "metadata-report-v32" == report.schema_version
     previous = report.to_data()
     previous["schema_version"] = "metadata-report-v22"
     with pytest.raises(ReportValueError):

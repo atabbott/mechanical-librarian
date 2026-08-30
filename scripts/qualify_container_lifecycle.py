@@ -714,7 +714,7 @@ def _qualify_first_run(
 
 def _configuration() -> dict[str, object]:
     return {
-        "schema_version": "config-v6",
+        "schema_version": "config-v7",
         "provider_recovery_generation": 1,
         "connections": [
             {

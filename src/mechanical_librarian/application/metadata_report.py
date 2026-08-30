@@ -21,6 +21,7 @@ from mechanical_librarian.application.failure_diagnostics import (
     provider_attempt_diagnostics,
 )
 from mechanical_librarian.application.operations import StageTimer
+from mechanical_librarian.domain.audio_inspection import AudioSidecarDigest
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverProvenance,
@@ -59,6 +60,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     TargetField,
     TargetFieldState,
+    canonical_asin,
     canonical_json,
     complete_creator_identity_bindings,
     default_target_fields,
@@ -203,6 +205,10 @@ class MetadataLookup:
 
 MAX_ISBN_DISCOVERY_LANES = 8
 MAX_PROVIDER_DISCOVERY_QUERIES = 9
+# An audiobook carries far fewer identifier surfaces than an EPUB does, and
+# each distinct ASIN costs one product lookup per marketplace tried, so the
+# ASIN fan-out is bounded tighter than the ISBN one.
+MAX_ASIN_DISCOVERY_LANES = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,6 +220,7 @@ class MetadataDiscoveryLane:
     canonical_isbns: tuple[str, ...] = ()
     title: str | None = None
     authors: tuple[str, ...] = ()
+    canonical_asin: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -224,7 +231,12 @@ class MetadataDiscoveryLane:
                 for character in self.identity.removeprefix("lane_")
             )
             or type(self.kind) is not ProviderQueryKind
-            or self.kind not in {ProviderQueryKind.ISBN, ProviderQueryKind.WORK}
+            or self.kind
+            not in {
+                ProviderQueryKind.ISBN,
+                ProviderQueryKind.WORK,
+                ProviderQueryKind.ASIN,
+            }
             or type(self.input_references) is not tuple
             or tuple(sorted(set(self.input_references))) != self.input_references
         ):
@@ -235,6 +247,21 @@ class MetadataDiscoveryLane:
                 or not self.canonical_isbns
                 or self.title is not None
                 or self.authors
+                or self.canonical_asin is not None
+            ):
+                raise MetadataReportError("provider discovery lane is invalid")
+        elif self.kind is ProviderQueryKind.ASIN:
+            # One ASIN is one product lookup, so it is one lane. The value is
+            # canonical rather than shape-filtered: an ISBN-10-shaped ASIN is a
+            # genuine audiobook identifier (ADR-0061).
+            if (
+                self.canonical_asin is None
+                or canonical_asin(self.canonical_asin) != self.canonical_asin
+                or self.matched_family is not None
+                or self.canonical_isbns
+                or self.title is not None
+                or self.authors
+                or not self.input_references
             ):
                 raise MetadataReportError("provider discovery lane is invalid")
         elif (
@@ -242,6 +269,7 @@ class MetadataDiscoveryLane:
             or self.canonical_isbns
             or self.title is None
             or not self.authors
+            or self.canonical_asin is not None
         ):
             raise MetadataReportError("provider discovery lane is invalid")
 
@@ -279,6 +307,9 @@ class MetadataDiscoveryPlan:
         ):
             raise MetadataReportError("provider discovery plan is invalid")
         known = {value.reference for value in self.local_claims}
+        asin_lanes = tuple(
+            lane for lane in self.lanes if lane.kind is ProviderQueryKind.ASIN
+        )
         if (
             any(not set(lane.input_references).issubset(known) for lane in self.lanes)
             or (
@@ -292,6 +323,8 @@ class MetadataDiscoveryPlan:
                 != sum(lane.kind is ProviderQueryKind.ISBN for lane in self.lanes)
             )
             or sum(lane.kind is ProviderQueryKind.WORK for lane in self.lanes) > 1
+            or len(asin_lanes) > MAX_ASIN_DISCOVERY_LANES
+            or len({lane.canonical_asin for lane in asin_lanes}) != len(asin_lanes)
         ):
             raise MetadataReportError("provider discovery plan is invalid")
 
@@ -366,6 +399,61 @@ def _lane_identity(payload: dict[str, object]) -> str:
     return "lane_" + hashlib.sha256(canonical_json(payload).encode()).hexdigest()
 
 
+def _work_discovery_lanes(
+    target: TargetSnapshot, local_claims: tuple[LocalClaim, ...]
+) -> tuple[MetadataDiscoveryLane, ...]:
+    """Derive the single title-and-author lane, shared by both media plans."""
+    fields = {field.destination: field for field in target.fields}
+    title = fields[TargetDestination.TITLE]
+    authors = fields[TargetDestination.AUTHORS]
+    complete_work = (
+        title.state is TargetFieldState.VALUE
+        and type(title.value) is str
+        and authors.state is TargetFieldState.VALUE
+        and type(authors.value) is tuple
+        and bool(authors.value)
+        and all(type(value) is str for value in authors.value)
+        and len(
+            {normalize_title(cast("str", value)).casefold() for value in authors.value}
+        )
+        == len(authors.value)
+    )
+    if not complete_work:
+        return ()
+    # ``complete_work`` is exactly the conjunction that proved the title is a
+    # ``str`` and the authors are a non-empty tuple of ``str``.
+    normalized_title = normalize_title(cast("str", title.value))
+    normalized_authors = tuple(
+        normalize_title(value) for value in cast("tuple[str, ...]", authors.value)
+    )
+    title_references = tuple(
+        sorted(
+            claim.reference
+            for claim in local_claims
+            if claim.kind is ClaimKind.TITLE and claim.basis == "target_metadata"
+        )
+    )
+    if not title_references:
+        return ()
+    identity = _lane_identity(
+        {
+            "authors": list(normalized_authors),
+            "input_references": list(title_references),
+            "kind": ProviderQueryKind.WORK.value,
+            "title": normalized_title,
+        }
+    )
+    return (
+        MetadataDiscoveryLane(
+            identity,
+            ProviderQueryKind.WORK,
+            title_references,
+            title=normalized_title,
+            authors=normalized_authors,
+        ),
+    )
+
+
 def metadata_discovery_plan(
     target: TargetSnapshot, local_claims: tuple[LocalClaim, ...]
 ) -> MetadataDiscoveryPlan:
@@ -404,53 +492,62 @@ def metadata_discovery_plan(
             )
         )
 
-    fields = {field.destination: field for field in target.fields}
-    title = fields[TargetDestination.TITLE]
-    authors = fields[TargetDestination.AUTHORS]
-    complete_work = (
-        title.state is TargetFieldState.VALUE
-        and type(title.value) is str
-        and authors.state is TargetFieldState.VALUE
-        and type(authors.value) is tuple
-        and bool(authors.value)
-        and all(type(value) is str for value in authors.value)
-        and len(
-            {normalize_title(cast("str", value)).casefold() for value in authors.value}
-        )
-        == len(authors.value)
+    lanes.extend(_work_discovery_lanes(target, local_claims))
+    ordered_lanes = tuple(sorted(lanes, key=lambda value: value.identity))
+    if _metadata_discovery_query_count(ordered_lanes) > MAX_PROVIDER_DISCOVERY_QUERIES:
+        return MetadataDiscoveryPlan(local_claims, (), True)
+    return MetadataDiscoveryPlan(local_claims, ordered_lanes)
+
+
+def audiobook_discovery_plan(
+    target: TargetSnapshot, local_claims: tuple[LocalClaim, ...]
+) -> MetadataDiscoveryPlan:
+    """Plan one audiobook's discovery from its own identifier surfaces.
+
+    An audiobook's identifier is an ASIN, so each distinct canonical ASIN the
+    local surfaces carry becomes one marketplace-resolved product lane. An item
+    with no ASIN at all -- 57.6% of the reference library measured on #925 --
+    falls back to the title and author lane, which is the only way discovery
+    reaches it. The two are alternatives rather than a pair: an item that
+    already names its product does not also need a search for it.
+    """
+    canonical_asins = sorted(
+        {
+            value
+            for claim in local_claims
+            if claim.kind is ClaimKind.ASIN
+            and (value := canonical_asin(claim.canonical)) is not None
+        }
     )
-    if complete_work:
-        # ``complete_work`` is exactly the conjunction that proved the title is
-        # a ``str`` and the authors are a non-empty tuple of ``str``.
-        normalized_title = normalize_title(cast("str", title.value))
-        normalized_authors = tuple(
-            normalize_title(value) for value in cast("tuple[str, ...]", authors.value)
-        )
-        title_references = tuple(
+    if len(canonical_asins) > MAX_ASIN_DISCOVERY_LANES:
+        return MetadataDiscoveryPlan(local_claims, (), True)
+    lanes: list[MetadataDiscoveryLane] = []
+    for asin in canonical_asins:
+        references = tuple(
             sorted(
                 claim.reference
                 for claim in local_claims
-                if claim.kind is ClaimKind.TITLE and claim.basis == "target_metadata"
+                if claim.kind is ClaimKind.ASIN
+                and canonical_asin(claim.canonical) == asin
             )
         )
-        if title_references:
-            identity = _lane_identity(
-                {
-                    "authors": list(normalized_authors),
-                    "input_references": list(title_references),
-                    "kind": ProviderQueryKind.WORK.value,
-                    "title": normalized_title,
-                }
+        identity = _lane_identity(
+            {
+                "canonical_asin": asin,
+                "input_references": list(references),
+                "kind": ProviderQueryKind.ASIN.value,
+            }
+        )
+        lanes.append(
+            MetadataDiscoveryLane(
+                identity,
+                ProviderQueryKind.ASIN,
+                references,
+                canonical_asin=asin,
             )
-            lanes.append(
-                MetadataDiscoveryLane(
-                    identity,
-                    ProviderQueryKind.WORK,
-                    title_references,
-                    title=normalized_title,
-                    authors=normalized_authors,
-                )
-            )
+        )
+    if not lanes:
+        lanes.extend(_work_discovery_lanes(target, local_claims))
     ordered_lanes = tuple(sorted(lanes, key=lambda value: value.identity))
     if _metadata_discovery_query_count(ordered_lanes) > MAX_PROVIDER_DISCOVERY_QUERIES:
         return MetadataDiscoveryPlan(local_claims, (), True)
@@ -656,6 +753,9 @@ class AudioInspectionResult:
     There is deliberately no ``cover_sources`` member. An audiobook file's
     embedded art is recorded as presence inside ``audio`` and nothing here
     acquires, decodes, or elects it.
+
+    The recognized-sidecar manifest travels inside ``audio``: it is what the
+    evidence was read from, so it is what currentness has to re-prove.
     """
 
     content_digest: str
@@ -792,6 +892,7 @@ class AudioInspector(Protocol):
         relative_path: str,
         expected_digest: str,
         maximum_bytes: int,
+        expected_sidecars: tuple[AudioSidecarDigest, ...] = (),
     ) -> bool: ...
 
 
@@ -1687,17 +1788,30 @@ def require_report_current(
         or ((require_singular or audiobook) and len(final.files) != 1)
         or len(matches) != 1
         or matches[0].format != report.file.format
-        or not (
-            # ``audio_inspector`` was proved non-``None`` above for an
-            # audiobook report.
-            cast("AudioInspector", audio_inspector) if audiobook else inspector
-        ).unchanged(
+    ):
+        raise CurrentnessError("target or media changed")
+    if audiobook:
+        # An audiobook's evidence is read from the file *and* from every
+        # recognized sidecar beside it, so the file's own digest alone proves
+        # only half the source. The inspector re-derives the recognized
+        # candidate set and re-digests it through the one shared derivation
+        # inspection used, and any sidecar added, removed, or edited since
+        # publication makes the report stale.
+        current = cast("AudioInspector", audio_inspector).unchanged(
             mount,
             matches[0].relative_path,
             report.file.content_digest,
-            limits.audio_source_bytes if audiobook else limits.source_archive_bytes,
+            limits.audio_source_bytes,
+            () if report.audio is None else report.audio.sidecars,
         )
-    ):
+    else:
+        current = inspector.unchanged(
+            mount,
+            matches[0].relative_path,
+            report.file.content_digest,
+            limits.source_archive_bytes,
+        )
+    if not current:
         raise CurrentnessError("target or media changed")
     expected_cover = next(
         (
@@ -1761,6 +1875,7 @@ __all__ = [
     "TargetReader",
     "TargetSnapshot",
     "UnsupportedMediaError",
+    "audiobook_discovery_plan",
     "merge_provider_cover_descriptor",
     "merge_provider_cover_descriptors",
     "merge_provider_diagnostics",

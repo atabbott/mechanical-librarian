@@ -12,6 +12,7 @@ from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
     resolve_policy,
 )
+from mechanical_librarian.domain.metadata_report import AUDIOBOOK_MARKETPLACES
 from mechanical_librarian.domain.validation import (
     OWNER_SESSION_LIFETIME_DEFAULT,
     owner_session_lifetime,
@@ -23,6 +24,16 @@ _CONTACT_EMAIL = re.compile(
     r"(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*@[A-Za-z0-9]"
     r"(?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
     r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$"
+)
+
+
+EBOOK_PROVIDER_ADAPTERS = frozenset({"google_books", "hardcover", "open_library"})
+# ADR-0061's admitted set, in its stated layer order: the anonymous Audible
+# catalog is primary discovery and enrichment, Audnexus is per-ASIN enrichment,
+# AudioSilo is community corroboration and degraded mode, and iTunes Search
+# corroborates only. Every one of them is keyless.
+AUDIOBOOK_PROVIDER_ADAPTERS = frozenset(
+    {"audible_catalog", "audnexus", "audiosilo", "itunes_search"}
 )
 
 
@@ -151,17 +162,42 @@ class ProviderConnectionConfiguration:
     secret_file: str | None
     adapter: str = "hardcover"
     contact_email: str | None = None
+    marketplaces: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _name(self.name, "provider connection name")
         if (
-            self.adapter not in {"google_books", "hardcover", "open_library"}
+            self.adapter not in EBOOK_PROVIDER_ADAPTERS | AUDIOBOOK_PROVIDER_ADAPTERS
             or type(self.enabled) is not bool
             or type(self.cover_enabled) is not bool
         ):
             raise ConfigurationError("provider connection is invalid")
         if self.cover_enabled and not self.enabled:
             raise ConfigurationError("cover enablement requires provider enablement")
+        # A marketplace list orders the fallback of one ASIN lookup, so it
+        # belongs to the enabled Audible catalog and to nothing else.
+        if self.marketplaces and (
+            self.adapter != "audible_catalog"
+            or not self.enabled
+            or type(self.marketplaces) is not tuple
+            or len(self.marketplaces) > len(AUDIOBOOK_MARKETPLACES)
+            or len(set(self.marketplaces)) != len(self.marketplaces)
+            or any(value not in AUDIOBOOK_MARKETPLACES for value in self.marketplaces)
+        ):
+            raise ConfigurationError("provider marketplaces are invalid")
+        if self.adapter in AUDIOBOOK_PROVIDER_ADAPTERS:
+            # ADR-0061 admits these keyless: no credential exists for them even
+            # as an optional upgrade, and this build acquires no audiobook
+            # cover bytes, so neither surface may be configured on one.
+            if (
+                self.secret_file is not None
+                or self.contact_email is not None
+                or self.cover_enabled
+                or (self.adapter == "audible_catalog" and self.enabled)
+                != bool(self.marketplaces)
+            ):
+                raise ConfigurationError("provider connection is invalid")
+            return
         if self.adapter == "hardcover":
             if self.contact_email is not None or (
                 not self.enabled and self.secret_file is not None
@@ -303,12 +339,12 @@ class ApplicationConfiguration:
     mounts: tuple[MediaMountConfiguration, ...]
     providers: tuple[ProviderConnectionConfiguration, ...]
     limits: ReportLimits = ReportLimits()
-    schema_version: str = "config-v6"
+    schema_version: str = "config-v7"
     provider_recovery_generation: int = 1
     review: ReviewWebConfiguration | None = None
 
     def __post_init__(self) -> None:
-        if self.schema_version != "config-v6":
+        if self.schema_version != "config-v7":
             raise ConfigurationError("configuration schema is unsupported")
         # Recovery is deliberately tied to an operator-visible configuration
         # generation.  There is no file watcher, hash, or environment override:
@@ -379,6 +415,8 @@ class ApplicationConfiguration:
 
 
 __all__ = [
+    "AUDIOBOOK_PROVIDER_ADAPTERS",
+    "EBOOK_PROVIDER_ADAPTERS",
     "ApplicationConfiguration",
     "ConfigurationError",
     "LibraryConfiguration",

@@ -662,7 +662,7 @@ deadline, byte, and request-count authority. Attempt records are bounded and
 process-local. Provider adapters also count optional parser/schema rejections
 at their actual rejection points. The application canonically merges those
 counts once with the attempt categories and incomplete-outcome mapping for
-`metadata-report-v31`; provider, attempt ordinal, delay, elapsed time,
+`metadata-report-v32`; provider, attempt ordinal, delay, elapsed time,
 headers, bodies, and exception text are dropped. Application-created
 query-limit outcomes follow the same closed mapping and persist
 provider/lookup_construction/lookup without constructing or invoking a
@@ -785,7 +785,7 @@ reviewer identity, decision, or target-write capability.
 
 ### Schema admission
 
-The report database, `catalogue-v2` database, `config-v6`, artifact records,
+The report database, `catalogue-v2` database, `config-v7`, artifact records,
 and `batch-manifest-v5` each accept only absent or their exact current schema.
 An earlier schema, an extra object, altered SQL, or a failed integrity check
 fails closed before mutation, and is never migrated, imported, preserved, or

@@ -3,15 +3,16 @@
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
 The reviewer-access authority, `setup-state-v2`, `owner-settings-v2`,
-`cover-consideration-v3`, `metadata-report-v31`, and the added application
+`cover-consideration-v3`, `metadata-report-v32`, and the added application
 tables change the current SQLite objects in this build. Every earlier
 application database therefore requires a clean rebuild; no adoption,
 migration, conversion, import, repair, or downgrade is supplied by #872, #873,
 or #749.
 
-`metadata-report-v30` in particular cannot carry an audiobook's local evidence:
-it has no structured audio section for embedded chapters and cover presence, no
-duration or performance-type claim kind, and no audio evidence sources.
+`metadata-report-v31` in particular cannot carry an audiobook's provider
+evidence: it refuses a provider observation on an audio report outright, and
+has no ASIN query lane, marketplace provenance, chapter-structure evidence, or
+recognized-sidecar manifest.
 
 The three earlier exact-predecessor plans have been retired because each names
 a schema older than this build. The installed runtime no longer exposes a

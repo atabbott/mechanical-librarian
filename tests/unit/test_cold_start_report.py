@@ -394,7 +394,7 @@ def test_main_reads_existing_state_and_remaps_mounts() -> None:
         config.write_text(
             json.dumps(
                 {
-                    "schema_version": "config-v6",
+                    "schema_version": "config-v7",
                     "provider_recovery_generation": 1,
                     "connections": [
                         {
