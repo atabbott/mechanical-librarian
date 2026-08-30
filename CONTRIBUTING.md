@@ -168,7 +168,7 @@ of this table can be checked against the workflow rather than trusted.
 | Required installed test tier, run by the isolated wheel's interpreter | gate | `--test-tier required` in `exact-installed` |
 | The Chromium payload is well formed, its digest is recorded, and it starts on the runner's own libraries | gate | `scripts/verify_playwright_browser.py` in `protected-browser` |
 | Browser tier against that recorded payload | gate | `scripts/run_test_tier.py browser` in `protected-browser` |
-| The shipped container image builds from the exact revision | gate | `docker build --pull --tag mechanical-librarian:gate .` in `container-image` |
+| The shipped container image builds from the exact revision, restoring unchanged layers from the Actions cache | gate | `docker/build-push-action` with `tags: mechanical-librarian:gate` and `cache-to: type=gha,mode=max` in `container-image` |
 | Advisories against the locked dependency closure | gate | `--lockfile=uv.lock` in `dependency-audit` |
 | Explicit slow tier: scale, endurance, resource ceilings | maintainer-manual | `qualify_exact_artifact.py --test-tier slow` |
 | One-command complete exact-head qualification | maintainer-manual | `run_test_tier.py complete` |

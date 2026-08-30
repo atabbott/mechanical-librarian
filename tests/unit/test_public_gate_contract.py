@@ -239,11 +239,20 @@ def test_the_documented_check_set_matches_the_only_workflow() -> None:
 
 def test_builds_the_shipped_container_from_the_exact_revision() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    assert "run: docker build --pull --tag mechanical-librarian:gate ." in workflow
+    assert "uses: docker/build-push-action@" in workflow
+    assert "tags: mechanical-librarian:gate" in workflow
+    assert "context: ." in workflow
+    # Layers restore from the repository Actions cache; a stage re-runs only
+    # when its inputs change. Base-image freshness is governed by the digest
+    # pins on the Dockerfile's FROM lines, not by `--pull`.
+    assert "cache-from: type=gha" in workflow
+    assert "cache-to: type=gha,mode=max" in workflow
+    assert "docker build --pull" not in workflow
     # The built image is never pushed, loaded, or run by the gate: its tag
     # is written once and never referenced again. The `docker run` in the
     # dependency audit runs a different, digest-pinned scanner image and
     # never touches this one.
+    assert "push: false" in workflow
     assert "docker push" not in workflow
     assert workflow.count("mechanical-librarian:gate") == 1
 
@@ -299,7 +308,7 @@ def test_every_action_is_sha_pinned_without_persisted_credentials() -> None:
         for line in workflow.splitlines()
         if line.strip().startswith("uses:")
     ]
-    assert len(uses) == 16
+    assert len(uses) == 18
     # The references are read out of the workflow at run time, so they cannot
     # become parameters without making the collected case count -- and the
     # cohort identity digest built from it -- move whenever the workflow gains
