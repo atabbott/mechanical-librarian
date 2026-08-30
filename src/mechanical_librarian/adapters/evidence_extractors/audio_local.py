@@ -34,10 +34,13 @@ from mechanical_librarian.domain.evidence_bounds import (
 )
 from mechanical_librarian.domain.identifiers import Fingerprint
 
-# A bracketed ten-character upper-case token is the one path grammar Audible
-# exports and every downstream tool reproduces.  It is deliberately not an ASIN
-# shape filter: an ISBN-10-shaped ASIN matches it exactly as a `B0` one does,
-# and nothing downstream narrows it further.
+# The whole shape of an ASIN: ten upper-case alphanumerics, and nothing else.
+# It is a well-formedness gate, never a filter and never prefix-based -- an
+# ISBN-10-shaped ASIN is as well-formed as a `B0` one, and a value that fails
+# it is retained as malformed rather than discarded.
+_ASIN_TOKEN = re.compile(r"[A-Z0-9]{10}")
+# The same shape bracketed is the one path grammar Audible exports and every
+# downstream tool reproduces.
 _BRACKETED_TOKEN = re.compile(r"\[([A-Z0-9]{10})\]")
 _TONE_NAMESPACE = "com.pilabor.tone"
 _TRUE_VALUES = frozenset({"1", "true", "yes", "y"})
@@ -45,10 +48,20 @@ _FALSE_VALUES = frozenset({"0", "false", "no", "n"})
 _SEQUENCE = re.compile(r"^\d{1,4}(?:\.\d{1,3})?$")
 _CHAPTER_SECONDS = re.compile(r"^\d{1,9}(?:\.\d{1,9})?$")
 _XML_ELEMENT = re.compile(
-    r"<(?:[A-Za-z][\w.-]*:)?(language|description|title|creator|contributor)\b[^>]*>"
-    r"([^<]{0,4096})</",
+    r"<(?:[A-Za-z][\w.-]*:)?(language|description|title|creator|contributor)\b"
+    r"([^>]*)>([^<]{0,4096})</",
     re.IGNORECASE,
 )
+# `opf:role` on a `dc:contributor`, read out of that captured attribute run.
+# The leading whitespace is what separates a real attribute from the tail of a
+# longer name, so `data-role` is not a role.
+_XML_ROLE = re.compile(
+    r"\s(?:[A-Za-z][\w.-]*:)?role\s*=\s*[\"']\s*([A-Za-z]{1,16})\s*[\"']",
+    re.IGNORECASE,
+)
+# MARC relators for a spoken performance.  An OPF contributor is a contributor
+# of some kind; only these two say the kind is the one this evidence claims.
+_NARRATOR_ROLES = frozenset({"nrt", "prf"})
 _XML_META = re.compile(
     r"<meta\b[^>]*\bname\s*=\s*\"([\w:.-]{1,64})\"[^>]*\bcontent\s*=\s*\"([^\"]{0,512})\"",
     re.IGNORECASE,
@@ -275,13 +288,24 @@ class _Builder:
         if text is None:
             return
         support = text if key is None else _support(key, text, _text_bound(field))
-        resolved = canonical if canonical is not None else text
+        resolved: str | None = canonical if canonical is not None else text
+        state = "valid"
+        if field is AudioInspectionField.ASIN:
+            # Every surface that can carry an ASIN arrives here, so the shape
+            # is checked once.  A value that is not one is still what the file
+            # said: it is kept, marked malformed, and given no canonical form
+            # for anything downstream to match on.
+            normalized = text.upper()
+            if _ASIN_TOKEN.fullmatch(normalized) is None:
+                state, resolved = "malformed", None
+            else:
+                resolved = normalized
         identity = (field.value, surface.value, text, role)
         if identity in self._seen:
             return
         try:
             fact = AudioInspectionFact(
-                field, self._source, text, resolved, support, surface, "valid", role
+                field, self._source, text, resolved, support, surface, state, role
             )
         except ValueError:
             return
@@ -388,18 +412,21 @@ def _tag_surface_for(container: dict[str, object]) -> AudioEvidenceSurface:
     return AudioEvidenceSurface.MP4_ILST
 
 
-def _normalized_key(key: str) -> tuple[str, bool]:
-    """Reduce one exported tag key, and say whether it came from a freeform atom.
+def _normalized_key(key: str) -> tuple[str, str | None]:
+    """Reduce one exported tag key, and name the freeform mean it arrived under.
 
     ``-export_all`` spells an MP4 freeform atom as ``----:<mean>:<name>``, so
     the trailing component is the tag a writer intended and the mean is what
-    identifies the writer.  Everything else is a well-known key.
+    identifies the writer.  Everything else is a well-known key, reported with
+    no mean at all; a freeform atom whose export omitted the mean is reported
+    with an empty one, because the atom is still freeform and the writer is
+    still unknown.
     """
     lowered = key.strip().lower()
     if not lowered.startswith("----:"):
-        return lowered.replace("©", ""), False
+        return lowered.replace("©", ""), None
     parts = lowered.split(":")
-    return parts[-1], len(parts) >= 3 and parts[1] == _TONE_NAMESPACE
+    return parts[-1], parts[1] if len(parts) >= 3 else ""
 
 
 def _tag_facts(
@@ -417,8 +444,8 @@ def _tag_facts(
             continue
         if type(value) is str and len(value) > limits.tag_value_characters:
             continue
-        key, freeform = _normalized_key(raw_key)
-        surface = _surface_for(key, freeform, default_surface)
+        key, mean = _normalized_key(raw_key)
+        surface = _surface_for(key, mean, default_surface)
         if key in _ABRIDGED_KEYS or key in _PERFORMANCE_KEYS:
             builder.performance(surface, key, value)
             continue
@@ -437,7 +464,7 @@ def _tag_facts(
 
 
 def _surface_for(
-    key: str, freeform: bool, default_surface: AudioEvidenceSurface
+    key: str, mean: str | None, default_surface: AudioEvidenceSurface
 ) -> AudioEvidenceSurface:
     """Name the surface one exported key actually came from.
 
@@ -452,12 +479,17 @@ def _surface_for(
     For MP4, a key outside ffmpeg's mapping is an atom it has no name for, and
     ``-export_all`` exported it verbatim.  A raw ilst atom is a four-character
     type -- ``CDEK``, ``prID`` -- so a longer unmapped key can only have come
-    from a ``----`` freeform atom, which is what the tone writers emit.  Some
-    ffmpeg builds spell that atom's mean and name into the key, and
-    ``_normalized_key`` reports it directly when they do.
+    from a ``----`` freeform atom.  Which writer emitted it is a separate
+    question: only an explicit ``com.pilabor.tone`` mean answers it, so a
+    freeform atom under any other mean, or under none the export spelled out,
+    is named as the freeform atom it is and attributed to nobody.
     """
-    if freeform:
-        return AudioEvidenceSurface.MP4_FREEFORM_TONE
+    if mean is not None:
+        return (
+            AudioEvidenceSurface.MP4_FREEFORM_TONE
+            if mean == _TONE_NAMESPACE
+            else AudioEvidenceSurface.MP4_FREEFORM
+        )
     if default_surface is AudioEvidenceSurface.ID3_FRAME:
         return (
             AudioEvidenceSurface.ID3_FRAME
@@ -466,7 +498,7 @@ def _surface_for(
         )
     if key in _MP4_WELL_KNOWN or len(key) <= 4:
         return AudioEvidenceSurface.MP4_ILST
-    return AudioEvidenceSurface.MP4_FREEFORM_TONE
+    return AudioEvidenceSurface.MP4_FREEFORM
 
 
 def _is_sequence(value: object) -> bool:
@@ -640,6 +672,18 @@ def _json_values(
     return values
 
 
+def _is_narrator_role(attributes: str) -> bool:
+    """Say whether one OPF contributor's declared role is a narration role.
+
+    A `dc:contributor` names somebody who is not the author; the role attribute
+    is what says which somebody.  An editor is not a narrator, and a
+    contributor carrying no role at all has not said, so neither becomes
+    narrator evidence.
+    """
+    match = _XML_ROLE.search(attributes)
+    return match is not None and match.group(1).lower() in _NARRATOR_ROLES
+
+
 def _decode_entities(value: str) -> str:
     for entity, character in _XML_ENTITIES:
         value = value.replace(entity, character)
@@ -653,7 +697,7 @@ def _opf_sidecar_facts(builder: _Builder, sidecar: AudioSidecar) -> None:
     external entity, no DTD, and no nesting is ever resolved, so an OPF sidecar
     cannot become a parser attack surface the way a real document tree would.
     """
-    for name, raw in _XML_ELEMENT.findall(sidecar.text)[:64]:
+    for name, attributes, raw in _XML_ELEMENT.findall(sidecar.text)[:64]:
         lowered = name.lower()
         value = _decode_entities(raw)
         if lowered == "language":
@@ -667,7 +711,7 @@ def _opf_sidecar_facts(builder: _Builder, sidecar: AudioSidecar) -> None:
                 value,
                 key="dc:description",
             )
-        elif lowered == "contributor":
+        elif lowered == "contributor" and _is_narrator_role(attributes):
             builder.add(
                 AudioInspectionField.CONTRIBUTOR,
                 sidecar.surface,

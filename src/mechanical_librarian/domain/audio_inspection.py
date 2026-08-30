@@ -83,6 +83,7 @@ class AudioEvidenceSurface(StrEnum):
     CONTAINER_FORMAT = "container_format"
     CONTAINER_STREAM = "container_stream"
     MP4_ILST = "mp4_ilst"
+    MP4_FREEFORM = "mp4_freeform"
     MP4_FREEFORM_TONE = "mp4_freeform_tone"
     ID3_FRAME = "id3_frame"
     ID3_USER_TEXT = "id3_user_text"
@@ -103,6 +104,7 @@ AUDIO_SURFACE_BASIS: Mapping[AudioEvidenceSurface, str] = MappingProxyType(
         AudioEvidenceSurface.CONTAINER_FORMAT: "embedded_tag",
         AudioEvidenceSurface.CONTAINER_STREAM: "embedded_tag",
         AudioEvidenceSurface.MP4_ILST: "embedded_tag",
+        AudioEvidenceSurface.MP4_FREEFORM: "embedded_tag",
         AudioEvidenceSurface.MP4_FREEFORM_TONE: "embedded_tag",
         AudioEvidenceSurface.ID3_FRAME: "embedded_tag",
         AudioEvidenceSurface.ID3_USER_TEXT: "embedded_tag",
