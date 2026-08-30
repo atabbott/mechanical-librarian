@@ -486,9 +486,9 @@ def test_terminal_preparation_dismissal_restores_the_prior_work_decision() -> No
                 selected_header = page.locator(".selected-work-header")
                 expect(selected_header).to_be_focused()
 
-                page.get_by_role("button", name="Preparing your library").click()
+                page.get_by_role("button", name="Preparation complete").click()
                 preparation_heading = page.get_by_role(
-                    "heading", name="Preparing your library", exact=True
+                    "heading", name="Preparation complete", exact=True
                 )
                 preparation_heading.wait_for()
                 expect(preparation_heading).to_be_focused()
@@ -496,7 +496,7 @@ def test_terminal_preparation_dismissal_restores_the_prior_work_decision() -> No
                 page.get_by_role("button", name="Dismiss preparation").click()
 
                 expect(
-                    page.get_by_role("button", name="Preparing your library")
+                    page.get_by_role("button", name="Preparation complete")
                 ).to_have_count(0)
                 expect(preparation_heading).to_have_count(0)
                 page.get_by_role(

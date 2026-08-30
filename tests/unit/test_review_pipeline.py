@@ -841,8 +841,9 @@ def test_terminal_enrollment_is_excluded_from_triggerless_full_reconciliation(
 
 
 @pytest.mark.parametrize("ineligible", (False, True), ids=("removed", "ineligible"))
-def test_successor_discovery_removes_orphaned_presentation_work(
-    application_path: Path, ineligible: bool
+@pytest.mark.parametrize("outcome", ("ready", "failed"))
+def test_successor_discovery_retains_terminal_presentation_work(
+    application_path: Path, ineligible: bool, outcome: str
 ) -> None:
     repository = open_repository(application_path)
     repository.request_review_scan(
@@ -868,13 +869,31 @@ def test_successor_discovery_removes_orphaned_presentation_work(
     work_id = repository._connection.execute(
         "SELECT work_id FROM review_preparation_work"
     ).fetchone()[0]
-    repository._connection.execute(
-        "UPDATE review_preparation_work SET stage='complete',state='complete',updated_at=104 "
-        "WHERE work_id=?",
-        (work_id,),
-    )
-    refresh_preparation_work(repository._connection, work_id, 104)
-    assert repository.claim_review_pipeline_action(105) is None
+    if outcome == "ready":
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET stage='complete',state='complete',updated_at=104 "
+            "WHERE work_id=?",
+            (work_id,),
+        )
+        refresh_preparation_work(repository._connection, work_id, 104)
+    else:
+        failed_work = repository.claim_review_pipeline_action(104)
+        assert failed_work is not None and failed_work.action_id == work_id
+        repository.fail_review_pipeline_action(failed_work, "failed", False, 104)
+    before = repository.preparation_presentation(104)
+    before_sequence = repository._connection.execute(
+        "SELECT completion_sequence,updated_at FROM review_preparation_presentation "
+        "WHERE row_id=?",
+        ("work:" + work_id,),
+    ).fetchone()
+    assert before_sequence is not None
+    if outcome == "failed":
+        with patch.object(
+            repository, "_has_pending_field_effect_manual_return", return_value=True
+        ):
+            assert repository.claim_review_pipeline_action(105) is None
+    else:
+        assert repository.claim_review_pipeline_action(105) is None
     successor = repository.claim_review_pipeline_action(106)
     assert successor is not None and successor.stage == "discovery"
     successor_entries = (
@@ -884,18 +903,64 @@ def test_successor_discovery_removes_orphaned_presentation_work(
     assert repository.claim_review_pipeline_action(108) is None
     presentation = repository.preparation_presentation(108)
     sidecar_work = repository._connection.execute(
-        "SELECT COUNT(*) FROM review_preparation_presentation WHERE row_kind='work'"
-    ).fetchone()[0]
+        "SELECT work_outcome,current_work_state,completion_sequence,updated_at "
+        "FROM review_preparation_presentation WHERE row_kind='work'"
+    ).fetchone()
     repository.close()
 
-    assert presentation is not None
-    assert presentation.passage.ready == 1
+    assert before is not None and presentation is not None
+    assert presentation.passage == before.passage
     assert presentation.total == 1
     assert presentation.active_books == ()
-    assert sidecar_work == 0
+    assert presentation.recent_completions == before.recent_completions
+    assert presentation.recent_completions[0].outcome == outcome
+    assert presentation.throughput_per_minute > 0
+    assert sidecar_work == (
+        outcome,
+        "complete" if outcome == "ready" else "failed",
+        *before_sequence,
+    )
     reopened = open_repository(application_path, create=False)
     assert reopened.preparation_presentation(108) == presentation
     reopened.close()
+
+
+def test_refresh_removes_unfinished_orphaned_presentation_work(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry("item", "1" * 64),), 102
+    )
+    work_id = repository._connection.execute(
+        "SELECT work_id FROM review_preparation_work"
+    ).fetchone()[0]
+    repository._connection.execute(
+        "DELETE FROM review_preparation_work WHERE work_id=?", (work_id,)
+    )
+    refresh_preparation_work(repository._connection, work_id, 103)
+    assert (
+        repository._connection.execute(
+            "SELECT 1 FROM review_preparation_presentation WHERE row_id=?",
+            ("work:" + work_id,),
+        ).fetchone()
+        is None
+    )
+    assert repository._connection.execute(
+        "SELECT active_count,completion_count FROM review_preparation_presentation "
+        "WHERE row_id='run'"
+    ).fetchone() == (0, 0)
+    repository.close()
 
 
 @pytest.mark.parametrize(

@@ -89,7 +89,9 @@ describe('Library route', () => {
     ).toBeVisible()
     expect(router.state.location.search).toMatchObject({ preparation: runId })
     await waitFor(() =>
-      expect(screen.getByRole('heading', { name: 'Preparing your library' })).toHaveFocus(),
+      expect(
+        screen.getByRole('heading', { name: 'Preparation completed with failures' }),
+      ).toHaveFocus(),
     )
     expect(http.getPreparation).toHaveBeenCalledTimes(1)
   })
@@ -395,6 +397,93 @@ describe('Library route', () => {
     summary = await screen.findByRole('button', { name: /Preparation completed with failures/u })
     expect(within(summary).getByText('1 ready · 1 could not finish')).toBeVisible()
     expect(screen.getByRole('button', { name: /^A Book\./u })).toBeEnabled()
+  })
+
+  it.each([
+    [
+      'starting',
+      'Preparation is starting',
+      'The run is open and waiting for its first confirmed progress.',
+    ],
+    [
+      'running',
+      'Preparing your library',
+      'Preparation continues here while ready works remain selectable.',
+    ],
+    [
+      'blocked',
+      'Preparation needs attention',
+      'Preparation is paused until the reported issue is resolved.',
+    ],
+    ['completed_clean', 'Preparation complete', 'This run finished without a reported failure.'],
+    [
+      'completed_with_failures',
+      'Preparation completed with failures',
+      'Ready books remain available; unfinished outcomes stay visible for recovery.',
+    ],
+  ] as const)(
+    'describes the %s preparation detail truthfully',
+    async (state, heading, introduction) => {
+      const runId = `preparation_run_${'8'.repeat(64)}`
+      const base = terminalPreparation(runId)
+      const terminal = state === 'completed_clean' || state === 'completed_with_failures'
+      const presentation = {
+        ...base.presentation,
+        state,
+        passage: {
+          ...base.presentation.passage,
+          failed: state === 'completed_with_failures' ? 1 : 0,
+        },
+        active_books: terminal ? [] : base.presentation.active_books,
+        completed_at: terminal ? 104 : null,
+        dismissible: terminal,
+      }
+      const current: PreparationView = {
+        ...base,
+        active: !terminal,
+        actionable: terminal,
+        paused: state === 'blocked',
+        presentation,
+      }
+      const http = createHttp()
+      http.getPreparation = vi.fn(async () => current)
+      renderRoute(`/library?lens=all&preparation=${runId}`, http)
+
+      const detailHeading = await screen.findByRole('heading', { name: heading })
+      expect(screen.getByText(introduction)).toBeVisible()
+      await waitFor(() => expect(detailHeading).toHaveFocus())
+    },
+  )
+
+  it('gives preparation exclusive left selection and restores the retained work', async () => {
+    const user = userEvent.setup()
+    const runId = `preparation_run_${'9'.repeat(64)}`
+    const http = createHttp()
+    http.getPreparation = vi.fn(async () => terminalPreparation(runId))
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+
+    const work = await screen.findByRole('button', { name: /^A Book\./u })
+    expect(work).toHaveAttribute('aria-current', 'true')
+    const summary = await screen.findByRole('button', {
+      name: /Preparation completed with failures/u,
+    })
+    await user.click(summary)
+    expect(summary).toHaveAttribute('aria-current', 'true')
+    expect(work).not.toHaveAttribute('aria-current')
+    expect(work).not.toHaveClass('active')
+    expect(
+      document.querySelectorAll(
+        '.preparation-summary[aria-current="true"],.library-work-row[aria-current="true"]',
+      ),
+    ).toHaveLength(1)
+
+    await user.click(work)
+    expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
+    expect(work).toHaveAttribute('aria-current', 'true')
+    expect(summary).not.toHaveAttribute('aria-current')
+    expect(
+      screen.queryByRole('heading', { name: 'Preparation completed with failures' }),
+    ).toBeNull()
   })
 
   it.each(['pointer', 'Enter', 'Space'])(

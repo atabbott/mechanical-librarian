@@ -195,14 +195,42 @@ const PreparationDetail = ({
   onDismiss: () => void
 }) => {
   const outcomeTotal = presentation.passage.ready + presentation.passage.failed
+  let heading: string
+  let introduction: string
+  switch (presentation.state) {
+    case 'starting':
+      heading = 'Preparation is starting'
+      introduction = 'The run is open and waiting for its first confirmed progress.'
+      break
+    case 'running':
+      heading = 'Preparing your library'
+      introduction = 'Preparation continues here while ready works remain selectable.'
+      break
+    case 'blocked':
+      heading = 'Preparation needs attention'
+      introduction = 'Preparation is paused until the reported issue is resolved.'
+      break
+    case 'completed_clean':
+      heading = 'Preparation complete'
+      introduction = 'This run finished without a reported failure.'
+      break
+    case 'completed_with_failures':
+      heading = 'Preparation completed with failures'
+      introduction = 'Ready books remain available; unfinished outcomes stay visible for recovery.'
+      break
+    case 'dismissed':
+      heading = 'Preparation dismissed'
+      introduction = 'This preparation record has been dismissed.'
+      break
+  }
   return (
     <div className="preparation-detail">
       <header>
         <div>
           <h2 tabIndex={-1} data-route-focus="true">
-            Preparing your library
+            {heading}
           </h2>
-          <p>Preparation continues here while ready works remain selectable.</p>
+          <p>{introduction}</p>
         </div>
         <strong>{String(presentation.passage.ready)} ready</strong>
       </header>
@@ -2454,9 +2482,11 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
               </div>
             ) : (
               data.works.map((work) => {
-                const selectedWorkRow = work.reviewCaseId
-                  ? search.preview === work.reviewCaseId
-                  : search.work === work.workId
+                const selectedWorkRow =
+                  !preparationSelected &&
+                  (work.reviewCaseId
+                    ? search.preview === work.reviewCaseId
+                    : search.work === work.workId)
                 const needsAttention = work.attentionCount > 0
                 // A published report is not a failure. The row for a work
                 // that stopped before producing one has nothing to open and

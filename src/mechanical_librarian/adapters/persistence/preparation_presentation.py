@@ -88,15 +88,32 @@ def _next_completion_sequence(connection: sqlite3.Connection, run_id: str) -> in
 
 
 def _delete_preparation_work_rows(
-    connection: sqlite3.Connection, run_id: str, row_ids: tuple[str, ...]
+    connection: sqlite3.Connection,
+    run_id: str,
+    row_ids: tuple[str, ...],
+    *,
+    include_completed: bool = False,
 ) -> None:
     if not row_ids:
         return
     _completion_sequence_count(connection, run_id)
-    connection.executemany(
-        "DELETE FROM review_preparation_presentation WHERE row_id=?",
-        ((row_id,) for row_id in row_ids),
-    )
+    if include_completed:
+        connection.executemany(
+            "DELETE FROM review_preparation_presentation WHERE row_id=?",
+            ((row_id,) for row_id in row_ids),
+        )
+    else:
+        connection.executemany(
+            "UPDATE review_preparation_presentation SET "
+            "current_work_state=CASE work_outcome WHEN 'ready' THEN 'complete' ELSE 'failed' END,"
+            "recovery_high_water_stage=NULL,recovery_high_water_outcome=NULL "
+            "WHERE row_id=? AND work_outcome IS NOT NULL",
+            ((row_id,) for row_id in row_ids),
+        )
+        connection.executemany(
+            "DELETE FROM review_preparation_presentation WHERE row_id=? AND work_outcome IS NULL",
+            ((row_id,) for row_id in row_ids),
+        )
     completed = connection.execute(
         "SELECT row_id,completion_sequence FROM review_preparation_presentation "
         "WHERE row_kind='work' AND run_id=? AND completion_sequence IS NOT NULL "
@@ -111,9 +128,11 @@ def _delete_preparation_work_rows(
         ),
     )
     connection.execute(
-        "UPDATE review_preparation_presentation SET completion_count=? "
+        "UPDATE review_preparation_presentation SET completion_count=?,active_count=("
+        "SELECT COUNT(*) FROM review_preparation_presentation AS work "
+        "WHERE work.row_kind='work' AND work.run_id=? AND work.current_work_state='running') "
         "WHERE row_id='run' AND run_id=?",
-        (len(completed), run_id),
+        (len(completed), run_id, run_id),
     )
 
 
@@ -280,7 +299,12 @@ def reconcile_preparation_library_additions(
                     (existing[0], existing[1]),
                 )
             )
-            _delete_preparation_work_rows(connection, cast(str, existing[2]), work_rows)
+            _delete_preparation_work_rows(
+                connection,
+                cast(str, existing[2]),
+                work_rows,
+                include_completed=True,
+            )
             connection.execute(
                 "DELETE FROM review_preparation_presentation WHERE row_id=?",
                 (existing[0],),
@@ -1689,7 +1713,12 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                 if row_id != "work:" + cast(str, work_id):
                     raise ValueError("noncanonical presentation work identity")
                 if authoritative_scan_id is None:
-                    if not enrollment[2]:
+                    retained_state = "complete" if work_outcome == "ready" else "failed"
+                    if (
+                        work_outcome is None
+                        or current_state != retained_state
+                        or recovery_stage is not None
+                    ):
                         raise ValueError("orphan authoritative work")
                 elif (authoritative_scan_id, authoritative_ordinal) != (
                     scan_id,
