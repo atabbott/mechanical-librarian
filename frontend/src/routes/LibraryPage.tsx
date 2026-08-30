@@ -1285,11 +1285,13 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       if (timer !== null) window.clearTimeout(timer)
     }
   }, [preparationSelected, presentationVersion])
+  const currentSearch = useRef(search)
   const dismissPreparation = useMutation({
     mutationFn: (runId: string) => http.dismissPreparation(runId),
     retry: false,
-    onSuccess: (value) => {
-      preparationState.queryClient.setQueryData(['review-preparation'], value)
+    onSuccess: (value, runId) => {
+      if (!preparationState.adoptDismissal(runId, value)) return
+      if (currentSearch.current.preparation !== runId) return
       void navigate({
         replace: true,
         search: (current) => {
@@ -1300,7 +1302,6 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       })
     },
   })
-  const currentSearch = useRef(search)
   const pendingSearchQuery = useRef<string | null>(null)
   const searchNavigation = useRef<Promise<void> | null>(null)
   const searchCommitTimer = useRef<number | null>(null)

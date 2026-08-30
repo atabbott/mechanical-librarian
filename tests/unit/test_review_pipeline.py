@@ -8,6 +8,7 @@ import sys
 import tempfile
 import threading
 import time
+import tracemalloc
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack
 from dataclasses import replace
@@ -28,6 +29,7 @@ from mechanical_librarian.adapters.persistence.preparation_presentation import (
     refresh_preparation_presentation,
     refresh_preparation_run_state,
     refresh_preparation_work,
+    validate_preparation_presentation,
 )
 from mechanical_librarian.adapters.persistence.review_preparation import (
     _FAILURE_CODES,
@@ -3009,6 +3011,115 @@ def test_atomic_resume_rolls_back_every_promotion_and_retries_once(
     reopened.close()
 
 
+@pytest.mark.parametrize(
+    "operation", ("resume_review_pipeline", "drain_library_additions")
+)
+@pytest.mark.parametrize("failure_index", (0, 1), ids=("first", "later"))
+def test_library_addition_drain_rolls_back_keyboard_interrupt_exactly(
+    application_path: Path, operation: str, failure_index: int
+) -> None:
+    repository = open_repository(application_path)
+    repository.set_review_pipeline_paused(True, 100)
+    libraries = (
+        ("primary", "history", "lib-2", _PRODUCER),
+        ("primary", "poetry", "lib-3", _PRODUCER),
+    )
+    for index, target in enumerate(libraries):
+        repository.request_library_addition(*target, 101 + index)
+    if operation == "drain_library_additions":
+        repository.set_review_pipeline_paused(False, 103)
+    tables = (
+        "review_preparation_control",
+        "review_preparation_scans",
+        "review_preparation_work",
+        "review_preparation_presentation",
+    )
+    before = {
+        table: tuple(repository._connection.execute(f"SELECT * FROM {table}"))
+        for table in tables
+    }
+    original = repository._review_scans._request_review_scan_unpaused
+    calls = 0
+    interruption = KeyboardInterrupt("private drain sentinel")
+
+    def interrupt_selected(*args: object, **kwargs: object) -> PipelineProgress:
+        nonlocal calls
+        if calls == failure_index:
+            calls += 1
+            raise interruption
+        calls += 1
+        return original(*args, **kwargs)  # type: ignore[arg-type]
+
+    with (
+        patch.object(
+            repository._review_scans,
+            "_request_review_scan_unpaused",
+            interrupt_selected,
+        ),
+        pytest.raises(KeyboardInterrupt) as raised,
+    ):
+        getattr(repository, operation)(libraries, 104)
+
+    assert raised.value is interruption
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert not repository._connection.in_transaction
+    assert {
+        table: tuple(repository._connection.execute(f"SELECT * FROM {table}"))
+        for table in tables
+    } == before
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    "operation", ("resume_review_pipeline", "drain_library_additions")
+)
+def test_library_addition_drain_translates_private_sqlite_failure(
+    application_path: Path, operation: str
+) -> None:
+    repository = open_repository(application_path)
+    repository.set_review_pipeline_paused(True, 100)
+    libraries = (("primary", "history", "lib-2", _PRODUCER),)
+    repository.request_library_addition(*libraries[0], 101)
+    if operation == "drain_library_additions":
+        repository.set_review_pipeline_paused(False, 102)
+    before = tuple(
+        repository._connection.execute("SELECT * FROM review_preparation_presentation")
+    )
+
+    with (
+        patch.object(
+            repository._review_scans,
+            "_request_review_scan_unpaused",
+            side_effect=sqlite3.OperationalError("/private/library/database.sqlite3"),
+        ),
+        pytest.raises(MetadataReportError) as raised,
+    ):
+        getattr(repository, operation)(libraries, 103)
+
+    assert str(raised.value) == "review preparation persistence failed"
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert not repository._connection.in_transaction
+    assert (
+        tuple(
+            repository._connection.execute(
+                "SELECT * FROM review_preparation_presentation"
+            )
+        )
+        == before
+    )
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+    repository.close()
+
+
 def test_pause_mutation_failure_rolls_back_releases_writer_and_retries(
     application_path: Path,
 ) -> None:
@@ -5134,6 +5245,232 @@ def test_recovery_witness_retains_a_failed_outcome_across_reopen(
     reopened.close()
 
 
+@pytest.mark.parametrize(
+    ("old_outcome", "state", "failure_code", "scan_state"),
+    (
+        ("ready", "failed", "provider", "completed_with_failures"),
+        ("ready", "stale", "stale", "completed_with_failures"),
+        ("failed", "complete", None, "completed"),
+        ("failed", "failed", "local_evidence_only", "completed"),
+    ),
+)
+def test_terminal_recovery_reconciles_current_outcome_without_reaging_completion(
+    application_path: Path,
+    old_outcome: str,
+    state: str,
+    failure_code: str | None,
+    scan_state: str,
+) -> None:
+    _seed_recovery_witness(application_path)
+    repository = open_repository(application_path, create=False)
+    before = repository._connection.execute(
+        "SELECT run_id,scan_id,cycle_id,work_id,updated_at FROM "
+        "review_preparation_presentation WHERE row_kind='work'"
+    ).fetchone()
+    assert before is not None
+    run_id, scan_id, cycle_id, work_id, completed_at = before
+    repository._connection.execute(
+        "UPDATE review_preparation_presentation SET work_stage='projection',work_outcome=?,"
+        "recovery_high_water_stage='projection',recovery_high_water_outcome=?,"
+        "completion_sequence=1 WHERE row_kind='work'",
+        (old_outcome, old_outcome),
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_presentation SET read=1,searches_finished=1,compared=1,"
+        "checked=1,ready=?,failed=?,completion_count=1 "
+        "WHERE row_kind='run'",
+        (old_outcome == "ready", old_outcome == "failed"),
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET presentation_recovery_stage='projection',"
+        "presentation_recovery_outcome=?,stage=?,"
+        "state=?,failure_code=?,updated_at=110 WHERE work_id=?",
+        (
+            old_outcome,
+            "complete" if state == "complete" else "provider",
+            state,
+            failure_code,
+            work_id,
+        ),
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state=?,updated_at=110 WHERE scan_id=?",
+        (scan_state, scan_id),
+    )
+    refresh_preparation_run_state(repository._connection, 110)
+    settled = repository._connection.execute(
+        "SELECT presentation.work_outcome,presentation.current_work_state,"
+        "presentation.updated_at,presentation.completion_sequence,"
+        "presentation.recovery_high_water_stage,"
+        "authoritative.presentation_recovery_cycle_id "
+        "FROM review_preparation_presentation AS presentation "
+        "JOIN review_preparation_work AS authoritative USING(work_id) "
+        "WHERE presentation.row_kind='work'"
+    ).fetchone()
+    counters = repository._connection.execute(
+        "SELECT ready,failed,completion_count,state FROM "
+        "review_preparation_presentation WHERE row_kind='run'"
+    ).fetchone()
+    enrollment = repository._connection.execute(
+        "SELECT cycle_id,cycle_state FROM review_preparation_presentation "
+        "WHERE row_kind='enrollment'"
+    ).fetchone()
+    refresh_preparation_run_state(repository._connection, 111)
+    repeated = repository._connection.execute(
+        "SELECT ready,failed,completion_count FROM review_preparation_presentation "
+        "WHERE row_kind='run'"
+    ).fetchone()
+    repository._connection.commit()
+    repository.close()
+
+    expected_outcome = (
+        "ready"
+        if state == "complete" or failure_code == "local_evidence_only"
+        else "failed"
+    )
+    assert settled == (expected_outcome, state, completed_at, 1, None, None)
+    assert counters == (1, 1, 1, "completed_with_failures")
+    assert enrollment == (cycle_id, scan_state)
+    assert repeated == (1, 1, 1)
+    reopened = open_repository(application_path, create=False)
+    current = reopened.preparation_presentation(111)
+    reopened.close()
+    assert current is not None and current.run_id == run_id
+    assert current.passage.ready == current.passage.failed == current.total == 1
+    assert len(current.recent_completions) == 1
+    assert current.recent_completions[0].outcome == expected_outcome
+
+
+def test_terminal_recovery_reconciliation_rolls_back_with_its_owner(
+    application_path: Path,
+) -> None:
+    _seed_recovery_witness(application_path)
+    repository = open_repository(application_path, create=False)
+    scan_id, work_id = repository._connection.execute(
+        "SELECT scan_id,work_id FROM review_preparation_work"
+    ).fetchone()
+    repository._connection.execute(
+        "UPDATE review_preparation_presentation SET work_stage='projection',"
+        "work_outcome='ready',recovery_high_water_stage='projection',"
+        "recovery_high_water_outcome='ready',completion_sequence=1 "
+        "WHERE row_kind='work'"
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_presentation SET read=1,searches_finished=1,"
+        "compared=1,checked=1,ready=1,completion_count=1 WHERE row_kind='run'"
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET presentation_recovery_stage='projection',"
+        "presentation_recovery_outcome='ready',stage='provider',state='failed',"
+        "failure_code='provider',updated_at=110 WHERE work_id=?",
+        (work_id,),
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed_with_failures',updated_at=110 "
+        "WHERE scan_id=?",
+        (scan_id,),
+    )
+    repository._connection.commit()
+    tables = (
+        "review_preparation_control",
+        "review_preparation_scans",
+        "review_preparation_work",
+        "review_preparation_presentation",
+    )
+    before = {
+        table: tuple(repository._connection.execute(f"SELECT * FROM {table}"))
+        for table in tables
+    }
+
+    with (
+        patch(
+            "mechanical_librarian.adapters.persistence.preparation_presentation."
+            "_clear_preparation_recovery",
+            side_effect=sqlite3.OperationalError("private terminal settlement"),
+        ),
+        pytest.raises(MetadataReportError) as raised,
+    ):
+        repository.set_review_pipeline_paused(True, 111)
+
+    assert str(raised.value) == "review preparation persistence failed"
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert not repository._connection.in_transaction
+    assert {
+        table: tuple(repository._connection.execute(f"SELECT * FROM {table}"))
+        for table in tables
+    } == before
+    repository.close()
+
+
+def test_terminal_recovery_reconciliation_leaves_sibling_cycle_active(
+    application_path: Path,
+) -> None:
+    _seed_recovery_witness(application_path)
+    repository = open_repository(application_path, create=False)
+    run_id = repository._connection.execute(
+        "SELECT run_id FROM review_preparation_presentation WHERE row_kind='run'"
+    ).fetchone()[0]
+    repository.request_review_scan(
+        "primary",
+        "history",
+        "lib-3",
+        _PRODUCER,
+        105,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    sibling_before = repository._connection.execute(
+        "SELECT row_id,scan_id,cycle_id,cycle_state,ordinal FROM "
+        "review_preparation_presentation WHERE row_kind='enrollment' "
+        "AND library_name='history'"
+    ).fetchone()
+    scan_id, work_id = repository._connection.execute(
+        "SELECT scan_id,work_id FROM review_preparation_work"
+    ).fetchone()
+    repository._connection.execute(
+        "UPDATE review_preparation_presentation SET work_stage='projection',"
+        "work_outcome='ready',recovery_high_water_stage='projection',"
+        "recovery_high_water_outcome='ready',completion_sequence=1 "
+        "WHERE row_kind='work'"
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_presentation SET read=1,searches_finished=1,"
+        "compared=1,checked=1,ready=1,completion_count=1 WHERE row_kind='run'"
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET presentation_recovery_stage='projection',"
+        "presentation_recovery_outcome='ready',stage='provider',state='failed',"
+        "failure_code='provider',updated_at=110 WHERE work_id=?",
+        (work_id,),
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed_with_failures',updated_at=110 "
+        "WHERE scan_id=?",
+        (scan_id,),
+    )
+
+    refresh_preparation_run_state(repository._connection, 110)
+
+    assert (
+        repository._connection.execute(
+            "SELECT row_id,scan_id,cycle_id,cycle_state,ordinal FROM "
+            "review_preparation_presentation WHERE row_kind='enrollment' "
+            "AND library_name='history'"
+        ).fetchone()
+        == sibling_before
+    )
+    snapshot = repository.preparation_presentation(110)
+    assert snapshot is not None
+    assert snapshot.run_id == run_id
+    assert snapshot.state.value in {"starting", "running"}
+    assert snapshot.passage.ready == snapshot.passage.failed == snapshot.total == 1
+    repository._connection.commit()
+    repository.close()
+    reopened = open_repository(application_path, create=False)
+    assert reopened.preparation_presentation(111) is not None
+    reopened.close()
+
+
 def _seed_recovery_witness(path: Path) -> None:
     repository = open_repository(path)
     repository.request_review_scan(
@@ -5212,6 +5549,19 @@ def test_recovery_witness_corruption_fails_closed_without_repair(
     _assert_presentation_reopen_refuses_without_mutation(path)
 
 
+def test_empty_presentation_rejects_an_authoritative_recovery_witness(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "orphan-recovery-witness.sqlite3"
+    _seed_recovery_witness(path)
+    connection = sqlite3.connect(path)
+    connection.execute("DELETE FROM review_preparation_presentation")
+    connection.commit()
+    connection.close()
+
+    _assert_presentation_reopen_refuses_without_mutation(path)
+
+
 def test_recovery_marking_uses_two_set_based_linear_statements(tmp_path: Path) -> None:
     def measured(population: int) -> tuple[int, int, tuple[str, ...]]:
         repository = open_repository(tmp_path / f"recovery-scale-{population}.sqlite3")
@@ -5280,6 +5630,77 @@ def test_recovery_marking_uses_two_set_based_linear_statements(tmp_path: Path) -
         large_steps,
         large_plan,
     )
+
+
+def test_presentation_validation_is_constant_query_and_bounded_memory(
+    tmp_path: Path,
+) -> None:
+    def measured(population: int) -> tuple[int, int, int, tuple[str, ...]]:
+        repository = open_repository(
+            tmp_path / f"validation-scale-{population}.sqlite3"
+        )
+        repository.request_review_scan(
+            "primary",
+            "fiction",
+            "lib-1",
+            _PRODUCER,
+            100,
+            trigger=PreparationTrigger.MANUAL_SCAN,
+        )
+        discovery = repository.claim_review_pipeline_action(101)
+        assert discovery is not None
+        repository.complete_review_discovery(
+            discovery,
+            1,
+            "a" * 64,
+            tuple(
+                _entry(f"Book {index}", f"{index:064x}")
+                for index in range(1, population + 1)
+            ),
+            102,
+        )
+        statements: list[str] = []
+        vm_steps = 0
+
+        def count_step() -> int:
+            nonlocal vm_steps
+            vm_steps += 1
+            return 0
+
+        tracemalloc.start()
+        repository._connection.set_trace_callback(statements.append)
+        repository._connection.set_progress_handler(count_step, 1)
+        validate_preparation_presentation(repository._connection)
+        _current, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        repository._connection.set_progress_handler(None, 0)
+        repository._connection.set_trace_callback(None)
+        work_query = next(
+            statement
+            for statement in statements
+            if statement.startswith("SELECT presentation.scan_id")
+        )
+        plan = tuple(
+            row[3]
+            for row in repository._connection.execute(
+                "EXPLAIN QUERY PLAN " + work_query
+            )
+        )
+        repository.close()
+        return len(statements), vm_steps, peak, plan
+
+    small = measured(1)
+    medium = measured(200)
+    large = measured(2_000)
+    assert small[0] == medium[0] == large[0] == 27
+    assert small[3] == medium[3] == large[3]
+    assert any(
+        "PRIMARY KEY" in row or "sqlite_autoindex_review_preparation_work_1" in row
+        for row in large[3]
+    )
+    assert all("TEMP B-TREE" not in row for row in large[3])
+    assert large[1] <= small[1] + 300 * 2_000
+    assert large[2] <= small[2] + 8 * 1024 * 1024
 
 
 def test_third_crashed_stage_is_terminal_instead_of_overflowing_claim(

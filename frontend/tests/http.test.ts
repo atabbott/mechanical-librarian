@@ -625,6 +625,7 @@ describe('ReviewApiClient', () => {
     expect(() => mapPreparation({ ...base, presentation: { ...presentation, recent_completions: [{ name: `${maximumName}x`, outcome: 'ready', completed_at: 101 }] } })).toThrow('invalid_preparation_completion_name')
     expect(() => mapPreparation({ ...base, presentation: { ...presentation, passage: { ...presentation.passage, checked: 1, ready: 2 } } })).toThrow('invalid_preparation_passage_order')
     expect(mapPreparation({ ...base, presentation: { ...presentation, passage: { read: 1, searches_finished: 0, compared: 0, checked: 0, ready: 0, failed: 1 } } }).presentation?.passage.failed).toBe(1)
+    expect(mapPreparation({ ...base, presentation: { ...presentation, passage: { read: 1, searches_finished: 1, compared: 1, checked: 1, ready: 1, failed: 1 }, total: 1 } }).presentation?.passage).toMatchObject({ ready: 1, failed: 1 })
     expect(() => mapPreparation({ ...base, presentation: { ...presentation, updated_at: 99 } })).toThrow('invalid_preparation_passage_total')
     expect(() => mapPreparation({ ...base, presentation: { ...presentation, state: 'completed_clean' } })).toThrow('invalid_preparation_passage_total')
     expect(() => mapPreparation({ ...base, presentation: { ...presentation, completed_at: 101 } })).toThrow('invalid_preparation_passage_total')

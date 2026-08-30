@@ -227,7 +227,6 @@ class PreparationPresentation:
                     self.passage.failed,
                 )
             )
-            or self.passage.ready + self.passage.failed > self.total
             or len(self.active_books) + self.active_overflow > self.total
         ):
             raise ValueError("preparation presentation is invalid")

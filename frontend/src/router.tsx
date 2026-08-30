@@ -203,6 +203,7 @@ export const preparationQuery = (
     },
     staleTime: 1_000,
     retry: false,
+    structuralSharing: false,
     // The shell's always-mounted observer owns this singleton snapshot. Lazy
     // route consumers subscribe to that same query and must not turn a slow
     // route/chunk mount into a second startup read once the snapshot is stale.
@@ -255,6 +256,7 @@ export const usePreparation = () => {
     queryFn: (): Promise<PreparationReconnect> =>
       Promise.resolve({ epoch: 0, state: 'clear', transport: 'unknown' }),
     enabled: false,
+    structuralSharing: false,
     initialData: {
       epoch: 0,
       state: 'clear',
@@ -380,7 +382,32 @@ export const usePreparation = () => {
       queryClient.invalidateQueries({ queryKey: ['attention'] }),
     ])
   }, [live, queryClient, snapshot])
-  return { data, queryClient, http, live, reconnecting }
+  const adoptDismissal = useCallback(
+    (runId: string, value: PreparationView) => {
+      const dismissed = value.presentation
+      if (dismissed?.run_id !== runId || dismissed.state !== 'dismissed') return false
+      const primary = queryClient.getQueryData<PreparationView>(['review-preparation'])
+      const reconnect = queryClient.getQueryData<PreparationReconnect>(preparationReconnectKey)
+      if (
+        [primary, reconnect?.frozen].some((candidate) => {
+          const current = candidate?.presentation
+          return (
+            current !== undefined &&
+            current !== null &&
+            (current.run_id !== runId || current.updated_at > dismissed.updated_at)
+          )
+        })
+      )
+        return false
+      queryClient.setQueryData(['review-preparation'], value)
+      queryClient.setQueryData<PreparationReconnect>(preparationReconnectKey, (current) =>
+        current === undefined ? current : { ...current, frozen: value },
+      )
+      return true
+    },
+    [queryClient],
+  )
+  return { data, queryClient, http, live, reconnecting, adoptDismissal }
 }
 
 const connectionCopy = (code: 'tls' | 'authentication' | 'authorization' | 'unavailable') =>

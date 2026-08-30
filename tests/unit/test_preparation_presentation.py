@@ -135,8 +135,12 @@ def test_presentation_rejects_noncanonical_run_identity(run_id: str) -> None:
 def test_failed_outcomes_are_independent_but_all_counts_are_bounded_by_total() -> None:
     early_failures = PreparationPassage(2, 1, 1, 0, 0, 2)
     assert _presentation(passage=early_failures).passage.failed == 2
+    both_outcomes = PreparationPassage(1, 1, 1, 1, 1, 1)
+    assert _presentation(passage=both_outcomes, total=1).passage == both_outcomes
 
     with pytest.raises(ValueError, match="presentation is invalid"):
-        _presentation(passage=PreparationPassage(2, 1, 1, 1, 1, 2))
+        _presentation(passage=PreparationPassage(2, 2, 2, 2, 2, 0), total=1)
+    with pytest.raises(ValueError, match="presentation is invalid"):
+        _presentation(passage=PreparationPassage(1, 1, 1, 1, 0, 2), total=1)
     with pytest.raises(ValueError, match="presentation is invalid"):
         _presentation(passage=PreparationPassage(3, 1, 1, 1, 1, 0), total=2)

@@ -517,13 +517,15 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             transaction.begin()
             self._drain_library_additions(configured, updated_at, clear_pause=True)
             transaction.commit()
-        except Exception:
+        except BaseException as error:
             transaction.rollback()
-            failed = True
+            failure = error
         else:
-            failed = False
-        if failed:
+            failure = None
+        if isinstance(failure, Exception):
             raise MetadataReportError("review preparation persistence failed") from None
+        if failure is not None:
+            raise failure from None
 
     def drain_library_additions(
         self,
@@ -536,13 +538,15 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             transaction.begin()
             self._drain_library_additions(configured, updated_at, clear_pause=False)
             transaction.commit()
-        except Exception:
+        except BaseException as error:
             transaction.rollback()
-            failed = True
+            failure = error
         else:
-            failed = False
-        if failed:
+            failure = None
+        if isinstance(failure, Exception):
             raise MetadataReportError("review preparation persistence failed") from None
+        if failure is not None:
+            raise failure from None
 
     @staticmethod
     def _validated_library_scope(

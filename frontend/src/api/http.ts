@@ -1645,7 +1645,6 @@ const preparationPresentation = (value: unknown) => {
       : integerValue(value.completed_at, 'preparation_completed_at')
   if (
     Object.values(passage).some((count) => count > total) ||
-    passage.ready + passage.failed > total ||
     value.active_books.length + activeOverflow > total ||
     updatedAt < startedAt ||
     (terminal && (completedAt === null || completedAt < startedAt)) ||
