@@ -1289,10 +1289,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const dismissPreparation = useMutation({
     mutationFn: (runId: string) => http.dismissPreparation(runId),
     retry: false,
-    onSuccess: (value, runId) => {
-      if (!preparationState.adoptDismissal(runId, value)) return
+    onSuccess: async (value, runId) => {
+      if (!(await preparationState.adoptDismissal(runId, value))) return
       if (currentSearch.current.preparation !== runId) return
-      void navigate({
+      await navigate({
         replace: true,
         search: (current) => {
           const next = { ...current }

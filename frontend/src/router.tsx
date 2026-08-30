@@ -275,6 +275,19 @@ export const usePreparation = () => {
     preparationQuery(http, !live && updates?.hasBeenLive !== true, recordConfirmed),
   )
   const refetchPreparation = query.refetch
+  const schedulePreparationReconnectRetry = useCallback(
+    (epoch: number) => {
+      window.setTimeout(() => {
+        queryClient.setQueryData<PreparationReconnect>(preparationReconnectKey, (current) => {
+          if (current === undefined) return current
+          if (current.epoch !== epoch || current.transport !== 'live' || current.state !== 'retry')
+            return current
+          return { ...current, state: 'debt' }
+        })
+      }, 1_500)
+    },
+    [queryClient],
+  )
   useEffect(() => {
     if (streamState !== 'degraded' || updates?.hasBeenLive !== true) return
     void queryClient.cancelQueries(
@@ -348,15 +361,15 @@ export const usePreparation = () => {
           ? { ...current, state: 'retry' }
           : current,
       )
-      window.setTimeout(() => {
-        queryClient.setQueryData<PreparationReconnect>(preparationReconnectKey, (current) =>
-          current?.epoch === epoch && current.transport === 'live' && current.state === 'retry'
-            ? { ...current, state: 'debt' }
-            : current,
-        )
-      }, 1_500)
+      schedulePreparationReconnectRetry(epoch)
     })()
-  }, [queryClient, reconnectQuery.data, refetchPreparation, streamState])
+  }, [
+    queryClient,
+    reconnectQuery.data,
+    refetchPreparation,
+    schedulePreparationReconnectRetry,
+    streamState,
+  ])
   const reconnecting = reconnectQuery.data.state !== 'clear'
   // TanStack Query retains the last successful snapshot while a refetch is in
   // flight or the stream is degraded.  Frames never write this cache, so this
@@ -383,13 +396,14 @@ export const usePreparation = () => {
     ])
   }, [live, queryClient, snapshot])
   const adoptDismissal = useCallback(
-    (runId: string, value: PreparationView) => {
+    async (runId: string, value: PreparationView) => {
       const dismissed = value.presentation
       if (dismissed?.run_id !== runId || dismissed.state !== 'dismissed') return false
-      const primary = queryClient.getQueryData<PreparationView>(['review-preparation'])
-      const reconnect = queryClient.getQueryData<PreparationReconnect>(preparationReconnectKey)
-      if (
-        [primary, reconnect?.frozen].some((candidate) => {
+      const responseIsStale = () =>
+        [
+          queryClient.getQueryData<PreparationView>(['review-preparation']),
+          queryClient.getQueryData<PreparationReconnect>(preparationReconnectKey)?.frozen,
+        ].some((candidate) => {
           const current = candidate?.presentation
           return (
             current !== undefined &&
@@ -397,7 +411,30 @@ export const usePreparation = () => {
             (current.run_id !== runId || current.updated_at > dismissed.updated_at)
           )
         })
+      if (responseIsStale()) return false
+      let dismissalEpoch: number | undefined
+      queryClient.setQueryData<PreparationReconnect>(preparationReconnectKey, (current) => {
+        if (current === undefined || current.state === 'clear') return current
+        dismissalEpoch = current.epoch + 1
+        return {
+          ...current,
+          epoch: dismissalEpoch,
+          state: current.transport === 'live' ? 'retry' : current.state,
+        }
+      })
+      await queryClient.cancelQueries(
+        { queryKey: ['review-preparation'], exact: true },
+        { silent: true },
       )
+      const reconnect = queryClient.getQueryData<PreparationReconnect>(preparationReconnectKey)
+      const ownedEpoch = dismissalEpoch
+      if (
+        ownedEpoch !== undefined &&
+        reconnect?.epoch === ownedEpoch &&
+        reconnect.transport === 'live'
+      )
+        schedulePreparationReconnectRetry(ownedEpoch)
+      if ((ownedEpoch !== undefined && reconnect?.epoch !== ownedEpoch) || responseIsStale())
         return false
       queryClient.setQueryData(['review-preparation'], value)
       queryClient.setQueryData<PreparationReconnect>(preparationReconnectKey, (current) =>
@@ -405,7 +442,7 @@ export const usePreparation = () => {
       )
       return true
     },
-    [queryClient],
+    [queryClient, schedulePreparationReconnectRetry],
   )
   return { data, queryClient, http, live, reconnecting, adoptDismissal }
 }

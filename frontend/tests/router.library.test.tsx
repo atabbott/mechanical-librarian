@@ -303,6 +303,7 @@ describe('Library route', () => {
       expect(queryClient.getQueryData(['review-preparation'])).toBe(dismissed)
       expect(queryClient.getQueryData(['review-preparation-reconnect'])).toEqual({
         ...reconnectBefore,
+        epoch: (reconnectBefore?.epoch ?? 0) + 1,
         frozen: dismissed,
       })
       expect(
@@ -323,6 +324,95 @@ describe('Library route', () => {
       expect(http.getPreparation).toHaveBeenCalledTimes(readsBeforeDismissal)
     },
   )
+
+  it('dismissal invalidates a held reconnect generation before adopting its response', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const updates = createLiveStream()
+    const runId = `preparation_run_${'d'.repeat(64)}`
+    const confirmed = terminalPreparation(runId)
+    const dismissed: PreparationView = {
+      ...confirmed,
+      presentation: { ...confirmed.presentation, state: 'dismissed', dismissible: false },
+    }
+    let releaseReconnect!: (value: PreparationView) => void
+    http.getPreparation = vi
+      .fn<ReviewHttp['getPreparation']>()
+      .mockResolvedValueOnce(confirmed)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseReconnect = resolve
+          }),
+      )
+    http.dismissPreparation = vi.fn(async () => dismissed)
+    const { queryClient, router } = renderRoute(
+      '/library?lens=all&preview=case-1&field=title',
+      http,
+      updates,
+    )
+
+    expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: /Preparing your library/u }))
+    act(() => updates.setState('degraded'))
+    expect(
+      await screen.findByText(/Reconnecting · showing the last confirmed state/u),
+    ).toBeVisible()
+    act(() => updates.setState('live'))
+    await waitFor(() => expect(releaseReconnect).toBeTypeOf('function'))
+    const reconnectBefore = queryClient.getQueryData<{
+      epoch: number
+      state: string
+      transport: string
+      frozen?: PreparationView
+    }>(['review-preparation-reconnect'])
+    expect(reconnectBefore).toMatchObject({ state: 'refreshing', transport: 'live' })
+    const cancelQueries = vi.spyOn(queryClient, 'cancelQueries')
+    const invalidateQueries = vi.spyOn(queryClient, 'invalidateQueries')
+
+    await user.click(screen.getByRole('button', { name: 'Dismiss preparation' }))
+    await waitFor(() => expect(queryClient.getQueryData(['review-preparation'])).toBe(dismissed))
+    const reconnectAfter = queryClient.getQueryData<{
+      epoch: number
+      state: string
+      transport: string
+      frozen?: PreparationView
+    }>(['review-preparation-reconnect'])
+    expect(reconnectAfter).toEqual({
+      epoch: (reconnectBefore?.epoch ?? 0) + 1,
+      state: 'retry',
+      transport: 'live',
+      frozen: dismissed,
+    })
+    expect(reconnectAfter?.frozen).toBe(dismissed)
+    expect(cancelQueries).toHaveBeenCalledTimes(1)
+    expect(cancelQueries).toHaveBeenCalledWith(
+      { queryKey: ['review-preparation'], exact: true },
+      { silent: true },
+    )
+
+    await act(async () => releaseReconnect(confirmed))
+    expect(queryClient.getQueryData(['review-preparation'])).toBe(dismissed)
+    expect(
+      queryClient.getQueryData<{ frozen?: PreparationView }>([
+        'review-preparation-reconnect',
+      ])?.frozen,
+    ).toBe(dismissed)
+    expect(screen.queryByRole('button', { name: /Preparing your library/u })).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'Now preparing' })).toBeNull()
+    expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
+    expect(screen.getByRole('button', { name: /Choose current value/u })).toBeEnabled()
+    expect(screen.queryByText(/Reconnecting/u)).toBeNull()
+    expect(document.querySelector('.reported-change')).toBeNull()
+    expect(router.state.location.search).toEqual({
+      lens: 'all',
+      preview: 'case-1',
+      field: 'title',
+    })
+    expect(http.dismissPreparation).toHaveBeenCalledTimes(1)
+    expect(http.getPreparation).toHaveBeenCalledTimes(2)
+    expect(invalidateQueries).not.toHaveBeenCalled()
+  })
 
   it('leaves dismissal cache, reconnect debt, and URL unchanged on errors and stale responses', async () => {
     const user = userEvent.setup()
