@@ -242,6 +242,14 @@ def test_builds_the_shipped_container_from_the_exact_revision() -> None:
     assert "uses: docker/build-push-action@" in workflow
     assert "tags: mechanical-librarian:gate" in workflow
     assert "context: ." in workflow
+    # setup-buildx downloads the Buildx binary at run time, so the SHA pin on
+    # the action alone does not pin the toolchain: the version input must name
+    # an exact release, never `latest` or a floating range.
+    assert re.search(
+        r"docker/setup-buildx-action@[0-9a-f]{40}[^\n]*\n"
+        r"(?:[^\n]*\n){0,5}?\s+version: v\d+\.\d+\.\d+\n",
+        workflow,
+    )
     # Layers restore from the repository Actions cache; a stage re-runs only
     # when its inputs change. Base-image freshness is governed by the digest
     # pins on the Dockerfile's FROM lines, not by `--pull`.

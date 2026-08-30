@@ -244,6 +244,11 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+        with:
+          # The action downloads the Buildx binary at run time; without this
+          # pin an unchanged commit would execute whatever upstream released
+          # last.
+          version: v0.36.1
 
       # The shipped image must assemble from the exact revision. The build is
       # never pushed, loaded, or run here: running the built image's lifecycle
