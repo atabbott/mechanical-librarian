@@ -364,7 +364,7 @@ _TOOLCHAIN_PINS: dict[str, tuple[_PinSite, ...]] = {
         _PinSite(
             ".github/workflows/public-gate.yml",
             r'^\s+python-version: "(\d+\.\d+\.\d+)"$',
-            3,
+            4,
         ),
     ),
     "uv": (
@@ -372,7 +372,7 @@ _TOOLCHAIN_PINS: dict[str, tuple[_PinSite, ...]] = {
             "Dockerfile", r"^COPY --from=ghcr\.io/astral-sh/uv:(\d+\.\d+\.\d+)@", 1
         ),
         _PinSite(
-            ".github/workflows/public-gate.yml", r'^\s+version: "(\d+\.\d+\.\d+)"$', 3
+            ".github/workflows/public-gate.yml", r'^\s+version: "(\d+\.\d+\.\d+)"$', 4
         ),
     ),
     "node": (

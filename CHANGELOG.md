@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The hosted `container-image` check now extracts the pinned `ffprobe` from
+  the image it builds, installs it in place of the runner's own, and executes
+  the real-probe tests against it — audiobook inspection evidence is remote
+  qualification rather than maintainer-local practice. (#929)
+
 - Refresh the completed work's Library presentation before terminal preparation
   settlement, so an orderly completed-state restart accepts its exact durable
   cohort without repair. (#954)

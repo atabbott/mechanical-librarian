@@ -137,6 +137,11 @@ COHORTS = {
     ),
     "browser": TestCohort(discoveries=(("tests/browser", "test_*.py"),)),
     "slow": TestCohort(discoveries=(("tests/slow", "test_*.py"),)),
+    # The hosted `container-image` job runs exactly the probe cases against
+    # the binary extracted from the image it just built (#929). The file stays
+    # a member of `slow`, the same way `required-installed` re-runs files that
+    # `fast` owns: the slow tier remains the complete maintainer-local cohort.
+    "probe": TestCohort(discoveries=(("tests/slow", "test_audio_probe.py"),)),
     "required-installed": TestCohort(
         discoveries=(
             ("tests/unit", "test_package.py"),
