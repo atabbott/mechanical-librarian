@@ -1,10 +1,13 @@
 import sqlite3
+import threading
+from _thread import RLock
 from pathlib import Path
-from typing import cast
+from typing import Never, cast
 
 import pytest
 from pydantic import ValidationError
 
+import mechanical_librarian.adapters.persistence.owner_settings as owner_settings_adapter
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.owner_settings import OwnerSettingsStore
@@ -25,6 +28,10 @@ from mechanical_librarian.domain.owner_settings import (
     file_field_metadata,
 )
 from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
+from mechanical_librarian.domain.reviewer_access import (
+    OpenRouterTaskSelection,
+    ReviewerAccessDocument,
+)
 
 
 def _document(revision: int = 1) -> OwnerSettingsDocument:
@@ -67,7 +74,50 @@ class _FailingCommitConnection(sqlite3.Connection):
         super().commit()
 
 
-def _store(connection: sqlite3.Connection | None = None) -> OwnerSettingsStore:
+class _ReleaseInterruptionLock:
+    def __init__(self, fault: BaseException, *, before_effect: bool) -> None:
+        self.lock = RLock()
+        self.fault = fault
+        self.before_effect = before_effect
+        self.armed = False
+
+    def acquire(self) -> None:
+        self.lock.acquire()
+
+    def release(self) -> None:
+        if self.armed and self.before_effect:
+            self.armed = False
+            raise self.fault
+        self.lock.release()
+        if self.armed:
+            self.armed = False
+            raise self.fault
+
+    def _recursion_count(self) -> int:
+        return self.lock._recursion_count()
+
+
+def _assert_lock_available(lock: _ReleaseInterruptionLock) -> None:
+    acquired = threading.Event()
+
+    def contend() -> None:
+        with lock.lock:
+            acquired.set()
+
+    contender = threading.Thread(target=contend)
+    contender.start()
+    assert acquired.wait(1)
+    contender.join(timeout=1)
+    assert not contender.is_alive()
+
+
+def _interrupt(fault: BaseException) -> Never:
+    raise fault
+
+
+def _store(
+    connection: sqlite3.Connection | None = None, lock: RLock | None = None
+) -> OwnerSettingsStore:
     connection = connection or sqlite3.connect(":memory:")
     connection.execute(
         "CREATE TABLE owner_settings (singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1),revision INTEGER NOT NULL CHECK(revision>=1),document TEXT NOT NULL)"
@@ -85,7 +135,7 @@ def _store(connection: sqlite3.Connection | None = None) -> OwnerSettingsStore:
         ("connection.primary.key", "target-secret-1234"),
     )
     connection.commit()
-    return OwnerSettingsStore(connection)
+    return OwnerSettingsStore(connection, lock)
 
 
 def _cover_document(revision: int) -> OwnerSettingsDocument:
@@ -113,7 +163,7 @@ def _settings_with_libraries(
 def _seed_full_store(
     path: Path, names: tuple[str, ...] = ("ebooks",)
 ) -> tuple[object, OwnerSettingsStore]:
-    repository = open_repository(path)
+    repository = open_repository(path, cross_thread=True)
     document = _settings_with_libraries(1, names)
     repository._connection.execute(
         "INSERT INTO owner_settings VALUES(1,?,?)",
@@ -129,6 +179,180 @@ def _seed_full_store(
     )
     repository._connection.commit()
     return repository, repository.owner_settings_store()
+
+
+def _reviewer_document() -> ReviewerAccessDocument:
+    return ReviewerAccessDocument(
+        schema_version="reviewer-access-v1",
+        revision=2,
+        cover_observation=OpenRouterTaskSelection(
+            engine="openrouter", model="provider/model"
+        ),
+    )
+
+
+@pytest.mark.parametrize("reviewer_first", (False, True))
+def test_composed_settings_and_reviewer_aliases_serialize_transactions(
+    tmp_path: Path, reviewer_first: bool
+) -> None:
+    database = tmp_path / "control.sqlite3"
+    repository, settings = _seed_full_store(database)
+    reviewer = repository.reviewer_access_store()
+    connection = repository._connection
+    entered = threading.Event()
+    release = threading.Event()
+    second_done = threading.Event()
+    errors: list[BaseException] = []
+    settings_results: list[object] = []
+    reviewer_results: list[object] = []
+
+    def hold_alias_transaction() -> int:
+        entered.set()
+        assert release.wait(2)
+        return 1
+
+    connection.create_function("hold_alias_transaction", 0, hold_alias_transaction)
+    if reviewer_first:
+        connection.execute(
+            "CREATE TRIGGER hold_reviewer_alias AFTER INSERT ON reviewer_access "
+            "BEGIN SELECT hold_alias_transaction(); END"
+        )
+    else:
+        connection.execute(
+            "CREATE TRIGGER hold_settings_alias AFTER UPDATE ON owner_settings "
+            "BEGIN SELECT hold_alias_transaction(); END"
+        )
+    candidate = _settings_with_libraries(2, ("ebooks",))
+
+    def replace_reviewer() -> None:
+        try:
+            reviewer_results.append(
+                reviewer.replace(
+                    _reviewer_document(), 1, openrouter_key="reviewer-secret"
+                )
+            )
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            if not reviewer_first:
+                second_done.set()
+
+    def use_settings() -> None:
+        try:
+            if reviewer_first:
+                settings_results.append(settings.activation_snapshot(candidate, 1, ()))
+            else:
+                settings_results.append(settings.write(candidate, 1, ()))
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            if reviewer_first:
+                second_done.set()
+
+    first_operation = replace_reviewer if reviewer_first else use_settings
+    second_operation = use_settings if reviewer_first else replace_reviewer
+    first = threading.Thread(target=first_operation)
+    second = threading.Thread(target=second_operation)
+    first.start()
+    assert entered.wait(2)
+    second.start()
+    assert not second_done.wait(0.05)
+    release.set()
+    first.join(timeout=2)
+    second.join(timeout=2)
+
+    assert not first.is_alive() and not second.is_alive()
+    assert errors == []
+    assert len(settings_results) == len(reviewer_results) == 1
+    assert reviewer.read() == (_reviewer_document(), True)
+    independent = sqlite3.connect(database, isolation_level=None)
+    assert independent.execute(
+        "SELECT revision FROM reviewer_access WHERE singleton=1"
+    ).fetchone() == (2,)
+    assert independent.execute(
+        "SELECT revision FROM owner_settings WHERE singleton=1"
+    ).fetchone() == ((1,) if reviewer_first else (2,))
+    independent.close()
+    repository.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize(
+    "owner", ("read", "activate_runtime", "acknowledge_runtime", "write", "snapshot")
+)
+def test_owner_settings_transaction_owners_rollback_process_control(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    owner: str,
+    fault_type: type[BaseException],
+) -> None:
+    database = tmp_path / f"settings-{owner}.sqlite3"
+    connection = sqlite3.connect(database, isolation_level=None)
+    lock = _ReleaseInterruptionLock(SystemExit("unused"), before_effect=False)
+    store = _store(connection, cast(RLock, lock))
+    fault = fault_type(f"private owner settings {owner}")
+    before = list(connection.iterdump())
+    monkeypatch.setattr(
+        owner_settings_adapter,
+        "_load_owner_settings_authority",
+        lambda _connection: _interrupt(fault),
+    )
+
+    def operation() -> object:
+        if owner == "read":
+            return store.read()
+        if owner == "activate_runtime":
+            return store.activate_runtime()
+        if owner == "acknowledge_runtime":
+            store.acknowledge_runtime(1)
+            return None
+        if owner == "write":
+            return store.write(_document(2), 1, ())
+        return store.activation_snapshot(_document(2), 1, ())
+
+    with pytest.raises(fault_type) as raised:
+        operation()
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert not connection.in_transaction
+    assert list(connection.iterdump()) == before
+    assert lock._recursion_count() == 0
+    _assert_lock_available(lock)
+    independent = sqlite3.connect(database, isolation_level=None, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+    connection.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize("before_effect", (False, True))
+@pytest.mark.parametrize("owner", ("read", "write"))
+def test_owner_settings_release_process_control_is_balanced_and_propagated(
+    fault_type: type[BaseException], before_effect: bool, owner: str
+) -> None:
+    connection = sqlite3.connect(":memory:", isolation_level=None)
+    fault = fault_type(f"private owner settings {owner} release")
+    lock = _ReleaseInterruptionLock(fault, before_effect=before_effect)
+    store = _store(connection, cast(RLock, lock))
+    lock.armed = True
+
+    with pytest.raises(fault_type) as raised:
+        if owner == "read":
+            store.read()
+        else:
+            store.write(_document(2), 1, ())
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert not connection.in_transaction
+    assert connection.execute(
+        "SELECT revision FROM owner_settings WHERE singleton=1"
+    ).fetchone() == ((1,) if owner == "read" else (2,))
+    assert lock._recursion_count() == 0
+    _assert_lock_available(lock)
+    connection.close()
 
 
 def test_document_rejects_noncanonical_references_and_bounds() -> None:
