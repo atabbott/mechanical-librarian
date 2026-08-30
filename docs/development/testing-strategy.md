@@ -452,6 +452,17 @@ Public evidence from any qualification is aggregate only: raw case identities,
 metadata, paths, media, private corpus rows, and credentials never leave the
 private side.
 
+The provider-evidence replay exception is maintainer-owned private
+qualification, never development or CI. Every live capture needs explicit
+authority and an owner-selected bounded cohort. Public tests use only synthetic
+responses to prove request sanitization, fixed-host confinement, sealed bundle
+validation, exact current-adapter replay, selective invalidation, zero-network
+failure, deterministic provenance, and fresh exact-current persistence. Private
+acceptance publishes only aggregate cohort, provider, exchange, status, and
+database counts; request values, response payloads, work identities, paths, and
+digests remain private. Captured replay does not replace exact-installed,
+complete-library scale, browser, or semantic qualification.
+
 ## Qualification against a real service
 
 Audiobookshelf write qualification uses synthetic disposable libraries and API

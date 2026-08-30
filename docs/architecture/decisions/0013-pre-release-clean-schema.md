@@ -44,6 +44,17 @@ current provenance, and discard every downstream decision or projection. It
 never mutates the retained source, runs at startup, contacts a provider,
 accepts configuration-supplied operations, or establishes product compatibility.
 
+A code-defined provider-evidence qualifier may instead capture one separately
+authorized bounded private cohort at the exact HTTP request/response boundary
+before current provider parsing. It excludes credentials and configured contact
+identity before sealing the canonical bundle. Replay is source-head-bound,
+credential-free, and networkless; it verifies the bundle digest and current
+request contract, selectively invalidates only changed provider lanes, then
+re-runs current parsing and downstream derivation into absent exact-current
+state. This authority applies only to captured works. It is not runtime caching,
+database adoption, import, backup, migration, or proof of complete-library,
+exact-installed, scale, browser, or semantic qualification.
+
 The #800 index change predates this revision and is the sole retrospective
 exception: #805 delivers and qualifies its adoption separately because #800 was
 already merged when the retained experiment established the preservation need.
@@ -92,6 +103,13 @@ mandatory work-dispatch lineage, their dependent covers, and artifact-bearing
 cover references whose complete private store was not verified, and creates
 fresh report-only current state. The earlier `schema-adopt` plans remain
 retired.
+
+Issue #939 adds the bounded provider-evidence authority above after inventory
+proved that existing durable reports begin after provider parsing. Its sealed
+`provider-replay-bundle-v1` is necessary to exercise current transport decoding
+and parsers without reacquisition. The accepted 12-work proof does not contain a
+complete corpus, so it replaces provider acquisition only for its captured
+lanes and leaves #938's complete-library bridge unchanged.
 
 Issue #869 also takes the clean-rebuild branch. Its exact-current application
 schema adds the derived `review_preparation_presentation` object, including its

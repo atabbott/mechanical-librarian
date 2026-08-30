@@ -81,6 +81,7 @@ depends on it.
 - [Recoverability qualification](development/recoverability-qualification.md)
 - [Contributor workbench](development/contributor-workbench.md)
 - [Foreground evidence batch](development/foreground-evidence-batch.md)
+- [Provider evidence replay qualification](development/provider-evidence-replay.md)
 
 ## Product and governance
 

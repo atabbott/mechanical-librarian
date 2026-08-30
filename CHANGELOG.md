@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Capture an explicitly authorized bounded private provider cohort before
+  parsing and replay it offline through current adapters into fresh current
+  reports, proposals, and review admission. #938 remains the complete-library
+  qualification fallback; ordinary startup and upgrades are unchanged. (#939)
+
 - Restore an explicit offline maintainer bridge for the retained v26
   qualification checkpoint. It verifies a clone and backup, rebuilds fresh
   exact-current reports through current derivation, and invalidates evidence
