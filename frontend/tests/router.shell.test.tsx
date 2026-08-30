@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider, QueryObserver } from '@tanstack/react
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { StrictMode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { PreparationView, ReviewHttp } from '../src/api/http'
@@ -983,6 +984,57 @@ describe('Application shell', () => {
       stopShell()
       clock.mockRestore()
     }
+  })
+
+  it('shares one pending preparation confirmation across shell and route consumers', async () => {
+    let releasePreparation: (value: PreparationView) => void = () => undefined
+    const pendingPreparation = new Promise<PreparationView>((resolve) => {
+      releasePreparation = resolve
+    })
+    const preparation: PreparationView = {
+      schema_version: 'review-preparation-v2',
+      active: true,
+      actionable: false,
+      paused: false,
+      libraries: [],
+      connections: [
+        {
+          connection: 'primary',
+          code: 'unavailable',
+          state: 'paused',
+          affected: 1,
+          updated_at: 1,
+        },
+      ],
+    }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(() => pendingPreparation),
+    }
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const router = createApplicationRouter(
+      http,
+      queryClient,
+      createMemoryHistory({ initialEntries: ['/attention'] }),
+    )
+    render(
+      <StrictMode>
+        <QueryClientProvider client={queryClient}>
+          <RouterProvider router={router} />
+        </QueryClientProvider>
+      </StrictMode>,
+    )
+    await waitFor(() => expect(http.getPreparation).toHaveBeenCalledOnce())
+
+    await router.navigate({
+      to: '/library',
+      search: { lens: 'all' },
+    })
+    await act(async () => releasePreparation(preparation))
+
+    expect(await screen.findByText('Library connection needs attention')).toBeVisible()
+    expect(queryClient.getQueryData(['review-preparation'])).toBe(preparation)
+    expect(http.getPreparation).toHaveBeenCalledOnce()
   })
 
   it('says the stream is down only once it has stayed down', async () => {

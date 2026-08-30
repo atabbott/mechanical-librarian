@@ -45,6 +45,7 @@ const SettingsPage = recoverableLazy(() => import('./routes/SettingsPage'))
 export interface RouterContext {
   http: ReviewHttp
   queryClient: QueryClient
+  preparation: ReturnType<typeof preparationQuery>
   /**
    * The tab's one live-update stream, absent where a composition has none.
    *
@@ -197,16 +198,71 @@ const activityQuery = (http: ReviewHttp, search: ActivitySearch) =>
   })
 export const preparationQuery = (
   http: ReviewHttp,
-  fallbackPolling = false,
-  beginConfirmation?: () => (value: PreparationView) => boolean,
-) =>
-  queryOptions({
+  fallbackPolling: boolean | (() => boolean) = false,
+  queryClient?: QueryClient,
+) => {
+  let pending: { confirmationGeneration: number; request: Promise<PreparationView> } | undefined
+  const beginConfirmation = queryClient
+    ? () => {
+        let epoch = 0
+        let confirmationGeneration = 0
+        queryClient.setQueryData<PreparationReconnect>(preparationReconnectKey, (current) => {
+          const reconnect = current ?? {
+            epoch: 0,
+            confirmationGeneration: 0,
+            state: 'clear',
+            transport: 'unknown',
+          }
+          epoch = reconnect.epoch
+          confirmationGeneration = reconnect.confirmationGeneration + 1
+          return { ...reconnect, confirmationGeneration }
+        })
+        return (value: PreparationView) => {
+          const current = queryClient.getQueryData<PreparationReconnect>(preparationReconnectKey)
+          if (current?.confirmationGeneration !== confirmationGeneration) return false
+          queryClient.setQueryData(['review-preparation'], value)
+          queryClient.setQueryData<PreparationReconnect>(preparationReconnectKey, (reconnect) =>
+            reconnect?.confirmationGeneration !== confirmationGeneration
+              ? reconnect
+              : {
+                  ...reconnect,
+                  state:
+                    reconnect.epoch === epoch &&
+                    reconnect.transport === 'live' &&
+                    reconnect.state === 'refreshing'
+                      ? 'clear'
+                      : reconnect.state,
+                },
+          )
+          return true
+        }
+      }
+    : undefined
+  return queryOptions({
     queryKey: ['review-preparation'] as const,
-    queryFn: async ({ signal }) => {
+    queryFn: () => {
+      // The router owns this request across StrictMode's transient observer
+      // teardown. Explicit reconnect and dismissal cancellation advances the
+      // shared generation first, so a superseded response still cannot write.
+      const currentGeneration =
+        queryClient?.getQueryData<PreparationReconnect>(preparationReconnectKey)
+          ?.confirmationGeneration ?? 0
+      if (pending?.confirmationGeneration === currentGeneration) return pending.request
       const confirm = beginConfirmation?.()
-      const value = await http.getPreparation(signal)
-      if (confirm && !confirm(value)) throw new CancelledError({ revert: true, silent: true })
-      return value
+      const confirmationGeneration =
+        queryClient?.getQueryData<PreparationReconnect>(preparationReconnectKey)
+          ?.confirmationGeneration ?? 0
+      const request = http
+        .getPreparation()
+        .then((value) => {
+          if (confirm && !confirm(value)) throw new CancelledError({ revert: true, silent: true })
+          return value
+        })
+        .finally(() => {
+          if (pending?.request === request) pending = undefined
+        })
+      pending = { confirmationGeneration, request }
+      return request
     },
     staleTime: 1_000,
     retry: false,
@@ -219,11 +275,13 @@ export const preparationQuery = (
     // up the snapshot is refetched when preparation actually advances, which is
     // both sooner than 1.5 seconds and, for an idle library, never.
     refetchInterval: (result) => {
-      if (!fallbackPolling) return false
+      if (!(typeof fallbackPolling === 'function' ? fallbackPolling() : fallbackPolling))
+        return false
       const value = result.state.data
       return value?.active || value?.actionable || value?.paused ? 1_500 : 15_000
     },
   })
+}
 
 const routeTitle = (path: string) =>
   path.startsWith('/review/')
@@ -254,7 +312,7 @@ interface PreparationReconnect {
 const preparationReconnectKey = ['review-preparation-reconnect'] as const
 
 export const usePreparation = () => {
-  const { http, queryClient, updates } = rootRoute.useRouteContext()
+  const { http, preparation, queryClient, updates } = rootRoute.useRouteContext()
   const streamState = useLiveStream()
   const live = streamState === 'live'
   const previousSnapshot = useRef<string | null>(null)
@@ -276,43 +334,7 @@ export const usePreparation = () => {
       transport: 'unknown',
     } satisfies PreparationReconnect,
   })
-  const beginConfirmation = useCallback(() => {
-    let epoch = 0
-    let confirmationGeneration = 0
-    queryClient.setQueryData<PreparationReconnect>(preparationReconnectKey, (current) => {
-      const reconnect = current ?? {
-        epoch: 0,
-        confirmationGeneration: 0,
-        state: 'clear',
-        transport: 'unknown',
-      }
-      epoch = reconnect.epoch
-      confirmationGeneration = reconnect.confirmationGeneration + 1
-      return { ...reconnect, confirmationGeneration }
-    })
-    return (value: PreparationView) => {
-      const current = queryClient.getQueryData<PreparationReconnect>(preparationReconnectKey)
-      if (current?.confirmationGeneration !== confirmationGeneration) return false
-      queryClient.setQueryData(['review-preparation'], value)
-      queryClient.setQueryData<PreparationReconnect>(preparationReconnectKey, (reconnect) =>
-        reconnect?.confirmationGeneration !== confirmationGeneration
-          ? reconnect
-          : {
-              ...reconnect,
-              state:
-                reconnect.epoch === epoch &&
-                reconnect.transport === 'live' &&
-                reconnect.state === 'refreshing'
-                  ? 'clear'
-                  : reconnect.state,
-            },
-      )
-      return true
-    }
-  }, [queryClient])
-  const query = useQuery(
-    preparationQuery(http, !live && updates?.hasBeenLive !== true, beginConfirmation),
-  )
+  const query = useQuery(preparation)
   const refetchPreparation = query.refetch
   useEffect(() => {
     if (streamState !== 'degraded' || updates?.hasBeenLive !== true) return
@@ -1240,10 +1262,15 @@ export const createApplicationRouter = (
   }),
   history?: ReturnType<typeof createMemoryHistory>,
   updates?: LiveUpdateStream,
-) =>
-  createRouter({
+) => {
+  const preparation = preparationQuery(
+    http,
+    () => updates === undefined || (updates.state !== 'live' && updates.hasBeenLive !== true),
+    queryClient,
+  )
+  return createRouter({
     routeTree,
-    context: { http, queryClient, ...(updates ? { updates } : {}) },
+    context: { http, queryClient, preparation, ...(updates ? { updates } : {}) },
     ...(history ? { history } : {}),
     defaultPreload: 'intent',
     defaultPreloadStaleTime: 15_000,
@@ -1251,6 +1278,7 @@ export const createApplicationRouter = (
     defaultPendingMinMs: 220,
     scrollRestoration: true,
   })
+}
 export type ApplicationRouter = ReturnType<typeof createApplicationRouter>
 declare module '@tanstack/react-router' {
   interface Register {

@@ -27,7 +27,7 @@ from mechanical_librarian.interfaces.web.app import (
     reviewer_failure_response,
 )
 from mechanical_librarian.interfaces.web.setup import create_setup_app
-from mechanical_librarian.interfaces.web.setup_frontend import SETUP_JS
+from mechanical_librarian.interfaces.web.setup_frontend import SETUP_CSS, SETUP_JS
 
 
 @pytest.mark.parametrize(
@@ -877,3 +877,9 @@ def test_setup_library_step_uses_audiobookshelf_book_kind_without_owner_choice()
     assert "/api/setup/reviewer/codex/recheck" in SETUP_JS
     assert "reviewer_access_stale:'Reviewer access changed" in SETUP_JS
     assert "invalid_key:'OpenRouter rejected this key." in SETUP_JS
+
+
+def test_setup_enables_cross_document_motion_only_for_the_workspace_handoff() -> None:
+    assert "@view-transition{navigation:auto}" not in SETUP_CSS
+    assert "sessionStorage.setItem('mechanical-librarian:setup-handoff'" in SETUP_JS
+    assert "transition.textContent='@view-transition{navigation:auto}'" in SETUP_JS

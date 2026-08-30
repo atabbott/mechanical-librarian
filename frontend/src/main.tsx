@@ -9,6 +9,34 @@ import { createLiveUpdateStream } from './liveUpdates'
 import { createApplicationRouter } from './router'
 import './styles.css'
 
+const setupHandoffKey = 'mechanical-librarian:setup-handoff'
+const disableCrossDocumentTransitions = () => {
+  for (const sheet of document.styleSheets) {
+    let rules: CSSRuleList
+    try {
+      rules = sheet.cssRules
+    } catch {
+      continue
+    }
+    for (let index = rules.length - 1; index >= 0; index -= 1)
+      if (rules[index]?.cssText.startsWith('@view-transition')) sheet.deleteRule(index)
+  }
+}
+const handoffDestination = sessionStorage.getItem(setupHandoffKey)
+sessionStorage.removeItem(setupHandoffKey)
+if (handoffDestination !== `${location.pathname}${location.search}`)
+  disableCrossDocumentTransitions()
+else
+  addEventListener(
+    'pagereveal',
+    (event) => {
+      const transition = event.viewTransition
+      if (transition) void transition.finished.finally(disableCrossDocumentTransitions)
+      else disableCrossDocumentTransitions()
+    },
+    { once: true },
+  )
+
 const mount = document.querySelector<HTMLElement>('#review-app')
 if (!mount) throw new Error('Review application mount is missing')
 

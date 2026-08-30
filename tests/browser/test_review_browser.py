@@ -2542,7 +2542,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                 has_navigation_rule = page.evaluate(
                     "Array.from(document.styleSheets).some(sheet=>Array.from(sheet.cssRules).some(rule=>rule.cssText.startsWith('@view-transition')))"
                 )
-                assert has_navigation_rule
+                assert not has_navigation_rule
                 assert source_names == (
                     ["none", "none", "none"]
                     if reduced
