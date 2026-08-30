@@ -5,10 +5,12 @@ import type { ComponentPropsWithoutRef, ReactNode } from 'react'
 import {
   AmbiguousMutationError,
   ApiError,
+  settingsAudibleMarketplaceOrder,
   settingsEndpointValid,
   settingsIntegerValid,
   settingsOpenLibraryEmailValid,
   settingsProviderKeyRequired,
+  settingsProviderKeyless,
   settingsSecretValid,
   settingsTextValid,
   settingsValidationCopy,
@@ -24,6 +26,10 @@ type Mutable<T> = T extends readonly (infer Item)[]
     ? { -readonly [Key in keyof T]: Mutable<T[Key]> }
     : T
 type Document = Mutable<SettingsView['document']>
+type AudibleMarketplace = Extract<
+  Document['providers'][number],
+  { adapter: 'audible_catalog' }
+>['marketplaces'][number]
 type SecretWrite = SettingsWrite['secrets'][number]
 type Group = SettingsGroup
 interface FieldIssue {
@@ -234,6 +240,35 @@ const Row = ({
     </div>
   </div>
 )
+
+// An added capability starts disabled and states only what its adapter owns.
+// The four audiobook adapters are keyless (ADR-0061), and Audible's
+// marketplace order stays with the configuration file, so neither appears.
+const newProvider = (
+  capability: SettingsView['provider_capabilities'][number],
+): Document['providers'][number] => {
+  const base = { cover_enabled: false as const, enabled: false, name: capability.name }
+  switch (capability.adapter) {
+    case 'open_library':
+      return { ...base, adapter: 'open_library', contact_email: null }
+    case 'hardcover':
+      return { ...base, adapter: 'hardcover' }
+    case 'google_books':
+      return { ...base, adapter: 'google_books' }
+    case 'audible_catalog':
+      return {
+        ...base,
+        adapter: 'audible_catalog',
+        marketplaces: [...settingsAudibleMarketplaceOrder] as AudibleMarketplace[],
+      }
+    case 'audnexus':
+      return { ...base, adapter: 'audnexus' }
+    case 'audiosilo':
+      return { ...base, adapter: 'audiosilo' }
+    case 'itunes_search':
+      return { ...base, adapter: 'itunes_search' }
+  }
+}
 
 const Secret = ({
   fieldId,
@@ -525,29 +560,7 @@ const SettingsEditor = ({
       )
         return current
       const value = clone(current)
-      const provider =
-        capability.adapter === 'open_library'
-          ? {
-              adapter: 'open_library' as const,
-              contact_email: null,
-              cover_enabled: false,
-              enabled: false,
-              name: capability.name,
-            }
-          : capability.adapter === 'hardcover'
-            ? {
-                adapter: 'hardcover' as const,
-                cover_enabled: false,
-                enabled: false,
-                name: capability.name,
-              }
-            : {
-                adapter: 'google_books' as const,
-                cover_enabled: false as const,
-                enabled: false,
-                name: capability.name,
-              }
-      value.providers.push(provider)
+      value.providers.push(newProvider(capability))
       value.providers.sort((left, right) => left.name.localeCompare(right.name))
       return value
     })
@@ -730,7 +743,18 @@ const SettingsEditor = ({
                           </label>
                         )}
                       </Row>
-                      {'contact_email' in provider ? (
+                      {provider.adapter === 'audible_catalog' ? (
+                        <Row
+                          title="Marketplace order"
+                          description="Audible lookups try these marketplaces in this order."
+                          effect={effect('providers')}
+                          locked={locked}
+                        >
+                          <strong>{provider.marketplaces.join(', ')}</strong>
+                        </Row>
+                      ) : null}
+                      {settingsProviderKeyless(provider.adapter) ? null : 'contact_email' in
+                        provider ? (
                         <Row
                           fieldId={`provider.${provider.name}.contact_email`}
                           error={fieldError(`provider.${provider.name}.contact_email`)}

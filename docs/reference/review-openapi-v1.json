@@ -1,6 +1,134 @@
 {
   "components": {
     "schemas": {
+      "AudibleCatalogProviderSettings": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter": {
+            "const": "audible_catalog",
+            "title": "Adapter",
+            "type": "string"
+          },
+          "cover_enabled": {
+            "default": false,
+            "title": "Cover Enabled",
+            "type": "boolean"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "marketplaces": {
+            "default": [
+              "us",
+              "uk",
+              "de",
+              "fr",
+              "au",
+              "in",
+              "ca",
+              "jp",
+              "it",
+              "es"
+            ],
+            "items": {
+              "enum": [
+                "us",
+                "uk",
+                "de",
+                "fr",
+                "au",
+                "in",
+                "ca",
+                "jp",
+                "it",
+                "es"
+              ],
+              "type": "string"
+            },
+            "maxItems": 10,
+            "minItems": 1,
+            "title": "Marketplaces",
+            "type": "array"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "adapter",
+          "enabled"
+        ],
+        "title": "AudibleCatalogProviderSettings",
+        "type": "object"
+      },
+      "AudioSiloProviderSettings": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter": {
+            "const": "audiosilo",
+            "title": "Adapter",
+            "type": "string"
+          },
+          "cover_enabled": {
+            "const": false,
+            "default": false,
+            "title": "Cover Enabled",
+            "type": "boolean"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "adapter",
+          "enabled"
+        ],
+        "title": "AudioSiloProviderSettings",
+        "type": "object"
+      },
+      "AudnexusProviderSettings": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter": {
+            "const": "audnexus",
+            "title": "Adapter",
+            "type": "string"
+          },
+          "cover_enabled": {
+            "const": false,
+            "default": false,
+            "title": "Cover Enabled",
+            "type": "boolean"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "adapter",
+          "enabled"
+        ],
+        "title": "AudnexusProviderSettings",
+        "type": "object"
+      },
       "CodexTaskSelection": {
         "additionalProperties": false,
         "properties": {
@@ -99,6 +227,37 @@
           "enabled"
         ],
         "title": "HardcoverProviderSettings",
+        "type": "object"
+      },
+      "ItunesSearchProviderSettings": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter": {
+            "const": "itunes_search",
+            "title": "Adapter",
+            "type": "string"
+          },
+          "cover_enabled": {
+            "default": false,
+            "title": "Cover Enabled",
+            "type": "boolean"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "adapter",
+          "enabled"
+        ],
+        "title": "ItunesSearchProviderSettings",
         "type": "object"
       },
       "LibrarySettings": {
@@ -374,8 +533,12 @@
             "items": {
               "discriminator": {
                 "mapping": {
+                  "audible_catalog": "#/components/schemas/AudibleCatalogProviderSettings",
+                  "audiosilo": "#/components/schemas/AudioSiloProviderSettings",
+                  "audnexus": "#/components/schemas/AudnexusProviderSettings",
                   "google_books": "#/components/schemas/GoogleBooksProviderSettings",
                   "hardcover": "#/components/schemas/HardcoverProviderSettings",
+                  "itunes_search": "#/components/schemas/ItunesSearchProviderSettings",
                   "open_library": "#/components/schemas/OpenLibraryProviderSettings"
                 },
                 "propertyName": "adapter"
@@ -389,6 +552,18 @@
                 },
                 {
                   "$ref": "#/components/schemas/OpenLibraryProviderSettings"
+                },
+                {
+                  "$ref": "#/components/schemas/AudibleCatalogProviderSettings"
+                },
+                {
+                  "$ref": "#/components/schemas/AudnexusProviderSettings"
+                },
+                {
+                  "$ref": "#/components/schemas/AudioSiloProviderSettings"
+                },
+                {
+                  "$ref": "#/components/schemas/ItunesSearchProviderSettings"
                 }
               ]
             },
@@ -442,7 +617,11 @@
             "enum": [
               "open_library",
               "hardcover",
-              "google_books"
+              "google_books",
+              "audible_catalog",
+              "audnexus",
+              "audiosilo",
+              "itunes_search"
             ],
             "title": "Adapter",
             "type": "string"

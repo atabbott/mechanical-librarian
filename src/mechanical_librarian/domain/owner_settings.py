@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Annotated, Literal
+from typing import Annotated, Literal, get_args
 
 from pydantic import (
     BaseModel,
@@ -30,6 +30,12 @@ from mechanical_librarian.domain.validation import (
 
 Name = Annotated[StrictStr, Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")]
 Email = Annotated[StrictStr, Field(min_length=3, max_length=254)]
+Marketplace = Literal["us", "uk", "de", "fr", "au", "in", "ca", "jp", "it", "es"]
+# The same closed set the report vocabulary and the configuration boundary
+# name, in the same US-first order. A test holds the three together, because a
+# `Literal` cannot be built from the tuple and the settings contract needs the
+# enumeration in its published JSON schema.
+_MARKETPLACE_DEFAULT: list[Marketplace] = list(get_args(Marketplace))
 _CONTACT_EMAIL = re.compile(
     r"^(?=.{1,64}@)[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+"
     r"(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*@[A-Za-z0-9]"
@@ -74,10 +80,52 @@ class OpenLibraryProviderSettings(_Closed):
     contact_email: Email | None = None
 
 
+# ADR-0061 admits every audiobook provider keyless: no credential exists for
+# one even as an optional upgrade, so none of the four below carries a secret
+# or contact field of any kind. Covers are admitted on the two that state an
+# asset of their own and refused on the two that restate Audible's, exactly as
+# the configuration boundary grants them.
+class AudibleCatalogProviderSettings(_Closed):
+    name: Name
+    adapter: Literal["audible_catalog"]
+    enabled: StrictBool
+    cover_enabled: StrictBool = False
+    # The order one ASIN lookup resolves in. The owner reads it here; the
+    # configuration file is the only place it is written.
+    marketplaces: Annotated[
+        list[Marketplace], Field(min_length=1, max_length=len(_MARKETPLACE_DEFAULT))
+    ] = _MARKETPLACE_DEFAULT
+
+
+class AudnexusProviderSettings(_Closed):
+    name: Name
+    adapter: Literal["audnexus"]
+    enabled: StrictBool
+    cover_enabled: Literal[False] = False
+
+
+class AudioSiloProviderSettings(_Closed):
+    name: Name
+    adapter: Literal["audiosilo"]
+    enabled: StrictBool
+    cover_enabled: Literal[False] = False
+
+
+class ItunesSearchProviderSettings(_Closed):
+    name: Name
+    adapter: Literal["itunes_search"]
+    enabled: StrictBool
+    cover_enabled: StrictBool = False
+
+
 ProviderSettings = Annotated[
     HardcoverProviderSettings
     | GoogleBooksProviderSettings
-    | OpenLibraryProviderSettings,
+    | OpenLibraryProviderSettings
+    | AudibleCatalogProviderSettings
+    | AudnexusProviderSettings
+    | AudioSiloProviderSettings
+    | ItunesSearchProviderSettings,
     Field(discriminator="adapter"),
 ]
 
@@ -86,12 +134,38 @@ class ProviderCapability(_Closed):
     """One fixed adapter the owner may configure when it is not yet present."""
 
     name: Name
-    adapter: Literal["open_library", "hardcover", "google_books"]
+    adapter: Literal[
+        "open_library",
+        "hardcover",
+        "google_books",
+        "audible_catalog",
+        "audnexus",
+        "audiosilo",
+        "itunes_search",
+    ]
     label: StrictStr
     credential: Literal["none", "contact_email", "api_key"]
 
 
 _PROVIDER_CAPABILITIES: tuple[ProviderCapability, ...] = (
+    ProviderCapability(
+        name="audible_catalog",
+        adapter="audible_catalog",
+        label="Audible",
+        credential="none",
+    ),
+    ProviderCapability(
+        name="audiosilo",
+        adapter="audiosilo",
+        label="AudioSilo",
+        credential="none",
+    ),
+    ProviderCapability(
+        name="audnexus",
+        adapter="audnexus",
+        label="Audnexus",
+        credential="none",
+    ),
     ProviderCapability(
         name="google_books",
         adapter="google_books",
@@ -103,6 +177,12 @@ _PROVIDER_CAPABILITIES: tuple[ProviderCapability, ...] = (
         adapter="hardcover",
         label="Hardcover",
         credential="api_key",
+    ),
+    ProviderCapability(
+        name="itunes_search",
+        adapter="itunes_search",
+        label="iTunes",
+        credential="none",
     ),
     ProviderCapability(
         name="open_library",
@@ -207,6 +287,12 @@ class OwnerSettingsDocument(_Closed):
             raise OwnerSettingsError("settings pending restart is invalid")
         for provider in self.providers:
             if provider.cover_enabled and not provider.enabled:
+                raise OwnerSettingsError("settings document is invalid")
+            if isinstance(provider, AudibleCatalogProviderSettings) and len(
+                set(provider.marketplaces)
+            ) != len(provider.marketplaces):
+                # A repeated marketplace is a resolution order no lookup can
+                # honour, and the configuration boundary refuses it too.
                 raise OwnerSettingsError("settings document is invalid")
             if isinstance(provider, OpenLibraryProviderSettings) and (
                 (provider.enabled and provider.contact_email is None)
@@ -389,9 +475,13 @@ def file_field_metadata(
 
 
 __all__ = [
+    "AudibleCatalogProviderSettings",
+    "AudioSiloProviderSettings",
+    "AudnexusProviderSettings",
     "GoogleBooksProviderSettings",
     "CoverPreferenceSettings",
     "HardcoverProviderSettings",
+    "ItunesSearchProviderSettings",
     "LibrarySettings",
     "OpenLibraryProviderSettings",
     "OwnerSettingsDocument",

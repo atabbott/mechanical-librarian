@@ -169,6 +169,7 @@ posture of [ADR-0061](../architecture/decisions/0061-audiobook-provider-posture.
 | Slice | Tracker | Demonstrable outcome | Planning state |
 | --- | --- | --- | --- |
 | F43 Local audiobook evidence | #749 | Each single-audio-file item of a mounted audiobook library produces a closed local evidence set — ASIN, narrator, series and sequence, duration, embedded chapters, performance type, language, description, embedded-cover presence — with per-surface provenance, projected read-only to the owner. | In delivery. |
+| F43 Audiobook provider evidence | #749 | The same item is compared against four keyless providers — Audible, Audnexus, AudioSilo, iTunes — configurable from Settings and the first-run wizard. An ASIN is adopted only where a second authority corroborates the recording's own running time, chapter structure, or perceptual cover hash; nothing corroborated leaves the item at `evidence_only`. Read-only throughout. | In delivery. |
 
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
 

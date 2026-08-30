@@ -140,6 +140,17 @@ export const settingsLocalLibraryNameValid = (value: string) =>
 export const settingsProviderKeyRequired = (adapter: string) =>
   settingsVocabulary.required_provider_keys.includes(adapter)
 
+// ADR-0061 admits the audiobook providers keyless: they have no credential to
+// collect, so no credential control may be offered for one.
+export const settingsProviderKeyless = (adapter: string) =>
+  settingsVocabulary.keyless_provider_adapters.includes(adapter)
+
+// The order an added Audible entry starts with. It restates the settings
+// contract's own default so the browser never invents one; a unit test holds
+// this list to the report vocabulary the contract is built from.
+export const settingsAudibleMarketplaceOrder: readonly string[] =
+  settingsVocabulary.audible_marketplace_order
+
 export const settingsValidationCopy = settingsVocabulary.errors
 
 export type LibraryLens = 'needs_attention' | 'all' | 'no_attention_needed'

@@ -211,18 +211,24 @@ values. Three read ebook metadata:
 - `open_library` always forbids a secret; when enabled it requires a bounded
   operational `contact_email`.
 
-Four read audiobook metadata, and every one of them is keyless: `secret_file`
-and `contact_email` are always `null`, `cover_enabled` is always `false`, and
-no key exists for them even as an optional upgrade.
+Four read audiobook metadata, and every one of them is keyless under
+[ADR-0061](../architecture/decisions/0061-audiobook-provider-posture.md):
+`secret_file` and `contact_email` are always `null`, and no key exists for them
+even as an optional upgrade. What each one reaches on the network is stated in
+[the security and threat model](../architecture/security.md).
 
-- `audible_catalog` is primary discovery and enrichment. When enabled it also
-  carries `marketplaces`: the ordered, non-empty, duplicate-free ASIN
-  resolution set drawn from `us`, `uk`, `de`, `fr`, `au`, `in`, `ca`, `jp`,
-  `it`, and `es`, defaulting to all ten with `us` first. No other adapter, and
-  not the disabled form of this one, accepts the key.
+- `audible_catalog` is primary discovery and enrichment, and may retrieve
+  covers. When enabled it also carries `marketplaces`: the ordered, non-empty,
+  duplicate-free ASIN resolution set drawn from `us`, `uk`, `de`, `fr`, `au`,
+  `in`, `ca`, `jp`, `it`, and `es`, defaulting to all ten with `us` first. No
+  other adapter, and not the disabled form of this one, accepts the key.
 - `audnexus` is per-ASIN enrichment, including chapters.
 - `audiosilo` is community corroboration and degraded mode.
-- `itunes_search` corroborates only.
+- `itunes_search` corroborates only, and may retrieve covers.
+
+`cover_enabled` defaults to `true` on an enabled `audible_catalog` or
+`itunes_search`, the two that state a cover asset of their own; `audnexus` and
+`audiosilo` restate Audible's and must leave it `false`.
 
 A disabled provider must set both adapter-specific authority fields to `null`.
 Adding or enabling a provider does nothing until a library explicitly

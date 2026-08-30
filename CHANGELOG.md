@@ -13,25 +13,12 @@
   missing current provenance; ordinary startup and user upgrades stay
   absent-or-exact-current. (#938)
 
-- Audiobook covers are now acquired from the Audible catalog and iTunes Search
-  through the same bounded pipeline an ebook's use, each behind its own
-  `cover_enabled` switch that defaults on. Every decoded cover states a
-  perceptual hash, and two authorities picturing the same art is recorded as
-  corroboration of the work. Nothing elects an audiobook cover. (#749)
-
-- Audiobooks now consult their providers, adding the iTunes Search adapter and
-  retaining what all four said. A title-and-author admission widens to the
-  marketplace, running time and narrator only when the provider's runtime
-  agrees with the recording's own. The terminal disposition
-  `local_evidence_only` is renamed `evidence_only`, which needs a clean
-  database. (#749)
-
-- Admit the audiobook provider vocabularies: ASIN discovery lanes with
-  marketplace provenance, bounded chapter-structure evidence, a duration
-  agreement band, and closed corroboration rules over runtime, chapter cuts,
-  and cover hashes. An audiobook report now also records every sidecar it read,
-  so an edited one makes it stale. Requires a clean database
-  (`metadata-report-v32`) and a `config-v7` file. (#749)
+- Audiobooks now consult four keyless providers — Audible, Audnexus, AudioSilo
+  and iTunes — for read-only discovery, enrichment and corroboration, each
+  addable from Settings and the first-run wizard. An ASIN is adopted only where
+  a second authority agrees, covers corroborate by perceptual hash, and a
+  report records every sidecar it read so an edited one makes it stale. Needs a
+  clean database (`metadata-report-v32`) and a `config-v7` file. (#749)
 
 - The container-image qualification job restores unchanged Docker layers from
   the repository Actions cache instead of rebuilding every stage per run; base

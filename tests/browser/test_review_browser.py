@@ -3176,6 +3176,21 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                         )
                         != "none"
                     )
+                # ADR-0061 admits the four audiobook providers keyless: the
+                # step offers them with no credential control and no account
+                # link to obtain one (#749).
+                for provider in ("Audible", "Audnexus", "AudioSilo", "iTunes"):
+                    expect(page.get_by_role("checkbox", name=provider)).to_be_visible()
+                    assert (
+                        page.get_by_role("link", name=f"Get {provider} access").count()
+                        == 0
+                    )
+                assert page.evaluate(
+                    """() => [...document.querySelectorAll('.option')]
+                      .filter((row) => ['Audible', 'Audnexus', 'AudioSilo', 'iTunes']
+                        .includes(row.querySelector('label').textContent.trim()))
+                      .every((row) => !row.querySelector('input[type=password], input[type=email], a'))"""
+                )
                 for color in color_schemes:
                     page.emulate_media(color_scheme=color)
                     for width, height in protected_viewports:
@@ -3640,15 +3655,28 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 expect(
                     page.get_by_role("heading", name="Add a metadata provider")
                 ).to_be_visible()
-                for provider in ("Google Books", "Hardcover", "Open Library"):
+                for provider in (
+                    "Audible",
+                    "AudioSilo",
+                    "Audnexus",
+                    "Google Books",
+                    "Hardcover",
+                    "iTunes",
+                    "Open Library",
+                ):
                     expect(
                         page.get_by_role("button", name=f"Add {provider}")
                     ).to_be_visible()
+                # One wrapped row per two or three capability buttons at 320px.
+                # The bound moved from 600 with the four audiobook providers
+                # (#749): seven buttons is four wrapped rows, and the guard is
+                # still that the add-list wraps rather than stacking one
+                # full-width button per row.
                 assert (
                     page.locator(".settings-sheet").evaluate(
                         "element => element.getBoundingClientRect().height"
                     )
-                    < 600
+                    < 700
                 )
                 assert page.evaluate(
                     """() => [...document.querySelectorAll('.settings-empty h3, .settings-capabilities h3')]

@@ -112,6 +112,9 @@ def file_settings_projection(
                         "enabled": value.enabled,
                         "cover_enabled": value.cover_enabled,
                         "contact_email": value.contact_email,
+                        # Stated only where the file states one; every other
+                        # entry takes the settings contract's default order.
+                        "marketplaces": list(value.marketplaces) or None,
                     }.items()
                     if item is not None
                 }

@@ -911,3 +911,74 @@ def test_setup_enables_cross_document_motion_only_for_the_workspace_handoff() ->
     assert "addEventListener('pageshow',disable,{once:true})" in SETUP_JS
     assert "fallback=setTimeout(disable,2000)" in SETUP_JS
     assert ".finally(" not in SETUP_JS
+
+
+def test_setup_admits_the_keyless_audiobook_providers_with_no_credential() -> None:
+    client, state, _connection = _client()
+    login = _claim(client)
+    headers = {
+        "cookie": _session_cookie(login),
+        "origin": "https://setup.invalid",
+        "x-csrf-token": login.json()["csrf_token"],
+    }
+    assert (
+        client.post(
+            "/api/setup/connect",
+            json={
+                "expected_revision": 2,
+                "name": "primary",
+                "endpoint": "https://abs.invalid",
+                "key": "secret-value",
+            },
+            headers=headers,
+        ).status_code
+        == 200
+    )
+
+    accepted = client.post(
+        "/api/setup/providers",
+        json={
+            "expected_revision": 3,
+            "providers": [
+                {"name": name, "adapter": adapter, "enabled": True}
+                for name, adapter in (
+                    ("audible", "audible_catalog"),
+                    ("audiosilo", "audiosilo"),
+                    ("audnexus", "audnexus"),
+                    ("itunes", "itunes_search"),
+                )
+            ],
+        },
+        headers=headers,
+    )
+
+    assert accepted.status_code == 200
+    assert [item.adapter for item in state.document.providers] == [
+        "audible_catalog",
+        "audiosilo",
+        "audnexus",
+        "itunes_search",
+    ]
+    # Keyless throughout: nothing was collected, so nothing is required to
+    # resume or promote the journey beyond the target connection's own key.
+    assert state.document.secret_fields() == frozenset({"connection.primary.key"})
+    assert state.document.required_secret_fields() == frozenset(
+        {"connection.primary.key"}
+    )
+
+
+def test_setup_providers_step_offers_the_audiobook_providers_without_a_key() -> None:
+    assert "['audible','audible_catalog','Audible']" in SETUP_JS
+    assert "['audnexus','audnexus','Audnexus']" in SETUP_JS
+    assert "['audiosilo','audiosilo','AudioSilo']" in SETUP_JS
+    assert "['itunes','itunes_search','iTunes']" in SETUP_JS
+    # No credential control and no account link is constructed for one.
+    assert (
+        "const key=adapter==='open_library'||settingsProviderKeyless(adapter)"
+        "?null:input(`${name}-key`,'password');" in SETUP_JS
+    )
+    assert "if(accessHref){" in SETUP_JS
+    assert (
+        "const settingsProviderKeyless=adapter=>"
+        "settingsVocabulary.keyless_provider_adapters.includes(adapter);" in SETUP_JS
+    )
