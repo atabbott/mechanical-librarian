@@ -113,13 +113,18 @@ export const startLiveInvalidation = (
     setPreparationDebt(false)
 
   const observePreparation = queryClient.getQueryCache().subscribe((event) => {
-    if (event.query.queryHash !== '["review-preparation"]') return
+    if (event.query.queryHash !== '["review-preparation"]' || event.type !== 'updated') return
     if (event.query.state.fetchStatus === 'fetching') {
       confirmationBeganLive = stream.state === 'live'
       return
     }
     if (event.query.state.fetchStatus !== 'idle') return
-    if (confirmationBeganLive && stream.state === 'live' && event.query.state.status === 'success')
+    if (
+      event.action.type === 'success' &&
+      event.action.manual !== true &&
+      confirmationBeganLive &&
+      stream.state === 'live'
+    )
       setPreparationDebt(false)
     confirmationBeganLive = false
   })

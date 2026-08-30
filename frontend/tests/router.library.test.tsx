@@ -82,7 +82,11 @@ describe('Library route', () => {
     ).toBeNull()
 
     await act(async () => release(confirmed))
-    expect(await screen.findByText('Preparation completed with failures')).toBeVisible()
+    expect(
+      await screen.findByText('Preparation completed with failures', {
+        selector: '.preparation-run-state',
+      }),
+    ).toBeVisible()
     expect(router.state.location.search).toMatchObject({ preparation: runId })
     await waitFor(() =>
       expect(screen.getByRole('heading', { name: 'Preparing your library' })).toHaveFocus(),
@@ -175,6 +179,20 @@ describe('Library route', () => {
     expect(screen.getByRole('heading', { name: 'Works' })).toBeVisible()
     await user.click(summary)
     expect(await screen.findByRole('heading', { name: 'Now preparing' })).toBeVisible()
+    const passage = screen.getAllByRole('progressbar')
+    expect(passage).toHaveLength(4)
+    expect(
+      passage.map((item) => [item.getAttribute('aria-label'), item.getAttribute('value')]),
+    ).toEqual([
+      ['Read from library: 4 of 4', '4'],
+      ['Searches finished: 3 of 4', '3'],
+      ['Candidates compared: 2 of 4', '2'],
+      ['Metadata checked: 2 of 4', '2'],
+    ])
+    for (const item of passage) {
+      expect(item).toHaveAttribute('max', '4')
+      expect(item).not.toHaveAttribute('style')
+    }
     expect(document.querySelector('.preparation-run-state')).not.toHaveClass('reported-change')
     expect(screen.getByText('Private title')).toBeVisible()
     expect(screen.getByText('1.2 books/min')).toBeVisible()
@@ -299,6 +317,86 @@ describe('Library route', () => {
     })
   })
 
+  it('summarizes preparation states truthfully while Works remains usable', async () => {
+    const runId = `preparation_run_${'7'.repeat(64)}`
+    const running = terminalPreparation(runId)
+    const presentation = running.presentation
+    const runningPresentation = {
+      ...presentation,
+      state: 'running' as const,
+      passage: { ...presentation.passage, ready: 1, failed: 0 },
+      active_books: [{ name: 'Active title', stage: 'Checking metadata' }],
+      completed_at: null,
+      dismissible: false,
+    }
+    const current: PreparationView = {
+      ...running,
+      active: true,
+      actionable: false,
+      presentation: runningPresentation,
+    }
+    const http = createHttp()
+    http.getPreparation = vi.fn(async () => current)
+    const { queryClient } = renderRoute('/library?lens=all', http)
+
+    let summary = await screen.findByRole('button', { name: /Preparing your library/u })
+    expect(within(summary).getByText('1 ready · 0 could not finish · 1 active')).toBeVisible()
+    expect(screen.getByRole('button', { name: /^A Book\./u })).toBeEnabled()
+
+    act(() => {
+      queryClient.setQueryData(['review-preparation'], {
+        ...current,
+        presentation: {
+          ...runningPresentation,
+          state: 'starting',
+          passage: { read: 0, searches_finished: 0, compared: 0, checked: 0, ready: 0, failed: 0 },
+          active_books: [],
+          updated_at: 101,
+        },
+      })
+    })
+    summary = await screen.findByRole('button', { name: /Preparation is starting/u })
+    expect(within(summary).getByText('0 ready · 0 could not finish · 0 active')).toBeVisible()
+    expect(screen.getByRole('button', { name: /^A Book\./u })).toBeEnabled()
+
+    act(() => {
+      queryClient.setQueryData(['review-preparation'], {
+        ...current,
+        paused: true,
+        presentation: { ...runningPresentation, state: 'blocked', updated_at: 102 },
+      })
+    })
+    summary = await screen.findByRole('button', { name: /Preparation needs attention/u })
+    expect(within(summary).getByText('1 ready · 0 could not finish · 1 active')).toBeVisible()
+    expect(screen.getByRole('button', { name: /^A Book\./u })).toBeEnabled()
+
+    act(() => {
+      queryClient.setQueryData(['review-preparation'], {
+        ...current,
+        active: false,
+        actionable: true,
+        presentation: {
+          ...runningPresentation,
+          state: 'completed_clean',
+          active_books: [],
+          updated_at: 103,
+          completed_at: 103,
+          dismissible: true,
+        },
+      })
+    })
+    summary = await screen.findByRole('button', { name: /Preparation complete/u })
+    expect(within(summary).getByText('1 ready · No failures')).toBeVisible()
+    expect(screen.getByRole('button', { name: /^A Book\./u })).toBeEnabled()
+
+    act(() => {
+      queryClient.setQueryData(['review-preparation'], terminalPreparation(runId, 104))
+    })
+    summary = await screen.findByRole('button', { name: /Preparation completed with failures/u })
+    expect(within(summary).getByText('1 ready · 1 could not finish')).toBeVisible()
+    expect(screen.getByRole('button', { name: /^A Book\./u })).toBeEnabled()
+  })
+
   it.each(['pointer', 'Enter', 'Space'])(
     'adopts a reconnecting dismissal by %s and restores the selected work',
     async (interaction) => {
@@ -323,8 +421,12 @@ describe('Library route', () => {
       )
 
       expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
-      await user.click(screen.getByRole('button', { name: /Preparing your library/u }))
-      expect(await screen.findByText('Preparation completed with failures')).toBeVisible()
+      await user.click(screen.getByRole('button', { name: /Preparation completed with failures/u }))
+      expect(
+        await screen.findByText('Preparation completed with failures', {
+          selector: '.preparation-run-state',
+        }),
+      ).toBeVisible()
       act(() => updates.setState('degraded'))
       expect(
         await screen.findByText(/Reconnecting · showing the last confirmed state/u),
@@ -387,8 +489,14 @@ describe('Library route', () => {
       '/library?lens=all&preview=case-1&field=title',
       http,
     )
-    await user.click(await screen.findByRole('button', { name: /Preparing your library/u }))
-    expect(await screen.findByText('Preparation completed with failures')).toBeVisible()
+    await user.click(
+      await screen.findByRole('button', { name: /Preparation completed with failures/u }),
+    )
+    expect(
+      await screen.findByText('Preparation completed with failures', {
+        selector: '.preparation-run-state',
+      }),
+    ).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Dismiss preparation' }))
     await waitFor(() => expect(releaseDismissal).toBeTypeOf('function'))
 
@@ -427,8 +535,14 @@ describe('Library route', () => {
       '/library?lens=all&preview=case-1&field=title',
       http,
     )
-    await user.click(await screen.findByRole('button', { name: /Preparing your library/u }))
-    expect(await screen.findByText('Preparation completed with failures')).toBeVisible()
+    await user.click(
+      await screen.findByRole('button', { name: /Preparation completed with failures/u }),
+    )
+    expect(
+      await screen.findByText('Preparation completed with failures', {
+        selector: '.preparation-run-state',
+      }),
+    ).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Dismiss preparation' }))
     await waitFor(() => expect(releaseDismissal).toBeTypeOf('function'))
 
@@ -477,7 +591,9 @@ describe('Library route', () => {
       '/library?lens=all&preview=case-1&field=title',
       http,
     )
-    await user.click(await screen.findByRole('button', { name: /Preparing your library/u }))
+    await user.click(
+      await screen.findByRole('button', { name: /Preparation completed with failures/u }),
+    )
     await user.click(screen.getByRole('button', { name: 'Dismiss preparation' }))
     await waitFor(() => expect(releaseDismissal).toBeTypeOf('function'))
 
@@ -531,8 +647,14 @@ describe('Library route', () => {
       '/library?lens=all&preview=case-1&field=title',
       http,
     )
-    await user.click(await screen.findByRole('button', { name: /Preparing your library/u }))
-    expect(await screen.findByText('Preparation completed with failures')).toBeVisible()
+    await user.click(
+      await screen.findByRole('button', { name: /Preparation completed with failures/u }),
+    )
+    expect(
+      await screen.findByText('Preparation completed with failures', {
+        selector: '.preparation-run-state',
+      }),
+    ).toBeVisible()
     const readsBeforeDismissal = vi.mocked(http.getPreparation).mock.calls.length
 
     await user.click(screen.getByRole('button', { name: 'Dismiss preparation' }))
@@ -602,7 +724,7 @@ describe('Library route', () => {
       .mockResolvedValue(confirmed)
     renderRoute('/library?lens=all', http, updates)
 
-    const summary = await screen.findByRole('button', { name: /Preparing your library/u })
+    const summary = await screen.findByRole('button', { name: /Preparation is starting/u })
     expect(summary).toBeVisible()
     await userEvent.click(summary)
     expect(await screen.findByRole('heading', { name: 'Now preparing' })).toBeVisible()
@@ -677,10 +799,16 @@ describe('Library route', () => {
       })),
     })
 
-    const summary = await screen.findByRole('button', { name: /Preparing your library/u })
+    const summary = await screen.findByRole('button', {
+      name: /Preparation completed with failures/u,
+    })
     expect(screen.getByRole('heading', { name: 'Works' })).toBeVisible()
     fireEvent.click(summary)
-    expect(await screen.findByText('Preparation completed with failures')).toBeVisible()
+    expect(
+      await screen.findByText('Preparation completed with failures', {
+        selector: '.preparation-run-state',
+      }),
+    ).toBeVisible()
     expect(screen.getAllByText('Could not finish')).toHaveLength(2)
     expect(screen.getByText('Unfinished work')).toBeVisible()
     expect(screen.getByRole('button', { name: 'Dismiss preparation' })).toBeVisible()

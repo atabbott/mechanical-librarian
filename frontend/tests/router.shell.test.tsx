@@ -4,6 +4,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { ApiError } from '../src/api/http'
 import type { PreparationView, ReviewHttp } from '../src/api/http'
 import type { LiveStreamState, LiveUpdate, LiveUpdateStream } from '../src/liveUpdates'
 import { coalesceMilliseconds } from '../src/liveInvalidation'
@@ -86,7 +87,7 @@ describe('Application shell', () => {
 
     const summary = await screen.findByRole('button', { name: /Preparing your library/u })
     expect(summary).toBeVisible()
-    expect(screen.getByText('1 ready · 1 active')).toBeVisible()
+    expect(screen.getByText('1 ready · 0 could not finish · 1 active')).toBeVisible()
     fireEvent.click(summary)
     expect(await screen.findByRole('heading', { name: 'Now preparing' })).toBeVisible()
     expect(screen.getByText('Preparation continues')).toBeVisible()
@@ -152,7 +153,9 @@ describe('Application shell', () => {
     }
     renderRoute('/library?lens=all', http)
 
-    const summary = await screen.findByRole('button', { name: /Preparing your library/u })
+    const summary = await screen.findByRole('button', {
+      name: /Preparation completed with failures/u,
+    })
     fireEvent.click(summary)
     expect(await screen.findByText('Preparation completed with failures')).toBeVisible()
     expect(screen.getByText('Unfinished work')).toBeVisible()
@@ -1052,6 +1055,131 @@ describe('Application shell', () => {
     expect(queryClient.getQueryData(['review-preparation'])).toBe(afterSecondEvent)
     await act(async () => releaseFirstEvent(afterFirstEvent))
     expect(queryClient.getQueryData(['review-preparation'])).toBe(afterSecondEvent)
+  })
+
+  it('keeps reconnect debt through cancellation and a failed superseding read', async () => {
+    const updates = createLiveStream()
+    const runId = `preparation_run_${'c'.repeat(64)}`
+    const initialPresentation: NonNullable<PreparationView['presentation']> = {
+      run_id: runId,
+      state: 'running',
+      triggers: [
+        {
+          trigger: 'manual_scan',
+          accepted_count: 1,
+          first_accepted_at: 100,
+          last_accepted_at: 100,
+        },
+      ],
+      passage: { read: 1, searches_finished: 0, compared: 0, checked: 0, ready: 0, failed: 0 },
+      active_books: [{ name: 'Confirmed title', stage: 'Reading library record' }],
+      active_overflow: 0,
+      recent_completions: [],
+      throughput_per_minute: 0,
+      started_at: 100,
+      updated_at: 100,
+      completed_at: null,
+      total: 1,
+      dismissible: false,
+    }
+    const initial: PreparationView = {
+      schema_version: 'review-preparation-v2',
+      active: true,
+      actionable: false,
+      paused: false,
+      libraries: [],
+      presentation: initialPresentation,
+    }
+    const confirmed: PreparationView = {
+      ...initial,
+      presentation: { ...initialPresentation, updated_at: 101 },
+    }
+    let heldAborted = false
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn((signal?: AbortSignal) => {
+        const request = vi.mocked(http.getPreparation).mock.calls.length
+        if (request === 1) return Promise.resolve(initial)
+        if (request === 2)
+          return new Promise<PreparationView>((_resolve, reject) => {
+            signal?.addEventListener('abort', () => {
+              heldAborted = true
+              reject(new DOMException('aborted', 'AbortError'))
+            })
+          })
+        if (request === 3) return Promise.reject(new ApiError(503, 'unavailable'))
+        return Promise.resolve(confirmed)
+      }),
+    }
+    const { queryClient } = renderRoute('/library?lens=all', http, updates)
+    await waitFor(() => expect(queryClient.getQueryData(['review-preparation'])).toBe(initial))
+    await screen.findByRole('button', { name: /Preparing your library/u })
+    const debtHistory: boolean[] = []
+    const preparationActions: string[] = []
+    const stopObservingDebt = queryClient.getQueryCache().subscribe((event) => {
+      if (event.query.queryHash === '["review-preparation-invalidation-debt"]')
+        debtHistory.push(
+          queryClient.getQueryData(['review-preparation-invalidation-debt']) === true,
+        )
+      if (event.query.queryHash === '["review-preparation"]' && event.type === 'updated')
+        preparationActions.push(
+          `${event.action.type}:${'manual' in event.action ? String(event.action.manual) : '-'}:${event.query.state.fetchStatus}`,
+        )
+    })
+
+    act(() => updates.setState('degraded'))
+    act(() => updates.setState('live'))
+    await waitFor(() => expect(http.getPreparation).toHaveBeenCalledTimes(2))
+    act(() => updates.announce({ sequence: 1, subject: null, topic: 'preparation' }))
+
+    await waitFor(() => expect(http.getPreparation).toHaveBeenCalledTimes(3))
+    expect(heldAborted).toBe(true)
+    expect(queryClient.getQueryData(['review-preparation-invalidation-debt'])).toBe(true)
+    expect(screen.getByText(/Reconnecting · last confirmed progress shown/u)).toBeVisible()
+    expect(queryClient.getQueryData(['review-preparation'])).toBe(initial)
+    expect(debtHistory).not.toContain(false)
+
+    await waitFor(() => expect(http.getPreparation).toHaveBeenCalledTimes(4), { timeout: 2_500 })
+    await waitFor(() => expect(queryClient.getQueryData(['review-preparation'])).toBe(confirmed))
+    expect(preparationActions.at(-1)).toBe('success:undefined:idle')
+    await waitFor(() =>
+      expect(queryClient.getQueryData(['review-preparation-invalidation-debt'])).toBe(false),
+    )
+    expect(queryClient.getQueryData(['review-preparation'])).toBe(confirmed)
+    stopObservingDebt()
+  })
+
+  it('does not discharge reconnect debt from a cancellation state restoration', async () => {
+    const updates = createLiveStream()
+    const initial: PreparationView = {
+      schema_version: 'review-preparation-v2',
+      active: true,
+      actionable: false,
+      paused: false,
+      libraries: [],
+    }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi
+        .fn<ReviewHttp['getPreparation']>()
+        .mockResolvedValueOnce(initial)
+        .mockImplementation(() => new Promise<PreparationView>(() => undefined)),
+    }
+    const { queryClient } = renderRoute('/library?lens=all', http, updates)
+    await waitFor(() => expect(queryClient.getQueryData(['review-preparation'])).toBe(initial))
+
+    act(() => updates.setState('degraded'))
+    act(() => updates.setState('live'))
+    await waitFor(() => expect(http.getPreparation).toHaveBeenCalledTimes(2))
+    act(() => {
+      const preparation = queryClient
+        .getQueryCache()
+        .find<PreparationView>({ queryKey: ['review-preparation'] })
+      if (!preparation) throw new Error('preparation query must exist')
+      preparation.setState({ ...preparation.state, fetchStatus: 'idle', status: 'success' })
+    })
+
+    expect(queryClient.getQueryData(['review-preparation-invalidation-debt'])).toBe(true)
   })
 
   it('supersedes a held degraded poll with a distinct live confirmation read', async () => {

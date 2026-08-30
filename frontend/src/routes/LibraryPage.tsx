@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { CSSProperties, KeyboardEvent, SyntheticEvent } from 'react'
+import type { KeyboardEvent, SyntheticEvent } from 'react'
 
 import { displayValue } from '../api/http'
 import type {
@@ -134,24 +134,52 @@ const PreparationSummary = ({
   reconnecting: boolean
   selected: boolean
   onSelect: () => void
-}) => (
-  <button
-    type="button"
-    className={`preparation-summary${selected ? ' active' : ''}`}
-    aria-current={selected ? 'true' : undefined}
-    onClick={onSelect}
-  >
-    <span className="preparation-summary-mark" aria-hidden="true" />
-    <span>
-      <strong>Preparing your library</strong>
-      <small>
-        {reconnecting
-          ? 'Reconnecting · last confirmed progress shown'
-          : `${String(presentation.passage.ready)} ready · ${String(presentation.active_books.length + presentation.active_overflow)} active`}
-      </small>
-    </span>
-  </button>
-)
+}) => {
+  const active = presentation.active_books.length + presentation.active_overflow
+  const outcomes = `${String(presentation.passage.ready)} ready · ${String(presentation.passage.failed)} could not finish`
+  let title: string
+  let copy: string
+  switch (presentation.state) {
+    case 'starting':
+      title = 'Preparation is starting'
+      copy = `${outcomes} · ${String(active)} active`
+      break
+    case 'running':
+      title = 'Preparing your library'
+      copy = `${outcomes} · ${String(active)} active`
+      break
+    case 'blocked':
+      title = 'Preparation needs attention'
+      copy = `${outcomes} · ${String(active)} active`
+      break
+    case 'completed_clean':
+      title = 'Preparation complete'
+      copy = `${String(presentation.passage.ready)} ready · No failures`
+      break
+    case 'completed_with_failures':
+      title = 'Preparation completed with failures'
+      copy = outcomes
+      break
+    case 'dismissed':
+      title = 'Preparation dismissed'
+      copy = outcomes
+      break
+  }
+  return (
+    <button
+      type="button"
+      className={`preparation-summary state-${presentation.state}${selected ? ' active' : ''}`}
+      aria-current={selected ? 'true' : undefined}
+      onClick={onSelect}
+    >
+      <span className="preparation-summary-mark" aria-hidden="true" />
+      <span>
+        <strong>{title}</strong>
+        <small>{reconnecting ? 'Reconnecting · last confirmed progress shown' : copy}</small>
+      </span>
+    </button>
+  )
+}
 
 const PreparationDetail = ({
   presentation,
@@ -236,14 +264,10 @@ const PreparationDetail = ({
             <div key={field}>
               <dt>{label}</dt>
               <dd>
-                <span
-                  style={
-                    {
-                      '--passage-scale': String(
-                        presentation.total ? presentation.passage[field] / presentation.total : 0,
-                      ),
-                    } as CSSProperties
-                  }
+                <progress
+                  aria-label={`${label}: ${String(presentation.passage[field])} of ${String(presentation.total)}`}
+                  max={Math.max(presentation.total, 1)}
+                  value={presentation.passage[field]}
                 />
                 <strong>{String(presentation.passage[field])}</strong>
               </dd>

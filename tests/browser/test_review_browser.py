@@ -2578,6 +2578,73 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                 expect(handoff).to_have_attribute(
                     "href", re.compile(r"preparation=preparation_run_[0-9a-f]{64}")
                 )
+                handoff_href = handoff.get_attribute("href")
+                assert handoff_href is not None
+                run_id = parse_qs(urlparse(handoff_href).query)["preparation"][0]
+                presentation_state = {"value": "running"}
+
+                def preparation_api(
+                    route,
+                    _request,
+                    state_ref=presentation_state,
+                    expected_run_id=run_id,
+                ) -> None:
+                    state = state_ref["value"]
+                    terminal = state in {
+                        "completed_clean",
+                        "completed_with_failures",
+                    }
+                    failed = 1 if state == "completed_with_failures" else 0
+                    route.fulfill(
+                        json={
+                            "schema_version": "review-preparation-v2",
+                            "active": not terminal,
+                            "actionable": terminal,
+                            "paused": state == "blocked",
+                            "libraries": [],
+                            "connections": [],
+                            "presentation": {
+                                "run_id": expected_run_id,
+                                "state": state,
+                                "triggers": [
+                                    {
+                                        "trigger": "initial_setup",
+                                        "accepted_count": 1,
+                                        "first_accepted_at": 100,
+                                        "last_accepted_at": 100,
+                                    }
+                                ],
+                                "passage": {
+                                    "read": 4,
+                                    "searches_finished": 4 if terminal else 3,
+                                    "compared": 4 if terminal else 2,
+                                    "checked": 4 if terminal else 1,
+                                    "ready": 4 - failed if terminal else 0,
+                                    "failed": failed,
+                                },
+                                "active_books": (
+                                    []
+                                    if terminal
+                                    else [
+                                        {
+                                            "name": "Synthetic active title",
+                                            "stage": "Checking metadata",
+                                        }
+                                    ]
+                                ),
+                                "active_overflow": 0,
+                                "recent_completions": [],
+                                "throughput_per_minute": 0,
+                                "started_at": 100,
+                                "updated_at": 101,
+                                "completed_at": 101 if terminal else None,
+                                "total": 4,
+                                "dismissible": terminal,
+                            },
+                        }
+                    )
+
+                page.route("**/api/v1/review-preparation", preparation_api)
                 source_names = page.evaluate(
                     "[getComputedStyle(document.querySelector('.masthead')).viewTransitionName,"
                     "getComputedStyle(document.querySelector('#setup-ledger')).viewTransitionName,"
@@ -2610,6 +2677,50 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                 expect(page.locator(".workspace-detail")).to_have_attribute(
                     "aria-live", "polite"
                 )
+                passage = page.get_by_role("progressbar")
+                expect(passage).to_have_count(4)
+                passage_facts = passage.evaluate_all(
+                    "elements => elements.map(element => ({label:element.getAttribute('aria-label'),value:element.value,max:element.max,position:element.position,style:element.getAttribute('style'),appearance:getComputedStyle(element).appearance,width:element.getBoundingClientRect().width}))"
+                )
+                assert passage_facts == [
+                    {
+                        "label": "Read from library: 4 of 4",
+                        "value": 4,
+                        "max": 4,
+                        "position": 1,
+                        "style": None,
+                        "appearance": "none",
+                        "width": passage_facts[0]["width"],
+                    },
+                    {
+                        "label": "Searches finished: 3 of 4",
+                        "value": 3,
+                        "max": 4,
+                        "position": 0.75,
+                        "style": None,
+                        "appearance": "none",
+                        "width": passage_facts[1]["width"],
+                    },
+                    {
+                        "label": "Candidates compared: 2 of 4",
+                        "value": 2,
+                        "max": 4,
+                        "position": 0.5,
+                        "style": None,
+                        "appearance": "none",
+                        "width": passage_facts[2]["width"],
+                    },
+                    {
+                        "label": "Metadata checked: 1 of 4",
+                        "value": 1,
+                        "max": 4,
+                        "position": 0.25,
+                        "style": None,
+                        "appearance": "none",
+                        "width": passage_facts[3]["width"],
+                    },
+                ]
+                assert all(fact["width"] > 0 for fact in passage_facts)
                 destination_names = page.evaluate(
                     "[getComputedStyle(document.querySelector('.masthead')).viewTransitionName,"
                     "getComputedStyle(document.querySelector('.library-works')).viewTransitionName,"
@@ -2672,6 +2783,31 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                         )
                         for animation in pseudo_styles
                     ), pseudo_styles
+                summary_cases = (
+                    (
+                        "blocked",
+                        "Preparation needs attention",
+                        "0 ready · 0 could not finish · 1 active",
+                    ),
+                    (
+                        "completed_clean",
+                        "Preparation complete",
+                        "4 ready · No failures",
+                    ),
+                    (
+                        "completed_with_failures",
+                        "Preparation completed with failures",
+                        "3 ready · 1 could not finish",
+                    ),
+                )
+                for state, title, copy in summary_cases:
+                    presentation_state["value"] = state
+                    page.reload()
+                    summary = page.locator(".preparation-summary")
+                    expect(summary).to_contain_text(title)
+                    expect(summary).to_contain_text(copy)
+                    expect(page.get_by_role("heading", name="Works")).to_be_visible()
+                    expect(page.locator(".library-work-row").first).to_be_enabled()
                 if not reduced:
                     page.goto(setup_url)
                     page.get_by_role("button", name="Kick off preparation").click()
