@@ -13,6 +13,13 @@
   missing current provenance; ordinary startup and user upgrades stay
   absent-or-exact-current. (#938)
 
+- Audiobooks now consult their providers, adding the iTunes Search adapter and
+  retaining what all four said. A title-and-author admission widens to the
+  marketplace, running time and narrator only when the provider's runtime
+  agrees with the recording's own. The terminal disposition
+  `local_evidence_only` is renamed `evidence_only`, which needs a clean
+  database. (#749)
+
 - Admit the audiobook provider vocabularies: ASIN discovery lanes with
   marketplace provenance, bounded chapter-structure evidence, a duration
   agreement band, and closed corroboration rules over runtime, chapter cuts,

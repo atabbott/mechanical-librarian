@@ -244,7 +244,28 @@ class ReviewPipelineStages:
                     audio_inspection_failure_code(error.outcome)
                 ) from error
             raise ReviewPipelineError("unknown") from error
-        return MetadataReport.from_json(serialized).report_id, True
+        value = MetadataReport.from_json(serialized)
+        if value.file.format in AUDIO_FILE_FORMATS:
+            # An audiobook now dispatches providers while its report is built,
+            # but its preparation still ends terminally in the transaction that
+            # published it, so the `providers` stage never runs for it. The
+            # observations it produced are recorded here instead, which is the
+            # first moment they exist and the last one before the work closes.
+            self._record_recovery(value)
+        return value.report_id, True
+
+    def _record_recovery(self, value: MetadataReport) -> None:
+        record_provider_recovery_observations(
+            self._recovery_observer,
+            value,
+            adapters={
+                provider.name: provider.adapter
+                for provider in self._configuration.providers
+            },
+            scope=value.target.library,
+            generation=self._configuration.provider_recovery_generation,
+            now=self._clock(),
+        )
 
     def _require_eligible_entry(self, action: PipelineAction) -> None:
         catalogue = self._catalogue(False)
@@ -302,25 +323,7 @@ class ReviewPipelineStages:
         value = MetadataReport.from_json(
             cast("ReviewStageRepository", pipeline_repository).get(report_id)
         )
-        if value.file.format in AUDIO_FILE_FORMATS:
-            # An audiobook's preparation already ended terminally in the
-            # transaction that published its report, so it never reaches this
-            # stage. This is the guard for the one thing that must not happen
-            # if it somehow did: contacting providers for a report that was
-            # published with none, and recording recovery observations that no
-            # provider produced.
-            raise ReviewPipelineError("local_evidence_only")
-        record_provider_recovery_observations(
-            self._recovery_observer,
-            value,
-            adapters={
-                provider.name: provider.adapter
-                for provider in self._configuration.providers
-            },
-            scope=value.target.library,
-            generation=self._configuration.provider_recovery_generation,
-            now=self._clock(),
-        )
+        self._record_recovery(value)
         return provider_statuses(value)
 
     def propose(

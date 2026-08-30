@@ -22,6 +22,9 @@ from mechanical_librarian.application.failure_diagnostics import (
 )
 from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.domain.audio_inspection import AudioSidecarDigest
+from mechanical_librarian.domain.audiobook_corroboration import (
+    runtime_corroborated_candidate,
+)
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverProvenance,
@@ -37,6 +40,7 @@ from mechanical_librarian.domain.failure_diagnostics import (
 )
 from mechanical_librarian.domain.metadata_report import (
     AUDIO_FILE_FORMATS,
+    AUDIOBOOK_PROVIDER_AUTHORITIES,
     MAX_CANDIDATES,
     AudioFacts,
     ClaimKind,
@@ -48,6 +52,7 @@ from mechanical_librarian.domain.metadata_report import (
     LocalClaim,
     MetadataReport,
     ProviderCandidate,
+    ProviderClaim,
     ProviderEvidenceKind,
     ProviderLaneCandidate,
     ProviderLaneObservation,
@@ -1167,7 +1172,23 @@ def qualify_provider_observation(
             diagnostics=observation.diagnostics,
             request_accounting=observation.request_accounting,
         )
-    candidate = min(set_admission.candidates, key=lambda value: value.identity)
+    # Gate order: the work-identity admission above has already decided that
+    # this candidate set names the item's title and author. Only then may the
+    # runtime band widen one of them from a work statement to an edition one.
+    # A band that does not pass falls through to the work-scope shape every
+    # other authority gets, so the widening below is dead code for an ebook
+    # provider: none of them is an audiobook authority and none states a
+    # `DURATION` claim to compare.
+    corroborated = (
+        runtime_corroborated_candidate(set_admission.candidates, lookup.local_claims)
+        if observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+        else None
+    )
+    candidate = (
+        min(set_admission.candidates, key=lambda value: value.identity)
+        if corroborated is None
+        else corroborated[0]
+    )
     transformation_lineage = set_admission.transformation
     neutral_creators = tuple(
         claim
@@ -1227,6 +1248,7 @@ def qualify_provider_observation(
                 and claim.kind in neutral_rejection_sibling_claims
                 and claim.state is FieldState.VALID
             )
+            or _corroborated_edition_claim(claim, corroborated is not None)
         )
     )
     filtered_references = {claim.reference for claim in filtered_claims}
@@ -1261,6 +1283,15 @@ def qualify_provider_observation(
                         )
                     )
                 )
+                or (
+                    corroborated is not None
+                    and value.scope is ClaimScope.EDITION
+                    and value.kind
+                    in {
+                        ProviderEvidenceKind.ASIN_MARKETPLACE,
+                        ProviderEvidenceKind.CHAPTER_STRUCTURE,
+                    }
+                )
             )
         ),
         tuple(
@@ -1281,6 +1312,33 @@ def qualify_provider_observation(
         request_accounting=observation.request_accounting,
         dispatch_lineage=observation.dispatch_lineage,
         transformation_lineage=transformation_lineage,
+    )
+
+
+def _corroborated_edition_claim(claim: ProviderClaim, corroborated: bool) -> bool:
+    """Whether a corroborated candidate may keep one edition-bearing claim.
+
+    A work admission retains what names a work. Once the runtime band has said
+    that this candidate is this exact recording, four more statements become
+    true of the item rather than of some edition of its work: the marketplace
+    identifier, the running time that proved it, and who read it.
+
+    Every one is required to be a stated, readable value. An `ABSENT` narrator
+    is the provider saying it does not know, and an ASIN outside its canonical
+    grammar names no product, so neither is retained as though it did.
+    """
+    if not corroborated:
+        return False
+    if claim.state is not FieldState.VALID:
+        return False
+    if claim.scope is ClaimScope.EDITION and claim.kind is ClaimKind.ASIN:
+        return canonical_asin(claim.value) is not None
+    if claim.scope is ClaimScope.EDITION and claim.kind is ClaimKind.DURATION:
+        return True
+    return (
+        claim.scope is ClaimScope.WORK
+        and claim.kind is ClaimKind.CONTRIBUTOR
+        and claim.role == "narrator"
     )
 
 
@@ -1486,9 +1544,74 @@ class GenerateMetadataReport:
         # audiobook branch returned above and the gate admitted no third kind.
         local = cast("InspectionResult", local)
         plan = metadata_discovery_plan(initial, combined_claims)
+        cover_aggregate_deadline = time.monotonic() + 60.0
+        observations, descriptors = self._observe_providers(
+            repository, plan, cover_aggregate_deadline
+        )
+
+        reasons = tuple(
+            sorted(
+                {f"{claim.basis}_{claim.kind.value}" for claim in local.claims}
+                | ({"rear_resource_limit"} if local.rear_resource_limit else set())
+                or {"no_opening_claims"}
+            )
+        )
+        try:
+            cover_sources = (
+                local.cover_sources
+                if self._cover_observer is None
+                else self._cover_observer.observe(
+                    initial,
+                    tuple(observations),
+                    local.cover_sources,
+                    tuple(descriptors),
+                    cover_aggregate_deadline,
+                )
+            )
+            report = MetadataReport.create(
+                target=TargetFacts(
+                    self._connection.name,
+                    self._library.name,
+                    item,
+                    initial.fields,
+                ),
+                file=FileFacts(file_index, selected.identity, local.content_digest),
+                local_claims=combined_claims,
+                local_reasons=reasons,
+                providers=tuple(sorted(observations, key=lambda value: value.provider)),
+                field_results=derive_field_results(combined_claims),
+                cover_sources=cover_sources,
+            )
+        except Exception as error:
+            # Cleanup only: the report assembly spans domain construction over
+            # everything the providers returned, and this handler exists to
+            # release the repository handle rather than to classify anything.
+            # The failure is re-raised unchanged, and a ``close`` that itself
+            # fails no longer displaces it: the release failure is noted on it
+            # instead.
+            _release_repository(repository, error)
+            raise
+        return self._publish(repository, report, expected_current)
+
+    def _observe_providers(
+        self,
+        repository: ReportRepository,
+        plan: MetadataDiscoveryPlan,
+        deadline: float,
+    ) -> tuple[tuple[ProviderObservation, ...], tuple[ProviderCoverDescriptor, ...]]:
+        """Dispatch one discovery plan across every configured provider binding.
+
+        Both media branches run this one loop, so an audiobook observation is
+        bounded, classified, and diagnosed exactly as an ebook one is. What the
+        branches differ in is the plan they hand it -- ISBN and work lanes, or
+        ASIN and work lanes -- and what they do with the descriptors it returns.
+        """
         observations: list[ProviderObservation] = []
         descriptors: list[ProviderCoverDescriptor] = []
-        cover_aggregate_deadline = time.monotonic() + 60.0
+        # One name for the two failure types this loop raises: a credential the
+        # factory declared missing, and a factory that broke for any other
+        # reason. Both are released and re-raised through the same statements.
+        failure: MetadataReportError
         for binding in self._providers:
             if not binding.enabled:
                 disabled_lanes = tuple(
@@ -1559,7 +1682,7 @@ class GenerateMetadataReport:
                         binding.authority,
                         provider,
                         plan,
-                        deadline=cover_aggregate_deadline,
+                        deadline=deadline,
                     )
             except Exception as error:
                 _release_repository(repository, error)
@@ -1575,50 +1698,7 @@ class GenerateMetadataReport:
                 _release_repository(repository, failure)
                 raise failure
             descriptors.extend(candidate_descriptors)
-
-        reasons = tuple(
-            sorted(
-                {f"{claim.basis}_{claim.kind.value}" for claim in local.claims}
-                | ({"rear_resource_limit"} if local.rear_resource_limit else set())
-                or {"no_opening_claims"}
-            )
-        )
-        try:
-            cover_sources = (
-                local.cover_sources
-                if self._cover_observer is None
-                else self._cover_observer.observe(
-                    initial,
-                    tuple(observations),
-                    local.cover_sources,
-                    tuple(descriptors),
-                    cover_aggregate_deadline,
-                )
-            )
-            report = MetadataReport.create(
-                target=TargetFacts(
-                    self._connection.name,
-                    self._library.name,
-                    item,
-                    initial.fields,
-                ),
-                file=FileFacts(file_index, selected.identity, local.content_digest),
-                local_claims=combined_claims,
-                local_reasons=reasons,
-                providers=tuple(sorted(observations, key=lambda value: value.provider)),
-                field_results=derive_field_results(combined_claims),
-                cover_sources=cover_sources,
-            )
-        except Exception as error:
-            # Cleanup only: the report assembly spans domain construction over
-            # everything the providers returned, and this handler exists to
-            # release the repository handle rather than to classify anything.
-            # The failure is re-raised unchanged, and a ``close`` that itself
-            # fails no longer displaces it: the release failure is noted on it
-            # instead.
-            _release_repository(repository, error)
-            raise
-        return self._publish(repository, report, expected_current)
+        return tuple(observations), tuple(descriptors)
 
     def _publish(
         self,
@@ -1691,18 +1771,23 @@ class GenerateMetadataReport:
         combined_claims: tuple[LocalClaim, ...],
         expected_current: str | None,
     ) -> str:
-        """Publish one audiobook report that terminates at local extraction.
+        """Publish one audiobook report over its own discovery plan.
 
-        No ``ProviderBinding`` is read, no discovery plan is built, and no
-        provider is constructed or dispatched: F43 slice 1 publishes exactly
-        what the isolated inspector read off the file, and the domain refuses
-        an audio report that carries a provider observation at all.
+        An audiobook's identifier is an ASIN, so the plan is built by
+        ``audiobook_discovery_plan`` rather than the ISBN one, and it runs
+        through the same provider loop an ebook does. Cover descriptors are
+        deliberately discarded: no admitted audiobook adapter carries a cover
+        surface, so an audio report states no cover source at all.
         """
         reasons = tuple(
             sorted(
                 {f"{claim.basis}_{claim.kind.value}" for claim in audio.claims}
                 or {"no_local_audio_claims"}
             )
+        )
+        plan = audiobook_discovery_plan(initial, combined_claims)
+        observations, _descriptors = self._observe_providers(
+            repository, plan, time.monotonic() + 60.0
         )
         try:
             report = MetadataReport.create(
@@ -1720,7 +1805,7 @@ class GenerateMetadataReport:
                 ),
                 local_claims=combined_claims,
                 local_reasons=reasons,
-                providers=(),
+                providers=tuple(sorted(observations, key=lambda value: value.provider)),
                 field_results=derive_field_results(combined_claims),
                 audio=audio.audio,
             )

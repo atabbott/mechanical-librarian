@@ -100,6 +100,12 @@ AUDIOBOOK_MARKETPLACES = (
     "it",
     "es",
 )
+# The four authorities that observe a recording rather than a printed edition.
+# Only these state a running time, a narrator, or a marketplace, so only these
+# reach the corroboration gate that widens a work admission to an edition one.
+AUDIOBOOK_PROVIDER_AUTHORITIES = frozenset(
+    {"audible_catalog", "audiosilo", "audnexus", "itunes_search"}
+)
 MAX_CONTRIBUTIONS = 16
 MAX_SERIES = 16
 MAX_TAGS = 32

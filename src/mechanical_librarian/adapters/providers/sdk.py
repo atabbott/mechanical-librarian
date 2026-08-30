@@ -124,13 +124,27 @@ class BoundedProviderSession:
         *,
         pacer: ProviderRequestPacer | None = None,
         clocks: ProviderClocks | None = None,
+        accept_content_types: tuple[str, ...] = ("application/json",),
     ) -> None:
+        if (
+            type(accept_content_types) is not tuple
+            or not accept_content_types
+            or any(
+                type(value) is not str or value != value.strip().lower()
+                for value in accept_content_types
+            )
+        ):
+            raise ValueError("provider content types are invalid")
         self._name = name
         self._client = client
         self._bounds = bounds
         self._ledger = ledger
         self._pacer = pacer
         self._clocks = ProviderClocks() if clocks is None else clocks
+        # The closed set of media types this provider is permitted to return.
+        # Anything outside it is `MALFORMED`, exactly as before: widening is a
+        # per-adapter admission and never a fallback.
+        self._accept_content_types = frozenset(accept_content_types)
         self.attempt_count = 0
         self.remaining_response_bytes = bounds.aggregate_response_bytes
         self._attempt_records: list[ProviderAttemptRecord] = []
@@ -314,7 +328,7 @@ class BoundedProviderSession:
                     .split(";", 1)[0]
                     .strip()
                     .lower()
-                    != "application/json"
+                    not in self._accept_content_types
                 ):
                     raise ProviderFailure(ProviderStatus.MALFORMED)
         except ProviderFailure as error:

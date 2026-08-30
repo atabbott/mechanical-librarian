@@ -91,7 +91,7 @@ _FAILURE_CODES = frozenset(
         "missing_required_input",
         "malformed_retained_data",
         "internal_failure",
-        "local_evidence_only",
+        "evidence_only",
         "unknown",
     )
 )
@@ -284,7 +284,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 failures = self._connection.execute(
                     "SELECT COUNT(*) FROM review_preparation_work "
                     "WHERE scan_id=? AND state='failed' "
-                    "AND failure_code IS NOT 'local_evidence_only'",
+                    "AND failure_code IS NOT 'evidence_only'",
                     (scan_id,),
                 ).fetchone()[0]
                 stale = self._connection.execute(
@@ -659,7 +659,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                         report_id = proposal_set_id = review_case_id = None
                     elif (
                         previous_state == "failed"
-                        and previous_failure_code == "local_evidence_only"
+                        and previous_failure_code == "evidence_only"
                     ):
                         # The file this outcome is terminal about has not moved:
                         # re-inspecting it would re-hash gigabytes to reach the
@@ -1107,7 +1107,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 # published, and F43 grants an audiobook nothing beyond it, so
                 # the work ends here rather than queueing a proposal that has
                 # no comparison to evaluate.
-                "local_evidence_only",
+                "evidence_only",
             }
             or type(claim_next) is not bool
             or (
@@ -1151,7 +1151,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             terminal_failure = provider_failure_code in {
                 "authentication",
                 "configuration",
-                "local_evidence_only",
+                "evidence_only",
             }
             updated = self._connection.execute(
                 "UPDATE review_preparation_work SET stage=?,state=?,attempt=0,"
@@ -1170,7 +1170,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             ).rowcount
         if updated != 1:
             raise MetadataReportError("review preparation state changed")
-        if provider_failure_code == "local_evidence_only":
+        if provider_failure_code == "evidence_only":
             # Publication registers this row itself only when nothing follows
             # it, and the pipeline always passes a disposition.  An ebook
             # acquires its package later, at proposal or admission; an

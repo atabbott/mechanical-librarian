@@ -65,7 +65,7 @@ _TERMINAL_PREPARATION_CODES = frozenset(
         # it.  It is admitted anyway: a code the vocabulary rejects fails the
         # whole status projection closed, and an audiobook that reached this
         # far is the one case where nothing is actually wrong.
-        "local_evidence_only",
+        "evidence_only",
     )
 )
 

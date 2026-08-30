@@ -53,6 +53,7 @@ from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
     LibraryConfiguration,
     MediaMountConfiguration,
+    ProviderConnectionConfiguration,
     TargetConnectionConfiguration,
 )
 from mechanical_librarian.application.metadata_report import (
@@ -100,6 +101,7 @@ from mechanical_librarian.domain.metadata_report import (
     FileFacts,
     MetadataReport,
     ProviderObservation,
+    ProviderQueryKind,
     ProviderStatus,
     TargetFacts,
     default_target_fields,
@@ -9919,7 +9921,7 @@ def test_a_terminal_stop_that_registers_no_package_refuses_to_pass_silently(
     repository._connection.execute("BEGIN")
     with pytest.raises(MetadataReportError):
         repository.complete_review_extraction_publication(
-            extraction, "report_" + "c" * 64, 14, 0, "local_evidence_only"
+            extraction, "report_" + "c" * 64, 14, 0, "evidence_only"
         )
     packages = repository._connection.execute(
         "SELECT COUNT(*) FROM current_review_packages"
@@ -9930,7 +9932,14 @@ def test_a_terminal_stop_that_registers_no_package_refuses_to_pass_silently(
     assert packages == (0,)
 
 
-def test_the_provider_stage_refuses_an_audiobook_report_it_should_never_see() -> None:
+def test_the_provider_stage_admits_an_audiobook_report_that_carries_providers() -> None:
+    """The audio refusal is lifted: an audio report is now one the stage reads.
+
+    Its preparation still ends in the publishing transaction, so this stage is
+    not what runs for an audiobook in practice.  What matters here is that the
+    stage no longer treats an audio report as a state that must not exist.
+    """
+
     def unreachable(*_arguments: object, **_keywords: object) -> None:
         raise AssertionError
 
@@ -9941,7 +9950,14 @@ def test_the_provider_stage_refuses_an_audiobook_report_it_should_never_see() ->
         file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
         local_claims=(),
         local_reasons=("no_local_audio_claims",),
-        providers=(),
+        providers=(
+            ProviderObservation(
+                "catalogue",
+                ProviderStatus.NO_MATCH,
+                query_kind=ProviderQueryKind.ASIN,
+                authority="audible_catalog",
+            ),
+        ),
         audio=AudioFacts(),
     )
 
@@ -9968,12 +9984,9 @@ def test_the_provider_stage_refuses_an_audiobook_report_it_should_never_see() ->
         clock=lambda: 7,
     )
 
-    with pytest.raises(ReviewPipelineError) as raised:
-        stages.providers(
-            cast("ReviewPipelineRepository", _Repository()), report.report_id
-        )
-
-    assert raised.value.code == "local_evidence_only"
+    assert (ProviderStatus.NO_MATCH,) == stages.providers(
+        cast("ReviewPipelineRepository", _Repository()), report.report_id
+    )
 
 
 def test_an_ebook_report_still_reaches_the_provider_stage() -> None:
@@ -10075,7 +10088,7 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
         lambda: True,
         None,
         lambda value, published: value.complete_review_extraction_publication(
-            extraction, published.report_id, 14, 0, "local_evidence_only"
+            extraction, published.report_id, 14, 0, "evidence_only"
         ),
     )
     work = repository._connection.execute(
@@ -10093,7 +10106,7 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
     presentation = repository.preparation_presentation(15)
     repository.close()
 
-    assert work == ("provider", "failed", "local_evidence_only", None)
+    assert work == ("provider", "failed", "evidence_only", None)
     assert remaining is None
     assert presentation is not None
     assert presentation.state is PreparationRunState.COMPLETED_CLEAN
@@ -10269,7 +10282,7 @@ def test_a_prepared_audiobook_leaves_a_mixed_library_scan_clean(
                         published.report_id,
                         completed_at,
                         0,
-                        "local_evidence_only",
+                        "evidence_only",
                     )
                 else:
                     writer.advance_review_pipeline_action(
@@ -10343,7 +10356,7 @@ def _publish_terminal_audiobook(
         lambda: True,
         None,
         lambda value, published: value.complete_review_extraction_publication(
-            extraction, published.report_id, at + 4, 0, "local_evidence_only"
+            extraction, published.report_id, at + 4, 0, "evidence_only"
         ),
     )
     # Settle the scan, so the rescan below starts from a completed one rather
@@ -10405,7 +10418,7 @@ def test_a_later_scan_does_not_re_inspect_an_unchanged_published_audiobook(
     ).fetchall()
     repository.close()
 
-    assert published == ("provider", "failed", "local_evidence_only", published[3])
+    assert published == ("provider", "failed", "evidence_only", published[3])
     # Nothing to do: the evidence this scan would produce is already recorded.
     assert following is None
     assert work == published
@@ -10528,3 +10541,97 @@ def test_audiobook_publication_refreshes_before_interleaved_claim_next(
     assert presentation.passage.failed == 0
     assert claimed is not None
     assert claimed.connection == "secondary" and claimed.stage == "discovery"
+
+
+class _Observer:
+    """The one durable write the extraction stage is expected to perform."""
+
+    def __init__(self, recorded: list[object]) -> None:
+        self._recorded = recorded
+
+    def observe_failure(self, **keywords: object) -> None:
+        self._recorded.append(keywords)
+
+
+def test_an_audiobook_records_its_recovery_evidence_at_extraction() -> None:
+    """The audio path's observations are recorded where they first exist.
+
+    An audiobook's preparation ends in the transaction that published its
+    report, so the `providers` stage never runs for it. Recording its provider
+    health at extraction is what keeps a failing audiobook provider visible to
+    recovery at all.
+    """
+
+    def unreachable(*_arguments: object, **_keywords: object) -> None:
+        raise AssertionError
+
+    report = MetadataReport.create(
+        target=TargetFacts(
+            "primary", "audio", "item-1", default_target_fields("Recorded title")
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=(),
+        local_reasons=("no_local_audio_claims",),
+        providers=(
+            ProviderObservation(
+                "catalogue",
+                ProviderStatus.UNAVAILABLE,
+                query_kind=ProviderQueryKind.ASIN,
+                authority="audible_catalog",
+            ),
+        ),
+        audio=AudioFacts(),
+    )
+    observations: list[object] = []
+    stages = ReviewPipelineStages(
+        configuration=ApplicationConfiguration(
+            (),
+            (),
+            (),
+            (
+                ProviderConnectionConfiguration(
+                    "catalogue",
+                    True,
+                    False,
+                    None,
+                    "audible_catalog",
+                    marketplaces=("us",),
+                ),
+            ),
+            provider_recovery_generation=3,
+        ),
+        catalogue=unreachable,
+        catalogue_reader=cast("CatalogueReader", unreachable),
+        probe_connection=unreachable,
+        connections=frozenset(),
+        repository_factory=unreachable,
+        recover_artifacts=lambda: None,
+        generate_report=lambda *_args, **_kwargs: report.to_json(),
+        create_proposal_set=unreachable,
+        admit_review_case=unreachable,
+        cover_considerations=unreachable,
+        recovery_observer=cast("ProviderFailureObserver", _Observer(observations)),
+        drain_outbox=unreachable,
+        discovery_lock=threading.Lock(),
+        clock=lambda: 7,
+    )
+
+    with patch.object(stages, "_require_eligible_entry", lambda _action: None):
+        published, claimed = stages.extract(
+            cast("ReviewPipelineRepository", object()),
+            cast("PipelineAction", object()),
+            False,
+        )
+
+    assert (report.report_id, True) == (published, claimed)
+    assert [
+        {
+            "connection": "catalogue",
+            "adapter": "audible_catalog",
+            "scope": "audio",
+            "generation": 3,
+            "failure": "transient",
+            "now": 7,
+            "retry_after": None,
+        }
+    ] == observations

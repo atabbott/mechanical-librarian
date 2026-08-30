@@ -2110,7 +2110,7 @@ def test_an_audiobooks_recorded_evidence_is_reachable_from_the_library(
 
     assert detail.status_code == 200, detail.text
     body = detail.json()
-    assert body["schema_version"] == "review-report-detail-v1"
+    assert body["schema_version"] == "review-report-detail-v2"
     assert (body["connection"], body["library"], body["item"]) == (
         "primary",
         "ebooks",

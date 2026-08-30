@@ -29,7 +29,9 @@ from mechanical_librarian.domain.metadata_report import (
     FieldState,
     LocalClaim,
     MetadataReport,
+    ProviderCandidate,
     ProviderChapterStructure,
+    ProviderClaim,
     duration_milliseconds,
 )
 
@@ -184,13 +186,59 @@ def local_runtime_seconds(report: MetadataReport) -> int | None:
     """
     if type(report) is not MetadataReport:
         raise CorroborationValueError("corroboration input is invalid")
+    return local_claim_runtime_seconds(report.local_claims)
+
+
+def local_claim_runtime_seconds(local_claims: tuple[LocalClaim, ...]) -> int | None:
+    """Read one running time off a claim set, under the same agreement rule."""
+    if type(local_claims) is not tuple:
+        raise CorroborationValueError("corroboration input is invalid")
     values = {
         seconds
-        for claim in report.local_claims
+        for claim in local_claims
         if _valid_duration_claim(claim)
         and (seconds := _claim_runtime_seconds(claim)) is not None
     }
     return values.pop() if len(values) == 1 else None
+
+
+def runtime_corroborated_candidate(
+    candidates: tuple[ProviderCandidate, ...],
+    local_claims: tuple[LocalClaim, ...],
+) -> tuple[ProviderCandidate, tuple[str, ...]] | None:
+    """Choose the one candidate whose stated runtime is this recording's.
+
+    An audiobook's edition identity is what this gate decides, so it fails
+    closed in every direction that is not a positive statement: an item with no
+    single local running time, a candidate that states none, a candidate whose
+    runtime only agrees inside the loose band, and a candidate set where none
+    agrees all return ``None`` and leave the caller with its work-scope shape.
+
+    Only the tight band admits. The loose band exists to explain a plausible
+    near-miss, not to promote one: ten minutes is wide enough to hold a
+    different cut of the same work, and an ASIN naming the wrong cut is exactly
+    the error this gate exists to prevent.
+
+    Several candidates inside the tight band is a real outcome -- a work
+    published in more than one marketplace states one runtime -- so the tie is
+    broken on identity, which is deterministic and provider-native.
+    """
+    if type(candidates) is not tuple or any(
+        type(value) is not ProviderCandidate for value in candidates
+    ):
+        raise CorroborationValueError("corroboration input is invalid")
+    local = local_claim_runtime_seconds(local_claims)
+    if local is None:
+        return None
+    admitted: list[tuple[ProviderCandidate, CorroborationSignal]] = []
+    for candidate in candidates:
+        signal = runtime_agreement(local, _candidate_runtime_seconds(candidate))
+        if signal.outcome is CorroborationOutcome.CORROBORATED:
+            admitted.append((candidate, signal))
+    if not admitted:
+        return None
+    candidate, signal = min(admitted, key=lambda value: value[0].identity)
+    return candidate, signal.reasons
 
 
 def local_chapter_durations_seconds(audio: AudioFacts | None) -> tuple[int, ...]:
@@ -337,6 +385,35 @@ def _claim_runtime_seconds(claim: LocalClaim) -> int | None:
     return None if milliseconds is None else (milliseconds + 500) // 1000
 
 
+def _candidate_runtime_seconds(candidate: ProviderCandidate) -> int | None:
+    """Read the one running time a candidate states, or nothing at all.
+
+    Two `DURATION` claims on one candidate is two answers to a question that
+    has one, so a candidate that states more than one states none here.
+    """
+    values = {
+        seconds
+        for claim in candidate.claims
+        if _valid_provider_duration_claim(claim)
+        and (seconds := _provider_claim_runtime_seconds(claim)) is not None
+    }
+    return values.pop() if len(values) == 1 else None
+
+
+def _valid_provider_duration_claim(claim: ProviderClaim) -> bool:
+    return (
+        type(claim) is ProviderClaim
+        and claim.kind is ClaimKind.DURATION
+        and claim.state is FieldState.VALID
+        and claim.value is not None
+    )
+
+
+def _provider_claim_runtime_seconds(claim: ProviderClaim) -> int | None:
+    milliseconds = duration_milliseconds(claim.value or "")
+    return None if milliseconds is None else (milliseconds + 500) // 1000
+
+
 def _best_alignment(
     local: tuple[int, ...], provider: tuple[int, ...]
 ) -> tuple[int, bool] | None:
@@ -385,6 +462,8 @@ __all__ = [
     "chapter_vector_agreement",
     "cover_hash_agreement",
     "local_chapter_durations_seconds",
+    "local_claim_runtime_seconds",
     "local_runtime_seconds",
     "runtime_agreement",
+    "runtime_corroborated_candidate",
 ]

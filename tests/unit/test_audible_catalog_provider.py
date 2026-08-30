@@ -27,6 +27,7 @@ from mechanical_librarian.domain.metadata_report import (
 from tests.support.audiobook_providers import (
     asin_plan,
     local_claims,
+    local_runtime_claim,
     payload,
     work_plan,
 )
@@ -315,9 +316,36 @@ def test_a_series_statement_becomes_a_name_and_a_sequence() -> None:
     )
 
 
-def test_a_markup_summary_is_recorded_as_unprojectable_rather_than_absent() -> None:
+def test_a_markup_summary_projects_as_visible_plain_text() -> None:
+    """The publisher summary is HTML, and the shared renderer reads it.
+
+    Before the renderer was shared this claim was `MALFORMED`: the adapter
+    could see that the provider had said something and could not say what.
+    """
     document = copy.deepcopy(payload("audible_lookup"))
     del document["product"]["short_description"]
+    stated = document["product"]["publisher_summary"]
+    _seen, handle = _recorder(default=_json(document))
+    candidate = _provider(handle).observe(asin_plan()).candidates[0]
+    description = _claims(candidate, ClaimKind.DESCRIPTION)[0]
+
+    assert "<" in stated
+    assert FieldState.VALID is description.state
+    assert description.value is not None
+    assert "<" not in description.value and ">" not in description.value
+    assert ("html-visible-text-v1",) == tuple(
+        value.value
+        for value in _evidence(
+            candidate, ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION
+        )
+    )
+
+
+def test_markup_the_renderer_refuses_stays_unprojectable_rather_than_absent() -> None:
+    """Hostile markup is still a value the provider stated and we will not read."""
+    document = copy.deepcopy(payload("audible_lookup"))
+    del document["product"]["short_description"]
+    document["product"]["publisher_summary"] = "<script>alert(1)</script>"
     _seen, handle = _recorder(default=_json(document))
     candidate = _provider(handle).observe(asin_plan()).candidates[0]
     description = _claims(candidate, ClaimKind.DESCRIPTION)[0]
@@ -365,3 +393,46 @@ def test_the_pacer_is_the_shared_request_start_clock() -> None:
     assert AudibleCatalogPacer is not None
     pacer = AudibleCatalogPacer(1.0, clock=lambda: 0.0, sleep=lambda value: None)
     assert pacer.wait(None)
+
+
+def test_a_corroborated_search_lane_keeps_the_edition_it_established() -> None:
+    """A running time the container agrees with turns a work into an edition.
+
+    The same search as above, with one difference: the item states its own
+    runtime, and the admitted product's runtime is inside the agreement band.
+    That is what widens the retention to the ASIN, the marketplace, the
+    narrator and the running time itself.
+    """
+    seen, handle = _recorder(default=_json(payload("audible_search")))
+    observation = _provider(handle).observe(work_plan(local_runtime_claim()))
+    candidate = observation.candidates[0]
+
+    assert ProviderStatus.CANDIDATES is observation.status
+    assert ProviderQueryKind.WORK is observation.query_kind
+    assert 1 == len(seen)
+    assert ("B08G9PRS1K",) == tuple(
+        claim.value for claim in _claims(candidate, ClaimKind.ASIN)
+    )
+    assert ("58200.000",) == tuple(
+        claim.value for claim in _claims(candidate, ClaimKind.DURATION)
+    )
+    assert ("Ray Porter",) == tuple(
+        claim.value for claim in _claims(candidate, ClaimKind.CONTRIBUTOR)
+    )
+    assert ("us",) == tuple(
+        value.value
+        for value in _evidence(candidate, ProviderEvidenceKind.ASIN_MARKETPLACE)
+    )
+
+
+def test_a_search_lane_outside_the_band_keeps_only_its_work_shape() -> None:
+    """A runtime two hours away is a different recording, not this one."""
+    seen, handle = _recorder(default=_json(payload("audible_search")))
+    observation = _provider(handle).observe(work_plan(local_runtime_claim("51000.000")))
+    candidate = observation.candidates[0]
+
+    assert 1 == len(seen)
+    assert () == _claims(candidate, ClaimKind.ASIN)
+    assert () == _claims(candidate, ClaimKind.DURATION)
+    assert () == _claims(candidate, ClaimKind.CONTRIBUTOR)
+    assert () == _evidence(candidate, ProviderEvidenceKind.ASIN_MARKETPLACE)

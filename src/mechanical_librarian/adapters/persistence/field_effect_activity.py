@@ -2788,7 +2788,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "SELECT work_id,stage,attempt,recovery_attempt,failure_code "
                 "FROM review_preparation_work WHERE state='failed' "
                 "AND failure_code IS NOT NULL "
-                "AND failure_code != 'local_evidence_only' "
+                "AND failure_code != 'evidence_only' "
                 "ORDER BY updated_at DESC,work_id LIMIT 256"
             ).fetchall()
             for work_id, stage, attempt, recovery_attempt, code in terminal_failures:

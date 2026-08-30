@@ -31,6 +31,10 @@ from mechanical_librarian.adapters.providers.sdk import (
     decode_json,
     provider_bounds,
 )
+from mechanical_librarian.adapters.providers.visible_text import (
+    HTML_VISIBLE_TEXT_VERSION,
+    projected_description,
+)
 from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryLane,
     MetadataDiscoveryPlan,
@@ -541,7 +545,14 @@ def _candidate(
     series, sequence = _series(payload.get("seriesPrimary"), schema_rejections)
     add(ClaimKind.SERIES, series)
     add(ClaimKind.SERIES_SEQUENCE, sequence)
-    add(ClaimKind.DESCRIPTION, _description(payload.get("description")))
+    # Audnexus publishes a plain `description` and an HTML `summary` of the
+    # same text. The plain one is preferred; the summary is read only when the
+    # provider states no plain one, and the shared renderer makes it visible
+    # text rather than a value the report cannot project.
+    description, description_transformed = projected_description(
+        payload.get("description"), payload.get("summary")
+    )
+    add(ClaimKind.DESCRIPTION, description)
     add(ClaimKind.LANGUAGE, payload.get("language"))
     add(
         ClaimKind.DURATION,
@@ -560,6 +571,14 @@ def _candidate(
             ClaimScope.EDITION,
         ),
     ]
+    if description_transformed:
+        evidence.append(
+            ProviderEvidence(
+                ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION,
+                HTML_VISIBLE_TEXT_VERSION,
+                ClaimScope.WORK,
+            )
+        )
     if chapters is not None:
         evidence.append(
             ProviderEvidence(
@@ -684,18 +703,6 @@ def _series(
     if type(position) is int and not isinstance(position, bool):
         position = str(position)
     return name, position
-
-
-def _description(value: object) -> object:
-    """Return the stated plain-text description, or a value we will not project.
-
-    Audnexus publishes both a plain `description` and an HTML `summary`. Only
-    the plain one is read: rendering markup to visible text is the ebook
-    adapter's own machinery and is deliberately not duplicated here.
-    """
-    if type(value) is not str:
-        return None
-    return _UNPROJECTABLE if "<" in value or ">" in value else value
 
 
 def _duration(value: object, schema_rejections: Callable[[int], None]) -> object:

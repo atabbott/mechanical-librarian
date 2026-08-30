@@ -985,6 +985,25 @@ contract differs by provider and is not provider-wide:
   as evidence on either path. A lookup that does not name both a work and its
   recording fails closed. It acquires no cover bytes and constructs no cover
   source.
+- **iTunes Search** issues `GET` requests only, to the single fixed origin
+  `https://itunes.apple.com` on the single fixed path `/search`. The query
+  travels entirely in the `term` parameter beside a fixed `media=audiobook` and
+  a fixed result limit, so no provider or owner value ever becomes part of a URL
+  path or a host. It is keyless by design. Compression is declined; one
+  observation spends at most three attempts per request, twelve dispatches in
+  total — one work lane walking a ladder of at most three queries — and the
+  configured per-response ceiling with nine times that ceiling capped at 1 MiB
+  in aggregate, under one request timeout, one observation deadline, and the
+  shared request-start pacer. `Retry-After` is honoured on `429` and `503`;
+  `401`, `403` and `404` are typed as authentication, authorization and
+  no-match, and any other status is terminally unavailable. The store answers
+  `text/javascript` rather than `application/json`, so this adapter — and only
+  this adapter — admits that one additional media type by name; the admission is
+  a closed pair rather than a fallback, and anything outside it is still
+  malformed. A result without a collection identifier fails closed. The adapter
+  states no narrator and no running time at all, because the store publishes
+  neither, so no candidate it builds can satisfy the runtime corroboration gate.
+  It acquires no cover bytes and constructs no cover source.
 
 Every cover byte, whichever provider supplied it, passes through the same
 public-address pinning, bounded decoder child, and private artifact path.

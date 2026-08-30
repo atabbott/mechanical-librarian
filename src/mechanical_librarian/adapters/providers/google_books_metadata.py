@@ -9,7 +9,6 @@ import time
 from dataclasses import replace
 from datetime import datetime, timedelta
 from datetime import time as datetime_time
-from html.parser import HTMLParser
 from typing import Any, Callable, cast
 from zoneinfo import ZoneInfo
 
@@ -28,6 +27,12 @@ from mechanical_librarian.adapters.providers.sdk import (
     ProviderResponseFacts,
     decode_json,
     provider_bounds,
+)
+from mechanical_librarian.adapters.providers.visible_text import (
+    DESCRIPTION_OVERSIZED as _DESCRIPTION_OVERSIZED,
+)
+from mechanical_librarian.adapters.providers.visible_text import (
+    visible_description as _visible_description,
 )
 from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryPlan,
@@ -87,7 +92,6 @@ _MAX_ATTEMPTS_PER_OBSERVATION = 54
 _BURST_WINDOW_SECONDS = 100
 _PACIFIC = ZoneInfo("America/Los_Angeles")
 GOOGLE_BOOKS_HTML_VISIBLE_TEXT_VERSION = "google-books-html-visible-text-v1"
-_DESCRIPTION_OVERSIZED = object()
 _FIELDS = (
     "totalItems,items(id,volumeInfo(title,subtitle,authors,publisher,"
     "publishedDate,description,industryIdentifiers,pageCount,"
@@ -834,107 +838,6 @@ def _field(kind: ClaimKind, value: object) -> tuple[FieldState, str | None]:
             else FieldState.MALFORMED,
             None,
         )
-
-
-class _DescriptionParser(HTMLParser):
-    _BLOCKS = frozenset(
-        {"p", "div", "br", "hr", "li", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6"}
-    )
-    _REJECT = frozenset(
-        {"script", "style", "iframe", "object", "embed", "svg", "math", "template"}
-    )
-    _VOID = frozenset(
-        {
-            "area",
-            "base",
-            "br",
-            "col",
-            "embed",
-            "hr",
-            "img",
-            "input",
-            "link",
-            "meta",
-            "param",
-            "source",
-            "track",
-            "wbr",
-        }
-    )
-
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.parts: list[str] = []
-        self.safe = True
-        self.open_tags: list[str] = []
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in self._REJECT or any(
-            name.casefold().startswith("on") for name, _ in attrs
-        ):
-            self.safe = False
-        if tag in self._BLOCKS:
-            self.parts.append("\n")
-        if tag not in self._VOID:
-            self.open_tags.append(tag)
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag in self._REJECT:
-            self.safe = False
-        if not self.open_tags or self.open_tags.pop() != tag:
-            self.safe = False
-        if tag in self._BLOCKS:
-            self.parts.append("\n")
-
-    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        self.handle_starttag(tag, attrs)
-        if tag not in self._VOID:
-            self.handle_endtag(tag)
-
-    def handle_data(self, data: str) -> None:
-        self.parts.append(data)
-
-
-def _visible_description(value: object) -> object:
-    if type(value) is not str or ("<" not in value and ">" not in value):
-        return value
-    if len(value) > MAX_DESCRIPTION_CHARACTERS:
-        return _DESCRIPTION_OVERSIZED
-    position = 0
-    while (start := value.find("<", position)) >= 0:
-        quote: str | None = None
-        end = start + 1
-        while end < len(value):
-            character = value[end]
-            if quote is not None:
-                if character == quote:
-                    quote = None
-            elif character in {'"', "'"}:
-                quote = character
-            elif character == "<":
-                return None
-            elif character == ">":
-                break
-            end += 1
-        if end >= len(value) or quote is not None:
-            return None
-        position = end + 1
-    parser = _DescriptionParser()
-    try:
-        parser.feed(value)
-        parser.close()
-    except (ValueError, OverflowError):
-        return None
-    # Claims intentionally exclude control characters.  A visible bullet is a
-    # stable plain-text boundary for each source paragraph/list item.
-    rendered = " • ".join(
-        " ".join(line.split())
-        for line in "".join(parser.parts).splitlines()
-        if line.split()
-    )
-    if len(rendered) > MAX_DESCRIPTION_CHARACTERS:
-        return _DESCRIPTION_OVERSIZED
-    return rendered if parser.safe and not parser.open_tags and rendered else None
 
 
 def _text(value: object, maximum: int = MAX_SCALAR_CHARACTERS) -> str:

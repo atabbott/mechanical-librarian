@@ -316,3 +316,23 @@ def test_one_adapter_serves_one_observation() -> None:
 
     assert ProviderStatus.CANDIDATES is provider.observe(asin_plan()).status
     assert ProviderStatus.UNAVAILABLE is provider.observe(asin_plan()).status
+
+
+def test_an_html_summary_is_read_only_when_no_plain_description_is_stated() -> None:
+    """The plain field is preferred; the markup one is a fallback, not a rewrite."""
+    document = copy.deepcopy(payload("audnexus_book"))
+    del document["description"]
+    stated = document["summary"]
+    _seen, handle = _recorder(book=_json(document))
+    candidate = _provider(handle).observe(asin_plan()).candidates[0]
+    description = _claims(candidate, ClaimKind.DESCRIPTION)[0]
+
+    assert "<" in stated
+    assert description.value is not None
+    assert "<" not in description.value and ">" not in description.value
+    assert ("html-visible-text-v1",) == tuple(
+        value.value
+        for value in _evidence(
+            candidate, ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION
+        )
+    )

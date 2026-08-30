@@ -213,6 +213,14 @@ export interface ReportChapterView {
   startMilliseconds: number
   title: string | null
 }
+export interface ReportProviderEvidenceView {
+  candidate: string
+  kind: string
+  provider: string
+  role: string | null
+  state: string
+  value: string | null
+}
 export interface ReportDetailView {
   chapters: readonly ReportChapterView[]
   chaptersTruncated: boolean
@@ -223,6 +231,9 @@ export interface ReportDetailView {
   item: string
   library: string
   mediaKind: string
+  providerSources: readonly ProviderOutcomeView[]
+  providerEvidence: readonly ReportProviderEvidenceView[]
+  providerEvidenceTruncated: boolean
   reportId: string
   title: string
 }
@@ -2046,16 +2057,21 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
 export const mapReportDetail = (value: unknown): ReportDetailView => {
   if (
     !record(value) ||
-    value.schema_version !== 'review-report-detail-v1' ||
+    value.schema_version !== 'review-report-detail-v2' ||
     !record(value.embedded_cover) ||
     !Array.isArray(value.chapters) ||
-    !Array.isArray(value.evidence)
+    !Array.isArray(value.evidence) ||
+    !Array.isArray(value.provider_sources) ||
+    !Array.isArray(value.provider_evidence)
   )
     throw new ApiError(502, 'invalid_report_detail_response')
   const cover = value.embedded_cover
   if (typeof cover.present !== 'boolean' || typeof value.chapters_truncated !== 'boolean')
     throw new ApiError(502, 'invalid_report_detail_response')
-  if (typeof value.evidence_truncated !== 'boolean')
+  if (
+    typeof value.evidence_truncated !== 'boolean' ||
+    typeof value.provider_evidence_truncated !== 'boolean'
+  )
     throw new ApiError(502, 'invalid_report_detail_response')
   return {
     chapters: (value.chapters as unknown[]).map((chapter, index) => {
@@ -2085,6 +2101,19 @@ export const mapReportDetail = (value: unknown): ReportDetailView => {
     item: stringValue(value.item, 'report_item'),
     library: stringValue(value.library, 'report_library'),
     mediaKind: stringValue(value.media_kind, 'report_media_kind'),
+    providerSources: (value.provider_sources as unknown[]).map(mapProviderOutcome),
+    providerEvidence: (value.provider_evidence as unknown[]).map((claim, index) => {
+      if (!record(claim)) throw new ApiError(502, `invalid_report_provider_${String(index)}`)
+      return {
+        candidate: stringValue(claim.candidate, 'report_provider_candidate'),
+        kind: stringValue(claim.kind, 'report_provider_kind'),
+        provider: stringValue(claim.provider, 'report_provider_name'),
+        role: claim.role == null ? null : stringValue(claim.role, 'report_provider_role'),
+        state: stringValue(claim.state, 'report_provider_state'),
+        value: claim.value == null ? null : stringValue(claim.value, 'report_provider_value'),
+      }
+    }),
+    providerEvidenceTruncated: value.provider_evidence_truncated,
     reportId: stringValue(value.report_id, 'report_id'),
     title: stringValue(value.title, 'report_title'),
   }

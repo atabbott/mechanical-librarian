@@ -397,3 +397,30 @@ def test_unconfigured_provider_is_a_configuration_failure() -> None:
             scope="books",
         )
     assert "configuration" == raised.value.code
+
+
+def test_an_insufficient_input_audiobook_lane_records_no_provider_health() -> None:
+    """A provider asked something it cannot answer is not an unhealthy provider.
+
+    Audnexus resolves a product and never a search, so a plan with no ASIN lane
+    leaves it with nothing to look up. That is a fact about the item, and
+    recording it against the provider's recovery health would take a working
+    provider out of service for having been asked the wrong question.
+    """
+    observer = _Observer()
+    record_provider_recovery_observations(
+        observer,
+        _report(
+            ProviderObservation(
+                "enrichment",
+                ProviderStatus.INSUFFICIENT_INPUT,
+                authority="audnexus",
+            )
+        ),
+        adapters={"enrichment": "audnexus"},
+        scope="audiobooks",
+        generation=4,
+        now=7,
+    )
+
+    assert [] == observer.calls

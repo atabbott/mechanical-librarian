@@ -80,6 +80,18 @@ from mechanical_librarian.adapters.private_recovery import (
     PrivateCoverRecoveryStore,
     require_private_directory,
 )
+from mechanical_librarian.adapters.providers.audible_catalog_metadata import (
+    AudibleCatalogMetadataProvider,
+    AudibleCatalogPacer,
+)
+from mechanical_librarian.adapters.providers.audiosilo_metadata import (
+    AudioSiloMetadataProvider,
+    AudioSiloPacer,
+)
+from mechanical_librarian.adapters.providers.audnexus_metadata import (
+    AudnexusMetadataProvider,
+    AudnexusPacer,
+)
 from mechanical_librarian.adapters.providers.google_books_metadata import (
     GoogleBooksMetadataProvider,
     GoogleBooksPacer,
@@ -87,6 +99,10 @@ from mechanical_librarian.adapters.providers.google_books_metadata import (
 from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HardcoverMetadataProvider,
     HardcoverPacer,
+)
+from mechanical_librarian.adapters.providers.itunes_search_metadata import (
+    ITunesSearchMetadataProvider,
+    ITunesSearchPacer,
 )
 from mechanical_librarian.adapters.providers.open_library_metadata import (
     OpenLibraryMetadataProvider,
@@ -283,9 +299,13 @@ from mechanical_librarian.infrastructure.local_media import (
     sha256_descriptor,
 )
 from mechanical_librarian.infrastructure.security.credentials import (
+    audible_catalog_client,
+    audiosilo_client,
+    audnexus_client,
     google_books_client,
     hardcover_client,
     hardcover_client_token,
+    itunes_search_client,
     open_library_client,
     read_secret,
     target_client,
@@ -1432,6 +1452,28 @@ class _NonClosingRepository:
         return None
 
 
+def _audiobook_marketplaces(
+    providers: Sequence[ProviderConnectionConfiguration],
+) -> tuple[str, ...]:
+    """Read the one marketplace order every ASIN lookup in this build walks.
+
+    `marketplaces` is configurable on the enabled Audible catalog and on
+    nothing else, but an ASIN is marketplace-scoped for Audnexus in exactly the
+    same way and it has no configuration surface of its own. Both read the
+    owner's one stated order here rather than each inventing a default.
+    """
+    return next(
+        (
+            value.marketplaces
+            for value in providers
+            if value.adapter == "audible_catalog"
+            and value.enabled
+            and value.marketplaces
+        ),
+        ("us",),
+    )
+
+
 def run_metadata_report_loaded(
     configuration: ApplicationConfiguration,
     database_path: Path,
@@ -1447,6 +1489,10 @@ def run_metadata_report_loaded(
     google_books_pacer: GoogleBooksPacer | None = None,
     open_library_pacer: OpenLibraryPacer | None = None,
     hardcover_pacer: HardcoverPacer | None = None,
+    audible_catalog_pacer: AudibleCatalogPacer | None = None,
+    audnexus_pacer: AudnexusPacer | None = None,
+    audiosilo_pacer: AudioSiloPacer | None = None,
+    itunes_search_pacer: ITunesSearchPacer | None = None,
     review_action: PipelineAction | None = None,
     recover_artifacts: bool = True,
     repository_authority: object | None = None,
@@ -1498,6 +1544,27 @@ def run_metadata_report_loaded(
         for provider in provider_configs
     ):
         hardcover_pacer = HardcoverPacer()
+    if audible_catalog_pacer is None and any(
+        provider.enabled and provider.adapter == "audible_catalog"
+        for provider in provider_configs
+    ):
+        audible_catalog_pacer = AudibleCatalogPacer()
+    if audnexus_pacer is None and any(
+        provider.enabled and provider.adapter == "audnexus"
+        for provider in provider_configs
+    ):
+        audnexus_pacer = AudnexusPacer()
+    if audiosilo_pacer is None and any(
+        provider.enabled and provider.adapter == "audiosilo"
+        for provider in provider_configs
+    ):
+        audiosilo_pacer = AudioSiloPacer()
+    if itunes_search_pacer is None and any(
+        provider.enabled and provider.adapter == "itunes_search"
+        for provider in provider_configs
+    ):
+        itunes_search_pacer = ITunesSearchPacer()
+    marketplaces = _audiobook_marketplaces(provider_configs)
     bindings: list[ProviderBinding] = []
     for provider in provider_configs:
 
@@ -1550,6 +1617,40 @@ def run_metadata_report_loaded(
                     configuration.limits.provider_response_bytes,
                     configuration.limits.timeout_seconds,
                     pacer=open_library_pacer,
+                )
+            elif value.adapter == "audible_catalog":
+                instance = AudibleCatalogMetadataProvider(
+                    value.name,
+                    audible_catalog_client(configuration.limits.timeout_seconds),
+                    configuration.limits.provider_response_bytes,
+                    configuration.limits.timeout_seconds,
+                    marketplaces=marketplaces,
+                    pacer=audible_catalog_pacer,
+                )
+            elif value.adapter == "audnexus":
+                instance = AudnexusMetadataProvider(
+                    value.name,
+                    audnexus_client(configuration.limits.timeout_seconds),
+                    configuration.limits.provider_response_bytes,
+                    configuration.limits.timeout_seconds,
+                    marketplaces=marketplaces,
+                    pacer=audnexus_pacer,
+                )
+            elif value.adapter == "audiosilo":
+                instance = AudioSiloMetadataProvider(
+                    value.name,
+                    audiosilo_client(configuration.limits.timeout_seconds),
+                    configuration.limits.provider_response_bytes,
+                    configuration.limits.timeout_seconds,
+                    pacer=audiosilo_pacer,
+                )
+            elif value.adapter == "itunes_search":
+                instance = ITunesSearchMetadataProvider(
+                    value.name,
+                    itunes_search_client(configuration.limits.timeout_seconds),
+                    configuration.limits.provider_response_bytes,
+                    configuration.limits.timeout_seconds,
+                    pacer=itunes_search_pacer,
                 )
             else:
                 raise MetadataReportError("provider configuration is invalid")
@@ -1605,9 +1706,7 @@ def run_metadata_report_loaded(
                 # the work ends terminally here, in the same transaction that
                 # published the report, rather than queueing stages that have
                 # no provider comparison to work from.
-                "local_evidence_only"
-                if report.file.format in AUDIO_FILE_FORMATS
-                else None,
+                "evidence_only" if report.file.format in AUDIO_FILE_FORMATS else None,
                 review_claim_next,
                 None,
             )
@@ -1824,6 +1923,38 @@ def create_review_pipeline(
         )
         else None
     )
+    audible_catalog_pacer = (
+        AudibleCatalogPacer()
+        if any(
+            provider.enabled and provider.adapter == "audible_catalog"
+            for provider in configuration.providers
+        )
+        else None
+    )
+    audnexus_pacer = (
+        AudnexusPacer()
+        if any(
+            provider.enabled and provider.adapter == "audnexus"
+            for provider in configuration.providers
+        )
+        else None
+    )
+    audiosilo_pacer = (
+        AudioSiloPacer()
+        if any(
+            provider.enabled and provider.adapter == "audiosilo"
+            for provider in configuration.providers
+        )
+        else None
+    )
+    itunes_search_pacer = (
+        ITunesSearchPacer()
+        if any(
+            provider.enabled and provider.adapter == "itunes_search"
+            for provider in configuration.providers
+        )
+        else None
+    )
     discovery_lock = threading.Lock()
     if provider_recovery is None:
         raise ConfigurationError("provider recovery store is unavailable")
@@ -1917,6 +2048,45 @@ def create_review_pipeline(
                     configuration.limits.provider_response_bytes,
                     configuration.limits.timeout_seconds,
                     pacer=open_library_pacer,
+                )
+            # The four audiobook adapters are keyless, so a retry constructs one
+            # from the same configuration the foreground did. The marketplace
+            # order is read from `configured` -- the provider set this retry was
+            # resolved against -- so a retry never walks an order the report it
+            # is succeeding did not.
+            if value.adapter == "audible_catalog":
+                return AudibleCatalogMetadataProvider(
+                    value.name,
+                    audible_catalog_client(configuration.limits.timeout_seconds),
+                    configuration.limits.provider_response_bytes,
+                    configuration.limits.timeout_seconds,
+                    marketplaces=_audiobook_marketplaces(configured),
+                    pacer=audible_catalog_pacer,
+                )
+            if value.adapter == "audnexus":
+                return AudnexusMetadataProvider(
+                    value.name,
+                    audnexus_client(configuration.limits.timeout_seconds),
+                    configuration.limits.provider_response_bytes,
+                    configuration.limits.timeout_seconds,
+                    marketplaces=_audiobook_marketplaces(configured),
+                    pacer=audnexus_pacer,
+                )
+            if value.adapter == "audiosilo":
+                return AudioSiloMetadataProvider(
+                    value.name,
+                    audiosilo_client(configuration.limits.timeout_seconds),
+                    configuration.limits.provider_response_bytes,
+                    configuration.limits.timeout_seconds,
+                    pacer=audiosilo_pacer,
+                )
+            if value.adapter == "itunes_search":
+                return ITunesSearchMetadataProvider(
+                    value.name,
+                    itunes_search_client(configuration.limits.timeout_seconds),
+                    configuration.limits.provider_response_bytes,
+                    configuration.limits.timeout_seconds,
+                    pacer=itunes_search_pacer,
                 )
             raise ProviderRetrySuccessorError("provider retry configuration changed")
 
@@ -2024,6 +2194,10 @@ def create_review_pipeline(
             google_books_pacer=google_books_pacer,
             open_library_pacer=open_library_pacer,
             hardcover_pacer=hardcover_pacer,
+            audible_catalog_pacer=audible_catalog_pacer,
+            audnexus_pacer=audnexus_pacer,
+            audiosilo_pacer=audiosilo_pacer,
+            itunes_search_pacer=itunes_search_pacer,
             review_action=action,
             recover_artifacts=False,
             repository_authority=database_authority,
@@ -2417,6 +2591,14 @@ def run_batch(
         OpenLibraryPacer() if "open_library" in actual_adapters else None
     )
     hardcover_pacer = HardcoverPacer() if "hardcover" in actual_adapters else None
+    audible_catalog_pacer = (
+        AudibleCatalogPacer() if "audible_catalog" in actual_adapters else None
+    )
+    audnexus_pacer = AudnexusPacer() if "audnexus" in actual_adapters else None
+    audiosilo_pacer = AudioSiloPacer() if "audiosilo" in actual_adapters else None
+    itunes_search_pacer = (
+        ITunesSearchPacer() if "itunes_search" in actual_adapters else None
+    )
 
     def current_entry(
         generation: int, fingerprint: str, key: tuple[str, str, str, str]
@@ -2443,6 +2625,10 @@ def run_batch(
             google_books_pacer=google_books_pacer,
             open_library_pacer=open_library_pacer,
             hardcover_pacer=hardcover_pacer,
+            audible_catalog_pacer=audible_catalog_pacer,
+            audnexus_pacer=audnexus_pacer,
+            audiosilo_pacer=audiosilo_pacer,
+            itunes_search_pacer=itunes_search_pacer,
         )
         from mechanical_librarian.domain.metadata_report import MetadataReport
 

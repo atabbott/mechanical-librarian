@@ -165,10 +165,13 @@ chapters, and whether the file carries embedded cover art — each attributed to
 the surface it was read from: an embedded tag, a sidecar document beside the
 file, or the exported file and folder names. Chapters are a bounded structured
 section rather than claims, and the embedded cover is a presence fact that
-grants no cover authority. No provider is contacted for such a report: review
-preparation ends terminally with `local_evidence_only` in the same transaction
-that publishes it, and that transaction records the item's review package, so
-the work is browsed and searched by its evidence rather than by a failure. That
+grants no cover authority. Every configured audiobook provider is contacted
+while the report is built, and its observations are retained beside the local
+evidence; what an audiobook does not reach is a proposal, because nothing
+writes to one. Review preparation ends terminally with `evidence_only` in the
+same transaction that publishes it, and that transaction records the item's
+review package, so the work is browsed and searched by its evidence rather than
+by a failure. That
 package row is also the address of the report: the library row links to a
 read-only detail view of the recorded evidence, which is the only way to read
 it for a work that has no review case. The code raises no operational incident,

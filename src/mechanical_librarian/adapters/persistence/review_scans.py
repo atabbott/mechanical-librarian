@@ -53,9 +53,7 @@ from mechanical_librarian.domain.validation import (
 # not because anything went wrong with it.  It stays in `checked` -- it was
 # checked -- and appears in no count that asks an owner to unblock something.
 # `IS NOT` rather than `!=` so a row with no failure code still counts.
-_BLOCKED_SQL = (
-    "w.state IN ('failed','stale') AND w.failure_code IS NOT 'local_evidence_only'"
-)
+_BLOCKED_SQL = "w.state IN ('failed','stale') AND w.failure_code IS NOT 'evidence_only'"
 
 
 # A terminal state is tested before a stage, because `stage` on a failed row is
@@ -79,7 +77,7 @@ _STAGE_BUCKETS = (
     (
         "ready",
         "(w.state='complete' "
-        "OR (w.state='failed' AND w.failure_code IS 'local_evidence_only'))",
+        "OR (w.state='failed' AND w.failure_code IS 'evidence_only'))",
     ),
     ("failed", _BLOCKED_SQL),
 )

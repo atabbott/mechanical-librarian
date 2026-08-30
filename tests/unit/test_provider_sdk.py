@@ -70,6 +70,7 @@ def _session(
     clocks: ProviderClocks | None = None,
     pacer: ProviderRequestPacer | None = None,
     ledger: _DiscoveryRequestLedger | None = None,
+    accept_content_types: tuple[str, ...] = ("application/json",),
 ) -> BoundedProviderSession:
     return BoundedProviderSession(
         "provider",
@@ -78,6 +79,7 @@ def _session(
         _DiscoveryRequestLedger("provider", "v1") if ledger is None else ledger,
         pacer=pacer,
         clocks=clocks,
+        accept_content_types=accept_content_types,
     )
 
 
@@ -415,6 +417,63 @@ def test_only_strict_json_objects_are_returned(response: httpx.Response) -> None
     with pytest.raises(ProviderFailure) as failure:
         _request(session)
     assert ProviderStatus.MALFORMED == failure.value.status
+
+
+def test_an_admitted_content_type_is_the_only_widening() -> None:
+    """A widened set admits exactly its members and nothing adjacent to them."""
+    widened = ("application/json", "text/javascript")
+    accepted = _session(
+        lambda _: httpx.Response(
+            200,
+            headers={"content-type": "text/javascript; charset=utf-8"},
+            content=b'{"resultCount": 0}',
+        ),
+        clocks=_quiet_clocks(),
+        accept_content_types=widened,
+    )
+    assert {"resultCount": 0} == _request(accepted)
+    refused = _session(
+        lambda _: httpx.Response(
+            200,
+            headers={"content-type": "text/html"},
+            content=b"{}",
+        ),
+        clocks=_quiet_clocks(sleep=lambda _: pytest.fail("malformed must not retry")),
+        accept_content_types=widened,
+    )
+    with pytest.raises(ProviderFailure) as failure:
+        _request(refused)
+    assert ProviderStatus.MALFORMED == failure.value.status
+
+
+def test_a_widened_session_still_refuses_what_the_default_refuses() -> None:
+    """The default set is unchanged, so an unwidened caller sees no new type."""
+    session = _session(
+        lambda _: httpx.Response(
+            200,
+            headers={"content-type": "text/javascript"},
+            content=b"{}",
+        ),
+        clocks=_quiet_clocks(sleep=lambda _: pytest.fail("malformed must not retry")),
+    )
+    with pytest.raises(ProviderFailure) as failure:
+        _request(session)
+    assert ProviderStatus.MALFORMED == failure.value.status
+
+
+@pytest.mark.parametrize(
+    "accept_content_types",
+    ((), "application/json", ("Application/JSON",), (" application/json",), (None,)),
+    ids=("empty", "bare_string", "cased", "padded", "not_text"),
+)
+def test_a_content_type_set_outside_its_shape_is_refused(
+    accept_content_types: object,
+) -> None:
+    with pytest.raises(ValueError):
+        _session(
+            lambda _: _json({}),
+            accept_content_types=accept_content_types,  # type: ignore[arg-type]  # reason: the refusal under test is exactly a caller supplying the wrong shape.
+        )
 
 
 def test_non_identity_encoding_is_malformed_however_it_is_delivered() -> None:

@@ -220,7 +220,7 @@ def _publish_audiobook(repository: Any) -> None:
         lambda: True,
         None,
         lambda value, published: value.complete_review_extraction_publication(
-            extraction, published.report_id, 14, 0, "local_evidence_only"
+            extraction, published.report_id, 14, 0, "evidence_only"
         ),
     )
 

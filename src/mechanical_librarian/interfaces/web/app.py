@@ -661,6 +661,15 @@ class _ReportEvidence(_ClosedModel):
     value: str = Field(max_length=1024)
 
 
+class _ReportProviderEvidence(_ClosedModel):
+    candidate: str = Field(max_length=128)
+    kind: str = Field(max_length=64)
+    provider: str = Field(max_length=128)
+    role: str | None = Field(default=None, max_length=64)
+    state: str = Field(max_length=32)
+    value: str | None = Field(default=None, max_length=16_384)
+
+
 class _ReportDetailResponse(_ClosedModel):
     chapters: list[_ReportChapter] = Field(max_length=1024)
     chapters_truncated: bool
@@ -674,8 +683,14 @@ class _ReportDetailResponse(_ClosedModel):
     item: str = Field(max_length=512)
     library: str = Field(max_length=512)
     media_kind: str = Field(max_length=32)
+    # The two provider surfaces: what every configured provider was asked and
+    # how it ended, and what the admitted candidates stated. Both are bounded
+    # exactly as the local evidence above is.
+    provider_sources: list[_ProviderOutcome] = Field(max_length=1024)
+    provider_evidence: list[_ReportProviderEvidence] = Field(max_length=1024)
+    provider_evidence_truncated: bool
     report_id: str = Field(max_length=128)
-    schema_version: Literal["review-report-detail-v1"]
+    schema_version: Literal["review-report-detail-v2"]
     title: str = Field(max_length=1024)
 
 
@@ -1235,7 +1250,7 @@ class _OperationalIncident(_ClosedModel):
             "missing_required_input",
             "malformed_retained_data",
             "internal_failure",
-            "local_evidence_only",
+            "evidence_only",
             "unknown",
         ]
         | None

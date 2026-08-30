@@ -2501,7 +2501,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                 // is still a failure the owner has to see.
                 const recorded =
                   evidence &&
-                  (work.preparation === null || work.preparation.status === 'local_evidence_only')
+                  (work.preparation === null || work.preparation.status === 'evidence_only')
                 const status = recorded
                   ? 'Recorded evidence available'
                   : work.preparation

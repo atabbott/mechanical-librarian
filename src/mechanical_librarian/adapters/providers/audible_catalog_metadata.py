@@ -33,6 +33,10 @@ from mechanical_librarian.adapters.providers.sdk import (
     ProviderResponseFacts,
     provider_bounds,
 )
+from mechanical_librarian.adapters.providers.visible_text import (
+    HTML_VISIBLE_TEXT_VERSION,
+    projected_description,
+)
 from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryLane,
     MetadataDiscoveryPlan,
@@ -637,12 +641,10 @@ def _candidate(
     series, sequence = _series(product.get("series"), schema_rejections)
     add(ClaimKind.SERIES, series)
     add(ClaimKind.SERIES_SEQUENCE, sequence)
-    add(
-        ClaimKind.DESCRIPTION,
-        _description(
-            product.get("short_description"), product.get("publisher_summary")
-        ),
+    description, description_transformed = projected_description(
+        product.get("short_description"), product.get("publisher_summary")
     )
+    add(ClaimKind.DESCRIPTION, description)
     add(ClaimKind.LANGUAGE, product.get("language"))
     add(
         ClaimKind.DURATION,
@@ -663,6 +665,14 @@ def _candidate(
             ClaimScope.EDITION,
         ),
     ]
+    if description_transformed:
+        evidence.append(
+            ProviderEvidence(
+                ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION,
+                HTML_VISIBLE_TEXT_VERSION,
+                ClaimScope.WORK,
+            )
+        )
     return finalize_candidate_comparisons(
         ProviderCandidate(
             identity,
@@ -749,21 +759,6 @@ def _series(
             sequence = str(sequence)
         return title, sequence
     return None, None
-
-
-def _description(*values: object) -> object:
-    """Return the first plain-text description a product states.
-
-    Audible's long summaries are HTML.  Rendering markup to visible text is the
-    ebook adapter's own machinery and is deliberately not duplicated here, so a
-    markup-bearing summary is reported as a value this adapter cannot project
-    rather than as an absence the provider never stated.
-    """
-    for value in values:
-        if type(value) is not str:
-            continue
-        return _UNPROJECTABLE if "<" in value or ">" in value else value
-    return None
 
 
 def _duration(value: object, schema_rejections: Callable[[int], None]) -> object:

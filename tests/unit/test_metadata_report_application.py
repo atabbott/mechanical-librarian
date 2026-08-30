@@ -25,6 +25,7 @@ from mechanical_librarian.application.metadata_report import (
     CurrentnessError,
     GenerateMetadataReport,
     InspectionResult,
+    MetadataDiscoveryPlan,
     MetadataReportError,
     ProviderBinding,
     ReportRepository,
@@ -64,6 +65,7 @@ from mechanical_librarian.domain.metadata_report import (
     LocalClaim,
     MetadataReport,
     ProviderObservation,
+    ProviderQueryKind,
     ProviderStatus,
     TargetDestination,
     TargetFacts,
@@ -1018,14 +1020,34 @@ def _audiobook_service(
     activity: list[str] | None = None,
     limits: ReportLimits | None = None,
     inspector: FakeInspector | None = None,
+    plans: list[MetadataDiscoveryPlan] | None = None,
 ) -> GenerateMetadataReport:
+    recorded_plans: list[MetadataDiscoveryPlan] = [] if plans is None else plans
     recorded = [] if activity is None else activity
+
+    class _RecordingProvider:
+        """Record the plan the audiobook path builds, and match nothing."""
+
+        def observe(self, plan, *, deadline=None):
+            recorded.append("provider")
+            recorded_plans.append(plan)
+            return ProviderObservation(
+                "catalogue",
+                ProviderStatus.NO_MATCH,
+                query_kind=(
+                    plan.lanes[0].kind if plan.lanes else ProviderQueryKind.NONE
+                ),
+                authority="audible_catalog",
+            )
+
     return GenerateMetadataReport(
         target=target,
         inspector=inspector or FakeInspector(InspectionResult("c" * 64, ())),
         repository_factory=lambda: cast(ReportRepository, repository),
         providers=(
-            ProviderBinding("catalogue", True, lambda: recorded.append("provider")),  # type: ignore[return-value]  # reason: a sentinel factory the audiobook path must never invoke, so it never has to yield a provider.
+            ProviderBinding(
+                "catalogue", True, _RecordingProvider, authority="audible_catalog"
+            ),
         ),
         connection=TargetConnectionConfiguration(
             "primary", "https://example.invalid", "/private/target"
@@ -1039,7 +1061,7 @@ def _audiobook_service(
     )
 
 
-def test_audiobook_publishes_local_evidence_and_dispatches_no_provider() -> None:
+def test_audiobook_publishes_local_evidence_and_dispatches_its_asin_plan() -> None:
     selected = TargetFile("a" * 64, "book.m4b", "m4b")
     target = FakeTarget(
         [
@@ -1069,16 +1091,21 @@ def test_audiobook_publishes_local_evidence_and_dispatches_no_provider() -> None
     )
     repository = FakeReportRepository()
     activity: list[str] = []
+    plans: list[MetadataDiscoveryPlan] = []
 
     published = MetadataReport.from_json(
-        _audiobook_service(target, repository, audio_inspector, activity=activity).run(
-            "item-1", 0
-        )
+        _audiobook_service(
+            target, repository, audio_inspector, activity=activity, plans=plans
+        ).run("item-1", 0)
     )
 
-    assert activity == []
+    # Activation: the audiobook path builds its own ASIN plan from the local
+    # claims and runs it through the same provider loop an ebook does.
+    assert activity == ["provider"]
+    assert [lane.kind for lane in plans[0].lanes] == [ProviderQueryKind.ASIN]
+    assert [lane.canonical_asin for lane in plans[0].lanes] == ["B0CW1KL2QD"]
     assert audio_inspector.inspections == 1
-    assert published.providers == ()
+    assert [value.status for value in published.providers] == [ProviderStatus.NO_MATCH]
     assert published.cover_sources == ()
     assert published.file.format == "m4b"
     assert published.audio is not None
