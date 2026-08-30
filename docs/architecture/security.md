@@ -60,11 +60,14 @@ not upgrade authority. It reads only one exact owner-only retained clone,
 rejects sidecars, path replacement, unknown schemas, malformed canonical
 evidence, changed target builds, and unverified backups, then publishes a
 fresh exact-current output through an owner-only temporary inode and atomic
-directory entry. Backup and published-output inode identities remain frozen
-through the final read-back. That read-back verifies exact report rows, cover
-references, current pointers, report-only packages, and remaining downstream
-state tables against the exact freshly seeded baseline. The source is never
-writable. Current derivation reconstructs reports;
+directory entry. Retained local status and complete cover records are validated
+against their claims before selective invalidation can discard dependent state.
+Backup and published-output inode identities remain frozen through the final
+read-back; close or directory-entry cleanup failures require explicit recovery.
+That read-back verifies exact report rows, cover references, current pointers,
+report-only packages, and remaining downstream state tables against the exact
+freshly seeded baseline. The source is never writable. Current derivation
+reconstructs reports;
 observations missing mandatory work-dispatch lineage, dependent covers,
 artifact-bearing references, and every downstream decision or projection are
 invalidated. The bridge accepts no artifact path and has no configuration,
