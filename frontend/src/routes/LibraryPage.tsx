@@ -1323,18 +1323,18 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       }
       const currentLocation = router.state.location
       const currentSearch = currentLocation.search as LibrarySearch
-      const currentRun = preparationState.queryClient.getQueryData<PreparationView>([
-        'review-preparation',
-      ])?.presentation?.run_id
       if (
         !mounted.current ||
         routeNavigationGeneration.current !== request.navigationGeneration ||
         (currentLocation.state.__TSR_key ?? currentLocation.state.key ?? currentLocation.href) !==
           request.locationRevision ||
         librarySearchIdentity(currentSearch) !== request.searchIdentity ||
-        currentRun !== request.runId
-      )
+        currentSearch.preparation !== request.runId
+      ) {
+        if (dismissalCleanupSuppression.current === request)
+          dismissalCleanupSuppression.current = null
         return
+      }
       await navigate({
         replace: true,
         search: (current) => {
@@ -1344,6 +1344,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
           return next
         },
       })
+      if (dismissalCleanupSuppression.current === request)
+        dismissalCleanupSuppression.current = null
     },
   })
   const pendingSearchQuery = useRef<string | null>(null)

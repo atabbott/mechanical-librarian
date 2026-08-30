@@ -409,12 +409,15 @@ describe('Library route', () => {
       expect(screen.getByRole('button', { name: /Preparing your library/u })).toBeVisible()
       expect(screen.queryByText(/Reconnecting/u)).toBeNull()
       expect(document.querySelector('.reported-change')).toBeNull()
-      expect(router.state.location.search).toEqual({
-        lens: 'all',
-        preview: 'case-1',
-        field: 'title',
-        preparation: runId,
-      })
+      await waitFor(() =>
+        expect(router.state.location.search).toEqual({
+          lens: 'all',
+          preview: 'case-1',
+          field: 'title',
+        }),
+      )
+      const workHeading = await screen.findByRole('heading', { name: 'A Book' })
+      await waitFor(() => expect(workHeading.closest('[data-route-focus]')).toHaveFocus())
       expect(http.dismissPreparation).toHaveBeenCalledTimes(1)
       expect(http.getPreparation).toHaveBeenCalledTimes(3)
       expect(invalidateQueries).not.toHaveBeenCalled()
