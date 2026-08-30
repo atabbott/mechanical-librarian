@@ -115,10 +115,13 @@ qualification.
 - Nothing here dispatches an audiobook provider, computes a perceptual hash, or
   attaches a corroboration signal to a decision. The vocabularies exist so the
   adapter and activation packets have somewhere true to put their results.
-- `ProviderClaim` still validates an ASIN claim against the `B0` shape. An
-  audiobook adapter that states an ISBN-10-shaped ASIN as a claim will be
-  refused, and relaxing that touches the proposal path and the ASIN write
-  destination, which this record does not grant.
+- Report-layer ASIN claims accept ISBN-10-shaped ASINs. `ProviderClaim`
+  validates against the same `canonical_asin` grammar the ASIN lane is built
+  from, per clause 1 and ADR-0061 clause 4, so one identifier family has one
+  grammar rather than two that disagree. The proposal path's write-destination
+  eligibility and the shadow-review linkage guard remain `B0`-shaped: relaxing
+  those grants an ASIN write destination this record does not, and that part
+  stays deferred.
 - Audiobook cover acquisition stays ungranted: the four adapters carry no
   cover surface in `config-v7` at all.
 

@@ -938,6 +938,53 @@ contract differs by provider and is not provider-wide:
   against public HTTPS port 443 before use, as recorded under credentials and
   egress above. No redirect is ever followed by an HTTP client automatically;
   the cover transport resolves and re-checks each hop itself.
+- **Audible catalog** issues `GET` requests only, to the ten fixed origins of a
+  closed marketplace-code-to-host mapping held in the adapter —
+  `api.audible.com`, `.co.uk`, `.de`, `.fr`, `.com.au`, `.in`, `.ca`, `.co.jp`,
+  `.it`, `.es`. Every URL is built from that mapping, so a configured code that
+  is not a key in it is refused at construction and no provider value ever
+  becomes part of a host. It is keyless by design: no credential surface exists
+  for it in the configuration schema or the client. Compression is declined, one
+  observation spends at most three attempts per request, twenty-four dispatches
+  in total, the configured per-response ceiling and nine times that ceiling
+  capped at 1 MiB in aggregate, under one request timeout and one observation
+  deadline, behind the adapter's shared request-start pacer. `Retry-After` is
+  honoured on `429` and `503`, bounded to one minute; `401`, `403` and `404` are
+  typed as authentication, authorization and no-match, and any other status is
+  terminally unavailable rather than a no-match. Responses must be
+  `application/json`; a product without a canonical ASIN fails closed, and every
+  other field is tolerated as optional. It acquires no cover bytes and
+  constructs no cover source.
+- **Audnexus** issues `GET` requests only, to the single fixed origin
+  `https://api.audnex.us`, on the two paths `/books/{asin}` and
+  `/books/{asin}/chapters` built from a canonical ASIN, with the marketplace
+  region carried as a query parameter drawn from the same closed code set. It is
+  keyless by design. Compression is declined; one observation spends at most
+  three attempts per request, twenty dispatches in total, and the configured
+  per-response ceiling with nine times that ceiling capped at 1 MiB in
+  aggregate, under one request timeout, one observation deadline, and the shared
+  request-start pacer. `Retry-After` is honoured on `429` and `503`; a `404`
+  carrying the provider's `REGION_UNAVAILABLE` code advances the region walk and
+  never becomes a service failure, while `401` and `403` end it. Responses must
+  be `application/json`; a book without a canonical ASIN fails closed, and a
+  chapter document that cannot be read removes one evidence value rather than
+  the candidate. It acquires no cover bytes and constructs no cover source.
+- **AudioSilo** issues `GET` requests only, to the single fixed origin
+  `https://meta.audiosilo.app` under the fixed base path `/api/v1`. Work and
+  recording identifiers are matched against a closed identifier shape before any
+  URL is built, so a hostile identifier cannot traverse out of that base path.
+  It is keyless by design. Compression is declined; one observation spends at
+  most three attempts per request, eighteen dispatches in total — a lookup, a
+  work read, and at most one chapter read per identifier — and the configured
+  per-response ceiling with nine times that ceiling capped at 1 MiB in
+  aggregate, under one request timeout, one observation deadline, and the shared
+  request-start pacer. `Retry-After` is honoured on `429` and `503`. The service
+  answers an unknown API path with an HTML single-page document rather than a
+  structured error: a `404` is classified from its status alone, and an HTML
+  `200` fails the strict `application/json` check, so no HTML body is ever read
+  as evidence on either path. A lookup that does not name both a work and its
+  recording fails closed. It acquires no cover bytes and constructs no cover
+  source.
 
 Every cover byte, whichever provider supplied it, passes through the same
 public-address pinning, bounded decoder child, and private artifact path.

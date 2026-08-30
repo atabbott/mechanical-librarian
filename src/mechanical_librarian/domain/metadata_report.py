@@ -108,7 +108,6 @@ MAX_DESCRIPTION_CHARACTERS = 16_384
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _REPORT_ID = re.compile(r"^report_[0-9a-f]{64}$")
 _REFERENCE = re.compile(r"^(?:local|provider)_[0-9a-f]{64}$")
-_ASIN = re.compile(r"^B[0-9A-Z]{9}$")
 _EXPLICIT_TIMESTAMP_OFFSET = re.compile(r"(?:Z|[+-]\d{2}:\d{2})$")
 _LANE_IDENTITY = re.compile(r"^lane_[0-9a-f]{64}$")
 _LANE_CANDIDATE_REFERENCE = re.compile(r"^lane_candidate_[0-9a-f]{64}$")
@@ -1370,7 +1369,11 @@ class ProviderClaim:
         if (
             self.kind is ClaimKind.ASIN
             and self.value is not None
-            and _ASIN.fullmatch(self.value) is None
+            # One grammar for the whole identifier family: the same canonical
+            # form the ASIN discovery lane is built from. ADR-0061 clause 4
+            # admits ISBN-10-shaped ASINs, so a `B0` filter here would refuse
+            # 17 of the reference library's 103 genuine identifiers.
+            and canonical_asin(self.value) != self.value
         ):
             raise ReportValueError("provider ASIN claim is invalid")
         is_date = self.kind is ClaimKind.PUBLICATION_DATE
