@@ -69,9 +69,7 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover() ->
         ("primary", "history", "library-2"),
         ("primary", "existing", "library-3"),
     )
-    preparation.progress.side_effect = lambda _connection, library: (
-        object() if library == "existing" else None
-    )
+    preparation.progress.return_value = SimpleNamespace(state="completed")
     admission_events: list[str] = []
     preparation.request_library_addition.side_effect = lambda _connection, library: (
         admission_events.append(f"request:{library}")
@@ -127,6 +125,10 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover() ->
             Path("catalogue.sqlite3"),
             Path("artifacts"),
             repository_authority=object(),
+            library_additions=(
+                ("primary", "fiction"),
+                ("primary", "history"),
+            ),
         )
 
     assert create_pipeline.call_args.args[4] is reviewer_access
@@ -146,12 +148,13 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover() ->
         call("primary", "history"),
     ]
     preparation.request.assert_not_called()
-    assert preparation.progress.call_args_list == [
+    preparation.progress.assert_not_called()
+    assert admission_events == ["request:fiction", "request:history", "admit"]
+    runtime.admit()
+    assert preparation.request_library_addition.call_args_list == [
         call("primary", "fiction"),
         call("primary", "history"),
-        call("primary", "existing"),
     ]
-    assert admission_events == ["request:fiction", "request:history", "admit"]
     runtime.close()
     review_application.stop.assert_called_once_with()
 
@@ -238,13 +241,24 @@ def test_setup_runtime_reserves_codex_lease_until_admission() -> None:
 def test_store_runtime_activation_reuses_outer_control_authority_for_successors() -> (
     None
 ):
+    retained = SimpleNamespace(connection="primary", name="retained")
+    added = SimpleNamespace(connection="primary", name="added")
     snapshot: tuple[SettingsView, dict[str, str], str] = (
-        cast(SettingsView, object()),
+        cast(
+            SettingsView,
+            SimpleNamespace(document=SimpleNamespace(libraries=(retained, added))),
+        ),
         {},
         "verifier",
     )
     authority = object()
-    settings = SimpleNamespace(activation_snapshot=lambda *_values: snapshot)
+    predecessor = cast(
+        SettingsView,
+        SimpleNamespace(document=SimpleNamespace(libraries=(retained,))),
+    )
+    settings = SimpleNamespace(
+        read=lambda: predecessor, activation_snapshot=lambda *_values: snapshot
+    )
     activation = composition._StoreRuntimeActivation(
         ReviewBootstrap(
             schema_version="review-bootstrap-v1",
@@ -268,9 +282,81 @@ def test_store_runtime_activation_reuses_outer_control_authority_for_successors(
         with patch.object(activation, "_activate") as apply:
             activation.activate_setup(snapshot, lambda: None)
     assert compose.call_args_list[0].kwargs["repository_authority"] is authority
+    assert compose.call_args_list[0].kwargs["library_additions"] == (
+        ("primary", "added"),
+    )
     assert compose.call_args_list[1].kwargs["repository_authority"] is authority
     assert compose.call_args_list[1].kwargs["first_boot"] is True
     apply.assert_called_once()
+
+
+def test_settings_activation_admits_only_committed_scope_additions_once() -> None:
+    readded = SimpleNamespace(connection="primary", name="fiction")
+    predecessor = cast(
+        SettingsView, SimpleNamespace(document=SimpleNamespace(libraries=()))
+    )
+    successor = cast(
+        SettingsView,
+        SimpleNamespace(document=SimpleNamespace(libraries=(readded,))),
+    )
+    current = [predecessor]
+    settings = SimpleNamespace(
+        read=lambda: current[0],
+        activation_snapshot=lambda *_values: (successor, {}, "verifier"),
+    )
+    activation = composition._StoreRuntimeActivation(
+        ReviewBootstrap(
+            schema_version="review-bootstrap-v1",
+            canonical_origin="https://library.invalid",
+            tls_certificate_file="certificate",
+            tls_private_key_file="private-key",
+        ),
+        Path("application.sqlite3"),
+        Path("catalogue.sqlite3"),
+        Path("artifacts"),
+        settings,
+        object(),
+    )
+    original = RuntimeGeneration(_runtime_app)
+    dispatcher = MutableRuntimeDispatcher(original)
+    dispatcher.start()
+    activation.bind(dispatcher)
+    events: list[object] = []
+
+    def compose(*_arguments: object, **keywords: object) -> tuple[object, object]:
+        additions = keywords["library_additions"]
+        candidate = RuntimeGeneration(
+            _runtime_app,
+            admit=lambda: events.append(("admit", additions)),
+        )
+        return candidate, object()
+
+    with patch.object(
+        composition, "compose_store_runtime_generation", side_effect=compose
+    ):
+        with pytest.raises(RuntimeError, match="commit refused"):
+            activation.activate(
+                object(),
+                2,
+                (),
+                lambda: (_ for _ in ()).throw(RuntimeError("commit refused")),
+            )
+        assert events == []
+        assert current[0] is predecessor
+
+        def commit() -> None:
+            events.append("commit")
+            current[0] = successor
+
+        activation.activate(object(), 2, (), commit)
+        activation.activate(object(), 2, (), lambda: events.append("repeat-commit"))
+
+    assert events == [
+        "commit",
+        ("admit", (("primary", "fiction"),)),
+        "repeat-commit",
+        ("admit", ()),
+    ]
 
 
 @pytest.mark.skipif(
@@ -283,11 +369,16 @@ def test_setup_and_settings_successors_open_through_live_outer_control(
     control = composition.open_repository(database)
     predecessor = composition.open_repository(database, authority=control.authority)
     snapshot: tuple[SettingsView, dict[str, str], str] = (
-        cast(SettingsView, object()),
+        cast(SettingsView, SimpleNamespace(document=SimpleNamespace(libraries=()))),
         {},
         "verifier",
     )
-    settings = SimpleNamespace(activation_snapshot=lambda *_values: snapshot)
+    predecessor = cast(
+        SettingsView, SimpleNamespace(document=SimpleNamespace(libraries=()))
+    )
+    settings = SimpleNamespace(
+        read=lambda: predecessor, activation_snapshot=lambda *_values: snapshot
+    )
     activation = composition._StoreRuntimeActivation(
         ReviewBootstrap(
             schema_version="review-bootstrap-v1",
@@ -659,6 +750,15 @@ def test_first_preparation_marker_survives_settings_edit_and_repository_reopen(
             "UPDATE review_preparation_scans SET state='completed',total=1,"
             "updated_at=2 WHERE scan_id=?",
             (requested.scan_id,),
+        )
+        reopened._connection.execute(  # noqa: SLF001 - coherent lifecycle fixture
+            "UPDATE review_preparation_presentation SET cycle_state='completed',"
+            "updated_at=2 WHERE row_kind='enrollment' AND scan_id=?",
+            (requested.scan_id,),
+        )
+        reopened._connection.execute(  # noqa: SLF001 - coherent lifecycle fixture
+            "UPDATE review_preparation_presentation SET state='completed_clean',"
+            "updated_at=2,completed_at=2 WHERE row_kind='run'"
         )
         assert reopened.has_first_boot_preparation()
         rescan = reopened.request_review_scan(

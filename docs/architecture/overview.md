@@ -122,7 +122,9 @@ enrollment: it is visible as blocked immediately and becomes an ordinary scan
 atomically after resume, without creating claimable work while paused.
 Each authoritative claim/advance/failure boundary advances only its affected
 presentation row and run counters; bounded startup/recovery reconciliation
-replays monotonic high water across the run. The separate catalogue database stores one
+replays monotonic high water across the run. First terminal outcomes receive a
+contiguous, guarded sidecar sequence so same-second recent ordering remains
+authoritative without a population scan on each transition. The separate catalogue database stores one
 exact-current `catalogue-v2` schema. The final report database, catalogue
 database, configuration, artifacts, and manifest each recognize only absent or
 their exact current pre-release state. Prior and intermediate schemas are

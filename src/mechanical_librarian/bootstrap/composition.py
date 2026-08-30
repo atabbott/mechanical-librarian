@@ -375,7 +375,16 @@ class _StoreRuntimeActivation:
     def prepare(
         self, document: object, revision: int, secrets: object
     ) -> RuntimeGeneration:
+        predecessor = self._settings_store.read().document
         snapshot = self._settings_store.activation_snapshot(document, revision, secrets)
+        previous_targets = {
+            (library.connection, library.name) for library in predecessor.libraries
+        }
+        added_targets = tuple(
+            (library.connection, library.name)
+            for library in snapshot[0].document.libraries
+            if (library.connection, library.name) not in previous_targets
+        )
         candidate, _review = compose_store_runtime_generation(
             self._bootstrap,
             self._database_path,
@@ -384,6 +393,7 @@ class _StoreRuntimeActivation:
             repository_authority=self._repository_authority,
             authority_snapshot=snapshot,
             activation=self,
+            library_additions=added_targets,
         )
         return candidate
 
@@ -2475,6 +2485,7 @@ def compose_store_runtime_generation(
     authority_snapshot: tuple[SettingsView, dict[str, str], str] | None = None,
     activation: _StoreRuntimeActivation | None = None,
     first_boot: bool = False,
+    library_additions: tuple[tuple[str, str], ...] = (),
 ) -> tuple[RuntimeGeneration, object]:
     """Build one dormant, independently owned store runtime generation."""
     private_root = _private_root(database_path)
@@ -2650,11 +2661,13 @@ def compose_store_runtime_generation(
             finally:
                 session_store.close()
 
+        pending_library_additions = list(library_additions)
+
         def admit_generation() -> None:
-            if not first_boot:
-                for connection, library, _library_id in preparation.libraries:
-                    if preparation.progress(connection, library) is None:
-                        preparation.request_library_addition(connection, library)
+            while pending_library_additions:
+                connection, library = pending_library_additions[0]
+                preparation.request_library_addition(connection, library)
+                pending_library_additions.pop(0)
             reviewer_access.activate_codex_lease()
             review_application.admit()
 

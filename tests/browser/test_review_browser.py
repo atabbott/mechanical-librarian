@@ -312,7 +312,8 @@ def _server(
             repository._connection.execute(
                 "UPDATE review_preparation_presentation SET state='completed_clean',"
                 "completed_at=1000,updated_at=1000,active_count=0,read=7,"
-                "searches_finished=7,compared=7,checked=7,ready=7,failed=0 "
+                "searches_finished=7,compared=7,checked=7,ready=7,failed=0,"
+                "completion_count=7 "
                 "WHERE row_kind='run'"
             )
             repository._connection.commit()
