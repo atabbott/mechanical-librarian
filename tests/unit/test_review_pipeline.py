@@ -21,7 +21,10 @@ import pytest
 
 import mechanical_librarian.bootstrap.composition as composition
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
-from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.metadata_reports import (
+    SQLiteMetadataReportRepository,
+    open_repository,
+)
 from mechanical_librarian.adapters.persistence.preparation_presentation import (
     _completion_sequence_count,
     deferred_preparation_enrollment_id,
@@ -30,9 +33,6 @@ from mechanical_librarian.adapters.persistence.preparation_presentation import (
     refresh_preparation_run_state,
     refresh_preparation_work,
     validate_preparation_presentation,
-)
-from mechanical_librarian.adapters.persistence.metadata_reports import (
-    SQLiteMetadataReportRepository,
 )
 from mechanical_librarian.adapters.persistence.review_preparation import (
     _FAILURE_CODES,
