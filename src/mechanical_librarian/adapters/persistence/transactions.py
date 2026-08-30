@@ -69,7 +69,7 @@ class TransactionScope:
                 self._connection.execute("BEGIN")
             else:
                 self._connection.execute("BEGIN IMMEDIATE")
-        except Exception:
+        except BaseException:
             if self._lock is not None:
                 self._lock.release()
             raise

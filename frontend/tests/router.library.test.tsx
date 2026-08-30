@@ -62,6 +62,56 @@ const terminalPreparation = (
 })
 
 describe('Library route', () => {
+  it('retains a setup handoff until the first authoritative preparation snapshot selects it', async () => {
+    const runId = `preparation_run_${'9'.repeat(64)}`
+    const confirmed = terminalPreparation(runId)
+    let release!: (value: PreparationView) => void
+    const http = createHttp()
+    http.getPreparation = vi.fn<ReviewHttp['getPreparation']>(
+      () =>
+        new Promise<PreparationView>((resolve) => {
+          release = resolve
+        }),
+    )
+    const { router } = renderRoute(`/library?lens=all&preparation=${runId}`, http)
+
+    await waitFor(() => expect(release).toBeTypeOf('function'))
+    expect(router.state.location.search).toMatchObject({ preparation: runId })
+    expect(
+      screen.queryByRole('heading', { name: 'Preparation completed with failures' }),
+    ).toBeNull()
+
+    await act(async () => release(confirmed))
+    expect(await screen.findByText('Preparation completed with failures')).toBeVisible()
+    expect(router.state.location.search).toMatchObject({ preparation: runId })
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: 'Preparing your library' })).toHaveFocus(),
+    )
+    expect(http.getPreparation).toHaveBeenCalledTimes(1)
+  })
+
+  it('retains a failed cold handoff and normalizes only after authoritative absence', async () => {
+    const runId = `preparation_run_${'8'.repeat(64)}`
+    const http = createHttp()
+    http.getPreparation = vi
+      .fn<ReviewHttp['getPreparation']>()
+      .mockRejectedValueOnce(new ApiError(503, 'unavailable'))
+      .mockResolvedValueOnce({
+        ...terminalPreparation(runId),
+        presentation: null,
+      })
+    const { queryClient, router } = renderRoute(`/library?lens=all&preparation=${runId}`, http)
+
+    await waitFor(() => expect(http.getPreparation).toHaveBeenCalledTimes(1))
+    expect(router.state.location.search).toMatchObject({ preparation: runId })
+
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: ['review-preparation'], exact: true })
+    })
+    await waitFor(() => expect(router.state.location.search).toEqual({ lens: 'all' }))
+    expect(http.getPreparation).toHaveBeenCalledTimes(2)
+  })
+
   it('hands one preparation run from the Works summary into shared detail and restores work selection', async () => {
     const user = userEvent.setup()
     const http = createHttp()

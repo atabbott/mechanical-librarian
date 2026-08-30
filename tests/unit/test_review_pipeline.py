@@ -29,6 +29,7 @@ from mechanical_librarian.adapters.persistence.preparation_presentation import (
     _completion_sequence_count,
     deferred_preparation_enrollment_id,
     mark_preparation_recovery,
+    preparation_presentation_snapshot,
     refresh_preparation_presentation,
     refresh_preparation_run_state,
     refresh_preparation_work,
@@ -41,6 +42,7 @@ from mechanical_librarian.adapters.persistence.review_scans import (
     SQLiteReviewScanRepository,
 )
 from mechanical_librarian.adapters.persistence.schema import _REVIEW_WORK_SQL
+from mechanical_librarian.adapters.persistence.transactions import TransactionScope
 from mechanical_librarian.application.catalogue import (
     CatalogueEntry,
     CatalogueReader,
@@ -57,6 +59,7 @@ from mechanical_librarian.application.metadata_report import (
     CredentialError,
     ItemInspectionError,
     MetadataReportError,
+    ReportRepository,
     TargetNotFoundError,
     UnsupportedMediaError,
 )
@@ -3154,6 +3157,234 @@ def test_pause_mutation_failure_rolls_back_releases_writer_and_retries(
     reopened.close()
 
 
+def _f32_transaction_operation(
+    repository: SQLiteMetadataReportRepository, scope: str
+) -> Callable[[], object]:
+    if scope == "request":
+        return lambda: repository.request_review_scan(
+            "primary",
+            "fiction",
+            "lib-1",
+            _PRODUCER,
+            100,
+            trigger=PreparationTrigger.MANUAL_SCAN,
+        )
+    if scope == "pause":
+        return lambda: repository.set_review_pipeline_paused(True, 100)
+    if scope == "acknowledge":
+        return repository.acknowledge_first_boot_preparation
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    if scope == "hold":
+        return lambda: repository.hold_target_connection("primary", "unavailable", 101)
+    if scope == "begin_check":
+        repository.hold_target_connection("primary", "unavailable", 101)
+        return lambda: repository.begin_target_connection_check("primary", 102)
+    if scope == "finish_check":
+        repository.hold_target_connection("primary", "unavailable", 101)
+        condition = repository.begin_target_connection_check("primary", 102)
+        assert condition is not None
+        return lambda: repository.finish_target_connection_check(
+            "primary", condition.epoch, None, 103
+        )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    if scope == "guard":
+        repository.hold_target_connection("primary", "unavailable", 102)
+        return lambda: repository.guard_target_connection(discovery, 103)
+    if scope == "qualify":
+        return lambda: repository.qualify_review_discovery(discovery, 102)
+    if scope == "defer":
+        return lambda: repository.defer_for_target_connection(
+            discovery, "unavailable", 102
+        )
+    if scope == "complete_discovery":
+        return lambda: repository.complete_review_discovery(
+            discovery, 1, "a" * 64, (), 102
+        )
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry("First", "1" * 64),), 102
+    )
+    work_id = cast(
+        str,
+        repository._connection.execute(
+            "SELECT work_id FROM review_preparation_work"
+        ).fetchone()[0],
+    )
+    if scope == "claim_work":
+        return lambda: repository.claim_review_pipeline_work(work_id, 103)
+    work = repository.claim_review_pipeline_work(work_id, 103)
+    assert work is not None
+    if scope == "advance":
+        return lambda: repository.advance_review_pipeline_action(work, None, 104)
+    if scope == "fail":
+        return lambda: repository.fail_review_pipeline_action(
+            work, "failed", False, 104
+        )
+    raise AssertionError(f"unknown transaction scope: {scope}")
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize(
+    "scope",
+    (
+        "request",
+        "pause",
+        "acknowledge",
+        "hold",
+        "begin_check",
+        "finish_check",
+        "guard",
+        "qualify",
+        "defer",
+        "complete_discovery",
+        "claim_work",
+        "advance",
+        "fail",
+    ),
+)
+def test_f32_transaction_scopes_rollback_baseexceptions_at_commit_boundary(
+    application_path: Path,
+    scope: str,
+    fault_type: type[BaseException],
+) -> None:
+    repository = open_repository(application_path)
+    operation = _f32_transaction_operation(repository, scope)
+    tables = (
+        "review_preparation_control",
+        "review_preparation_scans",
+        "review_preparation_work",
+        "review_preparation_connection_conditions",
+        "review_preparation_presentation",
+    )
+    before = {
+        table: tuple(repository._connection.execute(f"SELECT * FROM {table}"))
+        for table in tables
+    }
+    fault = fault_type("private transaction sentinel")
+
+    injection = (
+        patch(
+            "mechanical_librarian.adapters.persistence.review_preparation.refresh_preparation_work",
+            side_effect=fault,
+        )
+        if scope == "advance"
+        else patch.object(TransactionScope, "commit", side_effect=fault)
+    )
+    with injection, pytest.raises(fault_type) as raised:
+        operation()
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert not repository._connection.in_transaction
+    assert {
+        table: tuple(repository._connection.execute(f"SELECT * FROM {table}"))
+        for table in tables
+    } == before
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+    repository.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+def test_dismissal_transaction_rolls_back_baseexception_and_releases_writer(
+    application_path: Path, fault_type: type[BaseException]
+) -> None:
+    repository = open_repository(application_path)
+    progress = repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed',updated_at=101 WHERE scan_id=?",
+        (progress.scan_id,),
+    )
+    refresh_preparation_presentation(repository._connection, 101)
+    repository._connection.commit()
+    presentation = repository.preparation_presentation(101)
+    assert presentation is not None and presentation.dismissible
+    before = tuple(
+        repository._connection.execute(
+            "SELECT * FROM review_preparation_presentation ORDER BY row_id"
+        )
+    )
+    fault = fault_type("private dismissal sentinel")
+
+    with (
+        patch.object(TransactionScope, "commit", side_effect=fault),
+        pytest.raises(fault_type) as raised,
+    ):
+        repository.dismiss_preparation_presentation(presentation.run_id, 102)
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert not repository._connection.in_transaction
+    assert (
+        tuple(
+            repository._connection.execute(
+                "SELECT * FROM review_preparation_presentation ORDER BY row_id"
+            )
+        )
+        == before
+    )
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+    repository.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+def test_preparation_snapshot_releases_savepoint_after_baseexception(
+    application_path: Path, fault_type: type[BaseException]
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    fault = fault_type("private snapshot sentinel")
+
+    class InterruptingConnection:
+        def execute(
+            self, sql: str, parameters: tuple[object, ...] = ()
+        ) -> sqlite3.Cursor:
+            if "SELECT trigger,accepted_count" in sql:
+                raise fault
+            return repository._connection.execute(sql, parameters)
+
+    with pytest.raises(fault_type) as raised:
+        preparation_presentation_snapshot(
+            cast(sqlite3.Connection, InterruptingConnection()), 101
+        )
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert not repository._connection.in_transaction
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+    repository.close()
+
+
 def test_supervisor_serializes_resume_prevalidation_with_library_addition(
     application_path: Path,
 ) -> None:
@@ -3584,6 +3815,65 @@ def test_late_target_connection_errors_rollback_and_defer_retained_stage() -> No
         assert repository.rolled_back == 1
         assert repository.deferred == [(action, "tls")]
     assert callbacks == {"proposal": 1, "admission": 1, "projection": 1}
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+def test_pipeline_output_transaction_rolls_back_baseexception(
+    fault_type: type[BaseException],
+) -> None:
+    class Repository:
+        begun = 0
+        rolled_back = 0
+
+        def guard_target_connection(self, _action, _checked_at):
+            return True
+
+        def begin_review_pipeline_output(self) -> None:
+            self.begun += 1
+
+        def rollback_review_pipeline_output(self) -> None:
+            self.rolled_back += 1
+
+    repository = Repository()
+    fault = fault_type("private pipeline-output sentinel")
+    action = PipelineAction(
+        "action-1",
+        "scan-1",
+        "proposal",
+        1,
+        "primary",
+        "ebooks",
+        "library-id",
+        _PRODUCER,
+        1,
+        "a" * 64,
+        "item-1",
+        "b" * 64,
+        0,
+        "report-1",
+        source_fingerprint="c" * 64,
+    )
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: cast(ReviewPipelineRepository, repository),
+        libraries=(("primary", "ebooks", "library-id", _PRODUCER),),
+        discover=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_args: (_ for _ in ()).throw(fault),
+        admit=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        clock=lambda: 1,
+    )
+
+    with pytest.raises(fault_type) as raised:
+        pipeline._run_claimed_action(
+            cast(ReviewPipelineRepository, repository), action, claim_next=False
+        )
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert repository.begun == 1
+    assert repository.rolled_back == 1
 
 
 def test_post_cutover_delivery_failure_requeues_the_claimed_successor() -> None:
@@ -7080,6 +7370,55 @@ def test_report_and_extraction_checkpoint_commit_atomically(
     assert resumed.stage == "proposal"
     assert resumed.report_id == report.report_id
     assert retry_not_before == (0,)
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+def test_report_publication_rolls_back_f32_callback_baseexception(
+    application_path: Path, fault_type: type[BaseException]
+) -> None:
+    report = _report()
+    entry = replace(
+        _entry("item-1", report.file.identity),
+        library="ebooks",
+        authors=(),
+    )
+    repository = open_repository(application_path)
+    repository.request_review_scan("primary", "ebooks", "lib-1", _PRODUCER, 10)
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None
+    repository.complete_review_discovery(discovery, 1, "a" * 64, (entry,), 12)
+    action = repository.claim_review_pipeline_action(13)
+    assert action is not None
+    before = tuple(
+        repository._connection.execute("SELECT * FROM review_preparation_work")
+    )
+    fault = fault_type("private publication sentinel")
+
+    def interrupt_after_presentation(
+        value: ReportRepository, published: MetadataReport
+    ) -> None:
+        writer = cast(SQLiteMetadataReportRepository, value)
+        writer.complete_review_extraction_publication(action, published.report_id, 14)
+        raise fault
+
+    with pytest.raises(fault_type) as raised:
+        repository.publish(report, lambda: True, None, interrupt_after_presentation)
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert not repository._connection.in_transaction
+    assert repository._connection.execute(
+        "SELECT COUNT(*) FROM metadata_reports"
+    ).fetchone() == (0,)
+    assert (
+        tuple(repository._connection.execute("SELECT * FROM review_preparation_work"))
+        == before
+    )
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+    repository.close()
 
 
 def _entry(item_id: str, file_identity: str) -> CatalogueEntry:

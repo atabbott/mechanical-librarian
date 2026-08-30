@@ -222,13 +222,19 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             )
             transaction.commit()
             return progress
-        except (sqlite3.Error, MetadataReportError, ReviewPipelineError) as error:
+        except BaseException as error:
             transaction.rollback()
-            if isinstance(error, (MetadataReportError, ReviewPipelineError)):
+            if not isinstance(error, Exception):
+                interruption = error
+            elif isinstance(error, (MetadataReportError, ReviewPipelineError)):
                 raise
-            raise MetadataReportError(
-                "review preparation persistence failed"
-            ) from error
+            elif isinstance(error, sqlite3.Error):
+                raise MetadataReportError(
+                    "review preparation persistence failed"
+                ) from error
+            else:
+                raise
+        raise interruption from None
 
     def _request_review_scan_unpaused(
         self,
@@ -508,7 +514,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
         if type(paused) is not bool or type(updated_at) is not int or updated_at < 0:
             raise MetadataReportError("review preparation control is invalid")
         transaction = self._transaction("set_review_pipeline_paused")
-        failed = False
+        failure: BaseException | None = None
         try:
             transaction.begin()
             self._connection.execute(
@@ -517,11 +523,13 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             )
             refresh_preparation_run_state(self._connection, updated_at)
             transaction.commit()
-        except Exception:
+        except BaseException as error:
             transaction.rollback()
-            failed = True
-        if failed:
+            failure = error
+        if isinstance(failure, Exception):
             raise MetadataReportError("review preparation persistence failed") from None
+        if failure is not None:
+            raise failure from None
 
     def resume_review_pipeline(
         self,
@@ -815,13 +823,19 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 raise MetadataReportError("review preparation state changed")
             transaction.commit()
             return False
-        except (sqlite3.Error, MetadataReportError) as error:
+        except BaseException as error:
             transaction.rollback()
-            if isinstance(error, MetadataReportError):
+            if not isinstance(error, Exception):
+                interruption = error
+            elif isinstance(error, MetadataReportError):
                 raise
-            raise MetadataReportError(
-                "target connection condition is unavailable"
-            ) from error
+            elif isinstance(error, sqlite3.Error):
+                raise MetadataReportError(
+                    "target connection condition is unavailable"
+                ) from error
+            else:
+                raise
+        raise interruption from None
 
     def discovery_requires_qualification(self, action: PipelineAction) -> bool:
         if action.stage != "discovery":
@@ -874,13 +888,19 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 raise MetadataReportError("review preparation state changed")
             transaction.commit()
             return True
-        except (sqlite3.Error, MetadataReportError) as error:
+        except BaseException as error:
             transaction.rollback()
-            if isinstance(error, MetadataReportError):
+            if not isinstance(error, Exception):
+                interruption = error
+            elif isinstance(error, MetadataReportError):
                 raise
-            raise MetadataReportError(
-                "target connection condition is unavailable"
-            ) from error
+            elif isinstance(error, sqlite3.Error):
+                raise MetadataReportError(
+                    "target connection condition is unavailable"
+                ) from error
+            else:
+                raise
+        raise interruption from None
 
     def defer_for_target_connection(
         self, action: PipelineAction, code: str, updated_at: int
@@ -924,13 +944,20 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 (affected, action.connection),
             )
             transaction.commit()
-        except (sqlite3.Error, MetadataReportError) as error:
+            return
+        except BaseException as error:
             transaction.rollback()
-            if isinstance(error, MetadataReportError):
+            if not isinstance(error, Exception):
+                interruption = error
+            elif isinstance(error, MetadataReportError):
                 raise
-            raise MetadataReportError(
-                "target connection condition is unavailable"
-            ) from error
+            elif isinstance(error, sqlite3.Error):
+                raise MetadataReportError(
+                    "target connection condition is unavailable"
+                ) from error
+            else:
+                raise
+        raise interruption from None
 
     def hold_target_connection(
         self, connection: str, code: str, updated_at: int
@@ -962,11 +989,18 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             )
             refresh_preparation_run_state(self._connection, updated_at)
             transaction.commit()
-        except sqlite3.Error as error:
+            return
+        except BaseException as error:
             transaction.rollback()
-            raise MetadataReportError(
-                "target connection condition is unavailable"
-            ) from error
+            if not isinstance(error, Exception):
+                interruption = error
+            elif isinstance(error, sqlite3.Error):
+                raise MetadataReportError(
+                    "target connection condition is unavailable"
+                ) from error
+            else:
+                raise
+        raise interruption from None
 
     def _target_connection_affected(self, connection: str) -> int:
         # The projection is a sum of two COUNT(*) sub-selects, always one int.
@@ -1019,13 +1053,19 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             return TargetConnectionCondition(
                 connection, row[0], "checking", epoch, row[3], checked_at
             )
-        except (sqlite3.Error, MetadataReportError) as error:
+        except BaseException as error:
             transaction.rollback()
-            if isinstance(error, MetadataReportError):
+            if not isinstance(error, Exception):
+                interruption = error
+            elif isinstance(error, MetadataReportError):
                 raise
-            raise MetadataReportError(
-                "target connection condition is unavailable"
-            ) from error
+            elif isinstance(error, sqlite3.Error):
+                raise MetadataReportError(
+                    "target connection condition is unavailable"
+                ) from error
+            else:
+                raise
+        raise interruption from None
 
     def finish_target_connection_check(
         self, connection: str, epoch: int, code: str | None, checked_at: int
@@ -1062,8 +1102,14 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 )
             transaction.commit()
             return updated == 1
-        except sqlite3.Error as error:
+        except BaseException as error:
             transaction.rollback()
-            raise MetadataReportError(
-                "target connection condition is unavailable"
-            ) from error
+            if not isinstance(error, Exception):
+                interruption = error
+            elif isinstance(error, sqlite3.Error):
+                raise MetadataReportError(
+                    "target connection condition is unavailable"
+                ) from error
+            else:
+                raise
+        raise interruption from None

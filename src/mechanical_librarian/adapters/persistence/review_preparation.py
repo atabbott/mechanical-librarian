@@ -333,11 +333,17 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             refresh_preparation_run_state(self._connection, claimed_at)
             transaction.commit()
             return None
-        except (sqlite3.Error, MetadataReportError) as error:
+        except BaseException as error:
             transaction.rollback()
-            if isinstance(error, MetadataReportError):
+            if not isinstance(error, Exception):
+                interruption = error
+            elif isinstance(error, MetadataReportError):
                 raise
-            raise MetadataReportError("review preparation claim failed") from error
+            elif isinstance(error, sqlite3.Error):
+                raise MetadataReportError("review preparation claim failed") from error
+            else:
+                raise
+        raise interruption from None
 
     def claim_review_pipeline_work(
         self, work_id: str, claimed_at: int
@@ -406,11 +412,17 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 work[17],
                 work[18],
             )
-        except (sqlite3.Error, MetadataReportError) as error:
+        except BaseException as error:
             transaction.rollback()
-            if isinstance(error, MetadataReportError):
+            if not isinstance(error, Exception):
+                interruption = error
+            elif isinstance(error, MetadataReportError):
                 raise
-            raise MetadataReportError("review preparation claim failed") from error
+            elif isinstance(error, sqlite3.Error):
+                raise MetadataReportError("review preparation claim failed") from error
+            else:
+                raise
+        raise interruption from None
 
     def stage_provider_retry_successor(
         self, source_report_id: str, report: MetadataReport, staged_at: int
@@ -754,11 +766,20 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 self._connection, action.scan_id, selected, completed_at
             )
             transaction.commit()
-        except (sqlite3.Error, MetadataReportError, ReviewCaseValueError) as error:
+            return
+        except BaseException as error:
             transaction.rollback()
-            if isinstance(error, MetadataReportError):
+            if not isinstance(error, Exception):
+                interruption = error
+            elif isinstance(error, MetadataReportError):
                 raise
-            raise MetadataReportError("review preparation discovery failed") from error
+            elif isinstance(error, (sqlite3.Error, ReviewCaseValueError)):
+                raise MetadataReportError(
+                    "review preparation discovery failed"
+                ) from error
+            else:
+                raise
+        raise interruption from None
 
     def _commit_review_absences(self, scan_id: str) -> None:
         scan = self._connection.execute(
@@ -998,16 +1019,22 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             refresh_preparation_work(self._connection, action.action_id, completed_at)
             self._connection.commit()
             return next_action
-        except (sqlite3.Error, MetadataReportError, ReviewAdmissionStaleError) as error:
+        except BaseException as error:
             if self._connection.in_transaction:
                 self._connection.rollback()
-            if isinstance(error, MetadataReportError):
+            if not isinstance(error, Exception):
+                interruption = error
+            elif isinstance(error, MetadataReportError):
                 raise
-            if isinstance(error, ReviewAdmissionStaleError):
+            elif isinstance(error, ReviewAdmissionStaleError):
                 raise MetadataReportError("review preparation state changed") from error
-            raise MetadataReportError(
-                "review preparation persistence failed"
-            ) from error
+            elif isinstance(error, sqlite3.Error):
+                raise MetadataReportError(
+                    "review preparation persistence failed"
+                ) from error
+            else:
+                raise
+        raise interruption from None
 
     def begin_review_pipeline_output(self) -> None:
         try:
@@ -1217,13 +1244,19 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 refresh_preparation_run_state(self._connection, completed_at)
                 transaction.commit()
                 return
-            except (sqlite3.Error, MetadataReportError) as error:
+            except BaseException as error:
                 transaction.rollback()
-                if isinstance(error, MetadataReportError):
+                if not isinstance(error, Exception):
+                    interruption = error
+                elif isinstance(error, MetadataReportError):
                     raise
-                raise MetadataReportError(
-                    "review preparation persistence failed"
-                ) from error
+                elif isinstance(error, sqlite3.Error):
+                    raise MetadataReportError(
+                        "review preparation persistence failed"
+                    ) from error
+                else:
+                    raise
+            raise interruption from None
         if code not in _FAILURE_CODES:
             code = "failed"
         if failure_root is not None and (
@@ -1308,13 +1341,20 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     )
             refresh_preparation_work(self._connection, action.action_id, completed_at)
             transaction.commit()
-        except (sqlite3.Error, MetadataReportError) as error:
+            return
+        except BaseException as error:
             transaction.rollback()
-            if isinstance(error, MetadataReportError):
+            if not isinstance(error, Exception):
+                interruption = error
+            elif isinstance(error, MetadataReportError):
                 raise
-            raise MetadataReportError(
-                "review preparation persistence failed"
-            ) from error
+            elif isinstance(error, sqlite3.Error):
+                raise MetadataReportError(
+                    "review preparation persistence failed"
+                ) from error
+            else:
+                raise
+        raise interruption from None
 
     def review_case_ready_at(self, review_case_id: str) -> int | None:
         """Return the exact preparation-complete checkpoint for advisory timing."""

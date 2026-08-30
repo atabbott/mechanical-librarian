@@ -1607,7 +1607,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     })
   }, [unresolvableWork, navigate])
   useEffect(() => {
-    if (!search.preparation || preparationSelected) return
+    if (!search.preparation || preparationSelected || !preparationState.confirmed) return
     if (dismissalCleanupSuppression.current?.runId === search.preparation) return
     void navigate({
       replace: true,
@@ -1617,7 +1617,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         return next
       },
     })
-  }, [navigate, preparationSelected, search.preparation])
+  }, [navigate, preparationSelected, preparationState.confirmed, search.preparation])
   const hasSelection = preparationSelected || Boolean(search.preview) || selectedWork !== undefined
   const selectedLibraryWork = search.preview
     ? data.works.find((work) => work.reviewCaseId === search.preview)

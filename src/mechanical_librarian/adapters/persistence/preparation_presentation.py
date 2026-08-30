@@ -1158,10 +1158,11 @@ def preparation_presentation_snapshot(
         )
         connection.execute("RELEASE preparation_snapshot")
         return result
-    except Exception:
+    except BaseException as error:
         connection.execute("ROLLBACK TO preparation_snapshot")
         connection.execute("RELEASE preparation_snapshot")
-        raise
+        failure = error
+    raise failure from None
 
 
 def dismiss_preparation_presentation(

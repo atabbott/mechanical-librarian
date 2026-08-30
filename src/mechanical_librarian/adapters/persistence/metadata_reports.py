@@ -988,9 +988,11 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             transaction.begin()
             dismiss_preparation_presentation(self._connection, run_id, dismissed_at)
             transaction.commit()
-        except Exception:
+            return
+        except BaseException as error:
             transaction.rollback()
-            raise
+            failure = error
+        raise failure from None
 
     def review_pipeline_progress(
         self, connection: str, library: str
@@ -1957,9 +1959,11 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             if cursor.rowcount != 1:
                 raise MetadataReportError("review preparation state is invalid")
             transaction.commit()
-        except Exception:
+            return
+        except BaseException as error:
             transaction.rollback()
-            raise
+            failure = error
+        raise failure from None
 
 
 class SQLiteShadowPreviewRepository:

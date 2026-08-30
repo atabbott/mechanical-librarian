@@ -2471,8 +2471,11 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                     reduced_motion="reduce" if reduced else "no-preference",
                 )
                 context.add_init_script(
-                    "addEventListener('pageswap',event=>sessionStorage.setItem('preparation-pageswap',event.viewTransition?'observed':'absent'));"
-                    "addEventListener('pagereveal',event=>{if(event.viewTransition)sessionStorage.setItem('preparation-pagereveal','observed')});"
+                    "const preparationTime=value=>value.split(',').reduce((largest,item)=>Math.max(largest,parseFloat(item)*(item.trim().endsWith('ms')?1:1000)),0);"
+                    "globalThis.preparationPseudoStyles=()=>['root','mechanical-librarian-brand','works-index','preparation-detail'].flatMap(name=>['group','image-pair','old','new'].map(kind=>{const pseudo=`::view-transition-${kind}(${name})`;const style=getComputedStyle(document.documentElement,pseudo);return {pseudo,duration:preparationTime(style.animationDuration),delay:preparationTime(style.animationDelay),state:style.animationPlayState}}));"
+                    "const preparationAnimations=key=>sessionStorage.setItem(key,JSON.stringify(document.documentElement.getAnimations({subtree:true}).map(animation=>{const timing=animation.effect?.getComputedTiming?.()||{};return {pseudo:animation.effect?.pseudoElement||animation.effect?.target?.type||'',duration:Number(timing.duration)||0,delay:Number(timing.delay)||0,state:animation.playState}})));"
+                    "addEventListener('pageswap',event=>{sessionStorage.setItem('preparation-pageswap',event.viewTransition?'observed':'absent');if(event.viewTransition){sessionStorage.setItem('preparation-pageswap-pseudos',JSON.stringify(preparationPseudoStyles()));preparationAnimations('preparation-pageswap-animations');event.viewTransition.ready.then(()=>preparationAnimations('preparation-pageswap-ready-animations'))}});"
+                    "addEventListener('pagereveal',event=>{if(event.viewTransition){sessionStorage.setItem('preparation-pagereveal','observed');preparationAnimations('preparation-pagereveal-animations');event.viewTransition.ready.then(()=>preparationAnimations('preparation-pagereveal-ready-animations'))}});"
                 )
                 page = context.new_page()
                 page.route("**/favicon.ico", lambda route: route.fulfill(status=204))
@@ -2574,11 +2577,41 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                         "preparation-detail",
                     ]
                 )
-                if not reduced:
-                    assert (
-                        page.evaluate("sessionStorage.getItem('preparation-pageswap')")
-                        == "observed"
+                assert (
+                    page.evaluate("sessionStorage.getItem('preparation-pageswap')")
+                    == "observed"
+                )
+                animation_sets = page.evaluate(
+                    "['preparation-pageswap-animations','preparation-pageswap-ready-animations','preparation-pagereveal-animations','preparation-pagereveal-ready-animations'].flatMap(key=>JSON.parse(sessionStorage.getItem(key)||'[]')).concat(document.documentElement.getAnimations({subtree:true}).map(animation=>{const timing=animation.effect?.getComputedTiming?.()||{};return {pseudo:animation.effect?.pseudoElement||animation.effect?.target?.type||'',duration:Number(timing.duration)||0,delay:Number(timing.delay)||0,state:animation.playState}}))"
+                )
+                pseudo_styles = page.evaluate(
+                    "JSON.parse(sessionStorage.getItem('preparation-pageswap-pseudos')||'[]').concat(preparationPseudoStyles())"
+                )
+                nonzero_running = [
+                    animation
+                    for animation in animation_sets
+                    if animation["state"] == "running"
+                    and animation["duration"] + animation["delay"] > 0
+                ]
+                if reduced:
+                    assert nonzero_running == []
+                    assert all(
+                        animation["duration"] + animation["delay"] == 0
+                        for animation in pseudo_styles
                     )
+                else:
+                    assert any(
+                        animation["duration"] > 0
+                        and any(
+                            name in animation["pseudo"]
+                            for name in (
+                                "mechanical-librarian-brand",
+                                "works-index",
+                                "preparation-detail",
+                            )
+                        )
+                        for animation in pseudo_styles
+                    ), pseudo_styles
                 context.close()
             browser.close()
 

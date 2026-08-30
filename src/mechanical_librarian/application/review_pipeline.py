@@ -962,6 +962,17 @@ class ReviewPreparationPipeline:
             if output_transaction:
                 repository.rollback_review_pipeline_output()
             self._fail(repository, action, "unknown", False)
+        except BaseException as error:
+            if output_transaction:
+                try:
+                    repository.rollback_review_pipeline_output()
+                except BaseException:
+                    # Cleanup cannot replace a process-control interruption.
+                    # Repository rollback is best effort at this application
+                    # boundary; its owned transaction methods provide the
+                    # stronger rollback guarantee.
+                    pass
+            raise error from None
         return None
 
     def _complete_discovery(

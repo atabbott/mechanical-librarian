@@ -506,7 +506,15 @@ export const usePreparation = () => {
     },
     [queryClient, refetchPreparation],
   )
-  return { data, queryClient, http, live, reconnecting, adoptDismissal }
+  return {
+    data,
+    confirmed: query.data !== undefined,
+    queryClient,
+    http,
+    live,
+    reconnecting,
+    adoptDismissal,
+  }
 }
 
 const connectionCopy = (code: 'tls' | 'authentication' | 'authorization' | 'unavailable') =>
