@@ -1842,6 +1842,7 @@ def test_one_malformed_asin_surface_reports_malformed_beside_a_valid_one() -> No
     )
 
     asin = next(value for value in results if value.kind is ClaimKind.ASIN)
+    assert asin.state is FieldState.MALFORMED
     assert (FieldSource.AUDIO_TAG, FieldState.MALFORMED) in {
         (value.source, value.state) for value in asin.sources
     }
