@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Restore an explicit offline maintainer bridge for the retained v26
+  qualification checkpoint. It verifies a clone and backup, rebuilds fresh
+  exact-current reports through current derivation, and invalidates evidence
+  missing current provenance; ordinary startup and user upgrades stay
+  absent-or-exact-current. (#938)
+
 - The container-image qualification job restores unchanged Docker layers from
   the repository Actions cache instead of rebuilding every stage per run; base
   images stay governed by the Dockerfile's digest pins. (#930)

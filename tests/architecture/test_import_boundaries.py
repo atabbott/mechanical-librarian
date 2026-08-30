@@ -174,6 +174,7 @@ def test_runtime_has_only_the_closed_installed_command_set() -> None:
             "cover-review",
             "review-activity",
             "provider-recovery",
+            "qualification-state-bridge",
         )
     )
     for unsupported in (

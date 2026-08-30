@@ -19,6 +19,18 @@ a schema older than this build. The installed runtime no longer exposes a
 directory offline if it has historical value, then start this build with an
 absent application database and artifact store and repeat first-run setup.
 
+Maintainers have one separate qualification-only command:
+`qualification-state-bridge retained-library-v26-to-v31`. It accepts only the
+exact retained #744 test schema, an existing complete owner-only clone, an
+independent backup path, and an absent output path under the same private
+directory. It leaves the source untouched, verifies the backup, rebuilds a
+fresh exact-current report database through current derivation, and
+invalidates observations that lack current work-dispatch provenance plus all
+downstream state. Artifact-bearing cover references are also invalidated
+because this command accepts no artifact path. It makes no network, provider,
+reviewer, credential, media, or target-service request and is not a supported
+upgrade for an installation.
+
 Current-schema restart, crash recovery, and replay remain supported. Never pair
 a current database with an older or unrelated artifact directory: current
 recovery may remove unreferenced digest-named artifacts. The independently
