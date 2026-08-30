@@ -98,6 +98,24 @@ def open_local_media(container_path: str, reference: str) -> OpenedLocalMedia:
             os.close(current)
 
 
+def _bounded_entry_names(descriptor: int, maximum_entries: int) -> list[str]:
+    """Read one directory's names, stopping at the entry past the bound.
+
+    The bound is enforced while reading rather than after it, so a directory
+    holding millions of entries costs one refusal instead of one materialized
+    list of every name in it.
+    """
+    names: list[str] = []
+    with os.scandir(descriptor) as entries:
+        for entry in entries:
+            if len(names) >= maximum_entries:
+                raise LocalMediaLimitError(
+                    "local media listing exceeds its entry limit"
+                )
+            names.append(entry.name)
+    return names
+
+
 def list_local_media_siblings(
     container_path: str, reference: str, *, maximum_entries: int = 256
 ) -> tuple[str, ...]:
@@ -115,7 +133,11 @@ def list_local_media_siblings(
     if type(maximum_entries) is not int or not 1 <= maximum_entries <= 4_096:
         raise LocalMediaError("local media listing limit is invalid")
     nofollow = getattr(os, "O_NOFOLLOW", 0)
-    if not nofollow or os.open not in os.supports_dir_fd:
+    if (
+        not nofollow
+        or os.open not in os.supports_dir_fd
+        or os.scandir not in os.supports_fd
+    ):
         raise LocalMediaError("no-follow local media access is unavailable")
     directory_flags = (
         os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | nofollow
@@ -127,21 +149,25 @@ def list_local_media_siblings(
             next_descriptor = os.open(component, directory_flags, dir_fd=current)
             os.close(current)
             current = next_descriptor
-        names = sorted(os.listdir(current))
+        names = _bounded_entry_names(current, maximum_entries)
+    except LocalMediaLimitError:
+        # `LocalMediaError` is an `OSError`, so the refusal below would
+        # otherwise reappear as an unavailable source rather than a limit.
+        raise
     except (OSError, UnicodeError) as error:
         raise LocalMediaError("local media source is unavailable") from error
     finally:
         if current >= 0:
             os.close(current)
-    if len(names) > maximum_entries:
-        raise LocalMediaLimitError("local media listing exceeds its entry limit")
     return tuple(
-        name
-        for name in names
-        if name not in {".", ".."}
-        and "/" not in name
-        and "\x00" not in name
-        and len(name.encode("utf-8", "surrogatepass")) <= 255
+        sorted(
+            name
+            for name in names
+            if name not in {".", ".."}
+            and "/" not in name
+            and "\x00" not in name
+            and len(name.encode("utf-8", "surrogatepass")) <= 255
+        )
     )
 
 
