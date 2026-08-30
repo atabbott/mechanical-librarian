@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import base64
 import copy
+import gzip
 import hashlib
 import json
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -26,6 +28,9 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimScope,
     LocalClaim,
     MetadataReport,
+    TargetDestination,
+    TargetField,
+    TargetFieldState,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from tests.support.metadata_report_schemas import synthetic_report
@@ -113,7 +118,12 @@ def _bundle() -> dict[str, object]:
         capture_epoch=1_700_000_000.0,
         pacers=replay.pacers(live=False),
     )
-    observation = instance.observe(plan)
+    observation = replay.observe_provider(
+        provider.name,
+        provider.adapter,
+        instance,
+        plan,
+    )
     report = MetadataReport.create(
         target=seed.target,
         file=seed.file,
@@ -171,6 +181,7 @@ def test_synthetic_capture_boundary_replays_current_derivation_exactly() -> None
         }
     ] == provenance
     assert reports[0].providers[0].provider == "open-library"
+    assert reports[0].providers[0].authority == "open_library"
 
 
 def test_request_drift_invalidates_only_the_affected_provider() -> None:
@@ -191,6 +202,43 @@ def test_request_drift_invalidates_only_the_affected_provider() -> None:
     assert provenance[0]["same_as_capture"] is False
 
 
+def test_newly_enabled_provider_is_explicitly_invalidated() -> None:
+    bundle = _bundle()
+    base = _configuration()
+    google = ProviderConnectionConfiguration(
+        "google-books",
+        True,
+        False,
+        None,
+        "google_books",
+        None,
+    )
+    configuration = replace(
+        base,
+        libraries=(
+            replace(
+                base.libraries[0],
+                provider_connections=("google-books", "open-library"),
+            ),
+        ),
+        providers=tuple(sorted((*base.providers, google), key=lambda item: item.name)),
+    )
+
+    reports, invalidated, provenance = replay.replay(bundle, configuration)
+
+    assert [
+        {
+            "provider": "google-books",
+            "reason": "provider_evidence_missing",
+            "row": 0,
+        }
+    ] == invalidated
+    assert ("open-library",) == tuple(
+        observation.provider for observation in reports[0].providers
+    )
+    assert provenance[0]["same_as_capture"] is True
+
+
 def test_replay_has_no_live_transport_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -207,6 +255,73 @@ def test_replay_has_no_live_transport_fallback(
     assert [] == invalidated
 
 
+def test_replay_preserves_credential_free_google_books_requests() -> None:
+    base = _configuration()
+    google = ProviderConnectionConfiguration(
+        "google-books",
+        True,
+        False,
+        None,
+        "google_books",
+        None,
+    )
+    configuration = replace(
+        base,
+        libraries=(
+            replace(
+                base.libraries[0],
+                provider_connections=("google-books",),
+            ),
+        ),
+        providers=(google,),
+    )
+    seed = _seed()
+    plan = metadata_discovery_plan(replay._target_snapshot(seed), seed.local_claims)
+    exchanges: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"totalItems": 0, "items": []},
+            request=request,
+        )
+
+    recorder = replay.RecordingTransport(
+        exchanges,
+        "google_books",
+        httpx.MockTransport(handler),
+    )
+    live = replay.build_provider(
+        google,
+        configuration,
+        recorder,
+        live=True,
+        capture_epoch=1_700_000_000.0,
+        pacers=replay.pacers(live=False),
+    )
+    replay.observe_provider(google.name, google.adapter, live, plan)
+    transport = replay.ReplayTransport(exchanges, "google_books")
+    offline = replay.build_provider(
+        google,
+        configuration,
+        transport,
+        live=False,
+        capture_epoch=1_700_000_000.0,
+        pacers=replay.pacers(live=False),
+    )
+
+    replay.observe_provider(google.name, google.adapter, offline, plan)
+
+    assert transport.mismatch is False
+    assert transport.cursor == len(exchanges)
+    assert not any(
+        pair[0] == "key"
+        for exchange in exchanges
+        for pair in exchange["request"]["query"]
+    )
+
+
 def test_capture_refuses_a_contact_echo_before_bundle_publication(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -217,6 +332,35 @@ def test_capture_refuses_a_contact_echo_before_bundle_publication(
             200,
             headers={"content-type": "application/json"},
             json={"docs": [], "echo": "owner@example.invalid"},
+            request=request,
+        )
+
+    monkeypatch.setattr(
+        replay,
+        "RecordingTransport",
+        lambda exchanges, adapter: original(
+            exchanges, adapter, httpx.MockTransport(handler)
+        ),
+    )
+
+    with pytest.raises(replay.ReplayFailure, match="private_identity_persisted"):
+        replay.capture(_configuration(), [_seed()], _HEAD)
+
+
+def test_capture_decodes_compressed_content_before_private_identity_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = replay.RecordingTransport
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = gzip.compress(b'{"docs":[],"echo":"owner@example.invalid"}')
+        return httpx.Response(
+            200,
+            headers={
+                "content-encoding": "gzip",
+                "content-type": "application/json",
+            },
+            content=payload,
             request=request,
         )
 
@@ -329,6 +473,68 @@ def test_selection_reads_only_named_reports_from_an_exact_current_database(
     assert [source.to_json()] == [report.to_json() for report in reports]
 
 
+def test_selected_report_envelope_is_validated_before_capture(tmp_path: Path) -> None:
+    tmp_path.chmod(0o700)
+    database = tmp_path / "source.sqlite3"
+    source = _seed()
+    replacement = MetadataReport.create(
+        target=source.target,
+        file=source.file,
+        local_claims=source.local_claims,
+        local_reasons=("replacement",),
+        providers=(),
+    )
+    repository = open_repository(database)
+    try:
+        repository.publish(source, lambda: True)
+    finally:
+        repository.close()
+    document = replacement.to_json()
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute("DROP TRIGGER metadata_reports_no_update")
+        connection.execute(
+            "UPDATE metadata_reports SET document_digest=?, document=? WHERE report_id=?",
+            (hashlib.sha256(document.encode()).hexdigest(), document, source.report_id),
+        )
+        connection.execute(
+            "CREATE TRIGGER metadata_reports_no_update BEFORE UPDATE ON "
+            "metadata_reports BEGIN SELECT RAISE(ABORT, "
+            "'metadata reports are append-only'); END"
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(replay.ReplayFailure, match="selected_report_invalid"):
+        replay.load_reports(database, (source.report_id,))
+
+
+def test_cover_bearing_retained_report_builds_a_consistent_discovery_snapshot() -> None:
+    seed = _seed()
+    fields = (
+        *seed.target.fields[:-1],
+        TargetField(
+            TargetDestination.COVER,
+            TargetFieldState.VALUE,
+            "covers/retained.jpg",
+        ),
+    )
+    cover_bearing = MetadataReport.create(
+        target=replace(seed.target, fields=fields),
+        file=seed.file,
+        local_claims=seed.local_claims,
+        local_reasons=seed.local_reasons,
+        providers=(),
+    )
+
+    snapshot = replay._target_snapshot(cover_bearing)
+    plan = metadata_discovery_plan(snapshot, cover_bearing.local_claims)
+
+    assert snapshot.cover is not None
+    assert plan.lanes
+
+
 def test_endpoint_confinement_precedes_upstream_transport() -> None:
     calls = 0
 
@@ -344,6 +550,21 @@ def test_endpoint_confinement_precedes_upstream_transport() -> None:
     with pytest.raises(replay.ReplayFailure, match="provider_endpoint_invalid"):
         transport.handle_request(httpx.Request("GET", "https://elsewhere.invalid"))
     assert 0 == calls
+
+
+def test_configuration_rejects_a_replaceable_parent_before_parsing(
+    tmp_path: Path,
+) -> None:
+    tmp_path.chmod(0o700)
+    unsafe = tmp_path / "unsafe"
+    unsafe.mkdir(mode=0o700)
+    configuration = unsafe / "config.json"
+    configuration.write_bytes(b"{}")
+    configuration.chmod(0o600)
+    unsafe.chmod(0o777)
+
+    with pytest.raises(replay.ReplayFailure, match="private_authority_unsafe"):
+        replay.load_private_configuration(configuration)
 
 
 def test_private_authority_refuses_symlinks_permissions_and_overwrite(
@@ -426,6 +647,25 @@ def test_cli_failure_is_value_free(capsys: pytest.CaptureFixture[str]) -> None:
     assert "" == captured.out
     assert "Provider-evidence qualification failed safely.\n" == captured.err
     assert private_path not in captured.err
+
+
+def test_cli_argument_errors_are_value_free_but_help_remains_available(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    private_path = "/private/owner/library/unexpected.json"
+
+    assert 1 == replay.main(["replay", private_path])
+    failed = capsys.readouterr()
+    assert "" == failed.out
+    assert "Provider-evidence qualification failed safely.\n" == failed.err
+    assert private_path not in failed.err
+
+    with pytest.raises(SystemExit) as help_exit:
+        replay.main(["--help"])
+    assert help_exit.value.code == 0
+    helped = capsys.readouterr()
+    assert "Capture or replay" in helped.out
+    assert "" == helped.err
 
 
 def test_noncanonical_and_oversized_documents_fail_before_authority() -> None:

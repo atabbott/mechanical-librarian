@@ -875,6 +875,75 @@ class ProviderBinding:
     authority: str | None = None
 
 
+def observe_provider(
+    provider_name: str,
+    authority: str | None,
+    provider: MetadataProvider,
+    plan: MetadataDiscoveryPlan,
+    *,
+    deadline: float | None = None,
+) -> ProviderObservation:
+    """Apply the product's provider failure and diagnostic normalization once."""
+    try:
+        observation = provider.observe(plan, deadline=deadline)
+    except Exception:
+        # A remote adapter fault is one unavailable lane, not a failed report;
+        # no single provider may suppress the remaining provider evidence.
+        accessed_at: str | None
+        try:
+            reading = getattr(provider, "accessed_at", None)
+            accessed_at = (
+                None if reading is None else validate_provider_access_time(reading)
+            )
+        except Exception:
+            accessed_at = None
+        observation = provider_observation(
+            provider_name,
+            tuple(
+                ProviderLaneResult(
+                    lane,
+                    ProviderStatus.UNAVAILABLE,
+                    accessed_at=accessed_at,
+                )
+                for lane in plan.lanes
+            ),
+            authority=authority,
+        )
+    if observation.provider != provider_name:
+        raise MetadataReportError("provider result is invalid")
+    # Adapter diagnostic properties are optional and may themselves fail. None
+    # records that the evidence was unobtainable; an empty tuple means none.
+    try:
+        attempt_records = getattr(provider, "attempt_records", ())
+    except Exception:
+        attempt_records = None
+    try:
+        incomplete_causes = getattr(provider, "incomplete_causes", ())
+    except Exception:
+        incomplete_causes = None
+    return ProviderObservation(
+        observation.provider,
+        observation.status,
+        observation.input_references,
+        observation.candidates,
+        observation.query_kind,
+        authority,
+        observation.lanes,
+        observation.convergence,
+        observation.accessed_at,
+        merge_provider_diagnostics(
+            observation.diagnostics,
+            provider_attempt_diagnostics(
+                attempt_records,
+                status=observation.status.value,
+                incomplete_causes=incomplete_causes,
+            ),
+        ),
+        observation.request_accounting,
+        observation.edition_enrichment_overflow,
+    )
+
+
 def metadata_lookup(
     target: TargetSnapshot, local_claims: tuple[LocalClaim, ...]
 ) -> MetadataLookup:
@@ -1384,87 +1453,16 @@ class GenerateMetadataReport:
                 raise failure from error
             try:
                 with self._timing.measure("provider_search", "provider"):
-                    observation = provider.observe(
-                        plan, deadline=cover_aggregate_deadline
+                    observation = observe_provider(
+                        binding.name,
+                        binding.authority,
+                        provider,
+                        plan,
+                        deadline=cover_aggregate_deadline,
                     )
-            except Exception:
-                # ``MetadataProvider`` is a protocol over remote adapters and
-                # declares no error type, so a provider that fails in any way
-                # is one unavailable lane rather than a failed report. Breadth
-                # is the contract here: the report must carry one terminal
-                # observation for every configured lane, and a provider allowed
-                # to abort the run would let one adapter deny the owner a
-                # package the remaining providers can still support.
-                #
-                # The access time is an optional diagnostic an adapter may
-                # expose as a computed property. ``getattr``'s default absorbs
-                # only ``AttributeError``, and the value it returns still has to
-                # satisfy the domain's access-time rule, so both the read and
-                # the check are guarded here: a provider whose property raises,
-                # or answers with something that is not an access time, must not
-                # take the unavailable lane this handler exists to produce.
-                # ``None`` is the recorded "not obtainable" value, as below.
-                accessed_at: str | None
-                try:
-                    reading = getattr(provider, "accessed_at", None)
-                    accessed_at = (
-                        None
-                        if reading is None
-                        else validate_provider_access_time(reading)
-                    )
-                except Exception:
-                    accessed_at = None
-                observation = provider_observation(
-                    binding.name,
-                    tuple(
-                        ProviderLaneResult(
-                            lane,
-                            ProviderStatus.UNAVAILABLE,
-                            accessed_at=accessed_at,
-                        )
-                        for lane in plan.lanes
-                    ),
-                    authority=binding.authority,
-                )
-            if observation.provider != binding.name:
-                failure = MetadataReportError("provider result is invalid")
-                _release_repository(repository, failure)
-                raise failure
-            # Both reads are optional diagnostics an adapter may expose as a
-            # computed property. A missing attribute already yields the default,
-            # so only a property that itself fails reaches these handlers, and
-            # its raisable set is the adapter's. ``None`` is the recorded "not
-            # obtainable" value and is distinct from the empty default, so the
-            # diagnostics stay truthful and the observation still stands.
-            try:
-                attempt_records = getattr(provider, "attempt_records", ())
-            except Exception:
-                attempt_records = None
-            try:
-                incomplete_causes = getattr(provider, "incomplete_causes", ())
-            except Exception:
-                incomplete_causes = None
-            observation = ProviderObservation(
-                observation.provider,
-                observation.status,
-                observation.input_references,
-                observation.candidates,
-                observation.query_kind,
-                binding.authority,
-                observation.lanes,
-                observation.convergence,
-                observation.accessed_at,
-                merge_provider_diagnostics(
-                    observation.diagnostics,
-                    provider_attempt_diagnostics(
-                        attempt_records,
-                        status=observation.status.value,
-                        incomplete_causes=incomplete_causes,
-                    ),
-                ),
-                observation.request_accounting,
-                observation.edition_enrichment_overflow,
-            )
+            except Exception as error:
+                _release_repository(repository, error)
+                raise
             observations.append(observation)
             candidate_descriptors = getattr(provider, "cover_descriptors", ())
             if type(candidate_descriptors) is not tuple or any(

@@ -15,10 +15,11 @@ import stat
 import subprocess
 import sys
 import time
+import zlib
 from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Never
 
 import httpx
 
@@ -27,7 +28,10 @@ from mechanical_librarian.adapters.persistence.metadata_reports import open_repo
 from mechanical_librarian.adapters.persistence.qualification_state_bridge import (
     _connect_read_only,
 )
-from mechanical_librarian.adapters.persistence.schema import _validate_schema
+from mechanical_librarian.adapters.persistence.schema import (
+    _validate_report_row,
+    _validate_schema,
+)
 from mechanical_librarian.adapters.providers.google_books_metadata import (
     GoogleBooksMetadataProvider,
     GoogleBooksPacer,
@@ -46,12 +50,16 @@ from mechanical_librarian.application.configuration import (
     ProviderConnectionConfiguration,
 )
 from mechanical_librarian.application.metadata_report import (
+    TargetCover,
     TargetSnapshot,
     metadata_discovery_plan,
+    observe_provider,
 )
 from mechanical_librarian.domain.metadata_report import REPORT_SCHEMA, MetadataReport
 from mechanical_librarian.domain.proposal_set import evaluate_report
-from mechanical_librarian.infrastructure.configuration import load_configuration_file
+from mechanical_librarian.infrastructure.configuration import (
+    load_configuration_document,
+)
 from mechanical_librarian.infrastructure.security.credentials import (
     google_books_client,
     hardcover_client_token,
@@ -63,6 +71,7 @@ _BUNDLE_SCHEMA = "provider-replay-bundle-v1"
 _RESULT_SCHEMA = "provider-replay-result-v1"
 _SELECTION_SCHEMA = "provider-replay-selection-v1"
 _MAX_BUNDLE_BYTES = 536_870_912
+_MAX_CONFIG_BYTES = 262_144
 _MAX_SELECTION_BYTES = 65_536
 _MAX_COHORT = 100
 _MAX_EXCHANGES = {
@@ -117,6 +126,11 @@ EMAIL = re.compile(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+")
 
 class ReplayFailure(RuntimeError):
     """A fixed, value-free provider replay qualification failure."""
+
+
+class SafeArgumentParser(argparse.ArgumentParser):
+    def error(self, _message: str) -> Never:
+        raise ReplayFailure("arguments_invalid")
 
 
 def canonical(value: object) -> bytes:
@@ -219,6 +233,26 @@ def require_private_directory(path: Path) -> os.stat_result:
     return _private_stat(path, directory=True)
 
 
+def require_safe_parent_chain(path: Path) -> None:
+    """Reject replaceable path authorities before descriptor-bound reads."""
+    current = path.absolute()
+    while True:
+        try:
+            value = current.stat(follow_symlinks=False)
+        except OSError as error:
+            raise ReplayFailure("private_input_unavailable") from error
+        if (
+            not stat.S_ISDIR(value.st_mode)
+            or stat.S_ISLNK(value.st_mode)
+            or value.st_mode & 0o022
+            and not value.st_mode & stat.S_ISVTX
+        ):
+            raise ReplayFailure("private_authority_unsafe")
+        if current.parent == current:
+            return
+        current = current.parent
+
+
 def read_private(path: Path, maximum: int) -> bytes:
     expected = require_private_file(path)
     if expected.st_size > maximum:
@@ -257,6 +291,14 @@ def read_private(path: Path, maximum: int) -> bytes:
         raise ReplayFailure("private_input_unavailable") from error
     finally:
         os.close(descriptor)
+
+
+def load_private_configuration(path: Path) -> ApplicationConfiguration:
+    require_safe_parent_chain(path.parent)
+    try:
+        return load_configuration_document(read_private(path, _MAX_CONFIG_BYTES))
+    except Exception as error:
+        raise ReplayFailure("configuration_invalid") from error
 
 
 def _unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -364,12 +406,18 @@ def load_reports(database: Path, report_ids: tuple[str, ...]) -> list[MetadataRe
         rows = []
         for report_id in report_ids:
             row = connection.execute(
-                "SELECT document FROM metadata_reports WHERE report_id=?",
+                """SELECT report_id, connection_name, library_name, item_id,
+                          file_identity, content_digest, schema_version,
+                          document_digest, document
+                   FROM metadata_reports WHERE report_id=?""",
                 (report_id,),
             ).fetchone()
             if row is None:
                 raise ReplayFailure("selected_report_unavailable")
-            rows.append(row)
+            try:
+                rows.append(_validate_report_row(tuple(row)))
+            except Exception as error:
+                raise ReplayFailure("selected_report_invalid") from error
         if binding is not None:
             binding.require_current()
     finally:
@@ -378,7 +426,7 @@ def load_reports(database: Path, report_ids: tuple[str, ...]) -> list[MetadataRe
             binding.close()
         elif descriptor >= 0:
             os.close(descriptor)
-    return [MetadataReport.from_json(row[0]) for row in rows]
+    return [MetadataReport.from_json(document) for document in rows]
 
 
 def load_selection(path: Path) -> tuple[str, ...]:
@@ -415,7 +463,23 @@ def plan_category(report: MetadataReport) -> str:
 
 
 def _target_snapshot(report: MetadataReport) -> TargetSnapshot:
-    return TargetSnapshot("book", None, (), fields=report.target.fields)
+    cover_field = report.target.fields[-1]
+    cover = (
+        None
+        if cover_field.value is None
+        else TargetCover(
+            report.file.identity,
+            str(cover_field.value),
+            report.target.item,
+        )
+    )
+    return TargetSnapshot(
+        "book",
+        None,
+        (),
+        cover=cover,
+        fields=report.target.fields,
+    )
 
 
 def sanitize_header(name: str, value: str) -> str:
@@ -633,7 +697,13 @@ def build_provider(
 ):
     timeout = configuration.limits.timeout_seconds
     maximum = configuration.limits.provider_response_bytes
-    credential = live_credential if live else "replay-placeholder"
+    credential = (
+        live_credential
+        if live
+        else "replay-placeholder"
+        if provider.secret_file is not None
+        else None
+    )
     virtual = VirtualTime()
     clock = time.monotonic if live else virtual.clock
     sleep = time.sleep if live else virtual.sleep
@@ -710,6 +780,47 @@ def seed_report(report: MetadataReport) -> MetadataReport:
     )
 
 
+def _inflate_bounded(payload: bytes, encoding: str) -> bytes:
+    modes = (
+        (zlib.MAX_WBITS | 16,)
+        if encoding == "gzip"
+        else (zlib.MAX_WBITS, -zlib.MAX_WBITS)
+    )
+    for mode in modes:
+        try:
+            decoder = zlib.decompressobj(mode)
+            decoded = decoder.decompress(payload, 67_108_865)
+            if len(decoded) > 67_108_864 or decoder.unconsumed_tail:
+                raise ReplayFailure("provider_response_decoding_oversized")
+            decoded += decoder.flush(67_108_865 - len(decoded))
+            if len(decoded) > 67_108_864 or not decoder.eof:
+                raise ReplayFailure("provider_response_decoding_invalid")
+            return decoded
+        except zlib.error:
+            continue
+    raise ReplayFailure("provider_response_decoding_invalid")
+
+
+def decoded_response_body(response: dict[str, Any]) -> bytes:
+    payload = b"".join(
+        base64.b64decode(chunk, validate=True) for chunk in response["chunks_base64"]
+    )
+    encodings = [
+        encoding.strip().casefold()
+        for name, value in response["headers"]
+        if name == "content-encoding"
+        for encoding in value.split(",")
+        if encoding.strip()
+    ]
+    for encoding in reversed(encodings):
+        if encoding == "identity":
+            continue
+        if encoding not in {"gzip", "deflate"}:
+            raise ReplayFailure("provider_response_encoding_unsupported")
+        payload = _inflate_bounded(payload, encoding)
+    return payload
+
+
 def _contains_private_identity(bundle: dict[str, Any], values: set[bytes]) -> bool:
     if not values:
         return False
@@ -726,6 +837,7 @@ def _contains_private_identity(bundle: dict[str, Any], values: set[bytes]) -> bo
                         base64.b64decode(chunk, validate=True)
                         for chunk in response["chunks_base64"]
                     )
+                    raw_values.append(decoded_response_body(response))
                 if any(value in raw for value in values for raw in raw_values):
                     return True
     return False
@@ -771,7 +883,12 @@ def capture(
                 pacers=live_pacers,
                 live_credential=credential,
             )
-            observation = instance.observe(plan)
+            observation = observe_provider(
+                provider.name,
+                provider.adapter,
+                instance,
+                plan,
+            )
             if any(
                 type(exchange.get("response")) is dict
                 and not exchange["response"]["complete"]
@@ -1097,6 +1214,19 @@ def replay(
         providers_by_name = {
             provider.name: provider for provider in scoped if provider.enabled
         }
+        captured_provider_names = {
+            provider_row["name"] for provider_row in row["providers"]
+        }
+        for provider_name in sorted(
+            set(providers_by_name).difference(captured_provider_names)
+        ):
+            invalidated.append(
+                {
+                    "provider": provider_name,
+                    "reason": "provider_evidence_missing",
+                    "row": row_index,
+                }
+            )
         observations = []
         for provider_row in row["providers"]:
             provider = providers_by_name.get(provider_row["name"])
@@ -1119,7 +1249,12 @@ def replay(
                 capture_epoch=provider_row["capture_epoch"],
                 pacers=current_pacers,
             )
-            observation = instance.observe(plan)
+            observation = observe_provider(
+                provider.name,
+                provider.adapter,
+                instance,
+                plan,
+            )
             if transport.mismatch or transport.cursor != len(exchanges):
                 invalidated.append(
                     {
@@ -1223,7 +1358,7 @@ def private_digest(path: Path) -> str:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = SafeArgumentParser(
         description="Capture or replay one sealed private provider-evidence cohort."
     )
     commands = parser.add_subparsers(dest="action", required=True)
@@ -1244,10 +1379,9 @@ def _parser() -> argparse.ArgumentParser:
 
 def _capture(arguments: argparse.Namespace) -> dict[str, object]:
     require_environment(arguments.repository, arguments.expected_head)
-    require_private_file(arguments.config)
     require_empty_output(arguments.output_directory)
     selection = load_selection(arguments.selection)
-    configuration = load_configuration_file(arguments.config)
+    configuration = load_private_configuration(arguments.config)
     selected = load_reports(arguments.database, selection)
     bundle = capture(configuration, selected, arguments.expected_head)
     validate_bundle(bundle)
@@ -1278,10 +1412,9 @@ def _capture(arguments: argparse.Namespace) -> dict[str, object]:
 
 def _replay(arguments: argparse.Namespace) -> dict[str, object]:
     require_environment(arguments.repository, arguments.expected_head)
-    require_private_file(arguments.config)
     require_empty_output(arguments.output_directory)
     bundle, bundle_digest = read_bundle(arguments.bundle, arguments.bundle_digest)
-    configuration = load_configuration_file(arguments.config)
+    configuration = load_private_configuration(arguments.config)
     reports, invalidated, provenance = replay(bundle, configuration)
     repeated, repeated_invalidated, repeated_provenance = replay(bundle, configuration)
     if (
