@@ -213,8 +213,12 @@ def _copy_verified_backup(
             "qualification-state backup is unavailable"
         ) from error
     finally:
+        cleanup_failure: BaseException | None = None
         if backup_descriptor >= 0:
-            os.close(backup_descriptor)
+            try:
+                os.close(backup_descriptor)
+            except OSError as error:
+                cleanup_failure = error
         if created_identity is not None and not succeeded:
             try:
                 information = os.stat(
@@ -226,10 +230,10 @@ def _copy_verified_backup(
                     )
                 os.unlink(backup_name, dir_fd=parent_descriptor)
                 os.fsync(parent_descriptor)
-            except OSError as error:
-                raise MetadataReportError(
-                    "qualification-state backup identity changed"
-                ) from error
+            except (MetadataReportError, OSError) as error:
+                cleanup_failure = cleanup_failure or error
+        if cleanup_failure is not None:
+            raise QualificationStateBridgeRecoveryRequired from cleanup_failure
 
 
 def _require_backup_current(
@@ -423,6 +427,13 @@ def _reconstruct_report(document: str) -> _ReconstructedReport:
         )
         local = _object(root["local"], {"claims", "reasons", "status"})
         claims = tuple(_local_claim_from_data(item) for item in _list(local["claims"]))
+        expected_local_status = (
+            "candidate"
+            if any(claim.basis == "opening_matter" for claim in claims)
+            else "no_candidate"
+        )
+        if local["status"] != expected_local_status:
+            raise MetadataReportError("qualification-state source is incompatible")
         if _project_source_field_results(claims) != root["field_results"]:
             raise MetadataReportError("qualification-state source is incompatible")
         provider_values = _list(root["providers"])
@@ -480,13 +491,12 @@ def _reconstruct_report(document: str) -> _ReconstructedReport:
                     "timeout_scope",
                 },
             )
-            provenance = cover_data["provenance"]
+            cover = _cover_source_from_data(cover_data)
             if (
-                type(provenance) is dict
-                and provenance.get("provider") in invalidated_providers
+                cover.provenance is not None
+                and cover.provenance.provider in invalidated_providers
             ):
                 continue
-            cover = _cover_source_from_data(cover_data)
             if cover.artifact is not None:
                 invalidated_artifact = True
                 continue
@@ -935,6 +945,7 @@ def bridge_qualification_state(
                     output_information.st_ino,
                 ) != (temp_information.st_dev, temp_information.st_ino):
                     raise QualificationStateBridgeRecoveryRequired
+                published = True
                 os.unlink(temp)
                 os.fsync(parent_descriptor)
             if backup_identity is None:

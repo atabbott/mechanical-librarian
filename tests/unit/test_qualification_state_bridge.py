@@ -279,6 +279,40 @@ def test_missing_work_dispatch_lineage_is_selectively_invalidated(
     assert source_document["providers"][0]["status"] == "candidates"
 
 
+def test_malformed_cover_dependent_on_invalidated_provider_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = json.loads(_v26_document(missing_work_lineage=True))
+    data["covers"] = [
+        {
+            "artifact": None,
+            "kind": "invalid",
+            "provenance": {"provider": "catalogue"},
+            "source_id": "invalid_source",
+            "state": "absent",
+            "timeout_scope": None,
+        }
+    ]
+    identity = dict(data)
+    identity.pop("report_id")
+    data["report_id"] = (
+        "report_" + hashlib.sha256(canonical_json(identity).encode("utf-8")).hexdigest()
+    )
+    source, backup, output = _paths(tmp_path)
+    _create_source(source, document=canonical_json(data))
+    _accept_synthetic_source(monkeypatch, source)
+
+    with pytest.raises(
+        MetadataReportError, match="qualification-state source is incompatible"
+    ):
+        bridge.bridge_qualification_state(
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+        )
+
+    assert not backup.exists()
+    assert not output.exists()
+
+
 def test_artifact_bearing_cover_is_invalidated_without_mutating_source(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -344,6 +378,38 @@ def test_durable_temp_is_reconciled_after_ambiguous_publication(
     assert result["status"] == "bridged"
     assert output.exists()
     assert not temp.exists()
+
+
+def test_existing_output_temp_cleanup_failure_requires_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, backup, output = _paths(tmp_path)
+    _create_source(source)
+    _accept_synthetic_source(monkeypatch, source)
+    bridge.bridge_qualification_state(
+        source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+    )
+    temp = output.with_name(f".{output.name}.qualification-state-bridge.tmp")
+    os.link(output, temp)
+    real_unlink = bridge.os.unlink
+
+    def fail_temp_unlink(
+        path: str | os.PathLike[str],
+        *,
+        dir_fd: int | None = None,
+    ) -> None:
+        if Path(path) == temp:
+            raise OSError("synthetic recovery cleanup failure")
+        real_unlink(path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(bridge.os, "unlink", fail_temp_unlink)
+    with pytest.raises(QualificationStateBridgeRecoveryRequired):
+        bridge.bridge_qualification_state(
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+        )
+
+    assert output.exists()
+    assert temp.exists()
 
 
 def test_unknown_source_contract_fails_before_backup_or_output(
@@ -419,6 +485,33 @@ def test_semantically_changed_source_document_fails_before_backup(
     document = canonical_json(data)
     source, backup, output = _paths(tmp_path)
     _create_source(source, document=document)
+    _accept_synthetic_source(monkeypatch, source)
+
+    with pytest.raises(
+        MetadataReportError, match="qualification-state source is incompatible"
+    ):
+        bridge.bridge_qualification_state(
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+        )
+
+    assert not backup.exists()
+    assert not output.exists()
+
+
+def test_inconsistent_retained_local_status_fails_before_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = json.loads(_v26_document())
+    data["local"]["status"] = (
+        "no_candidate" if data["local"]["status"] == "candidate" else "candidate"
+    )
+    identity = dict(data)
+    identity.pop("report_id")
+    data["report_id"] = (
+        "report_" + hashlib.sha256(canonical_json(identity).encode("utf-8")).hexdigest()
+    )
+    source, backup, output = _paths(tmp_path)
+    _create_source(source, document=canonical_json(data))
     _accept_synthetic_source(monkeypatch, source)
 
     with pytest.raises(
@@ -670,6 +763,40 @@ def test_backup_write_failure_removes_partial_backup_and_preserves_source(
         )
 
     assert _digest(source) == before
+    assert not backup.exists()
+    assert not output.exists()
+
+
+def test_backup_close_failure_still_unlinks_partial_and_requires_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, backup, output = _paths(tmp_path)
+    _create_source(source)
+    _accept_synthetic_source(monkeypatch, source)
+    real_close = bridge.os.close
+    backup_descriptor = -1
+
+    def fail_write(descriptor: int, value: object) -> int:
+        nonlocal backup_descriptor
+        backup_descriptor = descriptor
+        raise OSError("synthetic full disk")
+
+    def fail_backup_close(descriptor: int) -> None:
+        if descriptor == backup_descriptor:
+            raise OSError("synthetic close failure")
+        real_close(descriptor)
+
+    monkeypatch.setattr(bridge.os, "write", fail_write)
+    monkeypatch.setattr(bridge.os, "close", fail_backup_close)
+    try:
+        with pytest.raises(QualificationStateBridgeRecoveryRequired):
+            bridge.bridge_qualification_state(
+                source, backup, output, RETAINED_LIBRARY_V26_TO_V31
+            )
+    finally:
+        if backup_descriptor >= 0:
+            real_close(backup_descriptor)
+
     assert not backup.exists()
     assert not output.exists()
 
