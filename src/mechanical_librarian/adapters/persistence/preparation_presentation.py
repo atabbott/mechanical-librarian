@@ -53,7 +53,7 @@ def _completion_sequence_count(connection: sqlite3.Connection, run_id: str) -> i
         (run_id,),
     ).fetchone()
     aggregate = connection.execute(
-        "SELECT COUNT(completion_sequence),MAX(completion_sequence),"
+        "SELECT COUNT(completion_sequence),MIN(completion_sequence),MAX(completion_sequence),"
         "COALESCE(SUM(typeof(completion_sequence)<>'integer'),0) "
         "FROM review_preparation_presentation "
         "INDEXED BY review_preparation_presentation_completion_integrity "
@@ -61,7 +61,7 @@ def _completion_sequence_count(connection: sqlite3.Connection, run_id: str) -> i
         (run_id,),
     ).fetchone()
     count = None if count_row is None else count_row[0]
-    actual, latest, noninteger = aggregate
+    actual, earliest, latest, noninteger = aggregate
     if (
         type(count) is not int
         or count < 0
@@ -70,7 +70,9 @@ def _completion_sequence_count(connection: sqlite3.Connection, run_id: str) -> i
         or type(noninteger) is not int
         or noninteger != 0
         or actual != count
+        or (count == 0) != (earliest is None)
         or (count == 0) != (latest is None)
+        or (earliest is not None and (type(earliest) is not int or earliest != 1))
         or (latest is not None and (type(latest) is not int or latest != count))
     ):
         raise MetadataReportError("review preparation persistence failed") from None
@@ -405,6 +407,15 @@ def accept_preparation_trigger(
                 accepted_at,
             ),
         )
+        if enrollment is not None and enrollment[2] in {
+            "completed",
+            "completed_with_failures",
+        }:
+            connection.execute(
+                "UPDATE review_preparation_presentation SET cycle_id=? "
+                "WHERE row_kind='work' AND scan_id=? AND cycle_id=?",
+                (cycle_id, scan_id, enrollment[0]),
+            )
         if deferred is None:
             _record_preparation_trigger(connection, run_id, trigger, accepted_at)
         else:

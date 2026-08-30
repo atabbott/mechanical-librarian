@@ -741,9 +741,13 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             ).fetchone()[0]
             refresh_preparation_presentation(self._connection, latest)
             transaction.commit()
-        except sqlite3.Error as error:
+        except BaseException as error:
             transaction.rollback()
-            raise MetadataReportError("review preparation recovery failed") from error
+            if isinstance(error, sqlite3.Error):
+                raise MetadataReportError(
+                    "review preparation recovery failed"
+                ) from None
+            raise
 
     def target_connection_conditions(self) -> tuple[TargetConnectionCondition, ...]:
         try:

@@ -1193,7 +1193,7 @@ def test_completed_enrollment_restarts_exact_cycle_without_reaging_outcome(
         100,
         trigger=PreparationTrigger.MANUAL_SCAN,
     )
-    repository.request_review_scan(
+    second = repository.request_review_scan(
         "secondary",
         "history",
         "lib-2",
@@ -1232,6 +1232,11 @@ def test_completed_enrollment_restarts_exact_cycle_without_reaging_outcome(
         "SELECT cycle_id FROM review_preparation_presentation WHERE row_kind='enrollment' AND scan_id=?",
         (first.scan_id,),
     ).fetchone()[0]
+    sibling_cycle = repository._connection.execute(
+        "SELECT cycle_id FROM review_preparation_presentation "
+        "WHERE row_kind='enrollment' AND scan_id=?",
+        (second.scan_id,),
+    ).fetchone()[0]
 
     repository.request_review_scan(
         "primary",
@@ -1241,6 +1246,37 @@ def test_completed_enrollment_restarts_exact_cycle_without_reaging_outcome(
         108,
         trigger=PreparationTrigger.MANUAL_SCAN,
     )
+    immediate = repository.preparation_presentation(110)
+    new_cycle = repository._connection.execute(
+        "SELECT cycle_id FROM review_preparation_presentation "
+        "WHERE row_kind='enrollment' AND scan_id=?",
+        (first.scan_id,),
+    ).fetchone()[0]
+    retained = repository._connection.execute(
+        "SELECT cycle_id,work_outcome,updated_at,completion_sequence "
+        "FROM review_preparation_presentation WHERE row_kind='work' AND scan_id=?",
+        (first.scan_id,),
+    ).fetchone()
+    trigger = repository._connection.execute(
+        "SELECT accepted_count FROM review_preparation_presentation "
+        "WHERE row_kind='trigger' AND trigger='manual_scan'"
+    ).fetchone()
+    assert repository._connection.execute(
+        "SELECT cycle_id FROM review_preparation_presentation "
+        "WHERE row_kind='enrollment' AND scan_id=?",
+        (second.scan_id,),
+    ).fetchone() == (sibling_cycle,)
+    repository.close()
+
+    assert before is not None and immediate is not None
+    assert old_cycle != new_cycle
+    assert retained == (new_cycle, "ready", 105, 1)
+    assert trigger == (2,)
+    assert immediate.recent_completions == before.recent_completions
+    assert immediate.throughput_per_minute == before.throughput_per_minute
+
+    repository = open_repository(application_path, create=False)
+    assert repository.preparation_presentation(110) == immediate
     successor = repository.claim_review_pipeline_action(109)
     assert successor is not None and successor.connection == "primary"
     repository.complete_review_discovery(successor, 2, "b" * 64, (entry,), 110)
@@ -1252,21 +1288,12 @@ def test_completed_enrollment_restarts_exact_cycle_without_reaging_outcome(
     active_work = repository.claim_review_pipeline_work(work.action_id, 111)
     assert active_work is not None and active_work.connection == "primary"
     after = repository.preparation_presentation(110)
-    new_cycle = repository._connection.execute(
-        "SELECT cycle_id FROM review_preparation_presentation WHERE row_kind='enrollment' AND scan_id=?",
-        (first.scan_id,),
-    ).fetchone()[0]
-    retained = repository._connection.execute(
-        "SELECT work_outcome,updated_at FROM review_preparation_presentation WHERE row_kind='work'"
-    ).fetchone()
     repository._connection.commit()
     repository.close()
 
     assert before is not None and after is not None
-    assert old_cycle != new_cycle
     assert after.state is PreparationRunState.RUNNING
     assert after.active_books[0].stage == "Reading from library"
-    assert retained == ("ready", 105)
     assert after.recent_completions == before.recent_completions
     assert after.throughput_per_minute == before.throughput_per_minute
     reopened = open_repository(application_path, create=False)
@@ -1706,7 +1733,9 @@ def test_completion_allocator_rolls_back_corrupt_maximum_without_real_write(
     repository.close()
 
 
-@pytest.mark.parametrize("corruption", ("delete-first", "gap", "nonmaximum-real"))
+@pytest.mark.parametrize(
+    "corruption", ("delete-first", "gap", "nonmaximum-real", "zero-alias")
+)
 def test_completion_allocator_refuses_noncanonical_population_before_mutation(
     tmp_path: Path, corruption: str
 ) -> None:
@@ -1752,9 +1781,14 @@ def test_completion_allocator_refuses_noncanonical_population_before_mutation(
             "UPDATE review_preparation_presentation SET completion_sequence=7 "
             "WHERE completion_sequence=1"
         )
-    else:
+    elif corruption == "nonmaximum-real":
         repository._connection.execute(
             "UPDATE review_preparation_presentation SET completion_sequence=1.5 "
+            "WHERE completion_sequence=1"
+        )
+    else:
+        repository._connection.execute(
+            "UPDATE review_preparation_presentation SET completion_sequence=0 "
             "WHERE completion_sequence=1"
         )
     repository._connection.commit()
@@ -1764,6 +1798,18 @@ def test_completion_allocator_refuses_noncanonical_population_before_mutation(
             "FROM review_preparation_presentation ORDER BY row_id"
         )
     )
+    if corruption == "zero-alias":
+        with pytest.raises(
+            MetadataReportError, match="^review preparation persistence failed$"
+        ) as direct:
+            _completion_sequence_count(
+                repository._connection,
+                repository._connection.execute(
+                    "SELECT run_id FROM review_preparation_presentation WHERE row_id='run'"
+                ).fetchone()[0],
+            )
+        assert direct.value.__cause__ is None
+        assert direct.value.__context__ is None
 
     with pytest.raises(
         MetadataReportError, match="^review preparation persistence failed$"
@@ -1792,7 +1838,7 @@ def test_completion_allocator_uses_one_covering_linear_population_pass(
     tmp_path: Path,
 ) -> None:
     sql = (
-        "SELECT COUNT(completion_sequence),MAX(completion_sequence),"
+        "SELECT COUNT(completion_sequence),MIN(completion_sequence),MAX(completion_sequence),"
         "COALESCE(SUM(typeof(completion_sequence)<>'integer'),0) "
         "FROM review_preparation_presentation "
         "INDEXED BY review_preparation_presentation_completion_integrity "
@@ -2214,6 +2260,86 @@ def test_recovery_rebinds_the_latest_scan_after_settings_change(tmp_path: Path) 
         (first_boot.scan_id, "completed", "books-v1", _PRODUCER),
         (ordinary.scan_id, "queued", "books-v2", changed_producer),
     ]
+
+
+def test_recovery_rolls_back_corrupt_completion_authority_and_releases_writer(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "recovery-completion-corruption.sqlite3"
+    repository, _pending = _seed_partly_completed_presentation(path, failed=False)
+    repository._connection.execute("PRAGMA ignore_check_constraints=ON")
+    repository._connection.execute(
+        "UPDATE review_preparation_presentation SET completion_sequence=0 "
+        "WHERE completion_sequence=1"
+    )
+    repository._connection.commit()
+    tables = (
+        "review_preparation_control",
+        "review_preparation_scans",
+        "review_preparation_work",
+        "review_preparation_connection_conditions",
+        "review_preparation_presentation",
+    )
+    before = {
+        table: tuple(repository._connection.execute(f"SELECT * FROM {table}"))
+        for table in tables
+    }
+
+    with pytest.raises(
+        MetadataReportError, match="^review preparation persistence failed$"
+    ) as raised:
+        repository.recover_review_pipeline(
+            (("primary", "fiction", "lib-1", _PRODUCER),)
+        )
+
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert repository._connection.in_transaction is False
+    assert {
+        table: tuple(repository._connection.execute(f"SELECT * FROM {table}"))
+        for table in tables
+    } == before
+    second = sqlite3.connect(path, timeout=0)
+    second.execute("BEGIN IMMEDIATE")
+    second.rollback()
+    second.close()
+    repository.close()
+
+
+def test_recovery_rolls_back_unexpected_failure_and_releases_writer(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 100)
+    action = repository.claim_review_pipeline_action(101)
+    assert action is not None
+    before = tuple(
+        repository._connection.execute("SELECT * FROM review_preparation_scans")
+    )
+    fault = RuntimeError("injected recovery failure")
+
+    with (
+        patch(
+            "mechanical_librarian.adapters.persistence.review_scans.refresh_preparation_presentation",
+            side_effect=fault,
+        ),
+        pytest.raises(RuntimeError) as raised,
+    ):
+        repository.recover_review_pipeline(
+            (("primary", "fiction", "lib-1", _PRODUCER),)
+        )
+
+    assert raised.value is fault
+    assert repository._connection.in_transaction is False
+    assert (
+        tuple(repository._connection.execute("SELECT * FROM review_preparation_scans"))
+        == before
+    )
+    second = sqlite3.connect(application_path, timeout=0)
+    second.execute("BEGIN IMMEDIATE")
+    second.rollback()
+    second.close()
+    repository.close()
 
 
 def test_pipeline_preflight_is_once_per_cycle_and_recovery_retains_qualification(
