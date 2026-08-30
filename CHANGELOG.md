@@ -9,6 +9,10 @@
   Tone only when it names Tone. Evidence already published keeps its pre-gate
   claims until its item is prepared again. (#935)
 
+- Remove the dead owner-decision-actions predecessor validator and its frozen
+  schema constants from the persistence adapter; #872/#873 retired the last
+  adoption plan that reached them and no caller remained. (#933)
+
 - A prepared audiobook no longer settles its own scan: absences reconcile again
   in mixed-format libraries and nothing counts it as blocked. Its recorded
   evidence is reachable from the library row, its digest is bounded by a
