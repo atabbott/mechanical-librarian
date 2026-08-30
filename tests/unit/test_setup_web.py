@@ -358,7 +358,10 @@ def test_setup_surface_exposes_only_health_shell_session_and_redacted_state() ->
     assert "csrf=state.csrf_token" in script.text
     assert "location.assign('/library')" not in script.text
     assert "const retired=visible?.state==='dismissed'" in script.text
-    assert "if(!visible||retired){if(observed||retired)retire()" in script.text
+    assert "let open=null;let observed=true" in script.text
+    assert "if(!visible||retired){if(observed||retired)retire(retired)" in script.text
+    assert "dismissed?'Preparation was dismissed'" in script.text
+    assert "dismissed?'Open the ordinary workspace.'" in script.text
     assert "if(!open){open=document.createElement('a')" in script.text
     assert "open.href='/library?lens=all'" in script.text
     assert (

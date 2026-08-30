@@ -2870,7 +2870,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                     page.wait_for_timeout(1600)
                     assert preparation_requests["count"] == requests_after_null
                 else:
-                    presentation_state["value"] = "dismissed"
+                    presentation_state["value"] = None
                     page.goto(setup_url)
                     page.get_by_role("button", name="Kick off preparation").click()
                     handoff = page.get_by_role("link", name="Open workspace")
@@ -2881,9 +2881,25 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                     expect(page.get_by_text("Reconnecting", exact=False)).to_have_count(
                         0
                     )
-                    requests_after_dismissal = preparation_requests["count"]
+                    requests_after_initial_null = preparation_requests["count"]
                     page.wait_for_timeout(1600)
-                    assert preparation_requests["count"] == requests_after_dismissal
+                    assert preparation_requests["count"] == requests_after_initial_null
+                    presentation_state["value"] = "dismissed"
+                    page.goto(setup_url)
+                    page.get_by_role("button", name="Kick off preparation").click()
+                    handoff = page.get_by_role("link", name="Open workspace")
+                    page.get_by_role(
+                        "heading", name="Preparation was dismissed"
+                    ).wait_for()
+                    expect(
+                        page.get_by_text("Open the ordinary workspace.")
+                    ).to_be_visible()
+                    expect(handoff).to_have_attribute("href", "/library?lens=all")
+                    requests_after_legacy_dismissal = preparation_requests["count"]
+                    page.wait_for_timeout(1600)
+                    assert (
+                        preparation_requests["count"] == requests_after_legacy_dismissal
+                    )
                 assert console_errors == []
                 assert page_errors == []
                 setup_client.close()
