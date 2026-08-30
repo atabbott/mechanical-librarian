@@ -231,6 +231,20 @@ def test_too_many_results_exceed_the_candidate_limit() -> None:
     )
 
 
+def test_an_overshot_store_page_exceeds_the_candidate_limit() -> None:
+    document = copy.deepcopy(payload("itunes_search"))
+    one = document["results"][0]
+    document["results"] = [
+        {**one, "collectionId": one["collectionId"] + offset} for offset in range(8)
+    ]
+    _seen, handle = _recorder(_store(document))
+
+    assert (
+        ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
+        is _provider(handle).observe(work_plan()).status
+    )
+
+
 def test_a_result_without_a_collection_identifier_is_malformed() -> None:
     document = copy.deepcopy(payload("itunes_search"))
     del document["results"][0]["collectionId"]

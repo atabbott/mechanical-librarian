@@ -519,8 +519,18 @@ def _candidates(
 ) -> tuple[ProviderCandidate, ...]:
     schema_rejections(len(set(payload) - _SEARCH_TOP_LEVEL))
     results = payload.get("results", [])
-    if type(results) is not list or len(results) > _MAX_RETURNED_RESULTS:
+    if type(results) is not list:
         raise ValueError("provider candidate list is malformed")
+    if len(results) > _MAX_RETURNED_RESULTS:
+        # The store reads `limit` as approximate and overshoots it, so a page
+        # wider than the one asked for states a match set that is too broad --
+        # not a response missing required identity.  ADR-0061's vocabulary
+        # already names that outcome, and it is stated before any result is
+        # parsed so the count decides the lane rather than a member of it.
+        raise ProviderFailure(
+            ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+            category="candidate_limit_exceeded",
+        )
     admitted = [
         _candidate(
             provider,
