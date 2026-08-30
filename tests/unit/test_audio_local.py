@@ -137,7 +137,7 @@ def test_mp4_tags_separate_named_atoms_from_freeform_ones() -> None:
         ("mp4_ilst", "B0CW1KL2QD")
     }
     assert _values(interpretation, AudioInspectionField.SERIES) == {
-        ("mp4_freeform_tone", "Discworld")
+        ("mp4_freeform", "Discworld")
     }
     assert _values(interpretation, AudioInspectionField.SERIES_SEQUENCE) == {
         ("mp4_ilst", "3")
@@ -209,7 +209,7 @@ def test_performance_type_is_read_into_its_closed_vocabulary(
 
     assert _values(interpretation, AudioInspectionField.PERFORMANCE_TYPE) == {
         (
-            "mp4_freeform_tone" if len(key) > 4 else "mp4_ilst",
+            "mp4_freeform" if len(key) > 4 else "mp4_ilst",
             expected.value,
         )
     }
@@ -468,7 +468,7 @@ def test_one_surface_never_repeats_the_same_observation() -> None:
         value.surface.value
         for value in interpretation.facts
         if value.field is AudioInspectionField.CONTRIBUTOR
-    ] == ["mp4_freeform_tone"]
+    ] == ["mp4_freeform"]
 
 
 def test_the_same_observation_on_two_surfaces_is_kept_once_per_surface() -> None:
@@ -484,7 +484,7 @@ def test_the_same_observation_on_two_surfaces_is_kept_once_per_surface() -> None
     )
 
     assert _values(interpretation, AudioInspectionField.CONTRIBUTOR) == {
-        ("mp4_freeform_tone", "Recorded Narrator"),
+        ("mp4_freeform", "Recorded Narrator"),
         ("sidecar_nfo", "Recorded Narrator"),
     }
 
@@ -601,3 +601,231 @@ def test_reading_stops_at_the_tag_limit_rather_than_scanning_past_it() -> None:
     interpretation = _read(_probe(tags=tags), limits=AudioInspectionLimits(tags=4))
 
     assert _values(interpretation, AudioInspectionField.CONTRIBUTOR) == set()
+
+
+def _asins(
+    interpretation: audio_local.AudioInterpretation,
+) -> set[tuple[str, str, str | None, str]]:
+    return {
+        (value.surface.value, value.observed_value, value.canonical_value, value.state)
+        for value in interpretation.facts
+        if value.field is AudioInspectionField.ASIN
+    }
+
+
+@pytest.mark.parametrize(
+    ("shape", "canonical"),
+    (
+        ("B0CW1KL2QD", "B0CW1KL2QD"),
+        # An ISBN-10-shaped ASIN is exactly as well-formed as a `B0` one: the
+        # gate is a shape, never a prefix.
+        ("0641977697", "0641977697"),
+        ("b0cw1kl2qd", "B0CW1KL2QD"),
+    ),
+)
+def test_a_well_formed_asin_is_valid_and_canonical(shape: str, canonical: str) -> None:
+    interpretation = _read(_probe(tags={"CDEK": shape}))
+
+    assert _asins(interpretation) == {("mp4_ilst", shape, canonical, "valid")}
+
+
+@pytest.mark.parametrize(
+    "shape",
+    ("B0CW1KL2Q", "B0CW1KL2QDX", "B0CW1KL-QD", "B0CW1KL2Q_", "", "not an asin"),
+)
+def test_a_malformed_asin_is_retained_rather_than_filtered(shape: str) -> None:
+    """The file said it. The report says the file said it, and that it is junk."""
+    interpretation = _read(_probe(tags={"CDEK": shape}))
+
+    cleaned = " ".join(shape.split())
+    assert _asins(interpretation) == (
+        {("mp4_ilst", cleaned, None, "malformed")} if cleaned else set()
+    )
+
+
+def test_every_asin_surface_passes_the_same_gate() -> None:
+    """One choke point, so no surface can acquire its own idea of an ASIN."""
+    opf = (
+        '<?xml version="1.0"?><package><metadata>'
+        '<meta name="audible:asin" content="B0CW1KL-QD"/>'
+        "</metadata></package>"
+    )
+    interpretation = _read(
+        _probe(format_name="mp3", tags={"asin": "B0CW1KL-QD"}),
+        sidecars=(
+            AudioSidecar(
+                AudioEvidenceSurface.SIDECAR_AUDIOBOOKSHELF,
+                "metadata.json",
+                json.dumps({"asin": "B0CW1KL-QD"}),
+            ),
+            AudioSidecar(AudioEvidenceSurface.SIDECAR_OPF, "metadata.opf", opf),
+            AudioSidecar(
+                AudioEvidenceSurface.SIDECAR_NFO, "book.nfo", "ASIN: B0CW1KL-QD\n"
+            ),
+            AudioSidecar(
+                AudioEvidenceSurface.SIDECAR_CUE, "book.cue", "REM ASIN B0CW1KL-QD\n"
+            ),
+        ),
+    )
+
+    assert {
+        (surface, state)
+        for surface, _observed, _canonical, state in _asins(interpretation)
+    } == {
+        ("id3_user_text", "malformed"),
+        ("sidecar_audiobookshelf", "malformed"),
+        ("sidecar_opf", "malformed"),
+        ("sidecar_nfo", "malformed"),
+        ("sidecar_cue", "malformed"),
+    }
+
+
+def test_a_path_token_cannot_be_malformed_because_its_grammar_is_the_shape() -> None:
+    interpretation = _read(
+        _probe(), path=AudioPathContext("Book [0641977697].m4b", "Folder [B0CW1KL2QD]")
+    )
+
+    assert _asins(interpretation) == {
+        ("path_file", "0641977697", "0641977697", "valid"),
+        ("path_folder", "B0CW1KL2QD", "B0CW1KL2QD", "valid"),
+    }
+
+
+def test_a_junk_asin_beside_a_good_one_keeps_both_on_their_own_surfaces() -> None:
+    interpretation = _read(_probe(tags={"CDEK": "B0CW1KL2QD", "asin": "junk"}))
+
+    assert _asins(interpretation) == {
+        ("mp4_ilst", "B0CW1KL2QD", "B0CW1KL2QD", "valid"),
+        ("mp4_ilst", "junk", None, "malformed"),
+    }
+
+
+def test_an_opf_contributor_is_narrator_evidence_only_when_its_role_says_so() -> None:
+    document = (
+        '<?xml version="1.0"?><package><metadata>'
+        '<dc:contributor opf:role="nrt">Named Narrator</dc:contributor>'
+        '<dc:contributor opf:role="prf">Named Performer</dc:contributor>'
+        '<dc:contributor opf:role="edt">Named Editor</dc:contributor>'
+        "<dc:contributor>Unnamed Role</dc:contributor>"
+        '<dc:contributor role="NRT">Bare &amp; Attribute</dc:contributor>'
+        "</metadata></package>"
+    )
+    interpretation = _read(
+        _probe(),
+        sidecars=(
+            AudioSidecar(AudioEvidenceSurface.SIDECAR_OPF, "metadata.opf", document),
+        ),
+    )
+
+    assert _values(interpretation, AudioInspectionField.CONTRIBUTOR) == {
+        ("sidecar_opf", "Named Narrator"),
+        ("sidecar_opf", "Named Performer"),
+        ("sidecar_opf", "Bare & Attribute"),
+    }
+
+
+def test_an_mp4_freeform_atom_is_attributed_to_tone_only_when_it_says_tone() -> None:
+    interpretation = _read(
+        _probe(
+            tags={
+                "----:com.pilabor.tone:SERIES": "Tone Series",
+                "----:com.apple.iTunes:SHOW": "Apple Series",
+                "movementname": "Unmeant Series",
+            }
+        )
+    )
+
+    assert _values(interpretation, AudioInspectionField.SERIES) == {
+        ("mp4_freeform_tone", "Tone Series"),
+        ("mp4_freeform", "Apple Series"),
+        ("mp4_freeform", "Unmeant Series"),
+    }
+
+
+def test_naming_the_freeform_surface_changes_no_basis_and_no_claim() -> None:
+    """The correction is a label. Bases, values and roles are byte-identical."""
+    interpretation = _read(
+        _probe(
+            tags={
+                "----:com.apple.iTunes:NARRATOR": "Apple Narrator",
+                "narrator": "Bare Narrator",
+            }
+        )
+    )
+
+    assert {
+        (
+            value.field.value,
+            value.basis,
+            value.observed_value,
+            value.canonical_value,
+            value.role,
+        )
+        for value in interpretation.facts
+        if value.field is AudioInspectionField.CONTRIBUTOR
+    } == {
+        ("contributor", "embedded_tag", "Apple Narrator", "Apple Narrator", "narrator"),
+        ("contributor", "embedded_tag", "Bare Narrator", "Bare Narrator", "narrator"),
+    }
+
+
+def test_a_role_spelled_inside_another_attributes_value_is_not_a_role() -> None:
+    """An attribute's value is text the file chose. Only a name is a name."""
+    document = (
+        '<?xml version="1.0"?><package><metadata>'
+        "<dc:contributor title=\"fake role='nrt'\">Impostor</dc:contributor>"
+        "</metadata></package>"
+    )
+    interpretation = _read(
+        _probe(),
+        sidecars=(
+            AudioSidecar(AudioEvidenceSurface.SIDECAR_OPF, "metadata.opf", document),
+        ),
+    )
+
+    assert _values(interpretation, AudioInspectionField.CONTRIBUTOR) == set()
+
+
+@pytest.mark.parametrize(
+    "attributes",
+    (
+        ' title="x" opf:role="nrt"',
+        " opf:role='nrt' title='x'",
+        ' id="a" role="NRT" title="x"',
+        '\n  opf:role = "nrt"\n  title="x"',
+        ' title="role=\'edt\'" opf:role="nrt"',
+    ),
+)
+def test_a_real_role_is_found_wherever_the_attributes_put_it(attributes: str) -> None:
+    document = (
+        '<?xml version="1.0"?><package><metadata>'
+        f"<dc:contributor{attributes}>Named Narrator</dc:contributor>"
+        "</metadata></package>"
+    )
+    interpretation = _read(
+        _probe(),
+        sidecars=(
+            AudioSidecar(AudioEvidenceSurface.SIDECAR_OPF, "metadata.opf", document),
+        ),
+    )
+
+    assert _values(interpretation, AudioInspectionField.CONTRIBUTOR) == {
+        ("sidecar_opf", "Named Narrator")
+    }
+
+
+@pytest.mark.parametrize("shape", ("ß12345678", "İ1234567", "ﬀ12345678"))
+def test_a_case_mapping_can_never_grow_a_value_into_an_asin(shape: str) -> None:
+    """`ß`.upper() is `SS`. Ten characters after that is not ten characters."""
+    interpretation = _read(_probe(tags={"CDEK": shape}))
+
+    assert _asins(interpretation) == {("mp4_ilst", shape, None, "malformed")}
+
+
+def test_an_attribute_run_stops_being_read_where_it_stops_making_sense() -> None:
+    """Past a token that is not a quoted pair, nothing is being understood."""
+    assert audio_local._xml_attributes(' title="x" bare opf:role="nrt"') == {
+        "title": "x"
+    }
+    assert audio_local._xml_attributes(' role="nrt" role="edt"') == {"role": "nrt"}
+    assert audio_local._is_narrator_role(' data-role="nrt"') is False

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import resource
 import selectors
 import signal
 import subprocess
@@ -40,9 +39,6 @@ _TERMINATION_GRACE_SECONDS = 2.0
 # The probe document is the whole audio child's input, so its ceiling plus the
 # rest of one context has to fit in a single bounded write.
 _AUDIO_CONTEXT_LIMIT = 12_582_912
-_PROBE_ADDRESS_SPACE = 512 * 1024 * 1024
-_PROBE_CPU_SECONDS = 30
-_PROBE_OPEN_FILES = 64
 # Resolved from a closed list rather than an inherited `PATH`: the child runs
 # under `_minimal_environment`, which carries no `PATH` at all, and the shipped
 # image installs the probe at exactly these locations.
@@ -388,45 +384,6 @@ def _drain(
         selector.close()
 
 
-def _probe_limits() -> None:
-    """Bound the ffprobe child without the process cap the Python child uses.
-
-    ``RLIMIT_NPROC`` is deliberately absent. It is a per-uid ceiling on
-    processes *and* threads, and ffprobe is threaded, so installing the
-    ``bootstrap.audio_child`` value of 1 here would refuse every probe. That is
-    exactly why the parent harness runs ffprobe itself rather than letting the
-    Python child spawn it: the child's cap of 1 is kept intact, and the media
-    bytes are still parsed only inside an isolated, resource-bounded process.
-    """
-    for limit, value in (
-        (resource.RLIMIT_CORE, 0),
-        (resource.RLIMIT_NOFILE, _PROBE_OPEN_FILES),
-        (resource.RLIMIT_CPU, _PROBE_CPU_SECONDS),
-        (resource.RLIMIT_FSIZE, 0),
-    ):
-        current_soft, current_hard = resource.getrlimit(limit)
-        hard = (
-            value
-            if current_hard == resource.RLIM_INFINITY
-            else min(value, current_hard)
-        )
-        resource.setrlimit(limit, (min(value, hard), hard))
-    try:
-        current_soft, current_hard = resource.getrlimit(resource.RLIMIT_AS)
-        hard = (
-            _PROBE_ADDRESS_SPACE
-            if current_hard == resource.RLIM_INFINITY
-            else min(_PROBE_ADDRESS_SPACE, current_hard)
-        )
-        resource.setrlimit(resource.RLIMIT_AS, (min(_PROBE_ADDRESS_SPACE, hard), hard))
-    except ValueError:
-        # Same development-only compatibility branch `bootstrap.epub_child`
-        # documents: Darwin refuses an address-space limit below its framework
-        # reservations. Linux production must fail closed instead.
-        if sys.platform != "darwin":
-            raise
-
-
 def resolve_probe_path() -> str | None:
     """Resolve the shipped probe binary without consulting an inherited PATH."""
     for candidate in _PROBE_PATHS:
@@ -446,6 +403,13 @@ def run_probe_child(
     The parent runs this itself. The descriptor is passed through, never a
     path, so the child reads exactly the file the parent opened and validated
     and can never resolve a different one.
+
+    The spawn goes through `bootstrap.probe_shim`, which installs the probe's
+    resource ceilings and then becomes the probe. The ceilings used to be a
+    `preexec_fn`, which runs Python between a fork and an exec: from a threaded
+    supervisor that is a deadlock the parent waits on before any clock starts.
+    The binary is still resolved here, so a missing probe is still refused
+    before anything is spawned.
     """
     binary = resolve_probe_path()
     if binary is None:
@@ -454,6 +418,12 @@ def run_probe_child(
     try:
         process = subprocess.Popen(
             [
+                sys.executable,
+                "-I",
+                "-B",
+                "-m",
+                "mechanical_librarian.bootstrap.probe_shim",
+                str(descriptor),
                 binary,
                 "-v",
                 "error",
@@ -477,7 +447,6 @@ def run_probe_child(
             cwd="/",
             start_new_session=True,
             shell=False,
-            preexec_fn=_probe_limits,
         )
         run = _drain(
             process,

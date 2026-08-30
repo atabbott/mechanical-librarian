@@ -13,15 +13,71 @@ describe('activity ledger state', () => {
 
     const revoke = { path: 'activity/primary/fiction/revoke' }
     expect(activityOutcome({ enabled_libraries: [] }, revoke)).toBe('applied')
-    expect(activityOutcome({ enabled_libraries: [{ connection: 'primary', library: 'fiction' }] }, revoke)).toBe('unknown')
+    expect(
+      activityOutcome(
+        { enabled_libraries: [{ connection: 'primary', library: 'fiction' }] },
+        revoke,
+      ),
+    ).toBe('unknown')
     expect(activityOutcome({ enabled_libraries: [{}] }, revoke)).toBe('unknown')
 
-    const consent = { path: 'activity/consent', body: { grants: [{ library: 'fiction', destinations: ['title'] }] } }
-    expect(activityOutcome({ capabilities: [{ library: 'fiction', destinations: [{ destination: 'title', consented: true }] }] }, consent)).toBe('applied')
-    expect(activityOutcome({ capabilities: [{ library: 'fiction', destinations: [{ destination: 'title', consented: false }] }] }, consent)).toBe('unknown')
-    expect(activityOutcome({ capabilities: [{ library: 'fiction', destinations: [{ destination: 'title' }] }] }, consent)).toBe('unknown')
-    expect(activityOutcome({ capabilities: [{ library: 'fiction', destinations: [{ destination: 'title', consented: true }, { destination: 'title', consented: true }] }] }, consent)).toBe('unknown')
-    expect(activityOutcome({ capabilities: [{ library: 'fiction', destinations: [{ destination: 'title', consented: true }] }, { library: 'fiction', destinations: [{ destination: 'title', consented: false }] }] }, consent)).toBe('unknown')
+    const consent = {
+      path: 'activity/consent',
+      body: { grants: [{ library: 'fiction', destinations: ['title'] }] },
+    }
+    expect(
+      activityOutcome(
+        {
+          capabilities: [
+            { library: 'fiction', destinations: [{ destination: 'title', consented: true }] },
+          ],
+        },
+        consent,
+      ),
+    ).toBe('applied')
+    expect(
+      activityOutcome(
+        {
+          capabilities: [
+            { library: 'fiction', destinations: [{ destination: 'title', consented: false }] },
+          ],
+        },
+        consent,
+      ),
+    ).toBe('unknown')
+    expect(
+      activityOutcome(
+        { capabilities: [{ library: 'fiction', destinations: [{ destination: 'title' }] }] },
+        consent,
+      ),
+    ).toBe('unknown')
+    expect(
+      activityOutcome(
+        {
+          capabilities: [
+            {
+              library: 'fiction',
+              destinations: [
+                { destination: 'title', consented: true },
+                { destination: 'title', consented: true },
+              ],
+            },
+          ],
+        },
+        consent,
+      ),
+    ).toBe('unknown')
+    expect(
+      activityOutcome(
+        {
+          capabilities: [
+            { library: 'fiction', destinations: [{ destination: 'title', consented: true }] },
+            { library: 'fiction', destinations: [{ destination: 'title', consented: false }] },
+          ],
+        },
+        consent,
+      ),
+    ).toBe('unknown')
     expect(activityOutcome({ capabilities: [{}] }, consent)).toBe('unknown')
   })
 
@@ -35,11 +91,24 @@ describe('activity ledger state', () => {
       origin: 'human',
       failure: null,
     }))
-    const next = [{ ...existing[0], work_id: 'new-work', occurred_at: 1_001 }, ...existing.slice(0, 49)]
+    const next = [
+      { ...existing[0], work_id: 'new-work', occurred_at: 1_001 },
+      ...existing.slice(0, 49),
+    ]
     expect(activityEventKeys(next).slice(1)).toEqual(activityEventKeys(existing).slice(0, 49))
 
-    const duplicate = { work_id: 'same', destination: 'title', state: 'verified', occurred_at: 1_000, library: 'fiction', origin: 'human', failure: null }
+    const duplicate = {
+      work_id: 'same',
+      destination: 'title',
+      state: 'verified',
+      occurred_at: 1_000,
+      library: 'fiction',
+      origin: 'human',
+      failure: null,
+    }
     const duplicateWindow = Array.from({ length: 50 }, () => duplicate)
-    expect(new Set(activityEventKeys([duplicate, ...duplicateWindow.slice(0, 49)]))).toEqual(new Set(activityEventKeys(duplicateWindow)))
+    expect(new Set(activityEventKeys([duplicate, ...duplicateWindow.slice(0, 49)]))).toEqual(
+      new Set(activityEventKeys(duplicateWindow)),
+    )
   })
 })

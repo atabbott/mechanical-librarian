@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { configureChunkRecovery, loadRouteChunk, reloadCurrentApplication } from '../src/chunkRecovery'
+import {
+  configureChunkRecovery,
+  loadRouteChunk,
+  reloadCurrentApplication,
+} from '../src/chunkRecovery'
 import type { ChunkRecoveryError } from '../src/chunkRecovery'
 
 const build = 'a'.repeat(64)
@@ -16,16 +20,22 @@ describe('route chunk recovery', () => {
     const reload = vi.fn()
     const runtime = {
       attemptedBuild: () => attempted,
-      markAttempt: (identity: string) => { attempted = identity },
+      markAttempt: (identity: string) => {
+        attempted = identity
+      },
       reload,
     }
     const missing = () => Promise.reject(new TypeError('missing chunk'))
 
-    await expect(loadRouteChunk(missing, build, runtime)).rejects.toMatchObject({ exhausted: false })
+    await expect(loadRouteChunk(missing, build, runtime)).rejects.toMatchObject({
+      exhausted: false,
+    })
     expect(attempted).toBe(build)
     expect(reload).toHaveBeenCalledOnce()
 
-    await expect(loadRouteChunk(missing, build, runtime)).rejects.toEqual(expect.objectContaining<Partial<ChunkRecoveryError>>({ exhausted: true }))
+    await expect(loadRouteChunk(missing, build, runtime)).rejects.toEqual(
+      expect.objectContaining<Partial<ChunkRecoveryError>>({ exhausted: true }),
+    )
     expect(reload).toHaveBeenCalledOnce()
   })
 
@@ -34,12 +44,18 @@ describe('route chunk recovery', () => {
     const reload = vi.fn()
     const runtime = {
       attemptedBuild: () => attempted,
-      markAttempt: (identity: string) => { attempted = identity },
+      markAttempt: (identity: string) => {
+        attempted = identity
+      },
       reload,
     }
 
-    await expect(loadRouteChunk(async () => ({ default: 'loaded' }), build, runtime)).resolves.toEqual({ default: 'loaded' })
-    await expect(loadRouteChunk(() => Promise.reject(new Error('later missing chunk')), build, runtime)).rejects.toMatchObject({ exhausted: true })
+    await expect(
+      loadRouteChunk(async () => ({ default: 'loaded' }), build, runtime),
+    ).resolves.toEqual({ default: 'loaded' })
+    await expect(
+      loadRouteChunk(() => Promise.reject(new Error('later missing chunk')), build, runtime),
+    ).rejects.toMatchObject({ exhausted: true })
     expect(reload).not.toHaveBeenCalled()
   })
 
@@ -48,7 +64,9 @@ describe('route chunk recovery', () => {
     const reload = vi.fn()
     const runtime = {
       attemptedBuild: () => attempted,
-      markAttempt: (identity: string) => { attempted = identity },
+      markAttempt: (identity: string) => {
+        attempted = identity
+      },
       reload,
     }
 
