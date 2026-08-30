@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -7,6 +8,8 @@ import sys
 import tempfile
 import threading
 import time
+import tracemalloc
+from _thread import RLock
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack
 from dataclasses import replace
@@ -18,14 +21,29 @@ import httpx
 import pytest
 
 import mechanical_librarian.bootstrap.composition as composition
+from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
 )
+from mechanical_librarian.adapters.persistence.preparation_presentation import (
+    _completion_sequence_count,
+    deferred_preparation_enrollment_id,
+    mark_preparation_recovery,
+    preparation_presentation_snapshot,
+    refresh_preparation_presentation,
+    refresh_preparation_run_state,
+    refresh_preparation_work,
+    validate_preparation_presentation,
+)
 from mechanical_librarian.adapters.persistence.review_preparation import (
     _FAILURE_CODES,
 )
+from mechanical_librarian.adapters.persistence.review_scans import (
+    SQLiteReviewScanRepository,
+)
 from mechanical_librarian.adapters.persistence.schema import _REVIEW_WORK_SQL
+from mechanical_librarian.adapters.persistence.transactions import TransactionScope
 from mechanical_librarian.application.catalogue import (
     CatalogueEntry,
     CatalogueReader,
@@ -42,6 +60,7 @@ from mechanical_librarian.application.metadata_report import (
     CredentialError,
     ItemInspectionError,
     MetadataReportError,
+    ReportRepository,
     TargetNotFoundError,
     UnsupportedMediaError,
 )
@@ -85,12 +104,66 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     default_target_fields,
 )
+from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
+from mechanical_librarian.domain.preparation_presentation import (
+    PreparationRunState,
+    PreparationTrigger,
+)
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.provider_recovery import MAX_TIMESTAMP
 from mechanical_librarian.domain.review_browse import browse_report
 from tests.support.review_cases import _report
 
 _PRODUCER = "f" * 64
+
+
+class _ReviewText(str):
+    pass
+
+
+class _ReviewInteger(int):
+    pass
+
+
+class _UnsizedFingerprint:
+    pass
+
+
+def _install_settings_authority(repository: object) -> None:
+    document = OwnerSettingsDocument.model_validate(
+        {
+            "schema_version": "owner-settings-v2",
+            "revision": 1,
+            "connections": [
+                {"name": "primary", "endpoint": "https://library.example.invalid"}
+            ],
+            "libraries": [
+                {
+                    "name": name,
+                    "connection": "primary",
+                    "library_id": library_id,
+                    "media_kind": "ebook",
+                }
+                for name, library_id in (
+                    ("fiction", "lib-1"),
+                    ("history", "lib-2"),
+                    ("poetry", "lib-3"),
+                )
+            ],
+        }
+    )
+    repository._connection.execute(
+        "INSERT INTO owner_settings VALUES(1,?,?)",
+        (document.revision, _canonical_json(document.model_dump())),
+    )
+    repository._connection.executemany(
+        "INSERT INTO owner_setting_secrets VALUES(?,?)",
+        (
+            ("connection.primary.key", "synthetic-target-secret"),
+            ("owner.password.verifier", "$argon2id$synthetic"),
+        ),
+    )
+    repository._connection.commit()
 
 
 def _proposal_stages(
@@ -311,8 +384,2019 @@ def application_path() -> Iterator[Path]:
 
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "application.sqlite3"
-        open_repository(path).close()
+        repository = open_repository(path)
+        _install_settings_authority(repository)
+        repository.close()
         yield path
+
+
+def test_only_accepted_owner_trigger_creates_or_replaces_visible_run(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    ordinary = repository.request_review_scan(
+        "primary", "fiction", "lib-1", _PRODUCER, 10
+    )
+    assert repository.preparation_presentation(10) is None
+
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        11,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    first = repository.preparation_presentation(11)
+    assert first is not None
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        12,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    extended = repository.preparation_presentation(12)
+    assert extended is not None
+    assert extended.run_id == first.run_id
+    assert [item.trigger for item in extended.triggers] == [
+        PreparationTrigger.MANUAL_SCAN
+    ]
+    assert extended.triggers[0].accepted_count == 1
+
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed',updated_at=13 WHERE scan_id=?",
+        (ordinary.scan_id,),
+    )
+    refresh_preparation_presentation(repository._connection, 13)
+    repository._connection.commit()
+    terminal = repository.preparation_presentation(13)
+    assert terminal is not None and terminal.dismissible
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 14)
+    triggerless = repository.preparation_presentation(14)
+    assert triggerless is not None
+    assert (
+        triggerless.run_id,
+        triggerless.state,
+        triggerless.passage,
+        triggerless.completed_at,
+    ) == (terminal.run_id, terminal.state, terminal.passage, terminal.completed_at)
+    repository.dismiss_preparation_presentation(terminal.run_id, 15)
+    assert repository.preparation_presentation(15) is None
+    assert repository._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_presentation"
+    ).fetchone() == (0,)
+    repository.close()
+
+    repository = open_repository(application_path, create=False)
+    assert repository.preparation_presentation(16) is None
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 16)
+    assert repository.preparation_presentation(16) is None
+
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        17,
+        trigger=PreparationTrigger.LIBRARY_ADDED,
+    )
+    replacement = repository.preparation_presentation(17)
+    repository.close()
+    assert replacement is not None
+    assert replacement.run_id != terminal.run_id
+    assert [item.trigger for item in replacement.triggers] == [
+        PreparationTrigger.LIBRARY_ADDED
+    ]
+
+
+def test_review_scan_request_reuses_exact_bounded_validation(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 0)
+
+    for connection, requested_at in (
+        (_ReviewText("primary"), 1),
+        ("x" * 129, 1),
+        ("primary", True),
+        ("primary", _ReviewInteger(1)),
+        ("primary", -1),
+    ):
+        with pytest.raises(
+            MetadataReportError, match="^review preparation request is invalid$"
+        ):
+            repository.request_review_scan(
+                connection, "other", "lib-2", _PRODUCER, requested_at
+            )
+    repository.close()
+
+
+def test_review_scope_preserves_short_circuit_and_unsized_failure_identity() -> None:
+    assert SQLiteReviewScanRepository._validated_library_scope(
+        (("界" * 128, "界" * 128, "界" * 128, _PRODUCER),), 0
+    )
+    with pytest.raises(
+        MetadataReportError, match="review preparation scope is invalid"
+    ):
+        SQLiteReviewScanRepository._validated_library_scope(
+            (("", "fiction", "lib-1", _UnsizedFingerprint()),), 0
+        )
+    with pytest.raises(TypeError):
+        SQLiteReviewScanRepository._validated_library_scope(
+            (("primary", "fiction", "lib-1", _UnsizedFingerprint()),), 0
+        )
+
+
+def test_terminal_trigger_replacement_starts_queued_and_reopens_current(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    first = repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed',updated_at=101 "
+        "WHERE scan_id=?",
+        (first.scan_id,),
+    )
+    refresh_preparation_presentation(repository._connection, 101)
+    terminal = repository.preparation_presentation(101)
+    assert terminal is not None and terminal.dismissible
+
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        102,
+        trigger=PreparationTrigger.LIBRARY_ADDED,
+    )
+    replacement = repository.preparation_presentation(102)
+    repository.close()
+
+    assert replacement is not None
+    assert replacement.run_id != terminal.run_id
+    assert replacement.state is PreparationRunState.STARTING
+    assert replacement.completed_at is None
+    reopened = open_repository(application_path, create=False)
+    assert reopened.preparation_presentation(102) == replacement
+    reopened.close()
+
+
+def test_first_visible_run_restarts_completed_triggerless_scan_as_queued(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    ordinary = repository.request_review_scan(
+        "primary", "fiction", "lib-1", _PRODUCER, 100
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed',updated_at=101 "
+        "WHERE scan_id=?",
+        (ordinary.scan_id,),
+    )
+    repository._connection.commit()
+    assert repository.preparation_presentation(101) is None
+
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        102,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    presentation = repository.preparation_presentation(102)
+    enrollment_state = repository._connection.execute(
+        "SELECT cycle_state FROM review_preparation_presentation "
+        "WHERE row_kind='enrollment'"
+    ).fetchone()
+    repository.close()
+
+    assert presentation is not None
+    assert presentation.state is PreparationRunState.STARTING
+    assert presentation.completed_at is None
+    assert enrollment_state == ("queued",)
+    reopened = open_repository(application_path, create=False)
+    assert reopened.preparation_presentation(102) == presentation
+    reopened.close()
+
+
+def test_explicit_library_readd_bypasses_incomplete_first_boot_cohort(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    completed = repository.request_review_scan(
+        "primary", "fiction", "lib-1", _PRODUCER, 100, first_boot=True
+    )
+    repository.request_review_scan(
+        "primary", "history", "lib-2", _PRODUCER, 101, first_boot=True
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed',updated_at=102 "
+        "WHERE scan_id=?",
+        (completed.scan_id,),
+    )
+    refresh_preparation_presentation(repository._connection, 102)
+
+    readded = repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        103,
+        trigger=PreparationTrigger.LIBRARY_ADDED,
+    )
+    presentation = repository.preparation_presentation(103)
+    repository.close()
+
+    assert readded.state == "queued"
+    assert presentation is not None
+    assert any(
+        trigger.trigger is PreparationTrigger.LIBRARY_ADDED
+        for trigger in presentation.triggers
+    )
+
+
+def test_work_order_uses_unbounded_enrollment_ordinal(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    libraries = tuple((f"library-{index}", f"lib-{index}") for index in range(4))
+    for index, (library, library_id) in enumerate(libraries):
+        repository.request_review_scan(
+            "primary",
+            library,
+            library_id,
+            _PRODUCER,
+            100 + index,
+            trigger=PreparationTrigger.MANUAL_SCAN,
+        )
+    for index, (library, library_id) in enumerate(libraries):
+        discovery = repository.claim_review_pipeline_action(110 + index * 2)
+        assert discovery is not None
+        assert discovery.library == library
+        repository.complete_review_discovery(
+            discovery,
+            1,
+            f"{index + 1:064x}",
+            (
+                replace(
+                    _entry(f"item-{index}", f"{index + 11:064x}"),
+                    library=library,
+                    library_id=library_id,
+                    title=f"Enrollment {index}",
+                ),
+            ),
+            111 + index * 2,
+        )
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET state='running',updated_at=120"
+    )
+    refresh_preparation_presentation(repository._connection, 120)
+    presentation = repository.preparation_presentation(120)
+    work_ordinals = repository._connection.execute(
+        "SELECT enrollment_ordinal,trigger_ordinal FROM review_preparation_presentation "
+        "WHERE row_kind='work' ORDER BY enrollment_ordinal"
+    ).fetchall()
+    repository.close()
+
+    assert presentation is not None
+    assert presentation.triggers[0].accepted_count == 4
+    assert work_ordinals == [(0, None), (1, None), (2, None), (3, None)]
+    assert [book.name for book in presentation.active_books] == [
+        f"Enrollment {index}" for index in range(4)
+    ]
+
+
+@pytest.mark.parametrize(
+    "terminal_failure", (False, True), ids=("rollover", "terminal-cancellation")
+)
+def test_accepted_successor_cycle_settles_once_and_reopens_exact_current(
+    application_path: Path, terminal_failure: bool
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry("item", "1" * 64),), 102
+    )
+
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        103,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        104,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    before_rollover = repository.preparation_presentation(104)
+    assert before_rollover is not None
+    assert before_rollover.triggers[0].accepted_count == 2
+    assert before_rollover.updated_at == 103
+
+    work = repository.claim_review_pipeline_action(105)
+    assert work is not None and work.stage == "extraction"
+    if terminal_failure:
+        repository.fail_review_pipeline_action(work, "failed", False, 106)
+    else:
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET stage='complete',state='complete',updated_at=106 "
+            "WHERE work_id=?",
+            (work.action_id,),
+        )
+        refresh_preparation_work(repository._connection, work.action_id, 106)
+    assert repository.claim_review_pipeline_action(107) is None
+    cycles = repository._connection.execute(
+        "SELECT enrollment.cycle_id,enrollment.pending_cycle_id,work.cycle_id "
+        "FROM review_preparation_presentation AS enrollment "
+        "JOIN review_preparation_presentation AS work ON work.row_kind='work' "
+        "AND work.scan_id=enrollment.scan_id "
+        "WHERE enrollment.row_kind='enrollment'"
+    ).fetchone()
+    expected = repository.preparation_presentation(107)
+    repository.close()
+
+    assert cycles is not None
+    assert cycles[1] is None
+    assert cycles[0] == cycles[2]
+    reopened = open_repository(application_path, create=False)
+    assert reopened.preparation_presentation(107) == expected
+    if not terminal_failure:
+        successor_discovery = reopened.claim_review_pipeline_action(108)
+        assert successor_discovery is not None
+        reopened.complete_review_discovery(
+            successor_discovery,
+            2,
+            "b" * 64,
+            (_entry("item", "2" * 64),),
+            109,
+        )
+        running = reopened.claim_review_pipeline_action(110)
+        assert running is not None and running.stage == "extraction"
+        active = reopened.preparation_presentation(110)
+        assert active is not None
+        assert [book.name for book in active.active_books] == ["Synthetic work"]
+        assert active.passage.ready == 1
+        assert active.recent_completions[0].outcome == "ready"
+    reopened.close()
+
+
+def test_terminal_enrollment_is_excluded_from_triggerless_full_reconciliation(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    scan_a = repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    repository.request_review_scan(
+        "primary",
+        "history",
+        "lib-2",
+        _PRODUCER,
+        101,
+        trigger=PreparationTrigger.LIBRARY_ADDED,
+    )
+    discovery_a = repository.claim_review_pipeline_action(102)
+    assert discovery_a is not None and discovery_a.library == "fiction"
+    repository.complete_review_discovery(
+        discovery_a, 1, "a" * 64, (_entry("a", "1" * 64),), 103
+    )
+    discovery_b = repository.claim_review_pipeline_action(104)
+    assert discovery_b is not None and discovery_b.library == "history"
+    repository.complete_review_discovery(
+        discovery_b,
+        1,
+        "b" * 64,
+        (replace(_entry("b", "2" * 64), library="history", library_id="lib-2"),),
+        105,
+    )
+    work_a = repository._connection.execute(
+        "SELECT work_id FROM review_preparation_work WHERE scan_id=?",
+        (scan_a.scan_id,),
+    ).fetchone()[0]
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET stage='complete',state='complete',updated_at=106 "
+        "WHERE work_id=?",
+        (work_a,),
+    )
+    refresh_preparation_work(repository._connection, work_a, 106)
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed',updated_at=107 WHERE scan_id=?",
+        (scan_a.scan_id,),
+    )
+    refresh_preparation_run_state(repository._connection, 107)
+    before = repository.preparation_presentation(107)
+    before_work = repository._connection.execute(
+        "SELECT work_stage,current_work_state,work_outcome,updated_at "
+        "FROM review_preparation_presentation WHERE row_id=?",
+        ("work:" + work_a,),
+    ).fetchone()
+    assert before is not None and before.state is PreparationRunState.RUNNING
+
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 108)
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET stage='extraction',state='running',updated_at=109 "
+        "WHERE work_id=?",
+        (work_a,),
+    )
+    refresh_preparation_presentation(repository._connection, 109)
+    after = repository.preparation_presentation(109)
+    after_work = repository._connection.execute(
+        "SELECT work_stage,current_work_state,work_outcome,updated_at "
+        "FROM review_preparation_presentation WHERE row_id=?",
+        ("work:" + work_a,),
+    ).fetchone()
+    repository._connection.commit()
+    repository.close()
+
+    assert after is not None
+    assert after_work == before_work
+    assert after.passage == before.passage
+    assert after.recent_completions == before.recent_completions
+    reopened = open_repository(application_path, create=False)
+    assert reopened.preparation_presentation(109) == after
+    reopened.close()
+
+
+@pytest.mark.parametrize("ineligible", (False, True), ids=("removed", "ineligible"))
+@pytest.mark.parametrize("outcome", ("ready", "failed"))
+def test_successor_discovery_retains_terminal_presentation_work(
+    application_path: Path, ineligible: bool, outcome: str
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    entry = _entry("item", "1" * 64)
+    repository.complete_review_discovery(discovery, 1, "a" * 64, (entry,), 102)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        103,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    work_id = repository._connection.execute(
+        "SELECT work_id FROM review_preparation_work"
+    ).fetchone()[0]
+    if outcome == "ready":
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET stage='complete',state='complete',updated_at=104 "
+            "WHERE work_id=?",
+            (work_id,),
+        )
+        refresh_preparation_work(repository._connection, work_id, 104)
+    else:
+        failed_work = repository.claim_review_pipeline_action(104)
+        assert failed_work is not None and failed_work.action_id == work_id
+        repository.fail_review_pipeline_action(failed_work, "failed", False, 104)
+    before = repository.preparation_presentation(104)
+    before_sequence = repository._connection.execute(
+        "SELECT completion_sequence,updated_at FROM review_preparation_presentation "
+        "WHERE row_id=?",
+        ("work:" + work_id,),
+    ).fetchone()
+    assert before_sequence is not None
+    if outcome == "failed":
+        with patch.object(
+            repository, "_has_pending_field_effect_manual_return", return_value=True
+        ):
+            assert repository.claim_review_pipeline_action(105) is None
+    else:
+        assert repository.claim_review_pipeline_action(105) is None
+    successor = repository.claim_review_pipeline_action(106)
+    assert successor is not None and successor.stage == "discovery"
+    successor_entries = (
+        (replace(entry, classification="ambiguous"),) if ineligible else ()
+    )
+    repository.complete_review_discovery(successor, 2, "b" * 64, successor_entries, 107)
+    assert repository.claim_review_pipeline_action(108) is None
+    presentation = repository.preparation_presentation(108)
+    sidecar_work = repository._connection.execute(
+        "SELECT work_outcome,current_work_state,completion_sequence,updated_at "
+        "FROM review_preparation_presentation WHERE row_kind='work'"
+    ).fetchone()
+    repository.close()
+
+    assert before is not None and presentation is not None
+    assert presentation.passage == before.passage
+    assert presentation.total == 1
+    assert presentation.active_books == ()
+    assert presentation.recent_completions == before.recent_completions
+    assert presentation.recent_completions[0].outcome == outcome
+    assert presentation.throughput_per_minute > 0
+    assert sidecar_work == (
+        outcome,
+        "complete" if outcome == "ready" else "failed",
+        *before_sequence,
+    )
+    reopened = open_repository(application_path, create=False)
+    assert reopened.preparation_presentation(108) == presentation
+    reopened.close()
+
+
+def test_refresh_removes_unfinished_orphaned_presentation_work(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry("item", "1" * 64),), 102
+    )
+    work_id = repository._connection.execute(
+        "SELECT work_id FROM review_preparation_work"
+    ).fetchone()[0]
+    repository._connection.execute(
+        "DELETE FROM review_preparation_work WHERE work_id=?", (work_id,)
+    )
+    refresh_preparation_work(repository._connection, work_id, 103)
+    assert (
+        repository._connection.execute(
+            "SELECT 1 FROM review_preparation_presentation WHERE row_id=?",
+            ("work:" + work_id,),
+        ).fetchone()
+        is None
+    )
+    assert repository._connection.execute(
+        "SELECT active_count,completion_count FROM review_preparation_presentation "
+        "WHERE row_id='run'"
+    ).fetchone() == (0, 0)
+    repository.close()
+
+
+def test_reopen_refuses_persisted_dismissed_presentation_without_repair(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry("private-title", "1" * 64),), 102
+    )
+    work_id = repository._connection.execute(
+        "SELECT work_id FROM review_preparation_work"
+    ).fetchone()[0]
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET stage='complete',state='complete',updated_at=103 "
+        "WHERE work_id=?",
+        (work_id,),
+    )
+    refresh_preparation_work(repository._connection, work_id, 103)
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed',updated_at=104"
+    )
+    refresh_preparation_presentation(repository._connection, 104)
+    repository._connection.commit()
+    repository.close()
+
+    connection = sqlite3.connect(application_path)
+    connection.execute(
+        "UPDATE review_preparation_presentation SET state='dismissed' WHERE row_id='run'"
+    )
+    connection.commit()
+    connection.close()
+    before = application_path.read_bytes()
+
+    with pytest.raises(
+        MetadataReportError, match="^database is unavailable or incompatible$"
+    ) as raised:
+        open_repository(application_path, create=False)
+
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert application_path.read_bytes() == before
+
+
+def test_successor_rediscovery_does_not_rename_terminal_completion(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry("item", "1" * 64),), 102
+    )
+    work_id = repository._connection.execute(
+        "SELECT work_id FROM review_preparation_work"
+    ).fetchone()[0]
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET stage='complete',state='complete',updated_at=103 "
+        "WHERE work_id=?",
+        (work_id,),
+    )
+    refresh_preparation_work(repository._connection, work_id, 103)
+    before = repository._connection.execute(
+        "SELECT display_name,work_outcome,completion_sequence,updated_at "
+        "FROM review_preparation_presentation WHERE row_id=?",
+        ("work:" + work_id,),
+    ).fetchone()
+    assert before == ("Synthetic work", "ready", 1, 103)
+
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        104,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    assert repository.claim_review_pipeline_action(105) is None
+    successor = repository.claim_review_pipeline_action(106)
+    assert successor is not None and successor.stage == "discovery"
+    repository.complete_review_discovery(
+        successor,
+        1,
+        "b" * 64,
+        (replace(_entry("item", "1" * 64), title="Renamed work"),),
+        107,
+    )
+    assert (
+        repository._connection.execute(
+            "SELECT display_name,work_outcome,completion_sequence,updated_at "
+            "FROM review_preparation_presentation WHERE row_id=?",
+            ("work:" + work_id,),
+        ).fetchone()
+        == before
+    )
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    "title",
+    (
+        pytest.param("x" * 2048, id="ascii"),
+        pytest.param("界" * 682 + "ab", id="multibyte"),
+    ),
+)
+def test_maximum_observed_title_survives_active_completion_and_reopen(
+    application_path: Path, title: str
+) -> None:
+    assert len(title.encode("utf-8")) == 2048
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery,
+        1,
+        "a" * 64,
+        (replace(_entry("item", "1" * 64), title=title),),
+        102,
+    )
+    work = repository.claim_review_pipeline_action(103)
+    assert work is not None and work.stage == "extraction"
+    active = repository.preparation_presentation(103)
+    assert active is not None and active.active_books[0].name == title
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET stage='complete',state='complete',updated_at=104 "
+        "WHERE work_id=?",
+        (work.action_id,),
+    )
+    refresh_preparation_work(repository._connection, work.action_id, 104)
+    repository._connection.commit()
+    expected = repository.preparation_presentation(104)
+    persisted = repository._connection.execute(
+        "SELECT display_name FROM review_preparation_presentation WHERE row_kind='work'"
+    ).fetchone()
+    repository.close()
+
+    assert expected is not None
+    assert expected.recent_completions[0].name == title
+    assert persisted == (title,)
+    reopened = open_repository(application_path, create=False)
+    actual = reopened.preparation_presentation(104)
+    reopened_title = reopened._connection.execute(
+        "SELECT display_name FROM review_preparation_presentation WHERE row_kind='work'"
+    ).fetchone()
+    reopened.close()
+    assert actual == expected
+    assert reopened_title == (title,)
+
+
+def test_preparation_projection_bounds_private_names_and_preserves_outcomes(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    entries = tuple(
+        CatalogueEntry(
+            "primary",
+            "fiction",
+            "lib-1",
+            f"item-{index:02}",
+            1,
+            f"Private book {index:02}",
+            ("Example Author",),
+            True,
+            False,
+            "singular-supported",
+            f"{index + 1:064x}",
+            f"/book-{index:02}.epub",
+            "epub",
+            "books",
+        )
+        for index in range(10)
+    )
+    repository.complete_review_discovery(discovery, 1, "a" * 64, entries, 102)
+    work = repository._connection.execute(
+        "SELECT work_id FROM review_preparation_work ORDER BY ordinal"
+    ).fetchall()
+    for index, (work_id,) in enumerate(work):
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET stage='complete',state=?,updated_at=? WHERE work_id=?",
+            ("complete" if index % 2 == 0 else "failed", 103, work_id),
+        )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed_with_failures',updated_at=113"
+    )
+    refresh_preparation_presentation(repository._connection, 113)
+    repository._connection.commit()
+    sequences = tuple(
+        row[0]
+        for row in repository._connection.execute(
+            "SELECT completion_sequence FROM review_preparation_presentation "
+            "WHERE row_kind='work' ORDER BY ordinal"
+        )
+    )
+    completion_count = repository._connection.execute(
+        "SELECT completion_count FROM review_preparation_presentation WHERE row_kind='run'"
+    ).fetchone()
+
+    presentation = repository.preparation_presentation(113)
+    repository.close()
+    reopened = open_repository(application_path, create=False)
+    after_reopen = reopened.preparation_presentation(113)
+    reopened.close()
+    assert presentation is not None
+    assert presentation.passage.ready == 5
+    assert presentation.passage.failed == 5
+    assert presentation.passage.checked == 10
+    assert presentation.active_books == ()
+    assert len(presentation.recent_completions) == 8
+    assert {item.outcome for item in presentation.recent_completions} == {
+        "ready",
+        "failed",
+    }
+    assert presentation.recent_completions[0].name == "Private book 09"
+    assert sequences == tuple(range(1, 11))
+    assert completion_count == (10,)
+    assert after_reopen is not None
+    assert after_reopen.recent_completions == presentation.recent_completions
+    assert presentation.throughput_per_minute == 46.2
+
+
+def test_preparation_projection_exposes_five_active_names_and_overflow(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.INITIAL_SETUP,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    entries = tuple(
+        CatalogueEntry(
+            "primary",
+            "fiction",
+            "lib-1",
+            f"item-{index:02}",
+            1,
+            f"Private book {index:02}",
+            ("Example Author",),
+            True,
+            False,
+            "singular-supported",
+            f"{index + 1:064x}",
+            f"/book-{index:02}.epub",
+            "epub",
+            "books",
+        )
+        for index in range(9)
+    )
+    repository.complete_review_discovery(discovery, 1, "a" * 64, entries, 102)
+    work = repository._connection.execute(
+        "SELECT work_id FROM review_preparation_work ORDER BY ordinal"
+    ).fetchall()
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET state='delayed',retry_not_before=999 "
+        "WHERE work_id=?",
+        (work[1][0],),
+    )
+    repository._connection.executemany(
+        "UPDATE review_preparation_work SET stage='provider',state='running',updated_at=103 "
+        "WHERE work_id=?",
+        work[2:],
+    )
+    refresh_preparation_presentation(repository._connection, 103)
+    presentation = repository.preparation_presentation(102)
+    repository.close()
+    assert presentation is not None
+    assert [item.name for item in presentation.active_books] == [
+        f"Private book {index:02}" for index in range(2, 7)
+    ]
+    assert presentation.active_overflow == 2
+
+
+def test_preparation_failures_preserve_actual_passage_and_first_completion_time(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    entries = tuple(
+        CatalogueEntry(
+            "primary",
+            "fiction",
+            "lib-1",
+            f"item-{index}",
+            1,
+            f"Private failure {index}",
+            (),
+            True,
+            False,
+            "singular-supported",
+            f"{index + 1:064x}",
+            f"/failure-{index}.epub",
+            "epub",
+            "books",
+        )
+        for index in range(2)
+    )
+    repository.complete_review_discovery(discovery, 1, "a" * 64, entries, 102)
+    work = repository._connection.execute(
+        "SELECT work_id FROM review_preparation_work ORDER BY ordinal"
+    ).fetchall()
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET stage='extraction',state='failed',updated_at=103 WHERE work_id=?",
+        (work[0][0],),
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET stage='provider',state='failed',updated_at=104 WHERE work_id=?",
+        (work[1][0],),
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed_with_failures',updated_at=105"
+    )
+    refresh_preparation_presentation(repository._connection, 105)
+    first = repository.preparation_presentation(105)
+    refresh_preparation_presentation(repository._connection, 120)
+    later = repository.preparation_presentation(120)
+    repository.close()
+
+    assert first is not None and later is not None
+    assert first.passage.to_data() == {
+        "read": 1,
+        "searches_finished": 0,
+        "compared": 0,
+        "checked": 0,
+        "ready": 0,
+        "failed": 2,
+    }
+    assert first.completed_at == 105
+    assert later.completed_at == 105
+
+
+def test_preparation_blocking_is_scoped_to_enrolled_connections(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    repository._connection.execute(
+        "INSERT INTO review_preparation_connection_conditions VALUES("
+        "'secondary','unavailable','paused',1,1,101)"
+    )
+    refresh_preparation_run_state(repository._connection, 101)
+    unrelated = repository.preparation_presentation(101)
+    repository._connection.execute(
+        "INSERT INTO review_preparation_connection_conditions VALUES("
+        "'primary','unavailable','paused',1,1,102)"
+    )
+    refresh_preparation_run_state(repository._connection, 102)
+    enrolled = repository.preparation_presentation(102)
+    repository.close()
+
+    assert unrelated is not None
+    assert unrelated.state is PreparationRunState.STARTING
+    assert enrolled is not None
+    assert enrolled.state is PreparationRunState.BLOCKED
+
+
+def test_completed_enrollment_connection_condition_does_not_block_active_peer(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    first = repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    second = repository.request_review_scan(
+        "secondary",
+        "history",
+        "lib-2",
+        _PRODUCER,
+        101,
+        trigger=PreparationTrigger.LIBRARY_ADDED,
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed',updated_at=102 WHERE scan_id=?",
+        (first.scan_id,),
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='discovering',updated_at=102 WHERE scan_id=?",
+        (second.scan_id,),
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_presentation SET cycle_state='completed',updated_at=102 "
+        "WHERE row_kind='enrollment' AND scan_id=?",
+        (first.scan_id,),
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_presentation SET cycle_state='discovering',updated_at=102 "
+        "WHERE row_kind='enrollment' AND scan_id=?",
+        (second.scan_id,),
+    )
+    repository._connection.execute(
+        "INSERT INTO review_preparation_connection_conditions VALUES("
+        "'primary','unavailable','paused',1,1,103)"
+    )
+    refresh_preparation_run_state(repository._connection, 103)
+    presentation = repository.preparation_presentation(103)
+    repository.close()
+
+    assert presentation is not None
+    assert presentation.state is PreparationRunState.RUNNING
+
+
+def test_completed_enrollment_restarts_exact_cycle_without_reaging_outcome(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    first = repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    second = repository.request_review_scan(
+        "secondary",
+        "history",
+        "lib-2",
+        _PRODUCER,
+        101,
+        trigger=PreparationTrigger.LIBRARY_ADDED,
+    )
+    discovery = repository.claim_review_pipeline_action(102)
+    assert discovery is not None and discovery.connection == "primary"
+    entry = _entry("item", "1" * 64)
+    repository.complete_review_discovery(discovery, 1, "a" * 64, (entry,), 103)
+    work_id = repository._connection.execute(
+        "SELECT work_id FROM review_preparation_work WHERE scan_id=?", (first.scan_id,)
+    ).fetchone()[0]
+    work = repository.claim_review_pipeline_work(work_id, 104)
+    assert work is not None and work.stage == "extraction"
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET stage='complete',state='complete',updated_at=105 "
+        "WHERE work_id=?",
+        (work.action_id,),
+    )
+    refresh_preparation_work(repository._connection, work.action_id, 105)
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed',updated_at=106 WHERE scan_id=?",
+        (first.scan_id,),
+    )
+    refresh_preparation_presentation(repository._connection, 106)
+    peer = repository.claim_review_pipeline_action(107)
+    assert (
+        peer is not None
+        and peer.connection == "secondary"
+        and peer.stage == "discovery"
+    )
+    before = repository.preparation_presentation(110)
+    old_cycle = repository._connection.execute(
+        "SELECT cycle_id FROM review_preparation_presentation WHERE row_kind='enrollment' AND scan_id=?",
+        (first.scan_id,),
+    ).fetchone()[0]
+    sibling_cycle = repository._connection.execute(
+        "SELECT cycle_id FROM review_preparation_presentation "
+        "WHERE row_kind='enrollment' AND scan_id=?",
+        (second.scan_id,),
+    ).fetchone()[0]
+
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        108,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    immediate = repository.preparation_presentation(110)
+    new_cycle = repository._connection.execute(
+        "SELECT cycle_id FROM review_preparation_presentation "
+        "WHERE row_kind='enrollment' AND scan_id=?",
+        (first.scan_id,),
+    ).fetchone()[0]
+    retained = repository._connection.execute(
+        "SELECT cycle_id,work_outcome,updated_at,completion_sequence "
+        "FROM review_preparation_presentation WHERE row_kind='work' AND scan_id=?",
+        (first.scan_id,),
+    ).fetchone()
+    trigger = repository._connection.execute(
+        "SELECT accepted_count FROM review_preparation_presentation "
+        "WHERE row_kind='trigger' AND trigger='manual_scan'"
+    ).fetchone()
+    assert repository._connection.execute(
+        "SELECT cycle_id FROM review_preparation_presentation "
+        "WHERE row_kind='enrollment' AND scan_id=?",
+        (second.scan_id,),
+    ).fetchone() == (sibling_cycle,)
+    repository.close()
+
+    assert before is not None and immediate is not None
+    assert old_cycle != new_cycle
+    assert retained == (new_cycle, "ready", 105, 1)
+    assert trigger == (2,)
+    assert immediate.recent_completions == before.recent_completions
+    assert immediate.throughput_per_minute == before.throughput_per_minute
+
+    repository = open_repository(application_path, create=False)
+    assert repository.preparation_presentation(110) == immediate
+    successor = repository.claim_review_pipeline_action(109)
+    assert successor is not None and successor.connection == "primary"
+    repository.complete_review_discovery(successor, 2, "b" * 64, (entry,), 110)
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET stage='extraction',state='queued',updated_at=110 "
+        "WHERE work_id=?",
+        (work.action_id,),
+    )
+    active_work = repository.claim_review_pipeline_work(work.action_id, 111)
+    assert active_work is not None and active_work.connection == "primary"
+    after = repository.preparation_presentation(110)
+    repository._connection.commit()
+    repository.close()
+
+    assert before is not None and after is not None
+    assert after.state is PreparationRunState.RUNNING
+    assert after.active_books[0].stage == "Reading from library"
+    assert after.recent_completions == before.recent_completions
+    assert after.throughput_per_minute == before.throughput_per_minute
+    reopened = open_repository(application_path, create=False)
+    assert reopened.preparation_presentation(110) == after
+    reopened.close()
+
+
+def test_per_work_presentation_query_count_does_not_grow_with_run_population(
+    tmp_path: Path,
+) -> None:
+    def measured(population: int) -> tuple[int, tuple[str, ...], int, tuple[str, ...]]:
+        repository = open_repository(tmp_path / f"population-{population}.sqlite3")
+        repository.request_review_scan(
+            "primary",
+            "fiction",
+            "lib-1",
+            _PRODUCER,
+            100,
+            trigger=PreparationTrigger.MANUAL_SCAN,
+        )
+        discovery = repository.claim_review_pipeline_action(101)
+        assert discovery is not None
+        entries = tuple(
+            CatalogueEntry(
+                "primary",
+                "fiction",
+                "lib-1",
+                f"item-{index}",
+                1,
+                f"Synthetic book {index}",
+                (),
+                True,
+                False,
+                "singular-supported",
+                f"{index + 1:064x}",
+                f"/book-{index}.epub",
+                "epub",
+                "books",
+            )
+            for index in range(population)
+        )
+        repository.complete_review_discovery(discovery, 1, "a" * 64, entries, 102)
+        work_id = repository._connection.execute(
+            "SELECT work_id FROM review_preparation_work ORDER BY ordinal LIMIT 1"
+        ).fetchone()[0]
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET state='running',updated_at=103 WHERE work_id=?",
+            (work_id,),
+        )
+        statements: list[str] = []
+        repository._connection.set_trace_callback(statements.append)
+        refresh_preparation_work(repository._connection, work_id, 103)
+        repository._connection.set_trace_callback(None)
+        presentation = repository.preparation_presentation(103)
+        assert presentation is not None
+        run_id = presentation.run_id
+        exact_work_plan = tuple(
+            row[3]
+            for row in repository._connection.execute(
+                "EXPLAIN QUERY PLAN SELECT run_id,work_stage,work_outcome "
+                "FROM review_preparation_presentation WHERE row_id=? AND row_kind='work'",
+                ("work:" + work_id,),
+            )
+        )
+        trigger_plan = tuple(
+            row[3]
+            for row in repository._connection.execute(
+                "EXPLAIN QUERY PLAN SELECT COUNT(*) "
+                "FROM review_preparation_presentation AS trigger "
+                "JOIN review_preparation_scans AS scan ON scan.scan_id=trigger.scan_id "
+                "WHERE trigger.row_kind='trigger' AND trigger.run_id=?",
+                (run_id,),
+            )
+        )
+        snapshot_plans = tuple(
+            row[3]
+            for sql in (
+                "SELECT presentation.display_name,authoritative.stage FROM review_preparation_presentation AS presentation INDEXED BY review_preparation_presentation_active CROSS JOIN review_preparation_work AS authoritative ON authoritative.work_id=presentation.work_id WHERE presentation.row_kind='work' AND presentation.run_id=? AND presentation.current_work_state='running' AND authoritative.state='running' ORDER BY presentation.enrollment_ordinal,presentation.ordinal,presentation.work_id LIMIT 5",
+                "SELECT display_name,work_outcome,updated_at FROM review_preparation_presentation WHERE row_kind='work' AND run_id=? AND work_outcome IS NOT NULL ORDER BY completion_sequence DESC LIMIT 8",
+                "SELECT COUNT(*) FROM review_preparation_presentation WHERE row_kind='work' AND run_id=? AND work_outcome IS NOT NULL AND updated_at>=?",
+            )
+            for row in repository._connection.execute(
+                "EXPLAIN QUERY PLAN " + sql,
+                (run_id, 0) if sql.endswith("updated_at>=?") else (run_id,),
+            )
+        )
+        vm_steps = 0
+
+        def count_step() -> int:
+            nonlocal vm_steps
+            vm_steps += 1
+            return 0
+
+        repository._connection.set_progress_handler(count_step, 1)
+        repository.preparation_presentation(103)
+        repository._connection.set_progress_handler(None, 0)
+        repository.close()
+        return len(statements), exact_work_plan + trigger_plan, vm_steps, snapshot_plans
+
+    small_count, small_plan, small_vm, small_snapshot_plan = measured(1)
+    large_count, large_plan, large_vm, large_snapshot_plan = measured(2_000)
+    assert large_count == small_count
+    assert large_count <= 10
+    assert any(
+        "sqlite_autoindex_review_preparation_presentation_1" in row
+        for row in small_plan
+    )
+    assert any("review_preparation_presentation_run" in row for row in small_plan)
+    assert large_plan == small_plan
+    assert large_vm <= small_vm + 40
+    assert large_snapshot_plan == small_snapshot_plan
+    assert all("USE TEMP B-TREE" not in row for row in large_snapshot_plan)
+    assert any(
+        "review_preparation_presentation_active" in row for row in large_snapshot_plan
+    )
+    assert any(
+        "review_preparation_presentation_recent" in row for row in large_snapshot_plan
+    )
+    assert any(
+        "review_preparation_presentation_throughput" in row
+        for row in large_snapshot_plan
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "UPDATE review_preparation_presentation SET first_accepted_at=123 WHERE row_kind='run'",
+        "UPDATE review_preparation_presentation SET ready=1 WHERE row_kind='trigger'",
+        "UPDATE review_preparation_presentation SET searches_finished=1 WHERE row_kind='trigger'",
+        "UPDATE review_preparation_presentation SET started_at=1 WHERE row_kind='trigger'",
+        "UPDATE review_preparation_presentation SET ready=1 WHERE row_kind='enrollment'",
+        "UPDATE review_preparation_presentation SET started_at=1 WHERE row_kind='enrollment'",
+        "UPDATE review_preparation_presentation SET ready=1 WHERE row_kind='work'",
+        "UPDATE review_preparation_presentation SET started_at=1 WHERE row_kind='work'",
+        "UPDATE review_preparation_presentation SET row_id='work:invented' WHERE row_kind='work'",
+        "UPDATE review_preparation_presentation SET connection_name='other' WHERE row_kind='enrollment'",
+        "UPDATE review_preparation_presentation SET pending_cycle_id=cycle_id WHERE row_kind='enrollment' AND ordinal=0",
+        "UPDATE review_preparation_presentation SET ordinal=2 "
+        "WHERE row_kind='enrollment'",
+        "UPDATE review_preparation_presentation SET run_id='preparation_run_' || "
+        "lower(hex(randomblob(32))) WHERE row_kind='trigger'",
+        "UPDATE review_preparation_presentation SET enrollment_ordinal=9 "
+        "WHERE row_kind='work'",
+        "UPDATE review_preparation_presentation SET cycle_id=(SELECT cycle_id FROM "
+        "review_preparation_presentation WHERE row_kind='enrollment' AND ordinal=0) "
+        "WHERE row_kind='enrollment' AND ordinal=1",
+        "UPDATE review_preparation_presentation SET scan_id='private-scan' "
+        "WHERE row_kind='deferred_enrollment'",
+        "UPDATE review_preparation_presentation SET row_id='deferred_enrollment:invented' "
+        "WHERE row_kind='deferred_enrollment'",
+        "UPDATE review_preparation_presentation SET connection_name='other' "
+        "WHERE row_kind='deferred_enrollment'",
+        "UPDATE review_preparation_presentation SET accepted_at=-1 "
+        "WHERE row_kind='deferred_enrollment'",
+        "UPDATE review_preparation_presentation SET settings_revision=0 "
+        "WHERE row_kind='deferred_enrollment'",
+        "UPDATE review_preparation_presentation SET recovery_high_water_stage='provider',"
+        "recovery_high_water_outcome='ready' WHERE row_kind='work'",
+        "UPDATE review_preparation_presentation SET recovery_high_water_stage='extraction' "
+        "WHERE row_kind='work'",
+    ),
+    ids=(
+        "run-trigger-column",
+        "trigger-passage-column",
+        "trigger-search-column",
+        "trigger-run-column",
+        "enrollment-passage-column",
+        "enrollment-run-column",
+        "work-passage-column",
+        "work-run-column",
+        "work-row-identity",
+        "enrollment-target",
+        "equal-current-pending-cycle",
+        "noncanonical-ordinal",
+        "foreign-run",
+        "work-enrollment-ordinal",
+        "duplicate-enrollment-cycle",
+        "deferred-irrelevant-column",
+        "deferred-row-identity",
+        "deferred-target-identity",
+        "deferred-negative-accepted-at",
+        "deferred-settings-revision",
+        "recovery-marker-outcome-mismatch",
+        "unnecessary-recovery-marker",
+    ),
+)
+def test_exact_current_presentation_rows_fail_closed(
+    tmp_path: Path, mutation: str
+) -> None:
+    path = tmp_path / "invalid-presentation.sqlite3"
+    repository = open_repository(path)
+    _install_settings_authority(repository)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry("item", "1" * 64),), 102
+    )
+    repository.request_review_scan(
+        "primary",
+        "history",
+        "lib-2",
+        _PRODUCER,
+        103,
+        trigger=PreparationTrigger.LIBRARY_ADDED,
+    )
+    repository.set_review_pipeline_paused(True, 104)
+    repository.request_library_addition("primary", "poetry", "lib-3", _PRODUCER, 105)
+    repository.close()
+
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA ignore_check_constraints=ON")
+    connection.execute(mutation)
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(
+        MetadataReportError, match="database is unavailable or incompatible"
+    ):
+        open_repository(path, create=False)
+
+
+@pytest.mark.parametrize("column", ("cycle_id", "pending_cycle_id"))
+def test_nonhex_presentation_cycle_identity_fails_closed(
+    tmp_path: Path, column: str
+) -> None:
+    path = tmp_path / f"invalid-{column}.sqlite3"
+    repository = open_repository(path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry("item", "1" * 64),), 102
+    )
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        103,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    repository.close()
+
+    invalid = "preparation_cycle_" + "a" * 63 + "g"
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA ignore_check_constraints=ON")
+    connection.execute(
+        f"UPDATE review_preparation_presentation SET {column}=? "
+        "WHERE row_kind='enrollment'",
+        (invalid,),
+    )
+    if column == "cycle_id":
+        connection.execute(
+            "UPDATE review_preparation_presentation SET cycle_id=? WHERE row_kind='work'",
+            (invalid,),
+        )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(
+        MetadataReportError, match="database is unavailable or incompatible"
+    ):
+        open_repository(path, create=False)
+
+
+def _seed_partly_completed_presentation(
+    path: Path, *, failed: bool
+) -> tuple[object, str]:
+    repository = open_repository(path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery,
+        1,
+        "a" * 64,
+        (_entry("First", "1" * 64), _entry("Second", "2" * 64)),
+        102,
+    )
+    work_ids = tuple(
+        row[0]
+        for row in repository._connection.execute(  # noqa: SLF001 - corruption fixture
+            "SELECT work_id FROM review_preparation_work ORDER BY ordinal"
+        )
+    )
+    repository._connection.execute(  # noqa: SLF001 - corruption fixture
+        "UPDATE review_preparation_work SET stage=?,state=?,updated_at=103 WHERE work_id=?",
+        (
+            "extraction" if failed else "complete",
+            "failed" if failed else "complete",
+            work_ids[0],
+        ),
+    )
+    refresh_preparation_work(repository._connection, work_ids[0], 103)  # noqa: SLF001
+    repository._connection.commit()  # noqa: SLF001 - corruption fixture
+    return repository, work_ids[1]
+
+
+def _assert_presentation_reopen_refuses_without_mutation(path: Path) -> None:
+    connection = sqlite3.connect(path)
+    before = tuple(
+        connection.execute(
+            "SELECT * FROM review_preparation_presentation ORDER BY row_id"
+        )
+    )
+    connection.close()
+    before_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    with pytest.raises(
+        MetadataReportError, match="^database is unavailable or incompatible$"
+    ) as raised:
+        open_repository(path, create=False)
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == before_hash
+    connection = sqlite3.connect(path)
+    assert (
+        tuple(
+            connection.execute(
+                "SELECT * FROM review_preparation_presentation ORDER BY row_id"
+            )
+        )
+        == before
+    )
+    connection.close()
+
+
+@pytest.mark.parametrize(
+    ("sequence", "count"),
+    ((7, 1), (9_223_372_036_854_775_807, 9_223_372_036_854_775_807), (1.5, 1)),
+    ids=("gap", "unsafe-maximum", "wrong-exact-type"),
+)
+def test_completion_sequence_corruption_fails_closed_without_repair(
+    tmp_path: Path, sequence: object, count: object
+) -> None:
+    path = tmp_path / f"invalid-completion-{sequence}.sqlite3"
+    repository, _pending = _seed_partly_completed_presentation(path, failed=False)
+    repository.close()
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA ignore_check_constraints=ON")
+    connection.execute(
+        "UPDATE review_preparation_presentation SET completion_sequence=? "
+        "WHERE row_kind='work' AND completion_sequence IS NOT NULL",
+        (sequence,),
+    )
+    connection.execute(
+        "UPDATE review_preparation_presentation SET completion_count=? WHERE row_kind='run'",
+        (count,),
+    )
+    connection.commit()
+    connection.close()
+    _assert_presentation_reopen_refuses_without_mutation(path)
+
+
+def test_completion_allocator_rolls_back_corrupt_maximum_without_real_write(
+    tmp_path: Path,
+) -> None:
+    repository, pending_work_id = _seed_partly_completed_presentation(
+        tmp_path / "allocator-corruption.sqlite3", failed=False
+    )
+    action = repository.claim_review_pipeline_work(pending_work_id, 104)
+    assert action is not None
+    maximum = 9_223_372_036_854_775_807
+    repository._connection.execute(  # noqa: SLF001 - post-open fault injection
+        "PRAGMA ignore_check_constraints=ON"
+    )
+    repository._connection.execute(  # noqa: SLF001 - post-open fault injection
+        "UPDATE review_preparation_presentation SET completion_sequence=? "
+        "WHERE completion_sequence=1",
+        (maximum,),
+    )
+    repository._connection.execute(  # noqa: SLF001 - post-open fault injection
+        "UPDATE review_preparation_presentation SET completion_count=? WHERE row_kind='run'",
+        (maximum,),
+    )
+    repository._connection.commit()  # noqa: SLF001 - post-open fault injection
+    before = tuple(
+        repository._connection.execute(  # noqa: SLF001 - rollback proof
+            "SELECT row_id,current_work_state,work_outcome,completion_sequence,"
+            "typeof(completion_sequence) FROM review_preparation_presentation "
+            "WHERE row_kind IN ('run','work') ORDER BY row_id"
+        )
+    )
+    counters = repository._connection.execute(  # noqa: SLF001 - rollback proof
+        "SELECT ready,failed,completion_count FROM review_preparation_presentation "
+        "WHERE row_kind='run'"
+    ).fetchone()
+
+    with pytest.raises(
+        MetadataReportError, match="^review preparation persistence failed$"
+    ) as raised:
+        repository.fail_review_pipeline_action(action, "provider", False, 105)
+
+    assert raised.value.__cause__ is None
+    assert not repository._connection.in_transaction  # noqa: SLF001
+    assert (
+        tuple(
+            repository._connection.execute(  # noqa: SLF001 - rollback proof
+                "SELECT row_id,current_work_state,work_outcome,completion_sequence,"
+                "typeof(completion_sequence) FROM review_preparation_presentation "
+                "WHERE row_kind IN ('run','work') ORDER BY row_id"
+            )
+        )
+        == before
+    )
+    assert (
+        repository._connection.execute(  # noqa: SLF001 - rollback proof
+            "SELECT ready,failed,completion_count FROM review_preparation_presentation "
+            "WHERE row_kind='run'"
+        ).fetchone()
+        == counters
+    )
+    assert repository._connection.execute(  # noqa: SLF001 - authoritative rollback proof
+        "SELECT state FROM review_preparation_work WHERE work_id=?", (pending_work_id,)
+    ).fetchone() == ("running",)
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    "corruption", ("delete-first", "gap", "nonmaximum-real", "zero-alias")
+)
+def test_completion_allocator_refuses_noncanonical_population_before_mutation(
+    tmp_path: Path, corruption: str
+) -> None:
+    repository = open_repository(tmp_path / f"allocator-{corruption}.sqlite3")
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery,
+        1,
+        "a" * 64,
+        tuple(_entry(str(index), f"{index:064x}") for index in range(1, 4)),
+        102,
+    )
+    work_ids = tuple(
+        row[0]
+        for row in repository._connection.execute(
+            "SELECT work_id FROM review_preparation_work ORDER BY ordinal"
+        )
+    )
+    for offset, work_id in enumerate(work_ids[:2], 103):
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET state='complete',updated_at=? WHERE work_id=?",
+            (offset, work_id),
+        )
+        refresh_preparation_work(repository._connection, work_id, offset)
+    action = repository.claim_review_pipeline_work(work_ids[2], 105)
+    assert action is not None
+    repository._connection.execute("PRAGMA ignore_check_constraints=ON")
+    if corruption == "delete-first":
+        repository._connection.execute(
+            "DELETE FROM review_preparation_presentation WHERE completion_sequence=1"
+        )
+    elif corruption == "gap":
+        repository._connection.execute(
+            "UPDATE review_preparation_presentation SET completion_sequence=7 "
+            "WHERE completion_sequence=1"
+        )
+    elif corruption == "nonmaximum-real":
+        repository._connection.execute(
+            "UPDATE review_preparation_presentation SET completion_sequence=1.5 "
+            "WHERE completion_sequence=1"
+        )
+    else:
+        repository._connection.execute(
+            "UPDATE review_preparation_presentation SET completion_sequence=0 "
+            "WHERE completion_sequence=1"
+        )
+    repository._connection.commit()
+    before = tuple(
+        repository._connection.execute(
+            "SELECT row_id,completion_sequence,typeof(completion_sequence) "
+            "FROM review_preparation_presentation ORDER BY row_id"
+        )
+    )
+    if corruption == "zero-alias":
+        with pytest.raises(
+            MetadataReportError, match="^review preparation persistence failed$"
+        ) as direct:
+            _completion_sequence_count(
+                repository._connection,
+                repository._connection.execute(
+                    "SELECT run_id FROM review_preparation_presentation WHERE row_id='run'"
+                ).fetchone()[0],
+            )
+        assert direct.value.__cause__ is None
+        assert direct.value.__context__ is None
+
+    with pytest.raises(
+        MetadataReportError, match="^review preparation persistence failed$"
+    ) as raised:
+        repository.fail_review_pipeline_action(action, "provider", False, 106)
+
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert repository._connection.in_transaction is False
+    assert (
+        tuple(
+            repository._connection.execute(
+                "SELECT row_id,completion_sequence,typeof(completion_sequence) "
+                "FROM review_preparation_presentation ORDER BY row_id"
+            )
+        )
+        == before
+    )
+    assert repository._connection.execute(
+        "SELECT state FROM review_preparation_work WHERE work_id=?", (work_ids[2],)
+    ).fetchone() == ("running",)
+    repository.close()
+
+
+def test_completion_allocator_uses_one_covering_linear_population_pass(
+    tmp_path: Path,
+) -> None:
+    sql = (
+        "SELECT COUNT(completion_sequence),MIN(completion_sequence),MAX(completion_sequence),"
+        "COALESCE(SUM(typeof(completion_sequence)<>'integer'),0) "
+        "FROM review_preparation_presentation "
+        "INDEXED BY review_preparation_presentation_completion_integrity "
+        "WHERE row_kind='work' AND run_id=? AND completion_sequence IS NOT NULL"
+    )
+
+    def measured(population: int) -> tuple[int, int, tuple[str, ...]]:
+        repository, _pending = _seed_partly_completed_presentation(
+            tmp_path / f"allocator-scale-{population}.sqlite3", failed=False
+        )
+        run_id, scan_id, cycle_id = repository._connection.execute(
+            "SELECT run.run_id,enrollment.scan_id,enrollment.cycle_id "
+            "FROM review_preparation_presentation AS run "
+            "JOIN review_preparation_presentation AS enrollment "
+            "ON enrollment.row_kind='enrollment' WHERE run.row_id='run'"
+        ).fetchone()
+        for sequence in range(2, population + 1):
+            work_id = "review_work_" + f"{sequence:064x}"
+            repository._connection.execute(
+                "INSERT INTO review_preparation_presentation("
+                "row_id,row_kind,run_id,scan_id,cycle_id,work_id,ordinal,enrollment_ordinal,"
+                "display_name,work_stage,current_work_state,work_outcome,completion_sequence,updated_at) "
+                "VALUES(?,'work',?,?,?,?,?,?,?,'projection','complete','ready',?,103)",
+                (
+                    "work:" + work_id,
+                    run_id,
+                    scan_id,
+                    cycle_id,
+                    work_id,
+                    sequence,
+                    0,
+                    f"Book {sequence}",
+                    sequence,
+                ),
+            )
+        repository._connection.execute(
+            "UPDATE review_preparation_presentation SET completion_count=? WHERE row_id='run'",
+            (population,),
+        )
+        statements: list[str] = []
+        steps = 0
+
+        def count_step() -> int:
+            nonlocal steps
+            steps += 1
+            return 0
+
+        repository._connection.set_trace_callback(statements.append)
+        repository._connection.set_progress_handler(count_step, 1)
+        assert _completion_sequence_count(repository._connection, run_id) == population
+        repository._connection.set_progress_handler(None, 0)
+        repository._connection.set_trace_callback(None)
+        plan = tuple(
+            row[3]
+            for row in repository._connection.execute(
+                "EXPLAIN QUERY PLAN " + sql, (run_id,)
+            )
+        )
+        repository.close()
+        return len(statements), steps, plan
+
+    small_queries, small_steps, small_plan = measured(1)
+    large_queries, large_steps, large_plan = measured(2_000)
+    assert small_queries == large_queries == 2
+    assert small_plan == large_plan
+    assert any("COVERING INDEX" in row for row in large_plan)
+    assert all("TEMP B-TREE" not in row for row in large_plan)
+    assert large_steps <= small_steps + 30 * 2_000
+
+
+def test_retained_failed_completion_is_a_counter_lower_bound(tmp_path: Path) -> None:
+    path = tmp_path / "invalid-failed-counter.sqlite3"
+    repository, _pending = _seed_partly_completed_presentation(path, failed=True)
+    repository.close()
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA ignore_check_constraints=ON")
+    connection.execute(
+        "UPDATE review_preparation_presentation SET failed=0 WHERE row_kind='run'"
+    )
+    connection.commit()
+    connection.close()
+    _assert_presentation_reopen_refuses_without_mutation(path)
+
+
+def test_terminal_run_cannot_be_forged_while_two_works_remain_queued(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "invalid-terminal-queued.sqlite3"
+    repository = open_repository(path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery,
+        1,
+        "a" * 64,
+        (_entry("First", "1" * 64), _entry("Second", "2" * 64)),
+        102,
+    )
+    assert repository._connection.execute(  # noqa: SLF001 - fixture assertion
+        "SELECT COUNT(*) FROM review_preparation_work WHERE state='queued'"
+    ).fetchone() == (2,)
+    repository.close()
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA ignore_check_constraints=ON")
+    connection.execute(
+        "UPDATE review_preparation_presentation SET state='completed_clean',"
+        "completed_at=updated_at WHERE row_kind='run'"
+    )
+    connection.commit()
+    connection.close()
+    _assert_presentation_reopen_refuses_without_mutation(path)
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    (
+        "state",
+        "trigger",
+        "row_kind",
+        "deferred_target",
+        "deferred_enrollment_overlap",
+        "deferred_active_scan_overlap",
+        "work_display_name",
+        "enrollment_cycle_state",
+        "work_stage",
+        "work_current_state",
+        "work_outcome",
+        "trigger_updated_at",
+        "enrollment_updated_at",
+        "deferred_updated_at",
+        "work_updated_at",
+        "completion_sequence",
+        "terminal_with_active_authority",
+        "completed_enrollment_active_scan",
+        "trigger_before_run",
+        "queued_work_ready",
+    ),
+)
+def test_presentation_corruption_is_value_free_and_refused_without_repair(
+    tmp_path: Path, corruption: str
+) -> None:
+    path = tmp_path / f"invalid-{corruption}.sqlite3"
+    repository = open_repository(path)
+    _install_settings_authority(repository)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    private_value = "private-owner-title-library"
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry(private_value, "1" * 64),), 102
+    )
+    repository.request_review_scan("primary", "poetry", "lib-3", _PRODUCER, 103)
+    repository.set_review_pipeline_paused(True, 104)
+    repository.request_library_addition("primary", "history", "lib-2", _PRODUCER, 105)
+    repository.close()
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA ignore_check_constraints=ON")
+    if corruption == "state":
+        connection.execute(
+            "UPDATE review_preparation_presentation SET state=? WHERE row_kind='run'",
+            (private_value,),
+        )
+    elif corruption == "trigger":
+        connection.execute(
+            "UPDATE review_preparation_presentation SET trigger=?,row_id=? "
+            "WHERE row_kind='trigger' AND trigger='manual_scan'",
+            (private_value, "trigger:" + private_value),
+        )
+    elif corruption == "row_kind":
+        connection.execute(
+            "UPDATE review_preparation_presentation SET row_kind=? "
+            "WHERE row_kind='trigger' AND trigger='manual_scan'",
+            (private_value,),
+        )
+    elif corruption == "deferred_target":
+        connection.execute(
+            "UPDATE review_preparation_presentation SET connection_name=? "
+            "WHERE row_kind='deferred_enrollment'",
+            (private_value,),
+        )
+    elif corruption == "deferred_enrollment_overlap":
+        connection.execute(
+            "UPDATE review_preparation_presentation SET connection_name='primary',"
+            "library_name='fiction',row_id=? WHERE row_kind='deferred_enrollment'",
+            (deferred_preparation_enrollment_id("primary", "fiction"),),
+        )
+    elif corruption == "deferred_active_scan_overlap":
+        connection.execute(
+            "UPDATE review_preparation_presentation SET connection_name='primary',"
+            "library_name='poetry',row_id=? WHERE row_kind='deferred_enrollment'",
+            (deferred_preparation_enrollment_id("primary", "poetry"),),
+        )
+    elif corruption == "work_display_name":
+        private_value += "界" * 683
+        connection.execute(
+            "UPDATE review_preparation_presentation SET display_name=? "
+            "WHERE row_kind='work'",
+            (private_value,),
+        )
+    elif corruption == "enrollment_cycle_state":
+        connection.execute(
+            "UPDATE review_preparation_presentation SET cycle_state=? "
+            "WHERE row_kind='enrollment'",
+            (private_value,),
+        )
+    elif corruption == "work_stage":
+        connection.execute(
+            "UPDATE review_preparation_presentation SET work_stage=? WHERE row_kind='work'",
+            (private_value,),
+        )
+    elif corruption == "work_current_state":
+        connection.execute(
+            "UPDATE review_preparation_presentation SET current_work_state=? WHERE row_kind='work'",
+            (private_value,),
+        )
+    elif corruption == "work_outcome":
+        connection.execute(
+            "UPDATE review_preparation_presentation SET work_outcome=?,completion_sequence=1 "
+            "WHERE row_kind='work'",
+            (private_value,),
+        )
+    elif corruption == "terminal_with_active_authority":
+        connection.execute(
+            "UPDATE review_preparation_presentation SET state='completed_clean',"
+            "completed_at=updated_at WHERE row_kind='run'"
+        )
+    elif corruption == "completed_enrollment_active_scan":
+        connection.execute(
+            "UPDATE review_preparation_presentation SET cycle_state='completed' "
+            "WHERE row_kind='enrollment' AND library_name='fiction'"
+        )
+    elif corruption == "trigger_before_run":
+        connection.execute(
+            "UPDATE review_preparation_presentation SET first_accepted_at=0,"
+            "last_accepted_at=0 WHERE row_kind='trigger' AND trigger='manual_scan'"
+        )
+    elif corruption == "queued_work_ready":
+        connection.execute(
+            "UPDATE review_preparation_presentation SET work_outcome='ready',"
+            "completion_sequence=1 WHERE row_kind='work'"
+        )
+        connection.execute(
+            "UPDATE review_preparation_presentation SET ready=1,completion_count=1 "
+            "WHERE row_kind='run'"
+        )
+    elif corruption.endswith("_updated_at"):
+        row_kind = corruption.removesuffix("_updated_at")
+        connection.execute(
+            "UPDATE review_preparation_presentation SET updated_at=-1 WHERE row_kind=?",
+            ("deferred_enrollment" if row_kind == "deferred" else row_kind,),
+        )
+    else:
+        connection.execute(
+            "UPDATE review_preparation_presentation SET completion_sequence=0 "
+            "WHERE row_kind='work'"
+        )
+    connection.commit()
+    before_rows = tuple(
+        connection.execute(
+            "SELECT * FROM review_preparation_presentation ORDER BY row_id"
+        )
+    )
+    connection.close()
+    before_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+
+    with pytest.raises(
+        MetadataReportError, match="^database is unavailable or incompatible$"
+    ) as raised:
+        open_repository(path, create=False)
+
+    errors: list[BaseException] = [raised.value]
+    seen: set[int] = set()
+    while errors:
+        error = errors.pop()
+        if id(error) in seen:
+            continue
+        seen.add(id(error))
+        assert private_value not in str(error)
+        if error.__cause__ is not None:
+            errors.append(error.__cause__)
+        if error.__context__ is not None:
+            errors.append(error.__context__)
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == before_hash
+    connection = sqlite3.connect(path)
+    assert (
+        tuple(
+            connection.execute(
+                "SELECT * FROM review_preparation_presentation ORDER BY row_id"
+            )
+        )
+        == before_rows
+    )
+    connection.close()
 
 
 def test_pause_state_is_durable_and_does_not_remove_committed_work(
@@ -389,6 +2473,15 @@ def test_recovery_rebinds_the_latest_scan_after_settings_change(tmp_path: Path) 
         "UPDATE review_preparation_scans SET state='completed' WHERE scan_id=?",
         (first_boot.scan_id,),
     )
+    repository._connection.execute(
+        "UPDATE review_preparation_presentation SET cycle_state='completed' "
+        "WHERE row_kind='enrollment' AND scan_id=?",
+        (first_boot.scan_id,),
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_presentation SET state='completed_clean',"
+        "completed_at=1 WHERE row_kind='run'"
+    )
     ordinary = repository.request_review_scan(
         "primary", "books", "books-v1", _PRODUCER, 2
     )
@@ -415,6 +2508,125 @@ def test_recovery_rebinds_the_latest_scan_after_settings_change(tmp_path: Path) 
         (first_boot.scan_id, "completed", "books-v1", _PRODUCER),
         (ordinary.scan_id, "queued", "books-v2", changed_producer),
     ]
+
+
+def test_recovery_rolls_back_corrupt_completion_authority_and_releases_writer(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "recovery-completion-corruption.sqlite3"
+    repository, _pending = _seed_partly_completed_presentation(path, failed=False)
+    repository._connection.execute("PRAGMA ignore_check_constraints=ON")
+    repository._connection.execute(
+        "UPDATE review_preparation_presentation SET completion_sequence=0 "
+        "WHERE completion_sequence=1"
+    )
+    repository._connection.commit()
+    tables = (
+        "review_preparation_control",
+        "review_preparation_scans",
+        "review_preparation_work",
+        "review_preparation_connection_conditions",
+        "review_preparation_presentation",
+    )
+    before = {
+        table: tuple(repository._connection.execute(f"SELECT * FROM {table}"))
+        for table in tables
+    }
+
+    with pytest.raises(
+        MetadataReportError, match="^review preparation persistence failed$"
+    ) as raised:
+        repository.recover_review_pipeline(
+            (("primary", "fiction", "lib-1", _PRODUCER),)
+        )
+
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert repository._connection.in_transaction is False
+    assert {
+        table: tuple(repository._connection.execute(f"SELECT * FROM {table}"))
+        for table in tables
+    } == before
+    second = sqlite3.connect(path, timeout=0)
+    second.execute("BEGIN IMMEDIATE")
+    second.rollback()
+    second.close()
+    repository.close()
+
+
+def test_recovery_rolls_back_unexpected_failure_and_releases_writer(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 100)
+    action = repository.claim_review_pipeline_action(101)
+    assert action is not None
+    before = tuple(
+        repository._connection.execute("SELECT * FROM review_preparation_scans")
+    )
+    fault = RuntimeError("injected recovery failure")
+
+    with (
+        patch(
+            "mechanical_librarian.adapters.persistence.review_scans.refresh_preparation_presentation",
+            side_effect=fault,
+        ),
+        pytest.raises(RuntimeError) as raised,
+    ):
+        repository.recover_review_pipeline(
+            (("primary", "fiction", "lib-1", _PRODUCER),)
+        )
+
+    assert raised.value is fault
+    assert repository._connection.in_transaction is False
+    assert (
+        tuple(repository._connection.execute("SELECT * FROM review_preparation_scans"))
+        == before
+    )
+    second = sqlite3.connect(application_path, timeout=0)
+    second.execute("BEGIN IMMEDIATE")
+    second.rollback()
+    second.close()
+    repository.close()
+
+
+def test_recovery_translates_sqlite_failure_without_private_context(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 100)
+    action = repository.claim_review_pipeline_action(101)
+    assert action is not None
+    before = tuple(
+        repository._connection.execute("SELECT * FROM review_preparation_scans")
+    )
+
+    with (
+        patch(
+            "mechanical_librarian.adapters.persistence.review_scans.refresh_preparation_presentation",
+            side_effect=sqlite3.OperationalError("/private/library/database.sqlite3"),
+        ),
+        pytest.raises(
+            MetadataReportError, match="^review preparation recovery failed$"
+        ) as raised,
+    ):
+        repository.recover_review_pipeline(
+            (("primary", "fiction", "lib-1", _PRODUCER),)
+        )
+
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert "/private/library" not in str(raised.value)
+    assert repository._connection.in_transaction is False
+    assert (
+        tuple(repository._connection.execute("SELECT * FROM review_preparation_scans"))
+        == before
+    )
+    second = sqlite3.connect(application_path, timeout=0)
+    second.execute("BEGIN IMMEDIATE")
+    second.rollback()
+    second.close()
+    repository.close()
 
 
 def test_pipeline_preflight_is_once_per_cycle_and_recovery_retains_qualification(
@@ -560,6 +2772,1948 @@ def test_lifecycle_foreground_request_uses_one_clean_atomic_pause_boundary(
         assert reopened.review_pipeline_paused()
     finally:
         reopened.close()
+
+
+def test_supervisor_durably_defers_library_addition_and_promotes_after_recompose(
+    application_path: Path,
+) -> None:
+    owner = open_repository(application_path)
+    clock = [100]
+
+    def pipeline() -> ReviewPreparationPipeline:
+        return ReviewPreparationPipeline(
+            repository_factory=lambda: open_repository(
+                application_path, create=False, authority=owner.authority
+            ),
+            libraries=(("primary", "history", "lib-2", _PRODUCER),),
+            discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            providers=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            propose=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            project=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            clock=lambda: clock[0],
+        )
+
+    supervisor = ReviewPreparationSupervisor(pipeline(), clock=lambda: clock[0])
+    supervisor.set_paused(True)
+    assert supervisor.request_library_addition("primary", "history") is None
+    blocked = owner.preparation_presentation(clock[0])
+    assert blocked is not None and blocked.state is PreparationRunState.BLOCKED
+    assert not blocked.dismissible
+    assert owner.review_pipeline_progress("primary", "history") is None
+    assert owner.claim_review_pipeline_action(clock[0]) is None
+    assert owner._connection.execute(
+        "SELECT connection_name,library_name,ordinal "
+        "FROM review_preparation_presentation WHERE row_kind='deferred_enrollment'"
+    ).fetchone() == ("primary", "history", 0)
+    assert [item.trigger for item in blocked.triggers] == [
+        PreparationTrigger.LIBRARY_ADDED
+    ]
+    assert blocked.triggers[0].accepted_count == 1
+
+    clock[0] = 101
+    successor = ReviewPreparationSupervisor(pipeline(), clock=lambda: clock[0])
+    assert successor.request_library_addition("primary", "history") is None
+    repeated = owner.preparation_presentation(clock[0])
+    assert repeated is not None and repeated.run_id == blocked.run_id
+    assert repeated.triggers[0].accepted_count == 1
+
+    clock[0] = 102
+    successor.set_paused(False)
+    progress = owner.review_pipeline_progress("primary", "history")
+    resumed = owner.preparation_presentation(clock[0])
+    assert progress is not None and progress.state == "queued"
+    assert resumed is not None and resumed.state is PreparationRunState.STARTING
+    library_added = next(
+        item
+        for item in resumed.triggers
+        if item.trigger is PreparationTrigger.LIBRARY_ADDED
+    )
+    assert library_added.accepted_count == 1
+    assert owner._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_scans "
+        "WHERE connection_name='primary' AND library_name='history'"
+    ).fetchone() == (1,)
+    assert owner._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_presentation "
+        "WHERE row_kind='enrollment' AND connection_name='primary' "
+        "AND library_name='history'"
+    ).fetchone() == (1,)
+    assert owner._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_presentation "
+        "WHERE row_kind='deferred_enrollment'"
+    ).fetchone() == (0,)
+
+    clock[0] = 103
+    successor.set_paused(False)
+    unchanged = owner.preparation_presentation(clock[0])
+    owner.close()
+    assert unchanged is not None
+    assert (
+        next(
+            item
+            for item in unchanged.triggers
+            if item.trigger is PreparationTrigger.LIBRARY_ADDED
+        ).accepted_count
+        == 1
+    )
+
+
+def test_library_addition_does_not_retain_non_pause_failure() -> None:
+    class FailingPipeline(_ScheduledPipeline):
+        def request_library_addition(self, connection, library):
+            raise ReviewPipelineError("persistence")
+
+    supervisor = ReviewPreparationSupervisor(FailingPipeline())
+
+    with pytest.raises(ReviewPipelineError, match="persistence"):
+        supervisor.request_library_addition("primary", "fiction")
+
+
+@pytest.mark.parametrize("dismissed", (False, True), ids=("terminal", "dismissed"))
+def test_paused_library_addition_replaces_terminal_or_dismissed_run(
+    application_path: Path, dismissed: bool
+) -> None:
+    repository = open_repository(application_path)
+    progress = repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed',updated_at=101 "
+        "WHERE scan_id=?",
+        (progress.scan_id,),
+    )
+    refresh_preparation_presentation(repository._connection, 101)
+    previous = repository.preparation_presentation(101)
+    assert previous is not None and previous.dismissible
+    if dismissed:
+        repository.dismiss_preparation_presentation(previous.run_id, 102)
+    repository.set_review_pipeline_paused(True, 103)
+
+    assert (
+        repository.request_library_addition(
+            "primary", "history", "lib-2", _PRODUCER, 104
+        )
+        is None
+    )
+    blocked = repository.preparation_presentation(104)
+    assert blocked is not None and blocked.state is PreparationRunState.BLOCKED
+    assert blocked.run_id != previous.run_id
+    assert not blocked.dismissible
+    assert [item.trigger for item in blocked.triggers] == [
+        PreparationTrigger.LIBRARY_ADDED
+    ]
+    assert repository.review_pipeline_progress("primary", "history") is None
+    repository.close()
+
+    reopened = open_repository(application_path, create=False)
+    assert reopened.preparation_presentation(105) == blocked
+    reopened.set_review_pipeline_paused(False, 105)
+    promoted = reopened.request_library_addition(
+        "primary", "history", "lib-2", _PRODUCER, 105
+    )
+    current = reopened.preparation_presentation(105)
+    assert promoted is not None and promoted.state == "queued"
+    assert current is not None and current.run_id == blocked.run_id
+    assert current.triggers[0].accepted_count == 1
+    assert reopened.deferred_library_additions() == ()
+    reopened.close()
+
+
+def test_paused_library_addition_extends_existing_nonterminal_run(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    before = repository.preparation_presentation(100)
+    repository.set_review_pipeline_paused(True, 101)
+    repository.request_library_addition("primary", "history", "lib-2", _PRODUCER, 102)
+    extended = repository.preparation_presentation(102)
+    repository.close()
+
+    assert before is not None and extended is not None
+    assert extended.run_id == before.run_id
+    assert extended.state is PreparationRunState.BLOCKED
+    assert [item.trigger for item in extended.triggers] == [
+        PreparationTrigger.MANUAL_SCAN,
+        PreparationTrigger.LIBRARY_ADDED,
+    ]
+
+
+def test_unpaused_library_addition_uses_ordinary_scan_and_enrollment(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    progress = repository.request_library_addition(
+        "primary", "history", "lib-2", _PRODUCER, 100
+    )
+    current = repository.preparation_presentation(100)
+    deferred = repository.deferred_library_additions()
+    repository.close()
+
+    assert progress is not None and progress.state == "queued"
+    assert deferred == ()
+    assert current is not None and current.state is PreparationRunState.STARTING
+    assert [item.trigger for item in current.triggers] == [
+        PreparationTrigger.LIBRARY_ADDED
+    ]
+
+
+def test_failed_deferred_promotion_rolls_back_and_retries_without_duplicate(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.set_review_pipeline_paused(True, 100)
+    repository.request_library_addition("primary", "history", "lib-2", _PRODUCER, 101)
+    repository.set_review_pipeline_paused(False, 102)
+
+    with (
+        patch(
+            "mechanical_librarian.adapters.persistence.review_scans.accept_preparation_trigger",
+            side_effect=sqlite3.OperationalError("synthetic promotion failure"),
+        ),
+        pytest.raises(MetadataReportError, match="persistence failed"),
+    ):
+        repository.request_library_addition(
+            "primary", "history", "lib-2", _PRODUCER, 103
+        )
+
+    assert repository.review_pipeline_progress("primary", "history") is None
+    assert repository.deferred_library_additions() == (("primary", "history"),)
+    failed = repository.preparation_presentation(103)
+    assert failed is not None and failed.state is PreparationRunState.BLOCKED
+    assert failed.triggers[0].accepted_count == 1
+    promoted = repository.request_library_addition(
+        "primary", "history", "lib-2", _PRODUCER, 104
+    )
+    current = repository.preparation_presentation(104)
+    repository.close()
+    assert promoted is not None and current is not None
+    assert current.triggers[0].accepted_count == 1
+
+
+def test_recompose_promotes_deferred_after_pause_was_already_cleared(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.set_review_pipeline_paused(True, 100)
+    repository.request_library_addition("primary", "history", "lib-2", _PRODUCER, 101)
+    blocked = repository.preparation_presentation(101)
+    repository.set_review_pipeline_paused(False, 102)
+    held = repository.preparation_presentation(102)
+    repository.close()
+
+    reopened = open_repository(application_path, create=False)
+    assert blocked is not None and held is not None
+    assert held.run_id == blocked.run_id
+    assert held.state is PreparationRunState.BLOCKED
+    assert reopened.preparation_presentation(102) == held
+    assert (
+        reopened.request_library_addition("primary", "history", "lib-2", _PRODUCER, 103)
+        is not None
+    )
+    current = reopened.preparation_presentation(103)
+    reopened.close()
+    assert current is not None and current.state is PreparationRunState.STARTING
+    assert current.triggers[0].accepted_count == 1
+
+
+def test_deferred_ordinals_remain_canonical_during_out_of_order_promotion(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.set_review_pipeline_paused(True, 100)
+    repository.request_library_addition("primary", "history", "lib-2", _PRODUCER, 101)
+    repository.request_library_addition("primary", "poetry", "lib-3", _PRODUCER, 102)
+    assert repository._connection.execute(
+        "SELECT library_name,ordinal FROM review_preparation_presentation "
+        "WHERE row_kind='deferred_enrollment' ORDER BY ordinal"
+    ).fetchall() == [("history", 0), ("poetry", 1)]
+    repository.set_review_pipeline_paused(False, 103)
+    repository.request_library_addition("primary", "poetry", "lib-3", _PRODUCER, 104)
+    repository.close()
+
+    reopened = open_repository(application_path, create=False)
+    assert reopened.deferred_library_additions() == (("primary", "history"),)
+    reopened.request_library_addition("primary", "history", "lib-2", _PRODUCER, 105)
+    ordinals = reopened._connection.execute(
+        "SELECT library_name,ordinal FROM review_preparation_presentation "
+        "WHERE row_kind='enrollment' ORDER BY ordinal"
+    ).fetchall()
+    current = reopened.preparation_presentation(105)
+    reopened.close()
+    assert ordinals == [("history", 0), ("poetry", 1)]
+    assert current is not None and current.triggers[0].accepted_count == 2
+
+
+def test_resume_retires_unconfigured_deferred_target_without_pinning_run(
+    application_path: Path,
+) -> None:
+    owner = open_repository(application_path)
+    owner.set_review_pipeline_paused(True, 100)
+    owner.request_library_addition("primary", "history", "lib-2", _PRODUCER, 101)
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: open_repository(
+            application_path, create=False, authority=owner.authority
+        ),
+        libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+        discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        clock=lambda: 102,
+    )
+    supervisor = ReviewPreparationSupervisor(pipeline, clock=lambda: 102)
+    supervisor.set_paused(True)
+    supervisor._wake.clear()
+
+    supervisor.set_paused(False)
+
+    current = owner.preparation_presentation(102)
+    assert not owner.review_pipeline_paused()
+    assert not supervisor.paused()
+    assert not supervisor._schedule_paused
+    assert supervisor._wake.is_set()
+    assert current is None
+    assert owner.deferred_library_additions() == ()
+    assert owner.review_pipeline_progress("primary", "history") is None
+    assert owner.claim_review_pipeline_action(103) is None
+    owner.close()
+    reopened = open_repository(application_path, create=False)
+    assert reopened.preparation_presentation(103) is None
+    assert reopened.review_pipeline_progress("primary", "history") is None
+    assert reopened.claim_review_pipeline_action(103) is None
+    reopened.close()
+
+
+def test_atomic_resume_retires_removed_target_and_compacts_survivor(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.set_review_pipeline_paused(True, 100)
+    repository.request_library_addition("primary", "history", "lib-2", _PRODUCER, 101)
+    repository.request_library_addition("primary", "poetry", "lib-3", _PRODUCER, 102)
+    repository.resume_review_pipeline((("primary", "poetry", "lib-3", _PRODUCER),), 103)
+    assert repository.review_pipeline_progress("primary", "history") is None
+    assert repository.review_pipeline_progress("primary", "poetry") is not None
+    assert repository._connection.execute(
+        "SELECT library_name,ordinal FROM review_preparation_presentation "
+        "WHERE row_kind='enrollment'"
+    ).fetchall() == [("poetry", 0)]
+    assert repository._connection.execute(
+        "SELECT accepted_count FROM review_preparation_presentation "
+        "WHERE row_id='trigger:library_added'"
+    ).fetchone() == (2,)
+    repository.close()
+
+    reopened = open_repository(application_path, create=False)
+    assert reopened.review_pipeline_progress("primary", "history") is None
+    assert reopened.review_pipeline_progress("primary", "poetry") is not None
+    action = reopened.claim_review_pipeline_action(104)
+    assert action is not None
+    assert action.library == "poetry"
+    reopened.close()
+
+
+@pytest.mark.parametrize("failure_index", (0, 1), ids=("first", "later"))
+def test_atomic_resume_rolls_back_every_promotion_and_retries_once(
+    application_path: Path, failure_index: int
+) -> None:
+    repository = open_repository(application_path)
+    repository.set_review_pipeline_paused(True, 100)
+    libraries = (
+        ("primary", "history", "lib-2", _PRODUCER),
+        ("primary", "poetry", "lib-3", _PRODUCER),
+    )
+    for index, (connection, library, library_id, fingerprint) in enumerate(libraries):
+        repository.request_library_addition(
+            connection, library, library_id, fingerprint, 101 + index
+        )
+    accepted_before = repository._connection.execute(
+        "SELECT accepted_count FROM review_preparation_presentation "
+        "WHERE row_id='trigger:library_added'"
+    ).fetchone()
+    original = repository._review_scans._request_review_scan_unpaused
+    calls = 0
+
+    def fail_selected(*args: object, **kwargs: object) -> PipelineProgress:
+        nonlocal calls
+        if calls == failure_index:
+            calls += 1
+            raise sqlite3.OperationalError("private promotion sentinel")
+        calls += 1
+        return original(*args, **kwargs)
+
+    with (
+        patch.object(
+            repository._review_scans, "_request_review_scan_unpaused", fail_selected
+        ),
+        pytest.raises(MetadataReportError, match="persistence failed") as raised,
+    ):
+        repository.resume_review_pipeline(libraries, 104)
+    assert "private promotion sentinel" not in str(raised.value)
+    assert repository.review_pipeline_paused()
+    assert repository.deferred_library_additions() == (
+        ("primary", "history"),
+        ("primary", "poetry"),
+    )
+    assert repository._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_scans WHERE library_name IN ('history','poetry')"
+    ).fetchone() == (0,)
+    assert (
+        repository._connection.execute(
+            "SELECT accepted_count FROM review_preparation_presentation "
+            "WHERE row_id='trigger:library_added'"
+        ).fetchone()
+        == accepted_before
+    )
+
+    repository.resume_review_pipeline(libraries, 105)
+    assert not repository.review_pipeline_paused()
+    assert repository.deferred_library_additions() == ()
+    assert repository._connection.execute(
+        "SELECT library_name,COUNT(*) FROM review_preparation_scans "
+        "WHERE library_name IN ('history','poetry') GROUP BY library_name ORDER BY library_name"
+    ).fetchall() == [("history", 1), ("poetry", 1)]
+    repository.close()
+
+    reopened = open_repository(application_path, create=False)
+    assert (
+        reopened._connection.execute(
+            "SELECT accepted_count FROM review_preparation_presentation "
+            "WHERE row_id='trigger:library_added'"
+        ).fetchone()
+        == accepted_before
+    )
+    reopened.close()
+
+
+@pytest.mark.parametrize(
+    "operation", ("resume_review_pipeline", "drain_library_additions")
+)
+@pytest.mark.parametrize("failure_index", (0, 1), ids=("first", "later"))
+def test_library_addition_drain_rolls_back_keyboard_interrupt_exactly(
+    application_path: Path, operation: str, failure_index: int
+) -> None:
+    repository = open_repository(application_path)
+    repository.set_review_pipeline_paused(True, 100)
+    libraries = (
+        ("primary", "history", "lib-2", _PRODUCER),
+        ("primary", "poetry", "lib-3", _PRODUCER),
+    )
+    for index, target in enumerate(libraries):
+        repository.request_library_addition(*target, 101 + index)
+    if operation == "drain_library_additions":
+        repository.set_review_pipeline_paused(False, 103)
+    tables = (
+        "review_preparation_control",
+        "review_preparation_scans",
+        "review_preparation_work",
+        "review_preparation_presentation",
+    )
+    before = {
+        table: tuple(repository._connection.execute(f"SELECT * FROM {table}"))
+        for table in tables
+    }
+    original = repository._review_scans._request_review_scan_unpaused
+    calls = 0
+    interruption = KeyboardInterrupt("private drain sentinel")
+
+    def interrupt_selected(*args: object, **kwargs: object) -> PipelineProgress:
+        nonlocal calls
+        if calls == failure_index:
+            calls += 1
+            raise interruption
+        calls += 1
+        return original(*args, **kwargs)
+
+    with (
+        patch.object(
+            repository._review_scans,
+            "_request_review_scan_unpaused",
+            interrupt_selected,
+        ),
+        pytest.raises(KeyboardInterrupt) as raised,
+    ):
+        getattr(repository, operation)(libraries, 104)
+
+    assert raised.value is interruption
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert not repository._connection.in_transaction
+    assert {
+        table: tuple(repository._connection.execute(f"SELECT * FROM {table}"))
+        for table in tables
+    } == before
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    "operation", ("resume_review_pipeline", "drain_library_additions")
+)
+def test_library_addition_drain_translates_private_sqlite_failure(
+    application_path: Path, operation: str
+) -> None:
+    repository = open_repository(application_path)
+    repository.set_review_pipeline_paused(True, 100)
+    libraries = (("primary", "history", "lib-2", _PRODUCER),)
+    repository.request_library_addition(*libraries[0], 101)
+    if operation == "drain_library_additions":
+        repository.set_review_pipeline_paused(False, 102)
+    before = tuple(
+        repository._connection.execute("SELECT * FROM review_preparation_presentation")
+    )
+
+    with (
+        patch.object(
+            repository._review_scans,
+            "_request_review_scan_unpaused",
+            side_effect=sqlite3.OperationalError("/private/library/database.sqlite3"),
+        ),
+        pytest.raises(MetadataReportError) as raised,
+    ):
+        getattr(repository, operation)(libraries, 103)
+
+    assert str(raised.value) == "review preparation persistence failed"
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert not repository._connection.in_transaction
+    assert (
+        tuple(
+            repository._connection.execute(
+                "SELECT * FROM review_preparation_presentation"
+            )
+        )
+        == before
+    )
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+    repository.close()
+
+
+def test_pause_mutation_failure_rolls_back_releases_writer_and_retries(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    with (
+        patch(
+            "mechanical_librarian.adapters.persistence.review_scans.refresh_preparation_run_state",
+            side_effect=sqlite3.OperationalError("private pause sentinel"),
+        ),
+        pytest.raises(MetadataReportError, match="persistence failed") as raised,
+    ):
+        repository.set_review_pipeline_paused(True, 100)
+    assert repository._connection.in_transaction is False
+    assert not repository.review_pipeline_paused()
+    assert "private pause sentinel" not in str(raised.value)
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    second = sqlite3.connect(application_path, timeout=0)
+    second.execute("BEGIN IMMEDIATE")
+    second.execute(
+        "UPDATE review_preparation_control SET updated_at=99 WHERE singleton=1"
+    )
+    second.commit()
+    second.close()
+    repository.set_review_pipeline_paused(True, 101)
+    repository.close()
+    reopened = open_repository(application_path, create=False)
+    assert reopened.review_pipeline_paused()
+    reopened.close()
+
+
+class _AcceptedBoundaryInterruption:
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        boundary: str,
+        fault: BaseException | sqlite3.Error,
+        *,
+        accept: bool = True,
+        cleanup_fault: BaseException | None = None,
+        rollback_before_fault: BaseException | None = None,
+        rollback_always_fault: BaseException | None = None,
+        cleanup_execute_fault: BaseException | None = None,
+        cleanup_execute_before: str | None = None,
+        cleanup_execute_always_before: str | None = None,
+        execute_after_fault: BaseException | None = None,
+        execute_after_prefix: str | None = None,
+        close_before_fault: BaseException | None = None,
+        close_fault: BaseException | None = None,
+        close_always_fault: BaseException | None = None,
+        state_fault: BaseException | None = None,
+        state_fault_after_sql: str | None = None,
+    ) -> None:
+        self.connection = connection
+        self.boundary = boundary
+        self.fault = fault
+        self.accept = accept
+        self.cleanup_fault = cleanup_fault
+        self.rollback_before_fault = rollback_before_fault
+        self.rollback_always_fault = rollback_always_fault
+        self.cleanup_execute_fault = cleanup_execute_fault
+        self.cleanup_execute_before = cleanup_execute_before
+        self.cleanup_execute_always_before = cleanup_execute_always_before
+        self.execute_after_fault = execute_after_fault
+        self.execute_after_prefix = execute_after_prefix
+        self.close_before_fault = close_before_fault
+        self.close_fault = close_fault
+        self.close_always_fault = close_always_fault
+        self.state_fault = state_fault
+        self.state_fault_after_sql = state_fault_after_sql
+        self.accepted = False
+        self.rollback_calls = 0
+        self.close_calls = 0
+        self.authorizer_calls = 0
+
+    @property
+    def in_transaction(self) -> bool:
+        if self.accepted and self.state_fault is not None:
+            fault = self.state_fault
+            self.state_fault = None
+            raise fault
+        return self.connection.in_transaction
+
+    def execute(self, sql: str, parameters: tuple[object, ...] = ()) -> sqlite3.Cursor:
+        if sql == self.boundary and not self.accepted:
+            if self.accept:
+                self.connection.execute(sql, parameters)
+            self.accepted = True
+            raise self.fault
+        if self.cleanup_execute_before and sql.startswith(self.cleanup_execute_before):
+            self.cleanup_execute_before = None
+            raise self.cleanup_execute_fault or RuntimeError("cleanup failed")
+        if self.cleanup_execute_always_before and sql.startswith(
+            self.cleanup_execute_always_before
+        ):
+            raise self.cleanup_execute_fault or RuntimeError("cleanup failed")
+        cursor = self.connection.execute(sql, parameters)
+        if self.state_fault_after_sql and sql == self.state_fault_after_sql:
+            self.accepted = True
+            self.state_fault_after_sql = None
+        if sql.startswith("ROLLBACK TO SAVEPOINT") and self.cleanup_execute_fault:
+            cleanup = self.cleanup_execute_fault
+            self.cleanup_execute_fault = None
+            raise cleanup
+        if self.execute_after_prefix and sql.startswith(self.execute_after_prefix):
+            fault = self.execute_after_fault or RuntimeError("execute after-effect")
+            self.execute_after_prefix = None
+            raise fault
+        return cursor
+
+    def rollback(self) -> None:
+        self.rollback_calls += 1
+        if self.rollback_before_fault is not None:
+            cleanup = self.rollback_before_fault
+            self.rollback_before_fault = None
+            raise cleanup
+        if self.rollback_always_fault is not None:
+            raise self.rollback_always_fault
+        self.connection.rollback()
+        if self.cleanup_fault is not None:
+            raise self.cleanup_fault
+
+    def close(self) -> None:
+        self.close_calls += 1
+        if self.close_always_fault is not None:
+            raise self.close_always_fault
+        if self.close_before_fault is not None:
+            cleanup = self.close_before_fault
+            self.close_before_fault = None
+            raise cleanup
+        self.connection.close()
+        if self.close_fault is not None:
+            cleanup = self.close_fault
+            self.close_fault = None
+            raise cleanup
+
+    def set_authorizer(self, callback) -> None:
+        self.authorizer_calls += 1
+        self.connection.set_authorizer(callback)
+
+
+class _RecordingRLock:
+    def __init__(self) -> None:
+        self.lock = threading.RLock()
+        self.release_calls = 0
+
+    def acquire(self, blocking: bool = True) -> bool:
+        return self.lock.acquire(blocking=blocking)
+
+    def release(self) -> None:
+        self.release_calls += 1
+        self.lock.release()
+
+    def _recursion_count(self) -> int:
+        return self.lock._recursion_count()
+
+
+class _AcceptedLockInterruption:
+    def __init__(
+        self,
+        fault: BaseException,
+        *,
+        accept: bool,
+        release_fault: BaseException | None = None,
+    ) -> None:
+        self.lock = RLock()
+        self.fault = fault
+        self.accept = accept
+        self.release_fault = release_fault
+        self.release_calls = 0
+
+    def _recursion_count(self) -> int:
+        return self.lock._recursion_count()
+
+    def acquire(self) -> None:
+        if self.accept:
+            self.lock.acquire()
+        raise self.fault
+
+    def release(self) -> None:
+        self.release_calls += 1
+        self.lock.release()
+        if self.release_fault is not None:
+            raise self.release_fault
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize("preowned_depth", (0, 2))
+@pytest.mark.parametrize("accept", (False, True))
+def test_transaction_scope_balances_only_accepted_lock_increment(
+    application_path: Path,
+    fault_type: type[BaseException],
+    preowned_depth: int,
+    accept: bool,
+) -> None:
+    connection = sqlite3.connect(application_path)
+    fault = fault_type("private serialization acquisition boundary")
+    lock = _AcceptedLockInterruption(fault, accept=accept)
+    for _index in range(preowned_depth):
+        lock.lock.acquire()
+    scope = TransactionScope(
+        connection,
+        "lock_boundary",
+        serialization_lock=cast(RLock, lock),
+    )
+
+    with pytest.raises(fault_type) as raised:
+        scope.begin()
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert lock._recursion_count() == preowned_depth
+    assert lock.release_calls == (1 if accept else 0)
+    acquired = threading.Event()
+
+    def contend() -> None:
+        with lock.lock:
+            acquired.set()
+
+    contender = threading.Thread(target=contend)
+    contender.start()
+    if preowned_depth:
+        assert not acquired.wait(0.05)
+    for _index in range(preowned_depth):
+        lock.lock.release()
+    assert acquired.wait(1)
+    contender.join(timeout=1)
+    assert not contender.is_alive()
+    assert not connection.in_transaction
+    connection.close()
+
+
+def test_transaction_scope_lock_cleanup_fault_cannot_replace_interruption(
+    application_path: Path,
+) -> None:
+    connection = sqlite3.connect(application_path)
+    fault = KeyboardInterrupt("private serialization acquisition boundary")
+    lock = _AcceptedLockInterruption(
+        fault,
+        accept=True,
+        release_fault=SystemExit("private serialization cleanup replacement"),
+    )
+
+    with pytest.raises(KeyboardInterrupt) as raised:
+        TransactionScope(
+            connection,
+            "lock_cleanup",
+            serialization_lock=cast(RLock, lock),
+        ).begin()
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert lock._recursion_count() == 0
+    assert lock.release_calls == 1
+    connection.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize(
+    ("deferred", "boundary"),
+    ((False, "BEGIN IMMEDIATE"), (True, "BEGIN")),
+)
+def test_transaction_scope_unwinds_accepted_outer_acquisition_interruption(
+    application_path: Path,
+    deferred: bool,
+    boundary: str,
+    fault_type: type[BaseException],
+) -> None:
+    connection = sqlite3.connect(application_path)
+    fault = fault_type("private accepted outer boundary")
+    proxy = _AcceptedBoundaryInterruption(connection, boundary, fault)
+    lock = _RecordingRLock()
+    scope = TransactionScope(
+        cast(sqlite3.Connection, proxy),
+        "accepted_outer",
+        deferred=deferred,
+        serialization_lock=cast(RLock, lock),
+    )
+
+    with pytest.raises(fault_type) as raised:
+        scope.begin()
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert not scope.started and not connection.in_transaction
+    assert proxy.rollback_calls == 1
+    assert lock.release_calls == 1
+    assert lock.acquire(blocking=False)
+    lock.release()
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+    connection.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+def test_transaction_scope_unwinds_only_accepted_nested_savepoint(
+    application_path: Path, fault_type: type[BaseException]
+) -> None:
+    connection = sqlite3.connect(application_path)
+    connection.execute("CREATE TABLE nested_boundary(value TEXT NOT NULL)")
+    connection.execute("BEGIN IMMEDIATE")
+    connection.execute("INSERT INTO nested_boundary VALUES('outer-before')")
+    fault = fault_type("private accepted nested boundary")
+    proxy = _AcceptedBoundaryInterruption(connection, "", fault)
+    lock = _RecordingRLock()
+    scope = TransactionScope(
+        cast(sqlite3.Connection, proxy),
+        "accepted_nested",
+        serialization_lock=cast(RLock, lock),
+    )
+    proxy.boundary = f"SAVEPOINT {scope._savepoint}"
+
+    with pytest.raises(fault_type) as raised:
+        scope.begin()
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert not scope.started and scope.nested and connection.in_transaction
+    assert lock.release_calls == 1
+    assert tuple(connection.execute("SELECT value FROM nested_boundary")) == (
+        ("outer-before",),
+    )
+    connection.execute("INSERT INTO nested_boundary VALUES('outer-after')")
+    connection.commit()
+    assert lock.acquire(blocking=False)
+    lock.release()
+    assert tuple(connection.execute("SELECT value FROM nested_boundary")) == (
+        ("outer-before",),
+        ("outer-after",),
+    )
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+    connection.close()
+
+
+def test_transaction_scope_nested_cleanup_fault_cannot_replace_interruption(
+    application_path: Path,
+) -> None:
+    connection = sqlite3.connect(application_path)
+    connection.execute("BEGIN IMMEDIATE")
+    fault = KeyboardInterrupt("private nested acquisition boundary")
+    cleanup = SystemExit("private nested cleanup replacement")
+    proxy = _AcceptedBoundaryInterruption(
+        connection, "", fault, cleanup_execute_fault=cleanup
+    )
+    scope = TransactionScope(cast(sqlite3.Connection, proxy), "nested_cleanup")
+    proxy.boundary = f"SAVEPOINT {scope._savepoint}"
+
+    with pytest.raises(KeyboardInterrupt) as raised:
+        scope.begin()
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert proxy.close_calls == 0
+    assert connection.in_transaction
+    connection.rollback()
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+
+
+def test_transaction_scope_failed_nested_acquisition_preserves_existing_savepoint(
+    application_path: Path,
+) -> None:
+    connection = sqlite3.connect(application_path)
+    connection.execute("CREATE TABLE nested_existing(value TEXT NOT NULL)")
+    connection.execute("BEGIN IMMEDIATE")
+    connection.execute("SAVEPOINT accepted_nested")
+    connection.execute("INSERT INTO nested_existing VALUES('outer')")
+    ordinary = sqlite3.OperationalError("ordinary nested begin failure")
+    proxy = _AcceptedBoundaryInterruption(connection, "", ordinary, accept=False)
+    scope = TransactionScope(cast(sqlite3.Connection, proxy), "accepted_nested")
+    proxy.boundary = f"SAVEPOINT {scope._savepoint}"
+
+    with pytest.raises(sqlite3.OperationalError) as raised:
+        scope.begin()
+
+    assert raised.value is ordinary
+    assert connection.in_transaction
+    connection.execute("ROLLBACK TO SAVEPOINT accepted_nested")
+    connection.execute("RELEASE SAVEPOINT accepted_nested")
+    assert tuple(connection.execute("SELECT * FROM nested_existing")) == ()
+    connection.commit()
+    connection.close()
+
+
+def test_transaction_scope_preserves_acquisition_and_cleanup_error_surfaces(
+    application_path: Path,
+) -> None:
+    connection = sqlite3.connect(application_path)
+    ordinary = sqlite3.OperationalError("ordinary begin failure")
+    before = _AcceptedBoundaryInterruption(
+        connection, "BEGIN IMMEDIATE", ordinary, accept=False
+    )
+    with pytest.raises(sqlite3.OperationalError) as raised:
+        TransactionScope(cast(sqlite3.Connection, before), "not_accepted").begin()
+    assert raised.value is ordinary
+    assert not connection.in_transaction
+
+    fault = KeyboardInterrupt("private accepted cleanup boundary")
+    cleanup = SystemExit("private cleanup replacement")
+    accepted = _AcceptedBoundaryInterruption(
+        connection,
+        "BEGIN IMMEDIATE",
+        fault,
+        cleanup_fault=cleanup,
+    )
+    with pytest.raises(KeyboardInterrupt) as interrupted:
+        TransactionScope(cast(sqlite3.Connection, accepted), "cleanup").begin()
+    assert interrupted.value is fault
+    assert interrupted.value.__cause__ is None
+    assert interrupted.value.__context__ is None
+    assert not connection.in_transaction
+    connection.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize("boundary", ("BEGIN IMMEDIATE", "BEGIN"))
+def test_transaction_scope_invalidates_accepted_outer_when_rollback_is_unproven(
+    application_path: Path,
+    boundary: str,
+    fault_type: type[BaseException],
+) -> None:
+    connection = sqlite3.connect(application_path)
+    fault = fault_type("private accepted outer boundary")
+    proxy = _AcceptedBoundaryInterruption(
+        connection,
+        boundary,
+        fault,
+        rollback_always_fault=RuntimeError("private rollback-before boundary"),
+    )
+    lock = _RecordingRLock()
+    scope = TransactionScope(
+        cast(sqlite3.Connection, proxy),
+        "unproven_outer",
+        deferred=boundary == "BEGIN",
+        serialization_lock=cast(RLock, lock),
+    )
+
+    with pytest.raises(fault_type) as raised:
+        scope.begin()
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert proxy.close_calls == 1
+    assert lock.release_calls == 1
+    with pytest.raises(sqlite3.ProgrammingError):
+        connection.execute("SELECT 1")
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize(
+    "cleanup_boundary", ("ROLLBACK TO SAVEPOINT", "RELEASE SAVEPOINT")
+)
+def test_transaction_scope_invalidates_nested_when_cleanup_is_unproven(
+    application_path: Path,
+    cleanup_boundary: str,
+    fault_type: type[BaseException],
+) -> None:
+    connection = sqlite3.connect(application_path)
+    connection.execute("BEGIN IMMEDIATE")
+    connection.execute("CREATE TABLE nested_unproven(value INTEGER)")
+    fault = fault_type("private accepted nested boundary")
+    proxy = _AcceptedBoundaryInterruption(
+        connection,
+        "",
+        fault,
+        cleanup_execute_fault=RuntimeError("private savepoint cleanup boundary"),
+        cleanup_execute_always_before=cleanup_boundary,
+    )
+    scope = TransactionScope(cast(sqlite3.Connection, proxy), "nested_unproven")
+    proxy.boundary = f"SAVEPOINT {scope._savepoint}"
+
+    with pytest.raises(fault_type) as raised:
+        scope.begin()
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert proxy.close_calls == 1
+    with pytest.raises(sqlite3.ProgrammingError):
+        connection.execute("SELECT 1")
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+
+
+@pytest.mark.parametrize("fault_timing", ("before", "after"))
+def test_transaction_scope_close_fault_cannot_replace_interruption(
+    application_path: Path, fault_timing: str
+) -> None:
+    connection = sqlite3.connect(application_path)
+    fault = KeyboardInterrupt("private accepted outer boundary")
+    proxy = _AcceptedBoundaryInterruption(
+        connection,
+        "BEGIN IMMEDIATE",
+        fault,
+        rollback_always_fault=RuntimeError("private rollback-before boundary"),
+        close_before_fault=(
+            SystemExit("private close-before cleanup replacement")
+            if fault_timing == "before"
+            else None
+        ),
+        close_fault=(
+            SystemExit("private close-after cleanup replacement")
+            if fault_timing == "after"
+            else None
+        ),
+    )
+
+    with pytest.raises(KeyboardInterrupt) as raised:
+        TransactionScope(cast(sqlite3.Connection, proxy), "close_fault").begin()
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert proxy.close_calls == 2
+    with pytest.raises(sqlite3.ProgrammingError):
+        connection.execute("SELECT 1")
+
+
+def test_transaction_scope_retains_serialization_when_close_cannot_revoke_writer(
+    application_path: Path,
+) -> None:
+    connection = sqlite3.connect(application_path)
+    fault = KeyboardInterrupt("private accepted outer boundary")
+    proxy = _AcceptedBoundaryInterruption(
+        connection,
+        "BEGIN IMMEDIATE",
+        fault,
+        rollback_always_fault=RuntimeError("private rollback-before boundary"),
+        close_always_fault=SystemExit("private persistent close boundary"),
+    )
+    lock = _RecordingRLock()
+
+    with pytest.raises(KeyboardInterrupt) as raised:
+        TransactionScope(
+            cast(sqlite3.Connection, proxy),
+            "persistent_close",
+            serialization_lock=cast(RLock, lock),
+        ).begin()
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert proxy.close_calls == 2
+    assert proxy.authorizer_calls == 1
+    assert lock.release_calls == 1
+    acquired = threading.Event()
+
+    def contend() -> None:
+        with lock.lock:
+            acquired.set()
+
+    contender = threading.Thread(target=contend)
+    contender.start()
+    assert acquired.wait(1)
+    with pytest.raises(sqlite3.DatabaseError, match="not authorized"):
+        connection.execute("SELECT 1")
+    with pytest.raises(sqlite3.DatabaseError, match="not authorized"):
+        TransactionScope(cast(sqlite3.Connection, proxy), "poisoned_reentry").begin()
+    blocked = sqlite3.connect(application_path, timeout=0)
+    with pytest.raises(sqlite3.OperationalError, match="locked"):
+        blocked.execute("BEGIN IMMEDIATE")
+    blocked.close()
+    connection.set_authorizer(None)
+    connection.rollback()
+    connection.close()
+    contender.join(timeout=1)
+    assert not contender.is_alive()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize("cleanup_timing", ("before", "after"))
+def test_transaction_scope_rollback_preserves_active_interruption(
+    application_path: Path,
+    fault_type: type[BaseException],
+    cleanup_timing: str,
+) -> None:
+    connection = sqlite3.connect(application_path)
+    proxy = _AcceptedBoundaryInterruption(
+        connection,
+        "unused",
+        RuntimeError("unused"),
+        rollback_always_fault=(
+            RuntimeError("private rollback-before boundary")
+            if cleanup_timing == "before"
+            else None
+        ),
+        cleanup_fault=(
+            RuntimeError("private rollback-after boundary")
+            if cleanup_timing == "after"
+            else None
+        ),
+    )
+    lock = _RecordingRLock()
+    scope = TransactionScope(
+        cast(sqlite3.Connection, proxy),
+        "body_rollback",
+        serialization_lock=cast(RLock, lock),
+    )
+    scope.begin()
+    connection.execute("CREATE TABLE rollback_body(value INTEGER)")
+    fault = fault_type("private body interruption")
+
+    with pytest.raises(fault_type) as raised:
+        try:
+            raise fault
+        except BaseException as error:
+            scope.rollback()
+            raise error from None
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert lock.release_calls == 1
+    if cleanup_timing == "before":
+        assert proxy.close_calls == 1
+        with pytest.raises(sqlite3.ProgrammingError):
+            connection.execute("SELECT 1")
+    else:
+        assert not connection.in_transaction
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+    if cleanup_timing == "after":
+        connection.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize(
+    "cleanup_boundary", ("ROLLBACK TO SAVEPOINT", "RELEASE SAVEPOINT")
+)
+def test_nested_transaction_rollback_revokes_unproven_savepoint(
+    application_path: Path,
+    fault_type: type[BaseException],
+    cleanup_boundary: str,
+) -> None:
+    connection = sqlite3.connect(application_path)
+    connection.execute("BEGIN IMMEDIATE")
+    connection.execute("CREATE TABLE nested_body(value INTEGER)")
+    connection.execute("INSERT INTO nested_body VALUES(1)")
+    proxy = _AcceptedBoundaryInterruption(
+        connection,
+        "unused",
+        RuntimeError("unused"),
+        cleanup_execute_fault=RuntimeError("private savepoint cleanup"),
+        cleanup_execute_always_before=cleanup_boundary,
+    )
+    scope = TransactionScope(cast(sqlite3.Connection, proxy), "nested_body")
+    scope.begin()
+    connection.execute("INSERT INTO nested_body VALUES(2)")
+    fault = fault_type("private nested body interruption")
+
+    with pytest.raises(fault_type) as raised:
+        try:
+            raise fault
+        except BaseException as error:
+            scope.rollback()
+            raise error from None
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert proxy.close_calls == 1
+    with pytest.raises(sqlite3.ProgrammingError):
+        connection.execute("SELECT 1")
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+def test_nested_release_interruption_cannot_promote_unproven_writes(
+    application_path: Path, fault_type: type[BaseException]
+) -> None:
+    connection = sqlite3.connect(application_path)
+    connection.execute("CREATE TABLE nested_commit(value INTEGER)")
+    connection.execute("BEGIN IMMEDIATE")
+    connection.execute("INSERT INTO nested_commit VALUES(1)")
+    fault = fault_type("private nested release boundary")
+    proxy = _AcceptedBoundaryInterruption(
+        connection,
+        "unused",
+        RuntimeError("unused"),
+        execute_after_fault=fault,
+        execute_after_prefix="RELEASE SAVEPOINT",
+    )
+    scope = TransactionScope(cast(sqlite3.Connection, proxy), "nested_commit")
+    scope.begin()
+    connection.execute("INSERT INTO nested_commit VALUES(2)")
+
+    with pytest.raises(fault_type) as raised:
+        try:
+            scope.commit()
+        except BaseException as error:
+            scope.rollback()
+            raise error from None
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert proxy.close_calls == 1
+    with pytest.raises(sqlite3.ProgrammingError):
+        connection.execute("SELECT 1")
+    independent = sqlite3.connect(application_path, timeout=0)
+    assert tuple(independent.execute("SELECT value FROM nested_commit")) == ()
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+def test_pipeline_output_begin_unwinds_failed_state_observation(
+    application_path: Path, fault_type: type[BaseException]
+) -> None:
+    repository = open_repository(application_path)
+    fault = fault_type("private output state observation")
+    proxy = _AcceptedBoundaryInterruption(
+        repository._connection,
+        "unused",
+        RuntimeError("unused"),
+        state_fault=fault,
+        state_fault_after_sql="BEGIN IMMEDIATE",
+    )
+    repository._review_preparation._connection = cast(sqlite3.Connection, proxy)
+
+    with pytest.raises(fault_type) as raised:
+        repository.begin_review_pipeline_output()
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert not repository._connection.in_transaction
+    assert proxy.rollback_calls == 1
+    repository.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize("stage", ("proposal", "admission", "projection"))
+@pytest.mark.parametrize("cleanup_timing", ("before", "after"))
+def test_pipeline_output_body_interruption_owns_exactly_one_hardened_rollback(
+    application_path: Path,
+    fault_type: type[BaseException],
+    stage: str,
+    cleanup_timing: str,
+) -> None:
+    owner = open_repository(application_path)
+    proxy = _AcceptedBoundaryInterruption(
+        owner._connection,
+        "unused",
+        RuntimeError("unused"),
+        rollback_always_fault=(
+            RuntimeError("private output rollback-before boundary")
+            if cleanup_timing == "before"
+            else None
+        ),
+        cleanup_fault=(
+            RuntimeError("private output rollback-after boundary")
+            if cleanup_timing == "after"
+            else None
+        ),
+    )
+    owner._review_preparation._connection = cast(sqlite3.Connection, proxy)
+
+    class Repository:
+        rollback_calls = 0
+
+        def guard_target_connection(self, _action, _checked_at):
+            return True
+
+        def begin_review_pipeline_output(self) -> None:
+            owner.begin_review_pipeline_output()
+
+        def rollback_review_pipeline_output(self) -> None:
+            self.rollback_calls += 1
+            owner.rollback_review_pipeline_output()
+
+    repository = Repository()
+    fault = fault_type(f"private {stage} output body")
+    identifiers: dict[str, str] = {"report_id": "report-1"}
+    if stage in {"admission", "projection"}:
+        identifiers["proposal_set_id"] = "proposal-1"
+    if stage == "projection":
+        identifiers["review_case_id"] = "case-1"
+    action = PipelineAction(
+        "action-1",
+        "scan-1",
+        stage,
+        1,
+        "primary",
+        "ebooks",
+        "library-id",
+        _PRODUCER,
+        1,
+        "a" * 64,
+        "item-1",
+        "b" * 64,
+        0,
+        source_fingerprint="c" * 64,
+        **identifiers,
+    )
+
+    def output(*_args):
+        raise fault
+
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: cast(ReviewPipelineRepository, repository),
+        libraries=(("primary", "ebooks", "library-id", _PRODUCER),),
+        discover=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        propose=output if stage == "proposal" else lambda *_args: "proposal-1",
+        admit=output if stage == "admission" else lambda *_args: (True, "case-1"),
+        project=output if stage == "projection" else lambda *_args: True,
+        clock=lambda: 1,
+    )
+
+    with pytest.raises(fault_type) as raised:
+        pipeline._run_claimed_action(
+            cast(ReviewPipelineRepository, repository), action, claim_next=False
+        )
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert repository.rollback_calls == 1
+    if cleanup_timing == "before":
+        assert proxy.close_calls == 1
+        with pytest.raises(sqlite3.ProgrammingError):
+            owner._connection.execute("SELECT 1")
+    else:
+        assert not owner._connection.in_transaction
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+    owner.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize("stage", ("proposal", "admission", "projection"))
+def test_pipeline_output_begin_unwinds_accepted_interruption_before_caller_ownership(
+    application_path: Path,
+    stage: str,
+    fault_type: type[BaseException],
+) -> None:
+    owner = open_repository(application_path)
+    fault = fault_type(f"private accepted {stage} output boundary")
+    proxy = _AcceptedBoundaryInterruption(owner._connection, "BEGIN IMMEDIATE", fault)
+    owner._review_preparation._connection = cast(sqlite3.Connection, proxy)
+
+    class Repository:
+        rollback_calls = 0
+
+        def guard_target_connection(self, _action, _checked_at):
+            return True
+
+        def begin_review_pipeline_output(self) -> None:
+            owner.begin_review_pipeline_output()
+
+        def rollback_review_pipeline_output(self) -> None:
+            self.rollback_calls += 1
+            owner.rollback_review_pipeline_output()
+
+    repository = Repository()
+    identifiers: dict[str, str] = {"report_id": "report-1"}
+    if stage in {"admission", "projection"}:
+        identifiers["proposal_set_id"] = "proposal-1"
+    if stage == "projection":
+        identifiers["review_case_id"] = "case-1"
+    action = PipelineAction(
+        "action-1",
+        "scan-1",
+        stage,
+        1,
+        "primary",
+        "ebooks",
+        "library-id",
+        _PRODUCER,
+        1,
+        "a" * 64,
+        "item-1",
+        "b" * 64,
+        0,
+        source_fingerprint="c" * 64,
+        **identifiers,
+    )
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: cast(ReviewPipelineRepository, repository),
+        libraries=(("primary", "ebooks", "library-id", _PRODUCER),),
+        discover=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        clock=lambda: 1,
+    )
+
+    with pytest.raises(fault_type) as raised:
+        pipeline._run_claimed_action(
+            cast(ReviewPipelineRepository, repository), action, claim_next=False
+        )
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert not owner._connection.in_transaction
+    assert proxy.rollback_calls == 1
+    assert repository.rollback_calls == 0
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+    owner.close()
+
+
+def test_pipeline_output_begin_preserves_sqlite_and_cleanup_error_surfaces(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    ordinary = sqlite3.OperationalError("ordinary output begin failure")
+    before = _AcceptedBoundaryInterruption(
+        repository._connection, "BEGIN IMMEDIATE", ordinary, accept=False
+    )
+    repository._review_preparation._connection = cast(sqlite3.Connection, before)
+    with pytest.raises(
+        MetadataReportError, match="review preparation persistence failed"
+    ) as raised:
+        repository.begin_review_pipeline_output()
+    assert raised.value.__cause__ is ordinary
+    assert not repository._connection.in_transaction
+
+    fault = KeyboardInterrupt("private accepted output cleanup boundary")
+    cleanup = SystemExit("private output cleanup replacement")
+    accepted = _AcceptedBoundaryInterruption(
+        repository._connection,
+        "BEGIN IMMEDIATE",
+        fault,
+        cleanup_fault=cleanup,
+    )
+    repository._review_preparation._connection = cast(sqlite3.Connection, accepted)
+    with pytest.raises(KeyboardInterrupt) as interrupted:
+        repository.begin_review_pipeline_output()
+    assert interrupted.value is fault
+    assert interrupted.value.__cause__ is None
+    assert interrupted.value.__context__ is None
+    assert not repository._connection.in_transaction
+    repository.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+def test_pipeline_output_begin_invalidates_connection_when_rollback_is_unproven(
+    application_path: Path, fault_type: type[BaseException]
+) -> None:
+    repository = open_repository(application_path)
+    fault = fault_type("private accepted output boundary")
+    proxy = _AcceptedBoundaryInterruption(
+        repository._connection,
+        "BEGIN IMMEDIATE",
+        fault,
+        rollback_always_fault=RuntimeError("private output rollback-before boundary"),
+        close_fault=SystemExit("private output close replacement"),
+    )
+    repository._review_preparation._connection = cast(sqlite3.Connection, proxy)
+
+    with pytest.raises(fault_type) as raised:
+        repository.begin_review_pipeline_output()
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert proxy.close_calls == 2
+    with pytest.raises(sqlite3.ProgrammingError):
+        repository._connection.execute("SELECT 1")
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+
+
+def test_pipeline_output_persistent_close_poison_is_shared_until_owner_teardown(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    fault = KeyboardInterrupt("private accepted output boundary")
+    proxy = _AcceptedBoundaryInterruption(
+        repository._connection,
+        "BEGIN IMMEDIATE",
+        fault,
+        rollback_always_fault=RuntimeError("private output rollback boundary"),
+        close_always_fault=SystemExit("private persistent output close boundary"),
+    )
+    repository._review_preparation._connection = cast(sqlite3.Connection, proxy)
+
+    with pytest.raises(KeyboardInterrupt) as raised:
+        repository.begin_review_pipeline_output()
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert proxy.authorizer_calls == 1
+    with pytest.raises(MetadataReportError, match="persistence failed"):
+        repository.review_pipeline_paused()
+    blocked = sqlite3.connect(application_path, timeout=0)
+    with pytest.raises(sqlite3.OperationalError, match="locked"):
+        blocked.execute("BEGIN IMMEDIATE")
+    blocked.close()
+    repository.close()
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+
+
+def _f32_transaction_operation(
+    repository: SQLiteMetadataReportRepository, scope: str
+) -> Callable[[], object]:
+    if scope == "request":
+        return lambda: repository.request_review_scan(
+            "primary",
+            "fiction",
+            "lib-1",
+            _PRODUCER,
+            100,
+            trigger=PreparationTrigger.MANUAL_SCAN,
+        )
+    if scope == "pause":
+        return lambda: repository.set_review_pipeline_paused(True, 100)
+    if scope == "acknowledge":
+        return repository.acknowledge_first_boot_preparation
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    if scope == "hold":
+        return lambda: repository.hold_target_connection("primary", "unavailable", 101)
+    if scope == "begin_check":
+        repository.hold_target_connection("primary", "unavailable", 101)
+        return lambda: repository.begin_target_connection_check("primary", 102)
+    if scope == "finish_check":
+        repository.hold_target_connection("primary", "unavailable", 101)
+        condition = repository.begin_target_connection_check("primary", 102)
+        assert condition is not None
+        return lambda: repository.finish_target_connection_check(
+            "primary", condition.epoch, None, 103
+        )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    if scope == "guard":
+        repository.hold_target_connection("primary", "unavailable", 102)
+        return lambda: repository.guard_target_connection(discovery, 103)
+    if scope == "qualify":
+        return lambda: repository.qualify_review_discovery(discovery, 102)
+    if scope == "defer":
+        return lambda: repository.defer_for_target_connection(
+            discovery, "unavailable", 102
+        )
+    if scope == "complete_discovery":
+        return lambda: repository.complete_review_discovery(
+            discovery, 1, "a" * 64, (), 102
+        )
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry("First", "1" * 64),), 102
+    )
+    work_id = cast(
+        str,
+        repository._connection.execute(
+            "SELECT work_id FROM review_preparation_work"
+        ).fetchone()[0],
+    )
+    if scope == "claim_work":
+        return lambda: repository.claim_review_pipeline_work(work_id, 103)
+    work = repository.claim_review_pipeline_work(work_id, 103)
+    assert work is not None
+    if scope == "advance":
+        return lambda: repository.advance_review_pipeline_action(work, None, 104)
+    if scope == "fail":
+        return lambda: repository.fail_review_pipeline_action(
+            work, "failed", False, 104
+        )
+    raise AssertionError(f"unknown transaction scope: {scope}")
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize(
+    "scope",
+    (
+        "request",
+        "pause",
+        "acknowledge",
+        "hold",
+        "begin_check",
+        "finish_check",
+        "guard",
+        "qualify",
+        "defer",
+        "complete_discovery",
+        "claim_work",
+        "advance",
+        "fail",
+    ),
+)
+def test_f32_transaction_scopes_rollback_baseexceptions_at_commit_boundary(
+    application_path: Path,
+    scope: str,
+    fault_type: type[BaseException],
+) -> None:
+    repository = open_repository(application_path)
+    operation = _f32_transaction_operation(repository, scope)
+    tables = (
+        "review_preparation_control",
+        "review_preparation_scans",
+        "review_preparation_work",
+        "review_preparation_connection_conditions",
+        "review_preparation_presentation",
+    )
+    before = {
+        table: tuple(repository._connection.execute(f"SELECT * FROM {table}"))
+        for table in tables
+    }
+    fault = fault_type("private transaction sentinel")
+
+    injection = (
+        patch(
+            "mechanical_librarian.adapters.persistence.review_preparation.refresh_preparation_work",
+            side_effect=fault,
+        )
+        if scope == "advance"
+        else patch.object(TransactionScope, "commit", side_effect=fault)
+    )
+    with injection, pytest.raises(fault_type) as raised:
+        operation()
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert not repository._connection.in_transaction
+    assert {
+        table: tuple(repository._connection.execute(f"SELECT * FROM {table}"))
+        for table in tables
+    } == before
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+    repository.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+def test_dismissal_transaction_rolls_back_baseexception_and_releases_writer(
+    application_path: Path, fault_type: type[BaseException]
+) -> None:
+    repository = open_repository(application_path)
+    progress = repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed',updated_at=101 WHERE scan_id=?",
+        (progress.scan_id,),
+    )
+    refresh_preparation_presentation(repository._connection, 101)
+    repository._connection.commit()
+    presentation = repository.preparation_presentation(101)
+    assert presentation is not None and presentation.dismissible
+    before = tuple(
+        repository._connection.execute(
+            "SELECT * FROM review_preparation_presentation ORDER BY row_id"
+        )
+    )
+    fault = fault_type("private dismissal sentinel")
+
+    with (
+        patch.object(TransactionScope, "commit", side_effect=fault),
+        pytest.raises(fault_type) as raised,
+    ):
+        repository.dismiss_preparation_presentation(presentation.run_id, 102)
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert not repository._connection.in_transaction
+    assert (
+        tuple(
+            repository._connection.execute(
+                "SELECT * FROM review_preparation_presentation ORDER BY row_id"
+            )
+        )
+        == before
+    )
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+    repository.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+def test_preparation_snapshot_releases_savepoint_after_baseexception(
+    application_path: Path, fault_type: type[BaseException]
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    fault = fault_type("private snapshot sentinel")
+
+    class InterruptingConnection:
+        def execute(
+            self, sql: str, parameters: tuple[object, ...] = ()
+        ) -> sqlite3.Cursor:
+            if "SELECT trigger,accepted_count" in sql:
+                raise fault
+            return repository._connection.execute(sql, parameters)
+
+    with pytest.raises(fault_type) as raised:
+        preparation_presentation_snapshot(
+            cast(sqlite3.Connection, InterruptingConnection()), 101
+        )
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert not repository._connection.in_transaction
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+    repository.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize(
+    "cleanup_boundary", ("ROLLBACK TO SAVEPOINT", "RELEASE SAVEPOINT")
+)
+def test_preparation_snapshot_revokes_unproven_savepoint_cleanup(
+    application_path: Path,
+    fault_type: type[BaseException],
+    cleanup_boundary: str,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    fault = fault_type("private snapshot body interruption")
+    proxy = _AcceptedBoundaryInterruption(
+        repository._connection,
+        "SELECT run_id,state,started_at,updated_at,completed_at,total,active_count,"
+        "read,searches_finished,compared,checked,ready,failed FROM "
+        "review_preparation_presentation WHERE row_id='run'",
+        fault,
+        accept=False,
+        cleanup_execute_fault=RuntimeError("private snapshot cleanup"),
+        cleanup_execute_always_before=cleanup_boundary,
+    )
+
+    with pytest.raises(fault_type) as raised:
+        preparation_presentation_snapshot(cast(sqlite3.Connection, proxy), 101)
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert proxy.close_calls == 1
+    with pytest.raises(sqlite3.ProgrammingError):
+        repository._connection.execute("SELECT 1")
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+    repository.close()
+
+
+def test_supervisor_serializes_resume_prevalidation_with_library_addition(
+    application_path: Path,
+) -> None:
+    owner = open_repository(application_path)
+    owner.set_review_pipeline_paused(True, 100)
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: open_repository(
+            application_path, create=False, authority=owner.authority
+        ),
+        libraries=(
+            ("primary", "fiction", "lib-1", _PRODUCER),
+            ("primary", "history", "lib-2", _PRODUCER),
+        ),
+        discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        clock=lambda: 101,
+    )
+    supervisor = ReviewPreparationSupervisor(pipeline, clock=lambda: 101)
+    barrier = threading.Barrier(2)
+    errors: list[BaseException] = []
+
+    def resume() -> None:
+        try:
+            barrier.wait()
+            supervisor.set_paused(False)
+        except BaseException as error:
+            errors.append(error)
+
+    def add() -> None:
+        try:
+            barrier.wait()
+            supervisor.request_library_addition("primary", "history")
+        except BaseException as error:
+            errors.append(error)
+
+    threads = (threading.Thread(target=resume), threading.Thread(target=add))
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(3)
+
+    assert not errors
+    assert all(not thread.is_alive() for thread in threads)
+    assert not owner.review_pipeline_paused()
+    assert owner.deferred_library_additions() == ()
+    assert owner.review_pipeline_progress("primary", "history") is not None
+    assert owner._connection.execute(
+        "SELECT accepted_count FROM review_preparation_presentation "
+        "WHERE row_id='trigger:library_added'"
+    ).fetchone() == (1,)
+    owner.close()
+
+
+def test_pause_resume_and_library_addition_atomically_choose_one_posture(
+    application_path: Path,
+) -> None:
+    owner = open_repository(application_path)
+    owner.set_review_pipeline_paused(True, 100)
+    barrier = threading.Barrier(2)
+    errors: list[BaseException] = []
+
+    def resume() -> None:
+        try:
+            repository = open_repository(
+                application_path, create=False, authority=owner.authority
+            )
+            barrier.wait()
+            repository.set_review_pipeline_paused(False, 101)
+            repository.close()
+        except BaseException as error:
+            errors.append(error)
+
+    def add_library() -> None:
+        try:
+            repository = open_repository(
+                application_path, create=False, authority=owner.authority
+            )
+            barrier.wait()
+            repository.request_library_addition(
+                "primary", "history", "lib-2", _PRODUCER, 101
+            )
+            repository.close()
+        except BaseException as error:
+            errors.append(error)
+
+    threads = (threading.Thread(target=resume), threading.Thread(target=add_library))
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(3)
+
+    assert not errors
+    assert all(not thread.is_alive() for thread in threads)
+    scan_count = owner._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_scans "
+        "WHERE connection_name='primary' AND library_name='history'"
+    ).fetchone()[0]
+    deferred_count = owner._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_presentation "
+        "WHERE row_kind='deferred_enrollment' AND connection_name='primary' "
+        "AND library_name='history'"
+    ).fetchone()[0]
+    trigger_count = owner._connection.execute(
+        "SELECT accepted_count FROM review_preparation_presentation "
+        "WHERE row_kind='trigger' AND trigger='library_added'"
+    ).fetchone()
+    owner.close()
+    assert (scan_count, deferred_count) in {(1, 0), (0, 1)}
+    assert trigger_count == (1,)
 
 
 @pytest.mark.skipif(
@@ -877,6 +5031,65 @@ def test_late_target_connection_errors_rollback_and_defer_retained_stage() -> No
         assert repository.rolled_back == 1
         assert repository.deferred == [(action, "tls")]
     assert callbacks == {"proposal": 1, "admission": 1, "projection": 1}
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+def test_pipeline_output_transaction_rolls_back_baseexception(
+    fault_type: type[BaseException],
+) -> None:
+    class Repository:
+        begun = 0
+        rolled_back = 0
+
+        def guard_target_connection(self, _action, _checked_at):
+            return True
+
+        def begin_review_pipeline_output(self) -> None:
+            self.begun += 1
+
+        def rollback_review_pipeline_output(self) -> None:
+            self.rolled_back += 1
+
+    repository = Repository()
+    fault = fault_type("private pipeline-output sentinel")
+    action = PipelineAction(
+        "action-1",
+        "scan-1",
+        "proposal",
+        1,
+        "primary",
+        "ebooks",
+        "library-id",
+        _PRODUCER,
+        1,
+        "a" * 64,
+        "item-1",
+        "b" * 64,
+        0,
+        "report-1",
+        source_fingerprint="c" * 64,
+    )
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: cast(ReviewPipelineRepository, repository),
+        libraries=(("primary", "ebooks", "library-id", _PRODUCER),),
+        discover=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_args: (_ for _ in ()).throw(fault),
+        admit=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        clock=lambda: 1,
+    )
+
+    with pytest.raises(fault_type) as raised:
+        pipeline._run_claimed_action(
+            cast(ReviewPipelineRepository, repository), action, claim_next=False
+        )
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert repository.begun == 1
+    assert repository.rolled_back == 1
 
 
 def test_post_cutover_delivery_failure_requeues_the_claimed_successor() -> None:
@@ -2424,6 +6637,582 @@ def test_failed_rediscovery_cannot_claim_queued_children(
     assert child == ("queued",)
 
 
+def test_recovery_high_water_reopens_and_clears_when_authority_catches_up(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    entry = _entry("recovery", "7" * 64)
+    repository.complete_review_discovery(discovery, 1, "a" * 64, (entry,), 102)
+    extraction = repository.claim_review_pipeline_action(103)
+    assert extraction is not None and extraction.stage == "extraction"
+    repository.advance_review_pipeline_action(extraction, None, 104)
+    changed_producer = "d" * 64
+    repository.recover_review_pipeline(
+        (("primary", "fiction", "lib-2", changed_producer),)
+    )
+    marked = repository._connection.execute(
+        "SELECT presentation.work_stage,presentation.current_work_state,"
+        "presentation.recovery_high_water_stage,presentation.recovery_high_water_outcome,"
+        "authoritative.presentation_recovery_cycle_id,"
+        "authoritative.presentation_recovery_stage,authoritative.presentation_recovery_outcome "
+        "FROM review_preparation_presentation AS presentation "
+        "JOIN review_preparation_work AS authoritative USING(work_id) "
+        "WHERE presentation.row_kind='work'"
+    ).fetchone()
+    repository.close()
+
+    reopened = open_repository(application_path, create=False)
+    assert marked[:4] == ("provider", "queued", "provider", None)
+    assert marked[4] is not None and marked[5:] == ("provider", None)
+    rediscovery = reopened.claim_review_pipeline_action(105)
+    assert rediscovery is not None and rediscovery.stage == "discovery"
+    reopened.complete_review_discovery(
+        rediscovery, 2, "b" * 64, (replace(entry, library_id="lib-2"),), 106
+    )
+    retained = reopened._connection.execute(
+        "SELECT presentation_recovery_stage,presentation_recovery_outcome "
+        "FROM review_preparation_work"
+    ).fetchone()
+    reopened.close()
+
+    assert retained == ("provider", None)
+    reopened = open_repository(application_path, create=False)
+    extraction = reopened.claim_review_pipeline_action(107)
+    assert extraction is not None and extraction.stage == "extraction"
+    reopened.advance_review_pipeline_action(extraction, None, 108)
+    caught_up = reopened._connection.execute(
+        "SELECT presentation.work_stage,presentation.recovery_high_water_stage,"
+        "presentation.recovery_high_water_outcome,authoritative.presentation_recovery_cycle_id,"
+        "authoritative.presentation_recovery_stage,authoritative.presentation_recovery_outcome "
+        "FROM review_preparation_presentation AS presentation "
+        "JOIN review_preparation_work AS authoritative USING(work_id) "
+        "WHERE presentation.row_kind='work'"
+    ).fetchone()
+    reopened.close()
+
+    assert caught_up == ("provider", None, None, None, None, None)
+
+
+def test_recovery_witness_retains_a_failed_outcome_across_reopen(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery,
+        1,
+        "a" * 64,
+        (_entry("failed", "7" * 64), _entry("pending", "8" * 64)),
+        102,
+    )
+    extraction = repository.claim_review_pipeline_action(103)
+    assert extraction is not None and extraction.stage == "extraction"
+    repository.advance_review_pipeline_action(extraction, None, 104)
+    provider = repository.claim_review_pipeline_action(105)
+    assert provider is not None and provider.stage == "provider"
+    repository.fail_review_pipeline_action(provider, "provider", False, 106)
+    repository.recover_review_pipeline((("primary", "fiction", "lib-2", "d" * 64),))
+    retained = repository._connection.execute(
+        "SELECT presentation.work_stage,presentation.work_outcome,"
+        "presentation.recovery_high_water_stage,presentation.recovery_high_water_outcome,"
+        "authoritative.presentation_recovery_stage,"
+        "authoritative.presentation_recovery_outcome "
+        "FROM review_preparation_presentation AS presentation "
+        "JOIN review_preparation_work AS authoritative USING(work_id) "
+        "WHERE presentation.row_kind='work' AND presentation.work_outcome='failed'"
+    ).fetchone()
+    repository.close()
+
+    assert retained == (
+        "provider",
+        "failed",
+        "provider",
+        "failed",
+        "provider",
+        "failed",
+    )
+    reopened = open_repository(application_path, create=False)
+    assert reopened.preparation_presentation(107) is not None
+    reopened.close()
+
+
+@pytest.mark.parametrize(
+    ("old_outcome", "state", "failure_code", "scan_state"),
+    (
+        ("ready", "failed", "provider", "completed_with_failures"),
+        ("ready", "stale", "stale", "completed_with_failures"),
+        ("failed", "complete", None, "completed"),
+        ("failed", "failed", "local_evidence_only", "completed"),
+    ),
+)
+def test_terminal_recovery_reconciles_current_outcome_without_reaging_completion(
+    application_path: Path,
+    old_outcome: str,
+    state: str,
+    failure_code: str | None,
+    scan_state: str,
+) -> None:
+    _seed_recovery_witness(application_path)
+    repository = open_repository(application_path, create=False)
+    before = repository._connection.execute(
+        "SELECT run_id,scan_id,cycle_id,work_id,updated_at FROM "
+        "review_preparation_presentation WHERE row_kind='work'"
+    ).fetchone()
+    assert before is not None
+    run_id, scan_id, cycle_id, work_id, completed_at = before
+    repository._connection.execute(
+        "UPDATE review_preparation_presentation SET work_stage='projection',work_outcome=?,"
+        "recovery_high_water_stage='projection',recovery_high_water_outcome=?,"
+        "completion_sequence=1 WHERE row_kind='work'",
+        (old_outcome, old_outcome),
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_presentation SET read=1,searches_finished=1,compared=1,"
+        "checked=1,ready=?,failed=?,completion_count=1 "
+        "WHERE row_kind='run'",
+        (old_outcome == "ready", old_outcome == "failed"),
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET presentation_recovery_stage='projection',"
+        "presentation_recovery_outcome=?,stage=?,"
+        "state=?,failure_code=?,updated_at=110 WHERE work_id=?",
+        (
+            old_outcome,
+            "complete" if state == "complete" else "provider",
+            state,
+            failure_code,
+            work_id,
+        ),
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state=?,updated_at=110 WHERE scan_id=?",
+        (scan_state, scan_id),
+    )
+    refresh_preparation_run_state(repository._connection, 110)
+    settled = repository._connection.execute(
+        "SELECT presentation.work_outcome,presentation.current_work_state,"
+        "presentation.updated_at,presentation.completion_sequence,"
+        "presentation.recovery_high_water_stage,"
+        "authoritative.presentation_recovery_cycle_id "
+        "FROM review_preparation_presentation AS presentation "
+        "JOIN review_preparation_work AS authoritative USING(work_id) "
+        "WHERE presentation.row_kind='work'"
+    ).fetchone()
+    counters = repository._connection.execute(
+        "SELECT ready,failed,completion_count,state FROM "
+        "review_preparation_presentation WHERE row_kind='run'"
+    ).fetchone()
+    enrollment = repository._connection.execute(
+        "SELECT cycle_id,cycle_state FROM review_preparation_presentation "
+        "WHERE row_kind='enrollment'"
+    ).fetchone()
+    refresh_preparation_run_state(repository._connection, 111)
+    repeated = repository._connection.execute(
+        "SELECT ready,failed,completion_count FROM review_preparation_presentation "
+        "WHERE row_kind='run'"
+    ).fetchone()
+    repository._connection.commit()
+    repository.close()
+
+    expected_outcome = (
+        "ready"
+        if state == "complete" or failure_code == "local_evidence_only"
+        else "failed"
+    )
+    assert settled == (expected_outcome, state, completed_at, 1, None, None)
+    assert counters == (1, 1, 1, "completed_with_failures")
+    assert enrollment == (cycle_id, scan_state)
+    assert repeated == (1, 1, 1)
+    reopened = open_repository(application_path, create=False)
+    current = reopened.preparation_presentation(111)
+    reopened.close()
+    assert current is not None and current.run_id == run_id
+    assert current.passage.ready == current.passage.failed == current.total == 1
+    assert len(current.recent_completions) == 1
+    assert current.recent_completions[0].outcome == expected_outcome
+
+
+def test_terminal_recovery_reconciliation_rolls_back_with_its_owner(
+    application_path: Path,
+) -> None:
+    _seed_recovery_witness(application_path)
+    repository = open_repository(application_path, create=False)
+    scan_id, work_id = repository._connection.execute(
+        "SELECT scan_id,work_id FROM review_preparation_work"
+    ).fetchone()
+    repository._connection.execute(
+        "UPDATE review_preparation_presentation SET work_stage='projection',"
+        "work_outcome='ready',recovery_high_water_stage='projection',"
+        "recovery_high_water_outcome='ready',completion_sequence=1 "
+        "WHERE row_kind='work'"
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_presentation SET read=1,searches_finished=1,"
+        "compared=1,checked=1,ready=1,completion_count=1 WHERE row_kind='run'"
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET presentation_recovery_stage='projection',"
+        "presentation_recovery_outcome='ready',stage='provider',state='failed',"
+        "failure_code='provider',updated_at=110 WHERE work_id=?",
+        (work_id,),
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed_with_failures',updated_at=110 "
+        "WHERE scan_id=?",
+        (scan_id,),
+    )
+    repository._connection.commit()
+    tables = (
+        "review_preparation_control",
+        "review_preparation_scans",
+        "review_preparation_work",
+        "review_preparation_presentation",
+    )
+    before = {
+        table: tuple(repository._connection.execute(f"SELECT * FROM {table}"))
+        for table in tables
+    }
+
+    with (
+        patch(
+            "mechanical_librarian.adapters.persistence.preparation_presentation."
+            "_clear_preparation_recovery",
+            side_effect=sqlite3.OperationalError("private terminal settlement"),
+        ),
+        pytest.raises(MetadataReportError) as raised,
+    ):
+        repository.set_review_pipeline_paused(True, 111)
+
+    assert str(raised.value) == "review preparation persistence failed"
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert not repository._connection.in_transaction
+    assert {
+        table: tuple(repository._connection.execute(f"SELECT * FROM {table}"))
+        for table in tables
+    } == before
+    repository.close()
+
+
+def test_terminal_recovery_reconciliation_leaves_sibling_cycle_active(
+    application_path: Path,
+) -> None:
+    _seed_recovery_witness(application_path)
+    repository = open_repository(application_path, create=False)
+    run_id = repository._connection.execute(
+        "SELECT run_id FROM review_preparation_presentation WHERE row_kind='run'"
+    ).fetchone()[0]
+    repository.request_review_scan(
+        "primary",
+        "history",
+        "lib-3",
+        _PRODUCER,
+        105,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    sibling_before = repository._connection.execute(
+        "SELECT row_id,scan_id,cycle_id,cycle_state,ordinal FROM "
+        "review_preparation_presentation WHERE row_kind='enrollment' "
+        "AND library_name='history'"
+    ).fetchone()
+    scan_id, work_id = repository._connection.execute(
+        "SELECT scan_id,work_id FROM review_preparation_work"
+    ).fetchone()
+    repository._connection.execute(
+        "UPDATE review_preparation_presentation SET work_stage='projection',"
+        "work_outcome='ready',recovery_high_water_stage='projection',"
+        "recovery_high_water_outcome='ready',completion_sequence=1 "
+        "WHERE row_kind='work'"
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_presentation SET read=1,searches_finished=1,"
+        "compared=1,checked=1,ready=1,completion_count=1 WHERE row_kind='run'"
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET presentation_recovery_stage='projection',"
+        "presentation_recovery_outcome='ready',stage='provider',state='failed',"
+        "failure_code='provider',updated_at=110 WHERE work_id=?",
+        (work_id,),
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed_with_failures',updated_at=110 "
+        "WHERE scan_id=?",
+        (scan_id,),
+    )
+
+    refresh_preparation_run_state(repository._connection, 110)
+
+    assert (
+        repository._connection.execute(
+            "SELECT row_id,scan_id,cycle_id,cycle_state,ordinal FROM "
+            "review_preparation_presentation WHERE row_kind='enrollment' "
+            "AND library_name='history'"
+        ).fetchone()
+        == sibling_before
+    )
+    snapshot = repository.preparation_presentation(110)
+    assert snapshot is not None
+    assert snapshot.run_id == run_id
+    assert snapshot.state.value in {"starting", "running"}
+    assert snapshot.passage.ready == snapshot.passage.failed == snapshot.total == 1
+    repository._connection.commit()
+    repository.close()
+    reopened = open_repository(application_path, create=False)
+    assert reopened.preparation_presentation(111) is not None
+    reopened.close()
+
+
+def _seed_recovery_witness(path: Path) -> None:
+    repository = open_repository(path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry("recovery", "7" * 64),), 102
+    )
+    extraction = repository.claim_review_pipeline_action(103)
+    assert extraction is not None
+    repository.advance_review_pipeline_action(extraction, None, 104)
+    repository.recover_review_pipeline((("primary", "fiction", "lib-2", "d" * 64),))
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "UPDATE review_preparation_work SET presentation_recovery_cycle_id=NULL,"
+        "presentation_recovery_stage=NULL,presentation_recovery_outcome=NULL",
+        "UPDATE review_preparation_presentation SET recovery_high_water_stage=NULL,"
+        "recovery_high_water_outcome=NULL WHERE row_kind='work'",
+        "UPDATE review_preparation_work SET presentation_recovery_cycle_id=NULL,"
+        "presentation_recovery_stage=NULL,presentation_recovery_outcome=NULL;"
+        "UPDATE review_preparation_presentation SET recovery_high_water_stage=NULL,"
+        "recovery_high_water_outcome=NULL WHERE row_kind='work'",
+        "UPDATE review_preparation_work SET presentation_recovery_cycle_id=NULL",
+        "UPDATE review_preparation_work SET presentation_recovery_cycle_id='preparation_cycle_'||printf('%064x',2)",
+        "UPDATE review_preparation_work SET presentation_recovery_stage='proposal'",
+        "UPDATE review_preparation_work SET presentation_recovery_outcome='ready'",
+        "UPDATE review_preparation_presentation SET recovery_high_water_stage='proposal' "
+        "WHERE row_kind='work'",
+        "UPDATE review_preparation_work SET stage='provider',state='queued'",
+        "UPDATE review_preparation_work SET stage='proposal',state='queued'",
+        "UPDATE review_preparation_work SET presentation_recovery_stage=1.5",
+        "UPDATE review_preparation_work SET presentation_recovery_cycle_id='private-cycle'",
+        "UPDATE review_preparation_work SET scan_id='review_scan_'||printf('%064x',9)",
+    ),
+    ids=(
+        "marker-only",
+        "witness-only",
+        "progression-without-witness",
+        "partial-witness",
+        "wrong-cycle",
+        "stage-disagreement",
+        "outcome-disagreement",
+        "pair-disagreement",
+        "unnecessary-pair",
+        "marker-below-authority",
+        "real-stage",
+        "malformed-cycle",
+        "wrong-scan-association",
+    ),
+)
+def test_recovery_witness_corruption_fails_closed_without_repair(
+    tmp_path: Path, mutation: str
+) -> None:
+    path = tmp_path / "invalid-recovery-witness.sqlite3"
+    _seed_recovery_witness(path)
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA ignore_check_constraints=ON")
+    if ";" in mutation:
+        connection.executescript(mutation)
+    else:
+        connection.execute(mutation)
+    connection.commit()
+    connection.close()
+
+    _assert_presentation_reopen_refuses_without_mutation(path)
+
+
+def test_empty_presentation_rejects_an_authoritative_recovery_witness(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "orphan-recovery-witness.sqlite3"
+    _seed_recovery_witness(path)
+    connection = sqlite3.connect(path)
+    connection.execute("DELETE FROM review_preparation_presentation")
+    connection.commit()
+    connection.close()
+
+    _assert_presentation_reopen_refuses_without_mutation(path)
+
+
+def test_recovery_marking_uses_two_set_based_linear_statements(tmp_path: Path) -> None:
+    def measured(population: int) -> tuple[int, int, tuple[str, ...]]:
+        repository = open_repository(tmp_path / f"recovery-scale-{population}.sqlite3")
+        progress = repository.request_review_scan(
+            "primary",
+            "fiction",
+            "lib-1",
+            _PRODUCER,
+            100,
+            trigger=PreparationTrigger.MANUAL_SCAN,
+        )
+        discovery = repository.claim_review_pipeline_action(101)
+        assert discovery is not None
+        repository.complete_review_discovery(
+            discovery,
+            1,
+            "a" * 64,
+            tuple(
+                _entry(f"Book {index}", f"{index:064x}")
+                for index in range(1, population + 1)
+            ),
+            102,
+        )
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET stage='provider',state='queued'"
+        )
+        repository._connection.execute(
+            "UPDATE review_preparation_presentation SET work_stage='provider' "
+            "WHERE row_kind='work'"
+        )
+        repository._connection.commit()
+        statements: list[str] = []
+        vm_steps = 0
+
+        def count_step() -> int:
+            nonlocal vm_steps
+            vm_steps += 1
+            return 0
+
+        repository._connection.set_trace_callback(statements.append)
+        repository._connection.set_progress_handler(count_step, 1)
+        mark_preparation_recovery(repository._connection, progress.scan_id)
+        repository._connection.set_progress_handler(None, 0)
+        repository._connection.set_trace_callback(None)
+        updates = tuple(
+            statement
+            for statement in statements
+            if statement.startswith("UPDATE review_")
+        )
+        repository._connection.rollback()
+        plan = tuple(
+            row[3]
+            for statement in updates
+            for row in repository._connection.execute("EXPLAIN QUERY PLAN " + statement)
+        )
+        repository.close()
+        return len(updates), vm_steps, plan
+
+    small_count, small_steps, small_plan = measured(1)
+    large_count, large_steps, large_plan = measured(2_000)
+    assert small_count == large_count == 2
+    assert small_plan == large_plan
+    assert all("TEMP B-TREE" not in row for row in large_plan)
+    assert large_steps <= small_steps + 202 * 2_000, (
+        small_steps,
+        large_steps,
+        large_plan,
+    )
+
+
+def test_presentation_validation_is_constant_query_and_bounded_memory(
+    tmp_path: Path,
+) -> None:
+    def measured(population: int) -> tuple[int, int, int, tuple[str, ...]]:
+        repository = open_repository(
+            tmp_path / f"validation-scale-{population}.sqlite3"
+        )
+        repository.request_review_scan(
+            "primary",
+            "fiction",
+            "lib-1",
+            _PRODUCER,
+            100,
+            trigger=PreparationTrigger.MANUAL_SCAN,
+        )
+        discovery = repository.claim_review_pipeline_action(101)
+        assert discovery is not None
+        repository.complete_review_discovery(
+            discovery,
+            1,
+            "a" * 64,
+            tuple(
+                _entry(f"Book {index}", f"{index:064x}")
+                for index in range(1, population + 1)
+            ),
+            102,
+        )
+        statements: list[str] = []
+        vm_steps = 0
+
+        def count_step() -> int:
+            nonlocal vm_steps
+            vm_steps += 1
+            return 0
+
+        tracemalloc.start()
+        repository._connection.set_trace_callback(statements.append)
+        repository._connection.set_progress_handler(count_step, 1)
+        validate_preparation_presentation(repository._connection)
+        _current, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        repository._connection.set_progress_handler(None, 0)
+        repository._connection.set_trace_callback(None)
+        work_query = next(
+            statement
+            for statement in statements
+            if statement.startswith("SELECT presentation.scan_id")
+        )
+        plan = tuple(
+            row[3]
+            for row in repository._connection.execute(
+                "EXPLAIN QUERY PLAN " + work_query
+            )
+        )
+        repository.close()
+        return len(statements), vm_steps, peak, plan
+
+    small = measured(1)
+    medium = measured(200)
+    large = measured(2_000)
+    assert small[0] == medium[0] == large[0] == 27
+    assert small[3] == medium[3] == large[3]
+    assert any(
+        "PRIMARY KEY" in row or "sqlite_autoindex_review_preparation_work_1" in row
+        for row in large[3]
+    )
+    assert all("TEMP B-TREE" not in row for row in large[3])
+    assert large[1] <= small[1] + 300 * 2_000
+    assert large[2] <= small[2] + 8 * 1024 * 1024
+
+
 def test_third_crashed_stage_is_terminal_instead_of_overflowing_claim(
     application_path: Path,
 ) -> None:
@@ -3799,6 +8588,55 @@ def test_report_and_extraction_checkpoint_commit_atomically(
     assert retry_not_before == (0,)
 
 
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+def test_report_publication_rolls_back_f32_callback_baseexception(
+    application_path: Path, fault_type: type[BaseException]
+) -> None:
+    report = _report()
+    entry = replace(
+        _entry("item-1", report.file.identity),
+        library="ebooks",
+        authors=(),
+    )
+    repository = open_repository(application_path)
+    repository.request_review_scan("primary", "ebooks", "lib-1", _PRODUCER, 10)
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None
+    repository.complete_review_discovery(discovery, 1, "a" * 64, (entry,), 12)
+    action = repository.claim_review_pipeline_action(13)
+    assert action is not None
+    before = tuple(
+        repository._connection.execute("SELECT * FROM review_preparation_work")
+    )
+    fault = fault_type("private publication sentinel")
+
+    def interrupt_after_presentation(
+        value: ReportRepository, published: MetadataReport
+    ) -> None:
+        writer = cast(SQLiteMetadataReportRepository, value)
+        writer.complete_review_extraction_publication(action, published.report_id, 14)
+        raise fault
+
+    with pytest.raises(fault_type) as raised:
+        repository.publish(report, lambda: True, None, interrupt_after_presentation)
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert not repository._connection.in_transaction
+    assert repository._connection.execute(
+        "SELECT COUNT(*) FROM metadata_reports"
+    ).fetchone() == (0,)
+    assert (
+        tuple(repository._connection.execute("SELECT * FROM review_preparation_work"))
+        == before
+    )
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+    repository.close()
+
+
 def _entry(item_id: str, file_identity: str) -> CatalogueEntry:
     return CatalogueEntry(
         "primary",
@@ -3826,6 +8664,12 @@ class _ConcurrentRepository:
 
     def request_review_scan(self, *args):  # pragma: no cover - not used here
         raise AssertionError
+
+    def require_current(self) -> None:
+        return None
+
+    def drain_library_additions(self, *args) -> None:
+        return None
 
     def review_pipeline_progress(self, *args):  # pragma: no cover - not used here
         return None
@@ -3896,11 +8740,22 @@ class _ScheduledPipeline:
             self.is_paused,
         )
 
-    def request(self, connection, library):
+    def request(self, connection, library, *, trigger=None):
         self.requests.append((connection, library))
         return PipelineProgress(
             "review_scan_" + "a" * 64, connection, library, "queued", 0, 0, 0, 0, False
         )
+
+    def request_library_addition(self, connection, library):
+        return self.request(
+            connection, library, trigger=PreparationTrigger.LIBRARY_ADDED
+        )
+
+    def deferred_library_additions(self):
+        return ()
+
+    def drain_library_additions(self):
+        return None
 
     def set_paused(self, paused):
         self.is_paused = paused
@@ -3933,6 +8788,9 @@ class _LifecyclePipeline:
         self.events.append("recover")
         if self.fail_recover:
             raise ReviewPipelineError("persistence")
+
+    def drain_library_additions(self) -> None:
+        return None
 
     def run_next(self, maximum_actions: int = 64) -> bool:
         self.events.append("run")
@@ -3975,6 +8833,27 @@ def test_supervisor_closes_preopened_observation_when_start_fails() -> None:
     assert supervisor._threads == ()
 
 
+@pytest.mark.parametrize("stage", ("recover", "drain_library_additions"))
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+def test_supervisor_closes_preopened_observation_after_start_interruption(
+    stage: str, fault_type: type[BaseException]
+) -> None:
+    pipeline = _LifecyclePipeline()
+    supervisor = ReviewPreparationSupervisor(pipeline)
+    fault = fault_type("private startup sentinel")
+
+    with (
+        patch.object(pipeline, stage, side_effect=fault),
+        pytest.raises(fault_type) as raised,
+    ):
+        supervisor.start()
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert pipeline.events.count("close") == 1
+    assert supervisor._threads == ()
+
+
 def test_supervisor_cleans_only_started_lane_after_second_thread_start_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4003,6 +8882,35 @@ def test_supervisor_cleans_only_started_lane_after_second_thread_start_fails(
 
     assert joined == ["review-preparation-0"]
     assert pipeline.events[-3:] == ["drain", "on_stop", "close"]
+    assert supervisor._threads == ()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+def test_supervisor_closes_observation_once_when_start_and_stop_are_interrupted(
+    monkeypatch: pytest.MonkeyPatch, fault_type: type[BaseException]
+) -> None:
+    pipeline = _LifecyclePipeline()
+    original_start = threading.Thread.start
+    start_fault = fault_type("private start sentinel")
+    stop_fault = fault_type("private stop sentinel")
+
+    def start(thread: threading.Thread) -> None:
+        if thread.name == "review-preparation-1":
+            raise start_fault
+        original_start(thread)
+
+    def fail_stop() -> None:
+        raise stop_fault
+
+    monkeypatch.setattr(threading.Thread, "start", start)
+    supervisor = ReviewPreparationSupervisor(pipeline, on_stop=fail_stop)
+
+    with pytest.raises(fault_type) as raised:
+        supervisor.start()
+
+    assert raised.value is start_fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert pipeline.events.count("close") == 1
     assert supervisor._threads == ()
 
 
@@ -5147,7 +10055,14 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
     )
 
     repository = open_repository(application_path)
-    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        10,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
     discovery = repository.claim_review_pipeline_action(11)
     assert discovery is not None
     repository.complete_review_discovery(
@@ -5175,10 +10090,17 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
         "primary", "fiction", "no-such-item"
     )
     remaining = repository.claim_review_pipeline_action(15)
+    presentation = repository.preparation_presentation(15)
     repository.close()
 
     assert work == ("provider", "failed", "local_evidence_only", None)
     assert remaining is None
+    assert presentation is not None
+    assert presentation.state is PreparationRunState.COMPLETED_CLEAN
+    assert presentation.passage.ready == 1
+    assert presentation.passage.failed == 0
+    assert presentation.recent_completions[0].outcome == "ready"
+    assert presentation.throughput_per_minute > 0
     assert retained.schema_version == "metadata-report-v31"
     assert retained.audio is not None
     assert retained.providers == ()
@@ -5203,6 +10125,63 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
         value.kind not in {"healthy_activity", "automatic_recovery"}
         for value in incidents
     )
+    reopened = open_repository(application_path, create=False)
+    assert reopened.preparation_presentation(15) == presentation
+    reopened.close()
+
+
+def test_broad_reconciliation_projects_active_report_only_work_as_clean_ready(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    scan = repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        10,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry("item", "1" * 64),), 12
+    )
+    work = repository.claim_review_pipeline_action(13)
+    assert work is not None and work.stage == "extraction"
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET stage='provider',state='failed',"
+        "failure_code='local_evidence_only',updated_at=14 WHERE work_id=?",
+        (work.action_id,),
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed',updated_at=14 WHERE scan_id=?",
+        (scan.scan_id,),
+    )
+    active = repository._connection.execute(
+        "SELECT enrollment.cycle_state,work.work_outcome FROM review_preparation_presentation AS enrollment "
+        "JOIN review_preparation_presentation AS work ON work.scan_id=enrollment.scan_id "
+        "WHERE enrollment.row_kind='enrollment' AND work.row_kind='work'"
+    ).fetchone()
+
+    refresh_preparation_presentation(repository._connection, 14)
+
+    presentation = repository.preparation_presentation(14)
+    authoritative = repository._connection.execute(
+        "SELECT stage,state,failure_code FROM review_preparation_work WHERE work_id=?",
+        (work.action_id,),
+    ).fetchone()
+    repository.close()
+
+    assert active is not None
+    assert active[0] not in {"completed", "completed_with_failures"}
+    assert active[1] is None
+    assert authoritative == ("provider", "failed", "local_evidence_only")
+    assert presentation is not None
+    assert presentation.state is PreparationRunState.COMPLETED_CLEAN
+    assert presentation.passage.ready == 1
+    assert presentation.passage.failed == 0
+    assert presentation.recent_completions[0].outcome == "ready"
 
 
 def test_a_prepared_audiobook_leaves_a_mixed_library_scan_clean(
@@ -5487,3 +10466,65 @@ def test_a_scans_stage_counts_still_account_for_every_work_it_carried(
     assert stages["ready"] == 1
     assert stages["failed"] == 0
     assert progress.blocked == 0
+
+
+def test_audiobook_publication_refreshes_before_interleaved_claim_next(
+    application_path: Path,
+) -> None:
+    report = MetadataReport.create(
+        target=TargetFacts(
+            "primary", "fiction", "item", default_target_fields("Recorded work")
+        ),
+        file=FileFacts(0, "1" * 64, "b" * 64, "m4b"),
+        local_claims=(),
+        local_reasons=("no_local_audio_claims",),
+        providers=(),
+        audio=AudioFacts(),
+    )
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        10,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(12)
+    assert discovery is not None and discovery.connection == "primary"
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_audio_entry("item", report.file.identity),), 13
+    )
+    extraction = repository.claim_review_pipeline_action(14)
+    assert extraction is not None and extraction.stage == "extraction"
+    repository.request_review_scan(
+        "secondary",
+        "history",
+        "lib-2",
+        _PRODUCER,
+        14,
+        trigger=PreparationTrigger.LIBRARY_ADDED,
+    )
+    repository.publish(
+        report,
+        lambda: True,
+        None,
+        lambda value, published: value.complete_review_extraction_publication(
+            extraction,
+            published.report_id,
+            15,
+            0,
+            "local_evidence_only",
+            claim_next=True,
+        ),
+    )
+
+    presentation = repository.preparation_presentation(15)
+    claimed = repository.take_review_pipeline_claim()
+    repository.close()
+
+    assert presentation is not None
+    assert presentation.passage.ready == 1
+    assert presentation.passage.failed == 0
+    assert claimed is not None
+    assert claimed.connection == "secondary" and claimed.stage == "discovery"

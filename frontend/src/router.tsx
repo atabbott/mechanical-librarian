@@ -8,7 +8,7 @@ import {
   createRouter,
   useRouterState,
 } from '@tanstack/react-router'
-import { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import type { createMemoryHistory } from '@tanstack/react-router'
 import { ApiError, BuildMismatchError, SessionExpiredError } from './api/http'
@@ -26,7 +26,11 @@ import type {
 } from './api/http'
 import { ChunkRecoveryError, recoverableLazy, reloadCurrentApplication } from './chunkRecovery'
 import { LiveStreamNotice } from './components/LiveStreamNotice'
-import { useLiveInvalidation, useLiveStreamState } from './liveInvalidation'
+import {
+  preparationInvalidationDebtKey,
+  useLiveInvalidation,
+  useLiveStreamState,
+} from './liveInvalidation'
 import type { LiveUpdateStream } from './liveUpdates'
 
 const LibraryPage = recoverableLazy(() => import('./routes/LibraryPage'))
@@ -39,6 +43,7 @@ const SettingsPage = recoverableLazy(() => import('./routes/SettingsPage'))
 export interface RouterContext {
   http: ReviewHttp
   queryClient: QueryClient
+  preparation: ReturnType<typeof preparationQuery>
   /**
    * The tab's one live-update stream, absent where a composition has none.
    *
@@ -62,6 +67,7 @@ export const normalizeLibrarySearch = (search: Record<string, unknown>): Library
   // selection is owned by its own key rather than by borrowing ``preview``.
   const work = bounded(search.work)
   const field = bounded(search.field)
+  const preparation = bounded(search.preparation)
   return {
     lens,
     ...(q ? { q } : {}),
@@ -70,6 +76,7 @@ export const normalizeLibrarySearch = (search: Record<string, unknown>): Library
     ...(preview ? { preview } : {}),
     ...(preview ? {} : work ? { work } : {}),
     ...(field ? { field } : {}),
+    ...(preparation ? { preparation } : {}),
     ...(search.attention === 'open' ? { attention: 'open' } : {}),
   }
 }
@@ -187,12 +194,16 @@ const activityQuery = (http: ReviewHttp, search: ActivitySearch) =>
     staleTime: 4_000,
     retry: false,
   })
-export const preparationQuery = (http: ReviewHttp, live = false) =>
+export const preparationQuery = (
+  http: ReviewHttp,
+  fallbackPolling: boolean | (() => boolean) = false,
+) =>
   queryOptions({
     queryKey: ['review-preparation'] as const,
     queryFn: ({ signal }) => http.getPreparation(signal),
     staleTime: 1_000,
     retry: false,
+    structuralSharing: false,
     // The shell's always-mounted observer owns this singleton snapshot. Lazy
     // route consumers subscribe to that same query and must not turn a slow
     // route/chunk mount into a second startup read once the snapshot is stale.
@@ -201,7 +212,8 @@ export const preparationQuery = (http: ReviewHttp, live = false) =>
     // up the snapshot is refetched when preparation actually advances, which is
     // both sooner than 1.5 seconds and, for an idle library, never.
     refetchInterval: (result) => {
-      if (live) return false
+      if (!(typeof fallbackPolling === 'function' ? fallbackPolling() : fallbackPolling))
+        return false
       const value = result.state.data
       return value?.active || value?.actionable || value?.paused ? 1_500 : 15_000
     },
@@ -228,10 +240,21 @@ export const useLiveStream = () => {
 }
 
 export const usePreparation = () => {
-  const { http, queryClient } = rootRoute.useRouteContext()
-  const live = useLiveStream() === 'live'
+  const { http, preparation, queryClient } = rootRoute.useRouteContext()
+  const streamState = useLiveStream()
+  const live = streamState === 'live'
   const previousSnapshot = useRef<string | null>(null)
-  const query = useQuery(preparationQuery(http, live))
+  const debtQuery = useQuery({
+    queryKey: preparationInvalidationDebtKey,
+    queryFn: (): Promise<boolean> => Promise.resolve(false),
+    enabled: false,
+    initialData: false,
+  })
+  const query = useQuery(preparation)
+  const reconnecting = debtQuery.data
+  // TanStack Query retains the last successful snapshot while a refetch is in
+  // flight or the stream is degraded.  Frames never write this cache, so this
+  // is the last server-confirmed state rather than a client-side catch-up.
   const data = query.data
   const snapshot = data ? JSON.stringify(data) : null
   useEffect(() => {
@@ -252,8 +275,39 @@ export const usePreparation = () => {
       queryClient.invalidateQueries({ queryKey: ['library'] }),
       queryClient.invalidateQueries({ queryKey: ['attention'] }),
     ])
-  }, [live, queryClient, snapshot])
-  return { data, queryClient, http, live }
+  }, [data?.presentation?.state, live, queryClient, snapshot])
+  const adoptDismissal = useCallback(
+    (runId: string, value: PreparationView) => {
+      const dismissed = value.presentation
+      if (dismissed !== null) return false
+      const current = queryClient.getQueryData<PreparationView>([
+        'review-preparation',
+      ])?.presentation
+      if (current !== undefined && current !== null && current.run_id !== runId) return false
+      queryClient.setQueryData(['review-preparation'], value)
+      const preparationDebt = queryClient.getQueryData(preparationInvalidationDebtKey) === true
+      void Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ['review-preparation'],
+          exact: true,
+          refetchType: preparationDebt ? 'none' : 'active',
+        }),
+        queryClient.invalidateQueries({ queryKey: ['library'] }),
+        queryClient.invalidateQueries({ queryKey: ['attention'] }),
+      ])
+      return true
+    },
+    [queryClient],
+  )
+  return {
+    data,
+    confirmed: query.data !== undefined,
+    queryClient,
+    http,
+    live,
+    reconnecting,
+    adoptDismissal,
+  }
 }
 
 const connectionCopy = (code: 'tls' | 'authentication' | 'authorization' | 'unavailable') =>
@@ -436,73 +490,6 @@ export const PreparationNotice = ({ routeIdentity }: { routeIdentity: string }) 
         action.mutate(`${encodeURIComponent(connection)}/check-connection`)
       }}
     />
-  )
-}
-
-export const FirstBootHandover = () => {
-  const { http, queryClient } = rootRoute.useRouteContext()
-  const { data } = usePreparation()
-  const heading = useRef<HTMLHeadingElement>(null)
-  const announced = useRef(false)
-  const ready = data?.libraries.reduce((total, library) => total + library.ready, 0) ?? 0
-  const terminal = Boolean(data?.first_boot_complete)
-  const acknowledge = useMutation({
-    mutationFn: () => http.preparationAction('first-boot/acknowledge'),
-    onSuccess: (value) => queryClient.setQueryData(['review-preparation'], value),
-  })
-  useLayoutEffect(() => {
-    if (!data?.first_boot || (ready < 1 && !terminal) || announced.current) return
-    announced.current = true
-    heading.current?.focus({ preventScroll: true })
-    const section = heading.current?.closest('section')
-    if (section && 'scrollIntoView' in section)
-      section.scrollIntoView({
-        block: 'start',
-        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
-          ? 'instant'
-          : 'smooth',
-      })
-  }, [data?.first_boot, ready, terminal])
-  if (!data?.first_boot || (ready < 1 && !terminal)) return null
-  return (
-    <section className="first-boot-handover" aria-labelledby="first-boot-handover-title">
-      <div className="first-boot-handover-card">
-        <h2 id="first-boot-handover-title" ref={heading} tabIndex={-1}>
-          {ready > 0 ? 'Your work is ready' : 'Preparation is complete'}
-        </h2>
-        <p>
-          {ready > 0
-            ? terminal
-              ? 'Preparation is complete. Review your ready work below.'
-              : 'Preparation continues here as more work becomes ready.'
-            : data.actionable
-              ? 'No work became ready during this preparation. Review the failures and recovery below.'
-              : 'Preparation finished without ready work.'}
-        </p>
-        {data.first_boot_complete && typeof data.first_boot_works === 'number' ? (
-          <p className="first-boot-measurement" role="status">
-            Preparation complete · {String(data.first_boot_works)} unique{' '}
-            {data.first_boot_works === 1 ? 'work' : 'works'} checked.
-          </p>
-        ) : null}
-        {terminal && data.actionable ? (
-          <p>Some work could not finish. Review the failures and recovery below.</p>
-        ) : null}
-      </div>
-      <ul aria-label="Preparation progress">
-        {data.libraries.map((library) => (
-          <li key={`${library.connection}:${library.library}`}>
-            <span>{library.library}</span>
-            <strong>
-              {`${String(library.ready)} ready · ${String(library.checked)} of ${String(library.total)} checked`}
-            </strong>
-          </li>
-        ))}
-      </ul>
-      <button type="button" disabled={acknowledge.isPending} onClick={() => acknowledge.mutate()}>
-        {acknowledge.isPending ? 'Continuing…' : 'Continue to workspace'}
-      </button>
-    </section>
   )
 }
 
@@ -1046,10 +1033,18 @@ export const createApplicationRouter = (
   }),
   history?: ReturnType<typeof createMemoryHistory>,
   updates?: LiveUpdateStream,
-) =>
-  createRouter({
+) => {
+  const preparation = preparationQuery(
+    http,
+    () =>
+      updates === undefined ||
+      (updates.hasBeenLive !== true && updates.state !== 'live') ||
+      (updates.state === 'live' &&
+        queryClient.getQueryData(preparationInvalidationDebtKey) === true),
+  )
+  return createRouter({
     routeTree,
-    context: { http, queryClient, ...(updates ? { updates } : {}) },
+    context: { http, queryClient, preparation, ...(updates ? { updates } : {}) },
     ...(history ? { history } : {}),
     defaultPreload: 'intent',
     defaultPreloadStaleTime: 15_000,
@@ -1057,6 +1052,7 @@ export const createApplicationRouter = (
     defaultPendingMinMs: 220,
     scrollRestoration: true,
   })
+}
 export type ApplicationRouter = ReturnType<typeof createApplicationRouter>
 declare module '@tanstack/react-router' {
   interface Register {

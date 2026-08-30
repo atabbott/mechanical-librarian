@@ -27,7 +27,11 @@ from mechanical_librarian.interfaces.web.app import (
     reviewer_failure_response,
 )
 from mechanical_librarian.interfaces.web.setup import create_setup_app
-from mechanical_librarian.interfaces.web.setup_frontend import SETUP_JS
+from mechanical_librarian.interfaces.web.setup_frontend import (
+    SETUP_CSS,
+    SETUP_HANDOFF_CSS,
+    SETUP_JS,
+)
 
 
 @pytest.mark.parametrize(
@@ -332,13 +336,20 @@ def test_setup_surface_exposes_only_health_shell_session_and_redacted_state() ->
     assert 'id="setup-ledger"' in shell.text
     assert "https://openlibrary.org/account/create" not in shell.text
     assert '<script type="module" src="/assets/setup.js"></script>' in shell.text
+    assert 'rel="preload" href="/assets/setup-handoff.css" as="style"' in shell.text
+    assert 'id="setup-handoff-motion"' in shell.text
+    assert 'href="/assets/setup-handoff.css" disabled' in shell.text
     assert "content-security-policy" in shell.headers
     assert shell.headers["cache-control"] == "private, no-store"
     css = client.get("/assets/setup.css")
+    handoff_css = client.get("/assets/setup-handoff.css")
     script = client.get("/assets/setup.js")
     assert css.status_code == 200
     assert "@media(max-width:760px)" in css.text
     assert "prefers-reduced-motion" in css.text
+    assert handoff_css.status_code == 200
+    assert handoff_css.headers["content-type"].startswith("text/css")
+    assert handoff_css.text == "@view-transition{navigation:auto}"
     assert script.status_code == 200
     assert "https://openlibrary.org/account/create" in script.text
     assert "https://hardcover.app/account/api" in script.text
@@ -346,8 +357,23 @@ def test_setup_surface_exposes_only_health_shell_session_and_redacted_state() ->
     assert "sessionStorage" not in script.text
     assert "csrf=state.csrf_token" in script.text
     assert "location.assign('/library')" not in script.text
+    assert "const retired=visible?.state==='dismissed'" in script.text
+    assert "let open=null;let observed=true" in script.text
+    assert "if(!visible||retired){if(observed||retired)retire(retired)" in script.text
+    assert "dismissed?'Preparation was dismissed'" in script.text
+    assert "dismissed?'Open the ordinary workspace.'" in script.text
+    assert "if(!open){open=document.createElement('a')" in script.text
     assert "open.href='/library?lens=all'" in script.text
-    assert "preparation.first_boot_complete" in script.text
+    assert (
+        "['completed_clean','completed_with_failures'].includes(visible.state)"
+        in script.text
+    )
+    assert "pollDelay=terminal?5000:1500" in script.text
+    assert "if(terminal)stop()" not in script.text
+    assert "encodeURIComponent(visible.run_id)" in script.text
+    assert "setInterval" not in script.text
+    assert "const poll=async()=>" in script.text
+    assert "finally{if(!stopped)timer=setTimeout(poll,pollDelay)}" in script.text
     assert ".field[hidden]{display:none}" in css.text
     assert "MutationObserver" not in script.text
     assert "Writes stay off until you turn them on in Activity." in script.text
@@ -870,3 +896,18 @@ def test_setup_library_step_uses_audiobookshelf_book_kind_without_owner_choice()
     assert "/api/setup/reviewer/codex/recheck" in SETUP_JS
     assert "reviewer_access_stale:'Reviewer access changed" in SETUP_JS
     assert "invalid_key:'OpenRouter rejected this key." in SETUP_JS
+
+
+def test_setup_enables_cross_document_motion_only_for_the_workspace_handoff() -> None:
+    assert "@view-transition{navigation:auto}" not in SETUP_CSS
+    assert SETUP_HANDOFF_CSS == "@view-transition{navigation:auto}"
+    assert "sessionStorage" not in SETUP_JS
+    assert "createElement('style')" not in SETUP_JS
+    assert "target.pathname!=='/library'" in SETUP_JS
+    assert "/^preparation_run_[0-9a-f]{64}$/.test(run)" in SETUP_JS
+    assert "motion.disabled=false" in SETUP_JS
+    assert "addEventListener('pageswap'" in SETUP_JS
+    assert "handoff.viewTransition.finished.then(disable,disable)" in SETUP_JS
+    assert "addEventListener('pageshow',disable,{once:true})" in SETUP_JS
+    assert "fallback=setTimeout(disable,2000)" in SETUP_JS
+    assert ".finally(" not in SETUP_JS

@@ -46,6 +46,30 @@ boolean = exact_type(bool)
 text = exact_type(str)
 
 
+def bounded_utf8_text(maximum_bytes: int) -> FieldCheck:
+    """Accept exact, nonempty text within one UTF-8 byte bound."""
+
+    def check(value: object) -> bool:
+        if type(value) is not str:
+            return False
+        try:
+            return 1 <= len(value.encode("utf-8")) <= maximum_bytes
+        except UnicodeEncodeError:
+            return False
+
+    return check
+
+
+def prefixed_hex_identity(prefix: str) -> FieldCheck:
+    """Accept one exact prefix followed by 64 lowercase hexadecimal characters."""
+    return lambda value: (
+        type(value) is str
+        and len(value) == len(prefix) + 64
+        and value.startswith(prefix)
+        and all(character in "0123456789abcdef" for character in value[len(prefix) :])
+    )
+
+
 def credential(value: object) -> bool:
     """Accept the exact canonical bearer-token payload used by every adapter."""
     return (

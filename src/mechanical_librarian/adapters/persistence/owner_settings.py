@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from _thread import RLock
 from contextlib import AbstractContextManager, nullcontext
 
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
+from mechanical_librarian.adapters.persistence.preparation_presentation import (
+    reconcile_preparation_library_additions,
+)
+from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.domain.owner_settings import (
     OwnerSettingsDocument,
     OwnerSettingsError,
@@ -20,25 +25,31 @@ from mechanical_librarian.domain.setup_state import SetupStateDocument, SetupSta
 from mechanical_librarian.domain.validation import credential
 
 
-class OwnerSettingsStore:
+class OwnerSettingsStore(ConnectionScoped):
     """The only persistence boundary that ever receives raw settings secrets."""
 
-    def __init__(self, connection: sqlite3.Connection) -> None:
-        self._connection = connection
+    def __init__(
+        self, connection: sqlite3.Connection, serialization_lock: RLock | None = None
+    ) -> None:
+        super().__init__(connection, serialization_lock=serialization_lock)
 
     def read(self) -> SettingsView:
-        try:
-            document, values = _load_owner_settings_authority(self._connection)
-            return _settings_view(document, values)
-        except OwnerSettingsError:
-            raise
-        except sqlite3.Error as error:
-            raise OwnerSettingsError("owner settings are unavailable") from error
+        def read() -> SettingsView:
+            try:
+                document, values = _load_owner_settings_authority(self._connection)
+                return _settings_view(document, values)
+            except OwnerSettingsError:
+                raise
+            except sqlite3.Error as error:
+                raise OwnerSettingsError("owner settings are unavailable") from error
+
+        return self._serialized(read)
 
     def activate_runtime(self) -> tuple[SettingsView, dict[str, str], str]:
         """Snapshot complete store authority without acknowledging its application."""
+        transaction = self._transaction("activate_owner_runtime")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             document, values = _load_owner_settings_authority(self._connection)
             verifier = values.get("owner.password.verifier")
             configured = frozenset(values) - {"owner.password.verifier"}
@@ -49,13 +60,16 @@ class OwnerSettingsStore:
                 or not configured.issubset(document.secret_fields())
             ):
                 raise OwnerSettingsError("owner settings are unavailable")
-            self._connection.commit()
+            transaction.commit()
         except OwnerSettingsError:
-            self._connection.rollback()
+            transaction.rollback()
             raise
         except sqlite3.Error as error:
-            self._connection.rollback()
+            transaction.rollback()
             raise OwnerSettingsError("owner settings are unavailable") from error
+        except BaseException as error:
+            transaction.rollback()
+            raise error from None
         runtime_values = {
             name: value
             for name, value in values.items()
@@ -65,8 +79,9 @@ class OwnerSettingsStore:
 
     def acknowledge_runtime(self, revision: int) -> None:
         """Clear restart debt only after this exact snapshot composed successfully."""
+        transaction = self._transaction("acknowledge_owner_runtime")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             document, _ = _load_owner_settings_authority(self._connection)
             if type(revision) is not int or document.revision != revision:
                 raise OwnerSettingsError("settings revision is stale")
@@ -88,13 +103,16 @@ class OwnerSettingsStore:
                     != 1
                 ):
                     raise OwnerSettingsError("settings revision is stale")
-            self._connection.commit()
+            transaction.commit()
         except OwnerSettingsError:
-            self._connection.rollback()
+            transaction.rollback()
             raise
         except sqlite3.Error as error:
-            self._connection.rollback()
+            transaction.rollback()
             raise OwnerSettingsError("owner settings are unavailable") from error
+        except BaseException as error:
+            transaction.rollback()
+            raise error from None
 
     def write(
         self,
@@ -102,17 +120,22 @@ class OwnerSettingsStore:
         expected_revision: int,
         secrets: tuple[SecretWrite, ...],
         live_update: AbstractContextManager[None] | None = None,
+        *,
+        accepted_at: int = 0,
     ) -> SettingsView:
         # Candidate preparation enters before SQLite authority is locked;
         # successful exit occurs only after the durable commit.
         with live_update if live_update is not None else nullcontext():
-            return self._write_transaction(document, expected_revision, secrets)
+            return self._write_transaction(
+                document, expected_revision, secrets, accepted_at
+            )
 
     def _write_transaction(
         self,
         document: OwnerSettingsDocument,
         expected_revision: int,
         secrets: tuple[SecretWrite, ...],
+        accepted_at: int,
     ) -> SettingsView:
         if (
             type(expected_revision) is not int
@@ -121,8 +144,11 @@ class OwnerSettingsStore:
             raise OwnerSettingsError("settings revision is invalid")
         if len({entry.field_id for entry in secrets}) != len(secrets):
             raise OwnerSettingsError("settings secret operation is invalid")
+        if type(accepted_at) is not int or accepted_at < 0:
+            raise OwnerSettingsError("settings update time is invalid")
+        transaction = self._transaction("write_owner_settings")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             previous, current_values = _load_owner_settings_authority(self._connection)
             document, values, obsolete = self._candidate(
                 document, expected_revision, secrets, previous, current_values
@@ -138,7 +164,6 @@ class OwnerSettingsStore:
                 ).rowcount
                 != 1
             ):
-                self._connection.rollback()
                 raise OwnerSettingsError("settings revision is stale")
             for entry in secrets:
                 if entry.operation == "clear":
@@ -155,17 +180,28 @@ class OwnerSettingsStore:
                 self._connection.execute(
                     "DELETE FROM owner_setting_secrets WHERE field_id=?", (name,)
                 )
+            reconcile_preparation_library_additions(
+                self._connection,
+                tuple(
+                    (library.connection, library.name) for library in previous.libraries
+                ),
+                tuple(
+                    (library.connection, library.name) for library in document.libraries
+                ),
+                document.revision,
+                accepted_at,
+            )
             committed = _settings_view(document, values)
-            self._connection.commit()
+            transaction.commit()
         except OwnerSettingsError:
-            self._connection.rollback()
+            transaction.rollback()
             raise
         except sqlite3.Error as error:
-            self._connection.rollback()
+            transaction.rollback()
             raise OwnerSettingsError("owner settings are unavailable") from error
-        except BaseException:
-            self._connection.rollback()
-            raise
+        except BaseException as error:
+            transaction.rollback()
+            raise error from None
         return committed
 
     def activation_snapshot(
@@ -175,8 +211,9 @@ class OwnerSettingsStore:
         secrets: tuple[SecretWrite, ...],
     ) -> tuple[SettingsView, dict[str, str], str]:
         """Validate a candidate without making it authoritative."""
+        transaction = self._transaction("snapshot_owner_activation")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             previous, current_values = _load_owner_settings_authority(self._connection)
             candidate, values, _obsolete = self._candidate(
                 document, expected_revision, secrets, previous, current_values
@@ -190,14 +227,17 @@ class OwnerSettingsStore:
                 if name in candidate.runtime_secret_fields()
             }
             snapshot = _settings_view(candidate, values)
-            self._connection.rollback()
+            transaction.rollback()
             return snapshot, credentials, verifier
         except OwnerSettingsError:
-            self._connection.rollback()
+            transaction.rollback()
             raise
         except sqlite3.Error as error:
-            self._connection.rollback()
+            transaction.rollback()
             raise OwnerSettingsError("owner settings are unavailable") from error
+        except BaseException as error:
+            transaction.rollback()
+            raise error from None
 
     def _candidate(
         self,
@@ -211,8 +251,12 @@ class OwnerSettingsStore:
             raise OwnerSettingsError("settings revision is stale")
         if document.pending_restart or previous.pending_restart:
             raise OwnerSettingsError("settings restart state is invalid")
-        if _non_settings_library_state(previous) != _non_settings_library_state(
-            document
+        previous_library_state = dict(_non_settings_library_state(previous))
+        candidate_library_state = dict(_non_settings_library_state(document))
+        if any(
+            candidate_library_state[name] != state
+            for name, state in previous_library_state.items()
+            if name in candidate_library_state
         ):
             raise OwnerSettingsError("settings document is invalid")
         _validate_available_provider_references(document)
@@ -392,9 +436,12 @@ def _validate_available_provider_references(document: OwnerSettingsDocument) -> 
 
 def _non_settings_library_state(
     document: OwnerSettingsDocument,
-) -> tuple[tuple[str, str | None, str | None, object], ...]:
+) -> tuple[tuple[str, tuple[str | None, str | None, object]], ...]:
     return tuple(
-        (library.name, library.display_name, library.mount, library.policy_override)
+        (
+            library.name,
+            (library.display_name, library.mount, library.policy_override),
+        )
         for library in document.libraries
     )
 

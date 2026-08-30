@@ -46,6 +46,7 @@ from mechanical_librarian.interfaces.web.app import (
 )
 from mechanical_librarian.interfaces.web.setup_frontend import (
     SETUP_CSS,
+    SETUP_HANDOFF_CSS,
     SETUP_HTML,
     SETUP_JS,
 )
@@ -297,6 +298,10 @@ def create_setup_app(
     @app.get("/assets/setup.css")
     def setup_css() -> Response:
         return Response(SETUP_CSS, media_type="text/css; charset=utf-8")
+
+    @app.get("/assets/setup-handoff.css")
+    def setup_handoff_css() -> Response:
+        return Response(SETUP_HANDOFF_CSS, media_type="text/css; charset=utf-8")
 
     @app.get("/assets/setup.js")
     def setup_js() -> Response:

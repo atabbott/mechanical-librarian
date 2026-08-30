@@ -905,6 +905,60 @@ class _PreparationConnection(_ClosedModel):
     updated_at: int = Field(ge=0)
 
 
+class _PreparationTriggerRecord(_ClosedModel):
+    trigger: Literal["initial_setup", "manual_scan", "library_added"]
+    accepted_count: int = Field(ge=1)
+    first_accepted_at: int = Field(ge=0)
+    last_accepted_at: int = Field(ge=0)
+
+
+class _PreparationPassage(_ClosedModel):
+    read: int = Field(ge=0)
+    searches_finished: int = Field(ge=0)
+    compared: int = Field(ge=0)
+    checked: int = Field(ge=0)
+    ready: int = Field(ge=0)
+    failed: int = Field(ge=0)
+
+
+class _PreparationActiveBook(_ClosedModel):
+    name: StrictStr = Field(min_length=1, max_length=2048)
+    stage: str
+
+
+class _PreparationCompletion(_ClosedModel):
+    name: StrictStr = Field(min_length=1, max_length=2048)
+    outcome: Literal["ready", "failed"]
+    completed_at: int = Field(ge=0)
+
+
+class _PreparationPresentation(_ClosedModel):
+    run_id: StrictStr = Field(pattern=r"^preparation_run_[0-9a-f]{64}$")
+    state: Literal[
+        "starting",
+        "running",
+        "blocked",
+        "completed_clean",
+        "completed_with_failures",
+        "dismissed",
+    ]
+    triggers: list[_PreparationTriggerRecord] = Field(min_length=1, max_length=3)
+    passage: _PreparationPassage
+    active_books: list[_PreparationActiveBook] = Field(max_length=5)
+    active_overflow: int = Field(ge=0)
+    recent_completions: list[_PreparationCompletion] = Field(max_length=8)
+    throughput_per_minute: float = Field(ge=0)
+    started_at: int = Field(ge=0)
+    updated_at: int = Field(ge=0)
+    completed_at: int | None = Field(default=None, ge=0)
+    total: int = Field(ge=0)
+    dismissible: bool
+
+
+class _PreparationDismissRequest(_ClosedModel):
+    run_id: StrictStr = Field(pattern=r"^preparation_run_[0-9a-f]{64}$")
+
+
 class _PreparationResponse(_ClosedModel):
     libraries: list[_PreparationProgress]
     connections: list[_PreparationConnection] = Field(default_factory=list)
@@ -914,7 +968,8 @@ class _PreparationResponse(_ClosedModel):
     first_boot: bool = False
     first_boot_complete: bool = False
     first_boot_works: int | None = Field(default=None, ge=0)
-    schema_version: Literal["review-preparation-v1"] = "review-preparation-v1"
+    presentation: _PreparationPresentation | None = None
+    schema_version: Literal["review-preparation-v2"] = "review-preparation-v2"
 
 
 class _DecisionRequest(_ClosedModel):
@@ -1332,7 +1387,7 @@ def _preparation_http_error(
         return HTTPException(503, detail={"code": code})
     if code == "library":
         return HTTPException(404, detail={"code": code})
-    if code == "paused" or (retry and code == "retry"):
+    if code in {"paused", "stale", "blocked"} or (retry and code == "retry"):
         return HTTPException(409, detail={"code": code})
     return HTTPException(503, detail={"code": "persistence"})
 
@@ -1506,6 +1561,7 @@ def create_review_app(
         maximum_bytes=2048,
         decision_maximum_bytes=8192,
         path_limits={
+            "/api/v1/review-preparation/dismiss": 2048,
             "/api/v1/reviewer-access/openrouter/refresh": 2048,
             # The write contract permits a 2,048-character key plus its
             # model, revision, and JSON framing.
@@ -3002,6 +3058,29 @@ def _register_browse_and_preparation_routes(
             return _PreparationResponse.model_validate(
                 application.acknowledge_first_boot_preparation().to_data()
             )
+        except Exception:
+            raise HTTPException(503, detail={"code": "persistence"}) from None
+
+    @app.post(
+        "/api/v1/review-preparation/dismiss",
+        response_model=_PreparationResponse,
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 409, 413, 422, 503)
+        },
+    )
+    def dismiss_preparation(
+        command: _PreparationDismissRequest,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> _PreparationResponse:
+        _require_session(sessions, ml_session, x_csrf_token)
+        try:
+            return _PreparationResponse.model_validate(
+                application.dismiss_preparation(command.run_id).to_data()
+            )
+        except ReviewApplicationError as error:
+            raise _preparation_http_error(error) from None
         except Exception:
             raise HTTPException(503, detail={"code": "persistence"}) from None
 

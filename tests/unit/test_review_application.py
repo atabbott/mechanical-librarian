@@ -152,7 +152,16 @@ def test_settings_commit_updates_live_cover_policy_inside_the_application_gate(
         def read(self):
             return SimpleNamespace(document=document)
 
-        def write(self, _document, _revision, _secrets, live_update=None):
+        def write(
+            self,
+            _document,
+            _revision,
+            _secrets,
+            live_update=None,
+            *,
+            accepted_at=0,
+        ):
+            assert accepted_at == _NOW
             with live_update or nullcontext():
                 return SimpleNamespace(document=document)
 
@@ -212,7 +221,16 @@ def test_live_cover_binding_fault_is_a_fixed_settings_failure(
         def read(self):
             return SimpleNamespace(document=document)
 
-        def write(self, _document, _revision, _secrets, live_update=None):
+        def write(
+            self,
+            _document,
+            _revision,
+            _secrets,
+            live_update=None,
+            *,
+            accepted_at=0,
+        ):
+            assert accepted_at == _NOW
             with live_update or nullcontext():
                 return SimpleNamespace(document=document)
 

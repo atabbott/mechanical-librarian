@@ -207,20 +207,18 @@ class SQLiteReportRepository(ConnectionScoped):
                 self._binding.require_current()
             transaction.commit()
             return self.get(report.report_id)
-        except TargetConnectionError:
+        except BaseException as error:
             transaction.rollback()
-            raise
-        except MetadataReportError:
-            transaction.rollback()
-            raise
-        except sqlite3.Error as error:
-            transaction.rollback()
-            raise MetadataReportError("report publication failed") from error
-        except Exception as error:
-            transaction.rollback()
+            failure = error
+        if isinstance(failure, (TargetConnectionError, MetadataReportError)):
+            raise failure
+        if isinstance(failure, sqlite3.Error):
+            raise MetadataReportError("report publication failed") from failure
+        if isinstance(failure, Exception):
             raise MetadataReportError(
                 "report publication precondition failed"
-            ) from error
+            ) from failure
+        raise failure from None
 
     def get(self, report_id: str) -> str:
         try:

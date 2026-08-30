@@ -112,7 +112,23 @@ transaction. Proposal insertion separately rechecks the exact report and
 current pointer after external currentness. The report database also stores
 immutable ReviewCases with current lineages and retained deterministic shadow
 decision/outcome records. The sole baseline uses
-rollback-journal `DELETE` mode. The separate catalogue database stores one
+rollback-journal `DELETE` mode. `review_preparation_presentation` is a bounded
+derived projection maintained on that existing connection and inside the same
+scan/work transactions; it does not claim work, schedule activity, or open a
+second store. Accepted owner triggers extend the visible nonterminal run and
+replace a terminal one, while ordinary discovery has no presentation call.
+An accepted Settings library addition is first a bounded sidecar enrollment in
+the same transaction as the Settings revision. After successor publication one
+repository transaction promotes every surviving intent into ordinary scans; a
+pause retains them visibly blocked, and resume clears the pause and promotes
+them together without exposing a partially admitted configured scope.
+Each authoritative claim/advance/failure boundary advances only its affected
+presentation row and run counters; bounded startup/recovery reconciliation
+replays monotonic high water across the run. First terminal outcomes receive a
+contiguous, guarded sidecar sequence. Its allocator checks the stored count
+against one covering population pass before assigning the next value, while
+recovery-only high-water markers keep already-reported progress truthful until
+the rebound authoritative work catches up. The separate catalogue database stores one
 exact-current `catalogue-v2` schema. The final report database, catalogue
 database, configuration, artifacts, and manifest each recognize only absent or
 their exact current pre-release state. Prior and intermediate schemas are

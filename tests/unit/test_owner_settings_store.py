@@ -1,22 +1,39 @@
 import sqlite3
-from typing import cast
+import threading
+from _thread import RLock
+from pathlib import Path
+from typing import Never, cast
 
 import pytest
 from pydantic import ValidationError
 
+import mechanical_librarian.adapters.persistence.owner_settings as owner_settings_adapter
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
+from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.owner_settings import OwnerSettingsStore
+from mechanical_librarian.adapters.persistence.preparation_presentation import (
+    refresh_preparation_presentation,
+    refresh_preparation_work,
+    validate_preparation_presentation,
+)
+from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
     CoverConsiderationStore,
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
+from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.owner_settings import FileOwnerSettingsRepository
 from mechanical_librarian.domain.owner_settings import (
     OwnerSettingsDocument,
     OwnerSettingsError,
     SecretWrite,
     file_field_metadata,
+)
+from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
+from mechanical_librarian.domain.reviewer_access import (
+    OpenRouterTaskSelection,
+    ReviewerAccessDocument,
 )
 
 
@@ -60,7 +77,50 @@ class _FailingCommitConnection(sqlite3.Connection):
         super().commit()
 
 
-def _store(connection: sqlite3.Connection | None = None) -> OwnerSettingsStore:
+class _ReleaseInterruptionLock:
+    def __init__(self, fault: BaseException, *, before_effect: bool) -> None:
+        self.lock = RLock()
+        self.fault = fault
+        self.before_effect = before_effect
+        self.armed = False
+
+    def acquire(self) -> None:
+        self.lock.acquire()
+
+    def release(self) -> None:
+        if self.armed and self.before_effect:
+            self.armed = False
+            raise self.fault
+        self.lock.release()
+        if self.armed:
+            self.armed = False
+            raise self.fault
+
+    def _recursion_count(self) -> int:
+        return self.lock._recursion_count()
+
+
+def _assert_lock_available(lock: _ReleaseInterruptionLock) -> None:
+    acquired = threading.Event()
+
+    def contend() -> None:
+        with lock.lock:
+            acquired.set()
+
+    contender = threading.Thread(target=contend)
+    contender.start()
+    assert acquired.wait(1)
+    contender.join(timeout=1)
+    assert not contender.is_alive()
+
+
+def _interrupt(fault: BaseException) -> Never:
+    raise fault
+
+
+def _store(
+    connection: sqlite3.Connection | None = None, lock: RLock | None = None
+) -> OwnerSettingsStore:
     connection = connection or sqlite3.connect(":memory:")
     connection.execute(
         "CREATE TABLE owner_settings (singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1),revision INTEGER NOT NULL CHECK(revision>=1),document TEXT NOT NULL)"
@@ -78,7 +138,7 @@ def _store(connection: sqlite3.Connection | None = None) -> OwnerSettingsStore:
         ("connection.primary.key", "target-secret-1234"),
     )
     connection.commit()
-    return OwnerSettingsStore(connection)
+    return OwnerSettingsStore(connection, lock)
 
 
 def _cover_document(revision: int) -> OwnerSettingsDocument:
@@ -89,6 +149,213 @@ def _cover_document(revision: int) -> OwnerSettingsDocument:
         "prefer_minimal_composition": True,
     }
     return OwnerSettingsDocument.model_validate(value)
+
+
+def _settings_with_libraries(
+    revision: int, names: tuple[str, ...]
+) -> OwnerSettingsDocument:
+    value = _document(revision).model_dump()
+    template = value["libraries"][0]
+    value["libraries"] = [
+        {**template, "name": name, "library_id": f"library-{index}"}
+        for index, name in enumerate(names, 1)
+    ]
+    return OwnerSettingsDocument.model_validate(value)
+
+
+def _seed_full_store(
+    path: Path, names: tuple[str, ...] = ("ebooks",)
+) -> tuple[object, OwnerSettingsStore]:
+    repository = open_repository(path, cross_thread=True)
+    document = _settings_with_libraries(1, names)
+    repository._connection.execute(
+        "INSERT INTO owner_settings VALUES(1,?,?)",
+        (document.revision, _canonical_json(document.model_dump())),
+    )
+    repository._connection.executemany(
+        "INSERT INTO owner_setting_secrets VALUES(?,?)",
+        (
+            ("connection.primary.key", "target-secret-1234"),
+            ("provider.books.key", "provider-secret-1234"),
+            ("owner.password.verifier", "$argon2id$synthetic"),
+        ),
+    )
+    repository._connection.commit()
+    return repository, repository.owner_settings_store()
+
+
+def _reviewer_document() -> ReviewerAccessDocument:
+    return ReviewerAccessDocument(
+        schema_version="reviewer-access-v1",
+        revision=2,
+        cover_observation=OpenRouterTaskSelection(
+            engine="openrouter", model="provider/model"
+        ),
+    )
+
+
+@pytest.mark.parametrize("reviewer_first", (False, True))
+def test_composed_settings_and_reviewer_aliases_serialize_transactions(
+    tmp_path: Path, reviewer_first: bool
+) -> None:
+    database = tmp_path / "control.sqlite3"
+    repository, settings = _seed_full_store(database)
+    reviewer = repository.reviewer_access_store()
+    connection = repository._connection
+    entered = threading.Event()
+    release = threading.Event()
+    second_done = threading.Event()
+    errors: list[BaseException] = []
+    settings_results: list[object] = []
+    reviewer_results: list[object] = []
+
+    def hold_alias_transaction() -> int:
+        entered.set()
+        assert release.wait(2)
+        return 1
+
+    connection.create_function("hold_alias_transaction", 0, hold_alias_transaction)
+    if reviewer_first:
+        connection.execute(
+            "CREATE TRIGGER hold_reviewer_alias AFTER INSERT ON reviewer_access "
+            "BEGIN SELECT hold_alias_transaction(); END"
+        )
+    else:
+        connection.execute(
+            "CREATE TRIGGER hold_settings_alias AFTER UPDATE ON owner_settings "
+            "BEGIN SELECT hold_alias_transaction(); END"
+        )
+    candidate = _settings_with_libraries(2, ("ebooks",))
+
+    def replace_reviewer() -> None:
+        try:
+            reviewer_results.append(
+                reviewer.replace(
+                    _reviewer_document(), 1, openrouter_key="reviewer-secret"
+                )
+            )
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            if not reviewer_first:
+                second_done.set()
+
+    def use_settings() -> None:
+        try:
+            if reviewer_first:
+                settings_results.append(settings.activation_snapshot(candidate, 1, ()))
+            else:
+                settings_results.append(settings.write(candidate, 1, ()))
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            if reviewer_first:
+                second_done.set()
+
+    first_operation = replace_reviewer if reviewer_first else use_settings
+    second_operation = use_settings if reviewer_first else replace_reviewer
+    first = threading.Thread(target=first_operation)
+    second = threading.Thread(target=second_operation)
+    first.start()
+    assert entered.wait(2)
+    second.start()
+    assert not second_done.wait(0.05)
+    release.set()
+    first.join(timeout=2)
+    second.join(timeout=2)
+
+    assert not first.is_alive() and not second.is_alive()
+    assert errors == []
+    assert len(settings_results) == len(reviewer_results) == 1
+    assert reviewer.read() == (_reviewer_document(), True)
+    independent = sqlite3.connect(database, isolation_level=None)
+    assert independent.execute(
+        "SELECT revision FROM reviewer_access WHERE singleton=1"
+    ).fetchone() == (2,)
+    assert independent.execute(
+        "SELECT revision FROM owner_settings WHERE singleton=1"
+    ).fetchone() == ((1,) if reviewer_first else (2,))
+    independent.close()
+    repository.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize(
+    "owner", ("read", "activate_runtime", "acknowledge_runtime", "write", "snapshot")
+)
+def test_owner_settings_transaction_owners_rollback_process_control(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    owner: str,
+    fault_type: type[BaseException],
+) -> None:
+    database = tmp_path / f"settings-{owner}.sqlite3"
+    connection = sqlite3.connect(database, isolation_level=None)
+    lock = _ReleaseInterruptionLock(SystemExit("unused"), before_effect=False)
+    store = _store(connection, cast(RLock, lock))
+    fault = fault_type(f"private owner settings {owner}")
+    before = list(connection.iterdump())
+    monkeypatch.setattr(
+        owner_settings_adapter,
+        "_load_owner_settings_authority",
+        lambda _connection: _interrupt(fault),
+    )
+
+    def operation() -> object:
+        if owner == "read":
+            return store.read()
+        if owner == "activate_runtime":
+            return store.activate_runtime()
+        if owner == "acknowledge_runtime":
+            store.acknowledge_runtime(1)
+            return None
+        if owner == "write":
+            return store.write(_document(2), 1, ())
+        return store.activation_snapshot(_document(2), 1, ())
+
+    with pytest.raises(fault_type) as raised:
+        operation()
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert not connection.in_transaction
+    assert list(connection.iterdump()) == before
+    assert lock._recursion_count() == 0
+    _assert_lock_available(lock)
+    independent = sqlite3.connect(database, isolation_level=None, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+    connection.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize("before_effect", (False, True))
+@pytest.mark.parametrize("owner", ("read", "write"))
+def test_owner_settings_release_process_control_is_balanced_and_propagated(
+    fault_type: type[BaseException], before_effect: bool, owner: str
+) -> None:
+    connection = sqlite3.connect(":memory:", isolation_level=None)
+    fault = fault_type(f"private owner settings {owner} release")
+    lock = _ReleaseInterruptionLock(fault, before_effect=before_effect)
+    store = _store(connection, cast(RLock, lock))
+    lock.armed = True
+
+    with pytest.raises(fault_type) as raised:
+        if owner == "read":
+            store.read()
+        else:
+            store.write(_document(2), 1, ())
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert not connection.in_transaction
+    assert connection.execute(
+        "SELECT revision FROM owner_settings WHERE singleton=1"
+    ).fetchone() == ((1,) if owner == "read" else (2,))
+    assert lock._recursion_count() == 0
+    _assert_lock_available(lock)
+    connection.close()
 
 
 def test_document_rejects_noncanonical_references_and_bounds() -> None:
@@ -328,6 +595,363 @@ def test_store_is_atomic_and_enforces_cas_and_secret_operations() -> None:
             (SecretWrite(field_id="connection.primary.key", operation="clear"),),
         )
     assert store.read().document.revision == 2
+
+
+@pytest.mark.parametrize("failed_ordinal", (0, 1))
+def test_settings_addition_intents_share_the_settings_transaction(
+    tmp_path: Path, failed_ordinal: int
+) -> None:
+    repository, store = _seed_full_store(tmp_path / "settings-intents.sqlite3")
+    candidate = _settings_with_libraries(2, ("ebooks", "history", "poetry"))
+    failed_name = ("history", "poetry")[failed_ordinal]
+    repository._connection.execute(
+        "CREATE TEMP TRIGGER fail_settings_intent BEFORE INSERT ON review_preparation_presentation "
+        f"WHEN NEW.row_kind='deferred_enrollment' AND NEW.library_name='{failed_name}' "
+        "BEGIN SELECT RAISE(ABORT,'synthetic intent failure'); END"
+    )
+
+    with pytest.raises(OwnerSettingsError, match="unavailable"):
+        store.write(candidate, 1, (), accepted_at=100)
+
+    assert repository._connection.in_transaction is False
+    assert store.read().document.revision == 1
+    assert repository._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_presentation"
+    ).fetchone() == (0,)
+    repository._connection.execute("DROP TRIGGER fail_settings_intent")
+    committed = store.write(candidate, 1, (), accepted_at=100)
+    rows = repository._connection.execute(
+        "SELECT library_name,ordinal,accepted_at,settings_revision "
+        "FROM review_preparation_presentation WHERE row_kind='deferred_enrollment' "
+        "ORDER BY ordinal,row_id"
+    ).fetchall()
+    trigger = repository._connection.execute(
+        "SELECT accepted_count,first_accepted_at,last_accepted_at "
+        "FROM review_preparation_presentation WHERE row_id='trigger:library_added'"
+    ).fetchone()
+    repository._connection.execute(
+        "CREATE TEMP TRIGGER fail_settings_drain BEFORE INSERT ON review_preparation_scans "
+        f"WHEN NEW.library_name='{failed_name}' "
+        "BEGIN SELECT RAISE(ABORT,'synthetic drain failure'); END"
+    )
+    scope = (
+        ("primary", "ebooks", "library-1", "f" * 64),
+        ("primary", "history", "library-2", "f" * 64),
+        ("primary", "poetry", "library-3", "f" * 64),
+    )
+    with pytest.raises(Exception, match="persistence failed"):
+        repository.drain_library_additions(scope, 101)
+    assert repository._connection.in_transaction is False
+    assert repository._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_scans"
+    ).fetchone() == (0,)
+    assert repository._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_presentation "
+        "WHERE row_kind='deferred_enrollment'"
+    ).fetchone() == (2,)
+    repository._connection.execute("DROP TRIGGER fail_settings_drain")
+    repository.drain_library_additions(scope, 102)
+    repository.drain_library_additions(scope, 103)
+    promoted = repository._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_scans"
+    ).fetchone()
+    requested = repository._connection.execute(
+        "SELECT DISTINCT requested_at FROM review_preparation_scans"
+    ).fetchall()
+    deferred = repository._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_presentation "
+        "WHERE row_kind='deferred_enrollment'"
+    ).fetchone()
+    accepted = repository._connection.execute(
+        "SELECT accepted_count FROM review_preparation_presentation "
+        "WHERE row_id='trigger:library_added'"
+    ).fetchone()
+    repository.close()
+
+    assert committed.document.revision == 2
+    assert rows == [("history", 0, 100, 2), ("poetry", 1, 100, 2)]
+    assert trigger == (2, 100, 100)
+    assert promoted == (2,)
+    assert requested == [(102,)]
+    assert deferred == (0,)
+    assert accepted == (2,)
+
+
+@pytest.mark.parametrize("mixed", (False, True))
+def test_settings_removal_cancels_undrained_intent_without_rewriting_survivor(
+    tmp_path: Path, mixed: bool
+) -> None:
+    path = tmp_path / f"settings-removal-{mixed}.sqlite3"
+    repository, store = _seed_full_store(path)
+    added = ("ebooks", "history", "poetry") if mixed else ("ebooks", "history")
+    store.write(_settings_with_libraries(2, added), 1, (), accepted_at=100)
+    retained = ("ebooks", "poetry") if mixed else ("ebooks",)
+    store.write(_settings_with_libraries(3, retained), 2, (), accepted_at=110)
+    rows = repository._connection.execute(
+        "SELECT library_name,ordinal,accepted_at,settings_revision "
+        "FROM review_preparation_presentation WHERE row_kind='deferred_enrollment'"
+    ).fetchall()
+    trigger = repository._connection.execute(
+        "SELECT accepted_count FROM review_preparation_presentation "
+        "WHERE row_id='trigger:library_added'"
+    ).fetchone()
+    repository.close()
+
+    reopened = open_repository(path, create=False)
+    assert rows == ([("poetry", 0, 100, 2)] if mixed else [])
+    assert trigger == ((2,) if mixed else None)
+    presentation = reopened.preparation_presentation(111)
+    assert (presentation is not None) is mixed
+    reopened.close()
+
+
+def test_paused_settings_addition_stays_visible_until_atomic_resume(
+    tmp_path: Path,
+) -> None:
+    repository, store = _seed_full_store(tmp_path / "paused-settings-addition.sqlite3")
+    repository.set_review_pipeline_paused(True, 90)
+    store.write(
+        _settings_with_libraries(2, ("ebooks", "history")),
+        1,
+        (),
+        accepted_at=100,
+    )
+    scope = (
+        ("primary", "ebooks", "library-1", "f" * 64),
+        ("primary", "history", "library-2", "f" * 64),
+    )
+    blocked = repository.preparation_presentation(100)
+    repository.drain_library_additions(scope, 101)
+    assert repository._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_scans"
+    ).fetchone() == (0,)
+    repository.resume_review_pipeline(scope, 102)
+    promoted = repository.preparation_presentation(102)
+    rows = repository._connection.execute(
+        "SELECT row_kind,library_name FROM review_preparation_presentation "
+        "WHERE row_kind IN ('enrollment','deferred_enrollment')"
+    ).fetchall()
+    accepted = repository._connection.execute(
+        "SELECT accepted_count FROM review_preparation_presentation "
+        "WHERE row_id='trigger:library_added'"
+    ).fetchone()
+    repository.close()
+
+    assert blocked is not None and blocked.state.value == "blocked"
+    assert not blocked.dismissible
+    assert promoted is not None and promoted.state.value == "starting"
+    assert rows == [("enrollment", "history")]
+    assert accepted == (1,)
+
+
+@pytest.mark.parametrize("dismissed", (False, True))
+def test_settings_remove_and_readd_uses_intent_despite_terminal_scan_history(
+    tmp_path: Path, dismissed: bool
+) -> None:
+    repository, store = _seed_full_store(
+        tmp_path / f"settings-readd-{dismissed}.sqlite3", ("ebooks", "history")
+    )
+    scan = repository.request_review_scan(
+        "primary",
+        "ebooks",
+        "library-1",
+        "f" * 64,
+        80,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed',updated_at=81 WHERE scan_id=?",
+        (scan.scan_id,),
+    )
+    refresh_preparation_presentation(repository._connection, 81)
+    if dismissed:
+        terminal = repository.preparation_presentation(81)
+        assert terminal is not None
+        repository.dismiss_preparation_presentation(terminal.run_id, 82)
+    store.write(_settings_with_libraries(2, ("history",)), 1, (), accepted_at=90)
+    store.write(
+        _settings_with_libraries(3, ("ebooks", "history")),
+        2,
+        (),
+        accepted_at=100,
+    )
+    intent = repository.preparation_presentation(100)
+    repository.drain_library_additions(
+        (
+            ("primary", "ebooks", "library-1", "f" * 64),
+            ("primary", "history", "library-2", "f" * 64),
+        ),
+        101,
+    )
+    progress = repository.review_pipeline_progress("primary", "ebooks")
+    presentation = repository.preparation_presentation(101)
+    accepted = repository._connection.execute(
+        "SELECT accepted_count FROM review_preparation_presentation "
+        "WHERE row_id='trigger:library_added'"
+    ).fetchone()
+    repository.close()
+
+    assert intent is not None and intent.state.value == "blocked"
+    assert progress is not None and progress.state == "queued"
+    assert presentation is not None and presentation.run_id == intent.run_id
+    assert accepted == (1,)
+
+
+def test_settings_readd_preserves_same_run_terminal_completion_order(
+    tmp_path: Path,
+) -> None:
+    repository, store = _seed_full_store(
+        tmp_path / "settings-readd-completions.sqlite3", ("ebooks", "history")
+    )
+    for library, library_id, timestamp in (
+        ("ebooks", "library-1", 80),
+        ("history", "library-2", 81),
+    ):
+        repository.request_review_scan(
+            "primary",
+            library,
+            library_id,
+            "f" * 64,
+            timestamp,
+            trigger=PreparationTrigger.MANUAL_SCAN,
+        )
+    for index in range(2):
+        discovery = repository.claim_review_pipeline_action(82 + index * 2)
+        assert discovery is not None and discovery.stage == "discovery"
+        repository.complete_review_discovery(
+            discovery,
+            1,
+            f"{index + 1:064x}",
+            (
+                CatalogueEntry(
+                    "primary",
+                    discovery.library,
+                    "library-1" if discovery.library == "ebooks" else "library-2",
+                    f"item-{index}",
+                    1,
+                    f"Original {index}",
+                    ("Example Author",),
+                    True,
+                    False,
+                    "singular-supported",
+                    f"{index + 10:064x}",
+                    f"/item-{index}.epub",
+                    "epub",
+                    "books",
+                ),
+            ),
+            83 + index * 2,
+        )
+    work_rows = repository._connection.execute(
+        "SELECT work_id FROM review_preparation_work ORDER BY ordinal,work_id"
+    ).fetchall()
+    for index, (work_id,) in enumerate(work_rows):
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET stage='complete',state='complete',updated_at=? "
+            "WHERE work_id=?",
+            (90 + index, work_id),
+        )
+        refresh_preparation_work(repository._connection, work_id, 90 + index)
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed',updated_at=92 "
+        "WHERE library_name='ebooks'"
+    )
+    refresh_preparation_presentation(repository._connection, 92)
+    repository.request_review_scan(
+        "primary",
+        "history",
+        "library-2",
+        "f" * 64,
+        93,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    before = repository._connection.execute(
+        "SELECT display_name,work_outcome,completion_sequence,updated_at "
+        "FROM review_preparation_presentation WHERE row_kind='work' "
+        "ORDER BY completion_sequence"
+    ).fetchall()
+    before_view = repository.preparation_presentation(93)
+
+    store.write(_settings_with_libraries(2, ("history",)), 1, (), accepted_at=94)
+    store.write(
+        _settings_with_libraries(3, ("ebooks", "history")),
+        2,
+        (),
+        accepted_at=95,
+    )
+    validate_preparation_presentation(repository._connection)
+    assert (
+        repository._connection.execute(
+            "SELECT display_name,work_outcome,completion_sequence,updated_at "
+            "FROM review_preparation_presentation WHERE row_kind='work' "
+            "ORDER BY completion_sequence"
+        ).fetchall()
+        == before
+    )
+    repository.drain_library_additions(
+        (
+            ("primary", "ebooks", "library-1", "f" * 64),
+            ("primary", "history", "library-2", "f" * 64),
+        ),
+        96,
+    )
+    after = repository._connection.execute(
+        "SELECT display_name,work_outcome,completion_sequence,updated_at "
+        "FROM review_preparation_presentation WHERE row_kind='work' "
+        "ORDER BY completion_sequence"
+    ).fetchall()
+    after_view = repository.preparation_presentation(96)
+    repository.close()
+
+    assert before == after
+    assert before_view is not None and after_view is not None
+    assert after_view.run_id == before_view.run_id
+    assert after_view.passage == before_view.passage
+    assert after_view.recent_completions == before_view.recent_completions
+    assert after_view.throughput_per_minute > 0
+    reopened = open_repository(
+        tmp_path / "settings-readd-completions.sqlite3", create=False
+    )
+    assert reopened.preparation_presentation(96) == after_view
+    reopened.close()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "UPDATE review_preparation_presentation SET settings_revision=3 "
+        "WHERE row_kind='deferred_enrollment'",
+        "UPDATE review_preparation_presentation SET library_name='private-target' "
+        "WHERE row_kind='deferred_enrollment'",
+    ),
+)
+def test_deferred_settings_authority_corruption_is_value_free(
+    tmp_path: Path, mutation: str
+) -> None:
+    path = tmp_path / "deferred-settings-corruption.sqlite3"
+    repository, store = _seed_full_store(path)
+    store.write(
+        _settings_with_libraries(2, ("ebooks", "history")),
+        1,
+        (),
+        accepted_at=100,
+    )
+    repository.close()
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA ignore_check_constraints=ON")
+    connection.execute(mutation)
+    connection.commit()
+    connection.close()
+    before = path.read_bytes()
+
+    with pytest.raises(
+        MetadataReportError, match="^database is unavailable or incompatible$"
+    ) as raised:
+        open_repository(path, create=False)
+
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert path.read_bytes() == before
 
 
 def test_store_rejects_client_authored_restart_state() -> None:

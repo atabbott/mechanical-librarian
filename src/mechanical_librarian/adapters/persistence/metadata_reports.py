@@ -39,6 +39,10 @@ from mechanical_librarian.adapters.persistence.metadata_policy import (
     SQLiteMetadataPolicyRepository,
 )
 from mechanical_librarian.adapters.persistence.owner_settings import OwnerSettingsStore
+from mechanical_librarian.adapters.persistence.preparation_presentation import (
+    dismiss_preparation_presentation,
+    preparation_presentation_snapshot,
+)
 from mechanical_librarian.adapters.persistence.proposal_sets import (
     SQLiteProposalSetRepository,
     _validate_proposal_row,
@@ -119,6 +123,10 @@ from mechanical_librarian.domain.metadata_policy import (
 )
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
+)
+from mechanical_librarian.domain.preparation_presentation import (
+    PreparationPresentation,
+    PreparationTrigger,
 )
 from mechanical_librarian.domain.proposal_set import (
     ProposalSet,
@@ -205,7 +213,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 )
             ),
         )
-        self._owner_settings = OwnerSettingsStore(connection)
+        self._owner_settings = OwnerSettingsStore(
+            connection, self._setup_serialization_lock
+        )
         self._reviewer_access = ReviewerAccessStore(
             connection, self._setup_serialization_lock
         )
@@ -940,6 +950,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         requested_at: int,
         *,
         first_boot: bool = False,
+        trigger: PreparationTrigger | None = None,
     ) -> PipelineProgress:
         return self._review_scans.request_review_scan(
             connection,
@@ -948,7 +959,42 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             producer_fingerprint,
             requested_at,
             first_boot=first_boot,
+            trigger=trigger,
         )
+
+    def request_library_addition(
+        self,
+        connection: str,
+        library: str,
+        library_id: str,
+        producer_fingerprint: str,
+        requested_at: int,
+    ) -> PipelineProgress | None:
+        return self._review_scans.request_library_addition(
+            connection,
+            library,
+            library_id,
+            producer_fingerprint,
+            requested_at,
+        )
+
+    def deferred_library_additions(self) -> tuple[tuple[str, str], ...]:
+        return self._review_scans.deferred_library_additions()
+
+    def preparation_presentation(self, now: int) -> PreparationPresentation | None:
+        return preparation_presentation_snapshot(self._connection, now)
+
+    def dismiss_preparation_presentation(self, run_id: str, dismissed_at: int) -> None:
+        transaction = self._transaction("dismiss_preparation_presentation")
+        try:
+            transaction.begin()
+            dismiss_preparation_presentation(self._connection, run_id, dismissed_at)
+            transaction.commit()
+            return
+        except BaseException as error:
+            transaction.rollback()
+            failure = error
+        raise failure from None
 
     def review_pipeline_progress(
         self, connection: str, library: str
@@ -965,6 +1011,20 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
 
     def set_review_pipeline_paused(self, paused: bool, updated_at: int) -> None:
         self._review_scans.set_review_pipeline_paused(paused, updated_at)
+
+    def resume_review_pipeline(
+        self,
+        libraries: tuple[tuple[str, str, str, str], ...],
+        updated_at: int,
+    ) -> None:
+        self._review_scans.resume_review_pipeline(libraries, updated_at)
+
+    def drain_library_additions(
+        self,
+        libraries: tuple[tuple[str, str, str, str], ...],
+        updated_at: int,
+    ) -> None:
+        self._review_scans.drain_library_additions(libraries, updated_at)
 
     def recover_review_pipeline(
         self, producers: tuple[tuple[str, str, str, str], ...]
@@ -1901,9 +1961,11 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             if cursor.rowcount != 1:
                 raise MetadataReportError("review preparation state is invalid")
             transaction.commit()
-        except Exception:
+            return
+        except BaseException as error:
             transaction.rollback()
-            raise
+            failure = error
+        raise failure from None
 
 
 class SQLiteShadowPreviewRepository:

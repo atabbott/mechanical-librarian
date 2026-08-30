@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable
 from threading import RLock
-from typing import TypeVar
 
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
+from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.application.reviewer_access import (
     ReviewerAccessRepositoryError,
 )
@@ -15,33 +14,31 @@ from mechanical_librarian.domain.reviewer_access import ReviewerAccessDocument
 from mechanical_librarian.domain.validation import credential
 
 _OPENROUTER_SECRET = "openrouter.api_key"
-_T = TypeVar("_T")
 
 
 class ReviewerAccessStoreError(ReviewerAccessRepositoryError):
     """Value-free reviewer-access persistence failure."""
 
 
-class ReviewerAccessStore:
+class ReviewerAccessStore(ConnectionScoped):
     """One current document plus one write-only OpenRouter secret."""
 
     def __init__(
         self, connection: sqlite3.Connection, lock: RLock | None = None
     ) -> None:
-        self._connection = connection
-        self._lock = lock
+        super().__init__(connection, serialization_lock=lock)
 
     def read(self) -> tuple[ReviewerAccessDocument, bool]:
         def read() -> tuple[ReviewerAccessDocument, bool]:
             document, key = self._snapshot()
             return document, key is not None
 
-        return self._with_lock(read)
+        return self._serialized(read)
 
     def snapshot(self) -> tuple[ReviewerAccessDocument, str | None]:
         """Capture selection and its required secret in one SQLite read boundary."""
 
-        return self._with_lock(self._snapshot)
+        return self._serialized(self._snapshot)
 
     def revision_is_current(self, revision: int) -> bool:
         def check() -> bool:
@@ -61,7 +58,7 @@ class ReviewerAccessStore:
                     "reviewer access is unavailable"
                 ) from error
 
-        return self._with_lock(check)
+        return self._serialized(check)
 
     def openrouter_key(self) -> str:
         """Snapshot the write-only key without holding the store lock afterwards."""
@@ -74,7 +71,7 @@ class ReviewerAccessStore:
                     "reviewer access is unavailable"
                 ) from error
 
-        return self._with_lock(snapshot)
+        return self._serialized(snapshot)
 
     def _openrouter_key(self) -> str:
         rows = self._secret_rows()
@@ -106,55 +103,56 @@ class ReviewerAccessStore:
         ):
             raise ReviewerAccessStoreError("reviewer access is invalid")
 
-        def commit() -> tuple[ReviewerAccessDocument, bool]:
-            try:
-                self._connection.execute("BEGIN IMMEDIATE")
-                current, _ = self._read()
-                if current.revision != expected_revision:
+        transaction = self._transaction("replace_reviewer_access")
+        try:
+            transaction.begin()
+            current, _ = self._read()
+            if current.revision != expected_revision:
+                raise ReviewerAccessStoreError("reviewer access is stale")
+            cursor = self._connection.execute(
+                "UPDATE reviewer_access SET revision=?,document=? WHERE singleton=1 AND revision=?",
+                (
+                    document.revision,
+                    _canonical_json(document.model_dump()),
+                    expected_revision,
+                ),
+            )
+            if cursor.rowcount == 0:
+                if (
+                    expected_revision != 1
+                    or self._connection.execute(
+                        "SELECT 1 FROM reviewer_access WHERE singleton=1"
+                    ).fetchone()
+                    is not None
+                ):
                     raise ReviewerAccessStoreError("reviewer access is stale")
-                cursor = self._connection.execute(
-                    "UPDATE reviewer_access SET revision=?,document=? WHERE singleton=1 AND revision=?",
-                    (
-                        document.revision,
-                        _canonical_json(document.model_dump()),
-                        expected_revision,
-                    ),
+                self._connection.execute(
+                    "INSERT INTO reviewer_access(singleton,revision,document) VALUES(1,?,?)",
+                    (document.revision, _canonical_json(document.model_dump())),
                 )
-                if cursor.rowcount == 0:
-                    if (
-                        expected_revision != 1
-                        or self._connection.execute(
-                            "SELECT 1 FROM reviewer_access WHERE singleton=1"
-                        ).fetchone()
-                        is not None
-                    ):
-                        raise ReviewerAccessStoreError("reviewer access is stale")
-                    self._connection.execute(
-                        "INSERT INTO reviewer_access(singleton,revision,document) VALUES(1,?,?)",
-                        (document.revision, _canonical_json(document.model_dump())),
-                    )
-                if clear_openrouter_key:
-                    self._connection.execute(
-                        "DELETE FROM reviewer_access_secrets WHERE field_id=?",
-                        (_OPENROUTER_SECRET,),
-                    )
-                elif openrouter_key is not None:
-                    self._connection.execute(
-                        "INSERT INTO reviewer_access_secrets(field_id,value) VALUES(?,?) "
-                        "ON CONFLICT(field_id) DO UPDATE SET value=excluded.value",
-                        (_OPENROUTER_SECRET, openrouter_key),
-                    )
-                self._connection.commit()
-                return document, self._configured()
-            except (sqlite3.Error, ReviewerAccessStoreError) as error:
-                self._connection.rollback()
-                if isinstance(error, ReviewerAccessStoreError):
-                    raise
-                raise ReviewerAccessStoreError(
-                    "reviewer access is unavailable"
-                ) from error
-
-        return self._with_lock(commit)
+            if clear_openrouter_key:
+                self._connection.execute(
+                    "DELETE FROM reviewer_access_secrets WHERE field_id=?",
+                    (_OPENROUTER_SECRET,),
+                )
+            elif openrouter_key is not None:
+                self._connection.execute(
+                    "INSERT INTO reviewer_access_secrets(field_id,value) VALUES(?,?) "
+                    "ON CONFLICT(field_id) DO UPDATE SET value=excluded.value",
+                    (_OPENROUTER_SECRET, openrouter_key),
+                )
+            configured = self._configured()
+            transaction.commit()
+            return document, configured
+        except ReviewerAccessStoreError:
+            transaction.rollback()
+            raise
+        except sqlite3.Error as error:
+            transaction.rollback()
+            raise ReviewerAccessStoreError("reviewer access is unavailable") from error
+        except BaseException as error:
+            transaction.rollback()
+            raise error from None
 
     def _read(self) -> tuple[ReviewerAccessDocument, bool]:
         document, key = self._snapshot()
@@ -231,12 +229,6 @@ class ReviewerAccessStore:
         return self._connection.execute(
             "SELECT field_id,value FROM reviewer_access_secrets ORDER BY field_id"
         ).fetchall()
-
-    def _with_lock(self, operation: Callable[[], _T]) -> _T:
-        if self._lock is None:
-            return operation()
-        with self._lock:
-            return operation()
 
 
 __all__ = ["ReviewerAccessStore", "ReviewerAccessStoreError"]

@@ -11,13 +11,14 @@ module drives a real server and a real browser to find out (#641).
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 import time
 from contextlib import closing
 from pathlib import Path
 
 from argon2 import PasswordHasher
-from playwright.sync_api import Page, Response, sync_playwright
+from playwright.sync_api import Page, Response, expect, sync_playwright
 
 from tests.browser.test_review_browser import (
     _PASSWORD,
@@ -367,6 +368,146 @@ def test_a_change_in_one_tab_reaches_another_without_a_reload() -> None:
                 assert len(documents) == documents_before
 
 
+def test_preparation_run_shares_library_workspace_and_compacts_without_losing_state() -> (
+    None
+):
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 1440, "height": 900},
+            )
+            page = context.new_page()
+            with (
+                closing(ReservedPort()) as reserved_port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=reserved_port,
+                    preparation=True,
+                ) as (origin, _case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                works = page.get_by_role("heading", name="Works", exact=True)
+                summary = page.get_by_role("button", name="Preparing your library")
+                works.wait_for()
+                summary.wait_for()
+                assert summary.bounding_box()["y"] < works.bounding_box()["y"]
+
+                summary.click()
+                page.get_by_role("heading", name="Now preparing").wait_for()
+                assert (
+                    page.get_by_role("button", name="Dismiss preparation").count() == 0
+                )
+                page.get_by_text("Preparation book 00").wait_for()
+                assert (
+                    page.get_by_text(re.compile(r"more active books follow")).count()
+                    == 0
+                )
+                assert page.locator(".preparation-active-books li").count() == 1
+                assert page.locator("[data-route-focus]").evaluate(
+                    "element => element === document.activeElement"
+                )
+
+                page.set_viewport_size({"width": 390, "height": 844})
+                page.get_by_role("button", name="Attention queue").click()
+                attention = page.locator(".attention-rail")
+                attention.wait_for()
+                attention.locator(".attention-queue-item").first.click()
+                page.get_by_role(
+                    "heading", name=re.compile(r"^Mistborn")
+                ).first.wait_for()
+                assert page.get_by_role("heading", name="Now preparing").count() == 0
+                expect(page.locator(".selected-work-header")).to_be_focused()
+                decision = page.locator(".decision-canvas")
+                decision.wait_for()
+                expect(decision.locator(".choice-select").first).to_be_enabled()
+                assert "preview=" in page.url and "field=" in page.url
+                assert "preparation=" not in page.url
+
+                page.get_by_role("button", name="Back to works").click()
+                page.get_by_role("button", name="Preparing your library").click()
+                assert page.evaluate(
+                    "document.documentElement.scrollWidth <= window.innerWidth"
+                )
+                page.emulate_media(reduced_motion="reduce")
+                assert (
+                    page.locator(".preparation-run-state").evaluate(
+                        "element => getComputedStyle(element).animationName"
+                    )
+                    == "none"
+                )
+            browser.close()
+
+
+def test_terminal_preparation_dismissal_restores_the_prior_work_decision() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 1440, "height": 900},
+            )
+            page = context.new_page()
+            with (
+                closing(ReservedPort()) as reserved_port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=reserved_port,
+                    preparation=True,
+                    preparation_terminal=True,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
+                page.get_by_role(
+                    "heading", name="Which title should this work use?"
+                ).wait_for()
+                selected_header = page.locator(".selected-work-header")
+                expect(selected_header).to_be_focused()
+
+                page.get_by_role("button", name="Preparation complete").click()
+                preparation_heading = page.get_by_role(
+                    "heading", name="Preparation complete", exact=True
+                )
+                preparation_heading.wait_for()
+                expect(preparation_heading).to_be_focused()
+                assert "preview=" in page.url and "field=title" in page.url
+                page.get_by_role("button", name="Dismiss preparation").click()
+
+                expect(
+                    page.get_by_role("button", name="Preparation complete")
+                ).to_have_count(0)
+                expect(preparation_heading).to_have_count(0)
+                page.get_by_role(
+                    "heading", name="Which title should this work use?"
+                ).wait_for()
+                expect(selected_header).to_be_focused()
+                assert "preview=" in page.url and "field=title" in page.url
+                assert "preparation=" not in page.url
+            browser.close()
+
+
 def test_the_write_surfaces_reflow_rather_than_depend_on_how_wide_their_text_renders() -> (
     None
 ):
@@ -502,7 +643,7 @@ def test_the_write_surfaces_reflow_rather_than_depend_on_how_wide_their_text_ren
                     "**/api/v1/review-preparation",
                     lambda route: route.fulfill(
                         json={
-                            "schema_version": "review-preparation-v1",
+                            "schema_version": "review-preparation-v2",
                             "active": True,
                             "actionable": False,
                             "paused": True,

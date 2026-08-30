@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+from typing import cast
 
 import pytest
 
+from mechanical_librarian.application.review_pipeline import (
+    ReviewPreparationPipeline,
+    ReviewPreparationSupervisor,
+)
+from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
 from mechanical_librarian.interfaces.web.runtime_dispatch import (
     MutableRuntimeDispatcher,
     RuntimeGeneration,
@@ -157,6 +163,81 @@ def test_post_commit_admit_fault_serves_unavailable_and_requests_shutdown() -> N
     assert resources == ["old.drain", "old.close", "new.drain", "new.close"]
     assert not old.admitting and not new.admitting
     assert sent[0]["status"] == 503
+
+
+def test_post_commit_paused_library_addition_keeps_successor_available_until_resume() -> (
+    None
+):
+    class PausedPipeline:
+        libraries = (("primary", "added", "lib-2"),)
+
+        def __init__(self) -> None:
+            self.paused = True
+            self.requests: list[tuple[str, str, PreparationTrigger | None]] = []
+            self.deferred: tuple[tuple[str, str], ...] = ()
+
+        def request_library_addition(
+            self,
+            connection: str,
+            library: str,
+        ) -> object | None:
+            if self.paused:
+                self.deferred = ((connection, library),)
+                return None
+            self.requests.append(
+                (connection, library, PreparationTrigger.LIBRARY_ADDED)
+            )
+            self.deferred = ()
+            return object()
+
+        def deferred_library_additions(self) -> tuple[tuple[str, str], ...]:
+            return self.deferred
+
+        def set_paused(self, paused: bool) -> None:
+            self.paused = paused
+            if not paused:
+                self.requests.extend(
+                    (connection, library, PreparationTrigger.LIBRARY_ADDED)
+                    for connection, library in self.deferred
+                )
+                self.deferred = ()
+
+    pipeline = cast(ReviewPreparationPipeline, PausedPipeline())
+    supervisor = ReviewPreparationSupervisor(pipeline)
+    shutdown: list[str] = []
+    settings_commits: list[str] = []
+    available: list[str] = []
+
+    async def successor_app(scope: object, receive: object, send: object) -> None:
+        available.append("served")
+
+    predecessor = RuntimeGeneration(_app)
+
+    def admit_successor() -> None:
+        supervisor.request_library_addition("primary", "added")
+
+    successor = RuntimeGeneration(successor_app, admit=admit_successor)
+    dispatcher = MutableRuntimeDispatcher(
+        predecessor, request_shutdown=lambda: shutdown.append("shutdown")
+    )
+    dispatcher.start()
+    dispatcher.prepare(successor)
+    dispatcher.transition(
+        predecessor,
+        successor,
+        lambda: settings_commits.append("library-added"),
+    )
+    asyncio.run(dispatcher({"type": "http"}, _receive, _send))
+
+    assert settings_commits == ["library-added"]
+    assert dispatcher.current() is successor
+    assert shutdown == []
+    assert available == ["served"]
+    assert pipeline.requests == []
+
+    supervisor.set_paused(False)
+    supervisor.set_paused(False)
+    assert pipeline.requests == [("primary", "added", PreparationTrigger.LIBRARY_ADDED)]
 
 
 def test_initial_budget_failure_closes_dormant_generation() -> None:

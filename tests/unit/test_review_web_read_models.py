@@ -72,6 +72,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
     default_target_fields,
 )
+from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.interfaces.web.app import _CoverOmission
@@ -629,6 +630,9 @@ def test_review_preparation_is_authenticated_csrf_bound_and_bounded(
     )
     assert requested.status_code == 202
     assert requested.json()["state"] == "processing"
+    assert preparation.requests == [
+        ("primary", "fiction", PreparationTrigger.MANUAL_SCAN)
+    ]
     retried = web.client.post(
         "/api/v1/review-preparation/primary/fiction/retry",
         headers={**web.origin, "x-csrf-token": session["csrf_token"]},

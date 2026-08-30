@@ -157,6 +157,7 @@ export interface LibrarySearch {
   work?: string
   field?: string
   attention?: 'open'
+  preparation?: string
 }
 export interface AttentionSearch {
   q?: string
@@ -708,6 +709,7 @@ export interface ReviewHttp {
     path: string,
     signal?: AbortSignal,
   ): Promise<PreparationView | PreparationProgress>
+  dismissPreparation(runId: string, signal?: AbortSignal): Promise<PreparationView>
   recordDecision(
     reviewCaseId: string,
     command: DecisionCommand,
@@ -972,6 +974,11 @@ export class ReviewApiClient implements ReviewHttp {
     const value = await this.mutate(`/api/v1/review-preparation/${path}`, undefined, signal)
     if (/(?:^|\/)(?:scan|retry)$/.test(path)) return preparationProgress(value)
     return mapPreparation(value)
+  }
+  async dismissPreparation(runId: string, signal?: AbortSignal) {
+    return mapPreparation(
+      await this.mutate('/api/v1/review-preparation/dismiss', { run_id: runId }, signal),
+    )
   }
   async recordDecision(id: string, command: DecisionCommand, signal?: AbortSignal) {
     const {
@@ -1596,10 +1603,116 @@ const preparationProgress = (value: unknown): PreparationProgress => {
   // only re-attaches the generated type to an already-verified document.
   return value as unknown as PreparationProgress
 }
+const preparationPresentation = (value: unknown) => {
+  if (!record(value)) throw new ApiError(502, 'invalid_preparation_presentation')
+  const runId = stringValue(value.run_id, 'preparation_run_id')
+  if (!/^preparation_run_[0-9a-f]{64}$/u.test(runId))
+    throw new ApiError(502, 'invalid_preparation_run_id')
+  const state = stringValue(value.state, 'preparation_state')
+  const terminal = ['completed_clean', 'completed_with_failures', 'dismissed'].includes(state)
+  if (
+    ![
+      'starting',
+      'running',
+      'blocked',
+      'completed_clean',
+      'completed_with_failures',
+      'dismissed',
+    ].includes(state) ||
+    !record(value.passage) ||
+    !Array.isArray(value.triggers) ||
+    !Array.isArray(value.active_books) ||
+    value.active_books.length > 5 ||
+    !Array.isArray(value.recent_completions) ||
+    value.recent_completions.length > 8 ||
+    typeof value.dismissible !== 'boolean' ||
+    typeof value.throughput_per_minute !== 'number' ||
+    !Number.isFinite(value.throughput_per_minute) ||
+    value.throughput_per_minute < 0
+  )
+    throw new ApiError(502, 'invalid_preparation_presentation')
+  const rawPassage = value.passage
+  const passage = {
+    read: integerValue(rawPassage.read, 'preparation_passage_read'),
+    searchesFinished: integerValue(
+      rawPassage.searches_finished,
+      'preparation_passage_searches_finished',
+    ),
+    compared: integerValue(rawPassage.compared, 'preparation_passage_compared'),
+    checked: integerValue(rawPassage.checked, 'preparation_passage_checked'),
+    ready: integerValue(rawPassage.ready, 'preparation_passage_ready'),
+    failed: integerValue(rawPassage.failed, 'preparation_passage_failed'),
+  }
+  if (
+    passage.searchesFinished > passage.read ||
+    passage.compared > passage.searchesFinished ||
+    passage.checked > passage.compared ||
+    passage.ready > passage.checked
+  )
+    throw new ApiError(502, 'invalid_preparation_passage_order')
+  if (value.triggers.length < 1 || value.triggers.length > 3)
+    throw new ApiError(502, 'invalid_preparation_trigger')
+  const triggerFamilies = new Set<string>()
+  for (const trigger of value.triggers) {
+    if (!record(trigger)) throw new ApiError(502, 'invalid_preparation_trigger')
+    if (
+      !['initial_setup', 'manual_scan', 'library_added'].includes(
+        stringValue(trigger.trigger, 'preparation_trigger'),
+      )
+    )
+      throw new ApiError(502, 'invalid_preparation_trigger')
+    const family = stringValue(trigger.trigger, 'preparation_trigger')
+    if (triggerFamilies.has(family)) throw new ApiError(502, 'invalid_preparation_trigger')
+    triggerFamilies.add(family)
+    const acceptedCount = integerValue(trigger.accepted_count, 'preparation_trigger_accepted_count')
+    const firstAccepted = integerValue(
+      trigger.first_accepted_at,
+      'preparation_trigger_first_accepted_at',
+    )
+    const lastAccepted = integerValue(
+      trigger.last_accepted_at,
+      'preparation_trigger_last_accepted_at',
+    )
+    if (acceptedCount < 1 || lastAccepted < firstAccepted)
+      throw new ApiError(502, 'invalid_preparation_trigger')
+  }
+  const total = integerValue(value.total, 'preparation_total')
+  const activeOverflow = integerValue(value.active_overflow, 'preparation_active_overflow')
+  const startedAt = integerValue(value.started_at, 'preparation_started_at')
+  const updatedAt = integerValue(value.updated_at, 'preparation_updated_at')
+  const completedAt =
+    value.completed_at === null
+      ? null
+      : integerValue(value.completed_at, 'preparation_completed_at')
+  if (
+    Object.values(passage).some((count) => count > total) ||
+    value.active_books.length + activeOverflow > total ||
+    updatedAt < startedAt ||
+    (terminal && (completedAt === null || completedAt < startedAt)) ||
+    (!terminal && completedAt !== null)
+  )
+    throw new ApiError(502, 'invalid_preparation_passage_total')
+  for (const active of value.active_books) {
+    if (!record(active)) throw new ApiError(502, 'invalid_preparation_active_book')
+    boundedStringValue(active.name, 'preparation_active_name', 2048)
+    boundedStringValue(active.stage, 'preparation_active_stage', 64)
+  }
+  for (const completion of value.recent_completions) {
+    if (!record(completion)) throw new ApiError(502, 'invalid_preparation_completion')
+    boundedStringValue(completion.name, 'preparation_completion_name', 2048)
+    if (
+      !['ready', 'failed'].includes(
+        stringValue(completion.outcome, 'preparation_completion_outcome'),
+      )
+    )
+      throw new ApiError(502, 'invalid_preparation_completion')
+    integerValue(completion.completed_at, 'preparation_completion_completed_at')
+  }
+}
 export const mapPreparation = (value: unknown): PreparationView => {
   if (
     !record(value) ||
-    value.schema_version !== 'review-preparation-v1' ||
+    value.schema_version !== 'review-preparation-v2' ||
     !Array.isArray(value.libraries) ||
     !Array.isArray(value.connections) ||
     typeof value.paused !== 'boolean' ||
@@ -1607,6 +1720,9 @@ export const mapPreparation = (value: unknown): PreparationView => {
     typeof value.actionable !== 'boolean' ||
     (value.first_boot !== undefined && typeof value.first_boot !== 'boolean') ||
     (value.first_boot_complete !== undefined && typeof value.first_boot_complete !== 'boolean') ||
+    (value.presentation !== null &&
+      value.presentation !== undefined &&
+      !record(value.presentation)) ||
     (value.first_boot_works !== undefined &&
       value.first_boot_works !== null &&
       (typeof value.first_boot_works !== 'number' ||
@@ -1614,6 +1730,8 @@ export const mapPreparation = (value: unknown): PreparationView => {
         value.first_boot_works < 0))
   )
     throw new ApiError(502, 'invalid_preparation_response')
+  if (value.presentation !== null && value.presentation !== undefined)
+    preparationPresentation(value.presentation)
   value.libraries.forEach((item, index) => {
     if (!record(item)) throw new ApiError(502, `invalid_preparation_library_${String(index)}`)
     preparationProgress(item)

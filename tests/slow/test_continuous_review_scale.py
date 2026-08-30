@@ -348,7 +348,10 @@ class _WorkspaceProbe:
             assert elapsed_ms <= _FOREGROUND_RESPONSE_BUDGET_MS
         if phase == "late":
             assert self._case_id is not None
-            page.goto(f"{origin}/library?lens=all&preview={self._case_id}&field=title")
+            page.goto(
+                f"{origin}/library?lens=all&q={_FIXTURE_CURRENT_TITLE}"
+                f"&preview={self._case_id}&field=title"
+            )
             recorded_field = page.get_by_role(
                 "button", name=re.compile(r"^Title.*Decision recorded$")
             )

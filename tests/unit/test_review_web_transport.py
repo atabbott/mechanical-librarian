@@ -14,6 +14,7 @@ import tempfile
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -51,6 +52,15 @@ from mechanical_librarian.application.review_web import (
 from mechanical_librarian.bootstrap.composition import run_review_server
 from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
+from mechanical_librarian.domain.preparation_presentation import (
+    PreparationActiveBook,
+    PreparationCompletion,
+    PreparationPassage,
+    PreparationPresentation,
+    PreparationRunState,
+    PreparationTrigger,
+    PreparationTriggerRecord,
+)
 from mechanical_librarian.domain.proposal_set import (
     ProposalAlternative,
     ProposalAssessment,
@@ -1101,6 +1111,113 @@ def test_one_explicit_decision_requires_csrf_and_is_server_authoritative(
     assert len(web.repository.decisions) == 1
 
 
+def _preparation_presentation(state: PreparationRunState) -> PreparationPresentation:
+    terminal = state in {
+        PreparationRunState.COMPLETED_CLEAN,
+        PreparationRunState.COMPLETED_WITH_FAILURES,
+        PreparationRunState.DISMISSED,
+    }
+    return PreparationPresentation(
+        run_id="preparation_run_" + "a" * 64,
+        state=state,
+        triggers=(
+            PreparationTriggerRecord(
+                PreparationTrigger.MANUAL_SCAN,
+                1,
+                100,
+                100,
+            ),
+        ),
+        passage=PreparationPassage(1, 1, 1, 1, 1, 0),
+        active_books=(),
+        active_overflow=0,
+        recent_completions=(),
+        throughput_per_minute=1.0,
+        started_at=100,
+        updated_at=101,
+        completed_at=101 if terminal else None,
+        total=1,
+    )
+
+
+def test_preparation_dismissal_is_authenticated_guarded_and_stale_safe(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    path = "/api/v1/review-preparation/dismiss"
+    run_id = "preparation_run_" + "a" * 64
+    anonymous = web.client.post(path, headers=web.origin, json={"run_id": run_id})
+    assert anonymous.status_code == 401
+    assert anonymous.headers["cache-control"] == "no-store, private"
+
+    login = web.login()
+    missing_csrf = web.client.post(path, headers=web.origin, json={"run_id": run_id})
+    assert missing_csrf.status_code == 422
+    bad_csrf = web.client.post(
+        path,
+        headers={**web.origin, "x-csrf-token": "wrong"},
+        json={"run_id": run_id},
+    )
+    assert bad_csrf.status_code == 403
+    headers = {**web.origin, "x-csrf-token": login["csrf_token"]}
+    stale = web.client.post(path, headers=headers, json={"run_id": run_id})
+    assert stale.status_code == 409
+    assert stale.json()["error"]["code"] == "stale"
+
+    web.repository.preparation_presentation_value = _preparation_presentation(
+        PreparationRunState.BLOCKED
+    )
+    blocked = web.client.post(path, headers=headers, json={"run_id": run_id})
+    assert blocked.status_code == 409
+    assert blocked.json()["error"]["code"] == "blocked"
+
+    web.repository.dismiss_preparation_error = RuntimeError("database unavailable")
+    unavailable = web.client.post(path, headers=headers, json={"run_id": run_id})
+    assert unavailable.status_code == 503
+    assert unavailable.json()["error"]["code"] == "persistence"
+    web.repository.dismiss_preparation_error = None
+
+    web.repository.preparation_presentation_value = _preparation_presentation(
+        PreparationRunState.COMPLETED_WITH_FAILURES
+    )
+    accepted = web.client.post(path, headers=headers, json={"run_id": run_id})
+    assert accepted.status_code == 200
+    assert accepted.headers["cache-control"] == "no-store, private"
+    assert accepted.json()["presentation"] is None
+    assert web.repository.dismissed_preparation_runs == [run_id]
+    current = web.client.get("/api/v1/review-preparation")
+    assert current.status_code == 200
+    assert current.headers["cache-control"] == "no-store, private"
+    assert current.json()["presentation"] is None
+
+
+def test_preparation_dismissal_rejects_declared_and_streamed_oversized_bodies(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    path = "/api/v1/review-preparation/dismiss"
+    login = web.login()
+    headers = {**web.origin, "x-csrf-token": login["csrf_token"]}
+
+    declared = web.client.post(
+        path,
+        headers={**headers, "content-length": "2049"},
+        content=b"{}",
+    )
+    streamed = web.client.post(
+        path,
+        headers={**headers, "content-type": "application/json"},
+        content=iter((b'{"run_id":"', b"x" * 2048, b'"}')),
+    )
+
+    for response in (declared, streamed):
+        assert response.status_code == 413
+        assert response.headers["cache-control"] == "no-store, private"
+        assert response.json() == {
+            "schema_version": "review-error-v1",
+            "error": {"code": "body_too_large"},
+        }
+    assert web.repository.dismissed_preparation_runs == []
+
+
 def test_review_page_rotates_one_memory_only_csrf_token(
     web: ReviewWebContext[FakeReviewRepository],
 ) -> None:
@@ -1108,7 +1225,7 @@ def test_review_page_rotates_one_memory_only_csrf_token(
     inactive = web.client.get("/api/v1/review-preparation")
     assert inactive.status_code == 200, inactive.text
     assert inactive.json() == {
-        "schema_version": "review-preparation-v1",
+        "schema_version": "review-preparation-v2",
         "libraries": [],
         "paused": False,
         "active": False,
@@ -1117,6 +1234,7 @@ def test_review_page_rotates_one_memory_only_csrf_token(
         "first_boot": False,
         "first_boot_complete": False,
         "first_boot_works": None,
+        "presentation": None,
     }
     page = web.client.get(f"/review/{web.case.review_case_id}")
     assert page.status_code == 200, page.text
@@ -1158,6 +1276,27 @@ def test_review_page_rotates_one_memory_only_csrf_token(
         json=payload,
     )
     assert accepted.status_code == 200, accepted.text
+
+
+@pytest.mark.parametrize("name", ("x" * 2048, "界" * 682 + "ab"))
+def test_preparation_http_preserves_maximum_display_names(
+    web: ReviewWebContext[FakeReviewRepository], name: str
+) -> None:
+    assert len(name.encode("utf-8")) == 2048
+    presentation = _preparation_presentation(PreparationRunState.RUNNING)
+    web.repository.preparation_presentation_value = replace(
+        presentation,
+        active_books=(PreparationActiveBook(name, "Reading from library"),),
+        recent_completions=(PreparationCompletion(name, "ready", 101),),
+    )
+    web.login()
+
+    response = web.client.get("/api/v1/review-preparation")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.json()["presentation"]["active_books"][0]["name"] == name
+    assert response.json()["presentation"]["recent_completions"][0]["name"] == name
 
 
 def test_authenticated_page_preserves_csrf_rotation_persistence_failure(
@@ -1624,6 +1763,7 @@ def test_openapi_is_deterministic_and_secret_free(
         ),
         ("post", "/api/v1/metadata-policy/validate"),
         ("get", "/api/v1/review-preparation"),
+        ("post", "/api/v1/review-preparation/dismiss"),
         ("post", "/api/v1/review-preparation/first-boot/acknowledge"),
         # The live invalidation stream is a protected read like any other.
         ("get", "/api/v1/updates"),

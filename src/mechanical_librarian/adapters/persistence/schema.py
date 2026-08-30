@@ -36,6 +36,9 @@ from mechanical_librarian.adapters.persistence.field_effect_validation import (
 from mechanical_librarian.adapters.persistence.owner_settings import (
     _validate_owner_settings_content,
 )
+from mechanical_librarian.adapters.persistence.preparation_presentation import (
+    validate_preparation_presentation,
+)
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.automatic_decision import AutomaticDecisionError
 from mechanical_librarian.domain.cover_automatic_decision import (
@@ -283,6 +286,46 @@ _REVIEW_CONTROL_SQL = (
     "last_library TEXT CHECK(last_library IS NULL OR (typeof(last_library)='text' AND length(CAST(last_library AS BLOB)) BETWEEN 1 AND 64 AND last_library NOT GLOB '*[^a-z0-9_-]*' AND substr(last_library,1,1) GLOB '[a-z]')), circuit_failures INTEGER NOT NULL CHECK(circuit_failures BETWEEN 0 AND 3), "
     "circuit_open_until INTEGER NOT NULL CHECK(circuit_open_until>=0), updated_at INTEGER NOT NULL CHECK(updated_at>=0))"
 )
+_REVIEW_PREPARATION_PRESENTATION_WORK_SHAPE_SQL = "(row_kind='work' AND row_id='work:'||work_id AND scan_id IS NOT NULL AND connection_name IS NULL AND library_name IS NULL AND cycle_id IS NOT NULL AND pending_cycle_id IS NULL AND cycle_state IS NULL AND work_id IS NOT NULL AND ordinal IS NOT NULL AND trigger_ordinal IS NULL AND enrollment_ordinal IS NOT NULL AND display_name IS NOT NULL AND work_stage IS NOT NULL AND current_work_state IS NOT NULL AND ((work_outcome IS NULL AND completion_sequence IS NULL) OR (work_outcome IS NOT NULL AND completion_sequence IS NOT NULL)) AND ((recovery_high_water_stage IS NULL AND recovery_high_water_outcome IS NULL) OR recovery_high_water_stage IS NOT NULL) AND completion_count IS NULL AND trigger IS NULL AND accepted_count IS NULL AND accepted_at IS NULL AND settings_revision IS NULL AND first_accepted_at IS NULL AND last_accepted_at IS NULL AND state IS NULL AND started_at IS NULL AND completed_at IS NULL AND total IS NULL AND active_count IS NULL AND read IS NULL AND searches_finished IS NULL AND compared IS NULL AND checked IS NULL AND ready IS NULL AND failed IS NULL)"
+_REVIEW_PREPARATION_PRESENTATION_SQL = (
+    "CREATE TABLE review_preparation_presentation ("
+    "row_id TEXT PRIMARY KEY NOT NULL, row_kind TEXT NOT NULL CHECK(row_kind IN ('run','trigger','enrollment','deferred_enrollment','work')), "
+    "run_id TEXT NOT NULL CHECK(run_id GLOB 'preparation_run_[0-9a-f]*' AND length(run_id)=80), "
+    "state TEXT CHECK(state IS NULL OR state IN ('starting','running','blocked','completed_clean','completed_with_failures','dismissed')), "
+    "trigger TEXT CHECK(trigger IS NULL OR trigger IN ('initial_setup','manual_scan','library_added')), "
+    "scan_id TEXT, connection_name TEXT, library_name TEXT, cycle_id TEXT CHECK(cycle_id IS NULL OR (substr(cycle_id,1,18)='preparation_cycle_' AND length(cycle_id)=82 AND substr(cycle_id,19) NOT GLOB '*[^0-9a-f]*')), pending_cycle_id TEXT CHECK(pending_cycle_id IS NULL OR (substr(pending_cycle_id,1,18)='preparation_cycle_' AND length(pending_cycle_id)=82 AND substr(pending_cycle_id,19) NOT GLOB '*[^0-9a-f]*')), cycle_state TEXT CHECK(cycle_state IS NULL OR cycle_state IN ('queued','discovering','processing','completed','completed_with_failures')), work_id TEXT, ordinal INTEGER CHECK(ordinal IS NULL OR ordinal>=0), trigger_ordinal INTEGER CHECK(trigger_ordinal IS NULL OR trigger_ordinal BETWEEN 0 AND 2), enrollment_ordinal INTEGER CHECK(enrollment_ordinal IS NULL OR enrollment_ordinal>=0), "
+    "display_name TEXT CHECK(display_name IS NULL OR (typeof(display_name)='text' AND length(CAST(display_name AS BLOB)) BETWEEN 1 AND 2048)), "
+    "work_stage TEXT CHECK(work_stage IS NULL OR work_stage IN ('extraction','provider','proposal','admission','projection')), "
+    "current_work_state TEXT CHECK(current_work_state IS NULL OR current_work_state IN ('queued','delayed','running','complete','failed','stale')), work_outcome TEXT CHECK(work_outcome IS NULL OR work_outcome IN ('ready','failed')), recovery_high_water_stage TEXT CHECK(recovery_high_water_stage IS NULL OR recovery_high_water_stage IN ('extraction','provider','proposal','admission','projection')), recovery_high_water_outcome TEXT CHECK(recovery_high_water_outcome IS NULL OR recovery_high_water_outcome IN ('ready','failed')), completion_sequence INTEGER CHECK(completion_sequence IS NULL OR completion_sequence>0), completion_count INTEGER CHECK(completion_count IS NULL OR completion_count>=0), "
+    "accepted_count INTEGER CHECK(accepted_count IS NULL OR accepted_count>0), accepted_at INTEGER CHECK(accepted_at IS NULL OR accepted_at>=0), settings_revision INTEGER CHECK(settings_revision IS NULL OR settings_revision>0), first_accepted_at INTEGER CHECK(first_accepted_at IS NULL OR first_accepted_at>=0), last_accepted_at INTEGER CHECK(last_accepted_at IS NULL OR last_accepted_at>=0), "
+    "started_at INTEGER CHECK(started_at IS NULL OR started_at>=0), updated_at INTEGER NOT NULL CHECK(updated_at>=0), completed_at INTEGER CHECK(completed_at IS NULL OR completed_at>=0), "
+    "total INTEGER CHECK(total IS NULL OR total>=0), active_count INTEGER CHECK(active_count IS NULL OR active_count>=0), read INTEGER CHECK(read IS NULL OR read>=0), searches_finished INTEGER CHECK(searches_finished IS NULL OR searches_finished>=0), compared INTEGER CHECK(compared IS NULL OR compared>=0), checked INTEGER CHECK(checked IS NULL OR checked>=0), ready INTEGER CHECK(ready IS NULL OR ready>=0), failed INTEGER CHECK(failed IS NULL OR failed>=0), "
+    "CHECK(" + _REVIEW_PREPARATION_PRESENTATION_WORK_SHAPE_SQL + " OR "
+    "(row_kind='run' AND row_id='run' AND state IS NOT NULL AND started_at IS NOT NULL AND updated_at>=started_at AND ((state IN ('completed_clean','completed_with_failures','dismissed') AND completed_at IS NOT NULL AND completed_at>=started_at) OR (state NOT IN ('completed_clean','completed_with_failures','dismissed') AND completed_at IS NULL)) AND total IS NOT NULL AND active_count IS NOT NULL AND read IS NOT NULL AND searches_finished IS NOT NULL AND compared IS NOT NULL AND checked IS NOT NULL AND ready IS NOT NULL AND failed IS NOT NULL AND completion_count IS NOT NULL AND trigger IS NULL AND scan_id IS NULL AND connection_name IS NULL AND library_name IS NULL AND cycle_id IS NULL AND pending_cycle_id IS NULL AND cycle_state IS NULL AND work_id IS NULL AND ordinal IS NULL AND trigger_ordinal IS NULL AND enrollment_ordinal IS NULL AND display_name IS NULL AND work_stage IS NULL AND current_work_state IS NULL AND work_outcome IS NULL AND recovery_high_water_stage IS NULL AND recovery_high_water_outcome IS NULL AND completion_sequence IS NULL AND accepted_count IS NULL AND accepted_at IS NULL AND settings_revision IS NULL AND first_accepted_at IS NULL AND last_accepted_at IS NULL) OR "
+    "(row_kind='trigger' AND row_id='trigger:'||trigger AND trigger IS NOT NULL AND trigger_ordinal IS NOT NULL AND accepted_count IS NOT NULL AND first_accepted_at IS NOT NULL AND last_accepted_at IS NOT NULL AND last_accepted_at>=first_accepted_at AND state IS NULL AND scan_id IS NULL AND connection_name IS NULL AND library_name IS NULL AND cycle_id IS NULL AND pending_cycle_id IS NULL AND cycle_state IS NULL AND work_id IS NULL AND ordinal IS NULL AND enrollment_ordinal IS NULL AND display_name IS NULL AND work_stage IS NULL AND current_work_state IS NULL AND work_outcome IS NULL AND recovery_high_water_stage IS NULL AND recovery_high_water_outcome IS NULL AND completion_sequence IS NULL AND completion_count IS NULL AND accepted_at IS NULL AND settings_revision IS NULL AND started_at IS NULL AND completed_at IS NULL AND total IS NULL AND active_count IS NULL AND read IS NULL AND searches_finished IS NULL AND compared IS NULL AND checked IS NULL AND ready IS NULL AND failed IS NULL) OR "
+    "(row_kind='enrollment' AND trigger IS NULL AND scan_id IS NOT NULL AND connection_name IS NOT NULL AND library_name IS NOT NULL AND (cycle_id IS NOT NULL OR pending_cycle_id IS NOT NULL) AND (cycle_id IS NULL OR pending_cycle_id IS NULL OR cycle_id<>pending_cycle_id) AND cycle_state IS NOT NULL AND (cycle_id IS NOT NULL OR cycle_state='queued') AND (cycle_state NOT IN ('completed','completed_with_failures') OR pending_cycle_id IS NULL) AND work_id IS NULL AND ordinal IS NOT NULL AND trigger_ordinal IS NULL AND enrollment_ordinal IS NULL AND display_name IS NULL AND work_stage IS NULL AND current_work_state IS NULL AND work_outcome IS NULL AND recovery_high_water_stage IS NULL AND recovery_high_water_outcome IS NULL AND completion_sequence IS NULL AND completion_count IS NULL AND accepted_count IS NULL AND accepted_at IS NULL AND settings_revision IS NULL AND first_accepted_at IS NULL AND last_accepted_at IS NULL AND state IS NULL AND started_at IS NULL AND completed_at IS NULL AND total IS NULL AND active_count IS NULL AND read IS NULL AND searches_finished IS NULL AND compared IS NULL AND checked IS NULL AND ready IS NULL AND failed IS NULL) OR "
+    "(row_kind='deferred_enrollment' AND trigger IS NULL AND scan_id IS NULL AND connection_name IS NOT NULL AND library_name IS NOT NULL AND cycle_id IS NULL AND pending_cycle_id IS NULL AND cycle_state IS NULL AND work_id IS NULL AND ordinal IS NOT NULL AND trigger_ordinal IS NULL AND enrollment_ordinal IS NULL AND display_name IS NULL AND work_stage IS NULL AND current_work_state IS NULL AND work_outcome IS NULL AND recovery_high_water_stage IS NULL AND recovery_high_water_outcome IS NULL AND completion_sequence IS NULL AND completion_count IS NULL AND accepted_count IS NULL AND accepted_at IS NOT NULL AND settings_revision IS NOT NULL AND first_accepted_at IS NULL AND last_accepted_at IS NULL AND state IS NULL AND started_at IS NULL AND completed_at IS NULL AND total IS NULL AND active_count IS NULL AND read IS NULL AND searches_finished IS NULL AND compared IS NULL AND checked IS NULL AND ready IS NULL AND failed IS NULL)))"
+)
+_REVIEW_PREPARATION_PRESENTATION_RUN_INDEX_SQL = (
+    "CREATE INDEX review_preparation_presentation_run "
+    "ON review_preparation_presentation(run_id,row_kind,ordinal)"
+)
+_REVIEW_PREPARATION_PRESENTATION_ACTIVE_INDEX_SQL = (
+    "CREATE INDEX review_preparation_presentation_active ON review_preparation_presentation("
+    "run_id,current_work_state,enrollment_ordinal,ordinal,work_id) WHERE row_kind='work'"
+)
+_REVIEW_PREPARATION_PRESENTATION_RECENT_INDEX_SQL = (
+    "CREATE UNIQUE INDEX review_preparation_presentation_recent ON review_preparation_presentation("
+    "run_id,completion_sequence DESC) WHERE row_kind='work' AND work_outcome IS NOT NULL"
+)
+_REVIEW_PREPARATION_PRESENTATION_COMPLETION_INTEGRITY_INDEX_SQL = (
+    "CREATE INDEX review_preparation_presentation_completion_integrity ON review_preparation_presentation("
+    "run_id,completion_sequence) WHERE row_kind='work' AND completion_sequence IS NOT NULL"
+)
+_REVIEW_PREPARATION_PRESENTATION_THROUGHPUT_INDEX_SQL = (
+    "CREATE INDEX review_preparation_presentation_throughput ON review_preparation_presentation("
+    "run_id,updated_at) WHERE row_kind='work' AND work_outcome IS NOT NULL"
+)
 _REVIEW_CONNECTION_CONDITIONS_SQL = (
     "CREATE TABLE review_preparation_connection_conditions ("
     "connection_name TEXT PRIMARY KEY NOT NULL CHECK(typeof(connection_name)='text' AND length(CAST(connection_name AS BLOB)) BETWEEN 1 AND 64 AND connection_name NOT GLOB '*[^a-z0-9_-]*' AND substr(connection_name,1,1) GLOB '[a-z]'), "
@@ -304,7 +347,12 @@ _REVIEW_WORK_SQL = (
     "report_id TEXT REFERENCES metadata_reports(report_id), recovery_source_report_id TEXT REFERENCES metadata_reports(report_id), proposal_set_id TEXT REFERENCES proposal_sets(proposal_set_id), review_case_id TEXT REFERENCES review_cases(review_case_id), "
     "failure_code TEXT CHECK(failure_code IS NULL OR failure_code IN ('provider','configuration','authentication','stale','transient','projection','failed','currentness','persistence','unsupported_media','unreadable_media','parser_refused','missing_required_input','malformed_retained_data','internal_failure','local_evidence_only','unknown')), "
     "failure_root TEXT CHECK(failure_root IS NULL OR (failure_code='authentication' AND typeof(failure_root)='text' AND length(CAST(failure_root AS BLOB)) BETWEEN 1 AND 64 AND failure_root NOT GLOB '*[^a-z0-9_-]*' AND substr(failure_root,1,1) GLOB '[a-z]')), "
-    "updated_at INTEGER NOT NULL CHECK(updated_at>=0), UNIQUE(scan_id,item_id))"
+    "presentation_recovery_cycle_id TEXT CHECK(presentation_recovery_cycle_id IS NULL OR (presentation_recovery_cycle_id GLOB 'preparation_cycle_[0-9a-f]*' AND length(presentation_recovery_cycle_id)=82)), "
+    "presentation_recovery_stage TEXT CHECK(presentation_recovery_stage IS NULL OR presentation_recovery_stage IN ('extraction','provider','proposal','admission','projection')), "
+    "presentation_recovery_outcome TEXT CHECK(presentation_recovery_outcome IS NULL OR presentation_recovery_outcome IN ('ready','failed')), "
+    "updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
+    "CHECK((presentation_recovery_cycle_id IS NULL AND presentation_recovery_stage IS NULL AND presentation_recovery_outcome IS NULL) OR (presentation_recovery_cycle_id IS NOT NULL AND presentation_recovery_stage IS NOT NULL)), "
+    "UNIQUE(scan_id,item_id))"
 )
 _REVIEW_ABSENCES_SQL = (
     "CREATE TABLE review_preparation_absences ("
@@ -667,6 +715,12 @@ def _create_schema(connection: sqlite3.Connection) -> None:
         "INSERT INTO review_preparation_control(singleton,paused,claim_sequence,first_boot_acknowledged,last_library,circuit_failures,circuit_open_until,updated_at) VALUES(?,?,?,?,?,?,?,?)",
         _SETUP_REVIEW_CONTROL_ROW,
     )
+    connection.execute(_REVIEW_PREPARATION_PRESENTATION_SQL)
+    connection.execute(_REVIEW_PREPARATION_PRESENTATION_ACTIVE_INDEX_SQL)
+    connection.execute(_REVIEW_PREPARATION_PRESENTATION_RECENT_INDEX_SQL)
+    connection.execute(_REVIEW_PREPARATION_PRESENTATION_COMPLETION_INTEGRITY_INDEX_SQL)
+    connection.execute(_REVIEW_PREPARATION_PRESENTATION_RUN_INDEX_SQL)
+    connection.execute(_REVIEW_PREPARATION_PRESENTATION_THROUGHPUT_INDEX_SQL)
     connection.execute(_REVIEW_CONNECTION_CONDITIONS_SQL)
     connection.execute(_REVIEW_WORK_SQL)
     connection.execute(_METADATA_POLICY_TRANSITION_ITEMS_SQL)
@@ -836,8 +890,34 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
                 None,
             ),
             ("index", "sqlite_autoindex_review_preparation_scans_1", None),
+            ("index", "sqlite_autoindex_review_preparation_presentation_1", None),
             ("index", "sqlite_autoindex_review_preparation_work_1", None),
             ("index", "sqlite_autoindex_review_preparation_work_2", None),
+            (
+                "index",
+                "review_preparation_presentation_active",
+                _REVIEW_PREPARATION_PRESENTATION_ACTIVE_INDEX_SQL,
+            ),
+            (
+                "index",
+                "review_preparation_presentation_completion_integrity",
+                _REVIEW_PREPARATION_PRESENTATION_COMPLETION_INTEGRITY_INDEX_SQL,
+            ),
+            (
+                "index",
+                "review_preparation_presentation_recent",
+                _REVIEW_PREPARATION_PRESENTATION_RECENT_INDEX_SQL,
+            ),
+            (
+                "index",
+                "review_preparation_presentation_run",
+                _REVIEW_PREPARATION_PRESENTATION_RUN_INDEX_SQL,
+            ),
+            (
+                "index",
+                "review_preparation_presentation_throughput",
+                _REVIEW_PREPARATION_PRESENTATION_THROUGHPUT_INDEX_SQL,
+            ),
             (
                 "index",
                 "review_preparation_work_aged_claim",
@@ -921,6 +1001,11 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
             ("table", "review_cases", _REVIEW_CASES_SQL),
             ("table", "review_case_field_facts", _REVIEW_CASE_FIELD_FACTS_SQL),
             ("table", "review_preparation_control", _REVIEW_CONTROL_SQL),
+            (
+                "table",
+                "review_preparation_presentation",
+                _REVIEW_PREPARATION_PRESENTATION_SQL,
+            ),
             (
                 "table",
                 "review_preparation_connection_conditions",
@@ -1104,6 +1189,7 @@ def _validate_schema_contents_without_review_field_facts(
     _validate_metadata_policy_documents(connection)
     _validate_cover_selection_authorities(connection)
     _validate_field_effect_state(connection)
+    validate_preparation_presentation(connection)
     try:
         _validate_owner_settings_content(connection)
     except OwnerSettingsError as error:

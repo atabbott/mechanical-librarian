@@ -12,6 +12,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import Mock
@@ -20,6 +21,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 import uvicorn
 from argon2 import PasswordHasher
+from fastapi.testclient import TestClient
 from playwright.sync_api import (
     BrowserContext,
     Page,
@@ -65,6 +67,7 @@ from mechanical_librarian.domain.metadata_report import (
     default_target_fields,
 )
 from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
+from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.setup_state import SetupStateDocument
 from mechanical_librarian.interfaces.web.react_assets import ReactAssetLoader
@@ -234,6 +237,8 @@ def _server(
     automatic_fixture: bool = False,
     cover_shapes: tuple[tuple[int, int], ...] = ((1, 1), (1, 1)),
     cohort: int = 0,
+    preparation: bool = False,
+    preparation_terminal: bool = False,
     audiobook: bool = False,
     settings_document: OwnerSettingsDocument | None = _DEFAULT_SETTINGS_DOCUMENT,
     on_app: Callable[[Any], None] | None = None,
@@ -332,6 +337,57 @@ def _server(
     proposal_set = evaluate_report(report)
     repository.publish_proposal(proposal_set)
     case_id = json.loads(repository.admit_review_case(proposal_set))["review_case_id"]
+    if preparation:
+        repository.request_review_scan(
+            "primary",
+            "ebooks",
+            "library",
+            "f" * 64,
+            990,
+            trigger=PreparationTrigger.MANUAL_SCAN,
+        )
+        discovery = repository.claim_review_pipeline_action(991)
+        assert discovery is not None
+        entries = tuple(
+            CatalogueEntry(
+                "primary",
+                "ebooks",
+                "library",
+                f"preparation-{index:02}",
+                1,
+                f"Preparation book {index:02}",
+                ("Synthetic Author",),
+                True,
+                False,
+                "singular-supported",
+                f"{index + 10_000:064x}",
+                f"/synthetic/preparation-{index:02}.epub",
+                "epub",
+                "books",
+            )
+            for index in range(7)
+        )
+        repository.complete_review_discovery(discovery, 1, "e" * 64, entries, 992)
+        assert repository.claim_review_pipeline_action(993) is not None
+        if preparation_terminal:
+            repository._connection.execute(
+                "UPDATE review_preparation_presentation SET work_stage='projection',"
+                "current_work_state='complete',work_outcome='ready',updated_at=1000,"
+                "completion_sequence=ordinal+1 "
+                "WHERE row_kind='work'"
+            )
+            repository._connection.execute(
+                "UPDATE review_preparation_presentation SET cycle_state='completed',"
+                "updated_at=1000 WHERE row_kind='enrollment'"
+            )
+            repository._connection.execute(
+                "UPDATE review_preparation_presentation SET state='completed_clean',"
+                "completed_at=1000,updated_at=1000,active_count=0,read=7,"
+                "searches_finished=7,compared=7,checked=7,ready=7,failed=0,"
+                "completion_count=7 "
+                "WHERE row_kind='run'"
+            )
+            repository._connection.commit()
     # A cohort large enough that a whole-Library projection is measurably
     # slower than one exact-case read. #635's acceptance is about what the
     # next field waits on, and one work cannot tell those two apart.
@@ -513,6 +569,31 @@ def _closing_context(context: BrowserContext) -> Iterator[None]:
         yield
     finally:
         context.close()
+
+
+def _record_page_error(errors: list[str], error: Any) -> None:
+    errors.append(str(error))
+
+
+def _record_transition_console(
+    errors: list[str], records: list[dict[str, object]], message: Any
+) -> None:
+    if message.type == "error":
+        errors.append(message.text)
+    elif message.text.startswith("__ML_PREPARATION_TRANSITION__"):
+        records.append(
+            json.loads(message.text.removeprefix("__ML_PREPARATION_TRANSITION__"))
+        )
+
+
+def _serve_setup_asset(client: TestClient, route: Any) -> None:
+    path = urlparse(route.request.url).path
+    response = client.get("/" if path == "/setup-handoff" else path)
+    route.fulfill(
+        status=response.status_code,
+        headers=dict(response.headers),
+        body=response.content,
+    )
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -2382,6 +2463,450 @@ def test_z_compact_uncached_library_detail_keeps_visible_focus() -> None:
             browser.close()
 
 
+def test_setup_to_library_preparation_handoff_focuses_and_announces_destination() -> (
+    None
+):
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        with (
+            sync_playwright() as playwright,
+            closing(ReservedPort()) as reserved_port,
+            _server(
+                database=root / "review.sqlite3",
+                hash_path=hash_path,
+                certificate=certificate,
+                key=key,
+                port=reserved_port,
+                preparation=True,
+            ) as (origin, _case_id),
+        ):
+            browser = playwright.chromium.launch(headless=True)
+            for reduced in (False, True):
+                transition_records: list[dict[str, object]] = []
+                context = browser.new_context(
+                    ignore_https_errors=True,
+                    viewport={"width": 390, "height": 844},
+                    reduced_motion="reduce" if reduced else "no-preference",
+                )
+                context.add_init_script(
+                    "const preparationTime=value=>value.split(',').reduce((largest,item)=>Math.max(largest,parseFloat(item)*(item.trim().endsWith('ms')?1:1000)),0);"
+                    "globalThis.preparationPseudoStyles=()=>['root','mechanical-librarian-brand','works-index','preparation-detail'].flatMap(name=>['group','image-pair','old','new'].map(kind=>{const pseudo=`::view-transition-${kind}(${name})`;const style=getComputedStyle(document.documentElement,pseudo);return {pseudo,duration:preparationTime(style.animationDuration),delay:preparationTime(style.animationDelay),state:style.animationPlayState}}));"
+                    "const preparationRecord=(event,phase)=>console.debug('__ML_PREPARATION_TRANSITION__'+JSON.stringify({event:event.type,phase,observed:Boolean(event.viewTransition),pseudos:event.viewTransition?preparationPseudoStyles():[],animations:event.viewTransition?document.documentElement.getAnimations({subtree:true}).map(animation=>{const timing=animation.effect?.getComputedTiming?.()||{};return {pseudo:animation.effect?.pseudoElement||animation.effect?.target?.type||'',duration:Number(timing.duration)||0,delay:Number(timing.delay)||0,state:animation.playState}}):[]}));"
+                    "addEventListener('pageswap',event=>{preparationRecord(event,'event');if(event.viewTransition)event.viewTransition.ready.then(()=>preparationRecord(event,'ready'),()=>preparationRecord(event,'rejected'))});"
+                    "addEventListener('pagereveal',event=>{document.documentElement.dataset.preparationPagereveal=event.viewTransition?'observed':'absent';preparationRecord(event,'event');if(event.viewTransition)event.viewTransition.ready.then(()=>preparationRecord(event,'ready'),()=>preparationRecord(event,'rejected'))});"
+                )
+                page = context.new_page()
+                console_errors: list[str] = []
+                page_errors: list[str] = []
+                page.on("pageerror", partial(_record_page_error, page_errors))
+                page.on(
+                    "console",
+                    partial(
+                        _record_transition_console,
+                        console_errors,
+                        transition_records,
+                    ),
+                )
+                page.route("**/favicon.ico", lambda route: route.fulfill(status=204))
+                _login(page, origin)
+                setup_url = origin + "/setup-handoff"
+
+                class State:
+                    def read(self, _verifier: str) -> SetupStateDocument:
+                        return SetupStateDocument(
+                            schema_version="setup-state-v2",
+                            revision=1,
+                            bootstrap_verifier_digest="0" * 64,
+                        )
+
+                setup_client = TestClient(
+                    create_setup_app(cast(Any, object()), cast(Any, State()), "")
+                )
+
+                secured_setup_asset = partial(_serve_setup_asset, setup_client)
+
+                page.route(setup_url, secured_setup_asset)
+                page.route(origin + "/assets/setup.css", secured_setup_asset)
+                page.route(origin + "/assets/setup-handoff.css", secured_setup_asset)
+                page.route(origin + "/assets/setup.js", secured_setup_asset)
+
+                def setup_api(route) -> None:
+                    path = urlparse(route.request.url).path
+                    if path == "/api/setup/state":
+                        route.fulfill(
+                            json={
+                                "csrf_token": "synthetic-csrf",
+                                "next_step": "kick_off",
+                                "completed_steps": [
+                                    "claim",
+                                    "connect",
+                                    "providers",
+                                    "libraries",
+                                    "mounts",
+                                ],
+                                "revision": 6,
+                                "providers": [],
+                                "libraries": [],
+                                "mounts": [],
+                            }
+                        )
+                    elif path == "/api/setup/kick-off":
+                        route.fulfill(
+                            json={"message": "Preparation continues in the workspace."}
+                        )
+                    else:
+                        route.fulfill(status=404, json={"error": "not_found"})
+
+                page.route("**/api/setup/**", setup_api)
+                page.goto(setup_url)
+                assert (
+                    "style-src 'self'"
+                    in page.locator("html").evaluate(
+                        "() => document.querySelector('meta[http-equiv=content-security-policy]')?.content || ''"
+                    )
+                    or "style-src 'self'"
+                    in setup_client.get("/").headers["content-security-policy"]
+                )
+                transition_records.clear()
+                page.get_by_role("button", name="Kick off preparation").click()
+                handoff = page.get_by_role("link", name="Open workspace")
+                expect(handoff).to_have_attribute(
+                    "href", re.compile(r"preparation=preparation_run_[0-9a-f]{64}")
+                )
+                handoff_href = handoff.get_attribute("href")
+                assert handoff_href is not None
+                run_id = parse_qs(urlparse(handoff_href).query)["preparation"][0]
+                presentation_state: dict[str, str | None] = {"value": "running"}
+                preparation_requests = {"count": 0}
+
+                def preparation_api(
+                    route,
+                    _request,
+                    state_ref=presentation_state,
+                    expected_run_id=run_id,
+                    requests=preparation_requests,
+                ) -> None:
+                    state = state_ref["value"]
+                    requests["count"] += 1
+                    if state is None:
+                        route.fulfill(
+                            json={
+                                "schema_version": "review-preparation-v2",
+                                "active": False,
+                                "actionable": False,
+                                "paused": False,
+                                "libraries": [],
+                                "connections": [],
+                                "presentation": None,
+                            }
+                        )
+                        return
+                    terminal = state in {
+                        "completed_clean",
+                        "completed_with_failures",
+                    }
+                    failed = 1 if state == "completed_with_failures" else 0
+                    route.fulfill(
+                        json={
+                            "schema_version": "review-preparation-v2",
+                            "active": not terminal,
+                            "actionable": terminal,
+                            "paused": state == "blocked",
+                            "libraries": [],
+                            "connections": [],
+                            "presentation": {
+                                "run_id": expected_run_id,
+                                "state": state,
+                                "triggers": [
+                                    {
+                                        "trigger": "initial_setup",
+                                        "accepted_count": 1,
+                                        "first_accepted_at": 100,
+                                        "last_accepted_at": 100,
+                                    }
+                                ],
+                                "passage": {
+                                    "read": 4,
+                                    "searches_finished": 4 if terminal else 3,
+                                    "compared": 4 if terminal else 2,
+                                    "checked": 4 if terminal else 1,
+                                    "ready": 4 - failed if terminal else 0,
+                                    "failed": failed,
+                                },
+                                "active_books": (
+                                    []
+                                    if terminal
+                                    else [
+                                        {
+                                            "name": "Synthetic active title",
+                                            "stage": "Checking metadata",
+                                        }
+                                    ]
+                                ),
+                                "active_overflow": 0,
+                                "recent_completions": [],
+                                "throughput_per_minute": 0,
+                                "started_at": 100,
+                                "updated_at": 101,
+                                "completed_at": 101 if terminal else None,
+                                "total": 4,
+                                "dismissible": terminal,
+                            },
+                        }
+                    )
+
+                page.route("**/api/v1/review-preparation", preparation_api)
+                source_names = page.evaluate(
+                    "[getComputedStyle(document.querySelector('.masthead')).viewTransitionName,"
+                    "getComputedStyle(document.querySelector('#setup-ledger')).viewTransitionName,"
+                    "getComputedStyle(document.querySelector('.step-card')).viewTransitionName]"
+                )
+                has_navigation_rule = page.evaluate(
+                    "Array.from(document.styleSheets).some(sheet=>Array.from(sheet.cssRules).some(rule=>rule.cssText.startsWith('@view-transition')))"
+                )
+                assert not has_navigation_rule
+                assert page.locator("#setup-handoff-motion").evaluate(
+                    "element => element.disabled"
+                )
+                assert source_names == (
+                    ["none", "none", "none"]
+                    if reduced
+                    else [
+                        "mechanical-librarian-brand",
+                        "works-index",
+                        "preparation-detail",
+                    ]
+                )
+
+                handoff.click()
+                page.wait_for_url(re.compile(r"/library\?.*preparation="))
+                heading = page.get_by_role("heading", name="Preparing your library")
+                expect(heading).to_be_focused()
+                expect(page.locator(".preparation-run-state")).to_have_text(
+                    "Preparation continues"
+                )
+                expect(page.locator(".workspace-detail")).to_have_attribute(
+                    "aria-live", "polite"
+                )
+                passage = page.get_by_role("progressbar")
+                expect(passage).to_have_count(4)
+                passage_facts = passage.evaluate_all(
+                    "elements => elements.map(element => ({label:element.getAttribute('aria-label'),value:element.value,max:element.max,position:element.position,style:element.getAttribute('style'),appearance:getComputedStyle(element).appearance,width:element.getBoundingClientRect().width}))"
+                )
+                assert passage_facts == [
+                    {
+                        "label": "Read from library: 4 of 4",
+                        "value": 4,
+                        "max": 4,
+                        "position": 1,
+                        "style": None,
+                        "appearance": "none",
+                        "width": passage_facts[0]["width"],
+                    },
+                    {
+                        "label": "Searches finished: 3 of 4",
+                        "value": 3,
+                        "max": 4,
+                        "position": 0.75,
+                        "style": None,
+                        "appearance": "none",
+                        "width": passage_facts[1]["width"],
+                    },
+                    {
+                        "label": "Candidates compared: 2 of 4",
+                        "value": 2,
+                        "max": 4,
+                        "position": 0.5,
+                        "style": None,
+                        "appearance": "none",
+                        "width": passage_facts[2]["width"],
+                    },
+                    {
+                        "label": "Metadata checked: 1 of 4",
+                        "value": 1,
+                        "max": 4,
+                        "position": 0.25,
+                        "style": None,
+                        "appearance": "none",
+                        "width": passage_facts[3]["width"],
+                    },
+                ]
+                assert all(fact["width"] > 0 for fact in passage_facts)
+                destination_names = page.evaluate(
+                    "[getComputedStyle(document.querySelector('.masthead')).viewTransitionName,"
+                    "getComputedStyle(document.querySelector('.library-works')).viewTransitionName,"
+                    "getComputedStyle(document.querySelector('.preparation-detail')).viewTransitionName]"
+                )
+                assert destination_names == (
+                    ["none", "none", "none"]
+                    if reduced
+                    else [
+                        "mechanical-librarian-brand",
+                        "works-index",
+                        "preparation-detail",
+                    ]
+                )
+                page.wait_for_timeout(100)
+                assert any(
+                    record["event"] == "pageswap" and record["observed"]
+                    for record in transition_records
+                )
+                assert (
+                    page.locator("html").get_attribute("data-preparation-pagereveal")
+                    == "observed"
+                )
+                animation_sets = [
+                    animation
+                    for record in transition_records
+                    for animation in cast(list[dict[str, object]], record["animations"])
+                ]
+                pseudo_styles = [
+                    animation
+                    for record in transition_records
+                    for animation in cast(list[dict[str, object]], record["pseudos"])
+                ]
+                nonzero_running = [
+                    animation
+                    for animation in animation_sets
+                    if animation["state"] == "running"
+                    and cast(float, animation["duration"])
+                    + cast(float, animation["delay"])
+                    > 0
+                ]
+                if reduced:
+                    assert nonzero_running == []
+                    assert all(
+                        cast(float, animation["duration"])
+                        + cast(float, animation["delay"])
+                        == 0
+                        for animation in pseudo_styles
+                    )
+                else:
+                    assert any(
+                        cast(float, animation["duration"]) > 0
+                        and any(
+                            name in cast(str, animation["pseudo"])
+                            for name in (
+                                "mechanical-librarian-brand",
+                                "works-index",
+                                "preparation-detail",
+                            )
+                        )
+                        for animation in pseudo_styles
+                    ), pseudo_styles
+                summary_cases = (
+                    (
+                        "blocked",
+                        "Preparation needs attention",
+                        "0 ready · 0 could not finish · 1 active",
+                    ),
+                    (
+                        "completed_clean",
+                        "Preparation complete",
+                        "4 ready · No failures",
+                    ),
+                    (
+                        "completed_with_failures",
+                        "Preparation completed with failures",
+                        "3 ready · 1 could not finish",
+                    ),
+                )
+                for state, title, copy in summary_cases:
+                    presentation_state["value"] = state
+                    page.reload()
+                    summary = page.locator(".preparation-summary")
+                    expect(summary).to_contain_text(title)
+                    expect(summary).to_contain_text(copy)
+                    expect(page.get_by_role("heading", name="Works")).to_be_visible()
+                    expect(page.locator(".library-work-row").first).to_be_enabled()
+                if not reduced:
+                    presentation_state["value"] = "running"
+                    page.goto(setup_url)
+                    page.get_by_role("button", name="Kick off preparation").click()
+                    handoff = page.get_by_role("link", name="Open workspace")
+                    expect(handoff).to_have_attribute(
+                        "href",
+                        re.compile(r"preparation=preparation_run_[0-9a-f]{64}"),
+                    )
+                    page.eval_on_selector(
+                        "a.workspace-handoff",
+                        "element => { element.addEventListener('click', event => event.preventDefault(), {once:true}); element.click() }",
+                    )
+                    page.evaluate(
+                        "() => { const event = new Event('pageswap'); Object.defineProperty(event, 'viewTransition', {value:{ready:Promise.resolve(),finished:Promise.reject(new Error('synthetic rejected transition'))}}); dispatchEvent(event) }"
+                    )
+                    page.wait_for_function(
+                        "document.querySelector('#setup-handoff-motion').disabled"
+                    )
+                    page.eval_on_selector(
+                        "a.workspace-handoff",
+                        "element => { element.addEventListener('click', event => event.preventDefault(), {once:true}); element.click() }",
+                    )
+                    page.wait_for_timeout(2100)
+                    assert page.url == setup_url
+                    assert page.locator("#setup-handoff-motion").evaluate(
+                        "element => element.disabled"
+                    )
+                    presentation_state["value"] = "completed_clean"
+                    page.get_by_role(
+                        "heading", name="Preparation is complete"
+                    ).wait_for()
+                    requests_after_terminal = preparation_requests["count"]
+                    presentation_state["value"] = None
+                    page.get_by_role(
+                        "heading", name="Preparation is no longer available"
+                    ).wait_for(timeout=7000)
+                    assert preparation_requests["count"] == requests_after_terminal + 1
+                    expect(handoff).to_have_attribute("href", "/library?lens=all")
+                    expect(page.get_by_text("Reconnecting", exact=False)).to_have_count(
+                        0
+                    )
+                    requests_after_null = preparation_requests["count"]
+                    page.wait_for_timeout(1600)
+                    assert preparation_requests["count"] == requests_after_null
+                else:
+                    presentation_state["value"] = None
+                    page.goto(setup_url)
+                    page.get_by_role("button", name="Kick off preparation").click()
+                    handoff = page.get_by_role("link", name="Open workspace")
+                    page.get_by_role(
+                        "heading", name="Preparation is no longer available"
+                    ).wait_for()
+                    expect(handoff).to_have_attribute("href", "/library?lens=all")
+                    expect(page.get_by_text("Reconnecting", exact=False)).to_have_count(
+                        0
+                    )
+                    requests_after_initial_null = preparation_requests["count"]
+                    page.wait_for_timeout(1600)
+                    assert preparation_requests["count"] == requests_after_initial_null
+                    presentation_state["value"] = "dismissed"
+                    page.goto(setup_url)
+                    page.get_by_role("button", name="Kick off preparation").click()
+                    handoff = page.get_by_role("link", name="Open workspace")
+                    page.get_by_role(
+                        "heading", name="Preparation was dismissed"
+                    ).wait_for()
+                    expect(
+                        page.get_by_text("Open the ordinary workspace.")
+                    ).to_be_visible()
+                    expect(handoff).to_have_attribute("href", "/library?lens=all")
+                    requests_after_legacy_dismissal = preparation_requests["count"]
+                    page.wait_for_timeout(1600)
+                    assert (
+                        preparation_requests["count"] == requests_after_legacy_dismissal
+                    )
+                assert console_errors == []
+                assert page_errors == []
+                setup_client.close()
+                context.close()
+            browser.close()
+
+
 def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -2559,7 +3084,41 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
             page.route(
                 "**/api/v1/review-preparation",
                 lambda route: route.fulfill(
-                    json={"libraries": [], "active": True, "paused": False}
+                    json={
+                        "libraries": [],
+                        "active": True,
+                        "paused": False,
+                        "actionable": False,
+                        "presentation": {
+                            "run_id": "preparation_run_" + "a" * 64,
+                            "state": "running",
+                            "passage": {
+                                "read": 9,
+                                "searches_finished": 8,
+                                "compared": 7,
+                                "checked": 6,
+                                "ready": 1,
+                                "failed": 1,
+                            },
+                            "active_books": [
+                                {
+                                    "name": f"Private setup book {index}",
+                                    "stage": "Comparing candidates",
+                                }
+                                for index in range(5)
+                            ],
+                            "active_overflow": 2,
+                            "recent_completions": [
+                                {
+                                    "name": "Recently ready",
+                                    "outcome": "ready",
+                                    "completed_at": 99,
+                                }
+                            ],
+                            "throughput_per_minute": 1.2,
+                            "total": 10,
+                        },
+                    }
                 ),
             )
             with (
@@ -2701,6 +3260,23 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     page.get_by_role("heading", name="Kick off preparation")
                 ).to_be_visible()
                 page.get_by_role("button", name="Kick off preparation").click()
+                expect(
+                    page.get_by_role("heading", name="Now preparing")
+                ).to_be_visible()
+                expect(page.get_by_text("Private setup book 0")).to_be_visible()
+                expect(
+                    page.get_by_text("2 more active books follow in this run.")
+                ).to_be_visible()
+                expect(
+                    page.get_by_role("heading", name="How many books made it this far?")
+                ).to_be_visible()
+                expect(page.get_by_text("1.2 books/min")).to_be_visible()
+                expect(page.get_by_text("Recently ready · Ready")).to_be_visible()
+                for width, height in ((1440, 900), (390, 844)):
+                    page.set_viewport_size({"width": width, "height": height})
+                    assert page.evaluate(
+                        "document.documentElement.scrollWidth <= window.innerWidth"
+                    )
                 handoff = page.get_by_role("link", name="Open workspace")
                 expect(handoff).to_be_visible()
                 expect(handoff).to_have_class(re.compile(r"\bprimary\b"))

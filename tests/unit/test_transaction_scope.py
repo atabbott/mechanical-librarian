@@ -1,4 +1,6 @@
 import sqlite3
+import threading
+from _thread import RLock
 from typing import cast
 
 import pytest
@@ -17,6 +19,43 @@ class _FailingCommit:
 
     def __getattr__(self, name: str) -> object:
         return getattr(self._connection, name)
+
+
+class _InterruptingReleaseLock:
+    def __init__(self, fault: BaseException, *, before_effect: bool) -> None:
+        self.lock = RLock()
+        self.fault = fault
+        self.before_effect = before_effect
+        self.armed = False
+
+    def acquire(self) -> None:
+        self.lock.acquire()
+
+    def release(self) -> None:
+        if self.armed:
+            self.armed = False
+            if self.before_effect:
+                raise self.fault
+            self.lock.release()
+            raise self.fault
+        self.lock.release()
+
+    def _recursion_count(self) -> int:
+        return self.lock._recursion_count()
+
+
+def _assert_contender_acquires(lock: RLock) -> None:
+    acquired = threading.Event()
+
+    def contend() -> None:
+        with lock:
+            acquired.set()
+
+    contender = threading.Thread(target=contend)
+    contender.start()
+    assert acquired.wait(1)
+    contender.join(timeout=1)
+    assert not contender.is_alive()
 
 
 def _connection() -> sqlite3.Connection:
@@ -144,3 +183,86 @@ def test_a_failing_commit_leaves_the_scope_open_for_its_own_rollback() -> None:
     scope.rollback()
     assert not connection.in_transaction
     assert [] == _values(connection)
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize("before_effect", (False, True))
+def test_commit_propagates_balanced_release_process_control(
+    fault_type: type[BaseException], before_effect: bool
+) -> None:
+    connection = _connection()
+    fault = fault_type("private commit release")
+    lock = _InterruptingReleaseLock(fault, before_effect=before_effect)
+    scope = TransactionScope(
+        connection, "commit_release", serialization_lock=cast(RLock, lock)
+    )
+    scope.begin()
+    connection.execute("INSERT INTO facts(value) VALUES('committed')")
+    lock.armed = True
+
+    with pytest.raises(fault_type) as raised:
+        scope.commit()
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert not scope.started and not connection.in_transaction
+    assert _values(connection) == ["committed"]
+    assert lock._recursion_count() == 0
+    _assert_contender_acquires(lock.lock)
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize("before_effect", (False, True))
+def test_direct_rollback_propagates_balanced_release_process_control(
+    fault_type: type[BaseException], before_effect: bool
+) -> None:
+    connection = _connection()
+    fault = fault_type("private rollback release")
+    lock = _InterruptingReleaseLock(fault, before_effect=before_effect)
+    scope = TransactionScope(
+        connection, "rollback_release", serialization_lock=cast(RLock, lock)
+    )
+    scope.begin()
+    connection.execute("INSERT INTO facts(value) VALUES('discarded')")
+    lock.armed = True
+
+    with pytest.raises(fault_type) as raised:
+        scope.rollback()
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert not scope.started and not connection.in_transaction
+    assert _values(connection) == []
+    assert lock._recursion_count() == 0
+    _assert_contender_acquires(lock.lock)
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize("before_effect", (False, True))
+def test_rollback_preserves_existing_process_control_over_release_fault(
+    fault_type: type[BaseException], before_effect: bool
+) -> None:
+    connection = _connection()
+    original = fault_type("private body interruption")
+    release = SystemExit("private release interruption")
+    lock = _InterruptingReleaseLock(release, before_effect=before_effect)
+    scope = TransactionScope(
+        connection, "body_release", serialization_lock=cast(RLock, lock)
+    )
+    scope.begin()
+    connection.execute("INSERT INTO facts(value) VALUES('discarded')")
+    lock.armed = True
+
+    with pytest.raises(fault_type) as raised:
+        try:
+            raise original
+        except BaseException as error:
+            scope.rollback()
+            raise error from None
+
+    assert raised.value is original
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert not scope.started and not connection.in_transaction
+    assert _values(connection) == []
+    assert lock._recursion_count() == 0
+    _assert_contender_acquires(lock.lock)

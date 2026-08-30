@@ -1781,7 +1781,7 @@ describe('ReviewApiClient', () => {
       )
       .mockResolvedValueOnce(
         Response.json({
-          schema_version: 'review-preparation-v1',
+          schema_version: 'review-preparation-v2',
           active: false,
           actionable: false,
           paused: false,
@@ -1796,14 +1796,14 @@ describe('ReviewApiClient', () => {
       state: 'queued',
     })
     await expect(client.preparationAction('pause')).resolves.toMatchObject({
-      schema_version: 'review-preparation-v1',
+      schema_version: 'review-preparation-v2',
       paused: false,
     })
   })
 
   it('maps only closed target-connection preparation conditions', () => {
     const base = {
-      schema_version: 'review-preparation-v1',
+      schema_version: 'review-preparation-v2',
       active: true,
       actionable: false,
       paused: false,
@@ -1839,6 +1839,157 @@ describe('ReviewApiClient', () => {
       },
     ])
       expect(() => mapPreparation(invalid)).toThrow(ApiError)
+  })
+
+  it('accepts only ordered and bounded preparation presentation content', () => {
+    const presentation = {
+      run_id: `preparation_run_${'a'.repeat(64)}`,
+      state: 'running',
+      triggers: [
+        {
+          trigger: 'manual_scan',
+          accepted_count: 1,
+          first_accepted_at: 100,
+          last_accepted_at: 100,
+        },
+      ],
+      passage: { read: 4, searches_finished: 3, compared: 2, checked: 2, ready: 1, failed: 1 },
+      active_books: [{ name: 'Private title', stage: 'Comparing candidates' }],
+      active_overflow: 0,
+      recent_completions: [{ name: 'Finished title', outcome: 'ready', completed_at: 101 }],
+      throughput_per_minute: 1.2,
+      started_at: 100,
+      updated_at: 101,
+      completed_at: null,
+      total: 4,
+      dismissible: false,
+    }
+    const base = {
+      schema_version: 'review-preparation-v2',
+      active: true,
+      actionable: false,
+      paused: false,
+      libraries: [],
+      connections: [],
+      presentation,
+    }
+    expect(mapPreparation(base).presentation?.passage.ready).toBe(1)
+    const maximumName = 'x'.repeat(2048)
+    expect(
+      mapPreparation({
+        ...base,
+        presentation: {
+          ...presentation,
+          active_books: [{ name: maximumName, stage: 'Reading' }],
+          recent_completions: [{ name: maximumName, outcome: 'ready', completed_at: 101 }],
+        },
+      }).presentation?.active_books[0]?.name,
+    ).toBe(maximumName)
+    const maximumMultibyteName = `${'界'.repeat(682)}ab`
+    expect(new TextEncoder().encode(maximumMultibyteName)).toHaveLength(2048)
+    expect(
+      mapPreparation({
+        ...base,
+        presentation: {
+          ...presentation,
+          active_books: [{ name: maximumMultibyteName, stage: 'Reading' }],
+          recent_completions: [{ name: maximumMultibyteName, outcome: 'ready', completed_at: 101 }],
+        },
+      }).presentation?.recent_completions[0]?.name,
+    ).toBe(maximumMultibyteName)
+    expect(() =>
+      mapPreparation({
+        ...base,
+        presentation: {
+          ...presentation,
+          active_books: [{ name: `${maximumName}x`, stage: 'Reading' }],
+        },
+      }),
+    ).toThrow('invalid_preparation_active_name')
+    expect(() =>
+      mapPreparation({
+        ...base,
+        presentation: {
+          ...presentation,
+          recent_completions: [{ name: `${maximumName}x`, outcome: 'ready', completed_at: 101 }],
+        },
+      }),
+    ).toThrow('invalid_preparation_completion_name')
+    expect(() =>
+      mapPreparation({
+        ...base,
+        presentation: {
+          ...presentation,
+          passage: { ...presentation.passage, checked: 1, ready: 2 },
+        },
+      }),
+    ).toThrow('invalid_preparation_passage_order')
+    expect(
+      mapPreparation({
+        ...base,
+        presentation: {
+          ...presentation,
+          passage: { read: 1, searches_finished: 0, compared: 0, checked: 0, ready: 0, failed: 1 },
+        },
+      }).presentation?.passage.failed,
+    ).toBe(1)
+    expect(
+      mapPreparation({
+        ...base,
+        presentation: {
+          ...presentation,
+          passage: { read: 1, searches_finished: 1, compared: 1, checked: 1, ready: 1, failed: 1 },
+          total: 1,
+        },
+      }).presentation?.passage,
+    ).toMatchObject({ ready: 1, failed: 1 })
+    expect(() =>
+      mapPreparation({ ...base, presentation: { ...presentation, updated_at: 99 } }),
+    ).toThrow('invalid_preparation_passage_total')
+    expect(() =>
+      mapPreparation({ ...base, presentation: { ...presentation, state: 'completed_clean' } }),
+    ).toThrow('invalid_preparation_passage_total')
+    expect(() =>
+      mapPreparation({ ...base, presentation: { ...presentation, completed_at: 101 } }),
+    ).toThrow('invalid_preparation_passage_total')
+    expect(() =>
+      mapPreparation({
+        ...base,
+        presentation: { ...presentation, state: 'dismissed', completed_at: 99 },
+      }),
+    ).toThrow('invalid_preparation_passage_total')
+    expect(() =>
+      mapPreparation({
+        ...base,
+        presentation: {
+          ...presentation,
+          passage: { read: 0, searches_finished: 0, compared: 0, checked: 0, ready: 0, failed: 0 },
+          active_overflow: 1,
+          total: 1,
+        },
+      }),
+    ).toThrow('invalid_preparation_passage_total')
+    expect(() =>
+      mapPreparation({
+        ...base,
+        presentation: {
+          ...presentation,
+          active_books: Array.from({ length: 6 }, () => ({
+            name: 'Private title',
+            stage: 'Reading',
+          })),
+        },
+      }),
+    ).toThrow('invalid_preparation_presentation')
+    expect(() =>
+      mapPreparation({
+        ...base,
+        presentation: {
+          ...presentation,
+          recent_completions: [{ name: 'Private title', outcome: 'invented', completed_at: 101 }],
+        },
+      }),
+    ).toThrow('invalid_preparation_completion')
   })
 
   it('preserves structured server error codes and rejects malformed DTOs', async () => {

@@ -34,6 +34,7 @@ export type LiveStreamState = 'connecting' | 'live' | 'degraded'
 
 export interface LiveUpdateStream {
   readonly state: LiveStreamState
+  readonly hasBeenLive?: boolean
   subscribe(listener: (update: LiveUpdate) => void): () => void
   observeState(listener: (state: LiveStreamState) => void): () => void
   close(): void
@@ -96,10 +97,12 @@ export const createLiveUpdateStream = (options: LiveUpdateStreamOptions = {}): L
   let lastSequence = -1
   let closed = false
   let state: LiveStreamState = 'connecting'
+  let hasBeenLive = false
 
   const setState = (next: LiveStreamState) => {
     if (state === next) return
     state = next
+    if (next === 'live') hasBeenLive = true
     for (const listener of [...stateListeners]) listener(next)
   }
 
@@ -154,6 +157,9 @@ export const createLiveUpdateStream = (options: LiveUpdateStreamOptions = {}): L
   return {
     get state() {
       return state
+    },
+    get hasBeenLive() {
+      return hasBeenLive
     },
     subscribe(listener) {
       listeners.add(listener)

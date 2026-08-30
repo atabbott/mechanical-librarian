@@ -16,6 +16,7 @@ from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.domain.audio_inspection import AudioInspectionOutcome
 from mechanical_librarian.domain.epub_inspection import EpubInspectionOutcome
 from mechanical_librarian.domain.metadata_report import ProviderStatus
+from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
 
 __all__ = [
     "PipelineAction",
@@ -264,7 +265,19 @@ class ReviewPipelineRepository(Protocol):
         requested_at: int,
         *,
         first_boot: bool = False,
+        trigger: PreparationTrigger | None = None,
     ) -> PipelineProgress: ...
+
+    def request_library_addition(
+        self,
+        connection: str,
+        library: str,
+        library_id: str,
+        producer_fingerprint: str,
+        requested_at: int,
+    ) -> PipelineProgress | None: ...
+
+    def deferred_library_additions(self) -> tuple[tuple[str, str], ...]: ...
 
     def review_pipeline_progress(
         self, connection: str, library: str
@@ -281,6 +294,18 @@ class ReviewPipelineRepository(Protocol):
     def review_pipeline_paused(self) -> bool: ...
 
     def set_review_pipeline_paused(self, paused: bool, updated_at: int) -> None: ...
+
+    def resume_review_pipeline(
+        self,
+        libraries: tuple[tuple[str, str, str, str], ...],
+        updated_at: int,
+    ) -> None: ...
+
+    def drain_library_additions(
+        self,
+        libraries: tuple[tuple[str, str, str, str], ...],
+        updated_at: int,
+    ) -> None: ...
 
     def target_connection_conditions(self) -> tuple[TargetConnectionCondition, ...]: ...
     def guard_target_connection(
@@ -491,7 +516,13 @@ class ReviewPreparationPipeline:
             finally:
                 repository.close()
 
-    def request(self, connection: str, library: str) -> PipelineProgress:
+    def request(
+        self,
+        connection: str,
+        library: str,
+        *,
+        trigger: PreparationTrigger | None = None,
+    ) -> PipelineProgress:
         selected = self._libraries.get((connection, library))
         if selected is None:
             raise ReviewPipelineError("library")
@@ -506,12 +537,54 @@ class ReviewPreparationPipeline:
                 self._clock(),
             )
             if self._first_boot:
-                return repository.request_review_scan(*arguments, first_boot=True)
-            return repository.request_review_scan(*arguments)
+                return repository.request_review_scan(
+                    *arguments,
+                    first_boot=True,
+                    trigger=trigger or PreparationTrigger.INITIAL_SETUP,
+                )
+            if trigger is None:
+                return repository.request_review_scan(*arguments)
+            return repository.request_review_scan(*arguments, trigger=trigger)
 
         progress = self._with_foreground_repository(request)
         self._announce("preparation", None)
         return progress
+
+    def request_library_addition(
+        self, connection: str, library: str
+    ) -> PipelineProgress | None:
+        selected = self._libraries.get((connection, library))
+        if selected is None:
+            raise ReviewPipelineError("library")
+        library_id, producer_fingerprint = selected
+        progress = self._with_foreground_repository(
+            lambda repository: repository.request_library_addition(
+                connection,
+                library,
+                library_id,
+                producer_fingerprint,
+                self._clock(),
+            )
+        )
+        self._announce("preparation", None)
+        return progress
+
+    def drain_library_additions(self) -> None:
+        libraries = tuple(
+            (connection, library, values[0], values[1])
+            for (connection, library), values in self._libraries.items()
+        )
+        self._with_foreground_repository(
+            lambda repository: repository.drain_library_additions(
+                libraries, self._clock()
+            )
+        )
+        self._announce("preparation", None)
+
+    def deferred_library_additions(self) -> tuple[tuple[str, str], ...]:
+        return self._with_foreground_repository(
+            lambda repository: repository.deferred_library_additions()
+        )
 
     def progress(self, connection: str, library: str) -> PipelineProgress | None:
         if (connection, library) not in self._libraries:
@@ -561,7 +634,16 @@ class ReviewPreparationPipeline:
         repository = self._open_repository()
         try:
             try:
-                repository.set_review_pipeline_paused(paused, self._clock())
+                if paused:
+                    repository.set_review_pipeline_paused(True, self._clock())
+                else:
+                    repository.resume_review_pipeline(
+                        tuple(
+                            (connection, library, values[0], values[1])
+                            for (connection, library), values in self._libraries.items()
+                        ),
+                        self._clock(),
+                    )
             except ReviewPipelineError:
                 raise
             except Exception as error:
@@ -880,6 +962,17 @@ class ReviewPreparationPipeline:
             if output_transaction:
                 repository.rollback_review_pipeline_output()
             self._fail(repository, action, "unknown", False)
+        except BaseException as error:
+            if output_transaction:
+                try:
+                    repository.rollback_review_pipeline_output()
+                except BaseException:
+                    # Cleanup cannot replace a process-control interruption.
+                    # Repository rollback is best effort at this application
+                    # boundary; its owned transaction methods provide the
+                    # stronger rollback guarantee.
+                    pass
+            raise error from None
         return None
 
     def _complete_discovery(
@@ -1049,6 +1142,7 @@ class ReviewPreparationSupervisor:
         self._stop = threading.Event()
         self._threads: tuple[threading.Thread, ...] = ()
         self._on_stop = on_stop
+        self._observation_open = False
 
     @property
     def libraries(self) -> tuple[tuple[str, str, str], ...]:
@@ -1062,9 +1156,9 @@ class ReviewPreparationSupervisor:
         if self._threads:
             return
         self._stop.clear()
-        self._admission.set()
+        self._admission.clear()
         self._pipeline.open_observation()
-        observation_closed = False
+        self._observation_open = True
         try:
             if self._recovery_resume is not None:
                 self._recovery_resume()
@@ -1072,7 +1166,10 @@ class ReviewPreparationSupervisor:
             if resume is not None:
                 resume()
             self._pipeline.recover()
+            with self._schedule_lock:
+                self._pipeline.drain_library_additions()
             self._schedule_due()
+            self._admission.set()
             threads = tuple(
                 threading.Thread(
                     target=self._run,
@@ -1096,15 +1193,19 @@ class ReviewPreparationSupervisor:
                         "review preparation start cleanup failed: "
                         + type(cleanup_error).__name__
                     )
-                else:
-                    observation_closed = True
                 raise
             self._threads = threads
             self._wake.set()
-        except Exception:
-            if not observation_closed and not self._threads:
-                self._pipeline.close_observation()
-            raise
+        except BaseException as error:
+            if not self._threads:
+                try:
+                    self._close_observation()
+                except BaseException:
+                    pass
+            failure = error
+        else:
+            return
+        raise failure from None
 
     def start_dormant(self) -> None:
         """Start both lanes behind a closed claim-admission latch."""
@@ -1115,6 +1216,7 @@ class ReviewPreparationSupervisor:
         self._startup_ready.clear()
         self._dormant_start = True
         self._pipeline.open_observation()
+        self._observation_open = True
         threads = tuple(
             threading.Thread(
                 target=self._run,
@@ -1139,8 +1241,10 @@ class ReviewPreparationSupervisor:
 
     def admit(self) -> None:
         """Open the already-started lanes after their generation is published."""
-        self._admission.set()
-        self._wake.set()
+        with self._schedule_lock:
+            self._pipeline.drain_library_additions()
+            self._admission.set()
+            self._wake.set()
 
     def suspend_admission(self) -> None:
         """Close claims while leaving active lanes available for restoration."""
@@ -1180,11 +1284,35 @@ class ReviewPreparationSupervisor:
                 self._on_stop()
                 self._on_stop = None
         finally:
-            self._pipeline.close_observation()
+            self._close_observation()
 
-    def request(self, connection: str, library: str) -> PipelineProgress:
-        progress = self._pipeline.request(connection, library)
+    def _close_observation(self) -> None:
+        """Relinquish this supervisor's observation ownership at most once."""
+        if not self._observation_open:
+            return
+        self._observation_open = False
+        self._pipeline.close_observation()
+
+    def request(
+        self,
+        connection: str,
+        library: str,
+        *,
+        trigger: PreparationTrigger | None = None,
+    ) -> PipelineProgress:
+        progress = self._pipeline.request(connection, library, trigger=trigger)
         with self._schedule_lock:
+            self._schedule_waiting_for_action = False
+            self._next_schedule_at = None
+        self._wake.set()
+        return progress
+
+    def request_library_addition(
+        self, connection: str, library: str
+    ) -> PipelineProgress | None:
+        """Atomically admit or durably defer one configured library addition."""
+        with self._schedule_lock:
+            progress = self._pipeline.request_library_addition(connection, library)
             self._schedule_waiting_for_action = False
             self._next_schedule_at = None
         self._wake.set()
@@ -1200,8 +1328,8 @@ class ReviewPreparationSupervisor:
         return self._pipeline.paused()
 
     def set_paused(self, paused: bool) -> None:
-        self._pipeline.set_paused(paused)
         with self._schedule_lock:
+            self._pipeline.set_paused(paused)
             self._schedule_paused = paused
             if not paused:
                 self._schedule_waiting_for_action = False
@@ -1214,7 +1342,7 @@ class ReviewPreparationSupervisor:
         progress = self.progress(connection, library)
         if progress is None or progress.state != "completed_with_failures":
             raise ReviewPipelineError("retry")
-        return self.request(connection, library)
+        return self.request(connection, library, trigger=PreparationTrigger.MANUAL_SCAN)
 
     def connection_conditions(self) -> tuple[TargetConnectionCondition, ...]:
         return self._pipeline.connection_conditions()
