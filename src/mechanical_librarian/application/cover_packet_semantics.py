@@ -14,7 +14,11 @@ from typing import cast
 
 from PIL import Image, UnidentifiedImageError
 
-from mechanical_librarian.domain.cover_evidence import PREVIEW_VARIANT
+from mechanical_librarian.domain.cover_evidence import (
+    LOCAL_COVER_SOURCE_KINDS,
+    PREVIEW_VARIANT,
+    CoverSourceKind,
+)
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
     validate_projection_text,
@@ -35,7 +39,10 @@ _TRANSPORT_REFERENCE = re.compile(r"^cover_transport_ref_[0-9a-f]{64}$")
 _PACKET_REFERENCE = re.compile(r"^cover_packet_[0-9a-f]{64}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _PROVIDER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
-_SOURCE_KINDS = frozenset({"abs", "epub", "hardcover", "open_library"})
+# Derived from the domain enum so an admitted cover-bearing provider reaches
+# the packet by joining that closed set rather than by being named twice.
+_SOURCE_KINDS = frozenset(kind.value for kind in CoverSourceKind)
+_LOCAL_SOURCE_KINDS = frozenset(kind.value for kind in LOCAL_COVER_SOURCE_KINDS)
 _DESIGNATION_RANK: dict[str | None, int] = {
     "exact_edition": 0,
     "related_edition": 1,
@@ -615,7 +622,7 @@ def _validate_provenance(
     ):
         raise ValueError
     source_kind = value["source_kind"]
-    if source_kind in {"abs", "epub"}:
+    if source_kind in _LOCAL_SOURCE_KINDS:
         if (
             value["provider"] is not None
             or value["designation"] is not None

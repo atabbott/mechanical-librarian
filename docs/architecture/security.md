@@ -662,7 +662,7 @@ deadline, byte, and request-count authority. Attempt records are bounded and
 process-local. Provider adapters also count optional parser/schema rejections
 at their actual rejection points. The application canonically merges those
 counts once with the attempt categories and incomplete-outcome mapping for
-`metadata-report-v31`; provider, attempt ordinal, delay, elapsed time,
+`metadata-report-v32`; provider, attempt ordinal, delay, elapsed time,
 headers, bodies, and exception text are dropped. Application-created
 query-limit outcomes follow the same closed mapping and persist
 provider/lookup_construction/lookup without constructing or invoking a
@@ -785,7 +785,7 @@ reviewer identity, decision, or target-write capability.
 
 ### Schema admission
 
-The report database, `catalogue-v2` database, `config-v6`, artifact records,
+The report database, `catalogue-v2` database, `config-v7`, artifact records,
 and `batch-manifest-v5` each accept only absent or their exact current schema.
 An earlier schema, an extra object, altered SQL, or a failed integrity check
 fails closed before mutation, and is never migrated, imported, preserved, or
@@ -938,9 +938,98 @@ contract differs by provider and is not provider-wide:
   against public HTTPS port 443 before use, as recorded under credentials and
   egress above. No redirect is ever followed by an HTTP client automatically;
   the cover transport resolves and re-checks each hop itself.
+- **Audible catalog** issues `GET` requests only, to the ten fixed origins of a
+  closed marketplace-code-to-host mapping held in the adapter —
+  `api.audible.com`, `.co.uk`, `.de`, `.fr`, `.com.au`, `.in`, `.ca`, `.co.jp`,
+  `.it`, `.es`. Every URL is built from that mapping, so a configured code that
+  is not a key in it is refused at construction and no provider value ever
+  becomes part of a host. It is keyless by design: no credential surface exists
+  for it in the configuration schema or the client. Compression is declined, one
+  observation spends at most three attempts per request, twenty-four dispatches
+  in total, the configured per-response ceiling and nine times that ceiling
+  capped at 1 MiB in aggregate, under one request timeout and one observation
+  deadline, behind the adapter's shared request-start pacer. `Retry-After` is
+  honoured on `429` and `503`, bounded to one minute; `401`, `403` and `404` are
+  typed as authentication, authorization and no-match, and any other status is
+  terminally unavailable rather than a no-match. Responses must be
+  `application/json`; a product without a canonical ASIN fails closed, and every
+  other field is tolerated as optional. Its cover requests carry no credential,
+  follow no redirect, and share the adapter's request-start pacer. The URL is
+  the widest product image the product itself stated, admitted only if its host
+  is `m.media-amazon.com`: the closed host set is checked where the descriptor
+  is built, so a URL naming any other origin becomes a typed `unsafe_remote`
+  cover outcome and no socket is opened for it. Acquisition happens only when
+  the connection's `cover_enabled` is set.
+- **Audnexus** issues `GET` requests only, to the single fixed origin
+  `https://api.audnex.us`, on the two paths `/books/{asin}` and
+  `/books/{asin}/chapters` built from a canonical ASIN, with the marketplace
+  region carried as a query parameter drawn from the same closed code set. It is
+  keyless by design. Compression is declined; one observation spends at most
+  three attempts per request, twenty dispatches in total, and the configured
+  per-response ceiling with nine times that ceiling capped at 1 MiB in
+  aggregate, under one request timeout, one observation deadline, and the shared
+  request-start pacer. `Retry-After` is honoured on `429` and `503`; a `404`
+  carrying the provider's `REGION_UNAVAILABLE` code advances the region walk and
+  never becomes a service failure, while `401` and `403` end it. Responses must
+  be `application/json`; a book without a canonical ASIN fails closed, and a
+  chapter document that cannot be read removes one evidence value rather than
+  the candidate. It acquires no cover bytes and constructs no cover source.
+- **AudioSilo** issues `GET` requests only, to the single fixed origin
+  `https://meta.audiosilo.app` under the fixed base path `/api/v1`. Work and
+  recording identifiers are matched against a closed identifier shape before any
+  URL is built, so a hostile identifier cannot traverse out of that base path.
+  It is keyless by design. Compression is declined; one observation spends at
+  most three attempts per request, eighteen dispatches in total — a lookup, a
+  work read, and at most one chapter read per identifier — and the configured
+  per-response ceiling with nine times that ceiling capped at 1 MiB in
+  aggregate, under one request timeout, one observation deadline, and the shared
+  request-start pacer. `Retry-After` is honoured on `429` and `503`. The service
+  answers an unknown API path with an HTML single-page document rather than a
+  structured error: a `404` is classified from its status alone, and an HTML
+  `200` fails the strict `application/json` check, so no HTML body is ever read
+  as evidence on either path. A lookup that does not name both a work and its
+  recording fails closed. It acquires no cover bytes and constructs no cover
+  source.
+- **iTunes Search** issues `GET` requests only, to the single fixed origin
+  `https://itunes.apple.com` on the single fixed path `/search`. The query
+  travels entirely in the `term` parameter beside a fixed `media=audiobook` and
+  a fixed result limit, so no provider or owner value ever becomes part of a URL
+  path or a host. It is keyless by design. Compression is declined; one
+  observation spends at most three attempts per request, twelve dispatches in
+  total — one work lane walking a ladder of at most three queries — and the
+  configured per-response ceiling with nine times that ceiling capped at 1 MiB
+  in aggregate, under one request timeout, one observation deadline, and the
+  shared request-start pacer. `Retry-After` is honoured on `429` and `503`;
+  `401`, `403` and `404` are typed as authentication, authorization and
+  no-match, and any other status is terminally unavailable. The store answers
+  `text/javascript` rather than `application/json`, so this adapter — and only
+  this adapter — admits that one additional media type by name; the admission is
+  a closed pair rather than a fallback, and anything outside it is still
+  malformed. A result without a collection identifier fails closed. The adapter
+  states no narrator and no running time at all, because the store publishes
+  neither, so no candidate it builds can satisfy the runtime corroboration gate.
+  Its cover requests carry no credential, follow no redirect, and share the
+  adapter's request-start pacer. The URL is built from the `artworkUrl100` the
+  store stated: when — and only when — that URL ends in the exact segment
+  `/100x100bb.jpg`, that one segment is replaced by `/600x600bb.jpg`, asking
+  the same origin for the same asset at a legible rendition; any other shape is
+  used unmodified, because a URL the adapter cannot read is one it may not
+  rewrite. This is Open Library's constructed fixed-origin cover URL in the one
+  shape iTunes publishes. The result is admitted only if its host is one of the
+  five artwork shards `is1-ssl.mzstatic.com` through `is5-ssl.mzstatic.com`;
+  the store balances one result set across that set, so pinning a single
+  observed shard would silently drop the art of every result answered by
+  another. The closed host set is checked where the descriptor is built, so a
+  URL naming any other origin — `is6-ssl`, a shard without `-ssl`, or any
+  non-`mzstatic` host — becomes a typed `unsafe_remote` cover outcome and no
+  socket is opened for it. Acquisition happens only when the connection's
+  `cover_enabled` is set.
 
 Every cover byte, whichever provider supplied it, passes through the same
-public-address pinning, bounded decoder child, and private artifact path.
+public-address pinning, bounded decoder child, and private artifact path. The
+decoder child also states each image's 64-bit perceptual hash, computed beside
+the preview from the bytes it already decoded, so no other process decodes an
+untrusted image to obtain one.
 
 Open Library's enabled configuration requires a non-secret contact email, held
 only long enough to identify its fixed-origin requests; it enters no

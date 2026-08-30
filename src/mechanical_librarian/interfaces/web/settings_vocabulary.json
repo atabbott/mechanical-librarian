@@ -17,6 +17,8 @@
     "pattern": "^[a-z](?:[a-z0-9_]|-){0,63}$"
   },
   "required_provider_keys": ["hardcover"],
+  "keyless_provider_adapters": ["audible_catalog", "audiosilo", "audnexus", "itunes_search"],
+  "audible_marketplace_order": ["us", "uk", "de", "fr", "au", "in", "ca", "jp", "it", "es"],
   "errors": {
     "secret": "Secrets must be 1–2,048 printable ASCII characters with no whitespace or Bearer prefix.",
     "open_library_email": "Open Library needs a valid contact email while enabled.",

@@ -11,7 +11,11 @@ import sys
 import time
 from dataclasses import dataclass
 
-from mechanical_librarian.domain.cover_evidence import CoverArtifact, CoverSourceState
+from mechanical_librarian.domain.cover_evidence import (
+    CoverArtifact,
+    CoverEvidenceError,
+    CoverSourceState,
+)
 
 _MAX_ORIGINAL_BYTES = 8 * 1024 * 1024
 _MAX_PREVIEW_BYTES = 1024 * 1024
@@ -102,13 +106,21 @@ def decode_cover(original: bytes, *, deadline: float | None = None) -> DecodedCo
         state = CoverSourceState(value["state"])
         if state is not CoverSourceState.RETRIEVED:
             raise CoverDecodeRejected(state)
-        if set(value) != {"state", "format", "height", "preview", "width"}:
+        if set(value) != {
+            "state",
+            "format",
+            "height",
+            "perceptual_hash",
+            "preview",
+            "width",
+        }:
             raise ValueError
         preview = base64.b64decode(value["preview"], validate=True)
         if (
             type(value["format"]) is not str
             or type(value["width"]) is not int
             or type(value["height"]) is not int
+            or type(value["perceptual_hash"]) is not str
             or len(preview) > _MAX_PREVIEW_BYTES
         ):
             raise ValueError
@@ -116,12 +128,21 @@ def decode_cover(original: bytes, *, deadline: float | None = None) -> DecodedCo
         raise
     except (ValueError, TypeError, json.JSONDecodeError) as error:
         raise CoverDecodeRejected(CoverSourceState.DECODE_FAILED) from error
-    return DecodedCover(
-        CoverArtifact.create(
-            original, preview, value["format"], value["width"], value["height"]
-        ),
-        preview,
-    )
+    try:
+        artifact = CoverArtifact.create(
+            original,
+            preview,
+            value["format"],
+            value["width"],
+            value["height"],
+            value["perceptual_hash"],
+        )
+    except CoverEvidenceError as error:
+        # The hash is the child's own statement about bytes this process never
+        # decodes, so a malformed one is a rejected decode rather than a fault
+        # in the report the caller is assembling.
+        raise CoverDecodeRejected(CoverSourceState.DECODE_FAILED) from error
+    return DecodedCover(artifact, preview)
 
 
 __all__ = [

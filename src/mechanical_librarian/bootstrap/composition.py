@@ -10,6 +10,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import AbstractContextManager, contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
@@ -79,6 +80,18 @@ from mechanical_librarian.adapters.private_recovery import (
     PrivateCoverRecoveryStore,
     require_private_directory,
 )
+from mechanical_librarian.adapters.providers.audible_catalog_metadata import (
+    AudibleCatalogMetadataProvider,
+    AudibleCatalogPacer,
+)
+from mechanical_librarian.adapters.providers.audiosilo_metadata import (
+    AudioSiloMetadataProvider,
+    AudioSiloPacer,
+)
+from mechanical_librarian.adapters.providers.audnexus_metadata import (
+    AudnexusMetadataProvider,
+    AudnexusPacer,
+)
 from mechanical_librarian.adapters.providers.google_books_metadata import (
     GoogleBooksMetadataProvider,
     GoogleBooksPacer,
@@ -86,6 +99,10 @@ from mechanical_librarian.adapters.providers.google_books_metadata import (
 from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HardcoverMetadataProvider,
     HardcoverPacer,
+)
+from mechanical_librarian.adapters.providers.itunes_search_metadata import (
+    ITunesSearchMetadataProvider,
+    ITunesSearchPacer,
 )
 from mechanical_librarian.adapters.providers.open_library_metadata import (
     OpenLibraryMetadataProvider,
@@ -232,6 +249,7 @@ from mechanical_librarian.bootstrap.contained_reviewer import run_cover_packet_r
 from mechanical_librarian.domain.audio_inspection import (
     AudioInspectionLimits,
     AudioInspectionOutcome,
+    AudioSidecarDigest,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
@@ -281,9 +299,13 @@ from mechanical_librarian.infrastructure.local_media import (
     sha256_descriptor,
 )
 from mechanical_librarian.infrastructure.security.credentials import (
+    audible_catalog_client,
+    audiosilo_client,
+    audnexus_client,
     google_books_client,
     hardcover_client,
     hardcover_client_token,
+    itunes_search_client,
     open_library_client,
     read_secret,
     target_client,
@@ -884,7 +906,7 @@ class _IsolatedAudioInspector:
         self, mount: MediaMountConfiguration, relative_path: str, maximum_bytes: int
     ) -> AudioInspectionResult:
         opened = None
-        sidecars: list[tuple[str, str, int]] = []
+        sidecars: list[_OpenedSidecar] = []
         try:
             opened = open_local_media(mount.container_path, relative_path)
             digest = sha256_descriptor(
@@ -897,7 +919,9 @@ class _IsolatedAudioInspector:
                 opened.descriptor,
                 source,
                 AudioInspectionLimits(source_bytes=_audio_source_bytes(maximum_bytes)),
-                sidecars=tuple(sidecars),
+                sidecars=tuple(
+                    (value.surface, value.name, value.descriptor) for value in sidecars
+                ),
                 path_file=components[-1],
                 path_folder=components[-2] if len(components) > 1 else None,
             )
@@ -926,6 +950,7 @@ class _IsolatedAudioInspector:
                     inspection.chapters,
                     inspection.chapters_truncated,
                     inspection.embedded_cover,
+                    _sidecar_manifest(sidecars),
                 ),
             )
         except MetadataReportError:
@@ -943,11 +968,7 @@ class _IsolatedAudioInspector:
                 AudioInspectionOutcome.INTERNAL_FAILURE
             ) from error
         finally:
-            for _surface, _name, descriptor in sidecars:
-                try:
-                    os.close(descriptor)
-                except OSError:
-                    pass
+            _close_sidecars(sidecars)
             if opened is not None:
                 os.close(opened.descriptor)
 
@@ -957,21 +978,64 @@ class _IsolatedAudioInspector:
         relative_path: str,
         expected_digest: str,
         maximum_bytes: int,
+        expected_sidecars: tuple[AudioSidecarDigest, ...] = (),
     ) -> bool:
+        """Re-prove the audio file *and* the sidecar set it was read with.
+
+        Digesting the selected file alone proved only one of the two surfaces
+        an audiobook's evidence comes from.  The candidate set is re-derived
+        through the same function `inspect` uses, so a sidecar added, removed,
+        or edited since publication is a change here rather than a silently
+        stale report.
+        """
         opened = None
+        sidecars: list[_OpenedSidecar] = []
         try:
             opened = open_local_media(mount.container_path, relative_path)
-            return (
+            if (
                 sha256_descriptor(
                     opened.descriptor, opened.length, maximum=maximum_bytes
                 )
-                == expected_digest
+                != expected_digest
+            ):
+                return False
+            sidecars = _open_audio_sidecars(
+                mount, relative_path, relative_path.rsplit("/", 1)[-1]
             )
+            return _sidecar_manifest(sidecars) == tuple(expected_sidecars)
         except (LocalMediaError, OSError, ValueError):
             return False
         finally:
+            _close_sidecars(sidecars)
             if opened is not None:
                 os.close(opened.descriptor)
+
+
+@dataclass(frozen=True)
+class _OpenedSidecar:
+    """One recognized sidecar, open and already digested by the parent."""
+
+    surface: str
+    name: str
+    descriptor: int
+    digest: str
+
+
+def _sidecar_manifest(
+    sidecars: list[_OpenedSidecar],
+) -> tuple[AudioSidecarDigest, ...]:
+    return tuple(
+        AudioSidecarDigest(value.name, value.digest)
+        for value in sorted(sidecars, key=lambda value: value.name)
+    )
+
+
+def _close_sidecars(sidecars: list[_OpenedSidecar]) -> None:
+    for value in sidecars:
+        try:
+            os.close(value.descriptor)
+        except OSError:
+            pass
 
 
 def _audio_source_bytes(maximum_bytes: int) -> int:
@@ -982,21 +1046,28 @@ def _audio_source_bytes(maximum_bytes: int) -> int:
 
 def _open_audio_sidecars(
     mount: MediaMountConfiguration, relative_path: str, media_name: str
-) -> list[tuple[str, str, int]]:
-    """Open the supported sidecars beside one audio file, and nothing else.
+) -> list[_OpenedSidecar]:
+    """Derive, open, and digest the supported sidecars beside one audio file.
 
-    A sidecar that cannot be opened is simply absent evidence: the audiobook's
-    own container is the primary surface, and one unreadable neighbour must not
-    deny the owner the rest of the set.
+    This is the single candidate-set derivation: inspection passes the
+    descriptors to the isolated child, and revalidation compares the digests.
+    Two derivations would be two answers to "which documents is this evidence
+    made of", and only one of them could be right.
+
+    A sidecar that cannot be opened, read, or projected is simply absent
+    evidence: the audiobook's own container is the primary surface, and one
+    unreadable neighbour must not deny the owner the rest of the set. It is
+    absent identically on both paths because both call this.
     """
+    limits = AudioInspectionLimits()
     directory = relative_path.rsplit("/", 1)[0] if "/" in relative_path else ""
     try:
         names = list_local_media_siblings(mount.container_path, relative_path)
     except LocalMediaError:
         return []
-    opened: list[tuple[str, str, int]] = []
+    opened: list[_OpenedSidecar] = []
     for name in names:
-        if len(opened) >= AudioInspectionLimits().sidecar_documents:
+        if len(opened) >= limits.sidecar_documents:
             break
         surface = sidecar_surface(name, media_name)
         if surface is None:
@@ -1006,7 +1077,23 @@ def _open_audio_sidecars(
             sibling = open_local_media(mount.container_path, reference)
         except LocalMediaError:
             continue
-        opened.append((surface.value, name, sibling.descriptor))
+        try:
+            digest = sha256_descriptor(
+                sibling.descriptor, sibling.length, maximum=limits.sidecar_bytes
+            )
+            entry = _OpenedSidecar(surface.value, name, sibling.descriptor, digest)
+        except (LocalMediaError, OSError, ValueError):
+            os.close(sibling.descriptor)
+            continue
+        try:
+            AudioSidecarDigest(entry.name, entry.digest)
+        except ValueError:
+            # A name the retained report cannot project is a name the manifest
+            # cannot carry, so the document is not part of the candidate set on
+            # either path rather than on one of them.
+            os.close(sibling.descriptor)
+            continue
+        opened.append(entry)
     return opened
 
 
@@ -1365,6 +1452,28 @@ class _NonClosingRepository:
         return None
 
 
+def _audiobook_marketplaces(
+    providers: Sequence[ProviderConnectionConfiguration],
+) -> tuple[str, ...]:
+    """Read the one marketplace order every ASIN lookup in this build walks.
+
+    `marketplaces` is configurable on the enabled Audible catalog and on
+    nothing else, but an ASIN is marketplace-scoped for Audnexus in exactly the
+    same way and it has no configuration surface of its own. Both read the
+    owner's one stated order here rather than each inventing a default.
+    """
+    return next(
+        (
+            value.marketplaces
+            for value in providers
+            if value.adapter == "audible_catalog"
+            and value.enabled
+            and value.marketplaces
+        ),
+        ("us",),
+    )
+
+
 def run_metadata_report_loaded(
     configuration: ApplicationConfiguration,
     database_path: Path,
@@ -1380,6 +1489,10 @@ def run_metadata_report_loaded(
     google_books_pacer: GoogleBooksPacer | None = None,
     open_library_pacer: OpenLibraryPacer | None = None,
     hardcover_pacer: HardcoverPacer | None = None,
+    audible_catalog_pacer: AudibleCatalogPacer | None = None,
+    audnexus_pacer: AudnexusPacer | None = None,
+    audiosilo_pacer: AudioSiloPacer | None = None,
+    itunes_search_pacer: ITunesSearchPacer | None = None,
     review_action: PipelineAction | None = None,
     recover_artifacts: bool = True,
     repository_authority: object | None = None,
@@ -1431,6 +1544,27 @@ def run_metadata_report_loaded(
         for provider in provider_configs
     ):
         hardcover_pacer = HardcoverPacer()
+    if audible_catalog_pacer is None and any(
+        provider.enabled and provider.adapter == "audible_catalog"
+        for provider in provider_configs
+    ):
+        audible_catalog_pacer = AudibleCatalogPacer()
+    if audnexus_pacer is None and any(
+        provider.enabled and provider.adapter == "audnexus"
+        for provider in provider_configs
+    ):
+        audnexus_pacer = AudnexusPacer()
+    if audiosilo_pacer is None and any(
+        provider.enabled and provider.adapter == "audiosilo"
+        for provider in provider_configs
+    ):
+        audiosilo_pacer = AudioSiloPacer()
+    if itunes_search_pacer is None and any(
+        provider.enabled and provider.adapter == "itunes_search"
+        for provider in provider_configs
+    ):
+        itunes_search_pacer = ITunesSearchPacer()
+    marketplaces = _audiobook_marketplaces(provider_configs)
     bindings: list[ProviderBinding] = []
     for provider in provider_configs:
 
@@ -1483,6 +1617,40 @@ def run_metadata_report_loaded(
                     configuration.limits.provider_response_bytes,
                     configuration.limits.timeout_seconds,
                     pacer=open_library_pacer,
+                )
+            elif value.adapter == "audible_catalog":
+                instance = AudibleCatalogMetadataProvider(
+                    value.name,
+                    audible_catalog_client(configuration.limits.timeout_seconds),
+                    configuration.limits.provider_response_bytes,
+                    configuration.limits.timeout_seconds,
+                    marketplaces=marketplaces,
+                    pacer=audible_catalog_pacer,
+                )
+            elif value.adapter == "audnexus":
+                instance = AudnexusMetadataProvider(
+                    value.name,
+                    audnexus_client(configuration.limits.timeout_seconds),
+                    configuration.limits.provider_response_bytes,
+                    configuration.limits.timeout_seconds,
+                    marketplaces=marketplaces,
+                    pacer=audnexus_pacer,
+                )
+            elif value.adapter == "audiosilo":
+                instance = AudioSiloMetadataProvider(
+                    value.name,
+                    audiosilo_client(configuration.limits.timeout_seconds),
+                    configuration.limits.provider_response_bytes,
+                    configuration.limits.timeout_seconds,
+                    pacer=audiosilo_pacer,
+                )
+            elif value.adapter == "itunes_search":
+                instance = ITunesSearchMetadataProvider(
+                    value.name,
+                    itunes_search_client(configuration.limits.timeout_seconds),
+                    configuration.limits.provider_response_bytes,
+                    configuration.limits.timeout_seconds,
+                    pacer=itunes_search_pacer,
                 )
             else:
                 raise MetadataReportError("provider configuration is invalid")
@@ -1538,9 +1706,7 @@ def run_metadata_report_loaded(
                 # the work ends terminally here, in the same transaction that
                 # published the report, rather than queueing stages that have
                 # no provider comparison to work from.
-                "local_evidence_only"
-                if report.file.format in AUDIO_FILE_FORMATS
-                else None,
+                "evidence_only" if report.file.format in AUDIO_FILE_FORMATS else None,
                 review_claim_next,
                 None,
             )
@@ -1757,6 +1923,38 @@ def create_review_pipeline(
         )
         else None
     )
+    audible_catalog_pacer = (
+        AudibleCatalogPacer()
+        if any(
+            provider.enabled and provider.adapter == "audible_catalog"
+            for provider in configuration.providers
+        )
+        else None
+    )
+    audnexus_pacer = (
+        AudnexusPacer()
+        if any(
+            provider.enabled and provider.adapter == "audnexus"
+            for provider in configuration.providers
+        )
+        else None
+    )
+    audiosilo_pacer = (
+        AudioSiloPacer()
+        if any(
+            provider.enabled and provider.adapter == "audiosilo"
+            for provider in configuration.providers
+        )
+        else None
+    )
+    itunes_search_pacer = (
+        ITunesSearchPacer()
+        if any(
+            provider.enabled and provider.adapter == "itunes_search"
+            for provider in configuration.providers
+        )
+        else None
+    )
     discovery_lock = threading.Lock()
     if provider_recovery is None:
         raise ConfigurationError("provider recovery store is unavailable")
@@ -1850,6 +2048,45 @@ def create_review_pipeline(
                     configuration.limits.provider_response_bytes,
                     configuration.limits.timeout_seconds,
                     pacer=open_library_pacer,
+                )
+            # The four audiobook adapters are keyless, so a retry constructs one
+            # from the same configuration the foreground did. The marketplace
+            # order is read from `configured` -- the provider set this retry was
+            # resolved against -- so a retry never walks an order the report it
+            # is succeeding did not.
+            if value.adapter == "audible_catalog":
+                return AudibleCatalogMetadataProvider(
+                    value.name,
+                    audible_catalog_client(configuration.limits.timeout_seconds),
+                    configuration.limits.provider_response_bytes,
+                    configuration.limits.timeout_seconds,
+                    marketplaces=_audiobook_marketplaces(configured),
+                    pacer=audible_catalog_pacer,
+                )
+            if value.adapter == "audnexus":
+                return AudnexusMetadataProvider(
+                    value.name,
+                    audnexus_client(configuration.limits.timeout_seconds),
+                    configuration.limits.provider_response_bytes,
+                    configuration.limits.timeout_seconds,
+                    marketplaces=_audiobook_marketplaces(configured),
+                    pacer=audnexus_pacer,
+                )
+            if value.adapter == "audiosilo":
+                return AudioSiloMetadataProvider(
+                    value.name,
+                    audiosilo_client(configuration.limits.timeout_seconds),
+                    configuration.limits.provider_response_bytes,
+                    configuration.limits.timeout_seconds,
+                    pacer=audiosilo_pacer,
+                )
+            if value.adapter == "itunes_search":
+                return ITunesSearchMetadataProvider(
+                    value.name,
+                    itunes_search_client(configuration.limits.timeout_seconds),
+                    configuration.limits.provider_response_bytes,
+                    configuration.limits.timeout_seconds,
+                    pacer=itunes_search_pacer,
                 )
             raise ProviderRetrySuccessorError("provider retry configuration changed")
 
@@ -1957,6 +2194,10 @@ def create_review_pipeline(
             google_books_pacer=google_books_pacer,
             open_library_pacer=open_library_pacer,
             hardcover_pacer=hardcover_pacer,
+            audible_catalog_pacer=audible_catalog_pacer,
+            audnexus_pacer=audnexus_pacer,
+            audiosilo_pacer=audiosilo_pacer,
+            itunes_search_pacer=itunes_search_pacer,
             review_action=action,
             recover_artifacts=False,
             repository_authority=database_authority,
@@ -2350,6 +2591,14 @@ def run_batch(
         OpenLibraryPacer() if "open_library" in actual_adapters else None
     )
     hardcover_pacer = HardcoverPacer() if "hardcover" in actual_adapters else None
+    audible_catalog_pacer = (
+        AudibleCatalogPacer() if "audible_catalog" in actual_adapters else None
+    )
+    audnexus_pacer = AudnexusPacer() if "audnexus" in actual_adapters else None
+    audiosilo_pacer = AudioSiloPacer() if "audiosilo" in actual_adapters else None
+    itunes_search_pacer = (
+        ITunesSearchPacer() if "itunes_search" in actual_adapters else None
+    )
 
     def current_entry(
         generation: int, fingerprint: str, key: tuple[str, str, str, str]
@@ -2376,6 +2625,10 @@ def run_batch(
             google_books_pacer=google_books_pacer,
             open_library_pacer=open_library_pacer,
             hardcover_pacer=hardcover_pacer,
+            audible_catalog_pacer=audible_catalog_pacer,
+            audnexus_pacer=audnexus_pacer,
+            audiosilo_pacer=audiosilo_pacer,
+            itunes_search_pacer=itunes_search_pacer,
         )
         from mechanical_librarian.domain.metadata_report import MetadataReport
 

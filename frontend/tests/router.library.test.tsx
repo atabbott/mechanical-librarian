@@ -1127,7 +1127,7 @@ describe('Library route', () => {
         recovery: 'No owner action is needed. The recorded evidence is shown on this work.',
         recoveryAttempt: 0,
         stage: 'provider',
-        status: 'local_evidence_only',
+        status: 'evidence_only',
       },
     }
     const getReportDetail = vi.fn(async () => ({
@@ -1175,6 +1175,17 @@ describe('Library route', () => {
       item: 'item-9',
       library: 'audio',
       mediaKind: 'm4b',
+      providerSources: [
+        {
+          providerRequests: 1,
+          laneKind: 'asin',
+          provider: 'Audnexus',
+          reason: 'The provider had nothing matching this work.',
+          status: 'no_match',
+        },
+      ],
+      providerEvidence: [],
+      providerEvidenceTruncated: false,
       reportId: 'report_' + 'a'.repeat(64),
       title: 'Recorded work',
     }))

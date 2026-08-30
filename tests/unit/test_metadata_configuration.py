@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 from pathlib import Path
-from typing import cast
+from typing import cast, get_args
 from unittest.mock import patch
 
 import httpx
@@ -19,10 +19,12 @@ from mechanical_librarian.application.configuration import (
 )
 from mechanical_librarian.application.metadata_report import CredentialError
 from mechanical_librarian.domain.audio_inspection import AudioInspectionLimits
+from mechanical_librarian.domain.metadata_report import AUDIOBOOK_MARKETPLACES
 from mechanical_librarian.domain.owner_settings import SecretWrite
 from mechanical_librarian.domain.validation import credential
 from mechanical_librarian.infrastructure.configuration import (
     ConfigurationInput,
+    Marketplace,
     configuration_schema_json,
     load_configuration_file,
 )
@@ -41,7 +43,7 @@ _SYNTHETIC_SECRET = str(_SYNTHETIC_ROOT / "provider.secret")
 
 def _source(root: Path) -> dict[str, object]:
     return {
-        "schema_version": "config-v6",
+        "schema_version": "config-v7",
         "provider_recovery_generation": 1,
         "connections": [
             {
@@ -104,6 +106,207 @@ def _source(root: Path) -> dict[str, object]:
             },
         ],
     }
+
+
+_AUDIO_ADAPTERS = ("audible_catalog", "audnexus", "audiosilo", "itunes_search")
+
+
+def _audio_provider(adapter: str, *, enabled: bool = True) -> dict[str, object]:
+    return {
+        "name": adapter.replace("_", "-"),
+        "adapter": adapter,
+        "enabled": enabled,
+        "cover_enabled": False,
+        "secret_file": None,
+    }
+
+
+def _with_providers(providers: list[dict[str, object]]) -> dict[str, object]:
+    source = _source(_SYNTHETIC_ROOT)
+    source["providers"] = [*cast(list, source["providers"]), *providers]
+    return source
+
+
+def test_every_audiobook_adapter_is_admitted_keyless_in_both_states() -> None:
+    """ADR-0061 admits four providers for which no key exists at all.
+
+    A fresh install gets audiobook evidence with zero secrets, so the
+    enabled and disabled forms of each are the whole surface an owner has.
+    """
+    source = _with_providers(
+        [
+            _audio_provider(adapter, enabled=enabled)
+            for adapter in _AUDIO_ADAPTERS
+            for enabled in (True, False)
+        ]
+    )
+    source["providers"] = sorted(
+        cast(list, source["providers"]),
+        key=lambda item: (item["adapter"], item["enabled"]),
+    )
+    for index, item in enumerate(cast(list, source["providers"])):
+        item["name"] = f"provider-{index:02d}"
+    value = ConfigurationInput.model_validate(source)
+    admitted = {
+        (item.model_dump()["adapter"], item.model_dump()["enabled"])
+        for item in value.providers
+    }
+    assert {
+        (adapter, enabled) for adapter in _AUDIO_ADAPTERS for enabled in (True, False)
+    } <= admitted
+    audible = next(
+        item.model_dump()
+        for item in value.providers
+        if item.model_dump()["adapter"] == "audible_catalog"
+        and item.model_dump()["enabled"]
+    )
+    assert AUDIOBOOK_MARKETPLACES == tuple(audible["marketplaces"])
+    assert audible["marketplaces"][0] == "us"
+
+
+@pytest.mark.parametrize("adapter", _AUDIO_ADAPTERS)
+@pytest.mark.parametrize(
+    "credential_surface",
+    [
+        {"secret_file": _SYNTHETIC_SECRET},
+        {"contact_email": "owner@example.invalid"},
+        {"api_key": "synthetic"},
+        {"token": "synthetic"},
+    ],
+)
+def test_no_audiobook_adapter_accepts_a_credential_surface(
+    adapter: str, credential_surface: dict[str, object]
+) -> None:
+    entry = {**_audio_provider(adapter), **credential_surface}
+    with pytest.raises(ValidationError):
+        ConfigurationInput.model_validate(_with_providers([entry]))
+
+
+@pytest.mark.parametrize("adapter", ("audible_catalog", "itunes_search"))
+def test_the_two_cover_bearing_audiobook_adapters_carry_a_real_cover_switch(
+    adapter: str,
+) -> None:
+    """Audible and iTunes state art of their own, so the switch is a bool."""
+    for enabled in (True, False):
+        entry = {**_audio_provider(adapter), "cover_enabled": enabled}
+        value = ConfigurationInput.model_validate(_with_providers([entry]))
+        admitted = next(
+            item.model_dump()
+            for item in value.providers
+            if item.model_dump()["adapter"] == adapter
+        )
+        assert admitted["cover_enabled"] is enabled
+
+
+@pytest.mark.parametrize("adapter", ("audible_catalog", "itunes_search"))
+def test_a_cover_bearing_audiobook_adapter_acquires_covers_by_default(
+    adapter: str,
+) -> None:
+    entry = _audio_provider(adapter)
+    del entry["cover_enabled"]
+    value = ConfigurationInput.model_validate(_with_providers([entry]))
+    admitted = next(
+        item.model_dump()
+        for item in value.providers
+        if item.model_dump()["adapter"] == adapter
+    )
+    assert admitted["cover_enabled"] is True
+
+
+@pytest.mark.parametrize("adapter", ("audnexus", "audiosilo"))
+def test_a_restating_audiobook_adapter_refuses_a_cover_surface(adapter: str) -> None:
+    """Audnexus and AudioSilo restate Audible's asset, so they carry none."""
+    entry = {**_audio_provider(adapter), "cover_enabled": True}
+    with pytest.raises(ValidationError):
+        ConfigurationInput.model_validate(_with_providers([entry]))
+
+
+@pytest.mark.parametrize("adapter", _AUDIO_ADAPTERS)
+def test_a_disabled_audiobook_adapter_refuses_a_cover_surface(adapter: str) -> None:
+    entry = {**_audio_provider(adapter, enabled=False), "cover_enabled": True}
+    with pytest.raises(ValidationError):
+        ConfigurationInput.model_validate(_with_providers([entry]))
+
+
+def test_marketplaces_belong_to_the_enabled_audible_catalog_and_nowhere_else() -> None:
+    for adapter in _AUDIO_ADAPTERS[1:]:
+        with pytest.raises(ValidationError):
+            ConfigurationInput.model_validate(
+                _with_providers([{**_audio_provider(adapter), "marketplaces": ["us"]}])
+            )
+    with pytest.raises(ValidationError):
+        ConfigurationInput.model_validate(
+            _with_providers(
+                [
+                    {
+                        **_audio_provider("audible_catalog", enabled=False),
+                        "marketplaces": ["us"],
+                    }
+                ]
+            )
+        )
+    with pytest.raises(ValidationError):
+        ConfigurationInput.model_validate(
+            _with_providers(
+                [{**_audio_provider("google_books"), "marketplaces": ["us"]}]
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "marketplaces", [["zz"], ["us", "zz"], [], ["US"], ["us", "us"], "us"]
+)
+def test_a_marketplace_outside_the_closed_set_is_refused(
+    marketplaces: object,
+) -> None:
+    entry = {**_audio_provider("audible_catalog"), "marketplaces": marketplaces}
+    source = _with_providers([entry])
+    if marketplaces == ["us", "us"]:
+        # Pydantic admits the repetition; the domain value refuses it, because
+        # a marketplace tried twice is a wasted request rather than a fallback.
+        with pytest.raises(ConfigurationError):
+            ProviderConnectionConfiguration(
+                "audible-catalog",
+                True,
+                False,
+                None,
+                "audible_catalog",
+                None,
+                ("us", "us"),
+            )
+        return
+    with pytest.raises(ValidationError):
+        ConfigurationInput.model_validate(source)
+
+
+def test_the_boundary_marketplace_set_is_the_one_the_domain_names() -> None:
+    assert AUDIOBOOK_MARKETPLACES == get_args(Marketplace)
+
+
+def test_a_loaded_audible_catalog_carries_its_marketplaces_as_a_tuple(
+    tmp_path: Path,
+) -> None:
+    source = _with_providers([_audio_provider("audible_catalog")])
+    for library in cast(list, source["libraries"]):
+        library["provider_connections"] = [
+            *library["provider_connections"],
+            "audible-catalog",
+        ]
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(source), encoding="utf-8")
+    configuration = load_configuration_file(path)
+    audible = next(
+        value for value in configuration.providers if value.adapter == "audible_catalog"
+    )
+    assert AUDIOBOOK_MARKETPLACES == audible.marketplaces
+    assert audible.secret_file is None
+    assert audible.contact_email is None
+    assert audible.cover_enabled is False
+    assert all(
+        value.marketplaces == ()
+        for value in configuration.providers
+        if value.adapter != "audible_catalog"
+    )
 
 
 def _review(root: Path) -> dict[str, object]:
@@ -346,7 +549,7 @@ def test_multiple_referenced_cover_providers_share_the_bounded_gallery() -> None
 
 def test_generated_schema_is_current() -> None:
     expected = (
-        Path(__file__).parents[2] / "docs" / "reference" / "config-v6.schema.json"
+        Path(__file__).parents[2] / "docs" / "reference" / "config-v7.schema.json"
     ).read_text(encoding="utf-8")
     assert configuration_schema_json() == expected
 
@@ -364,11 +567,19 @@ def test_provider_recovery_generation_is_required_and_positive() -> None:
 def test_generated_schema_enforces_provider_variants() -> None:
     schema = json.loads(configuration_schema_json())["$defs"]
     assert {
+        "DisabledAudibleCatalogProviderInput",
+        "DisabledAudioSiloProviderInput",
+        "DisabledAudnexusProviderInput",
         "DisabledGoogleBooksProviderInput",
         "DisabledHardcoverProviderInput",
+        "DisabledItunesSearchProviderInput",
         "DisabledOpenLibraryProviderInput",
+        "EnabledAudibleCatalogProviderInput",
+        "EnabledAudioSiloProviderInput",
+        "EnabledAudnexusProviderInput",
         "EnabledGoogleBooksProviderInput",
         "EnabledHardcoverProviderInput",
+        "EnabledItunesSearchProviderInput",
         "EnabledOpenLibraryProviderInput",
     } == {
         value["$ref"].rsplit("/", 1)[-1] for value in schema["ProviderInput"]["anyOf"]
@@ -752,8 +963,8 @@ def test_hardcover_raw_token_is_confined_to_the_exact_graphql_post() -> None:
     assert requests[2].headers.get("authorization") is None
 
 
-def test_the_audio_ceiling_is_a_default_a_config_v6_document_need_not_carry() -> None:
-    """No schema increment: an older `config-v6` document still validates.
+def test_the_audio_ceiling_is_a_default_a_config_document_need_not_carry() -> None:
+    """No schema increment: an older `config-v7` document still validates.
 
     `LimitsInput` is closed, so a key added to it would reject every document
     written before it existed had it not carried a default. Both shapes an

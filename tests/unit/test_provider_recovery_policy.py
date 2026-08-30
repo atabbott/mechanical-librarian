@@ -114,3 +114,19 @@ def test_specific_and_generic_rate_limit_evidence_stays_ambiguous_across_scopes(
             ),
         )
         assert ("rate_limited", None) == provider_recovery_decision(observation, now=0)
+
+
+def test_insufficient_input_is_terminal_without_a_recovery_decision() -> None:
+    """The decision table names no failure for a lookup that could not be built."""
+    for authority in ("audnexus", "itunes_search", "audible_catalog", "audiosilo"):
+        assert (
+            provider_recovery_decision(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.INSUFFICIENT_INPUT,
+                    authority=authority,
+                ),
+                now=7,
+            )
+            is None
+        )

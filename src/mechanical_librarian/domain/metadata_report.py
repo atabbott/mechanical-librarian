@@ -20,6 +20,9 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioChapter,
     AudioEmbeddedCover,
     AudioEvidenceSurface,
+    AudioInspectionLimits,
+    AudioSidecarDigest,
+    normalize_duration_seconds,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
@@ -63,13 +66,46 @@ from mechanical_librarian.domain.work_identity import (
     work_title_transformation_lineage_from_data,
 )
 
-REPORT_SCHEMA = "metadata-report-v31"
+REPORT_SCHEMA = "metadata-report-v32"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v5"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
 MAX_REPORT_BYTES = 2_097_152
 MAX_CANDIDATES = 5
 MAX_PROVIDER_EVIDENCE = 128
+# One provider chapter vector holds at most the chapter count the local
+# inspector itself admits (ADR-0063), so neither side of a comparison can be
+# longer than the other can ever be.  At five candidates a full vector costs
+# roughly 30 KB of the 2 MiB document, which is why it is the one bounded
+# structure on `ProviderEvidence` rather than a free-form value.
+MAX_PROVIDER_CHAPTER_DURATIONS = 1_024
+MAX_AUDIO_SIDECARS = AudioInspectionLimits.HARD_CAPS["sidecar_documents"]
+# Whole seconds. Provider runtimes arrive minute-granular, so an agreement band
+# rather than equality is the only comparison that can be true of both sides.
+# The corroboration module names this same parameter
+# `RUNTIME_BAND_TIGHT_SECONDS`; it is measured at slice-2 qualification.
+DURATION_AGREEMENT_BAND_SECONDS = 90
+# The marketplaces an ASIN lookup may resolve in, US first. ADR-0061 makes ASIN
+# a marketplace-scoped identifier, so the resolving marketplace travels with the
+# evidence rather than being assumed.
+AUDIOBOOK_MARKETPLACES = (
+    "us",
+    "uk",
+    "de",
+    "fr",
+    "au",
+    "in",
+    "ca",
+    "jp",
+    "it",
+    "es",
+)
+# The four authorities that observe a recording rather than a printed edition.
+# Only these state a running time, a narrator, or a marketplace, so only these
+# reach the corroboration gate that widens a work admission to an edition one.
+AUDIOBOOK_PROVIDER_AUTHORITIES = frozenset(
+    {"audible_catalog", "audiosilo", "audnexus", "itunes_search"}
+)
 MAX_CONTRIBUTIONS = 16
 MAX_SERIES = 16
 MAX_TAGS = 32
@@ -78,10 +114,14 @@ MAX_DESCRIPTION_CHARACTERS = 16_384
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _REPORT_ID = re.compile(r"^report_[0-9a-f]{64}$")
 _REFERENCE = re.compile(r"^(?:local|provider)_[0-9a-f]{64}$")
-_ASIN = re.compile(r"^B[0-9A-Z]{9}$")
 _EXPLICIT_TIMESTAMP_OFFSET = re.compile(r"(?:Z|[+-]\d{2}:\d{2})$")
 _LANE_IDENTITY = re.compile(r"^lane_[0-9a-f]{64}$")
 _LANE_CANDIDATE_REFERENCE = re.compile(r"^lane_candidate_[0-9a-f]{64}$")
+# The whole shape of a canonical ASIN and nothing else: ten upper-case ASCII
+# alphanumerics.  ADR-0061 admits ISBN-10-shaped ASINs without prefix filtering
+# -- 17 of the reference library's 103 known ASINs are shaped that way and all
+# are genuine -- so a `B0` filter here would refuse real identifiers.
+_CANONICAL_ASIN = re.compile(r"^[0-9A-Z]{10}$")
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _PROVIDER_ACCESS_TIME = re.compile(
     r"^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])"
@@ -182,6 +222,13 @@ class ProviderEvidenceKind(StrEnum):
     SEARCH_EDITION = "search_edition"
     TAXONOMY = "taxonomy"
     DESCRIPTION_TRANSFORMATION = "description_transformation"
+    # The marketplace an ASIN lookup actually resolved in. An ASIN is
+    # marketplace-scoped, so provenance that omits the marketplace names no
+    # identity at all.
+    ASIN_MARKETPLACE = "asin_marketplace"
+    # A recording's bounded structure: chapter count, total runtime, and the
+    # per-chapter duration vector the corroboration rules align against.
+    CHAPTER_STRUCTURE = "chapter_structure"
 
 
 class DateLinkConfidence(StrEnum):
@@ -487,6 +534,7 @@ class ProviderQueryKind(StrEnum):
     DISCOVERY = "discovery"
     ISBN = "isbn"
     WORK = "work"
+    ASIN = "asin"
 
 
 class Comparison(StrEnum):
@@ -507,6 +555,10 @@ class ComparisonMethod(StrEnum):
     CONSERVATIVE_COMMA_INVERSION = "conservative_comma_inversion"
     STRUCTURAL_IDENTITY_BINDING = "structural_identity_binding"
     DATE_PRECISION_COMPATIBILITY = "date_precision_compatibility"
+    # Two running times that name the same recording within the agreement band.
+    # Only a `DURATION` claim reaches it, and only an audiobook provider states
+    # one, so no ebook comparison changes shape.
+    DURATION_BAND_AGREEMENT = "duration_band_agreement"
 
 
 class PublicationDateRelation(StrEnum):
@@ -917,11 +969,16 @@ class AudioFacts:
     compared, and can never become a proposal.  The embedded cover is a
     presence fact for the same reason -- it grants no acquisition authority and
     is deliberately not a ``CoverSource``.
+
+    ``sidecars`` is not evidence either: it is the currentness witness for the
+    documents beside the file that evidence was read from, so an added,
+    removed, or edited sidecar makes this report stale.
     """
 
     chapters: tuple[AudioChapter, ...] = ()
     chapters_truncated: bool = False
     embedded_cover: AudioEmbeddedCover = AudioEmbeddedCover(False)
+    sidecars: tuple[AudioSidecarDigest, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -936,12 +993,21 @@ class AudioFacts:
             range(1, len(self.chapters) + 1)
         ):
             raise ReportValueError("audio chapter ordinals are invalid")
+        names = tuple(value.name for value in self.sidecars)
+        if (
+            type(self.sidecars) is not tuple
+            or len(self.sidecars) > MAX_AUDIO_SIDECARS
+            or any(type(value) is not AudioSidecarDigest for value in self.sidecars)
+            or names != tuple(sorted(set(names)))
+        ):
+            raise ReportValueError("audio sidecar manifest is invalid")
 
     def to_data(self) -> dict[str, object]:
         return {
             "chapters": [value.to_data() for value in self.chapters],
             "chapters_truncated": self.chapters_truncated,
             "embedded_cover": self.embedded_cover.to_data(),
+            "sidecars": [value.to_data() for value in self.sidecars],
         }
 
 
@@ -1309,7 +1375,11 @@ class ProviderClaim:
         if (
             self.kind is ClaimKind.ASIN
             and self.value is not None
-            and _ASIN.fullmatch(self.value) is None
+            # One grammar for the whole identifier family: the same canonical
+            # form the ASIN discovery lane is built from. ADR-0061 clause 4
+            # admits ISBN-10-shaped ASINs, so a `B0` filter here would refuse
+            # 17 of the reference library's 103 genuine identifiers.
+            and canonical_asin(self.value) != self.value
         ):
             raise ReportValueError("provider ASIN claim is invalid")
         is_date = self.kind is ClaimKind.PUBLICATION_DATE
@@ -1440,6 +1510,56 @@ class ProviderClaim:
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderChapterStructure:
+    """One recording's bounded structure as a provider stated it.
+
+    Durations are whole seconds because that is the coarsest granularity any
+    admitted provider states and the finest either side can be trusted at; the
+    vector is capped at the same chapter count the local inspector admits, with
+    an explicit overflow flag, because a report document that cannot be
+    published is evidence nobody has.
+    """
+
+    chapter_count: int
+    runtime_seconds: int
+    durations_seconds: tuple[int, ...] = ()
+    durations_truncated: bool = False
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.chapter_count) is not int
+            or not 0 <= self.chapter_count <= 2_147_483_647
+            or type(self.runtime_seconds) is not int
+            or not 0 <= self.runtime_seconds <= 604_800
+            or type(self.durations_truncated) is not bool
+            or type(self.durations_seconds) is not tuple
+            or len(self.durations_seconds) > MAX_PROVIDER_CHAPTER_DURATIONS
+            or any(
+                type(value) is not int or not 0 <= value <= 604_800
+                for value in self.durations_seconds
+            )
+        ):
+            raise ReportValueError("provider chapter structure is invalid")
+        if self.durations_truncated:
+            if len(self.durations_seconds) != MAX_PROVIDER_CHAPTER_DURATIONS:
+                raise ReportValueError("provider chapter overflow is inconsistent")
+        elif len(self.durations_seconds) not in {0, self.chapter_count}:
+            raise ReportValueError("provider chapter vector is inconsistent")
+        if self.durations_truncated and self.chapter_count <= len(
+            self.durations_seconds
+        ):
+            raise ReportValueError("provider chapter overflow is inconsistent")
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "chapter_count": self.chapter_count,
+            "durations_seconds": list(self.durations_seconds),
+            "durations_truncated": self.durations_truncated,
+            "runtime_seconds": self.runtime_seconds,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderEvidence:
     kind: ProviderEvidenceKind
     value: str
@@ -1452,6 +1572,7 @@ class ProviderEvidence:
     source_ordinal: int = 0
     links: tuple[ComparisonLink, ...] = ()
     taxonomy_type: str | None = None
+    chapters: ProviderChapterStructure | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -1487,6 +1608,18 @@ class ProviderEvidence:
             and self.value != "contradictory_or_multiple"
         ):
             raise ReportValueError("provider work relation contradiction is invalid")
+        if (
+            self.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+            and self.value not in AUDIOBOOK_MARKETPLACES
+        ):
+            raise ReportValueError("provider ASIN marketplace is invalid")
+        if self.kind is ProviderEvidenceKind.CHAPTER_STRUCTURE:
+            if type(self.chapters) is not ProviderChapterStructure or self.value != str(
+                self.chapters.runtime_seconds
+            ):
+                raise ReportValueError("provider chapter structure is invalid")
+        elif self.chapters is not None:
+            raise ReportValueError("provider chapter structure is misbound")
         if self.kind is ProviderEvidenceKind.CONTRIBUTOR_IDENTITY:
             if self.role is None:
                 raise ReportValueError("provider rich evidence role is invalid")
@@ -1601,6 +1734,7 @@ class ProviderEvidence:
             "source_ordinal": self.source_ordinal,
             "links": [value.to_data() for value in self.links],
             "taxonomy_type": self.taxonomy_type,
+            "chapters": None if self.chapters is None else self.chapters.to_data(),
         }
 
 
@@ -1788,6 +1922,10 @@ class ProviderCandidate:
             ProviderEvidenceKind.EDITION_STATEMENT,
             ProviderEvidenceKind.TRANSLATION_STATEMENT,
             ProviderEvidenceKind.EDITION_DESCRIPTION,
+            # A marketplace and a running structure are properties of one
+            # recorded manifestation, exactly as `DURATION` is.
+            ProviderEvidenceKind.ASIN_MARKETPLACE,
+            ProviderEvidenceKind.CHAPTER_STRUCTURE,
         }
         work_only = {
             ProviderEvidenceKind.WORK_COVER_ID,
@@ -1811,6 +1949,22 @@ class ProviderCandidate:
             for value in self.evidence
             if value.kind is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
         )
+        # One candidate is one recording, so it has one structure and resolved
+        # in one marketplace. Two of either is a merge fault, and the vector is
+        # also the only unbounded-looking value the document carries.
+        if (
+            sum(
+                value.kind is ProviderEvidenceKind.CHAPTER_STRUCTURE
+                for value in self.evidence
+            )
+            > 1
+            or sum(
+                value.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+                for value in self.evidence
+            )
+            > 1
+        ):
+            raise ReportValueError("provider audio structure evidence is duplicated")
         if (
             len(work_relations) > 1
             or len(work_relation_contradictions) > 1
@@ -1916,7 +2070,12 @@ class ProviderLaneObservation:
     def __post_init__(self) -> None:
         if (
             _LANE_IDENTITY.fullmatch(self.identity) is None
-            or self.kind not in {ProviderQueryKind.ISBN, ProviderQueryKind.WORK}
+            or self.kind
+            not in {
+                ProviderQueryKind.ISBN,
+                ProviderQueryKind.WORK,
+                ProviderQueryKind.ASIN,
+            }
             or type(self.status) is not ProviderStatus
         ):
             raise ReportValueError("provider lane is invalid")
@@ -1937,7 +2096,9 @@ class ProviderLaneObservation:
             ):
                 raise ReportValueError("provider ISBN lane is invalid")
         elif self.matched_family is not None or not self.input_references:
-            raise ReportValueError("provider work lane is invalid")
+            # A WORK or ASIN lane carries no ISBN family, and every lane names
+            # the local claims it was dispatched from.
+            raise ReportValueError("provider lane inputs are invalid")
         if (
             type(self.candidates) is not tuple
             or any(
@@ -2072,8 +2233,12 @@ class ProviderObservation:
             or self.authority
             not in {
                 None,
+                "audible_catalog",
+                "audiosilo",
+                "audnexus",
                 "google_books",
                 "hardcover",
+                "itunes_search",
                 "open_library",
             }
         ):
@@ -2551,13 +2716,13 @@ class MetadataReport:
             type(value) is not ProviderObservation for value in self.providers
         ):
             raise ReportValueError("provider observations are invalid")
-        # F43 terminates an audiobook report at local extraction. No provider is
-        # constructed, dispatched, or recorded for one, so a provider
-        # observation on an audio report is a composition fault rather than a
-        # provider outcome, and the report refuses it here rather than letting
-        # it reach a proposal.
-        if is_audio and self.providers:
-            raise ReportValueError("audio report cannot carry provider observations")
+        # F43 slice 1 refused a provider observation on an audio report because
+        # no audiobook provider existed. ADR-0061 admits four, so `v32` carries
+        # them: the document is the same shape for both media, and what an
+        # audiobook does or does not dispatch is a pipeline decision rather than
+        # a property of the retained evidence. Until the activation packet lands
+        # the pipeline still stops an audiobook before any provider, so this
+        # section is empty in practice rather than by refusal.
         names = tuple(value.provider for value in self.providers)
         if names != tuple(sorted(set(names))):
             raise ReportValueError("provider observations are not in canonical order")
@@ -3192,6 +3357,20 @@ def isbn_family(value: str | None) -> str | None:
     return stem + str(checksum)
 
 
+def canonical_asin(value: str | None) -> str | None:
+    """Return one canonical ASIN, or ``None`` when the value is not one.
+
+    Ten upper-case ASCII alphanumerics and nothing else. ADR-0061 admits
+    ISBN-10-shaped ASINs without a prefix filter, so this deliberately does not
+    look for ``B0``: on the reference library 17 of 103 known ASINs are shaped
+    that way and every one of them is a genuine audiobook identifier.
+    """
+    if type(value) is not str:
+        return None
+    upper = value.strip().upper()
+    return upper if _CANONICAL_ASIN.fullmatch(upper) is not None else None
+
+
 def _provider_reference_data(
     provider: str,
     candidate: str,
@@ -3496,6 +3675,7 @@ _METHOD_STRENGTH = {
     ComparisonMethod.CONSERVATIVE_COMMA_INVERSION: 3,
     ComparisonMethod.STRUCTURAL_IDENTITY_BINDING: 4,
     ComparisonMethod.DATE_PRECISION_COMPATIBILITY: 5,
+    ComparisonMethod.DURATION_BAND_AGREEMENT: 6,
 }
 _PRINT_FORMAT_CONTRADICTIONS = frozenset(
     {
@@ -3964,6 +4144,13 @@ def _comparison_method(
 ) -> ComparisonMethod:
     if provider_value == local_value:
         return ComparisonMethod.EXACT
+    if kind is ClaimKind.DURATION:
+        # A running time is the one claim two sources state at different
+        # granularities and still mean the same recording: an audiobook
+        # provider publishes minutes, the container states milliseconds. Only
+        # an audiobook provider produces a `DURATION` claim, so no ebook
+        # comparison reaches this branch.
+        return _duration_band_method(provider_value, local_value)
     if kind not in {ClaimKind.TITLE, ClaimKind.SUBTITLE, ClaimKind.CREATOR}:
         return (
             ComparisonMethod.CLOSED_FIELD_NORMALIZATION
@@ -3999,6 +4186,29 @@ def _comparison_method(
         )
     ):
         return ComparisonMethod.CONSERVATIVE_COMMA_INVERSION
+    return ComparisonMethod.NONE
+
+
+def duration_milliseconds(value: str) -> int | None:
+    """Read one canonical duration into whole milliseconds, or ``None``."""
+    try:
+        canonical = normalize_duration_seconds(value)
+    except (TypeError, ValueError):
+        return None
+    whole, _, fraction = canonical.partition(".")
+    return int(whole) * 1000 + int(fraction)
+
+
+def _duration_band_method(provider_value: str, local_value: str) -> ComparisonMethod:
+    provider_milliseconds = duration_milliseconds(provider_value)
+    local_milliseconds = duration_milliseconds(local_value)
+    if provider_milliseconds is None or local_milliseconds is None:
+        return ComparisonMethod.NONE
+    if (
+        abs(provider_milliseconds - local_milliseconds)
+        <= DURATION_AGREEMENT_BAND_SECONDS * 1000
+    ):
+        return ComparisonMethod.DURATION_BAND_AGREEMENT
     return ComparisonMethod.NONE
 
 
@@ -4210,7 +4420,9 @@ def _report_from_data(value: object) -> MetadataReport:
 def _audio_facts_from_data(value: object) -> AudioFacts | None:
     if value is None:
         return None
-    item = _object(value, {"chapters", "chapters_truncated", "embedded_cover"})
+    item = _object(
+        value, {"chapters", "chapters_truncated", "embedded_cover", "sidecars"}
+    )
     cover = _object(item["embedded_cover"], {"present", "surface"})
     try:
         return AudioFacts(
@@ -4224,9 +4436,20 @@ def _audio_facts_from_data(value: object) -> AudioFacts | None:
                 if cover["surface"] is None
                 else AudioEvidenceSurface(cover["surface"]),
             ),
+            tuple(
+                _audio_sidecar_from_data(sidecar) for sidecar in _list(item["sidecars"])
+            ),
         )
     except ValueError as error:
         raise ReportValueError("audio facts are invalid") from error
+
+
+def _audio_sidecar_from_data(value: object) -> AudioSidecarDigest:
+    item = _object(value, {"digest", "name"})
+    try:
+        return AudioSidecarDigest(item["name"], item["digest"])
+    except ValueError as error:
+        raise ReportValueError("audio sidecar manifest is invalid") from error
 
 
 def _audio_chapter_from_data(value: object) -> AudioChapter:
@@ -4334,6 +4557,7 @@ def _cover_source_from_data(value: object) -> CoverSource:
                     "height",
                     "media_type",
                     "original_digest",
+                    "perceptual_hash",
                     "preview_digest",
                     "preview_variant",
                     "width",
@@ -4687,6 +4911,7 @@ def _provider_evidence_from_data(value: object) -> ProviderEvidence:
     item = _object(
         value,
         {
+            "chapters",
             "date_confidence",
             "date_event",
             "date_normalized",
@@ -4718,6 +4943,29 @@ def _provider_evidence_from_data(value: object) -> ProviderEvidence:
         item["source_ordinal"],
         tuple(_comparison_link_from_data(link) for link in _list(item["links"])),
         item["taxonomy_type"],
+        _provider_chapter_structure_from_data(item["chapters"]),
+    )
+
+
+def _provider_chapter_structure_from_data(
+    value: object,
+) -> ProviderChapterStructure | None:
+    if value is None:
+        return None
+    item = _object(
+        value,
+        {
+            "chapter_count",
+            "durations_seconds",
+            "durations_truncated",
+            "runtime_seconds",
+        },
+    )
+    return ProviderChapterStructure(
+        item["chapter_count"],
+        item["runtime_seconds"],
+        tuple(_list(item["durations_seconds"])),
+        item["durations_truncated"],
     )
 
 
@@ -4850,6 +5098,13 @@ def _valid_isbn(value: str, checksum: str) -> bool:
 
 
 __all__ = [
+    "AUDIOBOOK_MARKETPLACES",
+    "DURATION_AGREEMENT_BAND_SECONDS",
+    "MAX_AUDIO_SIDECARS",
+    "MAX_PROVIDER_CHAPTER_DURATIONS",
+    "ProviderChapterStructure",
+    "canonical_asin",
+    "duration_milliseconds",
     "ClaimKind",
     "ClaimScope",
     "COMPARISON_VERSION",

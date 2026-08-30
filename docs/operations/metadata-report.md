@@ -50,7 +50,7 @@ provider call.
 - The container runs under a dedicated Unix identity with no untrusted
   same-identity processes. Privileged and hostile same-identity filesystem
   mutation is outside the supported unprivileged exclusion boundary.
-- The configuration uses `config-v6` and names the requested connection and
+- The configuration uses `config-v7` and names the requested connection and
   library explicitly.
 - The target secret and each enabled referenced provider secret are owner-only
   regular files.
@@ -153,8 +153,8 @@ source order. Front and rear subtitle/publisher/imprint canonical values share
 NFC and whitespace normalization. Rear position does not increase authority.
 Provider comparisons link only claims with the same role; no publisher/imprint
 hierarchy is inferred. The exact-current persisted report and database
-discriminator is `metadata-report-v31`. Every earlier report discriminator,
-including immediate prior `metadata-report-v30`, remains offline and requires a
+discriminator is `metadata-report-v32`. Every earlier report discriminator,
+including immediate prior `metadata-report-v31`, remains offline and requires a
 clean current database under ADR-0013.
 
 An audiobook item in a mounted audiobook library, with exactly one audio file
@@ -165,10 +165,18 @@ chapters, and whether the file carries embedded cover art — each attributed to
 the surface it was read from: an embedded tag, a sidecar document beside the
 file, or the exported file and folder names. Chapters are a bounded structured
 section rather than claims, and the embedded cover is a presence fact that
-grants no cover authority. No provider is contacted for such a report: review
-preparation ends terminally with `local_evidence_only` in the same transaction
-that publishes it, and that transaction records the item's review package, so
-the work is browsed and searched by its evidence rather than by a failure. That
+grants no cover authority. Every configured audiobook provider is contacted
+while the report is built, and its observations are retained beside the local
+evidence. The two authorities that state a cover asset of their own — the
+Audible catalog and iTunes Search — have their covers acquired through the same
+bounded cover pipeline an ebook's use, each behind its own `cover_enabled`
+switch, and the retained cover evidence records where two independent
+authorities picture the same art. What an audiobook does not reach is a
+proposal, because nothing writes to one; its covers are evidence only, so no
+cover consideration is prepared for one and no cover it carries is elected. Review preparation ends terminally with `evidence_only` in the
+same transaction that publishes it, and that transaction records the item's
+review package, so the work is browsed and searched by its evidence rather than
+by a failure. That
 package row is also the address of the report: the library row links to a
 read-only detail view of the recorded evidence, which is the only way to read
 it for a work that has no review case. The code raises no operational incident,

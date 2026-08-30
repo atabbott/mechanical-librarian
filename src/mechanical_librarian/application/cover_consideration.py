@@ -60,6 +60,7 @@ from mechanical_librarian.domain.deterministic_cover_election import (
     CoverElectionCandidate,
 )
 from mechanical_librarian.domain.metadata_report import (
+    AUDIO_FILE_FORMATS,
     MetadataReport,
     TargetDestination,
     TargetFieldState,
@@ -310,17 +311,34 @@ class CoverConsiderationService:
             None if document is None else str(json.loads(document)["consideration_id"])
         )
 
+    def _packet(
+        self, report_document: str, report: MetadataReport
+    ) -> PreparedCoverPacket | None:
+        """Build one considerable cover packet, or state that there is none.
+
+        An audiobook's provider covers are acquired as evidence and nothing
+        elects them, so an audio report is never packeted and never reaches the
+        observer however many covers it retained: a consideration it cannot act
+        on is reviewer spend and a review row for a decision nobody may make.
+        The acquired covers, their artifacts, their perceptual hashes and the
+        corroboration recorded over them are unaffected -- they live in the
+        report, not in a consideration.
+        """
+        if report.file.format in AUDIO_FILE_FORMATS:
+            return None
+        try:
+            return prepare_cover_packet(report_document, self._read_preview)
+        except ValueError as error:
+            if str(error) != "cover packet has no retrieved previews":
+                raise
+            return None
+
     def prepare_observation(
         self, review_case_id: str, report_document: str
     ) -> _ObservationRequest:
         """Capture bounded observer inputs while mutable product state is serialized."""
         report = MetadataReport.from_json(report_document)
-        try:
-            packet = prepare_cover_packet(report_document, self._read_preview)
-        except ValueError as error:
-            if str(error) != "cover packet has no retrieved previews":
-                raise
-            packet = None
+        packet = self._packet(report_document, report)
         if packet is None:
             replay_digest = self._replay_digest(
                 review_case_id,
@@ -646,13 +664,7 @@ class CoverConsiderationService:
         reviewer_evidence: _ReviewerEvidence | None,
         provider_fetching: bool,
     ) -> str:
-        packet: PreparedCoverPacket | None
-        try:
-            packet = prepare_cover_packet(report_document, self._read_preview)
-        except ValueError as error:
-            if str(error) != "cover packet has no retrieved previews":
-                raise
-            packet = None
+        packet = self._packet(report_document, report)
 
         evidence = reviewer_evidence
         if packet is not None:
@@ -1119,6 +1131,16 @@ def _cover_choice_contexts(
                 ),
                 CoverSourceKind.OPEN_LIBRARY: (
                     "Open Library",
+                    "external_corroboration",
+                    "Retained catalogue cover supports this choice.",
+                ),
+                CoverSourceKind.AUDIBLE_CATALOG: (
+                    "Audible catalog",
+                    "external_corroboration",
+                    "Retained catalogue cover supports this choice.",
+                ),
+                CoverSourceKind.ITUNES_SEARCH: (
+                    "iTunes Store",
                     "external_corroboration",
                     "Retained catalogue cover supports this choice.",
                 ),

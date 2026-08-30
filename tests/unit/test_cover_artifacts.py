@@ -48,6 +48,64 @@ def test_deterministic_png_preview_strips_metadata_and_does_not_upscale() -> Non
     assert "image/jpeg" == decoded.artifact.media_type
 
 
+def _gradient(size: tuple[int, int] = (240, 360)) -> bytes:
+    """One image whose brightness varies, so its hash is not degenerate."""
+    image = Image.new("RGB", size)
+    image.putdata(
+        [
+            (index % 251, (index * 7) % 241, (index * 13) % 239)
+            for index in range(size[0] * size[1])
+        ]
+    )
+    output = io.BytesIO()
+    image.save(output, "PNG")
+    return output.getvalue()
+
+
+def test_the_isolated_child_states_a_64_bit_perceptual_hash() -> None:
+    decoded = decode_cover(_gradient())
+    value = decoded.artifact.perceptual_hash
+
+    assert value is not None
+    assert 16 == len(value)
+    assert value == value.lower()
+    int(value, 16)
+
+
+def test_the_perceptual_hash_is_deterministic_for_one_image() -> None:
+    payload = _gradient()
+
+    assert (
+        decode_cover(payload).artifact.perceptual_hash
+        == decode_cover(payload).artifact.perceptual_hash
+    )
+
+
+def test_one_design_hashes_alike_across_encodings_and_scales() -> None:
+    """The rule compares two authorities' art, which is never byte-identical."""
+    image = Image.open(io.BytesIO(_gradient((480, 720))))
+    large = io.BytesIO()
+    image.save(large, "PNG")
+    small = io.BytesIO()
+    image.resize((240, 360), Image.Resampling.LANCZOS).save(small, "JPEG", quality=80)
+
+    left = decode_cover(large.getvalue()).artifact.perceptual_hash
+    right = decode_cover(small.getvalue()).artifact.perceptual_hash
+
+    assert left is not None
+    assert right is not None
+    assert bin(int(left, 16) ^ int(right, 16)).count("1") <= 10
+
+
+def test_two_different_designs_do_not_hash_alike() -> None:
+    left = decode_cover(_gradient()).artifact.perceptual_hash
+    right = decode_cover(_image("PNG", (240, 360))).artifact.perceptual_hash
+
+    assert left is not None
+    assert right is not None
+    assert left != right
+
+
 def test_rejects_unsupported_bytes() -> None:
     with pytest.raises(CoverDecodeRejected) as raised:
         decode_cover(b"not an image")

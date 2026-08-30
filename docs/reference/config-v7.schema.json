@@ -36,6 +36,141 @@
       "title": "ConnectionInput",
       "type": "object"
     },
+    "DisabledAudibleCatalogProviderInput": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "const": "audible_catalog",
+          "title": "Adapter",
+          "type": "string"
+        },
+        "contact_email": {
+          "const": null,
+          "default": null,
+          "title": "Contact Email",
+          "type": "null"
+        },
+        "cover_enabled": {
+          "const": false,
+          "title": "Cover Enabled",
+          "type": "boolean"
+        },
+        "enabled": {
+          "const": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "secret_file": {
+          "const": null,
+          "title": "Secret File",
+          "type": "null"
+        }
+      },
+      "required": [
+        "name",
+        "cover_enabled",
+        "secret_file",
+        "adapter",
+        "enabled"
+      ],
+      "title": "DisabledAudibleCatalogProviderInput",
+      "type": "object"
+    },
+    "DisabledAudioSiloProviderInput": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "const": "audiosilo",
+          "title": "Adapter",
+          "type": "string"
+        },
+        "contact_email": {
+          "const": null,
+          "default": null,
+          "title": "Contact Email",
+          "type": "null"
+        },
+        "cover_enabled": {
+          "const": false,
+          "title": "Cover Enabled",
+          "type": "boolean"
+        },
+        "enabled": {
+          "const": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "secret_file": {
+          "const": null,
+          "title": "Secret File",
+          "type": "null"
+        }
+      },
+      "required": [
+        "name",
+        "cover_enabled",
+        "secret_file",
+        "adapter",
+        "enabled"
+      ],
+      "title": "DisabledAudioSiloProviderInput",
+      "type": "object"
+    },
+    "DisabledAudnexusProviderInput": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "const": "audnexus",
+          "title": "Adapter",
+          "type": "string"
+        },
+        "contact_email": {
+          "const": null,
+          "default": null,
+          "title": "Contact Email",
+          "type": "null"
+        },
+        "cover_enabled": {
+          "const": false,
+          "title": "Cover Enabled",
+          "type": "boolean"
+        },
+        "enabled": {
+          "const": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "secret_file": {
+          "const": null,
+          "title": "Secret File",
+          "type": "null"
+        }
+      },
+      "required": [
+        "name",
+        "cover_enabled",
+        "secret_file",
+        "adapter",
+        "enabled"
+      ],
+      "title": "DisabledAudnexusProviderInput",
+      "type": "object"
+    },
     "DisabledGoogleBooksProviderInput": {
       "additionalProperties": false,
       "properties": {
@@ -126,6 +261,51 @@
       "title": "DisabledHardcoverProviderInput",
       "type": "object"
     },
+    "DisabledItunesSearchProviderInput": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "const": "itunes_search",
+          "title": "Adapter",
+          "type": "string"
+        },
+        "contact_email": {
+          "const": null,
+          "default": null,
+          "title": "Contact Email",
+          "type": "null"
+        },
+        "cover_enabled": {
+          "const": false,
+          "title": "Cover Enabled",
+          "type": "boolean"
+        },
+        "enabled": {
+          "const": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "secret_file": {
+          "const": null,
+          "title": "Secret File",
+          "type": "null"
+        }
+      },
+      "required": [
+        "name",
+        "cover_enabled",
+        "secret_file",
+        "adapter",
+        "enabled"
+      ],
+      "title": "DisabledItunesSearchProviderInput",
+      "type": "object"
+    },
     "DisabledOpenLibraryProviderInput": {
       "additionalProperties": false,
       "properties": {
@@ -169,6 +349,173 @@
         "secret_file"
       ],
       "title": "DisabledOpenLibraryProviderInput",
+      "type": "object"
+    },
+    "EnabledAudibleCatalogProviderInput": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "const": "audible_catalog",
+          "title": "Adapter",
+          "type": "string"
+        },
+        "contact_email": {
+          "const": null,
+          "default": null,
+          "title": "Contact Email",
+          "type": "null"
+        },
+        "cover_enabled": {
+          "default": true,
+          "title": "Cover Enabled",
+          "type": "boolean"
+        },
+        "enabled": {
+          "const": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "marketplaces": {
+          "default": [
+            "us",
+            "uk",
+            "de",
+            "fr",
+            "au",
+            "in",
+            "ca",
+            "jp",
+            "it",
+            "es"
+          ],
+          "items": {
+            "enum": [
+              "us",
+              "uk",
+              "de",
+              "fr",
+              "au",
+              "in",
+              "ca",
+              "jp",
+              "it",
+              "es"
+            ],
+            "type": "string"
+          },
+          "maxItems": 10,
+          "minItems": 1,
+          "title": "Marketplaces",
+          "type": "array"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "secret_file": {
+          "const": null,
+          "title": "Secret File",
+          "type": "null"
+        }
+      },
+      "required": [
+        "name",
+        "secret_file",
+        "adapter",
+        "enabled"
+      ],
+      "title": "EnabledAudibleCatalogProviderInput",
+      "type": "object"
+    },
+    "EnabledAudioSiloProviderInput": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "const": "audiosilo",
+          "title": "Adapter",
+          "type": "string"
+        },
+        "contact_email": {
+          "const": null,
+          "default": null,
+          "title": "Contact Email",
+          "type": "null"
+        },
+        "cover_enabled": {
+          "const": false,
+          "title": "Cover Enabled",
+          "type": "boolean"
+        },
+        "enabled": {
+          "const": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "secret_file": {
+          "const": null,
+          "title": "Secret File",
+          "type": "null"
+        }
+      },
+      "required": [
+        "name",
+        "cover_enabled",
+        "secret_file",
+        "adapter",
+        "enabled"
+      ],
+      "title": "EnabledAudioSiloProviderInput",
+      "type": "object"
+    },
+    "EnabledAudnexusProviderInput": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "const": "audnexus",
+          "title": "Adapter",
+          "type": "string"
+        },
+        "contact_email": {
+          "const": null,
+          "default": null,
+          "title": "Contact Email",
+          "type": "null"
+        },
+        "cover_enabled": {
+          "const": false,
+          "title": "Cover Enabled",
+          "type": "boolean"
+        },
+        "enabled": {
+          "const": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "secret_file": {
+          "const": null,
+          "title": "Secret File",
+          "type": "null"
+        }
+      },
+      "required": [
+        "name",
+        "cover_enabled",
+        "secret_file",
+        "adapter",
+        "enabled"
+      ],
+      "title": "EnabledAudnexusProviderInput",
       "type": "object"
     },
     "EnabledGoogleBooksProviderInput": {
@@ -269,6 +616,50 @@
         "secret_file"
       ],
       "title": "EnabledHardcoverProviderInput",
+      "type": "object"
+    },
+    "EnabledItunesSearchProviderInput": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "const": "itunes_search",
+          "title": "Adapter",
+          "type": "string"
+        },
+        "contact_email": {
+          "const": null,
+          "default": null,
+          "title": "Contact Email",
+          "type": "null"
+        },
+        "cover_enabled": {
+          "default": true,
+          "title": "Cover Enabled",
+          "type": "boolean"
+        },
+        "enabled": {
+          "const": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "secret_file": {
+          "const": null,
+          "title": "Secret File",
+          "type": "null"
+        }
+      },
+      "required": [
+        "name",
+        "secret_file",
+        "adapter",
+        "enabled"
+      ],
+      "title": "EnabledItunesSearchProviderInput",
       "type": "object"
     },
     "EnabledOpenLibraryProviderInput": {
@@ -505,6 +896,30 @@
         },
         {
           "$ref": "#/$defs/DisabledGoogleBooksProviderInput"
+        },
+        {
+          "$ref": "#/$defs/EnabledAudibleCatalogProviderInput"
+        },
+        {
+          "$ref": "#/$defs/DisabledAudibleCatalogProviderInput"
+        },
+        {
+          "$ref": "#/$defs/EnabledAudnexusProviderInput"
+        },
+        {
+          "$ref": "#/$defs/DisabledAudnexusProviderInput"
+        },
+        {
+          "$ref": "#/$defs/EnabledAudioSiloProviderInput"
+        },
+        {
+          "$ref": "#/$defs/DisabledAudioSiloProviderInput"
+        },
+        {
+          "$ref": "#/$defs/EnabledItunesSearchProviderInput"
+        },
+        {
+          "$ref": "#/$defs/DisabledItunesSearchProviderInput"
         }
       ],
       "title": "ProviderInput"
@@ -694,7 +1109,7 @@
       "default": null
     },
     "schema_version": {
-      "const": "config-v6",
+      "const": "config-v7",
       "title": "Schema Version",
       "type": "string"
     }

@@ -980,19 +980,28 @@ def _validate_provider_citation(
             raise ShadowReviewValueError("shadow-review provider citation is invalid")
         return
     evidence_data = value["evidence"]
-    if type(evidence_data) is not dict or set(evidence_data) != {
-        "date_confidence",
-        "date_event",
-        "date_normalized",
-        "date_precision",
-        "kind",
-        "links",
-        "role",
-        "scope",
-        "source_ordinal",
-        "taxonomy_type",
-        "value",
-    }:
+    if (
+        type(evidence_data) is not dict
+        or set(evidence_data)
+        != {
+            "chapters",
+            "date_confidence",
+            "date_event",
+            "date_normalized",
+            "date_precision",
+            "kind",
+            "links",
+            "role",
+            "scope",
+            "source_ordinal",
+            "taxonomy_type",
+            "value",
+        }
+        # The shadow reviewer reads ebook proposals. An audiobook's chapter
+        # structure is not citable evidence for one, and a packet that carries
+        # it is not a packet this reviewer produced.
+        or evidence_data["chapters"] is not None
+    ):
         raise ShadowReviewValueError("shadow-review provider citation is invalid")
     try:
         evidence = ProviderEvidence(
@@ -1207,6 +1216,7 @@ def _validate_provider_linkage(
             type(fact) is not dict
             or set(fact)
             != {
+                "chapters",
                 "date_confidence",
                 "date_event",
                 "date_normalized",
@@ -1219,6 +1229,7 @@ def _validate_provider_linkage(
                 "taxonomy_type",
                 "value",
             }
+            or fact["chapters"] is not None
             or type(fact["kind"]) is not str
             or fact["kind"] != "physical_format"
             or fact["role"] is not None

@@ -2,8 +2,8 @@
 
 from mechanical_librarian.application.metadata_report import MetadataReportError
 
-RETAINED_LIBRARY_V26_TO_V31 = "retained-library-v26-to-v31"
-QUALIFICATION_STATE_BRIDGE_PLANS = (RETAINED_LIBRARY_V26_TO_V31,)
+RETAINED_LIBRARY_V26_TO_V32 = "retained-library-v26-to-v32"
+QUALIFICATION_STATE_BRIDGE_PLANS = (RETAINED_LIBRARY_V26_TO_V32,)
 
 
 class QualificationStateBridgeRecoveryRequired(MetadataReportError):

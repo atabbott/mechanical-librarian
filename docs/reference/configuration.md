@@ -1,11 +1,11 @@
 # Configuration reference
 
 The installed `review-serve` runtime and the shared application composition
-accept one strict UTF-8 JSON document with schema version `config-v6`. The
+accept one strict UTF-8 JSON document with schema version `config-v7`. The
 source-only contributor workbench may load the same schema only inside its
 disposable or explicitly approved test context. Unknown and duplicate fields
 are rejected. The generated schema is
-[`config-v6.schema.json`](config-v6.schema.json) and is regenerated with:
+[`config-v7.schema.json`](config-v7.schema.json) and is regenerated with:
 
 ```text
 uv run --frozen python scripts/generate_configuration_schema.py
@@ -14,7 +14,7 @@ uv run --frozen python scripts/generate_configuration_schema.py
 The file remains the complete authority while `/data/config.json` exists.
 The accepted store-mode, first-boot, secret, authority, and apply rules are
 [ADR-0058](../architecture/decisions/0058-settings-authority-and-first-boot.md);
-this reference describes the file-managed `config-v6` contract. In that mode it
+this reference describes the file-managed `config-v7` contract. In that mode it
 also solely supplies the review TLS identity, canonical origin, and trusted
 proxy IPs; the store/setup bootstrap document is neither required nor read.
 
@@ -60,7 +60,7 @@ derive hashes, or accept environment overrides.
 
 ```json
 {
-  "schema_version": "config-v6",
+  "schema_version": "config-v7",
   "provider_recovery_generation": 1,
   "connections": [
     {
@@ -200,8 +200,8 @@ as before. Reading that local evidence requires the `ffprobe` binary the
 shipped image builds and carries; a deployment without it records no audiobook
 evidence.
 
-Every provider has explicit enablement and one of exactly three built-in adapter
-values:
+Every provider has explicit enablement and one of exactly seven built-in adapter
+values. Three read ebook metadata:
 
 - `google_books` forbids `contact_email` and cover retrieval. When enabled,
   `secret_file` is optional: `null` uses credential-free access and an absolute
@@ -210,6 +210,25 @@ values:
   private `secret_file`.
 - `open_library` always forbids a secret; when enabled it requires a bounded
   operational `contact_email`.
+
+Four read audiobook metadata, and every one of them is keyless under
+[ADR-0061](../architecture/decisions/0061-audiobook-provider-posture.md):
+`secret_file` and `contact_email` are always `null`, and no key exists for them
+even as an optional upgrade. What each one reaches on the network is stated in
+[the security and threat model](../architecture/security.md).
+
+- `audible_catalog` is primary discovery and enrichment, and may retrieve
+  covers. When enabled it also carries `marketplaces`: the ordered, non-empty,
+  duplicate-free ASIN resolution set drawn from `us`, `uk`, `de`, `fr`, `au`,
+  `in`, `ca`, `jp`, `it`, and `es`, defaulting to all ten with `us` first. No
+  other adapter, and not the disabled form of this one, accepts the key.
+- `audnexus` is per-ASIN enrichment, including chapters.
+- `audiosilo` is community corroboration and degraded mode.
+- `itunes_search` corroborates only, and may retrieve covers.
+
+`cover_enabled` defaults to `true` on an enabled `audible_catalog` or
+`itunes_search`, the two that state a cover asset of their own; `audnexus` and
+`audiosilo` restate Audible's and must leave it `false`.
 
 A disabled provider must set both adapter-specific authority fields to `null`.
 Adding or enabling a provider does nothing until a library explicitly

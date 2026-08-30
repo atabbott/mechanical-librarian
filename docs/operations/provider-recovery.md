@@ -28,7 +28,7 @@ burst or daily-quota result consumes neither a recovery-health attempt nor the
 job's three-attempt execution allowance.
 
 After correcting a dormant condition, increment the positive
-`provider_recovery_generation` in the `config-v6` file and restart the
+`provider_recovery_generation` in the `config-v7` file and restart the
 container. Startup first performs a read-only generation compatibility check;
 it rejects persisted generations newer than configuration before any outbox
 delivery or database mutation. It then drains committed package cutovers from

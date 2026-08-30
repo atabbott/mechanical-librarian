@@ -19,6 +19,7 @@ from mechanical_librarian.application.configuration import (
     TargetConnectionConfiguration,
 )
 from mechanical_librarian.application.metadata_report import (
+    MAX_ASIN_DISCOVERY_LANES,
     GenerateMetadataReport,
     InspectionResult,
     MetadataDiscoveryLane,
@@ -31,10 +32,14 @@ from mechanical_librarian.application.metadata_report import (
     ReportRepository,
     TargetFile,
     TargetSnapshot,
+    audiobook_discovery_plan,
     metadata_discovery_plan,
     metadata_lookup,
     provider_observation,
     qualify_provider_observation,
+)
+from mechanical_librarian.domain.audiobook_corroboration import (
+    runtime_corroborated_candidate,
 )
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 from mechanical_librarian.domain.failure_diagnostics import (
@@ -45,16 +50,19 @@ from mechanical_librarian.domain.failure_diagnostics import (
 )
 from mechanical_librarian.domain.metadata_report import (
     MAX_CANDIDATES,
+    AudioFacts,
     ClaimKind,
     ClaimScope,
     Comparison,
     ComparisonLink,
+    ComparisonMethod,
     EditionEnrichmentOverflow,
     FieldState,
     FileFacts,
     LocalClaim,
     MetadataReport,
     ProviderCandidate,
+    ProviderChapterStructure,
     ProviderClaim,
     ProviderEvidence,
     ProviderEvidenceKind,
@@ -75,7 +83,10 @@ from mechanical_librarian.domain.metadata_report import (
     normalize_date_value,
     publication_date_is_voting,
 )
-from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.proposal_set import (
+    ProposalOutcome,
+    evaluate_report,
+)
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
 from mechanical_librarian.domain.work_identity import (
@@ -195,6 +206,149 @@ def test_lookup_prefers_one_isbn_family_and_otherwise_requires_complete_target_a
         for lane in plan.lanes
         if lane.kind is ProviderQueryKind.ISBN
     }
+
+
+def _audio_target(title: str | None, authors: tuple[str, ...]) -> TargetSnapshot:
+    populated = (
+        TargetField(TargetDestination.AUTHORS, TargetFieldState.VALUE, authors)
+        if authors
+        else TargetField(TargetDestination.AUTHORS, TargetFieldState.MISSING)
+    )
+    fields = tuple(
+        populated if field.destination is TargetDestination.AUTHORS else field
+        for field in default_target_fields(title)
+    )
+    return TargetSnapshot("audiobook", title, (), fields=fields)
+
+
+def _audio_claim(kind: ClaimKind, value: str, occurrence: int = 1) -> LocalClaim:
+    return LocalClaim.create(
+        kind=kind,
+        observed=value,
+        canonical=value,
+        excerpt=value,
+        applicability="not_applicable",
+        basis="embedded_tag",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        occurrence=occurrence,
+    )
+
+
+def _target_title_claim(title: str) -> LocalClaim:
+    return LocalClaim.create(
+        kind=ClaimKind.TITLE,
+        observed=title,
+        canonical=title,
+        excerpt=title,
+        applicability="not_applicable",
+        basis="target_metadata",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.WORK,
+    )
+
+
+def test_audiobook_plan_builds_one_lane_per_distinct_canonical_asin() -> None:
+    """Two surfaces naming one ASIN are one lookup; two ASINs are two.
+
+    An ISBN-10-shaped ASIN is admitted beside a `B0`-shaped one because
+    ADR-0061 measured seventeen genuine ones on the reference library, and a
+    prefix filter would have refused every one of them.
+    """
+    target = _audio_target("The Recording", ("Ada Author",))
+    claims = (
+        _target_title_claim("The Recording"),
+        _audio_claim(ClaimKind.ASIN, "B002V1BFKM", 1),
+        _audio_claim(ClaimKind.ASIN, "b002v1bfkm", 2),
+        _audio_claim(ClaimKind.ASIN, "0743563123", 3),
+    )
+    plan = audiobook_discovery_plan(target, claims)
+    assert not plan.overflow
+    assert [ProviderQueryKind.ASIN, ProviderQueryKind.ASIN] == [
+        lane.kind for lane in plan.lanes
+    ]
+    assert {"B002V1BFKM", "0743563123"} == {lane.canonical_asin for lane in plan.lanes}
+    shared = next(lane for lane in plan.lanes if lane.canonical_asin == "B002V1BFKM")
+    assert 2 == len(shared.input_references)
+    assert plan == audiobook_discovery_plan(target, claims)
+
+
+def test_audiobook_plan_searches_only_when_no_identifier_is_present() -> None:
+    target = _audio_target("The Recording", ("Ada Author",))
+    identified = audiobook_discovery_plan(
+        target,
+        (
+            _target_title_claim("The Recording"),
+            _audio_claim(ClaimKind.ASIN, "B002V1BFKM"),
+        ),
+    )
+    assert [ProviderQueryKind.ASIN] == [lane.kind for lane in identified.lanes]
+    unidentified = audiobook_discovery_plan(
+        target, (_target_title_claim("The Recording"),)
+    )
+    assert [ProviderQueryKind.WORK] == [lane.kind for lane in unidentified.lanes]
+    assert ("Ada Author",) == unidentified.lanes[0].authors
+    assert () == audiobook_discovery_plan(_audio_target(None, ()), ()).lanes
+
+
+def test_audiobook_plan_refuses_an_unbounded_identifier_fan_out() -> None:
+    target = _audio_target("The Recording", ("Ada Author",))
+    claims = (
+        _target_title_claim("The Recording"),
+        *(
+            _audio_claim(ClaimKind.ASIN, f"B00{index:07d}", index + 1)
+            for index in range(MAX_ASIN_DISCOVERY_LANES + 1)
+        ),
+    )
+    overflowed = audiobook_discovery_plan(target, claims)
+    assert overflowed.overflow
+    assert () == overflowed.lanes
+
+
+def test_asin_lane_requires_one_canonical_identifier_and_nothing_else() -> None:
+    identity = "lane_" + "0" * 64
+    reference = "local_" + "1" * 64
+    assert (
+        ProviderQueryKind.ASIN
+        == MetadataDiscoveryLane(
+            identity,
+            ProviderQueryKind.ASIN,
+            (reference,),
+            canonical_asin="B002V1BFKM",
+        ).kind
+    )
+    for keywords in (
+        {},
+        {"canonical_asin": "b002v1bfkm"},
+        {"canonical_asin": "B002V1BFK"},
+        {"canonical_asin": "B002V1BFKM", "matched_family": "9780306406157"},
+        {"canonical_asin": "B002V1BFKM", "title": "The Recording"},
+        {"canonical_asin": "B002V1BFKM", "canonical_isbns": ("9780306406157",)},
+    ):
+        with pytest.raises(MetadataReportError):
+            MetadataDiscoveryLane(
+                identity, ProviderQueryKind.ASIN, (reference,), **keywords
+            )
+    with pytest.raises(MetadataReportError):
+        MetadataDiscoveryLane(
+            identity, ProviderQueryKind.ASIN, (), canonical_asin="B002V1BFKM"
+        )
+
+
+def test_a_plan_refuses_two_lanes_for_one_asin() -> None:
+    claim = _audio_claim(ClaimKind.ASIN, "B002V1BFKM")
+    lanes = tuple(
+        MetadataDiscoveryLane(
+            f"lane_{index}" + "0" * 63,
+            ProviderQueryKind.ASIN,
+            (claim.reference,),
+            canonical_asin="B002V1BFKM",
+        )
+        for index in (1, 2)
+    )
+    with pytest.raises(MetadataReportError):
+        MetadataDiscoveryPlan((claim,), lanes)
 
 
 def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
@@ -329,7 +483,7 @@ def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
             "stage": "lookup",
         }
     ]
-    assert "metadata-report-v31" == report.schema_version
+    assert "metadata-report-v32" == report.schema_version
     previous = report.to_data()
     previous["schema_version"] = "metadata-report-v22"
     with pytest.raises(ReportValueError):
@@ -1681,3 +1835,289 @@ def test_work_lookup_requires_the_complete_canonical_author_order(
     )
     assert expected == result.status
     assert (expected is ProviderStatus.CANDIDATES) == bool(result.candidates)
+
+
+def _audio_target_fields() -> tuple[TargetField, ...]:
+    """Target facts naming both the title and the author the replay reads."""
+    populated = TargetField(
+        TargetDestination.AUTHORS, TargetFieldState.VALUE, ("Andy Weir",)
+    )
+    return tuple(
+        populated if field.destination is TargetDestination.AUTHORS else field
+        for field in default_target_fields("Project Hail Mary")
+    )
+
+
+def _audio_local_claims(duration: str | None = "58244.201") -> tuple[LocalClaim, ...]:
+    """One audiobook's local evidence, optionally without any running time."""
+    values: list[LocalClaim] = [
+        LocalClaim.create(
+            kind=ClaimKind.TITLE,
+            observed="Project Hail Mary",
+            canonical="Project Hail Mary",
+            excerpt="Project Hail Mary",
+            applicability="not_applicable",
+            basis="embedded_tag",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            occurrence=1,
+        )
+    ]
+    if duration is not None:
+        values.append(
+            LocalClaim.create(
+                kind=ClaimKind.DURATION,
+                observed=duration,
+                canonical=duration,
+                excerpt=duration,
+                applicability="not_applicable",
+                basis="embedded_tag",
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+                occurrence=2,
+            )
+        )
+    return tuple(values)
+
+
+def _audiobook_candidate(
+    local_claims: tuple[LocalClaim, ...],
+    *,
+    identity: str = "audible-product-B08G9PRS1K",
+    asin: str = "B08G9PRS1K",
+    duration: str = "58200.000",
+    provider: str = "catalogue",
+) -> ProviderCandidate:
+    """One candidate shaped exactly as the audiobook adapters build it."""
+    specifications: tuple[tuple[ClaimKind, str, ClaimScope, str | None], ...] = (
+        (ClaimKind.TITLE, "Project Hail Mary", ClaimScope.WORK, None),
+        (ClaimKind.CREATOR, "Andy Weir", ClaimScope.WORK, "author"),
+        (ClaimKind.ASIN, asin, ClaimScope.EDITION, None),
+        (ClaimKind.DURATION, duration, ClaimScope.EDITION, None),
+        (ClaimKind.CONTRIBUTOR, "Ray Porter", ClaimScope.WORK, "narrator"),
+    )
+    claims = tuple(
+        ProviderClaim.create(
+            provider=provider,
+            candidate=identity,
+            kind=kind,
+            value=value,
+            state=FieldState.VALID,
+            scope=scope,
+            applicability="not_applicable",
+            role=role,
+            raw_order=order,
+        )
+        for order, (kind, value, scope, role) in enumerate(specifications)
+    )
+    chapters = ProviderChapterStructure(2, 58_200, (29_100, 29_100), False)
+    evidence = tuple(
+        sorted(
+            (
+                ProviderEvidence(
+                    ProviderEvidenceKind.EDITION_WORK_RELATION,
+                    "unresolved",
+                    ClaimScope.EDITION,
+                ),
+                ProviderEvidence(
+                    ProviderEvidenceKind.ASIN_MARKETPLACE, "us", ClaimScope.EDITION
+                ),
+                ProviderEvidence(
+                    ProviderEvidenceKind.CHAPTER_STRUCTURE,
+                    str(chapters.runtime_seconds),
+                    ClaimScope.EDITION,
+                    chapters=chapters,
+                ),
+            ),
+            key=lambda value: (value.scope.value, value.kind.value, value.value),
+        )
+    )
+    return finalize_candidate_comparisons(
+        ProviderCandidate(identity, "unresolved", claims, evidence),
+        local_claims,
+        provider,
+    )
+
+
+def _qualified_audiobook(
+    local_claims: tuple[LocalClaim, ...],
+    *,
+    authority: str | None = "audible_catalog",
+    duration: str = "58200.000",
+    candidates: tuple[ProviderCandidate, ...] | None = None,
+) -> ProviderObservation:
+    admitted = (
+        (_audiobook_candidate(local_claims, duration=duration),)
+        if candidates is None
+        else candidates
+    )
+    return qualify_provider_observation(
+        ProviderObservation(
+            "catalogue",
+            ProviderStatus.CANDIDATES,
+            (),
+            admitted,
+            ProviderQueryKind.WORK,
+            authority,
+            dispatch_lineage=_work_dispatch("Project Hail Mary", ("Andy Weir",)),
+        ),
+        MetadataLookup(
+            ProviderQueryKind.WORK,
+            local_claims,
+            "Project Hail Mary",
+            ("Andy Weir",),
+        ),
+    )
+
+
+def test_a_runtime_corroborated_audiobook_candidate_keeps_its_edition_identity() -> (
+    None
+):
+    """The corroboration gate is what widens a work admission to an edition one."""
+    local_claims = _audio_local_claims()
+    qualified = _qualified_audiobook(local_claims)
+    candidate = qualified.candidates[0]
+
+    assert ProviderStatus.CANDIDATES is qualified.status
+    assert {
+        ClaimKind.TITLE,
+        ClaimKind.CREATOR,
+        ClaimKind.ASIN,
+        ClaimKind.DURATION,
+        ClaimKind.CONTRIBUTOR,
+    } == {claim.kind for claim in candidate.claims}
+    assert "B08G9PRS1K" == next(
+        claim.value for claim in candidate.claims if claim.kind is ClaimKind.ASIN
+    )
+    assert {"narrator"} == {
+        claim.role for claim in candidate.claims if claim.kind is ClaimKind.CONTRIBUTOR
+    }
+    assert {
+        ProviderEvidenceKind.ASIN_MARKETPLACE,
+        ProviderEvidenceKind.CHAPTER_STRUCTURE,
+    } == {value.kind for value in candidate.evidence}
+    assert "us" == next(
+        value.value
+        for value in candidate.evidence
+        if value.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+    )
+
+
+def test_the_retained_duration_claim_states_the_band_that_admitted_it() -> None:
+    """The report explains the admission through the comparison it already has.
+
+    The retained `DURATION` claim carries its link to the local running time
+    under `DURATION_BAND_AGREEMENT`, which is the rule that admitted the
+    candidate stated in the report's own closed comparison vocabulary.
+    """
+    local_claims = _audio_local_claims()
+    candidate = _qualified_audiobook(local_claims).candidates[0]
+    duration = next(
+        claim for claim in candidate.claims if claim.kind is ClaimKind.DURATION
+    )
+    local = next(claim for claim in local_claims if claim.kind is ClaimKind.DURATION)
+    link = next(
+        link for link in duration.links if link.local_reference == local.reference
+    )
+
+    assert Comparison.AGREEMENT is link.outcome
+    assert ComparisonMethod.DURATION_BAND_AGREEMENT is link.method
+
+
+@pytest.mark.parametrize(
+    ("local_duration", "provider_duration"),
+    (("58244.201", "51000.000"), (None, "58200.000")),
+    ids=("band_fails", "no_local_duration"),
+)
+def test_an_uncorroborated_audiobook_candidate_keeps_only_its_work_shape(
+    local_duration: str | None, provider_duration: str
+) -> None:
+    candidate = _qualified_audiobook(
+        _audio_local_claims(local_duration), duration=provider_duration
+    ).candidates[0]
+
+    assert {ClaimKind.TITLE, ClaimKind.CREATOR} == {
+        claim.kind for claim in candidate.claims
+    }
+    assert () == candidate.evidence
+
+
+def test_an_ebook_authority_never_reaches_the_widening() -> None:
+    """The gate is dead code for a provider that is not an audiobook authority.
+
+    The candidate here states everything the band would need, and the local
+    runtime agrees.  Only the authority differs, and that alone leaves the
+    observation in the shape every ebook provider has always had.
+    """
+    local_claims = _audio_local_claims()
+    for authority in ("google_books", "hardcover", "open_library", None):
+        candidate = _qualified_audiobook(local_claims, authority=authority).candidates[
+            0
+        ]
+
+        assert {ClaimKind.TITLE, ClaimKind.CREATOR} == {
+            claim.kind for claim in candidate.claims
+        }
+        assert () == candidate.evidence
+
+
+def test_several_corroborated_candidates_break_the_tie_on_identity() -> None:
+    """One work in two marketplaces states one runtime, so the tie is real.
+
+    Qualification cannot reach this today -- an `unresolved` work identity is
+    keyed on the candidate identity, so a two-candidate set is two work
+    identities and the admission above refuses it -- but the rule is total and
+    its tie-break is what keeps a future multi-candidate set deterministic.
+    """
+    local_claims = _audio_local_claims()
+    candidates = (
+        _audiobook_candidate(
+            local_claims,
+            identity="audible-product-B0ZZZZZZZZ",
+            asin="B0ZZZZZZZZ",
+        ),
+        _audiobook_candidate(
+            local_claims,
+            identity="audible-product-B0AAAAAAAA",
+            asin="B0AAAAAAAA",
+        ),
+    )
+    chosen = runtime_corroborated_candidate(candidates, local_claims)
+
+    assert chosen is not None
+    assert "audible-product-B0AAAAAAAA" == chosen[0].identity
+    assert ("runtime_within_tight_band",) == chosen[1]
+
+
+def test_an_admitted_asin_reaches_no_audiobook_field_effect() -> None:
+    """Evaluation runs on every report, and must stay silent about audiobooks.
+
+    The admitted ASIN is retained evidence, not a write destination: a proposal
+    set built over a report carrying one proposes nothing at all.
+    """
+    local_claims = _audio_local_claims()
+    qualified = _qualified_audiobook(local_claims)
+    report = MetadataReport.create(
+        target=TargetFacts("primary", "audio", "item-1", _audio_target_fields()),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=local_claims,
+        local_reasons=("embedded_tag_duration",),
+        providers=(qualified,),
+        audio=AudioFacts(),
+    )
+    proposals = evaluate_report(report)
+
+    assert ClaimKind.ASIN in {claim.kind for claim in qualified.candidates[0].claims}
+    # Every field result is a non-proposal: the admitted ASIN reaches no write
+    # destination, and neither does the narrator or the running time beside it.
+    assert proposals.results
+    assert set() == {
+        result.destination
+        for result in proposals.results
+        if result.outcome
+        in {
+            ProposalOutcome.PROPOSE_CHANGE,
+            ProposalOutcome.ACCEPTABLE_CHOICE,
+            ProposalOutcome.UNRESOLVED_CHOICE,
+        }
+    }

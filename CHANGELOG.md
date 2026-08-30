@@ -13,6 +13,13 @@
   missing current provenance; ordinary startup and user upgrades stay
   absent-or-exact-current. (#938)
 
+- Audiobooks now consult four keyless providers — Audible, Audnexus, AudioSilo
+  and iTunes — for read-only discovery, enrichment and corroboration, each
+  addable from Settings and the first-run wizard. An ASIN is adopted only where
+  a second authority agrees, covers corroborate by perceptual hash, and a
+  report records every sidecar it read so an edited one makes it stale. Needs a
+  clean database (`metadata-report-v32`) and a `config-v7` file. (#749)
+
 - The container-image qualification job restores unchanged Docker layers from
   the repository Actions cache instead of rebuilding every stage per run; base
   images stay governed by the Dockerfile's digest pins. (#930)

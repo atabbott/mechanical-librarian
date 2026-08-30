@@ -21,6 +21,7 @@ from mechanical_librarian.application.failure_diagnostics import (
     provider_attempt_diagnostics,
 )
 from mechanical_librarian.application.metadata_report import (
+    AudioInspector,
     CurrentnessError,
     EpubInspector,
     MetadataDiscoveryLane,
@@ -31,6 +32,7 @@ from mechanical_librarian.application.metadata_report import (
     ProviderLaneResult,
     ReportRepository,
     TargetReader,
+    audiobook_discovery_plan,
     metadata_discovery_plan,
     provider_observation,
     require_report_current,
@@ -39,6 +41,7 @@ from mechanical_librarian.application.provider_recovery_policy import (
     provider_recovery_decision,
 )
 from mechanical_librarian.domain.metadata_report import (
+    AUDIO_FILE_FORMATS,
     MetadataReport,
     ProviderCandidate,
     ProviderLaneObservation,
@@ -148,6 +151,12 @@ class GenerateProviderRetrySuccessor:
         target: TargetReader,
         inspector: EpubInspector,
         repository_factory: Callable[[], ReportRepository],
+        # An audiobook's currentness is re-derived from the file and every
+        # recognized sidecar beside it, so a retry over an audio report needs
+        # the same isolated inspector its publication used. Without one the
+        # currentness guard refuses, which is the correct fail-closed answer
+        # for a composition that cannot re-read what it published from.
+        audio_inspector: AudioInspector | None = None,
         provider_resolver: ProviderRetryResolver,
         mount: MediaMountConfiguration | None,
         limits: ReportLimits,
@@ -159,6 +168,7 @@ class GenerateProviderRetrySuccessor:
     ) -> None:
         self._target = target
         self._inspector = inspector
+        self._audio_inspector = audio_inspector
         self._repository_factory = repository_factory
         if (
             not callable(provider_resolver)
@@ -211,7 +221,12 @@ class GenerateProviderRetrySuccessor:
             # may follow a changed source package or rebound configuration.
             if (
                 not require_report_current(
-                    self._target, self._inspector, self._mount, self._limits, source
+                    self._target,
+                    self._inspector,
+                    self._mount,
+                    self._limits,
+                    source,
+                    audio_inspector=self._audio_inspector,
                 )
                 or self._current_source(repository, source) != current
             ):
@@ -266,11 +281,21 @@ class GenerateProviderRetrySuccessor:
                     )
                 ),
                 cover_sources=source.cover_sources,
+                # A successor replaces one provider's lanes and nothing the
+                # inspector read. The audio section travels unchanged, and the
+                # report refuses an audio file without one, so a retry over an
+                # audiobook could not publish without carrying it.
+                audio=source.audio,
             )
 
             def currentness() -> bool:
                 if not require_report_current(
-                    self._target, self._inspector, self._mount, self._limits, source
+                    self._target,
+                    self._inspector,
+                    self._mount,
+                    self._limits,
+                    source,
+                    audio_inspector=self._audio_inspector,
                 ):
                     return False
                 return self._current_source(
@@ -336,14 +361,27 @@ class GenerateProviderRetrySuccessor:
         return document, package
 
     def _plan(self, source: MetadataReport) -> MetadataDiscoveryPlan:
+        """Rebuild the plan the source report was observed under.
+
+        The media kind decides which plan builder rebuilds it: an audiobook's
+        identifier is an ASIN and its lanes come from `audiobook_discovery_plan`
+        rather than the ISBN one. Both builders are deterministic in the local
+        claims, so a rebuilt lane identity is the same lane identity the source
+        observation recorded and the caller's reconciliation is unchanged.
+        """
         snapshot = self._target.read(source.target.item)
+        audio = _is_audio(source)
         if (
-            snapshot.media_kind != "ebook"
+            snapshot.media_kind != ("audiobook" if audio else "ebook")
             or snapshot.title != source.target.current_title
             or snapshot.fields != source.target.fields
         ):
             raise CurrentnessError("target or media changed")
-        plan = metadata_discovery_plan(snapshot, source.local_claims)
+        plan = (
+            audiobook_discovery_plan(snapshot, source.local_claims)
+            if audio
+            else metadata_discovery_plan(snapshot, source.local_claims)
+        )
         if plan.overflow:
             raise ProviderRetrySuccessorError("provider retry source is invalid")
         return plan
@@ -609,6 +647,16 @@ class GenerateProviderRetrySuccessor:
             if previous.to_data() != lane.to_data():
                 raise ProviderRetrySuccessorError("provider retry lanes conflict")
         return result
+
+
+def _is_audio(source: MetadataReport) -> bool:
+    """Whether one source report is an audiobook's.
+
+    The retained `audio` section and the file format each name the same fact,
+    and both are read so a report cannot be one media kind by format and the
+    other by section.
+    """
+    return source.file.format in AUDIO_FILE_FORMATS or source.audio is not None
 
 
 __all__ = [

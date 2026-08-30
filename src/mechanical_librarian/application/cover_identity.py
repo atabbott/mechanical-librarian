@@ -21,7 +21,12 @@ from mechanical_librarian.application.cover_packet_semantics import (
     normalize_provenance,
 )
 from mechanical_librarian.application.cover_packets import cover_source_reference
+from mechanical_librarian.domain.audiobook_corroboration import (
+    CorroborationOutcome,
+    cover_hash_agreement,
+)
 from mechanical_librarian.domain.cover_evidence import (
+    AUDIOBOOK_COVER_SOURCE_KINDS,
     CoverArtifact,
     CoverDesignation,
     CoverSource,
@@ -29,7 +34,9 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceState,
 )
 from mechanical_librarian.domain.metadata_report import (
+    AUDIO_FILE_FORMATS,
     ClaimKind,
+    ClaimScope,
     Comparison,
     IdentifierRelation,
     LocalClaim,
@@ -64,6 +71,7 @@ _CLASSIFIER_RULES = (
     "provider-isbn-lane-title-agreement-without-unopposed-creator-or-work-contradiction:plausible",
     "provider-isbn-lane-title-insufficient-or-unopposed-creator-disagreement:unknown",
     "legacy-discovery-without-lane-candidate-mappings:aggregate-fallback",
+    "audiobook-cross-authority-cover-perceptual-hash:work-scope-corroboration",
 )
 CLASSIFIER_REFERENCE = (
     "cover_identity_classifier_"
@@ -161,6 +169,7 @@ def classify_cover_identity(
         raise ValueError("identity packet is not canonical")
 
     rows: list[dict[str, object]] = []
+    corroboration_hashes: dict[str, tuple[tuple[str, str], ...]] = {}
     for candidate in packet["candidates"]:
         if type(candidate) is not dict:
             raise ValueError("identity packet candidate is invalid")
@@ -168,6 +177,9 @@ def classify_cover_identity(
         outcome, reasons, evidence = _classify_sources(report, sources)
         if outcome not in _OUTCOMES:
             raise ValueError("identity outcome is invalid")
+        corroboration_hashes[cast("str", candidate["reference"])] = (
+            _audiobook_cover_hashes(sources)
+        )
         rows.append(
             {
                 "candidate_reference": candidate["reference"],
@@ -184,6 +196,11 @@ def classify_cover_identity(
                 "reasons": sorted(set(reasons)),
             }
         )
+    corroboration = _cover_corroboration_reasons(report, corroboration_hashes)
+    for row in rows:
+        additional = corroboration.get(cast("str", row["candidate_reference"]))
+        if additional:
+            row["reasons"] = sorted(set(cast("list[str]", row["reasons"])) | additional)
     body = {
         "candidates": rows,
         "classifier_reference": CLASSIFIER_REFERENCE,
@@ -193,6 +210,59 @@ def classify_cover_identity(
         "work_target_reference": _work_target_reference(report),
     }
     return CoverIdentityReport(canonical_packet_json(body))
+
+
+def _audiobook_cover_hashes(
+    sources: tuple[CoverSource, ...],
+) -> tuple[tuple[str, str], ...]:
+    """Read one candidate's audiobook provider covers as (provider, hash)."""
+    return tuple(
+        sorted(
+            {
+                (source.provenance.provider, source.artifact.perceptual_hash)
+                for source in sources
+                if source.kind in AUDIOBOOK_COVER_SOURCE_KINDS
+                and source.provenance is not None
+                and source.artifact is not None
+                and source.artifact.perceptual_hash is not None
+            }
+        )
+    )
+
+
+def _cover_corroboration_reasons(
+    report: MetadataReport,
+    hashes: dict[str, tuple[tuple[str, str], ...]],
+) -> dict[str, set[str]]:
+    """Apply ADR-0064's cover rule across two independent audiobook authorities.
+
+    An audiobook's identity is rarely settled by an identifier, so what two
+    authorities picture for one recording is evidence about it. The rule is
+    valid at work scope only, and only across *different* providers: two rows
+    from one authority are one statement, not two, and the rule is asked
+    nothing it could answer with itself.
+
+    Only audiobook cover kinds reach here, so an ebook report's identity
+    document is unchanged: it never forms a pair.
+    """
+    if report.file.format not in AUDIO_FILE_FORMATS:
+        return {}
+    reasons: dict[str, set[str]] = {}
+    references = sorted(hashes)
+    for index, left in enumerate(references):
+        for right in references[index + 1 :]:
+            for left_provider, left_hash in hashes[left]:
+                for right_provider, right_hash in hashes[right]:
+                    if left_provider == right_provider:
+                        continue
+                    signal = cover_hash_agreement(
+                        left_hash, right_hash, ClaimScope.WORK
+                    )
+                    if signal.outcome is CorroborationOutcome.NOT_COMPARABLE:
+                        continue
+                    reasons.setdefault(left, set()).update(signal.reasons)
+                    reasons.setdefault(right, set()).update(signal.reasons)
+    return reasons
 
 
 def _report_bound_candidate_sources(

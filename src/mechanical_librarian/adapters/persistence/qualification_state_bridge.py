@@ -36,7 +36,7 @@ from mechanical_librarian.adapters.persistence.schema import (
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.qualification_state_bridge import (
     QUALIFICATION_STATE_BRIDGE_PLANS,
-    RETAINED_LIBRARY_V26_TO_V31,
+    RETAINED_LIBRARY_V26_TO_V32,
     QualificationStateBridgeRecoveryRequired,
 )
 from mechanical_librarian.domain.metadata_report import (
@@ -61,7 +61,7 @@ _SOURCE_SCHEMA_OBJECTS_SHA256 = (
     "e6323cdec1412ab7158ffcde612a927d2ca5e859e7de412041a19af0d6ab1fd1"
 )
 _TARGET_SCHEMA_OBJECTS_SHA256 = (
-    "cbd019b5bd46276d031c3a8d9112b9fb89c0dad8c365a39b533f2c7924799ba4"
+    "14bd28e94923c2a2a7a1515dbeebc32459a8cebd7e4173a8c7808c5c6231ce66"
 )
 _SOURCE_REPORT_SCHEMA = "metadata-report-v26"
 _SOURCE_COMPARISON_VERSION = "closed-title-creator-publication-v4"
@@ -864,7 +864,7 @@ def bridge_qualification_state(
     """Build one exact-current qualification database from a verified clone."""
     if plan not in QUALIFICATION_STATE_BRIDGE_PLANS:
         raise MetadataReportError("qualification-state bridge plan is unsupported")
-    if plan != RETAINED_LIBRARY_V26_TO_V31:
+    if plan != RETAINED_LIBRARY_V26_TO_V32:
         raise MetadataReportError("qualification-state bridge plan is unsupported")
     if _expected_schema_objects_digest() != _TARGET_SCHEMA_OBJECTS_SHA256:
         raise MetadataReportError(

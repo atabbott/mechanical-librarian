@@ -161,6 +161,46 @@ describe('shipped first-run setup script', () => {
     expect(getComputedStyle(contactField).display).toBe('grid')
   })
 
+  it('offers the keyless audiobook providers with no credential control', async () => {
+    let submitted: unknown
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        if (requestUrl(request) === '/api/setup/providers' && init?.method === 'POST') {
+          submitted = jsonBody(init.body)
+          return response(setupState('libraries'))
+        }
+        return response(setupState('providers'))
+      }),
+    )
+    runSetup()
+
+    for (const label of ['Audible', 'Audnexus', 'AudioSilo', 'iTunes']) {
+      const control = await screen.findByRole('checkbox', { name: label })
+      expect(control).toBeVisible()
+      // ADR-0061 keyless: no key input and no account link is constructed.
+      expect(control.closest('.option')?.querySelector('input[type=password]')).toBeNull()
+      expect(control.closest('.option')?.querySelector('a')).toBeNull()
+      fireEvent.click(control)
+    }
+    expect(
+      screen.getByRole('checkbox', { name: 'Hardcover' }).closest('.option')?.querySelector('a'),
+    ).not.toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+
+    await waitFor(() => expect(submitted).toBeDefined())
+    expect(submitted).toEqual({
+      expected_revision: 3,
+      providers: [
+        { name: 'audible', adapter: 'audible_catalog', enabled: true },
+        { name: 'audnexus', adapter: 'audnexus', enabled: true },
+        { name: 'audiosilo', adapter: 'audiosilo', enabled: true },
+        { name: 'itunes', adapter: 'itunes_search', enabled: true },
+      ].map((value) => ({ ...value, cover_enabled: false, contact_email: null, key: null })),
+    })
+  })
+
   it('validates selected supported libraries before mutation and advances after correction', async () => {
     let current = setupState('libraries')
     let libraryMutations = 0

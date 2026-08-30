@@ -128,6 +128,12 @@ def store_runtime_configuration(
                 cover_enabled=item.cover_enabled,
                 contact_email=getattr(item, "contact_email", None),
                 secret_file=None,
+                # A resolution order belongs to the enabled Audible catalogue
+                # and to nothing else, so a disabled entry keeps its recorded
+                # order in the document and states none to the runtime.
+                marketplaces=(
+                    tuple(getattr(item, "marketplaces", ())) if item.enabled else ()
+                ),
             )
             for item in document.providers
         ),

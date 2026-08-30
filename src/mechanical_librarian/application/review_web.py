@@ -1114,7 +1114,7 @@ class BrowseReviewLibrary:
             # what it reached would attribute another work's evidence to this
             # one under the identity the owner asked about.
             raise ReviewWebError("unavailable")
-        return _report_detail(report)
+        return _report_detail(report, recorded)
 
 
 def _report_detail_url(target: TargetFacts) -> str:
@@ -1141,10 +1141,35 @@ def _report_detail_url(target: TargetFacts) -> str:
 # The same bound the report's own chapter section carries, for the same
 # reason: a page an owner reads is bounded, and what it left out is stated.
 _EVIDENCE_CEILING = 1_024
+# The provider authorities an owner-facing surface may name. A configured
+# connection's own name is the owner's private label for a service, so a public
+# projection uses the authority instead -- and every authority the report admits
+# is public, ebook and audiobook alike.
+_PUBLIC_PROVIDER_AUTHORITIES = frozenset(
+    {
+        "audible_catalog",
+        "audiosilo",
+        "audnexus",
+        "google_books",
+        "hardcover",
+        "itunes_search",
+        "open_library",
+    }
+)
 
 
-def _report_detail(report: dict[str, object]) -> dict[str, object]:
-    """Read the closed report envelope into the owner-facing evidence view."""
+def _report_detail(
+    report: dict[str, object], recorded: MetadataReport
+) -> dict[str, object]:
+    """Read the closed report envelope into the owner-facing evidence view.
+
+    An audiobook now dispatches providers, so this view carries the same two
+    provider surfaces the ebook detail does: the source ledger, which says what
+    every configured provider was asked and how it ended, and the claims the
+    admitted candidates actually stated. Without them an owner reading a
+    read-only audiobook would see the local evidence and have no way to tell a
+    provider that matched from one that was never reachable.
+    """
     target = report["target"]
     file = report["file"]
     local = report["local"]
@@ -1163,7 +1188,8 @@ def _report_detail(report: dict[str, object]) -> dict[str, object]:
     cover = None if audio is None else audio.get("embedded_cover")
     if type(chapters) is not list or (cover is not None and type(cover) is not dict):
         raise ReviewWebError("unavailable")
-    recorded = [value for value in claims if type(value) is dict]
+    recorded_claims = [value for value in claims if type(value) is dict]
+    provider_claims = _report_detail_provider_claims(report)
     return {
         "chapters": [
             {
@@ -1204,17 +1230,71 @@ def _report_detail(report: dict[str, object]) -> dict[str, object]:
                 "state": value["state"],
                 "value": value["canonical"] or value["observed"],
             }
-            for value in recorded[:_EVIDENCE_CEILING]
+            for value in recorded_claims[:_EVIDENCE_CEILING]
         ],
-        "evidence_truncated": len(recorded) > _EVIDENCE_CEILING,
+        "evidence_truncated": len(recorded_claims) > _EVIDENCE_CEILING,
         "item": target["item"],
         "library": target["library"],
         "connection": target["connection"],
         "media_kind": file["format"],
+        # What every configured provider was asked, and how each ended.
+        "provider_sources": _provider_outcomes(recorded),
+        # What the admitted candidates stated, under the same ceiling and the
+        # same truncation flag the local evidence above uses.
+        "provider_evidence": provider_claims[:_EVIDENCE_CEILING],
+        "provider_evidence_truncated": len(provider_claims) > _EVIDENCE_CEILING,
         "report_id": report["report_id"],
-        "schema_version": "review-report-detail-v1",
+        "schema_version": "review-report-detail-v2",
         "title": _report_title(report),
     }
+
+
+def _report_detail_provider_claims(
+    report: dict[str, object],
+) -> list[dict[str, object]]:
+    """Project every admitted candidate's stated claims, authority-labelled.
+
+    A configured connection's name is the owner's private label for a service,
+    so the authority is what an owner-facing surface names. Candidate identity
+    travels with each claim because one observation may admit more than one
+    candidate and a merged list would attribute one product's claims to
+    another.
+    """
+    values: list[dict[str, object]] = []
+    providers = report.get("providers")
+    if type(providers) is not list:
+        return values
+    for provider in cast("list[object]", providers):
+        if type(provider) is not dict:
+            continue
+        authority = provider.get("authority")
+        label = _provider_label(authority if type(authority) is str else None)
+        candidates = provider.get("candidates")
+        if type(candidates) is not list:
+            continue
+        for candidate in candidates:
+            if type(candidate) is not dict:
+                continue
+            identity = candidate.get("identity")
+            claims = candidate.get("claims")
+            if type(identity) is not str or type(claims) is not list:
+                continue
+            for claim in claims:
+                if type(claim) is not dict:
+                    continue
+                values.append(
+                    {
+                        "candidate": identity,
+                        "kind": claim.get("kind"),
+                        "provider": label,
+                        "role": claim.get("role"),
+                        # A malformed or oversized provider statement reads
+                        # exactly like a valid one without this.
+                        "state": claim.get("state"),
+                        "value": claim.get("value"),
+                    }
+                )
+    return values
 
 
 def _report_title(report: dict[str, object]) -> str:
@@ -1550,14 +1630,14 @@ def _evidence_by_reference(
         if type(provider) is dict
         and type(provider.get("provider")) is str
         and type(provider.get("authority")) is str
-        and provider["authority"] in {"google_books", "hardcover", "open_library"}
+        and provider["authority"] in _PUBLIC_PROVIDER_AUTHORITIES
         for authority in [cast(str, provider["authority"])]
     }
 
     def public_provider(value: object) -> str | None:
         if type(value) is not str:
             return None
-        if value in {"google_books", "hardcover", "open_library"}:
+        if value in _PUBLIC_PROVIDER_AUTHORITIES:
             return value
         return public_authority_by_provider.get(value)
 
@@ -1813,8 +1893,12 @@ def _provider_label(authority: str | None) -> str:
     return cast(
         "dict[str | None, str]",
         {
+            "audible_catalog": "Audible",
+            "audiosilo": "AudioSilo",
+            "audnexus": "Audnexus",
             "google_books": "Google Books",
             "hardcover": "Hardcover",
+            "itunes_search": "iTunes",
             "open_library": "Open Library",
         },
     ).get(authority, "Provider (name unavailable)")
@@ -1887,9 +1971,11 @@ _TERMINAL_PREPARATION_GUIDANCE: dict[str, tuple[str, str]] = {
         "Preparation stopped before a usable review package was produced.",
         "No owner action is currently available.",
     ),
-    "local_evidence_only": (
-        "This audiobook's local evidence was recorded; no review package follows it yet.",
-        "No owner action is needed. The recorded evidence is shown on this work.",
+    "evidence_only": (
+        "This audiobook's evidence was recorded and is read-only; "
+        "no review package follows it.",
+        "No owner action is needed. The recorded evidence -- local and from "
+        "every configured provider -- is shown on this work.",
     ),
     "unknown": (
         "Preparation failed; no safe detail is available.",

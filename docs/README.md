@@ -43,7 +43,7 @@ depends on it.
 ## Reference
 
 - [Configuration](reference/configuration.md)
-- [Configuration schema](reference/config-v6.schema.json)
+- [Configuration schema](reference/config-v7.schema.json)
 - [Example configuration](examples/synthetic-config.json)
 - [Compatibility and clean-state boundary](reference/compatibility.md)
 - [Glossary](reference/glossary.md)

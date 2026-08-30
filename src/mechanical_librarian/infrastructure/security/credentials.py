@@ -156,6 +156,78 @@ def google_books_client(
     )
 
 
+def audible_catalog_client(
+    timeout_seconds: int,
+    *,
+    transport: httpx.BaseTransport | None = None,
+) -> httpx.Client:
+    """Construct a credential-free client for the ten Audible marketplaces.
+
+    The closed origin set is api.audible.com, api.audible.co.uk,
+    api.audible.de, api.audible.fr, api.audible.com.au, api.audible.in,
+    api.audible.ca, api.audible.co.jp, api.audible.it and api.audible.es.  One
+    client serves all ten because the confinement is the adapter's fixed host
+    set, exactly as `google_books_client` is confined by its fixed URL, and
+    redirects off keeps a marketplace from sending the request elsewhere.
+    """
+    return httpx.Client(
+        follow_redirects=False,
+        trust_env=False,
+        verify=True,
+        timeout=httpx.Timeout(float(timeout_seconds)),
+        limits=httpx.Limits(max_connections=1, max_keepalive_connections=0),
+        transport=transport,
+    )
+
+
+def audnexus_client(
+    timeout_seconds: int,
+    *,
+    transport: httpx.BaseTransport | None = None,
+) -> httpx.Client:
+    """Construct a credential-free client confined to https://api.audnex.us."""
+    return httpx.Client(
+        follow_redirects=False,
+        trust_env=False,
+        verify=True,
+        timeout=httpx.Timeout(float(timeout_seconds)),
+        limits=httpx.Limits(max_connections=1, max_keepalive_connections=0),
+        transport=transport,
+    )
+
+
+def audiosilo_client(
+    timeout_seconds: int,
+    *,
+    transport: httpx.BaseTransport | None = None,
+) -> httpx.Client:
+    """Construct a credential-free client confined to https://meta.audiosilo.app."""
+    return httpx.Client(
+        follow_redirects=False,
+        trust_env=False,
+        verify=True,
+        timeout=httpx.Timeout(float(timeout_seconds)),
+        limits=httpx.Limits(max_connections=1, max_keepalive_connections=0),
+        transport=transport,
+    )
+
+
+def itunes_search_client(
+    timeout_seconds: int,
+    *,
+    transport: httpx.BaseTransport | None = None,
+) -> httpx.Client:
+    """Construct a credential-free client confined to https://itunes.apple.com."""
+    return httpx.Client(
+        follow_redirects=False,
+        trust_env=False,
+        verify=True,
+        timeout=httpx.Timeout(float(timeout_seconds)),
+        limits=httpx.Limits(max_connections=1, max_keepalive_connections=0),
+        transport=transport,
+    )
+
+
 class _TargetAuth(httpx.Auth):
     def __init__(self, origin: str, token: str) -> None:
         self._origin = httpx.URL(origin)
@@ -225,9 +297,13 @@ def _target_origin_allowed(value: str) -> bool:
 
 
 __all__ = [
+    "audible_catalog_client",
+    "audiosilo_client",
+    "audnexus_client",
     "hardcover_client",
     "hardcover_client_token",
     "google_books_client",
+    "itunes_search_client",
     "open_library_client",
     "read_secret",
     "target_client",

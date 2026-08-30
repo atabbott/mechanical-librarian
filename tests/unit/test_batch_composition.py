@@ -127,7 +127,7 @@ def test_review_receipt_ends_an_audiobook_report_at_its_local_evidence():
         "report-current",
         unittest.mock.ANY,
         0,
-        "local_evidence_only",
+        "evidence_only",
         False,
         None,
     )

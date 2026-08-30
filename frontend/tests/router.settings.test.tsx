@@ -5,11 +5,13 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   AmbiguousMutationError,
   ApiError,
+  settingsAudibleMarketplaceOrder,
   settingsEndpointValid,
   settingsIntegerValid,
   settingsOpenLibraryEmailValid,
   settingsLocalLibraryNameValid,
   settingsProviderKeyRequired,
+  settingsProviderKeyless,
   settingsSecretValid,
   settingsTextValid,
 } from '../src/api/http'
@@ -159,6 +161,14 @@ describe('settings API field validation vocabulary', () => {
     expect(settingsLocalLibraryNameValid('Not valid')).toBe(false)
     expect(settingsProviderKeyRequired('hardcover')).toBe(true)
     expect(settingsProviderKeyRequired('google_books')).toBe(false)
+    for (const adapter of ['audible_catalog', 'audiosilo', 'audnexus', 'itunes_search']) {
+      expect(settingsProviderKeyless(adapter)).toBe(true)
+      expect(settingsProviderKeyRequired(adapter)).toBe(false)
+    }
+    for (const adapter of ['hardcover', 'google_books', 'open_library'])
+      expect(settingsProviderKeyless(adapter)).toBe(false)
+    expect(settingsAudibleMarketplaceOrder[0]).toBe('us')
+    expect(settingsAudibleMarketplaceOrder).toHaveLength(10)
   })
 })
 
@@ -192,6 +202,67 @@ describe('owner settings route', () => {
     ).toHaveLength(1)
     expect(screen.getByRole('textbox', { name: 'Open Library contact email' })).toBeVisible()
     expect(screen.queryByRole('button', { name: 'Add Open Library' })).not.toBeInTheDocument()
+  })
+
+  it('adds the keyless audiobook providers with no credential and saves them', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    let savedRequest: SettingsWrite | undefined
+    http.getSettings = vi.fn(async () => ({
+      ...view(),
+      document: { ...document, providers: [], libraries: [] },
+      provider_capabilities: [
+        {
+          adapter: 'audible_catalog' as const,
+          credential: 'none' as const,
+          label: 'Audible',
+          name: 'audible_catalog',
+        },
+        {
+          adapter: 'itunes_search' as const,
+          credential: 'none' as const,
+          label: 'iTunes',
+          name: 'itunes_search',
+        },
+      ],
+    }))
+    http.writeSettings = vi.fn(async (request: SettingsWrite) => {
+      savedRequest = request
+      return { ...view(), document: request.document }
+    })
+    renderRoute('/settings?group=providers', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Add Audible' }))
+    await user.click(screen.getByRole('button', { name: 'Add iTunes' }))
+    await user.click(
+      screen.getByRole('checkbox', { name: 'Provider state Enable audible catalog' }),
+    )
+
+    // Keyless: no key, no email, and nothing to configure but enablement.
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /API key/u })).not.toBeInTheDocument()
+    expect(screen.getByText('Marketplace order')).toBeVisible()
+    expect(screen.getByText('us, uk, de, fr, au, in, ca, jp, it, es')).toBeVisible()
+
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+
+    await waitFor(() => expect(http.writeSettings).toHaveBeenCalledOnce())
+    expect(savedRequest?.secrets).toEqual([])
+    expect(savedRequest?.document.providers).toEqual([
+      {
+        adapter: 'audible_catalog',
+        cover_enabled: false,
+        enabled: true,
+        marketplaces: ['us', 'uk', 'de', 'fr', 'au', 'in', 'ca', 'jp', 'it', 'es'],
+        name: 'audible_catalog',
+      },
+      {
+        adapter: 'itunes_search',
+        cover_enabled: false,
+        enabled: false,
+        name: 'itunes_search',
+      },
+    ])
   })
 
   it('keeps the primary shell intact and saves a redacted replacement with revision CAS', async () => {

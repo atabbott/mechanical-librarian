@@ -117,7 +117,18 @@ class _ConnectRequest(BaseModel):
 class _ProviderRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     name: StrictStr = Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")
-    adapter: Literal["hardcover", "google_books", "open_library"]
+    # The four audiobook adapters are keyless (ADR-0061): they reach the
+    # settings union carrying nothing but their own fields, and the
+    # marketplace order stays with the configuration file rather than setup.
+    adapter: Literal[
+        "hardcover",
+        "google_books",
+        "open_library",
+        "audible_catalog",
+        "audnexus",
+        "audiosilo",
+        "itunes_search",
+    ]
     enabled: bool
     cover_enabled: bool = False
     contact_email: StrictStr | None = Field(default=None, min_length=3, max_length=254)

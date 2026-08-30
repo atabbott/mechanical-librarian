@@ -18,8 +18,15 @@ from mechanical_librarian.domain.evidence_bounds import (
 
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _ARTIFACT_ID = re.compile(r"^cover_[0-9a-f]{64}$")
-_SOURCE_ID = re.compile(r"^(?:abs|epub|hardcover|open_library)_[0-9a-f]{64}$")
+_SOURCE_ID = re.compile(
+    r"^(?:abs|audible_catalog|epub|hardcover|itunes_search|open_library)"
+    r"_[0-9a-f]{64}$"
+)
 _IDENTITY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
+# A 64-bit difference hash, lower-case hex.  The width is the one ADR-0064
+# fixes for the cover corroboration rule, and is validated here so a hash that
+# rule could never read cannot enter the report in the first place.
+_PERCEPTUAL_HASH = re.compile(r"^[0-9a-f]{16}$")
 PREVIEW_VARIANT = "preview-320x480-rgba-png-v1"
 
 
@@ -32,6 +39,17 @@ class CoverSourceKind(StrEnum):
     EPUB = "epub"
     HARDCOVER = "hardcover"
     OPEN_LIBRARY = "open_library"
+    # The two audiobook authorities that state a cover asset of their own.
+    # Audnexus and AudioSilo restate Audible's CDN asset, so they carry no
+    # independent signal and emit no cover source at all.
+    AUDIBLE_CATALOG = "audible_catalog"
+    ITUNES_SEARCH = "itunes_search"
+
+
+LOCAL_COVER_SOURCE_KINDS = frozenset({CoverSourceKind.ABS, CoverSourceKind.EPUB})
+AUDIOBOOK_COVER_SOURCE_KINDS = frozenset(
+    {CoverSourceKind.AUDIBLE_CATALOG, CoverSourceKind.ITUNES_SEARCH}
+)
 
 
 class CoverSourceState(StrEnum):
@@ -161,8 +179,18 @@ class CoverArtifact:
     media_type: str
     width: int
     height: int
+    # The 64-bit difference hash of the decoded image, computed in the isolated
+    # decode child beside the preview.  It is ``None`` for every artifact
+    # decoded before this field existed and for any child that could not state
+    # one; a reader treats absence as "no hash", never as a hash of zero.
+    perceptual_hash: str | None = None
 
     def __post_init__(self) -> None:
+        if self.perceptual_hash is not None and (
+            type(self.perceptual_hash) is not str
+            or _PERCEPTUAL_HASH.fullmatch(self.perceptual_hash) is None
+        ):
+            raise CoverEvidenceError("cover artifact is invalid")
         if (
             _ARTIFACT_ID.fullmatch(self.artifact_id) is None
             or _DIGEST.fullmatch(self.original_digest) is None
@@ -182,7 +210,13 @@ class CoverArtifact:
 
     @classmethod
     def create(
-        cls, original: bytes, preview: bytes, media_type: str, width: int, height: int
+        cls,
+        original: bytes,
+        preview: bytes,
+        media_type: str,
+        width: int,
+        height: int,
+        perceptual_hash: str | None = None,
     ) -> "CoverArtifact":
         if type(original) is not bytes or type(preview) is not bytes:
             raise CoverEvidenceError("cover artifact bytes are invalid")
@@ -196,6 +230,7 @@ class CoverArtifact:
             media_type,
             width,
             height,
+            perceptual_hash,
         )
 
     def to_data(self) -> dict[str, object]:
@@ -203,6 +238,7 @@ class CoverArtifact:
             "artifact_id": self.artifact_id,
             "media_type": self.media_type,
             "original_digest": self.original_digest,
+            "perceptual_hash": self.perceptual_hash,
             "preview_digest": self.preview_digest,
             "preview_variant": self.preview_variant,
             "height": self.height,
@@ -244,7 +280,7 @@ class CoverSource:
             and self.provenance.designation is CoverDesignation.TRUNCATION
         ):
             raise CoverEvidenceError("cover truncation is inconsistent")
-        if self.kind in {CoverSourceKind.ABS, CoverSourceKind.EPUB}:
+        if self.kind in LOCAL_COVER_SOURCE_KINDS:
             if self.provenance is not None:
                 raise CoverEvidenceError("local cover provenance is invalid")
         elif self.provenance is not None and self.provenance.provider == "":
@@ -281,15 +317,12 @@ def publication_ready(sources: tuple[CoverSource, ...]) -> bool:
         sources
     ):
         raise CoverEvidenceError("cover sources are invalid")
-    local = [
-        source
-        for source in sources
-        if source.kind in {CoverSourceKind.ABS, CoverSourceKind.EPUB}
-    ]
+    local = [source for source in sources if source.kind in LOCAL_COVER_SOURCE_KINDS]
+    # Every kind that is not one of the two local ones is a provider row, so an
+    # admitted cover-bearing provider enters this arithmetic by joining the
+    # enum rather than by being named again here.
     provider = [
-        source
-        for source in sources
-        if source.kind in {CoverSourceKind.HARDCOVER, CoverSourceKind.OPEN_LIBRARY}
+        source for source in sources if source.kind not in LOCAL_COVER_SOURCE_KINDS
     ]
     admitted_provider = [
         source for source in provider if source.state is not CoverSourceState.TRUNCATED
@@ -334,6 +367,8 @@ def publication_ready(sources: tuple[CoverSource, ...]) -> bool:
 
 
 __all__ = [
+    "AUDIOBOOK_COVER_SOURCE_KINDS",
+    "LOCAL_COVER_SOURCE_KINDS",
     "CoverArtifact",
     "CoverContext",
     "CoverContextField",
