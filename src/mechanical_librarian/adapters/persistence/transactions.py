@@ -3,8 +3,9 @@
 The scope owns begin, commit, and rollback mechanics and nothing else. It never
 translates an exception. Acquisition cleanup re-raises the exact original
 object; every caller keeps its own error identity and translation surface.
-An unproven accepted boundary revokes its connection before serialization is
-released; if revocation itself cannot be proven, serialization stays held.
+An unproven accepted boundary revokes its physical connection before
+serialization is released; if revocation itself cannot be proven,
+serialization stays held.
 
 An outermost scope uses a real transaction; a scope entered while the connection
 is already in a transaction uses a ``SAVEPOINT`` instead, so a nested repository
@@ -15,6 +16,7 @@ enclosing caller's partial writes.
 from __future__ import annotations
 
 import sqlite3
+import sys
 from _thread import RLock
 from typing import TYPE_CHECKING, Protocol, cast
 
@@ -55,8 +57,12 @@ class _SerializationLock:
         self.release()
 
 
-def _invalidate_connection(connection: sqlite3.Connection) -> bool:
-    """Revoke a connection whose accepted boundary could not be unwound."""
+def _deny_sqlite(*_args: object) -> int:
+    return sqlite3.SQLITE_DENY
+
+
+def _shutdown_connection(connection: sqlite3.Connection) -> bool:
+    """Boundedly release one physical SQLite authority."""
     for _attempt in range(2):
         try:
             connection.close()
@@ -64,6 +70,93 @@ def _invalidate_connection(connection: sqlite3.Connection) -> bool:
         except BaseException:
             pass
     return False
+
+
+def _revoke_connection(connection: sqlite3.Connection) -> bool:
+    """Close or physically poison a connection before authority is released."""
+    if _shutdown_connection(connection):
+        return True
+    try:
+        connection.set_authorizer(_deny_sqlite)
+        return True
+    except BaseException:
+        return False
+
+
+def _release_lock_increment(lock: _SerializationLock, prior_depth: int) -> bool:
+    """Balance exactly this invocation's recursion increment."""
+    for _attempt in range(2):
+        try:
+            if lock.depth() == prior_depth:
+                return True
+        except BaseException:
+            return False
+        try:
+            lock.release()
+        except BaseException:
+            pass
+    try:
+        return lock.depth() == prior_depth
+    except BaseException:
+        return False
+
+
+def _missing_savepoint(error: BaseException, savepoint: str) -> bool:
+    return isinstance(error, sqlite3.OperationalError) and str(error) == (
+        f"no such savepoint: {savepoint}"
+    )
+
+
+def _unwind_outer(
+    connection: sqlite3.Connection,
+) -> tuple[bool, BaseException | None]:
+    failure: BaseException | None = None
+    for _attempt in range(2):
+        try:
+            if not connection.in_transaction:
+                return True, failure
+        except BaseException as error:
+            failure = failure or error
+        try:
+            connection.rollback()
+        except BaseException as error:
+            failure = failure or error
+        try:
+            if not connection.in_transaction:
+                return True, failure
+        except BaseException as error:
+            failure = failure or error
+    return False, failure
+
+
+def _unwind_savepoint(
+    connection: sqlite3.Connection,
+    savepoint: str,
+    *,
+    missing_before_rollback_is_clean: bool,
+) -> tuple[bool, BaseException | None]:
+    failure: BaseException | None = None
+    rollback_clean = False
+    for _attempt in range(2):
+        try:
+            connection.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            rollback_clean = True
+            break
+        except BaseException as error:
+            if _missing_savepoint(error, savepoint):
+                return missing_before_rollback_is_clean, failure or error
+            failure = failure or error
+    if not rollback_clean:
+        return False, failure
+    for _attempt in range(2):
+        try:
+            connection.execute(f"RELEASE SAVEPOINT {savepoint}")
+            return True, failure
+        except BaseException as error:
+            if _missing_savepoint(error, savepoint):
+                return True, failure
+            failure = failure or error
+    return False, failure
 
 
 class TransactionScope:
@@ -74,7 +167,9 @@ class TransactionScope:
         "_savepoint",
         "_deferred",
         "_lock",
+        "_lock_depth",
         "_nested",
+        "_savepoint_only",
         "_started",
     )
 
@@ -84,11 +179,13 @@ class TransactionScope:
         savepoint: str,
         *,
         deferred: bool = False,
+        savepoint_only: bool = False,
         serialization_lock: RLock | _SerializationLock | None = None,
     ) -> None:
         self._connection = connection
         self._savepoint = f"{savepoint}_{id(self):x}"
         self._deferred = deferred
+        self._savepoint_only = savepoint_only
         self._lock = (
             serialization_lock
             if serialization_lock is None
@@ -96,6 +193,7 @@ class TransactionScope:
             else _SerializationLock(serialization_lock)
         )
         self._nested = False
+        self._lock_depth = 0
         self._started = False
 
     @property
@@ -105,14 +203,15 @@ class TransactionScope:
 
     @property
     def nested(self) -> bool:
-        """Report whether this scope runs inside an enclosing transaction."""
+        """Report whether this scope owns a savepoint boundary."""
         return self._nested
 
     def begin(self) -> None:
-        """Start this scope, nesting on a savepoint inside an open transaction."""
+        """Start this scope, using a savepoint when nested or explicitly required."""
         lock_depth = 0
         if self._lock is not None:
             lock_depth = self._lock.depth()
+            self._lock_depth = lock_depth
             try:
                 self._lock.acquire()
             except BaseException as error:
@@ -121,15 +220,12 @@ class TransactionScope:
                 except BaseException:
                     accepted = False
                 if accepted:
-                    try:
-                        self._lock.release()
-                    except BaseException:
-                        pass
+                    _release_lock_increment(self._lock, lock_depth)
                 raise error from None
         boundary_issued = False
         failure: BaseException | None = None
         try:
-            self._nested = self._connection.in_transaction
+            self._nested = self._savepoint_only or self._connection.in_transaction
             boundary_issued = True
             if self._nested:
                 self._connection.execute(f"SAVEPOINT {self._savepoint}")
@@ -139,47 +235,24 @@ class TransactionScope:
                 self._connection.execute("BEGIN IMMEDIATE")
         except BaseException as error:
             failure = error
-            cleanup_proven = not boundary_issued
-            if boundary_issued and self._nested:
-                rollback_failure: BaseException | None = None
-                release_failure: BaseException | None = None
-                try:
-                    self._connection.execute(f"ROLLBACK TO SAVEPOINT {self._savepoint}")
-                except BaseException as cleanup_error:
-                    rollback_failure = cleanup_error
-                try:
-                    self._connection.execute(f"RELEASE SAVEPOINT {self._savepoint}")
-                except BaseException as cleanup_error:
-                    release_failure = cleanup_error
-                cleanup_proven = (
-                    rollback_failure is None and release_failure is None
-                ) or (
-                    isinstance(error, sqlite3.Error)
-                    and isinstance(rollback_failure, sqlite3.Error)
-                    and isinstance(release_failure, sqlite3.Error)
+            cleanup_proven, _cleanup_error = (
+                (True, None)
+                if not boundary_issued
+                else (
+                    _unwind_savepoint(
+                        self._connection,
+                        self._savepoint,
+                        missing_before_rollback_is_clean=True,
+                    )
+                    if self._nested
+                    else _unwind_outer(self._connection)
                 )
-            elif boundary_issued:
-                try:
-                    acquired = self._connection.in_transaction
-                except BaseException:
-                    acquired = False
-                if acquired:
-                    try:
-                        self._connection.rollback()
-                    except BaseException:
-                        pass
-                try:
-                    cleanup_proven = not self._connection.in_transaction
-                except BaseException:
-                    cleanup_proven = False
-            authority_releasable = cleanup_proven or _invalidate_connection(
+            )
+            authority_releasable = cleanup_proven or _revoke_connection(
                 self._connection
             )
             if self._lock is not None and authority_releasable:
-                try:
-                    self._lock.release()
-                except BaseException:
-                    pass
+                _release_lock_increment(self._lock, lock_depth)
         if failure is not None:
             raise failure from None
         self._started = True
@@ -198,24 +271,37 @@ class TransactionScope:
             self._connection.execute(f"RELEASE SAVEPOINT {self._savepoint}")
         else:
             self._connection.commit()
+        if self._lock is not None and not _release_lock_increment(
+            self._lock, self._lock_depth
+        ):
+            raise RuntimeError("transaction serialization release failed") from None
         self._started = False
-        if self._lock is not None:
-            self._lock.release()
 
     def rollback(self) -> None:
         """Undo this scope's writes, leaving any enclosing transaction intact."""
         if not self._started:
             return
-        try:
-            if self._nested:
-                self._connection.execute(f"ROLLBACK TO SAVEPOINT {self._savepoint}")
-                self._connection.execute(f"RELEASE SAVEPOINT {self._savepoint}")
-            elif self._connection.in_transaction:
-                self._connection.rollback()
-            self._started = False
-        finally:
+        original = sys.exception()
+        cleanup_proven, cleanup_error = (
+            _unwind_savepoint(
+                self._connection,
+                self._savepoint,
+                missing_before_rollback_is_clean=False,
+            )
+            if self._nested
+            else _unwind_outer(self._connection)
+        )
+        authority_releasable = cleanup_proven or _revoke_connection(self._connection)
+        if authority_releasable:
             if self._lock is not None:
-                self._lock.release()
+                if not _release_lock_increment(self._lock, self._lock_depth):
+                    authority_releasable = False
+            if authority_releasable:
+                self._started = False
+        if original is not None:
+            return
+        if cleanup_error is not None:
+            raise cleanup_error from None
 
 
 class ConnectionScoped:

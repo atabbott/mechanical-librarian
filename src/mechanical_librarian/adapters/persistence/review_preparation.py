@@ -42,6 +42,7 @@ from __future__ import annotations
 import hashlib
 import re
 import sqlite3
+import sys
 from collections.abc import Callable
 from typing import cast
 
@@ -53,7 +54,8 @@ from mechanical_librarian.adapters.persistence.preparation_presentation import (
 )
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
-    _invalidate_connection,
+    _revoke_connection,
+    _unwind_outer,
 )
 from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.metadata_report import MetadataReportError
@@ -1045,22 +1047,12 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         failure: BaseException | None = None
         try:
             self._connection.execute("BEGIN IMMEDIATE")
+            if not self._connection.in_transaction:
+                raise MetadataReportError("review preparation state is invalid")
         except BaseException as error:
-            try:
-                acquired = self._connection.in_transaction
-            except BaseException:
-                acquired = False
-            if acquired:
-                try:
-                    self._connection.rollback()
-                except BaseException:
-                    pass
-                try:
-                    cleanup_proven = not self._connection.in_transaction
-                except BaseException:
-                    cleanup_proven = False
-                if not cleanup_proven:
-                    _invalidate_connection(self._connection)
+            cleanup_proven, _cleanup_error = _unwind_outer(self._connection)
+            if not cleanup_proven:
+                _revoke_connection(self._connection)
             failure = error
         if isinstance(failure, sqlite3.Error):
             raise MetadataReportError(
@@ -1075,13 +1067,18 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         return action
 
     def rollback_review_pipeline_output(self) -> None:
-        try:
-            if self._connection.in_transaction:
-                self._connection.rollback()
-        except sqlite3.Error as error:
+        original = sys.exception()
+        cleanup_proven, cleanup_error = _unwind_outer(self._connection)
+        if not cleanup_proven:
+            _revoke_connection(self._connection)
+        if original is not None:
+            return
+        if isinstance(cleanup_error, sqlite3.Error):
             raise MetadataReportError(
                 "review preparation persistence failed"
-            ) from error
+            ) from cleanup_error
+        if cleanup_error is not None:
+            raise cleanup_error from None
 
     def complete_review_extraction_publication(
         self,

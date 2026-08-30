@@ -3168,11 +3168,17 @@ class _AcceptedBoundaryInterruption:
         accept: bool = True,
         cleanup_fault: BaseException | None = None,
         rollback_before_fault: BaseException | None = None,
+        rollback_always_fault: BaseException | None = None,
         cleanup_execute_fault: BaseException | None = None,
         cleanup_execute_before: str | None = None,
+        cleanup_execute_always_before: str | None = None,
+        execute_after_fault: BaseException | None = None,
+        execute_after_prefix: str | None = None,
         close_before_fault: BaseException | None = None,
         close_fault: BaseException | None = None,
         close_always_fault: BaseException | None = None,
+        state_fault: BaseException | None = None,
+        state_fault_after_sql: str | None = None,
     ) -> None:
         self.connection = connection
         self.boundary = boundary
@@ -3180,17 +3186,28 @@ class _AcceptedBoundaryInterruption:
         self.accept = accept
         self.cleanup_fault = cleanup_fault
         self.rollback_before_fault = rollback_before_fault
+        self.rollback_always_fault = rollback_always_fault
         self.cleanup_execute_fault = cleanup_execute_fault
         self.cleanup_execute_before = cleanup_execute_before
+        self.cleanup_execute_always_before = cleanup_execute_always_before
+        self.execute_after_fault = execute_after_fault
+        self.execute_after_prefix = execute_after_prefix
         self.close_before_fault = close_before_fault
         self.close_fault = close_fault
         self.close_always_fault = close_always_fault
+        self.state_fault = state_fault
+        self.state_fault_after_sql = state_fault_after_sql
         self.accepted = False
         self.rollback_calls = 0
         self.close_calls = 0
+        self.authorizer_calls = 0
 
     @property
     def in_transaction(self) -> bool:
+        if self.accepted and self.state_fault is not None:
+            fault = self.state_fault
+            self.state_fault = None
+            raise fault
         return self.connection.in_transaction
 
     def execute(self, sql: str, parameters: tuple[object, ...] = ()) -> sqlite3.Cursor:
@@ -3202,11 +3219,22 @@ class _AcceptedBoundaryInterruption:
         if self.cleanup_execute_before and sql.startswith(self.cleanup_execute_before):
             self.cleanup_execute_before = None
             raise self.cleanup_execute_fault or RuntimeError("cleanup failed")
+        if self.cleanup_execute_always_before and sql.startswith(
+            self.cleanup_execute_always_before
+        ):
+            raise self.cleanup_execute_fault or RuntimeError("cleanup failed")
         cursor = self.connection.execute(sql, parameters)
+        if self.state_fault_after_sql and sql == self.state_fault_after_sql:
+            self.accepted = True
+            self.state_fault_after_sql = None
         if sql.startswith("ROLLBACK TO SAVEPOINT") and self.cleanup_execute_fault:
             cleanup = self.cleanup_execute_fault
             self.cleanup_execute_fault = None
             raise cleanup
+        if self.execute_after_prefix and sql.startswith(self.execute_after_prefix):
+            fault = self.execute_after_fault or RuntimeError("execute after-effect")
+            self.execute_after_prefix = None
+            raise fault
         return cursor
 
     def rollback(self) -> None:
@@ -3215,6 +3243,8 @@ class _AcceptedBoundaryInterruption:
             cleanup = self.rollback_before_fault
             self.rollback_before_fault = None
             raise cleanup
+        if self.rollback_always_fault is not None:
+            raise self.rollback_always_fault
         self.connection.rollback()
         if self.cleanup_fault is not None:
             raise self.cleanup_fault
@@ -3232,6 +3262,10 @@ class _AcceptedBoundaryInterruption:
             cleanup = self.close_fault
             self.close_fault = None
             raise cleanup
+
+    def set_authorizer(self, callback) -> None:
+        self.authorizer_calls += 1
+        self.connection.set_authorizer(callback)
 
 
 class _RecordingRLock:
@@ -3450,9 +3484,9 @@ def test_transaction_scope_nested_cleanup_fault_cannot_replace_interruption(
 
     assert raised.value is fault
     assert raised.value.__cause__ is None and raised.value.__context__ is None
-    assert proxy.close_calls == 1
-    with pytest.raises(sqlite3.ProgrammingError):
-        connection.execute("SELECT 1")
+    assert proxy.close_calls == 0
+    assert connection.in_transaction
+    connection.rollback()
     independent = sqlite3.connect(application_path, timeout=0)
     independent.execute("BEGIN IMMEDIATE")
     independent.rollback()
@@ -3527,7 +3561,7 @@ def test_transaction_scope_invalidates_accepted_outer_when_rollback_is_unproven(
         connection,
         boundary,
         fault,
-        rollback_before_fault=RuntimeError("private rollback-before boundary"),
+        rollback_always_fault=RuntimeError("private rollback-before boundary"),
     )
     lock = _RecordingRLock()
     scope = TransactionScope(
@@ -3570,7 +3604,7 @@ def test_transaction_scope_invalidates_nested_when_cleanup_is_unproven(
         "",
         fault,
         cleanup_execute_fault=RuntimeError("private savepoint cleanup boundary"),
-        cleanup_execute_before=cleanup_boundary,
+        cleanup_execute_always_before=cleanup_boundary,
     )
     scope = TransactionScope(cast(sqlite3.Connection, proxy), "nested_unproven")
     proxy.boundary = f"SAVEPOINT {scope._savepoint}"
@@ -3599,7 +3633,7 @@ def test_transaction_scope_close_fault_cannot_replace_interruption(
         connection,
         "BEGIN IMMEDIATE",
         fault,
-        rollback_before_fault=RuntimeError("private rollback-before boundary"),
+        rollback_always_fault=RuntimeError("private rollback-before boundary"),
         close_before_fault=(
             SystemExit("private close-before cleanup replacement")
             if fault_timing == "before"
@@ -3631,7 +3665,7 @@ def test_transaction_scope_retains_serialization_when_close_cannot_revoke_writer
         connection,
         "BEGIN IMMEDIATE",
         fault,
-        rollback_before_fault=RuntimeError("private rollback-before boundary"),
+        rollback_always_fault=RuntimeError("private rollback-before boundary"),
         close_always_fault=SystemExit("private persistent close boundary"),
     )
     lock = _RecordingRLock()
@@ -3646,7 +3680,8 @@ def test_transaction_scope_retains_serialization_when_close_cannot_revoke_writer
     assert raised.value is fault
     assert raised.value.__cause__ is None and raised.value.__context__ is None
     assert proxy.close_calls == 2
-    assert lock.release_calls == 0
+    assert proxy.authorizer_calls == 1
+    assert lock.release_calls == 1
     acquired = threading.Event()
 
     def contend() -> None:
@@ -3655,13 +3690,285 @@ def test_transaction_scope_retains_serialization_when_close_cannot_revoke_writer
 
     contender = threading.Thread(target=contend)
     contender.start()
-    assert not acquired.wait(0.05)
+    assert acquired.wait(1)
+    with pytest.raises(sqlite3.DatabaseError, match="not authorized"):
+        connection.execute("SELECT 1")
+    with pytest.raises(sqlite3.DatabaseError, match="not authorized"):
+        TransactionScope(cast(sqlite3.Connection, proxy), "poisoned_reentry").begin()
+    blocked = sqlite3.connect(application_path, timeout=0)
+    with pytest.raises(sqlite3.OperationalError, match="locked"):
+        blocked.execute("BEGIN IMMEDIATE")
+    blocked.close()
+    connection.set_authorizer(None)
     connection.rollback()
     connection.close()
-    lock.release()
-    assert acquired.wait(1)
     contender.join(timeout=1)
     assert not contender.is_alive()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize("cleanup_timing", ("before", "after"))
+def test_transaction_scope_rollback_preserves_active_interruption(
+    application_path: Path,
+    fault_type: type[BaseException],
+    cleanup_timing: str,
+) -> None:
+    connection = sqlite3.connect(application_path)
+    proxy = _AcceptedBoundaryInterruption(
+        connection,
+        "unused",
+        RuntimeError("unused"),
+        rollback_always_fault=(
+            RuntimeError("private rollback-before boundary")
+            if cleanup_timing == "before"
+            else None
+        ),
+        cleanup_fault=(
+            RuntimeError("private rollback-after boundary")
+            if cleanup_timing == "after"
+            else None
+        ),
+    )
+    lock = _RecordingRLock()
+    scope = TransactionScope(
+        cast(sqlite3.Connection, proxy),
+        "body_rollback",
+        serialization_lock=cast(RLock, lock),
+    )
+    scope.begin()
+    connection.execute("CREATE TABLE rollback_body(value INTEGER)")
+    fault = fault_type("private body interruption")
+
+    with pytest.raises(fault_type) as raised:
+        try:
+            raise fault
+        except BaseException as error:
+            scope.rollback()
+            raise error from None
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert lock.release_calls == 1
+    if cleanup_timing == "before":
+        assert proxy.close_calls == 1
+        with pytest.raises(sqlite3.ProgrammingError):
+            connection.execute("SELECT 1")
+    else:
+        assert not connection.in_transaction
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+    if cleanup_timing == "after":
+        connection.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize(
+    "cleanup_boundary", ("ROLLBACK TO SAVEPOINT", "RELEASE SAVEPOINT")
+)
+def test_nested_transaction_rollback_revokes_unproven_savepoint(
+    application_path: Path,
+    fault_type: type[BaseException],
+    cleanup_boundary: str,
+) -> None:
+    connection = sqlite3.connect(application_path)
+    connection.execute("BEGIN IMMEDIATE")
+    connection.execute("CREATE TABLE nested_body(value INTEGER)")
+    connection.execute("INSERT INTO nested_body VALUES(1)")
+    proxy = _AcceptedBoundaryInterruption(
+        connection,
+        "unused",
+        RuntimeError("unused"),
+        cleanup_execute_fault=RuntimeError("private savepoint cleanup"),
+        cleanup_execute_always_before=cleanup_boundary,
+    )
+    scope = TransactionScope(cast(sqlite3.Connection, proxy), "nested_body")
+    scope.begin()
+    connection.execute("INSERT INTO nested_body VALUES(2)")
+    fault = fault_type("private nested body interruption")
+
+    with pytest.raises(fault_type) as raised:
+        try:
+            raise fault
+        except BaseException as error:
+            scope.rollback()
+            raise error from None
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert proxy.close_calls == 1
+    with pytest.raises(sqlite3.ProgrammingError):
+        connection.execute("SELECT 1")
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+def test_nested_release_interruption_cannot_promote_unproven_writes(
+    application_path: Path, fault_type: type[BaseException]
+) -> None:
+    connection = sqlite3.connect(application_path)
+    connection.execute("CREATE TABLE nested_commit(value INTEGER)")
+    connection.execute("BEGIN IMMEDIATE")
+    connection.execute("INSERT INTO nested_commit VALUES(1)")
+    fault = fault_type("private nested release boundary")
+    proxy = _AcceptedBoundaryInterruption(
+        connection,
+        "unused",
+        RuntimeError("unused"),
+        execute_after_fault=fault,
+        execute_after_prefix="RELEASE SAVEPOINT",
+    )
+    scope = TransactionScope(cast(sqlite3.Connection, proxy), "nested_commit")
+    scope.begin()
+    connection.execute("INSERT INTO nested_commit VALUES(2)")
+
+    with pytest.raises(fault_type) as raised:
+        try:
+            scope.commit()
+        except BaseException as error:
+            scope.rollback()
+            raise error from None
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert proxy.close_calls == 1
+    with pytest.raises(sqlite3.ProgrammingError):
+        connection.execute("SELECT 1")
+    independent = sqlite3.connect(application_path, timeout=0)
+    assert tuple(independent.execute("SELECT value FROM nested_commit")) == ()
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+def test_pipeline_output_begin_unwinds_failed_state_observation(
+    application_path: Path, fault_type: type[BaseException]
+) -> None:
+    repository = open_repository(application_path)
+    fault = fault_type("private output state observation")
+    proxy = _AcceptedBoundaryInterruption(
+        repository._connection,
+        "unused",
+        RuntimeError("unused"),
+        state_fault=fault,
+        state_fault_after_sql="BEGIN IMMEDIATE",
+    )
+    repository._review_preparation._connection = cast(sqlite3.Connection, proxy)
+
+    with pytest.raises(fault_type) as raised:
+        repository.begin_review_pipeline_output()
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert not repository._connection.in_transaction
+    assert proxy.rollback_calls == 1
+    repository.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize("stage", ("proposal", "admission", "projection"))
+@pytest.mark.parametrize("cleanup_timing", ("before", "after"))
+def test_pipeline_output_body_interruption_owns_exactly_one_hardened_rollback(
+    application_path: Path,
+    fault_type: type[BaseException],
+    stage: str,
+    cleanup_timing: str,
+) -> None:
+    owner = open_repository(application_path)
+    proxy = _AcceptedBoundaryInterruption(
+        owner._connection,
+        "unused",
+        RuntimeError("unused"),
+        rollback_always_fault=(
+            RuntimeError("private output rollback-before boundary")
+            if cleanup_timing == "before"
+            else None
+        ),
+        cleanup_fault=(
+            RuntimeError("private output rollback-after boundary")
+            if cleanup_timing == "after"
+            else None
+        ),
+    )
+    owner._review_preparation._connection = cast(sqlite3.Connection, proxy)
+
+    class Repository:
+        rollback_calls = 0
+
+        def guard_target_connection(self, _action, _checked_at):
+            return True
+
+        def begin_review_pipeline_output(self) -> None:
+            owner.begin_review_pipeline_output()
+
+        def rollback_review_pipeline_output(self) -> None:
+            self.rollback_calls += 1
+            owner.rollback_review_pipeline_output()
+
+    repository = Repository()
+    fault = fault_type(f"private {stage} output body")
+    identifiers: dict[str, str] = {"report_id": "report-1"}
+    if stage in {"admission", "projection"}:
+        identifiers["proposal_set_id"] = "proposal-1"
+    if stage == "projection":
+        identifiers["review_case_id"] = "case-1"
+    action = PipelineAction(
+        "action-1",
+        "scan-1",
+        stage,
+        1,
+        "primary",
+        "ebooks",
+        "library-id",
+        _PRODUCER,
+        1,
+        "a" * 64,
+        "item-1",
+        "b" * 64,
+        0,
+        source_fingerprint="c" * 64,
+        **identifiers,
+    )
+
+    def output(*_args):
+        raise fault
+
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: cast(ReviewPipelineRepository, repository),
+        libraries=(("primary", "ebooks", "library-id", _PRODUCER),),
+        discover=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        propose=output if stage == "proposal" else lambda *_args: "proposal-1",
+        admit=output if stage == "admission" else lambda *_args: (True, "case-1"),
+        project=output if stage == "projection" else lambda *_args: True,
+        clock=lambda: 1,
+    )
+
+    with pytest.raises(fault_type) as raised:
+        pipeline._run_claimed_action(
+            cast(ReviewPipelineRepository, repository), action, claim_next=False
+        )
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert repository.rollback_calls == 1
+    if cleanup_timing == "before":
+        assert proxy.close_calls == 1
+        with pytest.raises(sqlite3.ProgrammingError):
+            owner._connection.execute("SELECT 1")
+    else:
+        assert not owner._connection.in_transaction
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+    owner.close()
 
 
 @pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
@@ -3785,7 +4092,7 @@ def test_pipeline_output_begin_invalidates_connection_when_rollback_is_unproven(
         repository._connection,
         "BEGIN IMMEDIATE",
         fault,
-        rollback_before_fault=RuntimeError("private output rollback-before boundary"),
+        rollback_always_fault=RuntimeError("private output rollback-before boundary"),
         close_fault=SystemExit("private output close replacement"),
     )
     repository._review_preparation._connection = cast(sqlite3.Connection, proxy)
@@ -3798,6 +4105,39 @@ def test_pipeline_output_begin_invalidates_connection_when_rollback_is_unproven(
     assert proxy.close_calls == 2
     with pytest.raises(sqlite3.ProgrammingError):
         repository._connection.execute("SELECT 1")
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+
+
+def test_pipeline_output_persistent_close_poison_is_shared_until_owner_teardown(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    fault = KeyboardInterrupt("private accepted output boundary")
+    proxy = _AcceptedBoundaryInterruption(
+        repository._connection,
+        "BEGIN IMMEDIATE",
+        fault,
+        rollback_always_fault=RuntimeError("private output rollback boundary"),
+        close_always_fault=SystemExit("private persistent output close boundary"),
+    )
+    repository._review_preparation._connection = cast(sqlite3.Connection, proxy)
+
+    with pytest.raises(KeyboardInterrupt) as raised:
+        repository.begin_review_pipeline_output()
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert proxy.authorizer_calls == 1
+    with pytest.raises(MetadataReportError, match="persistence failed"):
+        repository.review_pipeline_paused()
+    blocked = sqlite3.connect(application_path, timeout=0)
+    with pytest.raises(sqlite3.OperationalError, match="locked"):
+        blocked.execute("BEGIN IMMEDIATE")
+    blocked.close()
+    repository.close()
     independent = sqlite3.connect(application_path, timeout=0)
     independent.execute("BEGIN IMMEDIATE")
     independent.rollback()
@@ -4025,6 +4365,51 @@ def test_preparation_snapshot_releases_savepoint_after_baseexception(
     assert raised.value is fault
     assert raised.value.__cause__ is None and raised.value.__context__ is None
     assert not repository._connection.in_transaction
+    independent = sqlite3.connect(application_path, timeout=0)
+    independent.execute("BEGIN IMMEDIATE")
+    independent.rollback()
+    independent.close()
+    repository.close()
+
+
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+@pytest.mark.parametrize(
+    "cleanup_boundary", ("ROLLBACK TO SAVEPOINT", "RELEASE SAVEPOINT")
+)
+def test_preparation_snapshot_revokes_unproven_savepoint_cleanup(
+    application_path: Path,
+    fault_type: type[BaseException],
+    cleanup_boundary: str,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    fault = fault_type("private snapshot body interruption")
+    proxy = _AcceptedBoundaryInterruption(
+        repository._connection,
+        "SELECT run_id,state,started_at,updated_at,completed_at,total,active_count,"
+        "read,searches_finished,compared,checked,ready,failed FROM "
+        "review_preparation_presentation WHERE row_id='run'",
+        fault,
+        accept=False,
+        cleanup_execute_fault=RuntimeError("private snapshot cleanup"),
+        cleanup_execute_always_before=cleanup_boundary,
+    )
+
+    with pytest.raises(fault_type) as raised:
+        preparation_presentation_snapshot(cast(sqlite3.Connection, proxy), 101)
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert proxy.close_calls == 1
+    with pytest.raises(sqlite3.ProgrammingError):
+        repository._connection.execute("SELECT 1")
     independent = sqlite3.connect(application_path, timeout=0)
     independent.execute("BEGIN IMMEDIATE")
     independent.rollback()

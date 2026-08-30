@@ -6,6 +6,7 @@ import hashlib
 import sqlite3
 from typing import TYPE_CHECKING, cast
 
+from mechanical_librarian.adapters.persistence.transactions import TransactionScope
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.preparation_presentation import (
     TERMINAL_PREPARATION_STATES,
@@ -1092,14 +1093,17 @@ def _refresh_run_state(
 def preparation_presentation_snapshot(
     connection: sqlite3.Connection, now: int
 ) -> PreparationPresentation | None:
-    connection.execute("SAVEPOINT preparation_snapshot")
+    transaction = TransactionScope(
+        connection, "preparation_snapshot", savepoint_only=True
+    )
+    transaction.begin()
     try:
         row = connection.execute(
             "SELECT run_id,state,started_at,updated_at,completed_at,total,active_count,"
             "read,searches_finished,compared,checked,ready,failed FROM review_preparation_presentation WHERE row_id='run'"
         ).fetchone()
         if row is None:
-            connection.execute("RELEASE preparation_snapshot")
+            transaction.commit()
             return None
         run_id = cast(str, row[0])
         triggers = tuple(
@@ -1156,13 +1160,11 @@ def preparation_presentation_snapshot(
             completed_at=row[4],
             total=row[5],
         )
-        connection.execute("RELEASE preparation_snapshot")
+        transaction.commit()
         return result
     except BaseException as error:
-        connection.execute("ROLLBACK TO preparation_snapshot")
-        connection.execute("RELEASE preparation_snapshot")
-        failure = error
-    raise failure from None
+        transaction.rollback()
+        raise error from None
 
 
 def dismiss_preparation_presentation(
