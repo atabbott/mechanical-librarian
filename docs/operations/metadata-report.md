@@ -172,7 +172,8 @@ Audible catalog and iTunes Search — have their covers acquired through the sam
 bounded cover pipeline an ebook's use, each behind its own `cover_enabled`
 switch, and the retained cover evidence records where two independent
 authorities picture the same art. What an audiobook does not reach is a
-proposal, because nothing writes to one, and no cover it carries is elected. Review preparation ends terminally with `evidence_only` in the
+proposal, because nothing writes to one; its covers are evidence only, so no
+cover consideration is prepared for one and no cover it carries is elected. Review preparation ends terminally with `evidence_only` in the
 same transaction that publishes it, and that transaction records the item's
 review package, so the work is browsed and searched by its evidence rather than
 by a failure. That

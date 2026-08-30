@@ -1009,12 +1009,21 @@ contract differs by provider and is not provider-wide:
   states no narrator and no running time at all, because the store publishes
   neither, so no candidate it builds can satisfy the runtime corroboration gate.
   Its cover requests carry no credential, follow no redirect, and share the
-  adapter's request-start pacer. The URL is the `artworkUrl100` the store
-  stated, admitted only if its host is `is1-ssl.mzstatic.com`: the closed host
-  set is checked where the descriptor is built, so a URL naming any other
-  origin — including another artwork shard — becomes a typed `unsafe_remote`
-  cover outcome and no socket is opened for it. Acquisition happens only when
-  the connection's `cover_enabled` is set.
+  adapter's request-start pacer. The URL is built from the `artworkUrl100` the
+  store stated: when — and only when — that URL ends in the exact segment
+  `/100x100bb.jpg`, that one segment is replaced by `/600x600bb.jpg`, asking
+  the same origin for the same asset at a legible rendition; any other shape is
+  used unmodified, because a URL the adapter cannot read is one it may not
+  rewrite. This is Open Library's constructed fixed-origin cover URL in the one
+  shape iTunes publishes. The result is admitted only if its host is one of the
+  five artwork shards `is1-ssl.mzstatic.com` through `is5-ssl.mzstatic.com`;
+  the store balances one result set across that set, so pinning a single
+  observed shard would silently drop the art of every result answered by
+  another. The closed host set is checked where the descriptor is built, so a
+  URL naming any other origin — `is6-ssl`, a shard without `-ssl`, or any
+  non-`mzstatic` host — becomes a typed `unsafe_remote` cover outcome and no
+  socket is opened for it. Acquisition happens only when the connection's
+  `cover_enabled` is set.
 
 Every cover byte, whichever provider supplied it, passes through the same
 public-address pinning, bounded decoder child, and private artifact path. The

@@ -19,7 +19,10 @@ from mechanical_librarian.application.reviewer_access import (
     ReviewerAccessApplicationError,
 )
 from mechanical_librarian.application.reviewer_contracts import ReviewerDispatch
+from mechanical_librarian.domain.cover_evidence import CoverSourceKind
 from tests.unit.test_cover_packets import (
+    _audiobook_cover_source,
+    _audiobook_report,
     _observer_result,
     _preview,
     _report,
@@ -779,3 +782,103 @@ def test_each_served_image_is_the_artifact_that_choice_would_apply(
             "accept",
             {"kind": "cover", "value": "cover_artifact_" + "f" * 64},
         )
+
+
+def _audiobook_case() -> tuple[
+    CoverConsiderationService, str, list[str], dict[str, object]
+]:
+    """One audiobook report whose two provider covers were really retrieved."""
+    payloads = (_preview(41), _preview(42))
+    sources = (
+        _audiobook_cover_source(
+            41,
+            payloads[0],
+            CoverSourceKind.AUDIBLE_CATALOG,
+            "audible",
+            "0f1e2d3c4b5a6978",
+        ),
+        _audiobook_cover_source(
+            42,
+            payloads[1],
+            CoverSourceKind.ITUNES_SEARCH,
+            "store",
+            "0f1e2d3c4b5a6979",
+        ),
+    )
+    report = _audiobook_report(sources)
+    by_artifact = {
+        source.artifact.artifact_id: payload
+        for source, payload in zip(sources, payloads, strict=True)
+        if source.artifact is not None
+    }
+    by_preview = {
+        source.artifact.preview_digest: payload
+        for source, payload in zip(sources, payloads, strict=True)
+        if source.artifact is not None
+    }
+    dispatches: list[str] = []
+
+    def reviewer(*args: object) -> str:
+        dispatches.append("dispatched")
+        return _observer_result(
+            *cast(
+                "tuple[bytes, bytes, bytes, bytes, tuple[tuple[str, str, bytes], ...]]",
+                args,
+            )
+        )
+
+    service = CoverConsiderationService(
+        _Store(),
+        read_preview=lambda artifact, _variant: by_artifact[artifact],
+        read_preview_digest=lambda digest: by_preview[digest],
+        clock=lambda: 10,
+        reviewer_dispatch=lambda: ReviewerDispatch(
+            7,
+            "openrouter",
+            "example/vision",
+            b"profile",
+            cast("ReviewRunner", reviewer),
+        ),
+        reviewer_identity=lambda: (7, "openrouter", "example/vision", b"profile"),
+        reviewer_revision_current=lambda revision: revision == 7,
+    )
+    return (
+        service,
+        report.to_json(),
+        dispatches,
+        {"proposal_id": "review_proposal_" + "c" * 64},
+    )
+
+
+def test_an_audiobook_with_retrieved_covers_builds_no_cover_packet() -> None:
+    """Acquisition is evidence; consideration is a decision nobody may make."""
+    service, document, dispatches, _proposal = _audiobook_case()
+
+    request = service.prepare_observation("review_case_" + "d" * 64, document)
+
+    assert request.packet_payload is None
+    assert () == request.image_payloads
+    assert [] == dispatches
+
+
+def test_an_audiobook_consideration_dispatches_no_observer(
+    case: _Case,
+) -> None:
+    service, document, dispatches, proposal = _audiobook_case()
+
+    projected = service.ensure("review_case_" + "e" * 64, document, proposal)
+
+    assert [] == dispatches
+    assert "unavailable" == projected["reviewer_status"]
+    assert [] == projected["candidates"]
+    persisted = json.loads(
+        cast("_Store", service._store).current["review_case_" + "e" * 64]
+    )
+    assert persisted["packet_document"] is None
+    assert persisted["observation_document"] is None
+    assert persisted["identity_document"] is None
+    assert persisted["policy_report_document"] is None
+    # The same evidence on the ebook path still packets and still observes.
+    assert case.service.ensure(
+        "review_case_" + "f" * 64, case.report.to_json(), case.proposal
+    )["candidates"]

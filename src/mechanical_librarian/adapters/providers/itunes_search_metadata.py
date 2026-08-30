@@ -143,11 +143,23 @@ _MAX_COLLECTION_ID = 9_999_999_999_999
 # The store states a collection, never a work, so the candidate and its cover
 # provenance carry the same unresolved work sentinel.
 _UNRESOLVED_WORK = "unresolved"
-# The artwork origin the store states in the captured search response.  The
-# cover transport is address-pinned and follows no redirect, so this closed set
-# is the whole origin contract for this provider's cover bytes.
-ITUNES_ARTWORK_HOSTS: frozenset[str] = frozenset({"is1-ssl.mzstatic.com"})
+# The artwork shards the store serves cover art from.  One capture names one of
+# them, but the store balances a result across the set, so pinning the single
+# observed shard would silently drop the art of every result answered by
+# another.  The cover transport is address-pinned and follows no redirect, so
+# this closed set is the whole origin contract for this provider's cover bytes.
+ITUNES_ARTWORK_HOSTS: frozenset[str] = frozenset(
+    f"is{shard}-ssl.mzstatic.com" for shard in range(1, 6)
+)
 _MAX_COVER_URL_CHARACTERS = 2048
+# The store states a 100-pixel thumbnail and encodes the rendition it wants in
+# the last path segment.  Substituting that one exact segment asks the same
+# origin for the same asset at a legible size; anything that is not that exact
+# segment is left alone, because a URL this adapter cannot read is a URL it may
+# not rewrite.  This is Open Library's constructed fixed-origin cover URL in the
+# one shape iTunes publishes.
+_STATED_ARTWORK_SEGMENT = "/100x100bb.jpg"
+_CONSTRUCTED_ARTWORK_SEGMENT = "/600x600bb.jpg"
 
 
 class ITunesSearchMetadataProvider:
@@ -677,6 +689,13 @@ def _cover_descriptors(
     return tuple(descriptors)
 
 
+def _artwork_url(value: str) -> str:
+    """Ask the stated origin for the same asset at a legible rendition."""
+    if not value.endswith(_STATED_ARTWORK_SEGMENT):
+        return value
+    return value[: -len(_STATED_ARTWORK_SEGMENT)] + _CONSTRUCTED_ARTWORK_SEGMENT
+
+
 def _cover_url(value: object) -> tuple[str | None, CoverSourceState | None]:
     """Admit one artwork URL against this provider's closed host set."""
     if value is None:
@@ -685,6 +704,7 @@ def _cover_url(value: object) -> tuple[str | None, CoverSourceState | None]:
         return None, CoverSourceState.INVALID_DECLARATION
     if len(value) > _MAX_COVER_URL_CHARACTERS:
         return None, CoverSourceState.OVERSIZED
+    value = _artwork_url(value)
     try:
         parts = urlsplit(value)
         hostname = parts.hostname

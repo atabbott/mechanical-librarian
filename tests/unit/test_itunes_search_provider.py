@@ -296,6 +296,7 @@ def test_a_search_states_one_related_edition_cover_for_each_retained_result() ->
 @pytest.mark.parametrize(
     "url",
     (
+        "https://is6-ssl.mzstatic.com/image/thumb/a/100x100bb.jpg",
         "https://is9-ssl.mzstatic.com/image/thumb/a/100x100bb.jpg",
         "https://is1.mzstatic.com/image/thumb/a/100x100bb.jpg",
         "https://mzstatic.com.example.invalid/image/thumb/a/100x100bb.jpg",
@@ -358,3 +359,48 @@ def test_an_asin_only_plan_states_no_cover_at_all() -> None:
     provider.observe(asin_plan())
 
     assert () == provider.cover_descriptors
+
+
+def _descriptor_urls(document: object) -> tuple[str | None, ...]:
+    _seen, handle = _recorder(_store(document))
+    provider = _provider(handle)
+    provider.observe(work_plan())
+    assert provider.cover_descriptors
+    return tuple(value.url for value in provider.cover_descriptors)
+
+
+def test_the_stated_thumbnail_segment_is_constructed_into_a_legible_rendition() -> None:
+    document = copy.deepcopy(payload("itunes_search"))
+    for result in document["results"]:
+        result["artworkUrl100"] = (
+            "https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/a/rm.jpg/100x100bb.jpg"
+        )
+
+    assert (
+        "https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/a/rm.jpg/600x600bb.jpg",
+    ) == tuple(set(_descriptor_urls(document)))
+
+
+def test_an_artwork_url_that_is_not_the_stated_segment_is_left_unmodified() -> None:
+    stated = (
+        "https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/a/rm.jpg/170x170bb.png"
+    )
+    document = copy.deepcopy(payload("itunes_search"))
+    for result in document["results"]:
+        result["artworkUrl100"] = stated
+
+    assert (stated,) == tuple(set(_descriptor_urls(document)))
+
+
+@pytest.mark.parametrize("shard", (1, 2, 3, 4, 5))
+def test_every_admitted_artwork_shard_is_acquired(shard: int) -> None:
+    """The store balances one result set across its shards, not one host."""
+    document = copy.deepcopy(payload("itunes_search"))
+    for result in document["results"]:
+        result["artworkUrl100"] = (
+            f"https://is{shard}-ssl.mzstatic.com/image/thumb/a/100x100bb.jpg"
+        )
+
+    assert (
+        f"https://is{shard}-ssl.mzstatic.com/image/thumb/a/600x600bb.jpg",
+    ) == tuple(set(_descriptor_urls(document)))
