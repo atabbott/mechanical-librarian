@@ -34,11 +34,14 @@ from mechanical_librarian.domain.evidence_bounds import (
 )
 from mechanical_librarian.domain.identifiers import Fingerprint
 
-# The whole shape of an ASIN: ten upper-case alphanumerics, and nothing else.
-# It is a well-formedness gate, never a filter and never prefix-based -- an
+# The whole shape of an ASIN: ten ASCII alphanumerics, and nothing else.  It is
+# a well-formedness gate, never a filter and never prefix-based -- an
 # ISBN-10-shaped ASIN is as well-formed as a `B0` one, and a value that fails
-# it is retained as malformed rather than discarded.
-_ASIN_TOKEN = re.compile(r"[A-Z0-9]{10}")
+# it is retained as malformed rather than discarded.  Both cases are admitted
+# here because the value is matched before it is upper-cased: `"ß".upper()` is
+# `"SS"`, so a nine-character value tested after conversion would have been
+# grown into a well-formed ten-character one that no file ever held.
+_ASIN_TOKEN = re.compile(r"[A-Za-z0-9]{10}")
 # The same shape bracketed is the one path grammar Audible exports and every
 # downstream tool reproduces.
 _BRACKETED_TOKEN = re.compile(r"\[([A-Z0-9]{10})\]")
@@ -52,13 +55,16 @@ _XML_ELEMENT = re.compile(
     r"([^>]*)>([^<]{0,4096})</",
     re.IGNORECASE,
 )
-# `opf:role` on a `dc:contributor`, read out of that captured attribute run.
-# The leading whitespace is what separates a real attribute from the tail of a
-# longer name, so `data-role` is not a role.
-_XML_ROLE = re.compile(
-    r"\s(?:[A-Za-z][\w.-]*:)?role\s*=\s*[\"']\s*([A-Za-z]{1,16})\s*[\"']",
-    re.IGNORECASE,
+# One `name="value"` pair of a captured attribute run, consumed in sequence so
+# an attribute is recognised by its name rather than found anywhere in the run.
+# A value is text the file chose: `title="fake role=\'nrt\'"` declares a title,
+# and searching the run for a role would have read it as one.
+_XML_ATTRIBUTE = re.compile(
+    r"\s*([A-Za-z_:][\w.:-]{0,63})\s*=\s*(\"[^\"]{0,512}\"|\'[^\']{0,512}\')"
 )
+# The run itself is unbounded in the element grammar, so the walk over it is
+# not: no OPF element carries this many attributes.
+_MAX_XML_ATTRIBUTES = 32
 # MARC relators for a spoken performance.  An OPF contributor is a contributor
 # of some kind; only these two say the kind is the one this evidence claims.
 _NARRATOR_ROLES = frozenset({"nrt", "prf"})
@@ -295,11 +301,11 @@ class _Builder:
             # is checked once.  A value that is not one is still what the file
             # said: it is kept, marked malformed, and given no canonical form
             # for anything downstream to match on.
-            normalized = text.upper()
-            if _ASIN_TOKEN.fullmatch(normalized) is None:
+            if _ASIN_TOKEN.fullmatch(text) is None:
                 state, resolved = "malformed", None
             else:
-                resolved = normalized
+                # ASCII by construction above, so this cannot change a length.
+                resolved = text.upper()
         identity = (field.value, surface.value, text, role)
         if identity in self._seen:
             return
@@ -679,9 +685,39 @@ def _is_narrator_role(attributes: str) -> bool:
     is what says which somebody.  An editor is not a narrator, and a
     contributor carrying no role at all has not said, so neither becomes
     narrator evidence.
+
+    The run is tokenized rather than searched, so only a parsed attribute name
+    can supply a role and no attribute's value can pretend to be one.
     """
-    match = _XML_ROLE.search(attributes)
-    return match is not None and match.group(1).lower() in _NARRATOR_ROLES
+    parsed = _xml_attributes(attributes)
+    role = next(
+        (
+            value
+            for name, value in parsed.items()
+            if name == "role" or name.endswith(":role")
+        ),
+        None,
+    )
+    return role is not None and role.strip().lower() in _NARRATOR_ROLES
+
+
+def _xml_attributes(run: str) -> dict[str, str]:
+    """Read one element's attribute run as the name/value pairs it declares.
+
+    Consumed strictly in sequence: the first token that is not a quoted pair
+    ends the read, because whatever follows it is no longer being understood.
+    A repeated name keeps its first value, which is the one an XML reader that
+    accepted the document at all would have taken.
+    """
+    values: dict[str, str] = {}
+    position = 0
+    while position < len(run) and len(values) < _MAX_XML_ATTRIBUTES:
+        match = _XML_ATTRIBUTE.match(run, position)
+        if match is None:
+            break
+        values.setdefault(match.group(1).lower(), match.group(2)[1:-1])
+        position = match.end()
+    return values
 
 
 def _decode_entities(value: str) -> str:

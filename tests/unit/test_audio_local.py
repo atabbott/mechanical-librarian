@@ -767,3 +767,65 @@ def test_naming_the_freeform_surface_changes_no_basis_and_no_claim() -> None:
         ("contributor", "embedded_tag", "Apple Narrator", "Apple Narrator", "narrator"),
         ("contributor", "embedded_tag", "Bare Narrator", "Bare Narrator", "narrator"),
     }
+
+
+def test_a_role_spelled_inside_another_attributes_value_is_not_a_role() -> None:
+    """An attribute's value is text the file chose. Only a name is a name."""
+    document = (
+        '<?xml version="1.0"?><package><metadata>'
+        "<dc:contributor title=\"fake role='nrt'\">Impostor</dc:contributor>"
+        "</metadata></package>"
+    )
+    interpretation = _read(
+        _probe(),
+        sidecars=(
+            AudioSidecar(AudioEvidenceSurface.SIDECAR_OPF, "metadata.opf", document),
+        ),
+    )
+
+    assert _values(interpretation, AudioInspectionField.CONTRIBUTOR) == set()
+
+
+@pytest.mark.parametrize(
+    "attributes",
+    (
+        ' title="x" opf:role="nrt"',
+        " opf:role='nrt' title='x'",
+        ' id="a" role="NRT" title="x"',
+        '\n  opf:role = "nrt"\n  title="x"',
+        ' title="role=\'edt\'" opf:role="nrt"',
+    ),
+)
+def test_a_real_role_is_found_wherever_the_attributes_put_it(attributes: str) -> None:
+    document = (
+        '<?xml version="1.0"?><package><metadata>'
+        f"<dc:contributor{attributes}>Named Narrator</dc:contributor>"
+        "</metadata></package>"
+    )
+    interpretation = _read(
+        _probe(),
+        sidecars=(
+            AudioSidecar(AudioEvidenceSurface.SIDECAR_OPF, "metadata.opf", document),
+        ),
+    )
+
+    assert _values(interpretation, AudioInspectionField.CONTRIBUTOR) == {
+        ("sidecar_opf", "Named Narrator")
+    }
+
+
+@pytest.mark.parametrize("shape", ("ß12345678", "İ1234567", "ﬀ12345678"))
+def test_a_case_mapping_can_never_grow_a_value_into_an_asin(shape: str) -> None:
+    """`ß`.upper() is `SS`. Ten characters after that is not ten characters."""
+    interpretation = _read(_probe(tags={"CDEK": shape}))
+
+    assert _asins(interpretation) == {("mp4_ilst", shape, None, "malformed")}
+
+
+def test_an_attribute_run_stops_being_read_where_it_stops_making_sense() -> None:
+    """Past a token that is not a quoted pair, nothing is being understood."""
+    assert audio_local._xml_attributes(' title="x" bare opf:role="nrt"') == {
+        "title": "x"
+    }
+    assert audio_local._xml_attributes(' role="nrt" role="edt"') == {"role": "nrt"}
+    assert audio_local._is_narrator_role(' data-role="nrt"') is False
