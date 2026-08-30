@@ -159,6 +159,11 @@ def _sidecar_text(descriptor: int, maximum: int) -> str | None:
     A sidecar is owner-supplied text of unknown encoding.  Over-long or
     unreadable documents are dropped rather than truncated into a document
     whose grammar would then be read out of a fragment.
+
+    Bytes that are not UTF-8 are undecodable in exactly that sense.  Replacing
+    them would publish a U+FFFD the owner's file never held, as evidence
+    attributed to their file, so the sidecar is dropped whole instead.  A
+    replacement character the source really carries still decodes and stays.
     """
     try:
         information = os.fstat(descriptor)
@@ -167,7 +172,10 @@ def _sidecar_text(descriptor: int, maximum: int) -> str | None:
         value = os.pread(descriptor, maximum, 0)
     except OSError:
         return None
-    return value.decode("utf-8", "replace")
+    try:
+        return value.decode("utf-8", "strict")
+    except UnicodeError:
+        return None
 
 
 class _Expired(BaseException):

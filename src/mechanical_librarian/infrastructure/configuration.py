@@ -182,6 +182,12 @@ class LimitsInput(_Closed):
     source_archive_bytes: Annotated[StrictInt, Field(ge=1024, le=268_435_456)] = (
         268_435_456
     )
+    # A per-field default on a closed model: a `config-v6` document written
+    # before this key existed still validates and takes the default, so the
+    # audio ceiling needs no schema increment.
+    audio_source_bytes: Annotated[StrictInt, Field(ge=1024, le=17_179_869_184)] = (
+        8_589_934_592
+    )
     timeout_seconds: Annotated[StrictInt, Field(ge=1, le=60)] = 30
 
 

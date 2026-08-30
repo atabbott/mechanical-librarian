@@ -1232,6 +1232,13 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     ) -> ReviewAttentionSnapshot:
         return self._review_projections.read_review_attention(search, limit, offset)
 
+    def read_current_report_document(
+        self, connection: str, library: str, item: str
+    ) -> str | None:
+        return self._review_projections.read_current_report_document(
+            connection, library, item
+        )
+
     def list_current_review_case_documents(
         self,
         search: str | None,

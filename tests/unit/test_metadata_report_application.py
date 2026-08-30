@@ -1015,11 +1015,13 @@ def _audiobook_service(
     audio_inspector: FakeAudioInspector | None,
     *,
     activity: list[str] | None = None,
+    limits: ReportLimits | None = None,
+    inspector: FakeInspector | None = None,
 ) -> GenerateMetadataReport:
     recorded = [] if activity is None else activity
     return GenerateMetadataReport(
         target=target,
-        inspector=FakeInspector(InspectionResult("c" * 64, ())),
+        inspector=inspector or FakeInspector(InspectionResult("c" * 64, ())),
         repository_factory=lambda: cast(ReportRepository, repository),
         providers=(
             ProviderBinding("catalogue", True, lambda: recorded.append("provider")),  # type: ignore[return-value]  # reason: a sentinel factory the audiobook path must never invoke, so it never has to yield a provider.
@@ -1031,7 +1033,7 @@ def _audiobook_service(
             "audio", "primary", "library-id", "audiobook", "audiobooks", ("catalogue",)
         ),
         mount=MediaMountConfiguration("audiobooks", "/media", "/library", True),
-        limits=ReportLimits(),
+        limits=limits or ReportLimits(),
         audio_inspector=audio_inspector,
     )
 
@@ -1210,3 +1212,52 @@ def test_an_audiobook_report_cannot_prove_currentness_without_its_inspector() ->
             report,
         )
     assert target.calls == 0
+
+
+def test_the_audio_ceiling_binds_the_audio_path_and_not_the_epub_one() -> None:
+    """An audiobook is bounded by its own setting, not the EPUB archive's.
+
+    Both paths read one ceiling out of the same `ReportLimits`, so the only
+    thing that shows which setting reached which path is the argument the
+    inspector was handed.  The two are set apart here so a path that fell
+    back to the other one is a failure rather than a coincidence.
+    """
+    limits = ReportLimits(source_archive_bytes=1_024, audio_source_bytes=4_096)
+    recording = TargetFile("a" * 64, "book.m4b", "m4b")
+    audio_inspector = FakeAudioInspector(audio_result())
+    _audiobook_service(
+        FakeTarget(
+            [
+                TargetSnapshot("audiobook", "Recorded title", (recording,)),
+                TargetSnapshot("audiobook", "Recorded title", (recording,)),
+            ]
+        ),
+        FakeReportRepository(),
+        audio_inspector,
+        limits=limits,
+    ).run("item-1", 0)
+
+    archive = TargetFile("a" * 64, "book.epub", "epub")
+    inspector = FakeInspector(InspectionResult("c" * 64, ()))
+    GenerateMetadataReport(
+        target=FakeTarget(
+            [
+                TargetSnapshot("ebook", "Written title", (archive,)),
+                TargetSnapshot("ebook", "Written title", (archive,)),
+            ]
+        ),
+        inspector=inspector,
+        repository_factory=lambda: cast(ReportRepository, FakeReportRepository()),
+        providers=(),
+        connection=TargetConnectionConfiguration(
+            "primary", "https://example.invalid", "/private/target"
+        ),
+        library=LibraryConfiguration(
+            "ebooks", "primary", "library-id", "ebook", "books", ()
+        ),
+        mount=MediaMountConfiguration("books", "/media", "/library", True),
+        limits=limits,
+    ).run("item-1", 0)
+
+    assert audio_inspector.ceilings == [4_096]
+    assert inspector.ceilings == [1_024]

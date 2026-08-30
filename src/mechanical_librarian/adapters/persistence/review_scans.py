@@ -49,6 +49,15 @@ from mechanical_librarian.domain.validation import (
 # that decide them. Order is the order an owner reads them in: the work has not
 # started, it is moving through the stages, it is ready, or it could not finish.
 #
+# A prepared audiobook's work ends `failed` because nothing follows its report,
+# not because anything went wrong with it.  It stays in `checked` -- it was
+# checked -- and appears in no count that asks an owner to unblock something.
+# `IS NOT` rather than `!=` so a row with no failure code still counts.
+_BLOCKED_SQL = (
+    "w.state IN ('failed','stale') AND w.failure_code IS NOT 'local_evidence_only'"
+)
+
+
 # A terminal state is tested before a stage, because `stage` on a failed row is
 # where it stopped rather than where it is. `extraction` is the one stage split
 # by state: a work queued for extraction has not started, and one running it is
@@ -63,8 +72,16 @@ _STAGE_BUCKETS = (
         "projection",
         "w.state IN ('queued','delayed','running') AND w.stage='projection'",
     ),
-    ("ready", "w.state='complete'"),
-    ("failed", "w.state IN ('failed','stale')"),
+    # A prepared audiobook belongs here rather than nowhere: the eight buckets
+    # partition the scan, so leaving its work out of `failed` without counting
+    # it broke `total == sum(stages)`. Its evidence is recorded and there is
+    # nothing further to do with it, which is what `ready` says.
+    (
+        "ready",
+        "(w.state='complete' "
+        "OR (w.state='failed' AND w.failure_code IS 'local_evidence_only'))",
+    ),
+    ("failed", _BLOCKED_SQL),
 )
 _STAGE_COUNT_SQL = ",".join(
     f"COALESCE(SUM(CASE WHEN {predicate} THEN 1 ELSE 0 END),0)"
@@ -375,7 +392,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 "SELECT "
                 "COALESCE(SUM(CASE WHEN w.state IN ('complete','failed','stale') THEN 1 ELSE 0 END),0),"
                 "COALESCE(SUM(CASE WHEN w.state='complete' AND w.review_case_id IS NOT NULL THEN 1 ELSE 0 END),0),"
-                "COALESCE(SUM(CASE WHEN w.state IN ('failed','stale') THEN 1 ELSE 0 END),0),"
+                f"COALESCE(SUM(CASE WHEN {_BLOCKED_SQL} THEN 1 ELSE 0 END),0),"
                 f"{_STAGE_COUNT_SQL} "
                 "FROM review_preparation_work w WHERE w.scan_id=?",
                 (row[0],),
@@ -433,7 +450,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 "s.rescan_requested,s.updated_at,"
                 "COALESCE(SUM(CASE WHEN w.state IN ('complete','failed','stale') THEN 1 ELSE 0 END),0),"
                 "COALESCE(SUM(CASE WHEN w.state='complete' AND w.review_case_id IS NOT NULL THEN 1 ELSE 0 END),0),"
-                "COALESCE(SUM(CASE WHEN w.state IN ('failed','stale') THEN 1 ELSE 0 END),0),"
+                f"COALESCE(SUM(CASE WHEN {_BLOCKED_SQL} THEN 1 ELSE 0 END),0),"
                 f"{_STAGE_COUNT_SQL} "
                 "FROM review_preparation_scans s "
                 "LEFT JOIN review_preparation_work w ON w.scan_id=s.scan_id "

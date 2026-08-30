@@ -1245,7 +1245,7 @@ class GenerateMetadataReport:
                         audio = cast("AudioInspector", self._audio_inspector).inspect(
                             self._mount,
                             selected.relative_path,
-                            self._limits.source_archive_bytes,
+                            self._limits.audio_source_bytes,
                         )
                     else:
                         local = self._inspector.inspect(
@@ -1697,7 +1697,7 @@ def require_report_current(
             mount,
             matches[0].relative_path,
             report.file.content_digest,
-            limits.source_archive_bytes,
+            limits.audio_source_bytes if audiobook else limits.source_archive_bytes,
         )
     ):
         raise CurrentnessError("target or media changed")

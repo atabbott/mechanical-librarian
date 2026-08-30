@@ -187,13 +187,20 @@ a library-wide provider barrier.
   process: the parent runs `ffprobe` as its own isolated child over a passed
   descriptor, with no network, no inherited `PATH`, an empty-but-minimal
   environment, `cwd="/"`, its own session, and core, file-size, descriptor,
-  CPU, address-space, output, and wall-clock bounds. Its bounded JSON document
-  and each sidecar descriptor are then interpreted inside the same
-  descriptor-bound Python child the EPUB capability uses, whose process cap
-  stays at one. The interpretation itself is a closed recognition grammar —
-  never an XML or container parser — over already bounded text, and a sidecar
-  that is over-long or unreadable is dropped rather than truncated into a
-  fragment. Path evidence reads bare name components only, never a joined path.
+  CPU, address-space, output, and wall-clock bounds. The resource bounds are
+  installed by a shim process that then becomes the probe, so nothing runs
+  between a fork and an exec; the parent still resolves the binary from a
+  closed list, so a missing probe is refused before anything is spawned. Its
+  bounded JSON document and each sidecar descriptor are then interpreted inside
+  the same descriptor-bound Python child the EPUB capability uses, whose
+  process cap stays at one. The interpretation itself is a closed recognition
+  grammar — never an XML or container parser — over already bounded text; a
+  sidecar that is over-long, unreadable, or not valid UTF-8 is dropped whole
+  rather than truncated or repaired into a fragment; an identifier whose shape
+  is wrong is retained and reported as malformed rather than silently believed;
+  and a sibling listing refuses at its entry bound instead of materializing an
+  unbounded directory. Path evidence reads bare name components only, never a
+  joined path.
   Embedded cover art is recorded as presence and never acquired, decoded, or
   elected.
 - A local actor may replace or corrupt configuration, secret, media, manifest,

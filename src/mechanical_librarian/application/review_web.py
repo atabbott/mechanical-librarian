@@ -10,6 +10,7 @@ import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, cast
+from urllib.parse import urlencode
 
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
@@ -32,8 +33,10 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderLaneObservation,
     ReportValueError,
     TargetDestination,
+    TargetFacts,
 )
 from mechanical_librarian.domain.proposal_set import canonical_target_fields
+from mechanical_librarian.domain.review_browse import browse_report
 from mechanical_librarian.domain.review_case import ReviewCase, ReviewCaseValueError
 from mechanical_librarian.domain.review_field_classification import (
     ReviewFieldCause,
@@ -167,6 +170,9 @@ class ReviewLibraryStore(Protocol):
     def read_review_attention(
         self, search: str | None, limit: int, offset: int
     ) -> ReviewAttentionSnapshot: ...
+    def read_current_report_document(
+        self, connection: str, library: str, item: str
+    ) -> str | None: ...
 
 
 class HumanDecisionStore(CurrentReviewCaseStore, Protocol):
@@ -1062,6 +1068,166 @@ class BrowseReviewLibrary:
             "total": raw_total,
         }
 
+    def report_detail(
+        self, connection: str, library: str, item: str
+    ) -> dict[str, object]:
+        """Project one item's recorded evidence, read-only and complete.
+
+        A work with no review case has no case to open, and until this existed
+        its evidence was recorded, retained, and unreachable.  Nothing here
+        decides anything: it is the report the library row already stands for,
+        stated in the vocabulary the owner reads.
+        """
+        if any(
+            type(value) is not str or not 1 <= len(value) <= 512
+            for value in (connection, library, item)
+        ):
+            raise ReviewWebError("request")
+        try:
+            document = self._repository.read_current_report_document(
+                connection, library, item
+            )
+        except Exception as error:
+            # A store that could not answer is not a work that is not there.
+            # Collapsing the two told an owner their audiobook had vanished
+            # whenever the database was busy or unreadable.
+            raise ReviewWebError("unavailable") from error
+        if document is None:
+            raise ReviewWebError("missing")
+        try:
+            # The domain report first: `browse_report` closes the envelope but
+            # takes each member on trust, so a shaped-but-corrupt document
+            # would have projected arbitrary evidence as recorded fact. This
+            # is the same reconstruction `_library_item` performs before it
+            # projects a caseless row.
+            recorded = MetadataReport.from_json(document)
+            report = browse_report(document)
+        except Exception as error:
+            raise ReviewWebError("unavailable") from error
+        target = recorded.target
+        if (target.connection, target.library, target.item) != (
+            connection,
+            library,
+            item,
+        ):
+            # The package row is a pointer, and a pointer can be wrong. Serving
+            # what it reached would attribute another work's evidence to this
+            # one under the identity the owner asked about.
+            raise ReviewWebError("unavailable")
+        return _report_detail(report)
+
+
+def _report_detail_url(target: TargetFacts) -> str:
+    """Address one item's recorded evidence where a case identity does not exist.
+
+    A work without a review case has nothing to open under `/review`, so its
+    evidence is addressed by the identity the package row already carries.
+
+    The identity travels in the query rather than in path segments. A library
+    server's item id may contain a slash, and both the catalogue and
+    `TargetFacts` accept one; percent-encoded in a path it is decoded before
+    the router matches, so such a work answered 404 at exactly the address its
+    own row handed out.
+    """
+    return "/api/v1/library/report?" + urlencode(
+        {
+            "connection": target.connection,
+            "library": target.library,
+            "item": target.item,
+        }
+    )
+
+
+# The same bound the report's own chapter section carries, for the same
+# reason: a page an owner reads is bounded, and what it left out is stated.
+_EVIDENCE_CEILING = 1_024
+
+
+def _report_detail(report: dict[str, object]) -> dict[str, object]:
+    """Read the closed report envelope into the owner-facing evidence view."""
+    target = report["target"]
+    file = report["file"]
+    local = report["local"]
+    audio = report["audio"]
+    if (
+        type(target) is not dict
+        or type(file) is not dict
+        or type(local) is not dict
+        or (audio is not None and type(audio) is not dict)
+    ):
+        raise ReviewWebError("unavailable")
+    claims = local.get("claims")
+    if type(claims) is not list:
+        raise ReviewWebError("unavailable")
+    chapters = [] if audio is None else audio.get("chapters")
+    cover = None if audio is None else audio.get("embedded_cover")
+    if type(chapters) is not list or (cover is not None and type(cover) is not dict):
+        raise ReviewWebError("unavailable")
+    recorded = [value for value in claims if type(value) is dict]
+    return {
+        "chapters": [
+            {
+                "end_milliseconds": value["end_milliseconds"],
+                "ordinal": value["ordinal"],
+                "start_milliseconds": value["start_milliseconds"],
+                "title": value["title"],
+            }
+            for value in chapters
+            if type(value) is dict
+        ],
+        "chapters_truncated": bool(
+            audio is not None and audio.get("chapters_truncated")
+        ),
+        # Presence and the grammar that showed it, and deliberately no more:
+        # this build records that a file carries art and claims no authority
+        # over those bytes.
+        "embedded_cover": {
+            "present": bool(cover is not None and cover.get("present")),
+            "surface": None if cover is None else cover.get("surface"),
+        },
+        # Truncated rather than bounded by a count the domain does not impose:
+        # nothing caps a report's claims but the report's own byte ceiling, so
+        # a claim-rich work would otherwise exceed whatever number the
+        # transport declared and fail the whole read.  The order is the
+        # report's, so the kept prefix is the same one every time, and the
+        # flag says so rather than letting the page imply completeness -- the
+        # idiom the chapter section beside it already uses.
+        "evidence": [
+            {
+                "basis": value["basis"],
+                "excerpt": value["excerpt"],
+                "kind": value["kind"],
+                "role": value["role"],
+                # A claim the extraction marked malformed or oversized reads
+                # exactly like a valid one without this, which is the one
+                # thing an owner reading evidence must not be shown.
+                "state": value["state"],
+                "value": value["canonical"] or value["observed"],
+            }
+            for value in recorded[:_EVIDENCE_CEILING]
+        ],
+        "evidence_truncated": len(recorded) > _EVIDENCE_CEILING,
+        "item": target["item"],
+        "library": target["library"],
+        "connection": target["connection"],
+        "media_kind": file["format"],
+        "report_id": report["report_id"],
+        "schema_version": "review-report-detail-v1",
+        "title": _report_title(report),
+    }
+
+
+def _report_title(report: dict[str, object]) -> str:
+    target = report["target"]
+    fields = target["fields"] if type(target) is dict else None
+    if type(fields) is list:
+        for field in fields:
+            if type(field) is dict and field.get("kind") == "title":
+                value = field.get("value")
+                if type(value) is str and value:
+                    return value
+    return "Untitled"
+
 
 def _digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
@@ -1778,6 +1944,7 @@ def _library_item(
                     "attention_count": 0,
                     "attention_state": "no_attention_needed",
                     "detail_url": None,
+                    "detail_kind": None,
                     "dispositions": ["terminal_failure"],
                     "item": item,
                     "library": library,
@@ -1893,7 +2060,14 @@ def _library_item(
         "attention_state": (
             "needs_attention" if current_attention_count else "no_attention_needed"
         ),
-        "detail_url": None if case is None else f"/review/{case.review_case_id}",
+        "detail_url": f"/review/{case.review_case_id}"
+        if case is not None
+        else _report_detail_url(report.target),
+        # What the address is, said outright rather than left to be inferred
+        # from its shape. A reader that guessed from the URL prefix would be
+        # re-orphaned by a route rename, which is exactly how this evidence
+        # became unreachable in the first place.
+        "detail_kind": "case" if case is not None else "report",
         "dispositions": outcomes,
         "item": report.target.item,
         "library": report.target.library,

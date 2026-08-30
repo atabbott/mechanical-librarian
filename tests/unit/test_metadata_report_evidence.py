@@ -94,6 +94,10 @@ from mechanical_librarian.domain.metadata_report import (
     normalize_title,
     provider_access_time,
 )
+from mechanical_librarian.domain.proposal_set import (
+    TargetDestination,
+    evaluate_report,
+)
 from mechanical_librarian.domain.work_identity import work_title_has_variant_marker
 from tests.support.metadata_report_doubles import (
     FakeInspector,
@@ -1811,3 +1815,60 @@ def test_an_abs_asserted_field_other_than_title_is_still_refused() -> None:
 )
 def test_recorded_manifestation_fields_are_edition_scoped(kind: ClaimKind) -> None:
     assert claim_scope(kind) is ClaimScope.EDITION
+
+
+def _audio_asin(observed: str, canonical: str | None, state: FieldState) -> LocalClaim:
+    return LocalClaim.create(
+        kind=ClaimKind.ASIN,
+        observed=observed,
+        canonical=canonical,
+        excerpt=f"asin: {observed}",
+        applicability="not_applicable",
+        basis="embedded_tag",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        state=state,
+    )
+
+
+def test_one_malformed_asin_surface_reports_malformed_beside_a_valid_one() -> None:
+    """Deliberate: the owner is told a surface carried junk, not only that
+    another surface carried something usable."""
+    results = derive_field_results(
+        (
+            _audio_asin("B0CW1KL2QD", "B0CW1KL2QD", FieldState.VALID),
+            _audio_asin("B0CW1KL-QD", None, FieldState.MALFORMED),
+        )
+    )
+
+    asin = next(value for value in results if value.kind is ClaimKind.ASIN)
+    assert asin.state is FieldState.MALFORMED
+    assert (FieldSource.AUDIO_TAG, FieldState.MALFORMED) in {
+        (value.source, value.state) for value in asin.sources
+    }
+
+
+def test_a_malformed_asin_is_never_an_alternative_a_proposal_can_offer() -> None:
+    """The gate is upstream of every decision surface, so nothing has to
+    re-derive it: proposals already admit only valid, canonical claims."""
+    report = MetadataReport.create(
+        target=TargetFacts(
+            "primary", "audiobooks", "item-1", default_target_fields("Recorded title")
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=(
+            _audio_asin("B0CW1KL2QD", "B0CW1KL2QD", FieldState.VALID),
+            _audio_asin("B0CW1KL-QD", None, FieldState.MALFORMED),
+        ),
+        local_reasons=("embedded_tag_asin",),
+        providers=(),
+        audio=AudioFacts(),
+    )
+
+    asin = next(
+        value
+        for value in evaluate_report(report).results
+        if value.destination is TargetDestination.ASIN
+    )
+
+    assert [value.value.value for value in asin.alternatives] == ["B0CW1KL2QD"]

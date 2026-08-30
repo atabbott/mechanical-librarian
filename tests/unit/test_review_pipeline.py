@@ -31,6 +31,9 @@ from mechanical_librarian.adapters.persistence.preparation_presentation import (
     refresh_preparation_work,
     validate_preparation_presentation,
 )
+from mechanical_librarian.adapters.persistence.metadata_reports import (
+    SQLiteMetadataReportRepository,
+)
 from mechanical_librarian.adapters.persistence.review_preparation import (
     _FAILURE_CODES,
 )
@@ -8477,6 +8480,10 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
     browsed = repository.list_current_review_case_documents(None, 10, 0, None)
     found = repository.count_current_review_cases("Recorded work")
     incidents = operational_incidents(repository.operational_snapshot())
+    addressed = repository.read_current_report_document("primary", "fiction", "item")
+    absent = repository.read_current_report_document(
+        "primary", "fiction", "no-such-item"
+    )
     remaining = repository.claim_review_pipeline_action(15)
     presentation = repository.preparation_presentation(15)
     repository.close()
@@ -8497,6 +8504,14 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
     case_document, report_document = browsed[0]
     assert case_document is None
     assert browse_report(report_document)["audio"] is not None
+    # And addressable by the identity of the package row that lists it, which
+    # is the only route to an audiobook's evidence: it has no review case.
+    assert addressed is not None
+    assert MetadataReport.from_json(addressed).schema_version == "metadata-report-v31"
+    assert browse_report(addressed)["audio"] is not None
+    # No such work is a `None`, not a refusal: a store that cannot answer
+    # raises, and the two must not read alike to the caller above.
+    assert absent is None
     assert found == (1, 0)
     # And a stop that is not a fault raises no incident, so the status surface
     # keeps answering for every other library.
@@ -8562,6 +8577,290 @@ def test_broad_reconciliation_projects_active_report_only_work_as_clean_ready(
     assert presentation.passage.ready == 1
     assert presentation.passage.failed == 0
     assert presentation.recent_completions[0].outcome == "ready"
+
+
+def test_a_prepared_audiobook_leaves_a_mixed_library_scan_clean(
+    application_path: Path,
+) -> None:
+    """A completed audiobook must not decide the scan that carried it.
+
+    Its work ends `failed` because nothing follows the report, and counted as
+    a failure it settled the whole scan: the state the owner reads, the
+    absences the scan staged, and the count that asks to unblock something.
+    One audiobook in a mixed library therefore made absence reconciliation
+    permanently unreachable for the ebooks beside it.  The three surfaces are
+    asserted together because the leak reached all three.
+    """
+    departed = _report("Departed work", "d", "d")
+    present = MetadataReport.create(
+        target=TargetFacts(
+            "primary", "ebooks", "item-2", default_target_fields("Present work")
+        ),
+        file=FileFacts(0, "e" * 64, "e" * 64),
+        local_claims=(),
+        local_reasons=("no_opening_claims",),
+        providers=(),
+    )
+    audiobook = MetadataReport.create(
+        target=TargetFacts(
+            "primary", "ebooks", "audio-1", default_target_fields("Recorded work")
+        ),
+        file=FileFacts(0, "1" * 64, "1" * 64, "m4b"),
+        local_claims=(),
+        local_reasons=("no_local_audio_claims",),
+        providers=(),
+        audio=AudioFacts(),
+    )
+    survivors = (
+        replace(_audio_entry("audio-1", audiobook.file.identity), library="ebooks"),
+        replace(_entry("item-2", present.file.identity), library="ebooks"),
+    )
+    reports = {
+        "audio-1": audiobook,
+        "item-2": present,
+    }
+
+    repository = open_repository(application_path)
+    repository.publish(departed, lambda: True)
+    departed_proposal = evaluate_report(departed)
+    repository.publish_proposal(departed_proposal)
+    repository.admit_review_case(departed_proposal)
+    repository.request_review_scan("primary", "ebooks", "lib-1", _PRODUCER, 10)
+
+    clock = 11
+    generation = 0
+    while clock < 400:
+        action = repository.claim_review_pipeline_action(clock)
+        clock += 1
+        if action is None:
+            if (
+                repository._connection.execute(
+                    "SELECT state FROM review_preparation_scans"
+                )
+                .fetchone()[0]
+                .startswith("completed")
+            ):
+                break
+            continue
+        if action.stage == "discovery":
+            generation += 1
+            repository.complete_review_discovery(
+                action, generation, "a" * 64, survivors, clock
+            )
+        elif action.stage == "extraction":
+            report = reports[cast(str, action.item_id)]
+
+            def bind(
+                value: object,
+                published: MetadataReport,
+                claimed: PipelineAction = action,
+                completed_at: int = clock,
+                audio: bool = report.audio is not None,
+            ) -> None:
+                writer = cast("ReviewPipelineRepository", value)
+                if audio:
+                    writer.complete_review_extraction_publication(
+                        claimed,
+                        published.report_id,
+                        completed_at,
+                        0,
+                        "local_evidence_only",
+                    )
+                else:
+                    writer.advance_review_pipeline_action(
+                        claimed, published.report_id, completed_at
+                    )
+
+            repository.publish(report, lambda: True, None, bind)
+        elif action.stage == "provider":
+            repository.advance_review_pipeline_action(action, None, clock)
+        elif action.stage == "proposal":
+            proposal = evaluate_report(reports[cast(str, action.item_id)])
+            repository.publish_proposal(proposal)
+            repository.advance_review_pipeline_action(
+                action, proposal.proposal_set_id, clock
+            )
+        elif action.stage == "admission":
+            admitted = json.loads(
+                repository.admit_review_case(
+                    evaluate_report(reports[cast(str, action.item_id)])
+                )
+            )
+            repository.advance_review_pipeline_action(
+                action, admitted.get("review_case_id"), clock
+            )
+        else:  # pragma: no cover - the ladder above is exhaustive here
+            raise AssertionError(action.stage)
+
+    scan_state = repository._connection.execute(
+        "SELECT state FROM review_preparation_scans"
+    ).fetchone()
+    progress = repository.review_pipeline_progress("primary", "ebooks")
+    pointer = repository._connection.execute(
+        "SELECT review_case_id,outcome FROM current_review_case_lineages "
+        "WHERE item_id='item-1'"
+    ).fetchone()
+    packages = repository._connection.execute(
+        "SELECT item_id,outcome FROM current_review_packages ORDER BY item_id"
+    ).fetchall()
+    staged = repository._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_absences"
+    ).fetchone()
+    repository.close()
+
+    # The scan the audiobook rode in on is clean, ...
+    assert scan_state == ("completed",)
+    # ... the disappeared ebook was reconciled rather than discarded unread, ...
+    assert pointer == (None, "tombstoned")
+    assert staged == (0,)
+    assert [item for item, _outcome in packages] == ["audio-1", "item-2"]
+    # ... and nothing asks the owner to unblock a work that is already done.
+    assert progress is not None
+    assert progress.blocked == 0
+    assert dict(progress.stages)["failed"] == 0
+
+
+def _publish_terminal_audiobook(
+    repository: SQLiteMetadataReportRepository,
+    entry: CatalogueEntry,
+    report: MetadataReport,
+    at: int,
+) -> None:
+    """Take one audiobook through the real terminal path of one scan."""
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, at)
+    discovery = repository.claim_review_pipeline_action(at + 1)
+    assert discovery is not None
+    repository.complete_review_discovery(discovery, 1, "a" * 64, (entry,), at + 2)
+    extraction = repository.claim_review_pipeline_action(at + 3)
+    assert extraction is not None
+    repository.publish(
+        report,
+        lambda: True,
+        None,
+        lambda value, published: value.complete_review_extraction_publication(
+            extraction, published.report_id, at + 4, 0, "local_evidence_only"
+        ),
+    )
+    # Settle the scan, so the rescan below starts from a completed one rather
+    # than from a rescan request the drain has not read yet.
+    assert repository.claim_review_pipeline_action(at + 5) is None
+
+
+def _rescan(
+    repository: SQLiteMetadataReportRepository, entry: CatalogueEntry, at: int
+) -> PipelineAction | None:
+    """Run one further discovery over the same library and claim what follows."""
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, at)
+    discovery = repository.claim_review_pipeline_action(at + 1)
+    assert discovery is not None and discovery.stage == "discovery"
+    repository.complete_review_discovery(discovery, 2, "b" * 64, (entry,), at + 2)
+    return repository.claim_review_pipeline_action(at + 3)
+
+
+def _audio_report(item_id: str, identity: str) -> MetadataReport:
+    return MetadataReport.create(
+        target=TargetFacts(
+            "primary", "fiction", item_id, default_target_fields("Recorded work")
+        ),
+        file=FileFacts(0, identity, "b" * 64, "m4b"),
+        local_claims=(),
+        local_reasons=("no_local_audio_claims",),
+        providers=(),
+        audio=AudioFacts(),
+    )
+
+
+def test_a_later_scan_does_not_re_inspect_an_unchanged_published_audiobook(
+    application_path: Path,
+) -> None:
+    """The terminal outcome survives a rescan the file did not change.
+
+    Discovery reset any `failed` work sitting at `provider` back to
+    extraction, because that is what an exhausted provider failure needs. An
+    audiobook's work sits there for the opposite reason -- its report is
+    published and nothing follows it -- so every later scan re-read and
+    re-hashed a multi-gigabyte file that had not moved, which is the whole
+    cost the fingerprint work exists to avoid.
+    """
+    report = _audio_report("item", "1" * 64)
+    entry = _audio_entry("item", report.file.identity)
+    repository = open_repository(application_path)
+    _publish_terminal_audiobook(repository, entry, report, 10)
+    published = repository._connection.execute(
+        "SELECT stage,state,failure_code,report_id FROM review_preparation_work"
+    ).fetchone()
+
+    following = _rescan(repository, entry, 20)
+
+    work = repository._connection.execute(
+        "SELECT stage,state,failure_code,report_id FROM review_preparation_work"
+    ).fetchone()
+    packages = repository._connection.execute(
+        "SELECT item_id,outcome FROM current_review_packages"
+    ).fetchall()
+    repository.close()
+
+    assert published == ("provider", "failed", "local_evidence_only", published[3])
+    # Nothing to do: the evidence this scan would produce is already recorded.
+    assert following is None
+    assert work == published
+    assert packages == [("item", "report_only")]
+
+
+def test_a_changed_audiobook_is_prepared_again(application_path: Path) -> None:
+    """The exemption is currentness, not permanence.
+
+    A source fingerprint that moved means the file behind the report is not
+    the file the report describes, so the work returns to extraction exactly
+    as any other changed item does.
+    """
+    report = _audio_report("item", "1" * 64)
+    entry = _audio_entry("item", report.file.identity)
+    repository = open_repository(application_path)
+    _publish_terminal_audiobook(repository, entry, report, 10)
+
+    following = _rescan(repository, replace(entry, source_fingerprint="9" * 64), 20)
+
+    work = repository._connection.execute(
+        "SELECT stage,state,failure_code,report_id FROM review_preparation_work"
+    ).fetchone()
+    repository.close()
+
+    assert following is not None
+    assert following.stage == "extraction"
+    assert work == ("extraction", "running", None, None)
+
+
+def test_a_scans_stage_counts_still_account_for_every_work_it_carried(
+    application_path: Path,
+) -> None:
+    """Every work a scan carried lands in exactly one stage bucket.
+
+    The eight buckets partition the scan: an owner reading them is reading
+    where the whole scan got to, so a work in none of them is a work the
+    progress surface silently loses. Excluding the audiobook from `failed` --
+    which it is not -- put it in no bucket at all, and an audiobook-only scan
+    reported a total of one against eight zeroes.
+    """
+    report = _audio_report("item", "1" * 64)
+    repository = open_repository(application_path)
+    _publish_terminal_audiobook(
+        repository, _audio_entry("item", report.file.identity), report, 10
+    )
+    progress = repository.review_pipeline_progress("primary", "fiction")
+    repository.close()
+
+    assert progress is not None
+    assert progress.state == "completed"
+    assert progress.total == 1
+    assert sum(count for _name, count in progress.stages) == progress.total
+    stages = dict(progress.stages)
+    # `ready` is where a scan's work stops with nothing left owed. That is
+    # exactly what a published report with no package to follow it is, and it
+    # is emphatically not `failed`.
+    assert stages["ready"] == 1
+    assert stages["failed"] == 0
+    assert progress.blocked == 0
 
 
 def test_audiobook_publication_refreshes_before_interleaved_claim_next(

@@ -49,13 +49,20 @@ from mechanical_librarian.application.reviewer_access import (
     ReviewerAccessView,
     ReviewerEngineStatus,
 )
+from mechanical_librarian.domain.audio_inspection import (
+    AudioChapter,
+    AudioEmbeddedCover,
+    AudioEvidenceSurface,
+)
 from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
     FileFacts,
     MetadataReport,
     TargetDestination,
     TargetFacts,
     TargetField,
     TargetFieldState,
+    default_target_fields,
 )
 from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
 from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
@@ -68,6 +75,7 @@ from mechanical_librarian.interfaces.web.setup_frontend import (
     SETUP_HTML,
     SETUP_JS,
 )
+from tests.support.metadata_report_doubles import audio_result
 from tests.support.ports import ReservedPort, bind_loopback
 from tests.support.proposal_evidence import _fields as _bibliographic_fields
 from tests.support.review_web_doubles import FakeActivityApplication
@@ -155,6 +163,71 @@ _DEFAULT_SETTINGS_DOCUMENT = OwnerSettingsDocument.model_validate(
 )
 
 
+def _publish_audiobook(repository: Any) -> None:
+    """Publish one audiobook exactly as preparation does, and stop there.
+
+    The row this leaves behind is the whole point: a `report_only` package
+    with no review case, whose evidence the browser could not reach at all
+    until the Library row learned to open it.
+    """
+    inspection = audio_result(
+        (
+            (ClaimKind.ASIN, "B0CW1KL2QD", "sidecar", None),
+            (ClaimKind.CONTRIBUTOR, "Recorded Narrator", "sidecar", "narrator"),
+            (ClaimKind.DURATION, "43200.000", "embedded_tag", None),
+            (ClaimKind.PERFORMANCE_TYPE, "unabridged", "path", None),
+        ),
+        chapters=(AudioChapter(1, 0, 1_800_000, "Chapter One"),),
+        embedded_cover=AudioEmbeddedCover(True, AudioEvidenceSurface.CONTAINER_STREAM),
+    )
+    report = MetadataReport.create(
+        target=TargetFacts(
+            "primary",
+            "ebooks",
+            "audio-item",
+            default_target_fields("Recorded audiobook"),
+        ),
+        file=FileFacts(0, "1" * 64, "2" * 64, "m4b"),
+        local_claims=inspection.claims,
+        local_reasons=tuple(
+            sorted({f"{claim.basis}_{claim.kind.value}" for claim in inspection.claims})
+        ),
+        providers=(),
+        audio=inspection.audio,
+    )
+    producer = "f" * 64
+    repository.request_review_scan("primary", "ebooks", "library", producer, 10)
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None
+    entry = CatalogueEntry(
+        "primary",
+        "ebooks",
+        "library",
+        "audio-item",
+        1,
+        "Recorded audiobook",
+        ("Example Author",),
+        False,
+        False,
+        "singular-supported",
+        report.file.identity,
+        "/audio-item.m4b",
+        "m4b",
+        "audiobooks",
+    )
+    repository.complete_review_discovery(discovery, 1, "a" * 64, (entry,), 12)
+    extraction = repository.claim_review_pipeline_action(13)
+    assert extraction is not None
+    repository.publish(
+        report,
+        lambda: True,
+        None,
+        lambda value, published: value.complete_review_extraction_publication(
+            extraction, published.report_id, 14, 0, "local_evidence_only"
+        ),
+    )
+
+
 @contextmanager
 def _server(
     *,
@@ -169,6 +242,7 @@ def _server(
     cohort: int = 0,
     preparation: bool = False,
     preparation_terminal: bool = False,
+    audiobook: bool = False,
     settings_document: OwnerSettingsDocument | None = _DEFAULT_SETTINGS_DOCUMENT,
     on_app: Callable[[Any], None] | None = None,
 ):
@@ -352,6 +426,8 @@ def _server(
         extra_proposal = evaluate_report(extra)
         repository.publish_proposal(extra_proposal)
         repository.admit_review_case(extra_proposal)
+    if audiobook:
+        _publish_audiobook(repository)
     origin = f"https://127.0.0.1:{port.number}"
     session_store = SQLiteReviewSessionRepository.open(
         database.with_name("review-sessions.sqlite")
@@ -2246,6 +2322,72 @@ def test_compact_lower_choice_reveals_only_the_next_focused_control() -> None:
                     ).all_inner_texts()
                 ] == rail_order
             browser.close()
+
+
+def test_an_audiobook_row_opens_the_evidence_its_report_recorded() -> None:
+    """Walk the shipped browser to the evidence, because only that proves it.
+
+    Every layer below this passed while the browser dropped `detail_url` on
+    the floor and drew the row as an unclickable failure card, so an owner
+    could not reach a single field the F43 inspection recorded. This clicks
+    the real row in a real Chromium against the real server and reads the
+    narrator, the ASIN and the running time off the screen.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        errors: list[str] = []
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 1440, "height": 900},
+                reduced_motion="reduce",
+            )
+            page = context.new_page()
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.on(
+                "console",
+                lambda message: (
+                    errors.append(message.text) if message.type == "error" else None
+                ),
+            )
+            with (
+                closing(ReservedPort()) as reserved_port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=reserved_port,
+                    audiobook=True,
+                ) as (origin, _case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                page.goto(f"{origin}/library?lens=all&q=Recorded audiobook")
+                row = page.get_by_role("button", name=re.compile("^Recorded audiobook"))
+                expect(row).to_be_visible()
+                # Not a failure card: the report is the outcome, not the fault.
+                expect(row).to_contain_text("Recorded evidence available")
+                assert page.locator(".library-work-row.is-terminal").count() == 0
+
+                row.click()
+
+                evidence = page.get_by_role("region", name="Recorded evidence")
+                expect(evidence).to_be_visible()
+                expect(evidence).to_contain_text("Recorded Narrator")
+                expect(evidence).to_contain_text("B0CW1KL2QD")
+                expect(evidence).to_contain_text("43200.000")
+                expect(evidence).to_contain_text("Embedded cover art is present")
+                page.get_by_text(re.compile(r"Chapters \(1\)")).click()
+                expect(evidence).to_contain_text("Chapter One")
+            browser.close()
+        assert errors == []
 
 
 def test_z_compact_uncached_library_detail_keeps_visible_focus() -> None:

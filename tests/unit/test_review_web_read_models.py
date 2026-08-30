@@ -15,8 +15,14 @@ from unittest.mock import Mock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from mechanical_librarian.adapters.evidence_extractors.audio_local import (
+    AudioPathContext,
+    AudioSidecar,
+    interpret,
+)
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.field_effects import GuardedApplicationError
+from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_pipeline import (
     ReviewPipelineError,
 )
@@ -40,13 +46,22 @@ from mechanical_librarian.application.review_web import (
     _provider_comparison_notices,
     _provider_label,
 )
+from mechanical_librarian.domain.audio_inspection import (
+    AudioEvidenceSurface,
+    AudioInspectionLimits,
+)
 from mechanical_librarian.domain.automatic_decision import (
     F19A_QUALIFICATION_MANIFEST_SHA256,
     AutomaticDecision,
 )
+from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
 from mechanical_librarian.domain.metadata_report import (
+    AudioFacts,
     ClaimKind,
     ClaimScope,
+    FieldState,
+    FileFacts,
+    LocalClaim,
     MetadataReport,
     ProviderObservation,
     ProviderStatus,
@@ -55,6 +70,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     TargetField,
     TargetFieldState,
+    default_target_fields,
 )
 from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
 from mechanical_librarian.domain.proposal_set import evaluate_report
@@ -1602,7 +1618,14 @@ def test_complete_library_includes_current_report_without_review_lineage(
     }
     item = response.json()["items"][0]
     assert item["review_case_id"] is None
-    assert item["detail_url"] is None
+    # No case to open, but the evidence is still addressable: the row points at
+    # the report it stands for rather than at nothing, and says which of the
+    # two it is rather than leaving a reader to guess from the URL's shape.
+    assert (
+        item["detail_url"]
+        == "/api/v1/library/report?connection=primary&library=ebooks&item=item-1"
+    )
+    assert item["detail_kind"] == "report"
     assert item["work_id"].startswith("library_work_")
     assert item["attention_state"] == "no_attention_needed"
     assert item["dispositions"] == []
@@ -1970,4 +1993,405 @@ def test_audio_observations_are_labelled_for_the_owner(
             }
         )
         == expected
+    )
+
+
+def _recorded_audiobook() -> MetadataReport:
+    """Build one audiobook report the way the isolated inspector builds it.
+
+    `interpret` is the same pure grammar the inspection child runs, fed a
+    recorded ffprobe document rather than a probe, so the claims this report
+    carries are the ones a real m4b produces and not a hand-written imitation
+    of them.
+    """
+    interpretation = interpret(
+        json.dumps(
+            {
+                "chapters": [
+                    {
+                        "start_time": "0.000",
+                        "end_time": "1800.000",
+                        "tags": {"title": "Chapter One"},
+                    }
+                ],
+                "format": {
+                    "duration": "43200.000000",
+                    "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+                    "tags": {"PERFORMANCETYPE": "unabridged"},
+                },
+                "streams": [
+                    {
+                        "codec_type": "audio",
+                        "codec_name": "aac",
+                        "tags": {"language": "eng"},
+                    },
+                    {
+                        "codec_type": "video",
+                        "codec_name": "mjpeg",
+                        "disposition": {"attached_pic": 1},
+                    },
+                ],
+            }
+        ),
+        (
+            AudioSidecar(
+                AudioEvidenceSurface.SIDECAR_LIBATION,
+                "book.metadata.json",
+                json.dumps(
+                    {
+                        "asin": "B0CW1KL2QD",
+                        "narrators": [{"name": "Recorded Narrator"}],
+                        "publisherSummary": "A recorded summary.",
+                        "series": [{"name": "Discworld", "sequence": "3"}],
+                        "title": "Recorded work",
+                    }
+                ),
+            ),
+        ),
+        AudioPathContext("book.m4b"),
+        Fingerprint("sha256", SchemaVersion("local-file-v1"), "a" * 64),
+        AudioInspectionLimits(),
+    )
+    claims = tuple(
+        LocalClaim.create(
+            kind=ClaimKind(fact.field.value),
+            observed=fact.observed_value,
+            canonical=fact.canonical_value,
+            excerpt=fact.supporting_context,
+            applicability="not_applicable",
+            basis=fact.basis,
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            state=FieldState(fact.state),
+            role=fact.role,
+            occurrence=occurrence,
+        )
+        for occurrence, fact in enumerate(interpretation.facts, 1)
+    )
+    return MetadataReport.create(
+        target=TargetFacts(
+            "primary", "ebooks", "item-9", default_target_fields("Recorded work")
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=claims,
+        local_reasons=tuple(
+            sorted({f"{claim.basis}_{claim.kind.value}" for claim in claims})
+        )
+        or ("no_local_audio_claims",),
+        providers=(),
+        audio=AudioFacts(
+            interpretation.chapters,
+            interpretation.chapters_truncated,
+            interpretation.embedded_cover,
+        ),
+    )
+
+
+def test_an_audiobooks_recorded_evidence_is_reachable_from_the_library(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    """The owner can get from the listing to what the inspection recorded.
+
+    An audiobook acquires no review case, so its row carried no address and
+    every field the F43 inspection wrote -- ASIN, narrator, series, duration,
+    performance type, language, description, chapters, cover presence -- was
+    recorded, retained and unreachable.  This walks the only route an owner
+    has: the listing, the address it hands back, and the document behind it.
+    """
+    web.repository.browse_without_cases.append(_recorded_audiobook())
+    web.login()
+
+    listing = web.client.get("/api/v1/library?lens=all&q=Recorded work")
+    assert listing.status_code == 200, listing.text
+    item = next(value for value in listing.json()["items"] if value["item"] == "item-9")
+    assert item["review_case_id"] is None
+
+    detail = web.client.get(cast(str, item["detail_url"]))
+
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert body["schema_version"] == "review-report-detail-v1"
+    assert (body["connection"], body["library"], body["item"]) == (
+        "primary",
+        "ebooks",
+        "item-9",
+    )
+    assert body["media_kind"] == "m4b"
+    evidence = {
+        (value["kind"], value["role"], value["value"], value["state"])
+        for value in body["evidence"]
+    }
+    assert {
+        ("asin", None, "B0CW1KL2QD", "valid"),
+        ("contributor", "narrator", "Recorded Narrator", "valid"),
+        ("description", None, "A recorded summary.", "valid"),
+        ("duration", None, "43200.000", "valid"),
+        ("language", None, "eng", "valid"),
+        ("performance_type", None, "unabridged", "valid"),
+        ("series", None, "Discworld", "valid"),
+        ("series_sequence", None, "3", "valid"),
+    } <= evidence
+    # Every claim states where it came from and what the extraction made of
+    # it, so the owner reads evidence rather than an assertion -- and a
+    # malformed or oversized claim cannot render as a sound one.
+    assert all(value["basis"] for value in body["evidence"])
+    assert body["evidence_truncated"] is False
+    assert body["chapters"] == [
+        {
+            "end_milliseconds": 1_800_000,
+            "ordinal": 1,
+            "start_milliseconds": 0,
+            "title": "Chapter One",
+        }
+    ]
+    assert body["chapters_truncated"] is False
+    # Presence and its surface, and deliberately no bytes.
+    assert body["embedded_cover"] == {
+        "present": True,
+        "surface": "container_stream",
+    }
+
+
+def _claim_rich_report(count: int) -> MetadataReport:
+    return MetadataReport.create(
+        target=TargetFacts(
+            "primary", "ebooks", "item-8", default_target_fields("Crowded work")
+        ),
+        file=FileFacts(0, "c" * 64, "d" * 64),
+        local_claims=tuple(
+            LocalClaim.create(
+                kind=ClaimKind.SUBJECT,
+                observed=f"Subject {index:04d}",
+                canonical=f"Subject {index:04d}",
+                excerpt=f"Subject {index:04d}",
+                applicability="not_applicable",
+                basis="opening_matter",
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+                scope=ClaimScope.WORK,
+                occurrence=index,
+            )
+            for index in range(1, count + 1)
+        ),
+        local_reasons=("opening_matter_subject",),
+        providers=(),
+    )
+
+
+@pytest.mark.parametrize(
+    ("claims", "returned", "truncated"),
+    (
+        pytest.param(1_024, 1_024, False, id="at-the-bound"),
+        pytest.param(1_025, 1_024, True, id="past-the-bound"),
+    ),
+)
+def test_a_claim_rich_report_is_truncated_rather_than_refused(
+    web: ReviewWebContext[FakeReviewRepository],
+    claims: int,
+    returned: int,
+    truncated: bool,
+) -> None:
+    """Nothing but the report's byte ceiling caps how many claims it carries.
+
+    A transport bound on the evidence list would therefore be a number the
+    domain never agreed to, and the work that exceeded it would answer 500
+    instead of showing its evidence.  The projection truncates in the report's
+    own order and says so.
+    """
+    report = _claim_rich_report(claims)
+    web.repository.browse_without_cases.append(report)
+    web.login()
+
+    response = web.client.get(
+        "/api/v1/library/report?connection=primary&library=ebooks&item=item-8"
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["evidence"]) == returned
+    assert body["evidence_truncated"] is truncated
+    # The kept prefix is the report's own, so two reads agree on what was cut.
+    assert [value["value"] for value in body["evidence"][:3]] == [
+        "Subject 0001",
+        "Subject 0002",
+        "Subject 0003",
+    ]
+
+
+def test_an_item_id_holding_a_slash_is_reachable_at_the_address_it_advertises(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    """A library server's item id may contain a slash, and both ends must hold.
+
+    Percent-encoded in a path segment it is decoded before the router matches,
+    so such a work answered 404 at exactly the address its own row handed out.
+    The row's `detail_url` is followed here verbatim rather than rebuilt, so
+    the generator and the route are proved to agree.
+    """
+    report = MetadataReport.create(
+        target=TargetFacts(
+            "primary", "ebooks", "col/1", default_target_fields("Slashed work")
+        ),
+        file=FileFacts(0, "e" * 64, "f" * 64),
+        local_claims=(),
+        local_reasons=("no_opening_claims",),
+        providers=(),
+    )
+    web.repository.browse_without_cases.append(report)
+    web.login()
+
+    listing = web.client.get("/api/v1/library?lens=all&q=Slashed")
+    assert listing.status_code == 200, listing.text
+    advertised = next(
+        value["detail_url"]
+        for value in listing.json()["items"]
+        if value["item"] == "col/1"
+    )
+    response = web.client.get(cast(str, advertised))
+
+    assert advertised == (
+        "/api/v1/library/report?connection=primary&library=ebooks&item=col%2F1"
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["item"] == "col/1"
+
+
+def test_a_store_that_cannot_answer_is_not_a_work_that_is_not_there(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    """Absence is 404 and a persistence fault is 503, never one for the other.
+
+    Collapsing them told an owner their audiobook had vanished whenever the
+    database was busy or unreadable, which is the opposite of what happened.
+    """
+    web.login()
+
+    missing = web.client.get(
+        "/api/v1/library/report?connection=primary&library=ebooks&item=no-such-item"
+    )
+
+    def unavailable(_connection: str, _library: str, _item: str) -> str | None:
+        raise MetadataReportError("review snapshot is unavailable")
+
+    web.repository.read_current_report_document = unavailable  # type: ignore[method-assign,assignment]
+    failed = web.client.get(
+        "/api/v1/library/report?connection=primary&library=ebooks&item=item-1"
+    )
+
+    assert (missing.status_code, missing.json()["error"]["code"]) == (404, "missing")
+    assert (failed.status_code, failed.json()["error"]["code"]) == (
+        503,
+        "unavailable",
+    )
+
+
+def test_a_shaped_but_corrupt_document_is_refused_rather_than_projected(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    """The browse envelope closes the shape; it does not check the report.
+
+    Every member arrives from it on trust, so a document that satisfies the
+    envelope while contradicting the domain would have projected arbitrary
+    text to the owner as recorded evidence. Reconstructing the report is what
+    refuses it, and the report id below is exactly the kind of member the
+    envelope has no opinion about.
+    """
+    document = json.loads(_report(title="Corrupt work", actionable=False).to_json())
+    document["report_id"] = "report_" + "0" * 64
+    corrupted = json.dumps(document)
+
+    def corrupt(_connection: str, _library: str, _item: str) -> str | None:
+        return corrupted
+
+    web.repository.read_current_report_document = corrupt  # type: ignore[method-assign,assignment]
+    web.login()
+
+    response = web.client.get(
+        "/api/v1/library/report?connection=primary&library=ebooks&item=item-1"
+    )
+
+    assert (response.status_code, response.json()["error"]["code"]) == (
+        503,
+        "unavailable",
+    )
+
+
+def test_every_library_row_names_what_its_address_opens() -> None:
+    """The three shapes a row can have, and the one word that tells them apart.
+
+    A reader that inferred the kind from the URL -- a `/api/` prefix against a
+    `/review/` one -- would be silently re-orphaned by a route rename, which is
+    how this evidence became unreachable in the first place. The discriminator
+    is asserted here rather than only through the browser, so the joint is held
+    by the contract.
+    """
+    report = _report()
+    case = ReviewCase.create(evaluate_report(report), report)
+    terminal = json.dumps(
+        {
+            "attempt": 1,
+            "connection": "primary",
+            "failure_root": None,
+            "item": "item-3",
+            "lane": "extraction",
+            "library": "ebooks",
+            "recovery_attempt": 0,
+            "schema_version": "review-terminal-work-v1",
+            "status": "unreadable_media",
+            "work_id": "review_work_" + "c" * 64,
+        }
+    )
+
+    opened = _library_item(case.to_json(), report.to_json(), ())
+    recorded = _library_item(None, report.to_json(), ())
+    stopped = _library_item(None, terminal, ())
+
+    assert (opened["detail_kind"], opened["detail_url"]) == (
+        "case",
+        f"/review/{case.review_case_id}",
+    )
+    assert (recorded["detail_kind"], recorded["detail_url"]) == (
+        "report",
+        "/api/v1/library/report?connection=primary&library=ebooks&item=item-1",
+    )
+    # Preparation stopped before a report existed, so there is nothing to open
+    # and the row says so rather than offering an address that answers nothing.
+    assert (stopped["detail_kind"], stopped["detail_url"]) == (None, None)
+
+
+def test_a_package_row_pointing_at_another_work_serves_no_evidence(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    """The report must be the report of the work that was asked for.
+
+    `current_review_packages` names a report by id, and the report names its
+    own target. Nothing made the two agree here, so a row corrupted to point
+    at another work's canonical report would have served that work's ASIN,
+    narrator and description under this item's name -- evidence attributed to
+    the wrong book, which is worse than no evidence at all. The browse path
+    already compares the two; this is the same comparison.
+    """
+    stranger = MetadataReport.create(
+        target=TargetFacts(
+            "primary", "ebooks", "someone-else", default_target_fields("Other work")
+        ),
+        file=FileFacts(0, "9" * 64, "8" * 64),
+        local_claims=(),
+        local_reasons=("no_opening_claims",),
+        providers=(),
+    )
+
+    def crossed(_connection: str, _library: str, _item: str) -> str | None:
+        return stranger.to_json()
+
+    web.repository.read_current_report_document = crossed  # type: ignore[method-assign,assignment]
+    web.login()
+
+    response = web.client.get(
+        "/api/v1/library/report?connection=primary&library=ebooks&item=item-1"
+    )
+
+    assert (response.status_code, response.json()["error"]["code"]) == (
+        503,
+        "unavailable",
     )

@@ -258,6 +258,12 @@ def _entry(
         # unmounted audiobook library keeps exactly the disposition it had
         # before F43: nothing to prepare, and nothing to attend to.
         audio_mount = mount
+        # The audio file carries its own revision exactly as an EPUB does, and
+        # it is the one signal that moves when the media changes.  Without it
+        # the fingerprint falls back to the item timestamp, which Audiobookshelf
+        # also advances on playback -- so listening to an audiobook would
+        # re-prepare it, re-hashing multiple gigabytes for a file nobody wrote.
+        metadata_file = _singular_audio_metadata(media.get("audioFiles"))
         audio_location = (
             None
             if audio_mount is None
@@ -361,10 +367,12 @@ def _entry(
     # prefer the file revision when it is available.  Without one, retain the
     # item timestamp as the conservative material-change signal.  A cover path
     # has no independent revision in the supported payload, so its bytes also
-    # require that fallback even when the EPUB has a stable revision.
+    # require that fallback -- but only where this build acquires them.  An
+    # audiobook's art is recorded as presence and never acquired, so a cover
+    # path does not make its fingerprint depend on a timestamp playback moves.
     item_revision_fallback = (
         detail["updatedAt"]
-        if not media_revision or cover_reference is not None
+        if not media_revision or (cover_reference is not None and has_ebook)
         else None
     )
     source_fingerprint = hashlib.sha256(
@@ -405,6 +413,18 @@ def _entry(
         mount_name,
         source_fingerprint,
     )
+
+
+def _singular_audio_metadata(value: object) -> dict[str, Any] | None:
+    """Return the revision record of the one audio file, or none at all.
+
+    Deliberately singular: a multi-file item is not prepared, and one member's
+    revision would state a currentness the whole item does not have.
+    """
+    if type(value) is not list or len(value) != 1 or type(value[0]) is not dict:
+        return None
+    record = value[0].get("metadata")
+    return record if type(record) is dict else None
 
 
 def _singular_audio_location(

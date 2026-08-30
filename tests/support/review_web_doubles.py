@@ -529,6 +529,27 @@ class FakeReviewRepository:
             for case, report in rows[offset : offset + limit]
         )
 
+    def read_current_report_document(
+        self, connection: str, library: str, item: str
+    ) -> str | None:
+        """Answer for exactly the reports the library page already lists.
+
+        `None` where no such work is listed; the store-failure path is driven
+        by tests that replace this method with one that raises.
+        """
+        for report in (
+            *self.browse_without_cases,
+            *(value for _case, value in self.browse_cases),
+        ):
+            target = report.target
+            if (target.connection, target.library, target.item) == (
+                connection,
+                library,
+                item,
+            ):
+                return report.to_json()
+        return None
+
     def count_current_review_cases(self, search: str | None) -> tuple[int, int]:
         rows = self.list_current_review_case_documents(search, 100_000, 0, None)
         return len(rows), sum(

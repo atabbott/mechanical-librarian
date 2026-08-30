@@ -43,6 +43,7 @@ const document: SettingsView['document'] = {
     },
   ],
   limits: {
+    audio_source_bytes: 8_589_934_592,
     provider_response_bytes: 65_536,
     source_archive_bytes: 268_435_456,
     target_response_bytes: 1_048_576,
@@ -964,5 +965,38 @@ describe('owner settings route', () => {
       vi.stubGlobal('requestAnimationFrame', originalRequestFrame)
       vi.stubGlobal('cancelAnimationFrame', originalCancelFrame)
     }
+  })
+
+  it('renders and range-validates the audiobook source limit beside the archive one', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    renderRoute('/settings?group=automation', http)
+
+    await user.click(await screen.findByText('Advanced response and archive limits'))
+    const audio = screen.getByRole('spinbutton', { name: 'Audiobook source limit' })
+    expect(audio).toHaveValue(8_589_934_592)
+    // Its own ceiling, not the EPUB archive's: an audiobook is read by header
+    // and is routinely larger than any archive this build admits.
+    expect(audio).toHaveAttribute('max', '17179869184')
+    expect(screen.getByRole('spinbutton', { name: 'Source archive limit' })).toHaveAttribute(
+      'max',
+      '268435456',
+    )
+
+    await user.clear(audio)
+    await user.type(audio, '1023')
+    expect(audio).toHaveAttribute('aria-invalid', 'true')
+    expect(audio).toHaveAccessibleDescription(/Audiobook source limit must be from 1,024/)
+    expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled()
+
+    await user.clear(audio)
+    await user.type(audio, '17179869185')
+    expect(audio).toHaveAttribute('aria-invalid', 'true')
+
+    await user.clear(audio)
+    await user.type(audio, '17179869184')
+    expect(audio).not.toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByRole('button', { name: 'Save settings' })).toBeEnabled()
   })
 })

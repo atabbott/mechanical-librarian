@@ -133,6 +133,7 @@ def file_settings_projection(
                 "target_response_bytes": configuration.limits.target_response_bytes,
                 "provider_response_bytes": configuration.limits.provider_response_bytes,
                 "source_archive_bytes": configuration.limits.source_archive_bytes,
+                "audio_source_bytes": configuration.limits.audio_source_bytes,
                 "timeout_seconds": configuration.limits.timeout_seconds,
             },
             "provider_recovery_generation": configuration.provider_recovery_generation,

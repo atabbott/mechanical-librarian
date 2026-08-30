@@ -13,11 +13,11 @@
   },
   "scripts": {
     "generate": "node scripts/generate-dtos.mjs",
-    "format": "prettier --write src",
+    "format": "prettier --write src tests",
     "pretypecheck": "npm run generate",
     "typecheck": "tsc --noEmit",
     "prelint": "npm run generate",
-    "lint": "prettier --check src && eslint .",
+    "lint": "prettier --check src tests && eslint .",
     "licenses": "node scripts/check-licenses.mjs",
     "pretest": "npm run generate",
     "test": "vitest run",

@@ -41,9 +41,13 @@ class FakeInspector:
         self.result = result
         self.inspections = 0
         self.verifications = 0
+        # The ceiling each call was handed: the EPUB and audio paths draw
+        # theirs from different settings and only the argument shows which.
+        self.ceilings: list[int] = []
 
     def inspect(self, mount, relative_path, maximum_bytes):
         self.inspections += 1
+        self.ceilings.append(maximum_bytes)
         return self.result
 
     def unchanged(self, mount, relative_path, expected_digest, maximum_bytes):
@@ -58,9 +62,11 @@ class FakeAudioInspector:
         self.result = result
         self.inspections = 0
         self.verifications = 0
+        self.ceilings: list[int] = []
 
     def inspect(self, mount, relative_path, maximum_bytes):
         self.inspections += 1
+        self.ceilings.append(maximum_bytes)
         return self.result
 
     def unchanged(self, mount, relative_path, expected_digest, maximum_bytes):

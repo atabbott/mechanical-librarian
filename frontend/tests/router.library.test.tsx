@@ -919,6 +919,9 @@ describe('Library route', () => {
       title: 'Preparation unavailable',
       attentionCount: 0,
       attention: 'no_attention_needed',
+      // Neither a case nor a report: there is nothing here to open.
+      detailUrl: null,
+      detailKind: null,
       preparation: {
         attempt: 1,
         diagnosticReference: 'prep-0123456789abcdef',
@@ -965,6 +968,168 @@ describe('Library route', () => {
       'Update the configured provider credentials, then scan this library again.',
     )
     expect(screen.getByText('prep-0123456789abcdef')).toBeVisible()
+  })
+
+  it('opens an audiobook row and reads the evidence its report recorded', async () => {
+    const user = userEvent.setup()
+    const firstWork = library.works[0]
+    if (!firstWork) throw new Error('library fixture requires one work')
+    const baseWork = { ...firstWork }
+    delete baseWork.reviewCaseId
+    const detailUrl = '/api/v1/library/report?connection=primary&library=audio&item=item-9'
+    const recorded = {
+      ...baseWork,
+      id: 'library_work_audio',
+      workId: 'library_work_audio',
+      title: 'Recorded work',
+      mediaKind: 'm4b',
+      attentionCount: 0,
+      attention: 'no_attention_needed',
+      detailUrl,
+      detailKind: 'report' as const,
+      summary: {
+        state: 'no_decision_recorded',
+        reason: 'No review decision is recorded.',
+        fields: [],
+      },
+      // An audiobook's work ends `failed` because nothing follows its report.
+      // The row must not read as a failure, and must open.
+      preparation: {
+        attempt: 1,
+        diagnosticReference: 'prep-audio-0123456789ab',
+        provider: 'provider',
+        reason: "This audiobook's local evidence was recorded; no review package follows it yet.",
+        recovery: 'No owner action is needed. The recorded evidence is shown on this work.',
+        recoveryAttempt: 0,
+        stage: 'provider',
+        status: 'local_evidence_only',
+      },
+    }
+    const getReportDetail = vi.fn(async () => ({
+      chapters: [
+        { endMilliseconds: 1_800_000, ordinal: 1, startMilliseconds: 0, title: 'Chapter One' },
+      ],
+      chaptersTruncated: false,
+      coverPresent: true,
+      coverSurface: 'container_stream',
+      evidence: [
+        {
+          basis: 'sidecar_libation',
+          excerpt: 'B0CW1KL2QD',
+          kind: 'asin',
+          role: null,
+          state: 'valid',
+          value: 'B0CW1KL2QD',
+        },
+        {
+          basis: 'sidecar_libation',
+          excerpt: 'Recorded Narrator',
+          kind: 'contributor',
+          role: 'narrator',
+          state: 'valid',
+          value: 'Recorded Narrator',
+        },
+        {
+          basis: 'container_format',
+          excerpt: '43200.000',
+          kind: 'duration',
+          role: null,
+          state: 'valid',
+          value: '43200.000',
+        },
+        {
+          basis: 'path_file',
+          excerpt: 'B0XXXXXXXX',
+          kind: 'asin',
+          role: null,
+          state: 'malformed',
+          value: 'B0XXXXXXXX',
+        },
+      ],
+      evidenceTruncated: false,
+      item: 'item-9',
+      library: 'audio',
+      mediaKind: 'm4b',
+      reportId: 'report_' + 'a'.repeat(64),
+      title: 'Recorded work',
+    }))
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getReportDetail,
+      getLibrary: vi.fn(async () => ({
+        lens: 'all' as const,
+        page: 1,
+        counts: { attention: 0, all: 1, clear: 1 },
+        works: [recorded],
+      })),
+    }
+    renderRoute('/library?lens=all', http)
+
+    const row = await screen.findByRole('button', { name: /^Recorded work\./u })
+    expect(row).not.toHaveClass('is-terminal')
+    expect(document.querySelector('.library-work-row.is-terminal')).toBeNull()
+    expect(row).toHaveTextContent('Recorded evidence available')
+
+    await user.click(row)
+
+    const evidence = await screen.findByRole('region', { name: 'Recorded evidence' })
+    expect(getReportDetail).toHaveBeenCalledWith(detailUrl, expect.anything())
+    expect(within(evidence).getByText('B0CW1KL2QD')).toBeVisible()
+    expect(within(evidence).getByText('Recorded Narrator')).toBeVisible()
+    expect(within(evidence).getByText('43200.000')).toBeVisible()
+    // A claim the extraction could not trust must not read as sound evidence.
+    expect(within(evidence).getByText(/Malformed/u)).toBeVisible()
+    expect(within(evidence).getByText(/Embedded cover art is present/u)).toBeVisible()
+    // Chapters are a bounded structured section, disclosed like the source
+    // ledger beside them rather than filling the panel.
+    await user.click(within(evidence).getByText(/Chapters \(1\)/u))
+    expect(within(evidence).getByText('Chapter One')).toBeVisible()
+    expect(within(evidence).getByText('00:00:00 – 00:30:00')).toBeVisible()
+  })
+
+  it('does not let a retained report hide the latest real preparation failure', async () => {
+    const firstWork = library.works[0]
+    if (!firstWork) throw new Error('library fixture requires one work')
+    const baseWork = { ...firstWork }
+    delete baseWork.reviewCaseId
+    const masked = {
+      ...baseWork,
+      id: 'library_work_masked',
+      workId: 'library_work_masked',
+      title: 'Retained work',
+      attentionCount: 0,
+      attention: 'no_attention_needed',
+      // Its earlier report is still browsable, but the latest attempt failed
+      // for a real reason the owner has to act on.
+      detailUrl: '/api/v1/library/report?connection=primary&library=ebooks&item=item-7',
+      detailKind: 'report' as const,
+      preparation: {
+        attempt: 1,
+        diagnosticReference: 'prep-masked-0123456789',
+        provider: 'hardcover-main',
+        reason: 'Provider credentials need owner attention.',
+        recovery: 'Update the configured provider credentials, then scan this library again.',
+        recoveryAttempt: 0,
+        stage: 'provider',
+        status: 'authentication',
+      },
+    }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getLibrary: vi.fn(async () => ({
+        lens: 'all' as const,
+        page: 1,
+        counts: { attention: 0, all: 1, clear: 1 },
+        works: [masked],
+      })),
+    }
+    renderRoute('/library?lens=all', http)
+
+    const row = await screen.findByRole('button', { name: /^Retained work\./u })
+    // Openable, because the evidence is real -- but not reported as a success.
+    expect(row).toHaveTextContent('Preparation failed safely')
+    expect(row).not.toHaveTextContent('Recorded evidence available')
+    expect(row.querySelector('.needs-attention')).not.toBeNull()
   })
 
   it('keeps a current case selectable while exposing its terminal preparation diagnostic', async () => {
