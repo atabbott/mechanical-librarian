@@ -226,9 +226,11 @@ class ConfigurationInput(_Closed):
     review: ReviewInput | None = None
 
 
-def load_configuration_file(path: Path) -> ApplicationConfiguration:
+def load_configuration_document(payload: bytes) -> ApplicationConfiguration:
+    """Parse one already bound configuration document."""
     try:
-        payload = _read_regular(path)
+        if type(payload) is not bytes or not 1 <= len(payload) <= _MAX_CONFIG_BYTES:
+            raise ConfigurationError("configuration document is invalid")
         source = json.loads(
             payload.decode("utf-8", "strict"),
             object_pairs_hook=_unique_object,
@@ -301,6 +303,17 @@ def load_configuration_file(path: Path) -> ApplicationConfiguration:
                 cover_prefer_minimal_composition=value.review.cover_prefer_minimal_composition,
             ),
         )
+    except ConfigurationError:
+        raise
+    except FileNotFoundError:
+        raise
+    except (OSError, UnicodeError, ValueError, ValidationError, RecursionError):
+        raise ConfigurationError("configuration document is invalid") from None
+
+
+def load_configuration_file(path: Path) -> ApplicationConfiguration:
+    try:
+        return load_configuration_document(_read_regular(path))
     except ConfigurationError:
         raise
     except FileNotFoundError:

@@ -74,6 +74,32 @@ invalidated. The bridge accepts no artifact path and has no configuration,
 credential, network, provider, reviewer, media, target, import, repair,
 arbitrary-SQL, or startup authority.
 
+Provider-evidence replay is a separate maintainer qualification boundary. Its
+source-bound capture command reads an exact-current owner-only database and one
+canonical owner-selected report list, uses only the selected libraries' current
+configured metadata providers, and confines HTTPS requests to each adapter's
+fixed provider host with redirects disabled. It records the exact bounded
+pre-parser response stream and behavior-relevant headers, but replaces API-key
+query values, authorization values, and configured contact identity before any
+bundle write. A final secret/contact scan precedes exclusive owner-only sealed
+publication. Interruptions, unsafe parents or files, sidecars, incomplete
+unclassified streams, unexpected endpoints, output collisions, and bundle
+limits fail closed without overwrite or deletion.
+
+Replay reads one digest-bound canonical owner-only
+`provider-replay-bundle-v1`, supplies only placeholder credentials and contact,
+and injects a transport with no network fallback into the current provider
+adapters. The current configuration scopes providers and limits. A changed
+provider name, adapter, or canonical request invalidates only that provider row;
+unchanged rows run current decoding, parsing, report, proposal, and admission
+derivation into an absent exact-current database. Private results bind capture
+and replay heads, schemas, bundle and database digests, invalidations, and
+derived document digests. Standard output is aggregate and failures are
+value-free. Neither command has target, media, reviewer, provider-write,
+ordinary-startup, import, repair, migration, unattended-acquisition, or deletion
+authority. Captured coverage does not establish complete-library or product
+compatibility; #938 remains the complete retained qualification fallback.
+
 Foreground batch manifests are private immutable operator artifacts. Preview and
 read bind bounded regular no-follow descriptors under a private parent, validate
 strict UTF-8 canonical JSON before authority, and bind execution to the
