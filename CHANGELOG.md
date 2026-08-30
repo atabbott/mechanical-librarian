@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The container-image qualification job restores unchanged Docker layers from
+  the repository Actions cache instead of rebuilding every stage per run; base
+  images stay governed by the Dockerfile's digest pins. (#930)
+
 - Tighten what an audiobook's local evidence may say: a wrongly shaped ASIN is
   reported as malformed rather than believed, a sidecar that is not valid UTF-8
   is dropped whole rather than repaired, an OPF contributor is narrator

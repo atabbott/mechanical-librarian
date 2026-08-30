@@ -147,9 +147,10 @@ provider means to the review pipeline.
   binary, so a published FFmpeg CVE is answered by bumping `FFMPEG_VERSION` and
   `FFMPEG_SHA256` in the Dockerfile and rebuilding. That duty is manual: see
   the Renovate note below.
-- Container qualification compiles FFmpeg. The container-image job builds on a
-  fresh runner with no layer cache, so the compile runs once per qualification
-  run.
+- Container qualification compiles FFmpeg. The container-image job restores
+  unchanged layers from the repository Actions cache, so the compile re-runs
+  only when its own inputs — the FFmpeg pin, base digest, or build stage —
+  change.
 - A deployment without the probe binary produces no audiobook evidence. The
   inspection ends with the typed `invalid_configuration` outcome rather than a
   partial report, and preparation records it as `internal_failure` — the same
