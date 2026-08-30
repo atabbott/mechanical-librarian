@@ -1433,9 +1433,7 @@ def test_per_work_presentation_query_count_does_not_grow_with_run_population(
             )
             for row in repository._connection.execute(
                 "EXPLAIN QUERY PLAN " + sql,
-                (run_id, 0)
-                if sql.endswith("updated_at>=?")
-                else (run_id,),
+                (run_id, 0) if sql.endswith("updated_at>=?") else (run_id,),
             )
         )
         vm_steps = 0

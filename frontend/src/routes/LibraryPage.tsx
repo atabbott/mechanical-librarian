@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query'
-import { Link, useNavigate, useRouterState } from '@tanstack/react-router'
+import { Link, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, KeyboardEvent, SyntheticEvent } from 'react'
 
@@ -9,6 +9,7 @@ import type {
   ChoiceContextView,
   CoverObservationView,
   DecisionCommand,
+  LibrarySearch,
   LibraryView,
   LibraryWorkView,
   PreparationView,
@@ -1234,6 +1235,7 @@ function LibraryCoverChoicesContent({
 export default function LibraryPage({ data }: { data: LibraryView }) {
   const search = libraryRoute.useSearch()
   const navigate = useNavigate({ from: '/library' })
+  const router = useRouter()
   const { http, updates } = useReviewContext()
   const preparationState = usePreparation()
   const presentation =
@@ -1286,23 +1288,57 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     }
   }, [preparationSelected, presentationVersion])
   const currentSearch = useRef(search)
+  const routeNavigationGeneration = useRef(0)
   const mounted = useRef(false)
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true
+    const unsubscribe = router.subscribe('onBeforeNavigate', () => {
+      routeNavigationGeneration.current += 1
+    })
     return () => {
       mounted.current = false
+      unsubscribe()
     }
-  }, [])
+  }, [router])
+  const dismissalCleanupSuppression = useRef<{
+    runId: string
+    navigationGeneration: number
+    locationRevision: string
+    searchIdentity: string
+  } | null>(null)
   const dismissPreparation = useMutation({
-    mutationFn: (runId: string) => http.dismissPreparation(runId),
+    mutationFn: (request: {
+      runId: string
+      navigationGeneration: number
+      locationRevision: string
+      searchIdentity: string
+    }) => http.dismissPreparation(request.runId),
     retry: false,
-    onSuccess: async (value, runId) => {
-      if (!(await preparationState.adoptDismissal(runId, value))) return
-      if (!mounted.current || currentSearch.current.preparation !== runId) return
+    onSuccess: async (value, request) => {
+      dismissalCleanupSuppression.current = request
+      if (!(await preparationState.adoptDismissal(request.runId, value))) {
+        if (dismissalCleanupSuppression.current === request)
+          dismissalCleanupSuppression.current = null
+        return
+      }
+      const currentLocation = router.state.location
+      const currentSearch = currentLocation.search as LibrarySearch
+      const currentRun = preparationState.queryClient.getQueryData<PreparationView>([
+        'review-preparation',
+      ])?.presentation?.run_id
+      if (
+        !mounted.current ||
+        routeNavigationGeneration.current !== request.navigationGeneration ||
+        (currentLocation.state.__TSR_key ?? currentLocation.state.key ?? currentLocation.href) !==
+          request.locationRevision ||
+        librarySearchIdentity(currentSearch) !== request.searchIdentity ||
+        currentRun !== request.runId
+      )
+        return
       await navigate({
         replace: true,
         search: (current) => {
-          if (current.preparation !== runId) return current
+          if (current.preparation !== request.runId) return current
           const next = { ...current }
           delete next.preparation
           return next
@@ -1399,6 +1435,16 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     select: (state) =>
       state.location.state.__TSR_key ?? state.location.state.key ?? state.location.href,
   })
+  useLayoutEffect(() => {
+    const suppression = dismissalCleanupSuppression.current
+    if (
+      suppression !== null &&
+      (suppression.locationRevision !== locationRevision ||
+        suppression.searchIdentity !== searchIdentity ||
+        suppression.runId !== search.preparation)
+    )
+      dismissalCleanupSuppression.current = null
+  }, [locationRevision, search.preparation, searchIdentity])
   const queryText = searchPending || typedQuery.echo === urlQuery ? typedQuery.text : urlQuery
   const selectedReviewCaseId = search.preview ?? ''
   useEffect(() => {
@@ -1459,6 +1505,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   }, [unresolvableWork, navigate])
   useEffect(() => {
     if (!search.preparation || preparationSelected) return
+    if (dismissalCleanupSuppression.current?.runId === search.preparation) return
     void navigate({
       replace: true,
       search: (current) => {
@@ -2385,7 +2432,14 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
               reconnecting={preparationState.reconnecting}
               animateChange={animatedPresentationVersion === presentationVersion}
               dismissing={dismissPreparation.isPending}
-              onDismiss={() => dismissPreparation.mutate(presentation.run_id)}
+              onDismiss={() =>
+                dismissPreparation.mutate({
+                  runId: presentation.run_id,
+                  navigationGeneration: routeNavigationGeneration.current,
+                  locationRevision,
+                  searchIdentity,
+                })
+              }
             />
           ) : selectedWork ? (
             <WorkSummary work={selectedWork} />

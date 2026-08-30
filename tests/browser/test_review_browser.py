@@ -2299,7 +2299,9 @@ def test_z_compact_uncached_library_detail_keeps_visible_focus() -> None:
             browser.close()
 
 
-def test_setup_to_library_preparation_handoff_focuses_and_announces_destination() -> None:
+def test_setup_to_library_preparation_handoff_focuses_and_announces_destination() -> (
+    None
+):
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         os.chmod(root, 0o700)
@@ -2431,7 +2433,10 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                     ]
                 )
                 if not reduced:
-                    assert page.evaluate("sessionStorage.getItem('preparation-pageswap')") == "observed"
+                    assert (
+                        page.evaluate("sessionStorage.getItem('preparation-pageswap')")
+                        == "observed"
+                    )
                 context.close()
             browser.close()
 
@@ -2789,9 +2794,13 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     page.get_by_role("heading", name="Kick off preparation")
                 ).to_be_visible()
                 page.get_by_role("button", name="Kick off preparation").click()
-                expect(page.get_by_role("heading", name="Now preparing")).to_be_visible()
+                expect(
+                    page.get_by_role("heading", name="Now preparing")
+                ).to_be_visible()
                 expect(page.get_by_text("Private setup book 0")).to_be_visible()
-                expect(page.get_by_text("2 more active books follow in this run.")).to_be_visible()
+                expect(
+                    page.get_by_text("2 more active books follow in this run.")
+                ).to_be_visible()
                 expect(
                     page.get_by_role("heading", name="How many books made it this far?")
                 ).to_be_visible()

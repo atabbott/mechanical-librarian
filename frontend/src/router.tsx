@@ -1,4 +1,10 @@
-import { QueryClient, queryOptions, useMutation, useQuery } from '@tanstack/react-query'
+import {
+  CancelledError,
+  QueryClient,
+  queryOptions,
+  useMutation,
+  useQuery,
+} from '@tanstack/react-query'
 import {
   Link,
   Navigate,
@@ -192,13 +198,14 @@ const activityQuery = (http: ReviewHttp, search: ActivitySearch) =>
 export const preparationQuery = (
   http: ReviewHttp,
   fallbackPolling = false,
-  onConfirmed?: (value: PreparationView) => void,
+  beginConfirmation?: () => (value: PreparationView) => boolean,
 ) =>
   queryOptions({
     queryKey: ['review-preparation'] as const,
     queryFn: async ({ signal }) => {
+      const confirm = beginConfirmation?.()
       const value = await http.getPreparation(signal)
-      onConfirmed?.(value)
+      if (confirm && !confirm(value)) throw new CancelledError({ revert: true, silent: true })
       return value
     },
     staleTime: 1_000,
@@ -240,6 +247,7 @@ export const useLiveStream = () => {
 
 interface PreparationReconnect {
   epoch: number
+  confirmationGeneration: number
   state: 'clear' | 'debt' | 'refreshing' | 'retry'
   transport: 'unknown' | 'live' | 'degraded'
   frozen?: PreparationView
@@ -254,34 +262,58 @@ export const usePreparation = () => {
   const reconnectQuery = useQuery({
     queryKey: preparationReconnectKey,
     queryFn: (): Promise<PreparationReconnect> =>
-      Promise.resolve({ epoch: 0, state: 'clear', transport: 'unknown' }),
+      Promise.resolve({
+        epoch: 0,
+        confirmationGeneration: 0,
+        state: 'clear',
+        transport: 'unknown',
+      }),
     enabled: false,
     structuralSharing: false,
     initialData: {
       epoch: 0,
+      confirmationGeneration: 0,
       state: 'clear',
       transport: 'unknown',
     } satisfies PreparationReconnect,
   })
-  const recordConfirmed = useCallback(
-    (value: PreparationView) => {
-      queryClient.setQueryData<PreparationReconnect>(preparationReconnectKey, (current) => {
-        if (current?.state !== 'clear') return current
-        const frozen = current.frozen?.presentation
-        const incoming = value.presentation
-        if (
-          frozen?.state === 'dismissed' &&
-          incoming?.run_id === frozen.run_id &&
-          incoming.updated_at <= frozen.updated_at
-        )
-          return current
-        return { ...current, frozen: value }
-      })
-    },
-    [queryClient],
-  )
+  const beginConfirmation = useCallback(() => {
+    let epoch = 0
+    let confirmationGeneration = 0
+    queryClient.setQueryData<PreparationReconnect>(preparationReconnectKey, (current) => {
+      const reconnect = current ?? {
+        epoch: 0,
+        confirmationGeneration: 0,
+        state: 'clear',
+        transport: 'unknown',
+      }
+      epoch = reconnect.epoch
+      confirmationGeneration = reconnect.confirmationGeneration + 1
+      return { ...reconnect, confirmationGeneration }
+    })
+    return (value: PreparationView) => {
+      const current = queryClient.getQueryData<PreparationReconnect>(preparationReconnectKey)
+      if (current?.confirmationGeneration !== confirmationGeneration) return false
+      queryClient.setQueryData<PreparationReconnect>(preparationReconnectKey, (reconnect) =>
+        reconnect?.confirmationGeneration !== confirmationGeneration
+          ? reconnect
+          : {
+              ...reconnect,
+              state:
+                reconnect.epoch === epoch &&
+                reconnect.transport === 'live' &&
+                reconnect.state === 'refreshing'
+                  ? 'clear'
+                  : reconnect.state,
+              frozen: value,
+            },
+      )
+      queryClient.setQueryData(['review-preparation'], value)
+      return true
+    }
+  }, [queryClient])
   const query = useQuery(
-    preparationQuery(http, !live && updates?.hasBeenLive !== true, recordConfirmed),
+    preparationQuery(http, !live && updates?.hasBeenLive !== true, beginConfirmation),
   )
   const refetchPreparation = query.refetch
   useEffect(() => {
@@ -295,6 +327,7 @@ export const usePreparation = () => {
         ? current
         : {
             epoch: (current?.epoch ?? 0) + 1,
+            confirmationGeneration: (current?.confirmationGeneration ?? 0) + 1,
             state: 'debt',
             transport: 'degraded',
             ...(current?.frozen === undefined ? {} : { frozen: current.frozen }),
@@ -306,7 +339,10 @@ export const usePreparation = () => {
     queryClient.setQueryData<PreparationReconnect>(preparationReconnectKey, (current) =>
       current?.transport === 'live'
         ? current
-        : { ...(current ?? { epoch: 0, state: 'clear' }), transport: 'live' },
+        : {
+            ...(current ?? { epoch: 0, confirmationGeneration: 0, state: 'clear' }),
+            transport: 'live',
+          },
     )
   }, [queryClient, streamState])
   useEffect(() => {
@@ -327,45 +363,36 @@ export const usePreparation = () => {
     if (!claim.won) return
     void (async () => {
       let successful: boolean
-      let confirmed: PreparationView | undefined
+      let confirmationGeneration: number | undefined
       try {
         await queryClient.cancelQueries(
           { queryKey: ['review-preparation'], exact: true },
           { silent: true },
         )
-        const result = await refetchPreparation({ cancelRefetch: true })
+        const refresh = refetchPreparation({ cancelRefetch: true })
+        confirmationGeneration =
+          queryClient.getQueryData<PreparationReconnect>(
+            preparationReconnectKey,
+          )?.confirmationGeneration
+        const result = await refresh
         successful = result.isSuccess
-        if (result.isSuccess) confirmed = result.data
       } catch {
         successful = false
       }
       if (successful) {
-        const adoption = { accepted: false }
-        queryClient.setQueryData<PreparationReconnect>(preparationReconnectKey, (current) => {
-          if (
-            current?.epoch !== epoch ||
-            current.transport !== 'live' ||
-            current.state !== 'refreshing'
-          )
-            return current
-          adoption.accepted = true
-          return {
-            epoch,
-            state: 'clear',
-            transport: 'live',
-            ...(confirmed === undefined ? {} : { frozen: confirmed }),
-          }
-        })
-        if (!adoption.accepted) {
-          const frozen =
-            queryClient.getQueryData<PreparationReconnect>(preparationReconnectKey)?.frozen
-          if (frozen?.presentation?.state === 'dismissed')
-            queryClient.setQueryData(['review-preparation'], frozen)
-        }
-        return
+        const reconnect = queryClient.getQueryData<PreparationReconnect>(preparationReconnectKey)
+        if (
+          reconnect?.epoch !== epoch ||
+          reconnect.confirmationGeneration !== confirmationGeneration ||
+          reconnect.state === 'clear'
+        )
+          return
       }
       queryClient.setQueryData<PreparationReconnect>(preparationReconnectKey, (current) =>
-        current?.epoch === epoch && current.transport === 'live' && current.state === 'refreshing'
+        current?.epoch === epoch &&
+        current.confirmationGeneration === confirmationGeneration &&
+        current.transport === 'live' &&
+        current.state === 'refreshing'
           ? { ...current, state: 'retry' }
           : current,
       )
@@ -421,14 +448,21 @@ export const usePreparation = () => {
           )
         })
       if (responseIsStale()) return false
-      let dismissalEpoch: number | undefined
+      let dismissalEpoch = 0
+      let dismissalGeneration = 0
       queryClient.setQueryData<PreparationReconnect>(preparationReconnectKey, (current) => {
-        if (current === undefined || current.state === 'clear') return current
-        dismissalEpoch = current.epoch + 1
+        const reconnect = current ?? {
+          epoch: 0,
+          confirmationGeneration: 0,
+          state: 'clear',
+          transport: 'unknown',
+        }
+        dismissalEpoch = reconnect.epoch + 1
+        dismissalGeneration = reconnect.confirmationGeneration + 1
         return {
-          ...current,
+          ...reconnect,
           epoch: dismissalEpoch,
-          state: current.transport === 'live' ? 'retry' : current.state,
+          confirmationGeneration: dismissalGeneration,
         }
       })
       await queryClient.cancelQueries(
@@ -436,19 +470,18 @@ export const usePreparation = () => {
         { silent: true },
       )
       const reconnect = queryClient.getQueryData<PreparationReconnect>(preparationReconnectKey)
-      const ownedEpoch = dismissalEpoch
-      if ((ownedEpoch !== undefined && reconnect?.epoch !== ownedEpoch) || responseIsStale())
-        return false
-      queryClient.setQueryData(['review-preparation'], value)
-      queryClient.setQueryData<PreparationReconnect>(preparationReconnectKey, (current) =>
-        current === undefined
-          ? current
-          : {
-              ...current,
-              state: ownedEpoch === undefined ? current.state : 'clear',
-              frozen: value,
-            },
+      if (
+        reconnect?.epoch !== dismissalEpoch ||
+        reconnect.confirmationGeneration !== dismissalGeneration ||
+        responseIsStale()
       )
+        return false
+      queryClient.setQueryData<PreparationReconnect>(preparationReconnectKey, (current) =>
+        current?.epoch !== dismissalEpoch || current.confirmationGeneration !== dismissalGeneration
+          ? current
+          : { ...current, state: 'clear', frozen: value },
+      )
+      queryClient.setQueryData(['review-preparation'], value)
       return true
     },
     [queryClient],

@@ -974,9 +974,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     else None
                 )
             )
-            refresh_preparation_work(
-                self._connection, action.action_id, completed_at
-            )
+            refresh_preparation_work(self._connection, action.action_id, completed_at)
             self._connection.commit()
             return next_action
         except (sqlite3.Error, MetadataReportError, ReviewAdmissionStaleError) as error:
@@ -1287,9 +1285,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     self._refresh_metadata_policy_transition(
                         transition_row[0], completed_at
                     )
-            refresh_preparation_work(
-                self._connection, action.action_id, completed_at
-            )
+            refresh_preparation_work(self._connection, action.action_id, completed_at)
             transaction.commit()
         except (sqlite3.Error, MetadataReportError) as error:
             transaction.rollback()

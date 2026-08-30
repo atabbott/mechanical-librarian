@@ -212,6 +212,7 @@ def test_post_commit_paused_library_addition_keeps_successor_available_until_res
         available.append("served")
 
     predecessor = RuntimeGeneration(_app)
+
     def admit_successor() -> None:
         supervisor.request_library_addition("primary", "added")
 

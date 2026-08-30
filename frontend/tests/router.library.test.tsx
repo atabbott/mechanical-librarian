@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, QueryObserver } from '@tanstack/react-query'
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -283,6 +283,7 @@ describe('Library route', () => {
       ).toBeVisible()
       const reconnectBefore = queryClient.getQueryData<{
         epoch: number
+        confirmationGeneration: number
         state: string
         transport: string
         frozen?: PreparationView
@@ -304,6 +305,7 @@ describe('Library route', () => {
       expect(queryClient.getQueryData(['review-preparation-reconnect'])).toEqual({
         ...reconnectBefore,
         epoch: (reconnectBefore?.epoch ?? 0) + 1,
+        confirmationGeneration: (reconnectBefore?.confirmationGeneration ?? 0) + 1,
         state: 'clear',
         frozen: dismissed,
       })
@@ -326,7 +328,10 @@ describe('Library route', () => {
     },
   )
 
-  it('dismissal invalidates a held reconnect generation before adopting its response', async () => {
+  it.each([
+    ['same-run', false],
+    ['different-run', true],
+  ])('dismissal invalidates a held %s reconnect response', async (_case, differentRun) => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
     const http = createHttp()
@@ -337,6 +342,7 @@ describe('Library route', () => {
       ...confirmed,
       presentation: { ...confirmed.presentation, state: 'dismissed', dismissible: false },
     }
+    const successor = terminalPreparation(`preparation_run_${'b'.repeat(64)}`, 103)
     let releaseReconnect!: (value: PreparationView) => void
     http.getPreparation = vi
       .fn<ReviewHttp['getPreparation']>()
@@ -347,6 +353,7 @@ describe('Library route', () => {
             releaseReconnect = resolve
           }),
       )
+      .mockResolvedValue(successor)
     http.dismissPreparation = vi.fn(async () => dismissed)
     const { queryClient, router } = renderRoute(
       '/library?lens=all&preview=case-1&field=title',
@@ -364,6 +371,7 @@ describe('Library route', () => {
     await waitFor(() => expect(releaseReconnect).toBeTypeOf('function'))
     const reconnectBefore = queryClient.getQueryData<{
       epoch: number
+      confirmationGeneration: number
       state: string
       transport: string
       frozen?: PreparationView
@@ -371,18 +379,37 @@ describe('Library route', () => {
     expect(reconnectBefore).toMatchObject({ state: 'refreshing', transport: 'live' })
     const cancelQueries = vi.spyOn(queryClient, 'cancelQueries')
     const invalidateQueries = vi.spyOn(queryClient, 'invalidateQueries')
+    const observedPairs: [PreparationView | undefined, PreparationView | undefined][] = []
+    const observer = new QueryObserver<PreparationView>(queryClient, {
+      queryKey: ['review-preparation'],
+    })
+    const unsubscribe = observer.subscribe(() => {
+      const primary = queryClient.getQueryData<PreparationView>(['review-preparation'])
+      const frozen = queryClient.getQueryData<{ frozen?: PreparationView }>([
+        'review-preparation-reconnect',
+      ])?.frozen
+      if (
+        primary === dismissed ||
+        frozen === dismissed ||
+        primary === successor ||
+        frozen === successor
+      )
+        observedPairs.push([primary, frozen])
+    })
 
     try {
       await user.click(screen.getByRole('button', { name: 'Dismiss preparation' }))
       await waitFor(() => expect(queryClient.getQueryData(['review-preparation'])).toBe(dismissed))
       const reconnectAfter = queryClient.getQueryData<{
         epoch: number
+        confirmationGeneration: number
         state: string
         transport: string
         frozen?: PreparationView
       }>(['review-preparation-reconnect'])
       expect(reconnectAfter).toEqual({
         epoch: (reconnectBefore?.epoch ?? 0) + 1,
+        confirmationGeneration: (reconnectBefore?.confirmationGeneration ?? 0) + 1,
         state: 'clear',
         transport: 'live',
         frozen: dismissed,
@@ -395,7 +422,7 @@ describe('Library route', () => {
       )
 
       await act(async () => {
-        releaseReconnect(confirmed)
+        releaseReconnect(differentRun ? successor : confirmed)
         await vi.advanceTimersByTimeAsync(1_600)
       })
       expect(queryClient.getQueryData(['review-preparation'])).toBe(dismissed)
@@ -417,7 +444,18 @@ describe('Library route', () => {
       expect(http.dismissPreparation).toHaveBeenCalledTimes(1)
       expect(http.getPreparation).toHaveBeenCalledTimes(2)
       expect(invalidateQueries).not.toHaveBeenCalled()
+
+      act(() => updates.announce({ sequence: 1, subject: null, topic: 'preparation' }))
+      await waitFor(() => expect(http.getPreparation).toHaveBeenCalledTimes(3))
+      await waitFor(() => expect(queryClient.getQueryData(['review-preparation'])).toBe(successor))
+      expect(
+        queryClient.getQueryData<{ frozen?: PreparationView }>(['review-preparation-reconnect'])
+          ?.frozen,
+      ).toBe(successor)
+      expect(screen.getByRole('button', { name: /Preparing your library/u })).toBeVisible()
+      expect(observedPairs.every(([primary, frozen]) => primary === frozen)).toBe(true)
     } finally {
+      unsubscribe()
       vi.useRealTimers()
     }
   })
@@ -496,6 +534,59 @@ describe('Library route', () => {
     await waitFor(() => expect(queryClient.getQueryData(['review-preparation'])).toBe(dismissed))
     expect(router.state.location.search).toEqual(laterSearch)
     expect(http.dismissPreparation).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not let dismissal normalization cancel a newer held Library navigation', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const runId = `preparation_run_${'d'.repeat(64)}`
+    const confirmed = terminalPreparation(runId)
+    const dismissed: PreparationView = {
+      ...confirmed,
+      presentation: { ...confirmed.presentation, state: 'dismissed', dismissible: false },
+    }
+    let releaseDismissal!: (value: PreparationView) => void
+    let releaseLibrary!: (value: LibraryView) => void
+    http.getPreparation = vi.fn(async () => confirmed)
+    http.dismissPreparation = vi.fn<ReviewHttp['dismissPreparation']>(
+      () =>
+        new Promise<PreparationView>((resolve) => {
+          releaseDismissal = resolve
+        }),
+    )
+    http.getLibrary = vi.fn<ReviewHttp['getLibrary']>((search) =>
+      search.q === 'held destination'
+        ? new Promise((resolve) => {
+            releaseLibrary = resolve
+          })
+        : Promise.resolve(library),
+    )
+    const { queryClient, router } = renderRoute(
+      '/library?lens=all&preview=case-1&field=title',
+      http,
+    )
+    await user.click(await screen.findByRole('button', { name: /Preparing your library/u }))
+    await user.click(screen.getByRole('button', { name: 'Dismiss preparation' }))
+    await waitFor(() => expect(releaseDismissal).toBeTypeOf('function'))
+
+    const laterSearch = {
+      lens: 'needs_attention' as const,
+      preview: 'case-1',
+      field: 'authors',
+      q: 'held destination',
+    }
+    const navigation = router.navigate({ to: '/library', search: laterSearch })
+    await waitFor(() => expect(releaseLibrary).toBeTypeOf('function'))
+    await act(async () => releaseDismissal(dismissed))
+    await waitFor(() => expect(queryClient.getQueryData(['review-preparation'])).toBe(dismissed))
+
+    await act(async () => releaseLibrary(library))
+    await navigation
+    expect(router.state.location.search).toEqual(laterSearch)
+    expect(http.dismissPreparation).toHaveBeenCalledTimes(1)
+    expect(
+      vi.mocked(http.getLibrary).mock.calls.filter(([search]) => search.q === 'held destination'),
+    ).toHaveLength(1)
   })
 
   it('leaves dismissal cache, reconnect debt, and URL unchanged on errors and stale responses', async () => {
