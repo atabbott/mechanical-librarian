@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The container-image qualification job restores unchanged Docker layers from
+  the repository Actions cache instead of rebuilding every stage per run; base
+  images stay governed by the Dockerfile's digest pins. (#930)
+
 - A prepared audiobook no longer settles its own scan: absences reconcile again
   in mixed-format libraries and nothing counts it as blocked. Its recorded
   evidence is reachable from the library row, its digest is bounded by a
