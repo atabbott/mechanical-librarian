@@ -51,7 +51,10 @@ from mechanical_librarian.adapters.persistence.preparation_presentation import (
     refresh_preparation_run_state,
     refresh_preparation_work,
 )
-from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
+from mechanical_librarian.adapters.persistence.transactions import (
+    ConnectionScoped,
+    _invalidate_connection,
+)
 from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_pipeline import PipelineAction
@@ -1052,6 +1055,12 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     self._connection.rollback()
                 except BaseException:
                     pass
+                try:
+                    cleanup_proven = not self._connection.in_transaction
+                except BaseException:
+                    cleanup_proven = False
+                if not cleanup_proven:
+                    _invalidate_connection(self._connection)
             failure = error
         if isinstance(failure, sqlite3.Error):
             raise MetadataReportError(
