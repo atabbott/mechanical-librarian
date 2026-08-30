@@ -754,7 +754,7 @@ def _adopt_enrollment_states(connection: sqlite3.Connection, updated_at: int) ->
 def _presentation_observation(
     stage: str, state: str, failure_code: str | None
 ) -> tuple[str, str | None]:
-    report_only = failure_code == "local_evidence_only"
+    report_only = failure_code == "evidence_only"
     return (
         "projection" if stage == "complete" or report_only else stage,
         "ready"

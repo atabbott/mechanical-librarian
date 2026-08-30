@@ -6763,7 +6763,7 @@ def test_recovery_witness_retains_a_failed_outcome_across_reopen(
         ("ready", "failed", "provider", "completed_with_failures"),
         ("ready", "stale", "stale", "completed_with_failures"),
         ("failed", "complete", None, "completed"),
-        ("failed", "failed", "local_evidence_only", "completed"),
+        ("failed", "failed", "evidence_only", "completed"),
     ),
 )
 def test_terminal_recovery_reconciles_current_outcome_without_reaging_completion(
@@ -6837,7 +6837,7 @@ def test_terminal_recovery_reconciles_current_outcome_without_reaging_completion
 
     expected_outcome = (
         "ready"
-        if state == "complete" or failure_code == "local_evidence_only"
+        if state == "complete" or failure_code == "evidence_only"
         else "failed"
     )
     assert settled == (expected_outcome, state, completed_at, 1, None, None)
@@ -10164,7 +10164,7 @@ def test_broad_reconciliation_projects_active_report_only_work_as_clean_ready(
     assert work is not None and work.stage == "extraction"
     repository._connection.execute(
         "UPDATE review_preparation_work SET stage='provider',state='failed',"
-        "failure_code='local_evidence_only',updated_at=14 WHERE work_id=?",
+        "failure_code='evidence_only',updated_at=14 WHERE work_id=?",
         (work.action_id,),
     )
     repository._connection.execute(
@@ -10189,7 +10189,7 @@ def test_broad_reconciliation_projects_active_report_only_work_as_clean_ready(
     assert active is not None
     assert active[0] not in {"completed", "completed_with_failures"}
     assert active[1] is None
-    assert authoritative == ("provider", "failed", "local_evidence_only")
+    assert authoritative == ("provider", "failed", "evidence_only")
     assert presentation is not None
     assert presentation.state is PreparationRunState.COMPLETED_CLEAN
     assert presentation.passage.ready == 1
@@ -10527,7 +10527,7 @@ def test_audiobook_publication_refreshes_before_interleaved_claim_next(
             published.report_id,
             15,
             0,
-            "local_evidence_only",
+            "evidence_only",
             claim_next=True,
         ),
     )
