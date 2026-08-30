@@ -133,6 +133,63 @@ describe('live update frames', () => {
 })
 
 describe('live invalidation', () => {
+  it('releases observers, timers, and a nonsettling preparation read on teardown', async () => {
+    const queryClient = new QueryClient()
+    let aborted = false
+    void queryClient
+      .fetchQuery({
+        queryKey: ['review-preparation'],
+        queryFn: ({ signal }) =>
+          new Promise((_resolve, reject) => {
+            signal.addEventListener('abort', () => {
+              aborted = true
+              reject(new DOMException('aborted', 'AbortError'))
+            })
+          }),
+      })
+      .catch(() => undefined)
+    let updateStopped = false
+    let stateStopped = false
+    let activityStopped = false
+    let visibilityStopped = false
+    const canceled: number[] = []
+    let updateListener: ((update: LiveUpdate) => void) | undefined
+    const stream = {
+      state: 'live' as const,
+      subscribe: (listener: (update: LiveUpdate) => void) => {
+        updateListener = listener
+        return () => {
+          updateStopped = true
+        }
+      },
+      observeState: () => () => {
+        stateStopped = true
+      },
+      close: () => undefined,
+    }
+    const stop = startLiveInvalidation(stream, queryClient, {
+      schedule: () => 7,
+      cancel: (handle) => canceled.push(handle),
+      observeActivity: () => () => {
+        activityStopped = true
+      },
+      observeVisibility: () => () => {
+        visibilityStopped = true
+      },
+    })
+
+    updateListener?.({ sequence: 1, subject: null, topic: 'activity' })
+    stop()
+    await vi.waitFor(() => expect(aborted).toBe(true))
+    expect({ activityStopped, stateStopped, updateStopped, visibilityStopped }).toEqual({
+      activityStopped: true,
+      stateStopped: true,
+      updateStopped: true,
+      visibilityStopped: true,
+    })
+    expect(canceled).toEqual([7])
+  })
+
   it('invalidates only the queries a topic names, never the whole Library', () => {
     expect(invalidationKeys({ sequence: 1, subject: CASE, topic: 'case' })).toEqual([
       ['review-case', CASE],

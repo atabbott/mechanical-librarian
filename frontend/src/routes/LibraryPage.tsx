@@ -1417,7 +1417,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     retry: false,
     onSuccess: async (value, request) => {
       dismissalCleanupSuppression.current = request
-      if (!(await preparationState.adoptDismissal(request.runId, value))) {
+      if (!preparationState.adoptDismissal(request.runId, value)) {
         if (dismissalCleanupSuppression.current === request)
           dismissalCleanupSuppression.current = null
         return

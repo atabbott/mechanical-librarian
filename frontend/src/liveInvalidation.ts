@@ -31,6 +31,7 @@ export const coalesceMilliseconds = 120
  */
 export const ownerIdleMilliseconds = 10_000
 export const idlePreparationRefreshMilliseconds = (42 * 60 * 1_000) / 20
+export const preparationInvalidationDebtKey = ['review-preparation-invalidation-debt'] as const
 
 const caseKey = (subject: string | null) =>
   subject === null ? ['review-case'] : ['review-case', subject]
@@ -102,6 +103,26 @@ export const startLiveInvalidation = (
   let lastActivityAt = now()
   let lastIdleRefreshAt = lastActivityAt
   let wasVisible = visible()
+  let confirmationBeganLive =
+    queryClient.getQueryState(['review-preparation'])?.fetchStatus === 'fetching' &&
+    stream.state === 'live'
+
+  const setPreparationDebt = (debt: boolean) =>
+    queryClient.setQueryData(preparationInvalidationDebtKey, debt)
+  if (queryClient.getQueryData(preparationInvalidationDebtKey) === undefined)
+    setPreparationDebt(false)
+
+  const observePreparation = queryClient.getQueryCache().subscribe((event) => {
+    if (event.query.queryHash !== '["review-preparation"]') return
+    if (event.query.state.fetchStatus === 'fetching') {
+      confirmationBeganLive = stream.state === 'live'
+      return
+    }
+    if (event.query.state.fetchStatus !== 'idle') return
+    if (confirmationBeganLive && stream.state === 'live' && event.query.state.status === 'success')
+      setPreparationDebt(false)
+    confirmationBeganLive = false
+  })
 
   const queueResync = (includePreparation = true) => {
     for (const key of invalidationKeys({ sequence: 0, subject: null, topic: 'resync' })) {
@@ -122,7 +143,17 @@ export const startLiveInvalidation = (
     // A read taken now is a read this tab no longer owes itself for an echo it
     // recognised earlier, so the debt is discharged rather than repeated.
     forgetSettledKeys(queryClient, keys)
-    for (const queryKey of keys) void queryClient.invalidateQueries({ queryKey })
+    for (const queryKey of keys) {
+      if (
+        queryKey[0] === 'review-preparation' &&
+        stream.hasBeenLive === true &&
+        stream.state !== 'live'
+      ) {
+        setPreparationDebt(true)
+        continue
+      }
+      void queryClient.invalidateQueries({ queryKey })
+    }
   }
 
   const flushIdlePreparation = () => {
@@ -166,6 +197,43 @@ export const startLiveInvalidation = (
     for (const key of invalidationKeys(update)) pending.set(JSON.stringify(key), key)
     handle ??= schedule(flush, coalesceMilliseconds)
   })
+  const handleStreamState = (state: LiveStreamState) => {
+    if (state === 'degraded' && stream.hasBeenLive === true) {
+      confirmationBeganLive = false
+      pending.delete(JSON.stringify(['review-preparation']))
+      setPreparationDebt(true)
+      void queryClient.cancelQueries(
+        { queryKey: ['review-preparation'], exact: true },
+        { silent: true },
+      )
+      return
+    }
+    if (state === 'live') {
+      const degradedReadPending =
+        queryClient.getQueryState(['review-preparation'])?.fetchStatus === 'fetching' &&
+        !confirmationBeganLive
+      if (degradedReadPending) {
+        setPreparationDebt(true)
+        void queryClient
+          .cancelQueries({ queryKey: ['review-preparation'], exact: true }, { silent: true })
+          .then(() => {
+            if (
+              stream.state === 'live' &&
+              queryClient.getQueryData(preparationInvalidationDebtKey) === true
+            )
+              void queryClient.invalidateQueries({
+                queryKey: ['review-preparation'],
+                exact: true,
+              })
+          })
+        return
+      }
+      if (queryClient.getQueryData(preparationInvalidationDebtKey) === true)
+        void queryClient.invalidateQueries({ queryKey: ['review-preparation'], exact: true })
+    }
+  }
+  const stopObservingState = stream.observeState(handleStreamState)
+  handleStreamState(stream.state)
   const stopObservingActivity = observeActivity(() => {
     const owedResync = deferredWhileIdle || idleHandle !== null
     const preparationAlreadyRefreshed = deferredWhileIdle && idleHandle === null
@@ -198,12 +266,19 @@ export const startLiveInvalidation = (
 
   return () => {
     unsubscribe()
+    stopObservingState()
+    observePreparation()
     stopObservingActivity()
     stopObservingVisibility()
+    void queryClient.cancelQueries(
+      { queryKey: ['review-preparation'], exact: true },
+      { silent: true },
+    )
     if (handle !== null) cancel(handle)
     if (idleHandle !== null) cancel(idleHandle)
     handle = null
     idleHandle = null
+    confirmationBeganLive = false
   }
 }
 

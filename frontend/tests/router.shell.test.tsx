@@ -2,14 +2,13 @@ import { QueryClient, QueryClientProvider, QueryObserver } from '@tanstack/react
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { StrictMode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { PreparationView, ReviewHttp } from '../src/api/http'
 import type { LiveStreamState, LiveUpdate, LiveUpdateStream } from '../src/liveUpdates'
 import { coalesceMilliseconds } from '../src/liveInvalidation'
 import { createApplicationRouter, preparationQuery } from '../src/router'
-import { createHttp, renderRoute } from './fixtures'
+import { createHttp, createLiveStream, renderRoute } from './fixtures'
 
 const reducedMotion = () => ({
   matches: true,
@@ -834,9 +833,13 @@ describe('Application shell', () => {
       const listeners = new Set<(update: LiveUpdate) => void>()
       const stateListeners = new Set<(state: LiveStreamState) => void>()
       let streamState: LiveStreamState = 'connecting'
+      let hasBeenLive = false
       const updates: LiveUpdateStream = {
         get state() {
           return streamState
+        },
+        get hasBeenLive() {
+          return hasBeenLive
         },
         subscribe(listener) {
           listeners.add(listener)
@@ -883,6 +886,7 @@ describe('Application shell', () => {
       expect(before).toEqual({ attention: 1, library: 1, preparation: 1 })
       await act(async () => {
         streamState = 'live'
+        hasBeenLive = true
         for (const listener of [...stateListeners]) listener(streamState)
       })
 
@@ -948,7 +952,7 @@ describe('Application shell', () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(1_600)
       })
-      expect(vi.mocked(http.getPreparation)).toHaveBeenCalledTimes(afterIdle.preparation + 2)
+      expect(vi.mocked(http.getPreparation)).toHaveBeenCalledTimes(afterIdle.preparation + 1)
     } finally {
       vi.useRealTimers()
     }
@@ -986,55 +990,126 @@ describe('Application shell', () => {
     }
   })
 
-  it('shares one pending preparation confirmation across shell and route consumers', async () => {
-    let releasePreparation: (value: PreparationView) => void = () => undefined
-    const pendingPreparation = new Promise<PreparationView>((resolve) => {
-      releasePreparation = resolve
-    })
-    const preparation: PreparationView = {
+  it('lets TanStack cancellation abort one held preparation read', async () => {
+    let aborted = false
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(
+        (signal?: AbortSignal) =>
+          new Promise<PreparationView>((_resolve, reject) => {
+            signal?.addEventListener('abort', () => {
+              aborted = true
+              reject(new DOMException('aborted', 'AbortError'))
+            })
+          }),
+      ),
+    }
+    const { queryClient } = renderRoute('/library?lens=all', http)
+    await waitFor(() => expect(http.getPreparation).toHaveBeenCalledOnce())
+
+    await queryClient.cancelQueries({ queryKey: ['review-preparation'], exact: true })
+
+    expect(aborted).toBe(true)
+  })
+
+  it('takes a distinct authoritative read for an event arriving during a slow refresh', async () => {
+    const updates = createLiveStream()
+    const initial: PreparationView = {
       schema_version: 'review-preparation-v2',
       active: true,
       actionable: false,
       paused: false,
       libraries: [],
-      connections: [
-        {
-          connection: 'primary',
-          code: 'unavailable',
-          state: 'paused',
-          affected: 1,
-          updated_at: 1,
-        },
-      ],
     }
+    const afterFirstEvent = { ...initial, paused: true }
+    const afterSecondEvent = { ...initial, actionable: true }
+    let releaseFirstEvent: (value: PreparationView) => void = () => undefined
+    let firstEventAborted = false
     const http: ReviewHttp = {
       ...createHttp(),
-      getPreparation: vi.fn(() => pendingPreparation),
+      getPreparation: vi.fn((signal?: AbortSignal) => {
+        const request = vi.mocked(http.getPreparation).mock.calls.length
+        if (request === 1) return Promise.resolve(initial)
+        if (request === 2)
+          return new Promise<PreparationView>((resolve) => {
+            releaseFirstEvent = resolve
+            signal?.addEventListener('abort', () => {
+              firstEventAborted = true
+            })
+          })
+        return Promise.resolve(afterSecondEvent)
+      }),
     }
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    const router = createApplicationRouter(
-      http,
-      queryClient,
-      createMemoryHistory({ initialEntries: ['/attention'] }),
-    )
-    render(
-      <StrictMode>
-        <QueryClientProvider client={queryClient}>
-          <RouterProvider router={router} />
-        </QueryClientProvider>
-      </StrictMode>,
-    )
+    const { queryClient } = renderRoute('/library?lens=all', http, updates)
+    await waitFor(() => expect(queryClient.getQueryData(['review-preparation'])).toBe(initial))
+
+    act(() => updates.announce({ sequence: 1, subject: null, topic: 'preparation' }))
+    await waitFor(() => expect(http.getPreparation).toHaveBeenCalledTimes(2))
+    act(() => updates.announce({ sequence: 2, subject: null, topic: 'preparation' }))
+
+    await waitFor(() => expect(http.getPreparation).toHaveBeenCalledTimes(3))
+    expect(firstEventAborted).toBe(true)
+    expect(queryClient.getQueryData(['review-preparation'])).toBe(afterSecondEvent)
+    await act(async () => releaseFirstEvent(afterFirstEvent))
+    expect(queryClient.getQueryData(['review-preparation'])).toBe(afterSecondEvent)
+  })
+
+  it('supersedes a held degraded poll with a distinct live confirmation read', async () => {
+    const stateListeners = new Set<(state: LiveStreamState) => void>()
+    let streamState: LiveStreamState = 'degraded'
+    let hasBeenLive = false
+    const updates: LiveUpdateStream & { setState: (state: LiveStreamState) => void } = {
+      get state() {
+        return streamState
+      },
+      get hasBeenLive() {
+        return hasBeenLive
+      },
+      subscribe: () => () => undefined,
+      observeState: (listener) => {
+        stateListeners.add(listener)
+        return () => stateListeners.delete(listener)
+      },
+      close: () => undefined,
+      setState: (state) => {
+        streamState = state
+        if (state === 'live') hasBeenLive = true
+        for (const listener of [...stateListeners]) listener(state)
+      },
+    }
+    const degraded: PreparationView = {
+      schema_version: 'review-preparation-v2',
+      active: true,
+      actionable: false,
+      paused: true,
+      libraries: [],
+    }
+    const confirmedLive = { ...degraded, actionable: true, paused: false }
+    let releaseDegraded: (value: PreparationView) => void = () => undefined
+    let degradedAborted = false
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn((signal?: AbortSignal) => {
+        const request = vi.mocked(http.getPreparation).mock.calls.length
+        if (request === 1)
+          return new Promise<PreparationView>((resolve) => {
+            releaseDegraded = resolve
+            signal?.addEventListener('abort', () => {
+              degradedAborted = true
+            })
+          })
+        return Promise.resolve(confirmedLive)
+      }),
+    }
+    const { queryClient } = renderRoute('/library?lens=all', http, updates)
     await waitFor(() => expect(http.getPreparation).toHaveBeenCalledOnce())
+    act(() => updates.setState('live'))
 
-    await router.navigate({
-      to: '/library',
-      search: { lens: 'all' },
-    })
-    await act(async () => releasePreparation(preparation))
-
-    expect(await screen.findByText('Library connection needs attention')).toBeVisible()
-    expect(queryClient.getQueryData(['review-preparation'])).toBe(preparation)
-    expect(http.getPreparation).toHaveBeenCalledOnce()
+    await waitFor(() => expect(http.getPreparation).toHaveBeenCalledTimes(2))
+    expect(degradedAborted).toBe(true)
+    expect(queryClient.getQueryData(['review-preparation'])).toBe(confirmedLive)
+    await act(async () => releaseDegraded(degraded))
+    expect(queryClient.getQueryData(['review-preparation'])).toBe(confirmedLive)
   })
 
   it('says the stream is down only once it has stayed down', async () => {

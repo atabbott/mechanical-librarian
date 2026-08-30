@@ -12,6 +12,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import Mock
@@ -20,6 +21,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 import uvicorn
 from argon2 import PasswordHasher
+from fastapi.testclient import TestClient
 from playwright.sync_api import (
     BrowserContext,
     Page,
@@ -70,11 +72,6 @@ from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.setup_state import SetupStateDocument
 from mechanical_librarian.interfaces.web.react_assets import ReactAssetLoader
 from mechanical_librarian.interfaces.web.setup import create_setup_app
-from mechanical_librarian.interfaces.web.setup_frontend import (
-    SETUP_CSS,
-    SETUP_HTML,
-    SETUP_JS,
-)
 from tests.support.metadata_report_doubles import audio_result
 from tests.support.ports import ReservedPort, bind_loopback
 from tests.support.proposal_evidence import _fields as _bibliographic_fields
@@ -572,6 +569,31 @@ def _closing_context(context: BrowserContext) -> Iterator[None]:
         yield
     finally:
         context.close()
+
+
+def _record_page_error(errors: list[str], error: Any) -> None:
+    errors.append(str(error))
+
+
+def _record_transition_console(
+    errors: list[str], records: list[dict[str, object]], message: Any
+) -> None:
+    if message.type == "error":
+        errors.append(message.text)
+    elif message.text.startswith("__ML_PREPARATION_TRANSITION__"):
+        records.append(
+            json.loads(message.text.removeprefix("__ML_PREPARATION_TRANSITION__"))
+        )
+
+
+def _serve_setup_asset(client: TestClient, route: Any) -> None:
+    path = urlparse(route.request.url).path
+    response = client.get("/" if path == "/setup-handoff" else path)
+    route.fulfill(
+        status=response.status_code,
+        headers=dict(response.headers),
+        body=response.content,
+    )
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -2465,6 +2487,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
         ):
             browser = playwright.chromium.launch(headless=True)
             for reduced in (False, True):
+                transition_records: list[dict[str, object]] = []
                 context = browser.new_context(
                     ignore_https_errors=True,
                     viewport={"width": 390, "height": 844},
@@ -2473,32 +2496,44 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                 context.add_init_script(
                     "const preparationTime=value=>value.split(',').reduce((largest,item)=>Math.max(largest,parseFloat(item)*(item.trim().endsWith('ms')?1:1000)),0);"
                     "globalThis.preparationPseudoStyles=()=>['root','mechanical-librarian-brand','works-index','preparation-detail'].flatMap(name=>['group','image-pair','old','new'].map(kind=>{const pseudo=`::view-transition-${kind}(${name})`;const style=getComputedStyle(document.documentElement,pseudo);return {pseudo,duration:preparationTime(style.animationDuration),delay:preparationTime(style.animationDelay),state:style.animationPlayState}}));"
-                    "const preparationAnimations=key=>sessionStorage.setItem(key,JSON.stringify(document.documentElement.getAnimations({subtree:true}).map(animation=>{const timing=animation.effect?.getComputedTiming?.()||{};return {pseudo:animation.effect?.pseudoElement||animation.effect?.target?.type||'',duration:Number(timing.duration)||0,delay:Number(timing.delay)||0,state:animation.playState}})));"
-                    "addEventListener('pageswap',event=>{sessionStorage.setItem('preparation-pageswap',event.viewTransition?'observed':'absent');if(event.viewTransition){sessionStorage.setItem('preparation-pageswap-pseudos',JSON.stringify(preparationPseudoStyles()));preparationAnimations('preparation-pageswap-animations');event.viewTransition.ready.then(()=>preparationAnimations('preparation-pageswap-ready-animations'))}});"
-                    "addEventListener('pagereveal',event=>{if(event.viewTransition){sessionStorage.setItem('preparation-pagereveal','observed');preparationAnimations('preparation-pagereveal-animations');event.viewTransition.ready.then(()=>preparationAnimations('preparation-pagereveal-ready-animations'))}});"
+                    "const preparationRecord=(event,phase)=>console.debug('__ML_PREPARATION_TRANSITION__'+JSON.stringify({event:event.type,phase,observed:Boolean(event.viewTransition),pseudos:event.viewTransition?preparationPseudoStyles():[],animations:event.viewTransition?document.documentElement.getAnimations({subtree:true}).map(animation=>{const timing=animation.effect?.getComputedTiming?.()||{};return {pseudo:animation.effect?.pseudoElement||animation.effect?.target?.type||'',duration:Number(timing.duration)||0,delay:Number(timing.delay)||0,state:animation.playState}}):[]}));"
+                    "addEventListener('pageswap',event=>{preparationRecord(event,'event');if(event.viewTransition)event.viewTransition.ready.then(()=>preparationRecord(event,'ready'),()=>preparationRecord(event,'rejected'))});"
+                    "addEventListener('pagereveal',event=>{document.documentElement.dataset.preparationPagereveal=event.viewTransition?'observed':'absent';preparationRecord(event,'event');if(event.viewTransition)event.viewTransition.ready.then(()=>preparationRecord(event,'ready'),()=>preparationRecord(event,'rejected'))});"
                 )
                 page = context.new_page()
+                console_errors: list[str] = []
+                page_errors: list[str] = []
+                page.on("pageerror", partial(_record_page_error, page_errors))
+                page.on(
+                    "console",
+                    partial(
+                        _record_transition_console,
+                        console_errors,
+                        transition_records,
+                    ),
+                )
                 page.route("**/favicon.ico", lambda route: route.fulfill(status=204))
                 _login(page, origin)
                 setup_url = origin + "/setup-handoff"
-                page.route(
-                    setup_url,
-                    lambda route: route.fulfill(
-                        content_type="text/html", body=SETUP_HTML
-                    ),
+
+                class State:
+                    def read(self, _verifier: str) -> SetupStateDocument:
+                        return SetupStateDocument(
+                            schema_version="setup-state-v2",
+                            revision=1,
+                            bootstrap_verifier_digest="0" * 64,
+                        )
+
+                setup_client = TestClient(
+                    create_setup_app(cast(Any, object()), cast(Any, State()), "")
                 )
-                page.route(
-                    origin + "/assets/setup.css",
-                    lambda route: route.fulfill(
-                        content_type="text/css", body=SETUP_CSS
-                    ),
-                )
-                page.route(
-                    origin + "/assets/setup.js",
-                    lambda route: route.fulfill(
-                        content_type="text/javascript", body=SETUP_JS
-                    ),
-                )
+
+                secured_setup_asset = partial(_serve_setup_asset, setup_client)
+
+                page.route(setup_url, secured_setup_asset)
+                page.route(origin + "/assets/setup.css", secured_setup_asset)
+                page.route(origin + "/assets/setup-handoff.css", secured_setup_asset)
+                page.route(origin + "/assets/setup.js", secured_setup_asset)
 
                 def setup_api(route) -> None:
                     path = urlparse(route.request.url).path
@@ -2529,6 +2564,15 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
 
                 page.route("**/api/setup/**", setup_api)
                 page.goto(setup_url)
+                assert (
+                    "style-src 'self'"
+                    in page.locator("html").evaluate(
+                        "() => document.querySelector('meta[http-equiv=content-security-policy]')?.content || ''"
+                    )
+                    or "style-src 'self'"
+                    in setup_client.get("/").headers["content-security-policy"]
+                )
+                transition_records.clear()
                 page.get_by_role("button", name="Kick off preparation").click()
                 handoff = page.get_by_role("link", name="Open workspace")
                 expect(handoff).to_have_attribute(
@@ -2543,6 +2587,9 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                     "Array.from(document.styleSheets).some(sheet=>Array.from(sheet.cssRules).some(rule=>rule.cssText.startsWith('@view-transition')))"
                 )
                 assert not has_navigation_rule
+                assert page.locator("#setup-handoff-motion").evaluate(
+                    "element => element.disabled"
+                )
                 assert source_names == (
                     ["none", "none", "none"]
                     if reduced
@@ -2577,33 +2624,46 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                         "preparation-detail",
                     ]
                 )
+                page.wait_for_timeout(100)
+                assert any(
+                    record["event"] == "pageswap" and record["observed"]
+                    for record in transition_records
+                )
                 assert (
-                    page.evaluate("sessionStorage.getItem('preparation-pageswap')")
+                    page.locator("html").get_attribute("data-preparation-pagereveal")
                     == "observed"
                 )
-                animation_sets = page.evaluate(
-                    "['preparation-pageswap-animations','preparation-pageswap-ready-animations','preparation-pagereveal-animations','preparation-pagereveal-ready-animations'].flatMap(key=>JSON.parse(sessionStorage.getItem(key)||'[]')).concat(document.documentElement.getAnimations({subtree:true}).map(animation=>{const timing=animation.effect?.getComputedTiming?.()||{};return {pseudo:animation.effect?.pseudoElement||animation.effect?.target?.type||'',duration:Number(timing.duration)||0,delay:Number(timing.delay)||0,state:animation.playState}}))"
-                )
-                pseudo_styles = page.evaluate(
-                    "JSON.parse(sessionStorage.getItem('preparation-pageswap-pseudos')||'[]').concat(preparationPseudoStyles())"
-                )
+                animation_sets = [
+                    animation
+                    for record in transition_records
+                    for animation in cast(list[dict[str, object]], record["animations"])
+                ]
+                pseudo_styles = [
+                    animation
+                    for record in transition_records
+                    for animation in cast(list[dict[str, object]], record["pseudos"])
+                ]
                 nonzero_running = [
                     animation
                     for animation in animation_sets
                     if animation["state"] == "running"
-                    and animation["duration"] + animation["delay"] > 0
+                    and cast(float, animation["duration"])
+                    + cast(float, animation["delay"])
+                    > 0
                 ]
                 if reduced:
                     assert nonzero_running == []
                     assert all(
-                        animation["duration"] + animation["delay"] == 0
+                        cast(float, animation["duration"])
+                        + cast(float, animation["delay"])
+                        == 0
                         for animation in pseudo_styles
                     )
                 else:
                     assert any(
-                        animation["duration"] > 0
+                        cast(float, animation["duration"]) > 0
                         and any(
-                            name in animation["pseudo"]
+                            name in cast(str, animation["pseudo"])
                             for name in (
                                 "mechanical-librarian-brand",
                                 "works-index",
@@ -2612,6 +2672,36 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                         )
                         for animation in pseudo_styles
                     ), pseudo_styles
+                if not reduced:
+                    page.goto(setup_url)
+                    page.get_by_role("button", name="Kick off preparation").click()
+                    handoff = page.get_by_role("link", name="Open workspace")
+                    expect(handoff).to_have_attribute(
+                        "href",
+                        re.compile(r"preparation=preparation_run_[0-9a-f]{64}"),
+                    )
+                    page.eval_on_selector(
+                        "a.workspace-handoff",
+                        "element => { element.addEventListener('click', event => event.preventDefault(), {once:true}); element.click() }",
+                    )
+                    page.evaluate(
+                        "() => { const event = new Event('pageswap'); Object.defineProperty(event, 'viewTransition', {value:{ready:Promise.resolve(),finished:Promise.reject(new Error('synthetic rejected transition'))}}); dispatchEvent(event) }"
+                    )
+                    page.wait_for_function(
+                        "document.querySelector('#setup-handoff-motion').disabled"
+                    )
+                    page.eval_on_selector(
+                        "a.workspace-handoff",
+                        "element => { element.addEventListener('click', event => event.preventDefault(), {once:true}); element.click() }",
+                    )
+                    page.wait_for_timeout(2100)
+                    assert page.url == setup_url
+                    assert page.locator("#setup-handoff-motion").evaluate(
+                        "element => element.disabled"
+                    )
+                assert console_errors == []
+                assert page_errors == []
+                setup_client.close()
                 context.close()
             browser.close()
 

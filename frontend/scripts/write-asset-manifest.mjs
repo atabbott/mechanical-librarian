@@ -1,8 +1,24 @@
 import { createHash } from 'node:crypto'
-import { readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 const outputRoot = path.resolve(process.env.ML_FRONTEND_OUT_DIR ?? 'dist')
+const handoffAssets = ['preparation-handoff.css', 'preparation-handoff.js']
+let shell = await readFile(path.join(outputRoot, 'index.html'), 'utf8')
+await mkdir(path.join(outputRoot, 'assets'), { recursive: true })
+const hashedHandoffAssets = []
+for (const name of handoffAssets) {
+  const source = path.join(outputRoot, name)
+  const bytes = await readFile(source)
+  const extension = path.extname(name)
+  const stem = path.basename(name, extension)
+  const fingerprint = createHash('sha256').update(bytes).digest('hex').slice(0, 12)
+  const target = `assets/${stem}-${fingerprint}${extension}`
+  await rename(source, path.join(outputRoot, target))
+  shell = shell.replace(`/assets/review-app/${name}`, `/assets/review-app/${target}`)
+  hashedHandoffAssets.push(target)
+}
+await writeFile(path.join(outputRoot, 'index.html'), shell, 'utf8')
 const viteManifestPath = path.join(outputRoot, '.vite', 'manifest.json')
 const viteManifest = JSON.parse(await readFile(viteManifestPath, 'utf8'))
 const entry = Object.values(viteManifest).find((item) => item.isEntry)
@@ -21,12 +37,14 @@ const visit = (key) => {
   }
   reachable.add(item.file)
   for (const asset of [...(item.css ?? []), ...(item.assets ?? [])]) reachable.add(asset)
-  for (const dependency of [...(item.imports ?? []), ...(item.dynamicImports ?? [])]) visit(dependency)
+  for (const dependency of [...(item.imports ?? []), ...(item.dynamicImports ?? [])])
+    visit(dependency)
 }
 const entryKey = Object.entries(viteManifest).find(([, item]) => item === entry)?.[0]
 if (!entryKey) throw new Error('Vite entry key is missing')
 visit(entryKey)
 reachable.add('index.html')
+for (const asset of hashedHandoffAssets) reachable.add(asset)
 
 const assets = []
 for (const relativePath of [...reachable].sort()) {
@@ -37,19 +55,25 @@ for (const relativePath of [...reachable].sort()) {
     throw new Error(`Asset is not content hashed: ${relativePath}`)
   }
   const absolutePath = path.resolve(outputRoot, relativePath)
-  if (!absolutePath.startsWith(`${outputRoot}${path.sep}`)) throw new Error('Asset escapes output root')
+  if (!absolutePath.startsWith(`${outputRoot}${path.sep}`))
+    throw new Error('Asset escapes output root')
   const bytes = await readFile(absolutePath)
   const metadata = await stat(absolutePath)
   if (!metadata.isFile()) throw new Error(`Asset is not a regular file: ${relativePath}`)
   assets.push({
-    kind: relativePath === 'index.html' ? 'shell' : relativePath.endsWith('.css') ? 'style' : 'script',
+    kind:
+      relativePath === 'index.html' ? 'shell' : relativePath.endsWith('.css') ? 'style' : 'script',
     path: relativePath,
     sha256: createHash('sha256').update(bytes).digest('hex'),
     size: bytes.byteLength,
   })
 }
 
-const identityInput = JSON.stringify({ schema: 'review-react-assets-v1', entry: 'index.html', assets })
+const identityInput = JSON.stringify({
+  schema: 'review-react-assets-v1',
+  entry: 'index.html',
+  assets,
+})
 const manifest = {
   schema: 'review-react-assets-v1',
   build_identity: createHash('sha256').update(identityInput).digest('hex'),
