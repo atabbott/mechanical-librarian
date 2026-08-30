@@ -950,7 +950,11 @@ describe('Activity route', () => {
     let failFirst = true
     const http: ReviewHttp = {
       ...createHttp(),
-      getActivity: vi.fn(async () => activity({ events: [{ event_id: 'lifecycle', transition_id: 'effect_plan_' + 'a'.repeat(64) }] })),
+      getActivity: vi.fn(async () =>
+        activity({
+          events: [{ event_id: 'lifecycle', transition_id: 'effect_plan_' + 'a'.repeat(64) }],
+        }),
+      ),
       getActivityTransitions: vi.fn(async (_eventId: string, afterSequence?: number) => {
         if (failFirst) {
           failFirst = false
@@ -989,7 +993,9 @@ describe('Activity route', () => {
         state: 'planned',
       }))
     let current = activity({
-      events: [{ change_id: 'stable-change', event_id: 'latest-event', transition_id: transitionId }],
+      events: [
+        { change_id: 'stable-change', event_id: 'latest-event', transition_id: transitionId },
+      ],
     })
     let continuationFailures = 0
     const http: ReviewHttp = {
@@ -1016,7 +1022,9 @@ describe('Activity route', () => {
     disclosure.focus()
 
     current = activity({
-      events: [{ change_id: 'stable-change', event_id: 'new-latest-event', transition_id: transitionId }],
+      events: [
+        { change_id: 'stable-change', event_id: 'new-latest-event', transition_id: transitionId },
+      ],
     })
     await queryClient.invalidateQueries({ queryKey: ['activity'] })
 

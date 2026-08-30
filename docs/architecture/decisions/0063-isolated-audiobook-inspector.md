@@ -38,7 +38,13 @@ provider means to the review pipeline.
    runs `ffprobe` itself as one isolated child (fd-passed media descriptor,
    `/dev/fd/N`, minimal environment, `cwd="/"`, new session, `RLIMIT_CORE=0`,
    `RLIMIT_FSIZE=0`, `RLIMIT_NOFILE`, `RLIMIT_CPU`, `RLIMIT_AS`, bounded
-   stdout/stderr, wall clock, cancellation). Its bounded JSON document is then
+   stdout/stderr, wall clock, cancellation). The rlimits are installed by
+   `bootstrap.probe_shim`, a shim the parent spawns that applies them and then
+   `execv`s the probe: a `preexec_fn` would run Python between a fork and an
+   exec, and this spawn happens on a supervisor thread, where that window is a
+   deadlock the parent waits on before any clock starts. The parent still
+   resolves the binary, so a missing probe is a pre-spawn refusal. Its bounded
+   JSON document is then
    handed to a second child — the existing ADR-0011 Python child, with
    `RLIMIT_NPROC=1` intact — which owns every remaining untrusted byte: the
    probe document and each sidecar it is passed a descriptor for. The

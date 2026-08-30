@@ -11,6 +11,8 @@ import hashlib
 import json
 import os
 import resource
+import subprocess
+import sys
 import tempfile
 import threading
 from pathlib import Path
@@ -20,6 +22,7 @@ from unittest.mock import patch
 import pytest
 
 import mechanical_librarian.bootstrap.audio_child as child
+import mechanical_librarian.bootstrap.probe_shim as shim
 from mechanical_librarian.adapters.evidence_extractors import process
 from mechanical_librarian.adapters.evidence_extractors.process import (
     resolve_probe_path,
@@ -283,6 +286,64 @@ def test_an_oversized_or_unreadable_sidecar_is_dropped_rather_than_truncated() -
         assert child._sidecar_text(descriptor, 1024) is None
 
 
+def test_bytes_that_are_not_utf_8_drop_the_sidecar_rather_than_replacing_them() -> None:
+    """A U+FFFD the owner's file never held is not evidence about their file."""
+    with tempfile.TemporaryDirectory() as temporary:
+        path = Path(temporary) / "book.nfo"
+        path.write_bytes(b"Narrator: Recorded \xff\xfe Narrator\n")
+        descriptor = os.open(path, os.O_RDONLY)
+        try:
+            assert child._sidecar_text(descriptor, 1024) is None
+        finally:
+            os.close(descriptor)
+
+
+def test_a_replacement_character_the_source_really_holds_is_still_read() -> None:
+    """Strict decoding drops undecodable bytes, not a legitimate character."""
+    with tempfile.TemporaryDirectory() as temporary:
+        path = Path(temporary) / "book.nfo"
+        path.write_text("Narrator: Recorded \ufffd Narrator\n", encoding="utf-8")
+        descriptor = os.open(path, os.O_RDONLY)
+        try:
+            assert child._sidecar_text(descriptor, 1024) == (
+                "Narrator: Recorded \ufffd Narrator\n"
+            )
+        finally:
+            os.close(descriptor)
+
+
+def test_one_undecodable_sidecar_never_stops_the_others() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        broken = Path(temporary) / "broken.nfo"
+        broken.write_bytes(b"Series: \xff\xfe\n")
+        sound = Path(temporary) / "book.nfo"
+        sound.write_text("Series: Discworld\n", encoding="utf-8")
+        descriptors = [os.open(value, os.O_RDONLY) for value in (broken, sound)]
+        try:
+            written = _run(
+                _context(
+                    sidecars=[
+                        {
+                            "descriptor": descriptors[0],
+                            "name": "broken.nfo",
+                            "surface": AudioEvidenceSurface.SIDECAR_NFO.value,
+                        },
+                        {
+                            "descriptor": descriptors[1],
+                            "name": "book.nfo",
+                            "surface": AudioEvidenceSurface.SIDECAR_NFO.value,
+                        },
+                    ]
+                )
+            )
+        finally:
+            for descriptor in descriptors:
+                os.close(descriptor)
+
+    assert {value.observed_value for value in written[0].facts} >= {"Discworld"}
+    assert not any("\ufffd" in value.observed_value for value in written[0].facts)
+
+
 def test_sidecar_bytes_reach_the_interpretation_through_passed_descriptors() -> None:
     with tempfile.TemporaryDirectory() as temporary:
         path = Path(temporary) / "book.nfo"
@@ -312,17 +373,17 @@ def test_the_probe_child_keeps_no_process_cap_so_a_threaded_probe_can_run() -> N
     applied: list[int] = []
     with (
         patch.object(
-            process.resource,
+            shim.resource,
             "getrlimit",
             return_value=(resource.RLIM_INFINITY, resource.RLIM_INFINITY),
         ),
         patch.object(
-            process.resource,
+            shim.resource,
             "setrlimit",
             side_effect=lambda limit, value: applied.append(limit),
         ),
     ):
-        process._probe_limits()
+        shim.apply_limits()
 
     assert resource.RLIMIT_NPROC not in applied
     assert {
@@ -331,6 +392,120 @@ def test_the_probe_child_keeps_no_process_cap_so_a_threaded_probe_can_run() -> N
         resource.RLIMIT_FSIZE,
         resource.RLIMIT_NOFILE,
     } <= set(applied)
+
+
+def test_the_probe_address_space_limit_fails_closed_away_from_darwin() -> None:
+    """Darwin's carve-out is a development convenience, never a production one."""
+
+    def refuse(limit: int, _value: tuple[int, int]) -> None:
+        if limit == resource.RLIMIT_AS:
+            raise ValueError("address space limit refused")
+
+    with (
+        patch.object(shim.sys, "platform", "linux"),
+        patch.object(
+            shim.resource,
+            "getrlimit",
+            return_value=(resource.RLIM_INFINITY, resource.RLIM_INFINITY),
+        ),
+        patch.object(shim.resource, "setrlimit", side_effect=refuse),
+        pytest.raises(ValueError),
+    ):
+        shim.apply_limits()
+
+
+def test_the_probe_is_never_bounded_between_a_fork_and_an_exec() -> None:
+    """`preexec_fn` runs Python in a forked child holding a threaded parent's
+    locks, and the probe is spawned from a threaded supervisor. The shim is
+    what makes the bounded step an ordinary process instead."""
+    source = Path(process.__file__).read_text(encoding="utf-8")
+
+    assert "preexec_fn=" not in source
+    assert "mechanical_librarian.bootstrap.probe_shim" in source
+
+
+def test_the_shim_bounds_itself_and_then_becomes_the_binary_it_was_given() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        binary = Path(temporary) / "stub"
+        binary.write_text(
+            '#!/bin/sh\nulimit -c; ulimit -n; ulimit -t; echo "argv:$*"\n',
+            encoding="utf-8",
+        )
+        binary.chmod(0o755)
+        read, write = os.pipe()
+        try:
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    "-B",
+                    "-m",
+                    "mechanical_librarian.bootstrap.probe_shim",
+                    str(read),
+                    str(binary),
+                    "-of",
+                    "json",
+                ],
+                pass_fds=(read,),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        finally:
+            os.close(read)
+            os.close(write)
+
+    assert completed.returncode == 0
+    assert completed.stdout.splitlines() == ["0", "64", "30", "argv:-of json"]
+
+
+def test_the_shim_that_cannot_become_a_probe_exits_non_zero() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-B",
+            "-m",
+            "mechanical_librarian.bootstrap.probe_shim",
+            "0",
+            "/nonexistent/ffprobe",
+        ],
+        capture_output=True,
+        timeout=30,
+    )
+
+    assert completed.returncode != 0
+
+
+def test_the_descriptor_the_parent_passed_survives_the_shim_exec() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        binary = Path(temporary) / "stub"
+        binary.write_text("#!/bin/sh\ncat /dev/fd/$1\n", encoding="utf-8")
+        binary.chmod(0o755)
+        media = Path(temporary) / "book.m4b"
+        media.write_text("recorded bytes", encoding="utf-8")
+        descriptor = os.open(media, os.O_RDONLY)
+        try:
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    "-B",
+                    "-m",
+                    "mechanical_librarian.bootstrap.probe_shim",
+                    str(descriptor),
+                    str(binary),
+                    str(descriptor),
+                ],
+                pass_fds=(descriptor,),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        finally:
+            os.close(descriptor)
+
+    assert completed.stdout == "recorded bytes"
 
 
 def test_the_interpretation_child_caps_its_own_process_count_on_linux() -> None:
