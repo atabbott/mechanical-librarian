@@ -360,11 +360,11 @@ def test_setup_and_settings_successors_open_through_live_outer_control(
         {},
         "verifier",
     )
-    predecessor = cast(
+    predecessor_settings = cast(
         SettingsView, SimpleNamespace(document=SimpleNamespace(libraries=()))
     )
     settings = SimpleNamespace(
-        read=lambda: predecessor, activation_snapshot=lambda *_values: snapshot
+        read=lambda: predecessor_settings, activation_snapshot=lambda *_values: snapshot
     )
     activation = composition._StoreRuntimeActivation(
         ReviewBootstrap(

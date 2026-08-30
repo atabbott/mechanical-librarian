@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+from typing import cast
 
 import pytest
 
 from mechanical_librarian.application.review_pipeline import (
+    ReviewPreparationPipeline,
     ReviewPreparationSupervisor,
 )
 from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
@@ -200,7 +202,7 @@ def test_post_commit_paused_library_addition_keeps_successor_available_until_res
                 )
                 self.deferred = ()
 
-    pipeline = PausedPipeline()
+    pipeline = cast(ReviewPreparationPipeline, PausedPipeline())
     supervisor = ReviewPreparationSupervisor(pipeline)
     shutdown: list[str] = []
     settings_commits: list[str] = []
@@ -210,10 +212,10 @@ def test_post_commit_paused_library_addition_keeps_successor_available_until_res
         available.append("served")
 
     predecessor = RuntimeGeneration(_app)
-    successor = RuntimeGeneration(
-        successor_app,
-        admit=lambda: supervisor.request_library_addition("primary", "added"),
-    )
+    def admit_successor() -> None:
+        supervisor.request_library_addition("primary", "added")
+
+    successor = RuntimeGeneration(successor_app, admit=admit_successor)
     dispatcher = MutableRuntimeDispatcher(
         predecessor, request_shutdown=lambda: shutdown.append("shutdown")
     )

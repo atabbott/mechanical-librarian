@@ -1403,6 +1403,9 @@ def test_per_work_presentation_query_count_does_not_grow_with_run_population(
         repository._connection.set_trace_callback(statements.append)
         refresh_preparation_work(repository._connection, work_id, 103)
         repository._connection.set_trace_callback(None)
+        presentation = repository.preparation_presentation(103)
+        assert presentation is not None
+        run_id = presentation.run_id
         exact_work_plan = tuple(
             row[3]
             for row in repository._connection.execute(
@@ -1418,7 +1421,7 @@ def test_per_work_presentation_query_count_does_not_grow_with_run_population(
                 "FROM review_preparation_presentation AS trigger "
                 "JOIN review_preparation_scans AS scan ON scan.scan_id=trigger.scan_id "
                 "WHERE trigger.row_kind='trigger' AND trigger.run_id=?",
-                (repository.preparation_presentation(103).run_id,),
+                (run_id,),
             )
         )
         snapshot_plans = tuple(
@@ -1430,9 +1433,9 @@ def test_per_work_presentation_query_count_does_not_grow_with_run_population(
             )
             for row in repository._connection.execute(
                 "EXPLAIN QUERY PLAN " + sql,
-                (repository.preparation_presentation(103).run_id, 0)
+                (run_id, 0)
                 if sql.endswith("updated_at>=?")
-                else (repository.preparation_presentation(103).run_id,),
+                else (run_id,),
             )
         )
         vm_steps = 0
@@ -2965,7 +2968,7 @@ def test_atomic_resume_rolls_back_every_promotion_and_retries_once(
             calls += 1
             raise sqlite3.OperationalError("private promotion sentinel")
         calls += 1
-        return original(*args, **kwargs)  # type: ignore[arg-type]
+        return original(*args, **kwargs)
 
     with (
         patch.object(
@@ -3048,7 +3051,7 @@ def test_library_addition_drain_rolls_back_keyboard_interrupt_exactly(
             calls += 1
             raise interruption
         calls += 1
-        return original(*args, **kwargs)  # type: ignore[arg-type]
+        return original(*args, **kwargs)
 
     with (
         patch.object(

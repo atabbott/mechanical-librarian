@@ -1286,15 +1286,23 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     }
   }, [preparationSelected, presentationVersion])
   const currentSearch = useRef(search)
+  const mounted = useRef(false)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
   const dismissPreparation = useMutation({
     mutationFn: (runId: string) => http.dismissPreparation(runId),
     retry: false,
     onSuccess: async (value, runId) => {
       if (!(await preparationState.adoptDismissal(runId, value))) return
-      if (currentSearch.current.preparation !== runId) return
+      if (!mounted.current || currentSearch.current.preparation !== runId) return
       await navigate({
         replace: true,
         search: (current) => {
+          if (current.preparation !== runId) return current
           const next = { ...current }
           delete next.preparation
           return next

@@ -513,6 +513,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
     ) -> None:
         configured = self._validated_library_scope(libraries, updated_at)
         transaction = self._transaction("resume_review_pipeline")
+        failure: BaseException | None
         try:
             transaction.begin()
             self._drain_library_additions(configured, updated_at, clear_pause=True)
@@ -534,6 +535,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
     ) -> None:
         configured = self._validated_library_scope(libraries, updated_at)
         transaction = self._transaction("drain_library_additions")
+        failure: BaseException | None
         try:
             transaction.begin()
             self._drain_library_additions(configured, updated_at, clear_pause=False)
