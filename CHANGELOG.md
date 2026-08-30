@@ -13,6 +13,12 @@
   missing current provenance; ordinary startup and user upgrades stay
   absent-or-exact-current. (#938)
 
+- Audiobook covers are now acquired from the Audible catalog and iTunes Search
+  through the same bounded pipeline an ebook's use, each behind its own
+  `cover_enabled` switch that defaults on. Every decoded cover states a
+  perceptual hash, and two authorities picturing the same art is recorded as
+  corroboration of the work. Nothing elects an audiobook cover. (#749)
+
 - Audiobooks now consult their providers, adding the iTunes Search adapter and
   retaining what all four said. A title-and-author admission widens to the
   marketplace, running time and narrator only when the provider's runtime

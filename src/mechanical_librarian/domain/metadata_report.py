@@ -4557,6 +4557,7 @@ def _cover_source_from_data(value: object) -> CoverSource:
                     "height",
                     "media_type",
                     "original_digest",
+                    "perceptual_hash",
                     "preview_digest",
                     "preview_variant",
                     "width",

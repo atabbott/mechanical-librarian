@@ -147,8 +147,8 @@ class DisabledGoogleBooksProviderInput(_ProviderInput):
 # ADR-0061 admits every audiobook provider keyless: no key exists for them even
 # as an optional upgrade, so the four pairs below carry `secret_file: None` and
 # no credential surface of any kind, exactly as Open Library's disabled form
-# does. This build acquires no audiobook cover bytes, so `cover_enabled` is
-# closed shut on them too.
+# does. `cover_enabled` is closed shut by default and opened only on the two
+# adapters that state a cover asset of their own.
 class _KeylessAudioProviderInput(_Closed):
     name: Name
     cover_enabled: Literal[False]
@@ -156,7 +156,19 @@ class _KeylessAudioProviderInput(_Closed):
     contact_email: Literal[None] = None
 
 
-class EnabledAudibleCatalogProviderInput(_KeylessAudioProviderInput):
+# Audnexus and AudioSilo restate Audible's CDN asset, so only these two carry a
+# real cover switch, and it defaults on: an audiobook's art is the corroborating
+# surface a recording without an identifier is left with.  The fields are spelt
+# out rather than inherited because widening a closed `Literal[False]` in a
+# subclass would be an unsound override of the pair above.
+class _CoverBearingAudioProviderInput(_Closed):
+    name: Name
+    cover_enabled: StrictBool = True
+    secret_file: Literal[None]
+    contact_email: Literal[None] = None
+
+
+class EnabledAudibleCatalogProviderInput(_CoverBearingAudioProviderInput):
     adapter: Literal["audible_catalog"]
     enabled: Literal[True]
     # The resolution order for one ASIN. 27 of the reference library's 103
@@ -192,7 +204,7 @@ class DisabledAudioSiloProviderInput(_KeylessAudioProviderInput):
     enabled: Literal[False]
 
 
-class EnabledItunesSearchProviderInput(_KeylessAudioProviderInput):
+class EnabledItunesSearchProviderInput(_CoverBearingAudioProviderInput):
     adapter: Literal["itunes_search"]
     enabled: Literal[True]
 

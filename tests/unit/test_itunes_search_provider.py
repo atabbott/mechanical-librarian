@@ -14,6 +14,11 @@ from mechanical_librarian.adapters.providers.itunes_search_metadata import (
     ITunesSearchMetadataProvider,
     ITunesSearchPacer,
 )
+from mechanical_librarian.domain.cover_evidence import (
+    CoverDesignation,
+    CoverSourceKind,
+    CoverSourceState,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ProviderEvidenceKind,
@@ -263,3 +268,93 @@ def test_every_request_reaches_the_one_admitted_origin() -> None:
     assert seen
     for url in seen:
         assert str(url).startswith(ITUNES_SEARCH_ORIGIN + "/")
+
+
+def test_a_search_states_one_related_edition_cover_for_each_retained_result() -> None:
+    _seen, handle = _recorder()
+    provider = _provider(handle)
+
+    observation = provider.observe(work_plan())
+
+    identities = {candidate.identity for candidate in observation.candidates}
+    assert identities
+    assert identities == {
+        descriptor.provenance.edition_identity
+        for descriptor in provider.cover_descriptors
+        if descriptor.provenance is not None
+    }
+    for descriptor in provider.cover_descriptors:
+        assert CoverSourceKind.ITUNES_SEARCH is descriptor.kind
+        assert descriptor.url is not None
+        assert "is1-ssl.mzstatic.com" == httpx.URL(descriptor.url).host
+        assert descriptor.terminal_state is None
+        assert descriptor.allow_redirects is False
+        assert descriptor.provenance is not None
+        assert CoverDesignation.RELATED_EDITION is descriptor.provenance.designation
+
+
+@pytest.mark.parametrize(
+    "url",
+    (
+        "https://is9-ssl.mzstatic.com/image/thumb/a/100x100bb.jpg",
+        "https://is1.mzstatic.com/image/thumb/a/100x100bb.jpg",
+        "https://mzstatic.com.example.invalid/image/thumb/a/100x100bb.jpg",
+        "http://is1-ssl.mzstatic.com/image/thumb/a/100x100bb.jpg",
+        "https://is1-ssl.mzstatic.com:8443/image/thumb/a/100x100bb.jpg",
+    ),
+)
+def test_an_artwork_url_outside_the_closed_host_set_is_refused_with_a_typed_state(
+    url: str,
+) -> None:
+    document = copy.deepcopy(payload("itunes_search"))
+    for result in document["results"]:
+        result["artworkUrl100"] = url
+    _seen, handle = _recorder(_store(document))
+    provider = _provider(handle)
+
+    observation = provider.observe(work_plan())
+
+    assert ProviderStatus.CANDIDATES is observation.status
+    assert provider.cover_descriptors
+    for descriptor in provider.cover_descriptors:
+        assert descriptor.url is None
+        assert CoverSourceState.UNSAFE_REMOTE is descriptor.terminal_state
+
+
+def test_a_result_that_states_no_artwork_states_an_absent_cover_source() -> None:
+    document = copy.deepcopy(payload("itunes_search"))
+    for result in document["results"]:
+        del result["artworkUrl100"]
+    _seen, handle = _recorder(_store(document))
+    provider = _provider(handle)
+
+    provider.observe(work_plan())
+
+    assert provider.cover_descriptors
+    for descriptor in provider.cover_descriptors:
+        assert descriptor.url is None
+        assert descriptor.terminal_state is None
+
+
+def test_an_unreadable_artwork_declaration_is_typed_not_dropped() -> None:
+    document = copy.deepcopy(payload("itunes_search"))
+    for result in document["results"]:
+        result["artworkUrl100"] = ""
+    _seen, handle = _recorder(_store(document))
+    provider = _provider(handle)
+
+    provider.observe(work_plan())
+
+    assert provider.cover_descriptors
+    for descriptor in provider.cover_descriptors:
+        assert descriptor.url is None
+        assert CoverSourceState.INVALID_DECLARATION is descriptor.terminal_state
+
+
+def test_an_asin_only_plan_states_no_cover_at_all() -> None:
+    _seen, handle = _recorder()
+    provider = _provider(handle)
+
+    provider.observe(asin_plan())
+
+    assert () == provider.cover_descriptors

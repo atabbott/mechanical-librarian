@@ -366,7 +366,7 @@
           "type": "null"
         },
         "cover_enabled": {
-          "const": false,
+          "default": true,
           "title": "Cover Enabled",
           "type": "boolean"
         },
@@ -421,7 +421,6 @@
       },
       "required": [
         "name",
-        "cover_enabled",
         "secret_file",
         "adapter",
         "enabled"
@@ -634,7 +633,7 @@
           "type": "null"
         },
         "cover_enabled": {
-          "const": false,
+          "default": true,
           "title": "Cover Enabled",
           "type": "boolean"
         },
@@ -656,7 +655,6 @@
       },
       "required": [
         "name",
-        "cover_enabled",
         "secret_file",
         "adapter",
         "enabled"

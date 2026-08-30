@@ -17,6 +17,7 @@ from unittest import mock
 import pytest
 from PIL import Image, ImageCms
 
+from mechanical_librarian.domain.audio_inspection import AudioEmbeddedCover
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
     CoverDesignation,
@@ -27,6 +28,7 @@ from mechanical_librarian.domain.cover_evidence import (
     cover_source_id,
 )
 from mechanical_librarian.domain.metadata_report import (
+    AudioFacts,
     ClaimKind,
     ClaimScope,
     Comparison,
@@ -3472,3 +3474,134 @@ def test_unknown_invented_duplicate_or_mismatched_inputs_fail_closed(mutation) -
                 profile_payload=b'{"profile":"synthetic"}',
                 read_preview=read_preview,
             )
+
+
+def _audiobook_cover_source(
+    index: int,
+    payload: bytes,
+    kind: CoverSourceKind,
+    provider: str,
+    perceptual_hash: str | None,
+) -> CoverSource:
+    return CoverSource(
+        cover_source_id(kind, f"audio-source-{index}"),
+        kind,
+        CoverSourceState.RETRIEVED,
+        CoverArtifact.create(
+            f"audio-original-{index}".encode(),
+            payload,
+            "image/png",
+            300 + index,
+            450 + index,
+            perceptual_hash,
+        ),
+        provenance=CoverProvenance(
+            provider,
+            CoverDesignation.RELATED_EDITION,
+            "unresolved",
+            f"{provider}-edition-{index}",
+        ),
+    )
+
+
+def _audiobook_report(sources: tuple[CoverSource, ...]) -> MetadataReport:
+    return MetadataReport.create(
+        target=TargetFacts(
+            "synthetic", "books", "item", default_target_fields("Synthetic title")
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=(),
+        local_reasons=("no_local_audio_claims",),
+        providers=(),
+        cover_sources=tuple(sorted(sources, key=lambda value: value.source_id)),
+        audio=AudioFacts(embedded_cover=AudioEmbeddedCover(False)),
+    )
+
+
+def _audiobook_identity_reasons(
+    left_hash: str | None,
+    right_hash: str | None,
+    *,
+    right_provider: str = "store",
+    right_kind: CoverSourceKind = CoverSourceKind.ITUNES_SEARCH,
+    build=_audiobook_report,
+) -> dict[str, list[str]]:
+    payloads = (_preview(31), _preview(32))
+    sources = (
+        _audiobook_cover_source(
+            31, payloads[0], CoverSourceKind.AUDIBLE_CATALOG, "audible", left_hash
+        ),
+        _audiobook_cover_source(
+            32, payloads[1], right_kind, right_provider, right_hash
+        ),
+    )
+    report = build(sources)
+    by_artifact = {
+        source.artifact.artifact_id: payload
+        for source, payload in zip(sources, payloads, strict=True)
+        if source.artifact is not None
+    }
+
+    def read_preview(artifact: str, _variant: str) -> bytes:
+        return by_artifact[artifact]
+
+    packet = prepare_cover_packet(report.to_json(), read_preview)
+    images = tuple(
+        (value.reference, value.digest, value.payload) for value in packet.images
+    )
+    document = json.loads(
+        classify_cover_identity(
+            report.to_json(), packet.document, images, read_preview=read_preview
+        ).document
+    )
+    return {
+        row["candidate_reference"]: row["reasons"] for row in document["candidates"]
+    }
+
+
+def test_two_audiobook_authorities_agreeing_on_one_cover_corroborate_the_work() -> None:
+    reasons = _audiobook_identity_reasons("0f1e2d3c4b5a6978", "0f1e2d3c4b5a6979")
+
+    assert 2 == len(reasons)
+    for value in reasons.values():
+        assert "cover_hash_within_distance" in value
+
+
+def test_two_audiobook_authorities_picturing_different_art_contradict() -> None:
+    reasons = _audiobook_identity_reasons("0000000000000000", "ffffffffffffffff")
+
+    assert 2 == len(reasons)
+    for value in reasons.values():
+        assert "cover_hash_outside_distance" in value
+
+
+def test_one_authority_alone_states_no_cover_corroboration() -> None:
+    """The rule compares two independent authorities, never one with itself."""
+    reasons = _audiobook_identity_reasons(
+        "0f1e2d3c4b5a6978",
+        "0f1e2d3c4b5a6979",
+        right_provider="audible",
+        right_kind=CoverSourceKind.AUDIBLE_CATALOG,
+    )
+
+    for value in reasons.values():
+        assert not any(item.startswith("cover_hash_") for item in value)
+
+
+def test_a_cover_without_a_perceptual_hash_forms_no_pair() -> None:
+    reasons = _audiobook_identity_reasons("0f1e2d3c4b5a6978", None)
+
+    for value in reasons.values():
+        assert not any(item.startswith("cover_hash_") for item in value)
+
+
+def test_an_ebook_report_never_states_a_cover_corroboration_reason() -> None:
+    def ebook(sources: tuple[CoverSource, ...]) -> MetadataReport:
+        return _report(sources)
+
+    reasons = _audiobook_identity_reasons(
+        "0f1e2d3c4b5a6978", "0f1e2d3c4b5a6979", build=ebook
+    )
+
+    for value in reasons.values():
+        assert not any(item.startswith("cover_hash_") for item in value)

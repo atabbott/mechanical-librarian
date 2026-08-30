@@ -35,6 +35,10 @@ EBOOK_PROVIDER_ADAPTERS = frozenset({"google_books", "hardcover", "open_library"
 AUDIOBOOK_PROVIDER_ADAPTERS = frozenset(
     {"audible_catalog", "audnexus", "audiosilo", "itunes_search"}
 )
+# The two of those four that state a cover asset of their own. Audnexus and
+# AudioSilo restate Audible's CDN asset, so enabling covers on them would buy a
+# second copy of one image rather than a second opinion about it.
+AUDIOBOOK_COVER_PROVIDER_ADAPTERS = frozenset({"audible_catalog", "itunes_search"})
 
 
 class ConfigurationError(ValueError):
@@ -187,12 +191,16 @@ class ProviderConnectionConfiguration:
             raise ConfigurationError("provider marketplaces are invalid")
         if self.adapter in AUDIOBOOK_PROVIDER_ADAPTERS:
             # ADR-0061 admits these keyless: no credential exists for them even
-            # as an optional upgrade, and this build acquires no audiobook
-            # cover bytes, so neither surface may be configured on one.
+            # as an optional upgrade, so no credential surface may be
+            # configured on one. Covers are admitted on the two that state an
+            # asset of their own and refused on the two that restate Audible's.
             if (
                 self.secret_file is not None
                 or self.contact_email is not None
-                or self.cover_enabled
+                or (
+                    self.cover_enabled
+                    and self.adapter not in AUDIOBOOK_COVER_PROVIDER_ADAPTERS
+                )
                 or (self.adapter == "audible_catalog" and self.enabled)
                 != bool(self.marketplaces)
             ):

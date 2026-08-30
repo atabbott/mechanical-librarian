@@ -1122,6 +1122,16 @@ def _cover_choice_contexts(
                     "external_corroboration",
                     "Retained catalogue cover supports this choice.",
                 ),
+                CoverSourceKind.AUDIBLE_CATALOG: (
+                    "Audible catalog",
+                    "external_corroboration",
+                    "Retained catalogue cover supports this choice.",
+                ),
+                CoverSourceKind.ITUNES_SEARCH: (
+                    "iTunes Store",
+                    "external_corroboration",
+                    "Retained catalogue cover supports this choice.",
+                ),
             }.get(
                 source.kind,
                 (

@@ -122,8 +122,16 @@ qualification.
   eligibility and the shadow-review linkage guard remain `B0`-shaped: relaxing
   those grants an ASIN write destination this record does not, and that part
   stays deferred.
-- Audiobook cover acquisition stays ungranted: the four adapters carry no
-  cover surface in `config-v7` at all.
+- Audiobook cover acquisition is granted on two of the four adapters. The
+  Audible catalog and iTunes Search each state a cover asset of their own, so
+  `config-v7` carries a real `cover_enabled` bool on their enabled forms,
+  defaulting on. Audnexus and AudioSilo restate Audible's CDN asset, so they
+  carry no cover surface at all: a second copy of one image is not a second
+  opinion about it, and the cover rule needs two independent authorities.
+  Acquisition rides the existing bounded cover pipeline, and the hash the rule
+  compares is computed in the isolated decode child beside the preview. This
+  grants acquisition and evidence only; no cover election semantics change and
+  an audiobook still has no write authority.
 
 ## Alternatives considered
 

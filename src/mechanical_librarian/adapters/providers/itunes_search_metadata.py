@@ -18,6 +18,7 @@ import random
 import time
 from dataclasses import replace
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -43,9 +44,18 @@ from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryLane,
     MetadataDiscoveryPlan,
     MetadataLookup,
+    ProviderCoverDescriptor,
     ProviderLaneResult,
+    merge_provider_cover_descriptors,
     provider_observation,
     qualify_provider_observation,
+)
+from mechanical_librarian.domain.cover_evidence import (
+    CoverDesignation,
+    CoverProvenance,
+    CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
 )
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
@@ -130,6 +140,14 @@ _RESULT_KEYS = frozenset(
 # candidate's identity, which is the only surface a report retains a provider's
 # native identifier on.
 _MAX_COLLECTION_ID = 9_999_999_999_999
+# The store states a collection, never a work, so the candidate and its cover
+# provenance carry the same unresolved work sentinel.
+_UNRESOLVED_WORK = "unresolved"
+# The artwork origin the store states in the captured search response.  The
+# cover transport is address-pinned and follows no redirect, so this closed set
+# is the whole origin contract for this provider's cover bytes.
+ITUNES_ARTWORK_HOSTS: frozenset[str] = frozenset({"is1-ssl.mzstatic.com"})
+_MAX_COVER_URL_CHARACTERS = 2048
 
 
 class ITunesSearchMetadataProvider:
@@ -169,6 +187,8 @@ class ITunesSearchMetadataProvider:
         )
         self._called = False
         self._schema_rejections = 0
+        self._pacer = pacer
+        self.cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
 
     @property
     def attempt_records(self) -> tuple[ProviderAttemptRecord, ...]:
@@ -248,8 +268,10 @@ class ITunesSearchMetadataProvider:
             )
         self._session.ledger = ledger
         results: list[ProviderLaneResult] = []
+        descriptors: tuple[ProviderCoverDescriptor, ...] = ()
         try:
             for lane in lanes:
+                self.cover_descriptors = ()
                 lookup = _lane_lookup(lane, plan.local_claims)
                 physical = self._resolve(ledger, lane, lookup, deadline=deadline)
                 observation = qualify_provider_observation(physical, lookup)
@@ -263,8 +285,21 @@ class ITunesSearchMetadataProvider:
                         transformation_lineage=observation.transformation_lineage,
                     )
                 )
+                merged = merge_provider_cover_descriptors(
+                    descriptors,
+                    _retained_cover_descriptors(self.cover_descriptors, observation),
+                )
+                if merged is None:
+                    results[-1] = ProviderLaneResult(
+                        lane,
+                        ProviderStatus.MALFORMED,
+                        accessed_at=observation.accessed_at,
+                    )
+                else:
+                    descriptors = merged
         finally:
             self._client.close()
+        self.cover_descriptors = descriptors
         return provider_observation(
             self._name,
             tuple(results),
@@ -338,6 +373,9 @@ class ITunesSearchMetadataProvider:
                 lookup.local_claims,
                 schema_rejections=self._reject_schema_members,
             )
+            self.cover_descriptors = _cover_descriptors(
+                self._name, payload.get("results", []), self._cover_wait
+            )
         except ProviderFailure as error:
             return self._result(lookup, error.status)
         except (
@@ -359,6 +397,10 @@ class ITunesSearchMetadataProvider:
             candidates,
             dispatch_lineage=WorkDispatchLineage.from_query(query),
         )
+
+    def _cover_wait(self, deadline: float | None = None) -> bool:
+        """Pace a cover fetch on the same shared start pacer the search uses."""
+        return True if self._pacer is None else self._pacer.wait(deadline)
 
     def _reject_schema_members(self, count: int = 1) -> None:
         if count <= 0:
@@ -562,13 +604,105 @@ def _candidate(
     return finalize_candidate_comparisons(
         ProviderCandidate(
             identity,
-            "unresolved",
+            _UNRESOLVED_WORK,
             tuple(claims),
             _canonical_evidence(evidence),
         ),
         local_claims,
         provider,
     )
+
+
+def _retained_cover_descriptors(
+    descriptors: tuple[ProviderCoverDescriptor, ...],
+    observation: ProviderObservation,
+) -> tuple[ProviderCoverDescriptor, ...]:
+    """Keep only the covers of the candidates this lane's report retains."""
+    if observation.status is not ProviderStatus.CANDIDATES:
+        return ()
+    identities = {candidate.identity for candidate in observation.candidates}
+    return tuple(
+        value
+        for value in descriptors
+        if value.provenance is not None
+        and value.provenance.edition_identity in identities
+    )
+
+
+def _cover_descriptors(
+    provider: str,
+    results: object,
+    wait: Callable[[float | None], bool],
+) -> tuple[ProviderCoverDescriptor, ...]:
+    """State one cover source for each collection this search named.
+
+    Every iTunes candidate is discovered rather than resolved from an
+    identifier, so its art is a related edition's and never an exact one.
+    """
+    if type(results) is not list:
+        return ()
+    descriptors: list[ProviderCoverDescriptor] = []
+    for result in results:
+        if type(result) is not dict:
+            continue
+        collection = result.get("collectionId")
+        if (
+            type(collection) is not int
+            or isinstance(collection, bool)
+            or not 0 < collection <= _MAX_COLLECTION_ID
+        ):
+            continue
+        url, terminal_state = _cover_url(result.get("artworkUrl100"))
+        descriptors.append(
+            ProviderCoverDescriptor(
+                provider,
+                CoverSourceKind.ITUNES_SEARCH,
+                cover_source_id(
+                    CoverSourceKind.ITUNES_SEARCH,
+                    f"{provider}:collection:{collection}",
+                ),
+                url,
+                CoverProvenance(
+                    provider,
+                    CoverDesignation.RELATED_EDITION,
+                    _UNRESOLVED_WORK,
+                    "itunes-collection-" + str(collection),
+                ),
+                wait,
+                False,
+                None,
+                terminal_state,
+            )
+        )
+    return tuple(descriptors)
+
+
+def _cover_url(value: object) -> tuple[str | None, CoverSourceState | None]:
+    """Admit one artwork URL against this provider's closed host set."""
+    if value is None:
+        return None, None
+    if type(value) is not str or not value:
+        return None, CoverSourceState.INVALID_DECLARATION
+    if len(value) > _MAX_COVER_URL_CHARACTERS:
+        return None, CoverSourceState.OVERSIZED
+    try:
+        parts = urlsplit(value)
+        hostname = parts.hostname
+    except ValueError:
+        return None, CoverSourceState.UNSAFE_REMOTE
+    if (
+        any(ord(character) < 0x21 or ord(character) > 0x7E for character in value)
+        or "\\" in value
+        or parts.scheme != "https"
+        or hostname is None
+        or hostname not in ITUNES_ARTWORK_HOSTS
+        or parts.port not in (None, 443)
+        or parts.username is not None
+        or parts.password is not None
+        or bool(parts.fragment)
+    ):
+        return None, CoverSourceState.UNSAFE_REMOTE
+    return value, None
 
 
 def _canonical_evidence(

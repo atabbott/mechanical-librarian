@@ -1604,7 +1604,8 @@ class GenerateMetadataReport:
         Both media branches run this one loop, so an audiobook observation is
         bounded, classified, and diagnosed exactly as an ebook one is. What the
         branches differ in is the plan they hand it -- ISBN and work lanes, or
-        ASIN and work lanes -- and what they do with the descriptors it returns.
+        ASIN and work lanes. Both hand the descriptors it returns to the same
+        cover observer.
         """
         observations: list[ProviderObservation] = []
         descriptors: list[ProviderCoverDescriptor] = []
@@ -1775,9 +1776,15 @@ class GenerateMetadataReport:
 
         An audiobook's identifier is an ASIN, so the plan is built by
         ``audiobook_discovery_plan`` rather than the ISBN one, and it runs
-        through the same provider loop an ebook does. Cover descriptors are
-        deliberately discarded: no admitted audiobook adapter carries a cover
-        surface, so an audio report states no cover source at all.
+        through the same provider loop an ebook does. Its cover descriptors run
+        through the same bounded cover observer as well: two of the four
+        admitted authorities state a cover asset of their own, and each one's
+        `cover_enabled` flag is consulted inside that observer.
+
+        The aggregate cover window is the ebook path's own 60 seconds. There is
+        no measured reason for an audiobook's cover acquisition to be bounded
+        differently from an ebook's -- the bytes come from the same kind of CDN
+        over the same transport -- so it is deliberately the same number.
         """
         reasons = tuple(
             sorted(
@@ -1786,10 +1793,25 @@ class GenerateMetadataReport:
             )
         )
         plan = audiobook_discovery_plan(initial, combined_claims)
-        observations, _descriptors = self._observe_providers(
-            repository, plan, time.monotonic() + 60.0
+        cover_aggregate_deadline = time.monotonic() + 60.0
+        observations, descriptors = self._observe_providers(
+            repository, plan, cover_aggregate_deadline
         )
         try:
+            # An audiobook has no locally extracted cover: its embedded art is
+            # recorded as presence inside ``audio`` and never decoded, so the
+            # observer starts from an empty local set.
+            cover_sources = (
+                ()
+                if self._cover_observer is None
+                else self._cover_observer.observe(
+                    initial,
+                    tuple(observations),
+                    (),
+                    tuple(descriptors),
+                    cover_aggregate_deadline,
+                )
+            )
             report = MetadataReport.create(
                 target=TargetFacts(
                     self._connection.name,
@@ -1807,6 +1829,7 @@ class GenerateMetadataReport:
                 local_reasons=reasons,
                 providers=tuple(sorted(observations, key=lambda value: value.provider)),
                 field_results=derive_field_results(combined_claims),
+                cover_sources=cover_sources,
                 audio=audio.audio,
             )
         except Exception as error:

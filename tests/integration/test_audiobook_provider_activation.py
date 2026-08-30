@@ -9,13 +9,16 @@ is proved is the wiring rather than the adapters, which have their own suites.
 
 from __future__ import annotations
 
+import io
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from PIL import Image
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.providers.remote_cover import RemoteCover
 from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
@@ -27,6 +30,7 @@ from mechanical_librarian.application.configuration import (
 )
 from mechanical_librarian.application.metadata_report import (
     AudioInspectionResult,
+    ProviderCoverDescriptor,
     ProviderLaneResult,
     TargetFile,
     TargetSnapshot,
@@ -34,6 +38,13 @@ from mechanical_librarian.application.metadata_report import (
 )
 from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.domain.audio_inspection import AudioEmbeddedCover
+from mechanical_librarian.domain.cover_evidence import (
+    CoverDesignation,
+    CoverProvenance,
+    CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
+)
 from mechanical_librarian.domain.metadata_report import (
     AudioFacts,
     ClaimKind,
@@ -201,12 +212,36 @@ class _FakeAudiobookProvider:
         *,
         status: ProviderStatus = ProviderStatus.CANDIDATES,
         lane_kinds: frozenset[ProviderQueryKind] = frozenset({ProviderQueryKind.ASIN}),
+        cover_kind: CoverSourceKind | None = None,
+        cover_url: str | None = None,
     ) -> None:
         self.name = name
         self.authority = authority
         self.calls = calls
         self.status = status
         self.lane_kinds = lane_kinds
+        self.cover_descriptors: tuple[ProviderCoverDescriptor, ...] = (
+            ()
+            if cover_kind is None
+            else (
+                ProviderCoverDescriptor(
+                    name,
+                    cover_kind,
+                    cover_source_id(cover_kind, f"{name}:product:{_ASIN}"),
+                    cover_url,
+                    CoverProvenance(
+                        name,
+                        CoverDesignation.EXACT_EDITION,
+                        "unresolved",
+                        "audnexus-book-" + _ASIN,
+                    ),
+                    None,
+                    False,
+                    None,
+                    None if cover_url is not None else CoverSourceState.UNSAFE_REMOTE,
+                ),
+            )
+        )
 
     def observe(self, plan, *, deadline=None):
         del deadline
@@ -243,7 +278,7 @@ class _FakeAudiobookProvider:
         )
 
 
-def _configuration() -> ApplicationConfiguration:
+def _configuration(covers: bool = False) -> ApplicationConfiguration:
     return ApplicationConfiguration(
         (
             TargetConnectionConfiguration(
@@ -263,14 +298,14 @@ def _configuration() -> ApplicationConfiguration:
         (MediaMountConfiguration("audiobooks", "/container", "/service", True),),
         (
             ProviderConnectionConfiguration(
-                "audible", True, False, None, "audible_catalog", marketplaces=("uk",)
+                "audible", True, covers, None, "audible_catalog", marketplaces=("uk",)
             ),
             ProviderConnectionConfiguration(
                 "enrichment", True, False, None, "audnexus"
             ),
             ProviderConnectionConfiguration("silo", True, False, None, "audiosilo"),
             ProviderConnectionConfiguration(
-                "store", True, False, None, "itunes_search"
+                "store", True, covers, None, "itunes_search"
             ),
         ),
         provider_recovery_generation=1,
@@ -300,11 +335,14 @@ def _catalogue_entry() -> CatalogueEntry:
 
 
 def _run(
-    root: Path, providers: dict[str, _FakeAudiobookProvider]
+    root: Path,
+    providers: dict[str, _FakeAudiobookProvider],
+    *,
+    covers: bool = False,
 ) -> tuple[str, object]:
     """Publish one audiobook report through the real composition seam."""
     database = root / "reports.sqlite"
-    configuration = _configuration()
+    configuration = _configuration(covers)
     composition.CoverArtifactStore(root / "artifacts", create=True)
     repository = open_repository(database)
     repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
@@ -481,3 +519,152 @@ def test_a_degraded_primary_still_binds_the_remaining_observations(
         # A degraded primary is still a published report and still a terminal
         # disposition: nothing about the audiobook path waits on it.
         assert ("provider", "failed", "evidence_only") == work
+
+
+_AUDIBLE_ART = "https://m.media-amazon.com/images/I/51POf8gOyLL._SL500_.jpg"
+_ITUNES_ART = "https://is1-ssl.mzstatic.com/image/thumb/a/100x100bb.jpg"
+
+
+def _design(seed: int, size: tuple[int, int] = (240, 360)) -> Image.Image:
+    """One decodable cover whose brightness varies, so its hash is not flat."""
+    image = Image.new("RGB", size)
+    image.putdata(
+        [
+            ((index + seed) % 251, (index * 7) % 241, (index * 13 + seed) % 239)
+            for index in range(size[0] * size[1])
+        ]
+    )
+    return image
+
+
+def _art(image: Image.Image, size: tuple[int, int] | None = None) -> bytes:
+    output = io.BytesIO()
+    scaled = image if size is None else image.resize(size, Image.Resampling.LANCZOS)
+    scaled.save(output, "JPEG", quality=90)
+    return output.getvalue()
+
+
+def _one_design_two_authorities() -> dict[str, bytes]:
+    """The same art as two authorities publish it: two sizes, two encodings."""
+    design = _design(0)
+    return {_AUDIBLE_ART: _art(design), _ITUNES_ART: _art(design, (120, 180))}
+
+
+def _cover_providers(
+    calls: list[tuple[str, ProviderQueryKind]],
+    *,
+    itunes_url: str | None = _ITUNES_ART,
+) -> dict[str, _FakeAudiobookProvider]:
+    """The four authorities, with covers on the two that state one.
+
+    The store answers the ASIN lane here because this case proves the cover
+    wiring rather than its lane discipline, which its own suite proves.
+    """
+    return {
+        "audible_catalog": _FakeAudiobookProvider(
+            "audible",
+            "audible_catalog",
+            calls,
+            cover_kind=CoverSourceKind.AUDIBLE_CATALOG,
+            cover_url="https://m.media-amazon.com/images/I/51POf8gOyLL._SL500_.jpg",
+        ),
+        "audnexus": _FakeAudiobookProvider("enrichment", "audnexus", calls),
+        "audiosilo": _FakeAudiobookProvider("silo", "audiosilo", calls),
+        "itunes_search": _FakeAudiobookProvider(
+            "store",
+            "itunes_search",
+            calls,
+            cover_kind=CoverSourceKind.ITUNES_SEARCH,
+            cover_url=itunes_url,
+        ),
+    }
+
+
+def _published_with_covers(
+    root: Path,
+    calls: list[tuple[str, ProviderQueryKind]],
+    payloads: dict[str, bytes],
+    *,
+    covers: bool = True,
+    itunes_url: str | None = _ITUNES_ART,
+) -> MetadataReport:
+    def fetch(url: str, **_kwargs: object) -> RemoteCover:
+        return RemoteCover(url, "image/jpeg", payloads[url])
+
+    providers = _cover_providers(calls, itunes_url=itunes_url)
+    with patch.object(composition, "fetch_remote_cover", side_effect=fetch):
+        serialized, repository = _run(root, providers, covers=covers)
+    repository.close()
+    return MetadataReport.from_json(serialized)
+
+
+def test_an_audiobook_acquires_its_provider_covers_with_perceptual_hashes(
+    calls: list[tuple[str, ProviderQueryKind]],
+) -> None:
+    """Two independent authorities' art reaches the report through one pipeline."""
+    with tempfile.TemporaryDirectory() as temporary:
+        published = _published_with_covers(
+            Path(temporary),
+            calls,
+            _one_design_two_authorities(),
+        )
+
+    kinds = {source.kind for source in published.cover_sources}
+    assert CoverSourceKind.AUDIBLE_CATALOG in kinds
+    assert CoverSourceKind.ITUNES_SEARCH in kinds
+    retrieved = [
+        source
+        for source in published.cover_sources
+        if source.state is CoverSourceState.RETRIEVED
+    ]
+    assert 2 == len(retrieved)
+    hashes = [
+        source.artifact.perceptual_hash
+        for source in retrieved
+        if source.artifact is not None
+    ]
+    assert 2 == len(hashes)
+    assert all(value is not None and 16 == len(value) for value in hashes)
+    # One design carried by two authorities: the rule's own distance bound.
+    left, right = (int(str(value), 16) for value in hashes)
+    assert bin(left ^ right).count("1") <= 10
+
+
+def test_a_disabled_cover_switch_acquires_no_audiobook_cover_bytes(
+    calls: list[tuple[str, ProviderQueryKind]],
+) -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        published = _published_with_covers(
+            Path(temporary),
+            calls,
+            _one_design_two_authorities(),
+            covers=False,
+        )
+
+    assert not [
+        source
+        for source in published.cover_sources
+        if source.kind
+        in {CoverSourceKind.AUDIBLE_CATALOG, CoverSourceKind.ITUNES_SEARCH}
+    ]
+
+
+def test_a_refused_cover_origin_is_published_as_a_typed_outcome(
+    calls: list[tuple[str, ProviderQueryKind]],
+) -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        published = _published_with_covers(
+            Path(temporary),
+            calls,
+            {_AUDIBLE_ART: _art(_design(0))},
+            covers=True,
+            itunes_url=None,
+        )
+
+    store = next(
+        source
+        for source in published.cover_sources
+        if source.kind is CoverSourceKind.ITUNES_SEARCH
+    )
+    assert CoverSourceState.UNSAFE_REMOTE is store.state
+    assert store.artifact is None

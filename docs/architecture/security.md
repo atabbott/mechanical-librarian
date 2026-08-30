@@ -953,8 +953,13 @@ contract differs by provider and is not provider-wide:
   typed as authentication, authorization and no-match, and any other status is
   terminally unavailable rather than a no-match. Responses must be
   `application/json`; a product without a canonical ASIN fails closed, and every
-  other field is tolerated as optional. It acquires no cover bytes and
-  constructs no cover source.
+  other field is tolerated as optional. Its cover requests carry no credential,
+  follow no redirect, and share the adapter's request-start pacer. The URL is
+  the widest product image the product itself stated, admitted only if its host
+  is `m.media-amazon.com`: the closed host set is checked where the descriptor
+  is built, so a URL naming any other origin becomes a typed `unsafe_remote`
+  cover outcome and no socket is opened for it. Acquisition happens only when
+  the connection's `cover_enabled` is set.
 - **Audnexus** issues `GET` requests only, to the single fixed origin
   `https://api.audnex.us`, on the two paths `/books/{asin}` and
   `/books/{asin}/chapters` built from a canonical ASIN, with the marketplace
@@ -1003,10 +1008,19 @@ contract differs by provider and is not provider-wide:
   malformed. A result without a collection identifier fails closed. The adapter
   states no narrator and no running time at all, because the store publishes
   neither, so no candidate it builds can satisfy the runtime corroboration gate.
-  It acquires no cover bytes and constructs no cover source.
+  Its cover requests carry no credential, follow no redirect, and share the
+  adapter's request-start pacer. The URL is the `artworkUrl100` the store
+  stated, admitted only if its host is `is1-ssl.mzstatic.com`: the closed host
+  set is checked where the descriptor is built, so a URL naming any other
+  origin — including another artwork shard — becomes a typed `unsafe_remote`
+  cover outcome and no socket is opened for it. Acquisition happens only when
+  the connection's `cover_enabled` is set.
 
 Every cover byte, whichever provider supplied it, passes through the same
-public-address pinning, bounded decoder child, and private artifact path.
+public-address pinning, bounded decoder child, and private artifact path. The
+decoder child also states each image's 64-bit perceptual hash, computed beside
+the preview from the bytes it already decoded, so no other process decodes an
+untrusted image to obtain one.
 
 Open Library's enabled configuration requires a non-secret contact email, held
 only long enough to identify its fixed-origin requests; it enters no

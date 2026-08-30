@@ -16,6 +16,7 @@ from collections.abc import Mapping
 from dataclasses import replace
 from types import MappingProxyType
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -41,9 +42,18 @@ from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryLane,
     MetadataDiscoveryPlan,
     MetadataLookup,
+    ProviderCoverDescriptor,
     ProviderLaneResult,
+    merge_provider_cover_descriptors,
     provider_observation,
     qualify_provider_observation,
+)
+from mechanical_librarian.domain.cover_evidence import (
+    CoverDesignation,
+    CoverProvenance,
+    CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
 )
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
@@ -129,6 +139,16 @@ _LOOKUP_TOP_LEVEL = frozenset({"product", "response_groups"})
 # an absence: the claim keeps a `MALFORMED` state so the report still records
 # that the provider said something here.
 _UNPROJECTABLE = object()
+# Every audiobook candidate this adapter states names a product, never a work:
+# the catalog has no work identifier at all, so the report carries the same
+# unresolved work sentinel on the candidate and on its cover provenance.
+_UNRESOLVED_WORK = "unresolved"
+# The one origin Audible publishes product art from.  The cover transport is
+# address-pinned and refuses a redirect, so this closed set is the whole origin
+# contract for this provider's cover bytes: a URL naming any other host is
+# refused where the descriptor is built rather than at the socket.
+AUDIBLE_COVER_HOSTS: frozenset[str] = frozenset({"m.media-amazon.com"})
+_MAX_COVER_URL_CHARACTERS = 2048
 
 
 class AudibleCatalogMetadataProvider:
@@ -177,6 +197,8 @@ class AudibleCatalogMetadataProvider:
         )
         self._called = False
         self._schema_rejections = 0
+        self._pacer = pacer
+        self.cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
 
     @property
     def attempt_records(self) -> tuple[ProviderAttemptRecord, ...]:
@@ -256,8 +278,10 @@ class AudibleCatalogMetadataProvider:
                 )
         self._session.ledger = ledger
         results: list[ProviderLaneResult] = []
+        descriptors: tuple[ProviderCoverDescriptor, ...] = ()
         try:
             for lane in plan.lanes:
+                self.cover_descriptors = ()
                 lookup = _lane_lookup(lane, plan.local_claims)
                 physical = self._resolve(ledger, lane, lookup, deadline=deadline)
                 observation = qualify_provider_observation(physical, lookup)
@@ -271,8 +295,21 @@ class AudibleCatalogMetadataProvider:
                         transformation_lineage=observation.transformation_lineage,
                     )
                 )
+                merged = merge_provider_cover_descriptors(
+                    descriptors,
+                    _retained_cover_descriptors(self.cover_descriptors, observation),
+                )
+                if merged is None:
+                    results[-1] = ProviderLaneResult(
+                        lane,
+                        ProviderStatus.MALFORMED,
+                        accessed_at=observation.accessed_at,
+                    )
+                else:
+                    descriptors = merged
         finally:
             self._client.close()
+        self.cover_descriptors = descriptors
         return provider_observation(
             self._name,
             tuple(results),
@@ -344,6 +381,12 @@ class AudibleCatalogMetadataProvider:
                     marketplace=code,
                     schema_rejections=self._reject_schema_members,
                 )
+                self.cover_descriptors = _cover_descriptors(
+                    self._name,
+                    [product],
+                    ProviderQueryKind.ASIN,
+                    self._cover_wait,
+                )
             except ProviderFailure as error:
                 if error.status is ProviderStatus.NO_MATCH:
                     continue
@@ -409,6 +452,12 @@ class AudibleCatalogMetadataProvider:
                 marketplace=marketplace,
                 schema_rejections=self._reject_schema_members,
             )
+            self.cover_descriptors = _cover_descriptors(
+                self._name,
+                payload.get("products", []),
+                ProviderQueryKind.WORK,
+                self._cover_wait,
+            )
         except ProviderFailure as error:
             return self._result(lookup, error.status)
         except (
@@ -430,6 +479,10 @@ class AudibleCatalogMetadataProvider:
             candidates,
             dispatch_lineage=WorkDispatchLineage.from_query(query),
         )
+
+    def _cover_wait(self, deadline: float | None = None) -> bool:
+        """Pace a cover fetch on the same shared start pacer the API uses."""
+        return True if self._pacer is None else self._pacer.wait(deadline)
 
     def _reject_schema_members(self, count: int = 1) -> None:
         if count <= 0:
@@ -490,6 +543,126 @@ class AudibleCatalogMetadataProvider:
             query_retry=query_retry,
             classify=_classify,
         )
+
+
+def _retained_cover_descriptors(
+    descriptors: tuple[ProviderCoverDescriptor, ...],
+    observation: ProviderObservation,
+) -> tuple[ProviderCoverDescriptor, ...]:
+    """Keep only the covers of the candidates this lane's report retains.
+
+    A work search states up to five products but the work-identity admission
+    retains one, so acquiring the other four would spend the cover budget on
+    candidates no reader will ever see.
+    """
+    if observation.status is not ProviderStatus.CANDIDATES:
+        return ()
+    identities = {candidate.identity for candidate in observation.candidates}
+    return tuple(
+        value
+        for value in descriptors
+        if value.provenance is not None
+        and value.provenance.edition_identity in identities
+    )
+
+
+def _cover_descriptors(
+    provider: str,
+    products: object,
+    query_kind: ProviderQueryKind,
+    wait: Callable[[float | None], bool],
+) -> tuple[ProviderCoverDescriptor, ...]:
+    """State one cover source for each product this response named.
+
+    A product with no art states an absent cover rather than none at all: the
+    report records that the authority was asked and had nothing.
+    """
+    if type(products) is not list:
+        return ()
+    descriptors: list[ProviderCoverDescriptor] = []
+    for product in products:
+        if type(product) is not dict:
+            continue
+        asin = canonical_asin(product.get("asin"))
+        if asin is None:
+            continue
+        url, terminal_state = _cover_url(product.get("product_images"))
+        descriptors.append(
+            ProviderCoverDescriptor(
+                provider,
+                CoverSourceKind.AUDIBLE_CATALOG,
+                cover_source_id(
+                    CoverSourceKind.AUDIBLE_CATALOG,
+                    f"{provider}:product:{asin}",
+                ),
+                url,
+                CoverProvenance(
+                    provider,
+                    (
+                        CoverDesignation.EXACT_EDITION
+                        if query_kind is ProviderQueryKind.ASIN
+                        else CoverDesignation.RELATED_EDITION
+                    ),
+                    _UNRESOLVED_WORK,
+                    "audible-product-" + asin,
+                ),
+                wait,
+                False,
+                None,
+                terminal_state,
+            )
+        )
+    return tuple(descriptors)
+
+
+def _cover_url(value: object) -> tuple[str | None, CoverSourceState | None]:
+    """Admit one product image URL against this provider's closed host set.
+
+    The catalog states its art under integer width keys, so the widest key is
+    the one asked for.  Anything outside `AUDIBLE_COVER_HOSTS` is refused here
+    with a typed state rather than dropped, because a provider that offered a
+    cover this build would not fetch is a fact the report states.
+    """
+    if value is None:
+        return None, None
+    if type(value) is not dict or not value:
+        return None, CoverSourceState.INVALID_DECLARATION
+    widths = [
+        (width, image)
+        for key, image in value.items()
+        if type(key) is str and key.isdigit() and (width := int(key)) > 0
+    ]
+    if not widths:
+        return None, CoverSourceState.INVALID_DECLARATION
+    url = max(widths, key=lambda item: item[0])[1]
+    if type(url) is not str or not url:
+        return None, CoverSourceState.INVALID_DECLARATION
+    if len(url) > _MAX_COVER_URL_CHARACTERS:
+        return None, CoverSourceState.OVERSIZED
+    return _admitted_cover_url(url, AUDIBLE_COVER_HOSTS)
+
+
+def _admitted_cover_url(
+    url: str, hosts: frozenset[str]
+) -> tuple[str | None, CoverSourceState | None]:
+    try:
+        parts = urlsplit(url)
+        hostname = parts.hostname
+    except ValueError:
+        return None, CoverSourceState.UNSAFE_REMOTE
+    if (
+        any(ord(character) < 0x21 or ord(character) > 0x7E for character in url)
+        or "\\" in url
+        or parts.scheme != "https"
+        or hostname is None
+        or hostname not in hosts
+        or parts.port not in (None, 443)
+        or parts.username is not None
+        or parts.password is not None
+        or bool(parts.fragment)
+    ):
+        return None, CoverSourceState.UNSAFE_REMOTE
+    return url, None
 
 
 def _lane_asin(lane: MetadataDiscoveryLane) -> str:
@@ -676,7 +849,7 @@ def _candidate(
     return finalize_candidate_comparisons(
         ProviderCandidate(
             identity,
-            "unresolved",
+            _UNRESOLVED_WORK,
             tuple(claims),
             _canonical_evidence(evidence),
         ),

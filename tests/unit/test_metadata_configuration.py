@@ -172,13 +172,58 @@ def test_every_audiobook_adapter_is_admitted_keyless_in_both_states() -> None:
         {"contact_email": "owner@example.invalid"},
         {"api_key": "synthetic"},
         {"token": "synthetic"},
-        {"cover_enabled": True},
     ],
 )
-def test_no_audiobook_adapter_accepts_a_credential_or_cover_surface(
+def test_no_audiobook_adapter_accepts_a_credential_surface(
     adapter: str, credential_surface: dict[str, object]
 ) -> None:
     entry = {**_audio_provider(adapter), **credential_surface}
+    with pytest.raises(ValidationError):
+        ConfigurationInput.model_validate(_with_providers([entry]))
+
+
+@pytest.mark.parametrize("adapter", ("audible_catalog", "itunes_search"))
+def test_the_two_cover_bearing_audiobook_adapters_carry_a_real_cover_switch(
+    adapter: str,
+) -> None:
+    """Audible and iTunes state art of their own, so the switch is a bool."""
+    for enabled in (True, False):
+        entry = {**_audio_provider(adapter), "cover_enabled": enabled}
+        value = ConfigurationInput.model_validate(_with_providers([entry]))
+        admitted = next(
+            item.model_dump()
+            for item in value.providers
+            if item.model_dump()["adapter"] == adapter
+        )
+        assert admitted["cover_enabled"] is enabled
+
+
+@pytest.mark.parametrize("adapter", ("audible_catalog", "itunes_search"))
+def test_a_cover_bearing_audiobook_adapter_acquires_covers_by_default(
+    adapter: str,
+) -> None:
+    entry = _audio_provider(adapter)
+    del entry["cover_enabled"]
+    value = ConfigurationInput.model_validate(_with_providers([entry]))
+    admitted = next(
+        item.model_dump()
+        for item in value.providers
+        if item.model_dump()["adapter"] == adapter
+    )
+    assert admitted["cover_enabled"] is True
+
+
+@pytest.mark.parametrize("adapter", ("audnexus", "audiosilo"))
+def test_a_restating_audiobook_adapter_refuses_a_cover_surface(adapter: str) -> None:
+    """Audnexus and AudioSilo restate Audible's asset, so they carry none."""
+    entry = {**_audio_provider(adapter), "cover_enabled": True}
+    with pytest.raises(ValidationError):
+        ConfigurationInput.model_validate(_with_providers([entry]))
+
+
+@pytest.mark.parametrize("adapter", _AUDIO_ADAPTERS)
+def test_a_disabled_audiobook_adapter_refuses_a_cover_surface(adapter: str) -> None:
+    entry = {**_audio_provider(adapter, enabled=False), "cover_enabled": True}
     with pytest.raises(ValidationError):
         ConfigurationInput.model_validate(_with_providers([entry]))
 

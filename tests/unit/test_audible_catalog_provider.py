@@ -14,6 +14,11 @@ from mechanical_librarian.adapters.providers.audible_catalog_metadata import (
     AudibleCatalogMetadataProvider,
     AudibleCatalogPacer,
 )
+from mechanical_librarian.domain.cover_evidence import (
+    CoverDesignation,
+    CoverSourceKind,
+    CoverSourceState,
+)
 from mechanical_librarian.domain.metadata_report import (
     AUDIOBOOK_MARKETPLACES,
     ClaimKind,
@@ -436,3 +441,109 @@ def test_a_search_lane_outside_the_band_keeps_only_its_work_shape() -> None:
     assert () == _claims(candidate, ClaimKind.DURATION)
     assert () == _claims(candidate, ClaimKind.CONTRIBUTOR)
     assert () == _evidence(candidate, ProviderEvidenceKind.ASIN_MARKETPLACE)
+
+
+def test_an_asin_lookup_states_one_exact_edition_cover_source() -> None:
+    _seen, handle = _recorder(default=_json(payload("audible_lookup")))
+    provider = _provider(handle)
+
+    provider.observe(asin_plan())
+
+    (descriptor,) = provider.cover_descriptors
+    assert "audible" == descriptor.provider
+    assert CoverSourceKind.AUDIBLE_CATALOG is descriptor.kind
+    assert descriptor.url is not None
+    assert "m.media-amazon.com" == httpx.URL(descriptor.url).host
+    assert descriptor.terminal_state is None
+    assert descriptor.allow_redirects is False
+    assert descriptor.provenance is not None
+    assert CoverDesignation.EXACT_EDITION is descriptor.provenance.designation
+    assert "audible-product-" + _ASIN == descriptor.provenance.edition_identity
+
+
+def test_a_work_search_states_related_edition_covers_for_retained_candidates() -> None:
+    _seen, handle = _recorder(default=_json(payload("audible_search")))
+    provider = _provider(handle)
+
+    observation = provider.observe(work_plan(local_runtime_claim()))
+
+    identities = {candidate.identity for candidate in observation.candidates}
+    assert identities
+    assert identities == {
+        descriptor.provenance.edition_identity
+        for descriptor in provider.cover_descriptors
+        if descriptor.provenance is not None
+    }
+    assert all(
+        descriptor.provenance is not None
+        and descriptor.provenance.designation is CoverDesignation.RELATED_EDITION
+        for descriptor in provider.cover_descriptors
+    )
+
+
+def test_the_widest_stated_product_image_is_the_one_asked_for() -> None:
+    document = copy.deepcopy(payload("audible_lookup"))
+    document["product"]["product_images"] = {
+        "500": "https://m.media-amazon.com/images/I/small._SL500_.jpg",
+        "1024": "https://m.media-amazon.com/images/I/large._SL1024_.jpg",
+    }
+    _seen, handle = _recorder(default=_json(document))
+    provider = _provider(handle)
+
+    provider.observe(asin_plan())
+
+    (descriptor,) = provider.cover_descriptors
+    assert descriptor.url is not None
+    assert descriptor.url.endswith("large._SL1024_.jpg")
+
+
+@pytest.mark.parametrize(
+    "url",
+    (
+        "https://images-na.ssl-images-amazon.com/images/I/51POf8gOyLL.jpg",
+        "https://m.media-amazon.com.example.invalid/images/I/51POf8gOyLL.jpg",
+        "http://m.media-amazon.com/images/I/51POf8gOyLL.jpg",
+        "https://m.media-amazon.com:8443/images/I/51POf8gOyLL.jpg",
+        "https://owner:secret@m.media-amazon.com/images/I/51POf8gOyLL.jpg",
+    ),
+)
+def test_a_cover_url_outside_the_closed_host_set_is_refused_with_a_typed_state(
+    url: str,
+) -> None:
+    document = copy.deepcopy(payload("audible_lookup"))
+    document["product"]["product_images"] = {"500": url}
+    _seen, handle = _recorder(default=_json(document))
+    provider = _provider(handle)
+
+    observation = provider.observe(asin_plan())
+
+    assert ProviderStatus.CANDIDATES is observation.status
+    (descriptor,) = provider.cover_descriptors
+    assert descriptor.url is None
+    assert CoverSourceState.UNSAFE_REMOTE is descriptor.terminal_state
+
+
+def test_a_product_that_states_no_art_states_an_absent_cover_source() -> None:
+    document = copy.deepcopy(payload("audible_lookup"))
+    del document["product"]["product_images"]
+    _seen, handle = _recorder(default=_json(document))
+    provider = _provider(handle)
+
+    provider.observe(asin_plan())
+
+    (descriptor,) = provider.cover_descriptors
+    assert descriptor.url is None
+    assert descriptor.terminal_state is None
+
+
+def test_an_unreadable_product_image_declaration_is_typed_not_dropped() -> None:
+    document = copy.deepcopy(payload("audible_lookup"))
+    document["product"]["product_images"] = {"500": 12}
+    _seen, handle = _recorder(default=_json(document))
+    provider = _provider(handle)
+
+    provider.observe(asin_plan())
+
+    (descriptor,) = provider.cover_descriptors
+    assert descriptor.url is None
+    assert CoverSourceState.INVALID_DECLARATION is descriptor.terminal_state
