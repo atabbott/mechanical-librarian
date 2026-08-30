@@ -1142,6 +1142,7 @@ class ReviewPreparationSupervisor:
         self._stop = threading.Event()
         self._threads: tuple[threading.Thread, ...] = ()
         self._on_stop = on_stop
+        self._observation_open = False
 
     @property
     def libraries(self) -> tuple[tuple[str, str, str], ...]:
@@ -1157,7 +1158,7 @@ class ReviewPreparationSupervisor:
         self._stop.clear()
         self._admission.clear()
         self._pipeline.open_observation()
-        observation_closed = False
+        self._observation_open = True
         try:
             if self._recovery_resume is not None:
                 self._recovery_resume()
@@ -1192,15 +1193,13 @@ class ReviewPreparationSupervisor:
                         "review preparation start cleanup failed: "
                         + type(cleanup_error).__name__
                     )
-                else:
-                    observation_closed = True
                 raise
             self._threads = threads
             self._wake.set()
         except BaseException as error:
-            if not observation_closed and not self._threads:
+            if not self._threads:
                 try:
-                    self._pipeline.close_observation()
+                    self._close_observation()
                 except BaseException:
                     pass
             failure = error
@@ -1217,6 +1216,7 @@ class ReviewPreparationSupervisor:
         self._startup_ready.clear()
         self._dormant_start = True
         self._pipeline.open_observation()
+        self._observation_open = True
         threads = tuple(
             threading.Thread(
                 target=self._run,
@@ -1284,7 +1284,14 @@ class ReviewPreparationSupervisor:
                 self._on_stop()
                 self._on_stop = None
         finally:
-            self._pipeline.close_observation()
+            self._close_observation()
+
+    def _close_observation(self) -> None:
+        """Relinquish this supervisor's observation ownership at most once."""
+        if not self._observation_open:
+            return
+        self._observation_open = False
+        self._pipeline.close_observation()
 
     def request(
         self,

@@ -366,10 +366,12 @@ def test_setup_surface_exposes_only_health_shell_session_and_redacted_state() ->
         "['completed_clean','completed_with_failures'].includes(visible.state)"
         in script.text
     )
+    assert "pollDelay=terminal?5000:1500" in script.text
+    assert "if(terminal)stop()" not in script.text
     assert "encodeURIComponent(visible.run_id)" in script.text
     assert "setInterval" not in script.text
     assert "const poll=async()=>" in script.text
-    assert "finally{if(!stopped)timer=setTimeout(poll,1500)}" in script.text
+    assert "finally{if(!stopped)timer=setTimeout(poll,pollDelay)}" in script.text
     assert ".field[hidden]{display:none}" in css.text
     assert "MutationObserver" not in script.text
     assert "Writes stay off until you turn them on in Activity." in script.text

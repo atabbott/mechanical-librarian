@@ -8885,6 +8885,35 @@ def test_supervisor_cleans_only_started_lane_after_second_thread_start_fails(
     assert supervisor._threads == ()
 
 
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+def test_supervisor_closes_observation_once_when_start_and_stop_are_interrupted(
+    monkeypatch: pytest.MonkeyPatch, fault_type: type[BaseException]
+) -> None:
+    pipeline = _LifecyclePipeline()
+    original_start = threading.Thread.start
+    start_fault = fault_type("private start sentinel")
+    stop_fault = fault_type("private stop sentinel")
+
+    def start(thread: threading.Thread) -> None:
+        if thread.name == "review-preparation-1":
+            raise start_fault
+        original_start(thread)
+
+    def fail_stop() -> None:
+        raise stop_fault
+
+    monkeypatch.setattr(threading.Thread, "start", start)
+    supervisor = ReviewPreparationSupervisor(pipeline, on_stop=fail_stop)
+
+    with pytest.raises(fault_type) as raised:
+        supervisor.start()
+
+    assert raised.value is start_fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert pipeline.events.count("close") == 1
+    assert supervisor._threads == ()
+
+
 def test_supervisor_stops_then_closes_observation_in_existing_callback_order() -> None:
     pipeline = _LifecyclePipeline()
     supervisor = ReviewPreparationSupervisor(

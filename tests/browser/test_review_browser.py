@@ -2852,10 +2852,16 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                     assert page.locator("#setup-handoff-motion").evaluate(
                         "element => element.disabled"
                     )
+                    presentation_state["value"] = "completed_clean"
+                    page.get_by_role(
+                        "heading", name="Preparation is complete"
+                    ).wait_for()
+                    requests_after_terminal = preparation_requests["count"]
                     presentation_state["value"] = None
                     page.get_by_role(
                         "heading", name="Preparation is no longer available"
-                    ).wait_for()
+                    ).wait_for(timeout=7000)
+                    assert preparation_requests["count"] == requests_after_terminal + 1
                     expect(handoff).to_have_attribute("href", "/library?lens=all")
                     expect(page.get_by_text("Reconnecting", exact=False)).to_have_count(
                         0
