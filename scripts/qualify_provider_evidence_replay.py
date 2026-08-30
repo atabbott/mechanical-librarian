@@ -339,7 +339,7 @@ def require_environment(repository: Path, expected_head: str) -> None:
             ["git", "rev-parse", "--show-toplevel"], cwd=repository, text=True
         ).strip()
         status = subprocess.check_output(
-            ["git", "status", "--porcelain", "--untracked-files=no"],
+            ["git", "status", "--porcelain", "--untracked-files=all"],
             cwd=repository,
             text=True,
         )

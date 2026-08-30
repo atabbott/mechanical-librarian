@@ -6,6 +6,7 @@ import gzip
 import hashlib
 import json
 import sqlite3
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -565,6 +566,35 @@ def test_configuration_rejects_a_replaceable_parent_before_parsing(
 
     with pytest.raises(replay.ReplayFailure, match="private_authority_unsafe"):
         replay.load_private_configuration(configuration)
+
+
+def test_exact_source_authority_rejects_untracked_code(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.invalid"],
+        cwd=repository,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test Maintainer"],
+        cwd=repository,
+        check=True,
+    )
+    tracked = repository / "tracked.py"
+    tracked.write_text("value = 1\n")
+    subprocess.run(["git", "add", "tracked.py"], cwd=repository, check=True)
+    subprocess.run(["git", "commit", "-qm", "test"], cwd=repository, check=True)
+    head = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=repository, text=True
+    ).strip()
+    replay.require_environment(repository, head)
+
+    (repository / "untracked.py").write_text("value = 2\n")
+
+    with pytest.raises(replay.ReplayFailure, match="source_repository_invalid"):
+        replay.require_environment(repository, head)
 
 
 def test_private_authority_refuses_symlinks_permissions_and_overwrite(
