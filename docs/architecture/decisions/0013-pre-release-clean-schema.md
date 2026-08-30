@@ -34,6 +34,16 @@ it. Runtime SQL, plugins, configuration-supplied operations, canonical row
 conversion, general migration machinery, repair, import, and downgrade remain
 out of scope.
 
+Maintainer qualification continuity is a separate, narrower authority. A
+code-defined bridge may read one named complete private test-state clone,
+create and reverify an independent private backup, and reconstruct a fresh
+exact-current qualification database through current domain derivation. The
+plan must bind one exact source and target contract, preserve only evidence
+whose meaning current code accepts, explicitly invalidate observations missing
+current provenance, and discard every downstream decision or projection. It
+never mutates the retained source, runs at startup, contacts a provider,
+accepts configuration-supplied operations, or establishes product compatibility.
+
 The #800 index change predates this revision and is the sole retrospective
 exception: #805 delivers and qualifies its adoption separately because #800 was
 already merged when the retained experiment established the preservation need.
@@ -74,6 +84,14 @@ state objects cannot update the canonical historical state targeted by the
 three previous exact-predecessor plans, so those plans and the now-empty public
 command are retired. This does not weaken ordinary absent-or-exact-current
 startup or create a generic conversion seam.
+
+Issue #938 restores only the maintainer qualification boundary above. Its
+`retained-library-v26-to-v31` plan reads the exact retained #744 checkpoint,
+re-derives current reports, invalidates provider observations that predate
+mandatory work-dispatch lineage, their dependent covers, and artifact-bearing
+cover references whose complete private store was not verified, and creates
+fresh report-only current state. The earlier `schema-adopt` plans remain
+retired.
 
 Issue #869 also takes the clean-rebuild branch. Its exact-current application
 schema adds the derived `review_preparation_presentation` object, including its

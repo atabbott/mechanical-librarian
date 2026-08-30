@@ -50,12 +50,23 @@ deletion, repair, import, schema-migration, or backward-compatibility authority.
 An existing database must match the installed increment's exact current schema
 before any writable connection or mutation.
 
-This build has no offline schema-adoption command. Earlier exact-predecessor
-plans are retired because reviewer-access and owner-state tables change the
-current application schema. Older state is rejected before mutation and needs
-a clean rebuild; no configuration, credential, network, provider, reviewer,
-media, target, decision, canonical-row, import, repair, or arbitrary-SQL
-authority is created for upgrading it.
+This build has no offline product schema-adoption command. Earlier
+exact-predecessor plans are retired because reviewer-access and owner-state
+tables change the current application schema. Older runtime state is rejected
+before mutation and needs a clean rebuild.
+
+The installed qualification-state bridge is a maintainer test-state boundary,
+not upgrade authority. It reads only one exact owner-only retained clone,
+rejects sidecars, path replacement, unknown schemas, malformed canonical
+evidence, changed target builds, and unverified backups, then publishes a
+fresh exact-current output through an owner-only temporary inode and atomic
+directory entry. The source is never writable. Current derivation reconstructs
+reports; observations missing mandatory work-dispatch lineage, dependent
+covers, artifact-bearing references, and every downstream decision or
+projection are invalidated. The bridge accepts no artifact path and has no
+configuration, credential, network,
+provider, reviewer, media, target, import, repair, arbitrary-SQL, or startup
+authority.
 
 Foreground batch manifests are private immutable operator artifacts. Preview and
 read bind bounded regular no-follow descriptors under a private parent, validate
