@@ -27,6 +27,8 @@ class OwnerSettingsRepository(Protocol):
         expected_revision: int,
         secrets: tuple[SecretWrite, ...],
         live_update: AbstractContextManager[None] | None = None,
+        *,
+        accepted_at: int = 0,
     ) -> SettingsView: ...
 
 
@@ -43,8 +45,16 @@ class OwnerSettingsOperations:
         expected_revision: int,
         secrets: tuple[SecretWrite, ...],
         live_update: AbstractContextManager[None] | None = None,
+        *,
+        accepted_at: int = 0,
     ) -> SettingsView:
-        return self._repository.write(document, expected_revision, secrets, live_update)
+        return self._repository.write(
+            document,
+            expected_revision,
+            secrets,
+            live_update,
+            accepted_at=accepted_at,
+        )
 
 
 class FileOwnerSettingsRepository:
@@ -72,6 +82,8 @@ class FileOwnerSettingsRepository:
         expected_revision: int,
         secrets: tuple[SecretWrite, ...],
         live_update: AbstractContextManager[None] | None = None,
+        *,
+        accepted_at: int = 0,
     ) -> SettingsView:
         raise OwnerSettingsError("settings locked")
 

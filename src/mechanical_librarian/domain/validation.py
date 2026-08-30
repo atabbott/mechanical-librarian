@@ -46,17 +46,6 @@ boolean = exact_type(bool)
 text = exact_type(str)
 
 
-def preparation_display_name(value: object) -> bool:
-    """Accept one exact, nonempty owner-visible preparation title."""
-    if type(value) is not str:
-        return False
-    try:
-        length = len(value.encode("utf-8"))
-    except UnicodeEncodeError:
-        return False
-    return 1 <= length <= 2048
-
-
 def bounded_utf8_text(maximum_bytes: int) -> FieldCheck:
     """Accept exact, nonempty text within one UTF-8 byte bound."""
 

@@ -19,8 +19,10 @@ import httpx
 import pytest
 
 import mechanical_librarian.bootstrap.composition as composition
+from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.preparation_presentation import (
+    _completion_sequence_count,
     deferred_preparation_enrollment_id,
     refresh_preparation_presentation,
     refresh_preparation_run_state,
@@ -89,6 +91,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     default_target_fields,
 )
+from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
 from mechanical_librarian.domain.preparation_presentation import (
     PreparationRunState,
     PreparationTrigger,
@@ -99,6 +102,43 @@ from mechanical_librarian.domain.review_browse import browse_report
 from tests.support.review_cases import _report
 
 _PRODUCER = "f" * 64
+
+
+def _install_settings_authority(repository: object) -> None:
+    document = OwnerSettingsDocument.model_validate(
+        {
+            "schema_version": "owner-settings-v2",
+            "revision": 1,
+            "connections": [
+                {"name": "primary", "endpoint": "https://library.example.invalid"}
+            ],
+            "libraries": [
+                {
+                    "name": name,
+                    "connection": "primary",
+                    "library_id": library_id,
+                    "media_kind": "ebook",
+                }
+                for name, library_id in (
+                    ("fiction", "lib-1"),
+                    ("history", "lib-2"),
+                    ("poetry", "lib-3"),
+                )
+            ],
+        }
+    )
+    repository._connection.execute(
+        "INSERT INTO owner_settings VALUES(1,?,?)",
+        (document.revision, _canonical_json(document.model_dump())),
+    )
+    repository._connection.executemany(
+        "INSERT INTO owner_setting_secrets VALUES(?,?)",
+        (
+            ("connection.primary.key", "synthetic-target-secret"),
+            ("owner.password.verifier", "$argon2id$synthetic"),
+        ),
+    )
+    repository._connection.commit()
 
 
 def _proposal_stages(
@@ -319,7 +359,9 @@ def application_path() -> Iterator[Path]:
 
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "application.sqlite3"
-        open_repository(path).close()
+        repository = open_repository(path)
+        _install_settings_authority(repository)
+        repository.close()
         yield path
 
 
@@ -475,6 +517,42 @@ def test_first_visible_run_restarts_completed_triggerless_scan_as_queued(
     reopened = open_repository(application_path, create=False)
     assert reopened.preparation_presentation(102) == presentation
     reopened.close()
+
+
+def test_explicit_library_readd_bypasses_incomplete_first_boot_cohort(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    completed = repository.request_review_scan(
+        "primary", "fiction", "lib-1", _PRODUCER, 100, first_boot=True
+    )
+    repository.request_review_scan(
+        "primary", "history", "lib-2", _PRODUCER, 101, first_boot=True
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed',updated_at=102 "
+        "WHERE scan_id=?",
+        (completed.scan_id,),
+    )
+    refresh_preparation_presentation(repository._connection, 102)
+
+    readded = repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        103,
+        trigger=PreparationTrigger.LIBRARY_ADDED,
+    )
+    presentation = repository.preparation_presentation(103)
+    repository.close()
+
+    assert readded.state == "queued"
+    assert presentation is not None
+    assert any(
+        trigger.trigger is PreparationTrigger.LIBRARY_ADDED
+        for trigger in presentation.triggers
+    )
 
 
 def test_work_order_uses_unbounded_enrollment_ordinal(
@@ -1341,6 +1419,14 @@ def test_per_work_presentation_query_count_does_not_grow_with_run_population(
         "WHERE row_kind='deferred_enrollment'",
         "UPDATE review_preparation_presentation SET connection_name='other' "
         "WHERE row_kind='deferred_enrollment'",
+        "UPDATE review_preparation_presentation SET accepted_at=-1 "
+        "WHERE row_kind='deferred_enrollment'",
+        "UPDATE review_preparation_presentation SET settings_revision=0 "
+        "WHERE row_kind='deferred_enrollment'",
+        "UPDATE review_preparation_presentation SET recovery_high_water_stage='provider',"
+        "recovery_high_water_outcome='ready' WHERE row_kind='work'",
+        "UPDATE review_preparation_presentation SET recovery_high_water_stage='extraction' "
+        "WHERE row_kind='work'",
     ),
     ids=(
         "run-trigger-column",
@@ -1361,6 +1447,10 @@ def test_per_work_presentation_query_count_does_not_grow_with_run_population(
         "deferred-irrelevant-column",
         "deferred-row-identity",
         "deferred-target-identity",
+        "deferred-negative-accepted-at",
+        "deferred-settings-revision",
+        "recovery-marker-outcome-mismatch",
+        "unnecessary-recovery-marker",
     ),
 )
 def test_exact_current_presentation_rows_fail_closed(
@@ -1368,6 +1458,7 @@ def test_exact_current_presentation_rows_fail_closed(
 ) -> None:
     path = tmp_path / "invalid-presentation.sqlite3"
     repository = open_repository(path)
+    _install_settings_authority(repository)
     repository.request_review_scan(
         "primary",
         "fiction",
@@ -1615,6 +1706,163 @@ def test_completion_allocator_rolls_back_corrupt_maximum_without_real_write(
     repository.close()
 
 
+@pytest.mark.parametrize("corruption", ("delete-first", "gap", "nonmaximum-real"))
+def test_completion_allocator_refuses_noncanonical_population_before_mutation(
+    tmp_path: Path, corruption: str
+) -> None:
+    repository = open_repository(tmp_path / f"allocator-{corruption}.sqlite3")
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery,
+        1,
+        "a" * 64,
+        tuple(_entry(str(index), f"{index:064x}") for index in range(1, 4)),
+        102,
+    )
+    work_ids = tuple(
+        row[0]
+        for row in repository._connection.execute(
+            "SELECT work_id FROM review_preparation_work ORDER BY ordinal"
+        )
+    )
+    for offset, work_id in enumerate(work_ids[:2], 103):
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET state='complete',updated_at=? WHERE work_id=?",
+            (offset, work_id),
+        )
+        refresh_preparation_work(repository._connection, work_id, offset)
+    action = repository.claim_review_pipeline_work(work_ids[2], 105)
+    assert action is not None
+    repository._connection.execute("PRAGMA ignore_check_constraints=ON")
+    if corruption == "delete-first":
+        repository._connection.execute(
+            "DELETE FROM review_preparation_presentation WHERE completion_sequence=1"
+        )
+    elif corruption == "gap":
+        repository._connection.execute(
+            "UPDATE review_preparation_presentation SET completion_sequence=7 "
+            "WHERE completion_sequence=1"
+        )
+    else:
+        repository._connection.execute(
+            "UPDATE review_preparation_presentation SET completion_sequence=1.5 "
+            "WHERE completion_sequence=1"
+        )
+    repository._connection.commit()
+    before = tuple(
+        repository._connection.execute(
+            "SELECT row_id,completion_sequence,typeof(completion_sequence) "
+            "FROM review_preparation_presentation ORDER BY row_id"
+        )
+    )
+
+    with pytest.raises(
+        MetadataReportError, match="^review preparation persistence failed$"
+    ) as raised:
+        repository.fail_review_pipeline_action(action, "provider", False, 106)
+
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert repository._connection.in_transaction is False
+    assert (
+        tuple(
+            repository._connection.execute(
+                "SELECT row_id,completion_sequence,typeof(completion_sequence) "
+                "FROM review_preparation_presentation ORDER BY row_id"
+            )
+        )
+        == before
+    )
+    assert repository._connection.execute(
+        "SELECT state FROM review_preparation_work WHERE work_id=?", (work_ids[2],)
+    ).fetchone() == ("running",)
+    repository.close()
+
+
+def test_completion_allocator_uses_one_covering_linear_population_pass(
+    tmp_path: Path,
+) -> None:
+    sql = (
+        "SELECT COUNT(completion_sequence),MAX(completion_sequence),"
+        "COALESCE(SUM(typeof(completion_sequence)<>'integer'),0) "
+        "FROM review_preparation_presentation "
+        "INDEXED BY review_preparation_presentation_completion_integrity "
+        "WHERE row_kind='work' AND run_id=? AND completion_sequence IS NOT NULL"
+    )
+
+    def measured(population: int) -> tuple[int, int, tuple[str, ...]]:
+        repository, _pending = _seed_partly_completed_presentation(
+            tmp_path / f"allocator-scale-{population}.sqlite3", failed=False
+        )
+        run_id, scan_id, cycle_id = repository._connection.execute(
+            "SELECT run.run_id,enrollment.scan_id,enrollment.cycle_id "
+            "FROM review_preparation_presentation AS run "
+            "JOIN review_preparation_presentation AS enrollment "
+            "ON enrollment.row_kind='enrollment' WHERE run.row_id='run'"
+        ).fetchone()
+        for sequence in range(2, population + 1):
+            work_id = "review_work_" + f"{sequence:064x}"
+            repository._connection.execute(
+                "INSERT INTO review_preparation_presentation("
+                "row_id,row_kind,run_id,scan_id,cycle_id,work_id,ordinal,enrollment_ordinal,"
+                "display_name,work_stage,current_work_state,work_outcome,completion_sequence,updated_at) "
+                "VALUES(?,'work',?,?,?,?,?,?,?,'projection','complete','ready',?,103)",
+                (
+                    "work:" + work_id,
+                    run_id,
+                    scan_id,
+                    cycle_id,
+                    work_id,
+                    sequence,
+                    0,
+                    f"Book {sequence}",
+                    sequence,
+                ),
+            )
+        repository._connection.execute(
+            "UPDATE review_preparation_presentation SET completion_count=? WHERE row_id='run'",
+            (population,),
+        )
+        statements: list[str] = []
+        steps = 0
+
+        def count_step() -> int:
+            nonlocal steps
+            steps += 1
+            return 0
+
+        repository._connection.set_trace_callback(statements.append)
+        repository._connection.set_progress_handler(count_step, 1)
+        assert _completion_sequence_count(repository._connection, run_id) == population
+        repository._connection.set_progress_handler(None, 0)
+        repository._connection.set_trace_callback(None)
+        plan = tuple(
+            row[3]
+            for row in repository._connection.execute(
+                "EXPLAIN QUERY PLAN " + sql, (run_id,)
+            )
+        )
+        repository.close()
+        return len(statements), steps, plan
+
+    small_queries, small_steps, small_plan = measured(1)
+    large_queries, large_steps, large_plan = measured(2_000)
+    assert small_queries == large_queries == 2
+    assert small_plan == large_plan
+    assert any("COVERING INDEX" in row for row in large_plan)
+    assert all("TEMP B-TREE" not in row for row in large_plan)
+    assert large_steps <= small_steps + 30 * 2_000
+
+
 def test_retained_failed_completion_is_a_counter_lower_bound(tmp_path: Path) -> None:
     path = tmp_path / "invalid-failed-counter.sqlite3"
     repository, _pending = _seed_partly_completed_presentation(path, failed=True)
@@ -1696,6 +1944,7 @@ def test_presentation_corruption_is_value_free_and_refused_without_repair(
 ) -> None:
     path = tmp_path / f"invalid-{corruption}.sqlite3"
     repository = open_repository(path)
+    _install_settings_authority(repository)
     repository.request_review_scan(
         "primary",
         "fiction",
@@ -4548,6 +4797,55 @@ def test_failed_rediscovery_cannot_claim_queued_children(
     assert child == ("queued",)
 
 
+def test_recovery_high_water_reopens_and_clears_when_authority_catches_up(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    entry = _entry("recovery", "7" * 64)
+    repository.complete_review_discovery(discovery, 1, "a" * 64, (entry,), 102)
+    extraction = repository.claim_review_pipeline_action(103)
+    assert extraction is not None and extraction.stage == "extraction"
+    repository.advance_review_pipeline_action(extraction, None, 104)
+    changed_producer = "d" * 64
+    repository.recover_review_pipeline(
+        (("primary", "fiction", "lib-2", changed_producer),)
+    )
+    marked = repository._connection.execute(
+        "SELECT work_stage,current_work_state,recovery_high_water_stage,"
+        "recovery_high_water_outcome FROM review_preparation_presentation "
+        "WHERE row_kind='work'"
+    ).fetchone()
+    repository.close()
+
+    reopened = open_repository(application_path, create=False)
+    assert marked == ("provider", "queued", "provider", None)
+    rediscovery = reopened.claim_review_pipeline_action(105)
+    assert rediscovery is not None and rediscovery.stage == "discovery"
+    reopened.complete_review_discovery(
+        rediscovery, 2, "b" * 64, (replace(entry, library_id="lib-2"),), 106
+    )
+    extraction = reopened.claim_review_pipeline_action(107)
+    assert extraction is not None and extraction.stage == "extraction"
+    reopened.advance_review_pipeline_action(extraction, None, 108)
+    caught_up = reopened._connection.execute(
+        "SELECT work_stage,recovery_high_water_stage,recovery_high_water_outcome "
+        "FROM review_preparation_presentation WHERE row_kind='work'"
+    ).fetchone()
+    reopened.close()
+
+    assert caught_up == ("provider", None, None)
+
+
 def test_third_crashed_stage_is_terminal_instead_of_overflowing_claim(
     application_path: Path,
 ) -> None:
@@ -5951,6 +6249,12 @@ class _ConcurrentRepository:
     def request_review_scan(self, *args):  # pragma: no cover - not used here
         raise AssertionError
 
+    def require_current(self) -> None:
+        return None
+
+    def drain_library_additions(self, *args) -> None:
+        return None
+
     def review_pipeline_progress(self, *args):  # pragma: no cover - not used here
         return None
 
@@ -6034,6 +6338,9 @@ class _ScheduledPipeline:
     def deferred_library_additions(self):
         return ()
 
+    def drain_library_additions(self):
+        return None
+
     def set_paused(self, paused):
         self.is_paused = paused
 
@@ -6065,6 +6372,9 @@ class _LifecyclePipeline:
         self.events.append("recover")
         if self.fail_recover:
             raise ReviewPipelineError("persistence")
+
+    def drain_library_additions(self) -> None:
+        return None
 
     def run_next(self, maximum_actions: int = 64) -> bool:
         self.events.append("run")

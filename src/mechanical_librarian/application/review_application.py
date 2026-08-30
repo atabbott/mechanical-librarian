@@ -492,6 +492,7 @@ class ReviewApplication:
                         revision,
                         secret_writes,
                         cover_update,
+                        accepted_at=self._clock(),
                     )
 
                 if self._settings_activation is not None:

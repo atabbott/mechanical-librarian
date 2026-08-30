@@ -1,16 +1,22 @@
 import sqlite3
+from pathlib import Path
 from typing import cast
 
 import pytest
 from pydantic import ValidationError
 
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
+from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.owner_settings import OwnerSettingsStore
+from mechanical_librarian.adapters.persistence.preparation_presentation import (
+    refresh_preparation_presentation,
+)
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
     CoverConsiderationStore,
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
+from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.owner_settings import FileOwnerSettingsRepository
 from mechanical_librarian.domain.owner_settings import (
     OwnerSettingsDocument,
@@ -18,6 +24,7 @@ from mechanical_librarian.domain.owner_settings import (
     SecretWrite,
     file_field_metadata,
 )
+from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
 
 
 def _document(revision: int = 1) -> OwnerSettingsDocument:
@@ -89,6 +96,39 @@ def _cover_document(revision: int) -> OwnerSettingsDocument:
         "prefer_minimal_composition": True,
     }
     return OwnerSettingsDocument.model_validate(value)
+
+
+def _settings_with_libraries(
+    revision: int, names: tuple[str, ...]
+) -> OwnerSettingsDocument:
+    value = _document(revision).model_dump()
+    template = value["libraries"][0]
+    value["libraries"] = [
+        {**template, "name": name, "library_id": f"library-{index}"}
+        for index, name in enumerate(names, 1)
+    ]
+    return OwnerSettingsDocument.model_validate(value)
+
+
+def _seed_full_store(
+    path: Path, names: tuple[str, ...] = ("ebooks",)
+) -> tuple[object, OwnerSettingsStore]:
+    repository = open_repository(path)
+    document = _settings_with_libraries(1, names)
+    repository._connection.execute(
+        "INSERT INTO owner_settings VALUES(1,?,?)",
+        (document.revision, _canonical_json(document.model_dump())),
+    )
+    repository._connection.executemany(
+        "INSERT INTO owner_setting_secrets VALUES(?,?)",
+        (
+            ("connection.primary.key", "target-secret-1234"),
+            ("provider.books.key", "provider-secret-1234"),
+            ("owner.password.verifier", "$argon2id$synthetic"),
+        ),
+    )
+    repository._connection.commit()
+    return repository, repository.owner_settings_store()
 
 
 def test_document_rejects_noncanonical_references_and_bounds() -> None:
@@ -328,6 +368,244 @@ def test_store_is_atomic_and_enforces_cas_and_secret_operations() -> None:
             (SecretWrite(field_id="connection.primary.key", operation="clear"),),
         )
     assert store.read().document.revision == 2
+
+
+@pytest.mark.parametrize("failed_ordinal", (0, 1))
+def test_settings_addition_intents_share_the_settings_transaction(
+    tmp_path: Path, failed_ordinal: int
+) -> None:
+    repository, store = _seed_full_store(tmp_path / "settings-intents.sqlite3")
+    candidate = _settings_with_libraries(2, ("ebooks", "history", "poetry"))
+    failed_name = ("history", "poetry")[failed_ordinal]
+    repository._connection.execute(
+        "CREATE TEMP TRIGGER fail_settings_intent BEFORE INSERT ON review_preparation_presentation "
+        f"WHEN NEW.row_kind='deferred_enrollment' AND NEW.library_name='{failed_name}' "
+        "BEGIN SELECT RAISE(ABORT,'synthetic intent failure'); END"
+    )
+
+    with pytest.raises(OwnerSettingsError, match="unavailable"):
+        store.write(candidate, 1, (), accepted_at=100)
+
+    assert repository._connection.in_transaction is False
+    assert store.read().document.revision == 1
+    assert repository._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_presentation"
+    ).fetchone() == (0,)
+    repository._connection.execute("DROP TRIGGER fail_settings_intent")
+    committed = store.write(candidate, 1, (), accepted_at=100)
+    rows = repository._connection.execute(
+        "SELECT library_name,ordinal,accepted_at,settings_revision "
+        "FROM review_preparation_presentation WHERE row_kind='deferred_enrollment' "
+        "ORDER BY ordinal,row_id"
+    ).fetchall()
+    trigger = repository._connection.execute(
+        "SELECT accepted_count,first_accepted_at,last_accepted_at "
+        "FROM review_preparation_presentation WHERE row_id='trigger:library_added'"
+    ).fetchone()
+    repository._connection.execute(
+        "CREATE TEMP TRIGGER fail_settings_drain BEFORE INSERT ON review_preparation_scans "
+        f"WHEN NEW.library_name='{failed_name}' "
+        "BEGIN SELECT RAISE(ABORT,'synthetic drain failure'); END"
+    )
+    scope = (
+        ("primary", "ebooks", "library-1", "f" * 64),
+        ("primary", "history", "library-2", "f" * 64),
+        ("primary", "poetry", "library-3", "f" * 64),
+    )
+    with pytest.raises(Exception, match="persistence failed"):
+        repository.drain_library_additions(scope, 101)
+    assert repository._connection.in_transaction is False
+    assert repository._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_scans"
+    ).fetchone() == (0,)
+    assert repository._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_presentation "
+        "WHERE row_kind='deferred_enrollment'"
+    ).fetchone() == (2,)
+    repository._connection.execute("DROP TRIGGER fail_settings_drain")
+    repository.drain_library_additions(scope, 102)
+    repository.drain_library_additions(scope, 103)
+    promoted = repository._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_scans"
+    ).fetchone()
+    requested = repository._connection.execute(
+        "SELECT DISTINCT requested_at FROM review_preparation_scans"
+    ).fetchall()
+    deferred = repository._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_presentation "
+        "WHERE row_kind='deferred_enrollment'"
+    ).fetchone()
+    accepted = repository._connection.execute(
+        "SELECT accepted_count FROM review_preparation_presentation "
+        "WHERE row_id='trigger:library_added'"
+    ).fetchone()
+    repository.close()
+
+    assert committed.document.revision == 2
+    assert rows == [("history", 0, 100, 2), ("poetry", 1, 100, 2)]
+    assert trigger == (2, 100, 100)
+    assert promoted == (2,)
+    assert requested == [(102,)]
+    assert deferred == (0,)
+    assert accepted == (2,)
+
+
+@pytest.mark.parametrize("mixed", (False, True))
+def test_settings_removal_cancels_undrained_intent_without_rewriting_survivor(
+    tmp_path: Path, mixed: bool
+) -> None:
+    path = tmp_path / f"settings-removal-{mixed}.sqlite3"
+    repository, store = _seed_full_store(path)
+    added = ("ebooks", "history", "poetry") if mixed else ("ebooks", "history")
+    store.write(_settings_with_libraries(2, added), 1, (), accepted_at=100)
+    retained = ("ebooks", "poetry") if mixed else ("ebooks",)
+    store.write(_settings_with_libraries(3, retained), 2, (), accepted_at=110)
+    rows = repository._connection.execute(
+        "SELECT library_name,ordinal,accepted_at,settings_revision "
+        "FROM review_preparation_presentation WHERE row_kind='deferred_enrollment'"
+    ).fetchall()
+    trigger = repository._connection.execute(
+        "SELECT accepted_count FROM review_preparation_presentation "
+        "WHERE row_id='trigger:library_added'"
+    ).fetchone()
+    repository.close()
+
+    reopened = open_repository(path, create=False)
+    assert rows == ([("poetry", 0, 100, 2)] if mixed else [])
+    assert trigger == ((2,) if mixed else None)
+    presentation = reopened.preparation_presentation(111)
+    assert (presentation is not None) is mixed
+    reopened.close()
+
+
+def test_paused_settings_addition_stays_visible_until_atomic_resume(
+    tmp_path: Path,
+) -> None:
+    repository, store = _seed_full_store(tmp_path / "paused-settings-addition.sqlite3")
+    repository.set_review_pipeline_paused(True, 90)
+    store.write(
+        _settings_with_libraries(2, ("ebooks", "history")),
+        1,
+        (),
+        accepted_at=100,
+    )
+    scope = (
+        ("primary", "ebooks", "library-1", "f" * 64),
+        ("primary", "history", "library-2", "f" * 64),
+    )
+    blocked = repository.preparation_presentation(100)
+    repository.drain_library_additions(scope, 101)
+    assert repository._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_scans"
+    ).fetchone() == (0,)
+    repository.resume_review_pipeline(scope, 102)
+    promoted = repository.preparation_presentation(102)
+    rows = repository._connection.execute(
+        "SELECT row_kind,library_name FROM review_preparation_presentation "
+        "WHERE row_kind IN ('enrollment','deferred_enrollment')"
+    ).fetchall()
+    accepted = repository._connection.execute(
+        "SELECT accepted_count FROM review_preparation_presentation "
+        "WHERE row_id='trigger:library_added'"
+    ).fetchone()
+    repository.close()
+
+    assert blocked is not None and blocked.state.value == "blocked"
+    assert not blocked.dismissible
+    assert promoted is not None and promoted.state.value == "starting"
+    assert rows == [("enrollment", "history")]
+    assert accepted == (1,)
+
+
+@pytest.mark.parametrize("dismissed", (False, True))
+def test_settings_remove_and_readd_uses_intent_despite_terminal_scan_history(
+    tmp_path: Path, dismissed: bool
+) -> None:
+    repository, store = _seed_full_store(
+        tmp_path / f"settings-readd-{dismissed}.sqlite3", ("ebooks", "history")
+    )
+    scan = repository.request_review_scan(
+        "primary",
+        "ebooks",
+        "library-1",
+        "f" * 64,
+        80,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed',updated_at=81 WHERE scan_id=?",
+        (scan.scan_id,),
+    )
+    refresh_preparation_presentation(repository._connection, 81)
+    if dismissed:
+        terminal = repository.preparation_presentation(81)
+        assert terminal is not None
+        repository.dismiss_preparation_presentation(terminal.run_id, 82)
+    store.write(_settings_with_libraries(2, ("history",)), 1, (), accepted_at=90)
+    store.write(
+        _settings_with_libraries(3, ("ebooks", "history")),
+        2,
+        (),
+        accepted_at=100,
+    )
+    intent = repository.preparation_presentation(100)
+    repository.drain_library_additions(
+        (
+            ("primary", "ebooks", "library-1", "f" * 64),
+            ("primary", "history", "library-2", "f" * 64),
+        ),
+        101,
+    )
+    progress = repository.review_pipeline_progress("primary", "ebooks")
+    presentation = repository.preparation_presentation(101)
+    accepted = repository._connection.execute(
+        "SELECT accepted_count FROM review_preparation_presentation "
+        "WHERE row_id='trigger:library_added'"
+    ).fetchone()
+    repository.close()
+
+    assert intent is not None and intent.state.value == "blocked"
+    assert progress is not None and progress.state == "queued"
+    assert presentation is not None and presentation.run_id == intent.run_id
+    assert accepted == (1,)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "UPDATE review_preparation_presentation SET settings_revision=3 "
+        "WHERE row_kind='deferred_enrollment'",
+        "UPDATE review_preparation_presentation SET library_name='private-target' "
+        "WHERE row_kind='deferred_enrollment'",
+    ),
+)
+def test_deferred_settings_authority_corruption_is_value_free(
+    tmp_path: Path, mutation: str
+) -> None:
+    path = tmp_path / "deferred-settings-corruption.sqlite3"
+    repository, store = _seed_full_store(path)
+    store.write(
+        _settings_with_libraries(2, ("ebooks", "history")),
+        1,
+        (),
+        accepted_at=100,
+    )
+    repository.close()
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA ignore_check_constraints=ON")
+    connection.execute(mutation)
+    connection.commit()
+    connection.close()
+    before = path.read_bytes()
+
+    with pytest.raises(
+        MetadataReportError, match="^database is unavailable or incompatible$"
+    ) as raised:
+        open_repository(path, create=False)
+
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert path.read_bytes() == before
 
 
 def test_store_rejects_client_authored_restart_state() -> None:

@@ -7,6 +7,9 @@ import sqlite3
 from contextlib import AbstractContextManager, nullcontext
 
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
+from mechanical_librarian.adapters.persistence.preparation_presentation import (
+    reconcile_preparation_library_additions,
+)
 from mechanical_librarian.domain.owner_settings import (
     OwnerSettingsDocument,
     OwnerSettingsError,
@@ -102,17 +105,22 @@ class OwnerSettingsStore:
         expected_revision: int,
         secrets: tuple[SecretWrite, ...],
         live_update: AbstractContextManager[None] | None = None,
+        *,
+        accepted_at: int = 0,
     ) -> SettingsView:
         # Candidate preparation enters before SQLite authority is locked;
         # successful exit occurs only after the durable commit.
         with live_update if live_update is not None else nullcontext():
-            return self._write_transaction(document, expected_revision, secrets)
+            return self._write_transaction(
+                document, expected_revision, secrets, accepted_at
+            )
 
     def _write_transaction(
         self,
         document: OwnerSettingsDocument,
         expected_revision: int,
         secrets: tuple[SecretWrite, ...],
+        accepted_at: int,
     ) -> SettingsView:
         if (
             type(expected_revision) is not int
@@ -121,6 +129,8 @@ class OwnerSettingsStore:
             raise OwnerSettingsError("settings revision is invalid")
         if len({entry.field_id for entry in secrets}) != len(secrets):
             raise OwnerSettingsError("settings secret operation is invalid")
+        if type(accepted_at) is not int or accepted_at < 0:
+            raise OwnerSettingsError("settings update time is invalid")
         try:
             self._connection.execute("BEGIN IMMEDIATE")
             previous, current_values = _load_owner_settings_authority(self._connection)
@@ -155,6 +165,17 @@ class OwnerSettingsStore:
                 self._connection.execute(
                     "DELETE FROM owner_setting_secrets WHERE field_id=?", (name,)
                 )
+            reconcile_preparation_library_additions(
+                self._connection,
+                tuple(
+                    (library.connection, library.name) for library in previous.libraries
+                ),
+                tuple(
+                    (library.connection, library.name) for library in document.libraries
+                ),
+                document.revision,
+                accepted_at,
+            )
             committed = _settings_view(document, values)
             self._connection.commit()
         except OwnerSettingsError:
@@ -211,8 +232,12 @@ class OwnerSettingsStore:
             raise OwnerSettingsError("settings revision is stale")
         if document.pending_restart or previous.pending_restart:
             raise OwnerSettingsError("settings restart state is invalid")
-        if _non_settings_library_state(previous) != _non_settings_library_state(
-            document
+        previous_library_state = dict(_non_settings_library_state(previous))
+        candidate_library_state = dict(_non_settings_library_state(document))
+        if any(
+            candidate_library_state[name] != state
+            for name, state in previous_library_state.items()
+            if name in candidate_library_state
         ):
             raise OwnerSettingsError("settings document is invalid")
         _validate_available_provider_references(document)
@@ -392,9 +417,12 @@ def _validate_available_provider_references(document: OwnerSettingsDocument) -> 
 
 def _non_settings_library_state(
     document: OwnerSettingsDocument,
-) -> tuple[tuple[str, str | None, str | None, object], ...]:
+) -> tuple[tuple[str, tuple[str | None, str | None, object]], ...]:
     return tuple(
-        (library.name, library.display_name, library.mount, library.policy_override)
+        (
+            library.name,
+            (library.display_name, library.mount, library.policy_override),
+        )
         for library in document.libraries
     )
 

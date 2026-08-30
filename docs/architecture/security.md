@@ -84,7 +84,13 @@ contains at most five current book display names and eight recent completion
 names; those values never enter stream frames, logs, audit identifiers,
 diagnostics, support bundles, or reviewer input. Dismissal requires the exact
 current terminal run identity plus session, CSRF, Origin, and installed-build
-identity, and cannot hide blocked work. Target TLS, authentication, authorization, and unavailable observations
+identity, and cannot hide blocked work.
+Settings additions persist their bounded presentation-only intent in the same
+writer transaction as the new revision and secrets. Worker admission follows
+only after publication and an all-or-nothing intent drain; startup validation
+rejects stale target/revision bindings, recovery markers, and noncanonical
+completion authority without reflecting corrupted values.
+Target TLS, authentication, authorization, and unavailable observations
 are connection-scoped durable conditions with only a closed code, state, epoch,
 and affected-work count. Owner recovery is CSRF-bound and probes the configured
 TLS client with bounded JSON only; it never reflects endpoint or transport

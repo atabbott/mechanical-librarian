@@ -301,6 +301,12 @@ class ReviewPipelineRepository(Protocol):
         updated_at: int,
     ) -> None: ...
 
+    def drain_library_additions(
+        self,
+        libraries: tuple[tuple[str, str, str, str], ...],
+        updated_at: int,
+    ) -> None: ...
+
     def target_connection_conditions(self) -> tuple[TargetConnectionCondition, ...]: ...
     def guard_target_connection(
         self, action: PipelineAction, checked_at: int
@@ -562,6 +568,18 @@ class ReviewPreparationPipeline:
         )
         self._announce("preparation", None)
         return progress
+
+    def drain_library_additions(self) -> None:
+        libraries = tuple(
+            (connection, library, values[0], values[1])
+            for (connection, library), values in self._libraries.items()
+        )
+        self._with_foreground_repository(
+            lambda repository: repository.drain_library_additions(
+                libraries, self._clock()
+            )
+        )
+        self._announce("preparation", None)
 
     def deferred_library_additions(self) -> tuple[tuple[str, str], ...]:
         return self._with_foreground_repository(
@@ -1126,7 +1144,7 @@ class ReviewPreparationSupervisor:
         if self._threads:
             return
         self._stop.clear()
-        self._admission.set()
+        self._admission.clear()
         self._pipeline.open_observation()
         observation_closed = False
         try:
@@ -1136,7 +1154,10 @@ class ReviewPreparationSupervisor:
             if resume is not None:
                 resume()
             self._pipeline.recover()
+            with self._schedule_lock:
+                self._pipeline.drain_library_additions()
             self._schedule_due()
+            self._admission.set()
             threads = tuple(
                 threading.Thread(
                     target=self._run,
@@ -1203,8 +1224,10 @@ class ReviewPreparationSupervisor:
 
     def admit(self) -> None:
         """Open the already-started lanes after their generation is published."""
-        self._admission.set()
-        self._wake.set()
+        with self._schedule_lock:
+            self._pipeline.drain_library_additions()
+            self._admission.set()
+            self._wake.set()
 
     def suspend_admission(self) -> None:
         """Close claims while leaving active lanes available for restoration."""

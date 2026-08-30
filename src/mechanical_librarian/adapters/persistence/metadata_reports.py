@@ -1015,6 +1015,13 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     ) -> None:
         self._review_scans.resume_review_pipeline(libraries, updated_at)
 
+    def drain_library_additions(
+        self,
+        libraries: tuple[tuple[str, str, str, str], ...],
+        updated_at: int,
+    ) -> None:
+        self._review_scans.drain_library_additions(libraries, updated_at)
+
     def recover_review_pipeline(
         self, producers: tuple[tuple[str, str, str, str], ...]
     ) -> None:

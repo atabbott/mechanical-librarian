@@ -25,6 +25,7 @@ from typing import cast
 from mechanical_librarian.adapters.persistence.preparation_presentation import (
     accept_preparation_trigger,
     defer_preparation_library_addition,
+    mark_preparation_recovery,
     refresh_preparation_presentation,
     refresh_preparation_run_state,
 )
@@ -177,7 +178,19 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             if bool(control[0]):
                 if defer_when_paused:
                     defer_preparation_library_addition(
-                        self._connection, connection, library, requested_at
+                        self._connection,
+                        connection,
+                        library,
+                        requested_at,
+                        cast(
+                            int,
+                            (
+                                self._connection.execute(
+                                    "SELECT revision FROM owner_settings WHERE singleton=1"
+                                ).fetchone()
+                                or (1,)
+                            )[0],
+                        ),
                     )
                     transaction.commit()
                     return None
@@ -212,6 +225,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
         first_boot: bool,
         trigger: PreparationTrigger | None,
         promoting_deferred: bool = False,
+        presentation_accepted_at: int | None = None,
     ) -> PipelineProgress:
         row = self._connection.execute(
             "SELECT scan_id,state,producer_fingerprint,rescan_requested FROM review_preparation_scans "
@@ -224,6 +238,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             and row[1] in {"completed", "completed_with_failures"}
             and is_first_boot_scan_id(row[0], connection, library)
             and not promoting_deferred
+            and trigger is None
         ):
             latest = self._connection.execute(
                 "SELECT scan_id,connection_name,library_name,state "
@@ -289,7 +304,9 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                     cast(str, row[0]),
                     connection,
                     library,
-                    requested_at,
+                    requested_at
+                    if presentation_accepted_at is None
+                    else presentation_accepted_at,
                     cast(str, row[1]),
                     bool(row[3]),
                 )
@@ -323,7 +340,9 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 scan_id,
                 connection,
                 library,
-                requested_at,
+                requested_at
+                if presentation_accepted_at is None
+                else presentation_accepted_at,
                 None,
                 False,
             )
@@ -493,6 +512,43 @@ class SQLiteReviewScanRepository(ConnectionScoped):
         libraries: tuple[tuple[str, str, str, str], ...],
         updated_at: int,
     ) -> None:
+        configured = self._validated_library_scope(libraries, updated_at)
+        transaction = self._transaction("resume_review_pipeline")
+        try:
+            transaction.begin()
+            self._drain_library_additions(configured, updated_at, clear_pause=True)
+            transaction.commit()
+        except Exception:
+            transaction.rollback()
+            failed = True
+        else:
+            failed = False
+        if failed:
+            raise MetadataReportError("review preparation persistence failed") from None
+
+    def drain_library_additions(
+        self,
+        libraries: tuple[tuple[str, str, str, str], ...],
+        updated_at: int,
+    ) -> None:
+        configured = self._validated_library_scope(libraries, updated_at)
+        transaction = self._transaction("drain_library_additions")
+        try:
+            transaction.begin()
+            self._drain_library_additions(configured, updated_at, clear_pause=False)
+            transaction.commit()
+        except Exception:
+            transaction.rollback()
+            failed = True
+        else:
+            failed = False
+        if failed:
+            raise MetadataReportError("review preparation persistence failed") from None
+
+    @staticmethod
+    def _validated_library_scope(
+        libraries: tuple[tuple[str, str, str, str], ...], updated_at: int
+    ) -> dict[tuple[str, str], tuple[str, str]]:
         if (
             type(libraries) is not tuple
             or len(libraries) > 128
@@ -513,77 +569,85 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             raise MetadataReportError("review preparation scope is invalid")
         if len({item[:2] for item in libraries}) != len(libraries):
             raise MetadataReportError("review preparation scope is invalid")
-        configured = {(item[0], item[1]): item[2:] for item in libraries}
-        transaction = self._transaction("resume_review_pipeline")
-        try:
-            transaction.begin()
-            deferred = self._connection.execute(
-                "SELECT row_id,connection_name,library_name,ordinal "
-                "FROM review_preparation_presentation "
-                "WHERE row_kind='deferred_enrollment' ORDER BY ordinal,row_id"
-            ).fetchall()
-            for row_id, connection, library, _ordinal in deferred:
-                if (connection, library) not in configured:
-                    self._connection.execute(
-                        "DELETE FROM review_preparation_presentation WHERE row_id=?",
-                        (row_id,),
-                    )
-            authorities = self._connection.execute(
-                "SELECT row_id,row_kind,scan_id,cycle_id FROM review_preparation_presentation "
-                "WHERE row_kind IN ('enrollment','deferred_enrollment') "
-                "ORDER BY ordinal,row_id"
-            ).fetchall()
-            if (
-                not authorities
-                and self._connection.execute(
-                    "SELECT COUNT(*) FROM review_preparation_presentation WHERE row_kind='work'"
-                ).fetchone()[0]
-                == 0
+        return {(item[0], item[1]): item[2:] for item in libraries}
+
+    def _drain_library_additions(
+        self,
+        configured: dict[tuple[str, str], tuple[str, str]],
+        updated_at: int,
+        *,
+        clear_pause: bool,
+    ) -> None:
+        if not clear_pause:
+            paused = self._connection.execute(
+                "SELECT paused FROM review_preparation_control WHERE singleton=1"
+            ).fetchone()
+            if paused is None:
+                raise MetadataReportError("review preparation control is unavailable")
+            if bool(paused[0]):
+                refresh_preparation_run_state(self._connection, updated_at)
+                return
+        deferred = self._connection.execute(
+            "SELECT row_id,connection_name,library_name,ordinal,accepted_at "
+            "FROM review_preparation_presentation "
+            "WHERE row_kind='deferred_enrollment' ORDER BY ordinal,row_id"
+        ).fetchall()
+        for row_id, connection, library, _ordinal, _accepted_at in deferred:
+            if (connection, library) not in configured:
+                self._connection.execute(
+                    "DELETE FROM review_preparation_presentation WHERE row_id=?",
+                    (row_id,),
+                )
+        authorities = self._connection.execute(
+            "SELECT row_id,row_kind,scan_id,cycle_id FROM review_preparation_presentation "
+            "WHERE row_kind IN ('enrollment','deferred_enrollment') "
+            "ORDER BY ordinal,row_id"
+        ).fetchall()
+        if (
+            not authorities
+            and self._connection.execute(
+                "SELECT COUNT(*) FROM review_preparation_presentation WHERE row_kind='work'"
+            ).fetchone()[0]
+            == 0
+        ):
+            self._connection.execute("DELETE FROM review_preparation_presentation")
+        else:
+            for ordinal, (row_id, row_kind, scan_id, cycle_id) in enumerate(
+                authorities
             ):
-                self._connection.execute("DELETE FROM review_preparation_presentation")
-            else:
-                for ordinal, (row_id, row_kind, scan_id, cycle_id) in enumerate(
-                    authorities
-                ):
+                self._connection.execute(
+                    "UPDATE review_preparation_presentation SET ordinal=?,updated_at=? WHERE row_id=?",
+                    (ordinal, updated_at, row_id),
+                )
+                if row_kind == "enrollment" and cycle_id is not None:
                     self._connection.execute(
-                        "UPDATE review_preparation_presentation SET ordinal=?,updated_at=? WHERE row_id=?",
-                        (ordinal, updated_at, row_id),
+                        "UPDATE review_preparation_presentation SET enrollment_ordinal=? "
+                        "WHERE row_kind='work' AND scan_id=? AND cycle_id=?",
+                        (ordinal, scan_id, cycle_id),
                     )
-                    if row_kind == "enrollment" and cycle_id is not None:
-                        self._connection.execute(
-                            "UPDATE review_preparation_presentation SET enrollment_ordinal=? "
-                            "WHERE row_kind='work' AND scan_id=? AND cycle_id=?",
-                            (ordinal, scan_id, cycle_id),
-                        )
+        if clear_pause:
             self._connection.execute(
                 "UPDATE review_preparation_control SET paused=0,updated_at=? WHERE singleton=1",
                 (updated_at,),
             )
-            surviving = self._connection.execute(
-                "SELECT connection_name,library_name FROM review_preparation_presentation "
-                "WHERE row_kind='deferred_enrollment' ORDER BY ordinal,row_id"
-            ).fetchall()
-            for connection, library in surviving:
-                library_id, fingerprint = configured[(connection, library)]
-                self._request_review_scan_unpaused(
-                    connection,
-                    library,
-                    library_id,
-                    fingerprint,
-                    updated_at,
-                    first_boot=False,
-                    trigger=PreparationTrigger.LIBRARY_ADDED,
-                    promoting_deferred=True,
-                )
-            refresh_preparation_run_state(self._connection, updated_at)
-            transaction.commit()
-        except Exception:
-            transaction.rollback()
-            failed = True
-        else:
-            failed = False
-        if failed:
-            raise MetadataReportError("review preparation persistence failed") from None
+        surviving = self._connection.execute(
+            "SELECT connection_name,library_name,accepted_at FROM review_preparation_presentation "
+            "WHERE row_kind='deferred_enrollment' ORDER BY ordinal,row_id"
+        ).fetchall()
+        for connection, library, accepted_at in surviving:
+            library_id, fingerprint = configured[(connection, library)]
+            self._request_review_scan_unpaused(
+                connection,
+                library,
+                library_id,
+                fingerprint,
+                updated_at,
+                first_boot=False,
+                trigger=PreparationTrigger.LIBRARY_ADDED,
+                promoting_deferred=True,
+                presentation_accepted_at=accepted_at,
+            )
+        refresh_preparation_run_state(self._connection, updated_at)
 
     def recover_review_pipeline(
         self, producers: tuple[tuple[str, str, str, str], ...]
@@ -652,6 +716,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                     and row[1] in {"queued", "discovering", "processing"}
                     and (row[2], row[3]) != (library_id, producer_fingerprint)
                 ):
+                    mark_preparation_recovery(self._connection, cast(str, row[0]))
                     self._connection.execute(
                         "UPDATE review_preparation_scans SET state='queued',"
                         "library_id=?,producer_fingerprint=?,catalogue_generation=NULL,"
@@ -670,7 +735,9 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                         (library_id, producer_fingerprint, row[0]),
                     )
             latest = self._connection.execute(
-                "SELECT COALESCE(MAX(updated_at),0) FROM review_preparation_scans"
+                "SELECT MAX(updated_at) FROM ("
+                "SELECT COALESCE(MAX(updated_at),0) AS updated_at FROM review_preparation_scans "
+                "UNION ALL SELECT COALESCE(MAX(updated_at),0) FROM review_preparation_work)"
             ).fetchone()[0]
             refresh_preparation_presentation(self._connection, latest)
             transaction.commit()

@@ -11,7 +11,9 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal
 
-from mechanical_librarian.domain.validation import preparation_display_name
+from mechanical_librarian.domain.validation import bounded_utf8_text
+
+_preparation_display_name = bounded_utf8_text(2048)
 
 
 class PreparationPresentationError(RuntimeError):
@@ -133,7 +135,7 @@ class PreparationActiveBook:
 
     def __post_init__(self) -> None:
         if (
-            not preparation_display_name(self.name)
+            not _preparation_display_name(self.name)
             or type(self.stage) is not str
             or not self.stage
         ):
@@ -151,7 +153,7 @@ class PreparationCompletion:
 
     def __post_init__(self) -> None:
         if (
-            not preparation_display_name(self.name)
+            not _preparation_display_name(self.name)
             or self.outcome not in {"ready", "failed"}
             or type(self.completed_at) is not int
             or self.completed_at < 0

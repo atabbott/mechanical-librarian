@@ -18,7 +18,7 @@ from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
-from unittest.mock import Mock, call, patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -125,10 +125,6 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover() ->
             Path("catalogue.sqlite3"),
             Path("artifacts"),
             repository_authority=object(),
-            library_additions=(
-                ("primary", "fiction"),
-                ("primary", "history"),
-            ),
         )
 
     assert create_pipeline.call_args.args[4] is reviewer_access
@@ -143,18 +139,12 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover() ->
     runtime.admit()
     reviewer_access.activate_codex_lease.assert_called_once_with()
     review_application.admit.assert_called_once_with()
-    assert preparation.request_library_addition.call_args_list == [
-        call("primary", "fiction"),
-        call("primary", "history"),
-    ]
+    preparation.request_library_addition.assert_not_called()
     preparation.request.assert_not_called()
     preparation.progress.assert_not_called()
-    assert admission_events == ["request:fiction", "request:history", "admit"]
+    assert admission_events == ["admit"]
     runtime.admit()
-    assert preparation.request_library_addition.call_args_list == [
-        call("primary", "fiction"),
-        call("primary", "history"),
-    ]
+    preparation.request_library_addition.assert_not_called()
     runtime.close()
     review_application.stop.assert_called_once_with()
 
@@ -282,15 +272,13 @@ def test_store_runtime_activation_reuses_outer_control_authority_for_successors(
         with patch.object(activation, "_activate") as apply:
             activation.activate_setup(snapshot, lambda: None)
     assert compose.call_args_list[0].kwargs["repository_authority"] is authority
-    assert compose.call_args_list[0].kwargs["library_additions"] == (
-        ("primary", "added"),
-    )
+    assert "library_additions" not in compose.call_args_list[0].kwargs
     assert compose.call_args_list[1].kwargs["repository_authority"] is authority
     assert compose.call_args_list[1].kwargs["first_boot"] is True
     apply.assert_called_once()
 
 
-def test_settings_activation_admits_only_committed_scope_additions_once() -> None:
+def test_settings_activation_keeps_addition_intent_out_of_candidate_closure() -> None:
     readded = SimpleNamespace(connection="primary", name="fiction")
     predecessor = cast(
         SettingsView, SimpleNamespace(document=SimpleNamespace(libraries=()))
@@ -324,10 +312,9 @@ def test_settings_activation_admits_only_committed_scope_additions_once() -> Non
     events: list[object] = []
 
     def compose(*_arguments: object, **keywords: object) -> tuple[object, object]:
-        additions = keywords["library_additions"]
         candidate = RuntimeGeneration(
             _runtime_app,
-            admit=lambda: events.append(("admit", additions)),
+            admit=lambda: events.append("admit"),
         )
         return candidate, object()
 
@@ -353,9 +340,9 @@ def test_settings_activation_admits_only_committed_scope_additions_once() -> Non
 
     assert events == [
         "commit",
-        ("admit", (("primary", "fiction"),)),
+        "admit",
         "repeat-commit",
-        ("admit", ()),
+        "admit",
     ]
 
 
