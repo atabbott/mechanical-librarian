@@ -443,9 +443,16 @@ def test_only_accepted_owner_trigger_creates_or_replaces_visible_run(
         triggerless.completed_at,
     ) == (terminal.run_id, terminal.state, terminal.passage, terminal.completed_at)
     repository.dismiss_preparation_presentation(terminal.run_id, 15)
+    assert repository.preparation_presentation(15) is None
+    assert repository._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_presentation"
+    ).fetchone() == (0,)
+    repository.close()
+
+    repository = open_repository(application_path, create=False)
+    assert repository.preparation_presentation(16) is None
     repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 16)
-    dismissed = repository.preparation_presentation(16)
-    assert dismissed is not None and dismissed.state.value == "dismissed"
+    assert repository.preparation_presentation(16) is None
 
     repository.request_review_scan(
         "primary",
@@ -960,6 +967,68 @@ def test_refresh_removes_unfinished_orphaned_presentation_work(
         "SELECT active_count,completion_count FROM review_preparation_presentation "
         "WHERE row_id='run'"
     ).fetchone() == (0, 0)
+    repository.close()
+
+
+def test_successor_rediscovery_does_not_rename_terminal_completion(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry("item", "1" * 64),), 102
+    )
+    work_id = repository._connection.execute(
+        "SELECT work_id FROM review_preparation_work"
+    ).fetchone()[0]
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET stage='complete',state='complete',updated_at=103 "
+        "WHERE work_id=?",
+        (work_id,),
+    )
+    refresh_preparation_work(repository._connection, work_id, 103)
+    before = repository._connection.execute(
+        "SELECT display_name,work_outcome,completion_sequence,updated_at "
+        "FROM review_preparation_presentation WHERE row_id=?",
+        ("work:" + work_id,),
+    ).fetchone()
+    assert before == ("Synthetic work", "ready", 1, 103)
+
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        104,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    assert repository.claim_review_pipeline_action(105) is None
+    successor = repository.claim_review_pipeline_action(106)
+    assert successor is not None and successor.stage == "discovery"
+    repository.complete_review_discovery(
+        successor,
+        1,
+        "b" * 64,
+        (replace(_entry("item", "1" * 64), title="Renamed work"),),
+        107,
+    )
+    assert (
+        repository._connection.execute(
+            "SELECT display_name,work_outcome,completion_sequence,updated_at "
+            "FROM review_preparation_presentation WHERE row_id=?",
+            ("work:" + work_id,),
+        ).fetchone()
+        == before
+    )
     repository.close()
 
 

@@ -200,7 +200,7 @@ const PreparationDetail = ({
   switch (presentation.state) {
     case 'starting':
       heading = 'Preparation is starting'
-      introduction = 'The run is open and waiting for its first confirmed progress.'
+      introduction = 'The run is open and waiting for preparation work to begin or resume.'
       break
     case 'running':
       heading = 'Preparing your library'
@@ -216,7 +216,8 @@ const PreparationDetail = ({
       break
     case 'completed_with_failures':
       heading = 'Preparation completed with failures'
-      introduction = 'Ready books remain available; unfinished outcomes stay visible for recovery.'
+      introduction =
+        'This run finished with reported failures; ready books remain available and the failed outcomes stay visible.'
       break
     case 'dismissed':
       heading = 'Preparation dismissed'
@@ -2443,6 +2444,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                   ...(search.preview ? { preview: search.preview } : {}),
                   ...(search.work ? { work: search.work } : {}),
                   ...(search.field ? { field: search.field } : {}),
+                  ...(search.preparation ? { preparation: search.preparation } : {}),
                 }}
                 preload="intent"
                 activeProps={{ 'aria-current': 'page' }}

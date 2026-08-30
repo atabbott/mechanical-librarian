@@ -13,7 +13,10 @@ from mechanical_librarian.adapters.persistence.metadata_reports import open_repo
 from mechanical_librarian.adapters.persistence.owner_settings import OwnerSettingsStore
 from mechanical_librarian.adapters.persistence.preparation_presentation import (
     refresh_preparation_presentation,
+    refresh_preparation_work,
+    validate_preparation_presentation,
 )
+from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
     CoverConsiderationStore,
@@ -792,6 +795,125 @@ def test_settings_remove_and_readd_uses_intent_despite_terminal_scan_history(
     assert progress is not None and progress.state == "queued"
     assert presentation is not None and presentation.run_id == intent.run_id
     assert accepted == (1,)
+
+
+def test_settings_readd_preserves_same_run_terminal_completion_order(
+    tmp_path: Path,
+) -> None:
+    repository, store = _seed_full_store(
+        tmp_path / "settings-readd-completions.sqlite3", ("ebooks", "history")
+    )
+    for library, library_id, timestamp in (
+        ("ebooks", "library-1", 80),
+        ("history", "library-2", 81),
+    ):
+        repository.request_review_scan(
+            "primary",
+            library,
+            library_id,
+            "f" * 64,
+            timestamp,
+            trigger=PreparationTrigger.MANUAL_SCAN,
+        )
+    for index in range(2):
+        discovery = repository.claim_review_pipeline_action(82 + index * 2)
+        assert discovery is not None and discovery.stage == "discovery"
+        repository.complete_review_discovery(
+            discovery,
+            1,
+            f"{index + 1:064x}",
+            (
+                CatalogueEntry(
+                    "primary",
+                    discovery.library,
+                    "library-1" if discovery.library == "ebooks" else "library-2",
+                    f"item-{index}",
+                    1,
+                    f"Original {index}",
+                    ("Example Author",),
+                    True,
+                    False,
+                    "singular-supported",
+                    f"{index + 10:064x}",
+                    f"/item-{index}.epub",
+                    "epub",
+                    "books",
+                ),
+            ),
+            83 + index * 2,
+        )
+    work_rows = repository._connection.execute(
+        "SELECT work_id FROM review_preparation_work ORDER BY ordinal,work_id"
+    ).fetchall()
+    for index, (work_id,) in enumerate(work_rows):
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET stage='complete',state='complete',updated_at=? "
+            "WHERE work_id=?",
+            (90 + index, work_id),
+        )
+        refresh_preparation_work(repository._connection, work_id, 90 + index)
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed',updated_at=92 "
+        "WHERE library_name='ebooks'"
+    )
+    refresh_preparation_presentation(repository._connection, 92)
+    repository.request_review_scan(
+        "primary",
+        "history",
+        "library-2",
+        "f" * 64,
+        93,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    before = repository._connection.execute(
+        "SELECT display_name,work_outcome,completion_sequence,updated_at "
+        "FROM review_preparation_presentation WHERE row_kind='work' "
+        "ORDER BY completion_sequence"
+    ).fetchall()
+    before_view = repository.preparation_presentation(93)
+
+    store.write(_settings_with_libraries(2, ("history",)), 1, (), accepted_at=94)
+    store.write(
+        _settings_with_libraries(3, ("ebooks", "history")),
+        2,
+        (),
+        accepted_at=95,
+    )
+    validate_preparation_presentation(repository._connection)
+    assert (
+        repository._connection.execute(
+            "SELECT display_name,work_outcome,completion_sequence,updated_at "
+            "FROM review_preparation_presentation WHERE row_kind='work' "
+            "ORDER BY completion_sequence"
+        ).fetchall()
+        == before
+    )
+    repository.drain_library_additions(
+        (
+            ("primary", "ebooks", "library-1", "f" * 64),
+            ("primary", "history", "library-2", "f" * 64),
+        ),
+        96,
+    )
+    after = repository._connection.execute(
+        "SELECT display_name,work_outcome,completion_sequence,updated_at "
+        "FROM review_preparation_presentation WHERE row_kind='work' "
+        "ORDER BY completion_sequence"
+    ).fetchall()
+    after_view = repository.preparation_presentation(96)
+    repository.close()
+
+    assert before == after
+    assert before_view is not None and after_view is not None
+    assert after_view.run_id == before_view.run_id
+    assert after_view.passage == before_view.passage
+    assert after_view.recent_completions == before_view.recent_completions
+    assert after_view.throughput_per_minute > 0
+    reopened = open_repository(
+        tmp_path / "settings-readd-completions.sqlite3", create=False
+    )
+    assert reopened.preparation_presentation(96) == after_view
+    reopened.close()
 
 
 @pytest.mark.parametrize(

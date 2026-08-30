@@ -403,7 +403,7 @@ describe('Library route', () => {
     [
       'starting',
       'Preparation is starting',
-      'The run is open and waiting for its first confirmed progress.',
+      'The run is open and waiting for preparation work to begin or resume.',
     ],
     [
       'running',
@@ -419,7 +419,7 @@ describe('Library route', () => {
     [
       'completed_with_failures',
       'Preparation completed with failures',
-      'Ready books remain available; unfinished outcomes stay visible for recovery.',
+      'This run finished with reported failures; ready books remain available and the failed outcomes stay visible.',
     ],
   ] as const)(
     'describes the %s preparation detail truthfully',
@@ -486,6 +486,29 @@ describe('Library route', () => {
     ).toBeNull()
   })
 
+  it('keeps preparation selected while changing the Library lens', async () => {
+    const user = userEvent.setup()
+    const runId = `preparation_run_${'9'.repeat(64)}`
+    const http = createHttp()
+    http.getPreparation = vi.fn(async () => terminalPreparation(runId))
+    renderRoute(`/library?lens=all&preview=case-1&field=title&preparation=${runId}`, http)
+
+    const summary = await screen.findByRole('button', {
+      name: /Preparation completed with failures/u,
+    })
+    const work = screen.getByRole('button', { name: /^A Book\./u })
+    expect(summary).toHaveAttribute('aria-current', 'true')
+    await user.click(screen.getByRole('link', { name: 'Needs attention' }))
+
+    expect(summary).toHaveAttribute('aria-current', 'true')
+    expect(work).not.toHaveAttribute('aria-current')
+    expect(
+      await screen.findByRole('heading', { name: 'Preparation completed with failures' }),
+    ).toBeVisible()
+    await user.click(work)
+    expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
+  })
+
   it.each(['pointer', 'Enter', 'Space'])(
     'adopts a reconnecting dismissal by %s and restores the selected work',
     async (interaction) => {
@@ -496,7 +519,7 @@ describe('Library route', () => {
       const confirmed = terminalPreparation(runId)
       const dismissed: PreparationView = {
         ...confirmed,
-        presentation: { ...confirmed.presentation, state: 'dismissed', dismissible: false },
+        presentation: null,
       }
       http.getPreparation = vi
         .fn<ReviewHttp['getPreparation']>()
@@ -561,7 +584,7 @@ describe('Library route', () => {
     const confirmed = terminalPreparation(runId)
     const dismissed: PreparationView = {
       ...confirmed,
-      presentation: { ...confirmed.presentation, state: 'dismissed', dismissible: false },
+      presentation: null,
     }
     let releaseDismissal!: (value: PreparationView) => void
     http.getPreparation = vi
@@ -607,7 +630,7 @@ describe('Library route', () => {
     const confirmed = terminalPreparation(runId)
     const dismissed: PreparationView = {
       ...confirmed,
-      presentation: { ...confirmed.presentation, state: 'dismissed', dismissible: false },
+      presentation: null,
     }
     let releaseDismissal!: (value: PreparationView) => void
     http.getPreparation = vi
@@ -655,7 +678,7 @@ describe('Library route', () => {
     const confirmed = terminalPreparation(runId)
     const dismissed: PreparationView = {
       ...confirmed,
-      presentation: { ...confirmed.presentation, state: 'dismissed', dismissible: false },
+      presentation: null,
     }
     let releaseDismissal!: (value: PreparationView) => void
     let releaseLibrary!: (value: LibraryView) => void
@@ -713,7 +736,7 @@ describe('Library route', () => {
     const confirmed = terminalPreparation(runId)
     const dismissed: PreparationView = {
       ...confirmed,
-      presentation: { ...confirmed.presentation, state: 'dismissed', dismissible: false },
+      presentation: null,
     }
     const other = terminalPreparation(`preparation_run_${'f'.repeat(64)}`)
     const otherDismissed: PreparationView = {
@@ -758,17 +781,17 @@ describe('Library route', () => {
 
     await user.click(screen.getByRole('button', { name: 'Dismiss preparation' }))
     await waitFor(() => expect(releaseOlder).toBeTypeOf('function'))
-    const later = terminalPreparation(runId, 102)
+    const later = terminalPreparation(`preparation_run_${'f'.repeat(64)}`, 102)
     act(() => {
       queryClient.setQueryData(['review-preparation'], later)
       releaseOlder(dismissed)
     })
     await waitFor(() => expect(http.dismissPreparation).toHaveBeenCalledTimes(3))
     expect(queryClient.getQueryData(['review-preparation'])).toBe(later)
-    expect(router.state.location.search).toMatchObject({
+    expect(router.state.location.search).toEqual({
+      lens: 'all',
       preview: 'case-1',
       field: 'title',
-      preparation: runId,
     })
     expect(http.getPreparation).toHaveBeenCalledTimes(readsBeforeDismissal)
   })

@@ -91,29 +91,21 @@ def _delete_preparation_work_rows(
     connection: sqlite3.Connection,
     run_id: str,
     row_ids: tuple[str, ...],
-    *,
-    include_completed: bool = False,
 ) -> None:
     if not row_ids:
         return
     _completion_sequence_count(connection, run_id)
-    if include_completed:
-        connection.executemany(
-            "DELETE FROM review_preparation_presentation WHERE row_id=?",
-            ((row_id,) for row_id in row_ids),
-        )
-    else:
-        connection.executemany(
-            "UPDATE review_preparation_presentation SET "
-            "current_work_state=CASE work_outcome WHEN 'ready' THEN 'complete' ELSE 'failed' END,"
-            "recovery_high_water_stage=NULL,recovery_high_water_outcome=NULL "
-            "WHERE row_id=? AND work_outcome IS NOT NULL",
-            ((row_id,) for row_id in row_ids),
-        )
-        connection.executemany(
-            "DELETE FROM review_preparation_presentation WHERE row_id=? AND work_outcome IS NULL",
-            ((row_id,) for row_id in row_ids),
-        )
+    connection.executemany(
+        "UPDATE review_preparation_presentation SET "
+        "current_work_state=CASE work_outcome WHEN 'ready' THEN 'complete' ELSE 'failed' END,"
+        "recovery_high_water_stage=NULL,recovery_high_water_outcome=NULL "
+        "WHERE row_id=? AND work_outcome IS NOT NULL",
+        ((row_id,) for row_id in row_ids),
+    )
+    connection.executemany(
+        "DELETE FROM review_preparation_presentation WHERE row_id=? AND work_outcome IS NULL",
+        ((row_id,) for row_id in row_ids),
+    )
     completed = connection.execute(
         "SELECT row_id,completion_sequence FROM review_preparation_presentation "
         "WHERE row_kind='work' AND run_id=? AND completion_sequence IS NOT NULL "
@@ -303,12 +295,20 @@ def reconcile_preparation_library_additions(
                 connection,
                 cast(str, existing[2]),
                 work_rows,
-                include_completed=True,
             )
-            connection.execute(
-                "DELETE FROM review_preparation_presentation WHERE row_id=?",
-                (existing[0],),
-            )
+            if (
+                connection.execute(
+                    "SELECT 1 FROM review_preparation_presentation WHERE row_kind='work' "
+                    "AND scan_id=(SELECT scan_id FROM review_preparation_presentation WHERE row_id=?) "
+                    "AND cycle_id=? LIMIT 1",
+                    (existing[0], existing[1]),
+                ).fetchone()
+                is None
+            ):
+                connection.execute(
+                    "DELETE FROM review_preparation_presentation WHERE row_id=?",
+                    (existing[0],),
+                )
         defer_preparation_library_addition(
             connection,
             connection_name,
@@ -497,7 +497,9 @@ def record_preparation_names(
             "row_id,row_kind,run_id,scan_id,cycle_id,work_id,ordinal,enrollment_ordinal,display_name,work_stage,current_work_state,updated_at) "
             "VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(row_id) DO UPDATE SET "
             "run_id=excluded.run_id,scan_id=excluded.scan_id,cycle_id=excluded.cycle_id,ordinal=excluded.ordinal,"
-            "enrollment_ordinal=excluded.enrollment_ordinal,display_name=excluded.display_name,"
+            "enrollment_ordinal=excluded.enrollment_ordinal,display_name=CASE "
+            "WHEN review_preparation_presentation.work_outcome IS NULL THEN excluded.display_name "
+            "ELSE review_preparation_presentation.display_name END,"
             "current_work_state=excluded.current_work_state,updated_at=CASE "
             "WHEN review_preparation_presentation.work_outcome IS NULL THEN excluded.updated_at "
             "ELSE review_preparation_presentation.updated_at END",
@@ -1192,7 +1194,7 @@ def preparation_presentation_snapshot(
 
 
 def dismiss_preparation_presentation(
-    connection: sqlite3.Connection, run_id: str, dismissed_at: int
+    connection: sqlite3.Connection, run_id: str, _dismissed_at: int
 ) -> None:
     current = connection.execute(
         "SELECT run_id,state FROM review_preparation_presentation WHERE row_id='run'"
@@ -1205,8 +1207,7 @@ def dismiss_preparation_presentation(
     }:
         raise PreparationPresentationError("not_dismissible")
     connection.execute(
-        "UPDATE review_preparation_presentation SET state='dismissed',updated_at=? WHERE row_id='run'",
-        (dismissed_at,),
+        "DELETE FROM review_preparation_presentation WHERE run_id=?", (run_id,)
     )
 
 
@@ -1559,14 +1560,22 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                     for target in ((row[0], row[1]),)
                 ):
                     raise ValueError("invalid deferred settings authority")
-            enrolled_targets = {(row[5], row[6]) for row in enrollments}
+            nonterminal_enrolled_targets = {
+                (row[5], row[6])
+                for row in enrollments
+                if row[7] not in {"completed", "completed_with_failures"}
+                or row[2] is not None
+            }
             active_scan_targets = set(
                 connection.execute(
                     "SELECT connection_name,library_name FROM review_preparation_scans "
                     "WHERE state IN ('queued','discovering','processing')"
                 )
             )
-            if deferred_targets & (enrolled_targets | active_scan_targets):
+            if (
+                deferred_targets & active_scan_targets
+                or deferred_targets & nonterminal_enrolled_targets
+            ):
                 raise ValueError("overlapping deferred enrollment")
             cycle_ids = [
                 cycle_id

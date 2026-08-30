@@ -1184,6 +1184,10 @@ def test_preparation_dismissal_is_authenticated_guarded_and_stale_safe(
     assert accepted.headers["cache-control"] == "no-store, private"
     assert accepted.json()["presentation"] is None
     assert web.repository.dismissed_preparation_runs == [run_id]
+    current = web.client.get("/api/v1/review-preparation")
+    assert current.status_code == 200
+    assert current.headers["cache-control"] == "no-store, private"
+    assert current.json()["presentation"] is None
 
 
 def test_preparation_dismissal_rejects_declared_and_streamed_oversized_bodies(

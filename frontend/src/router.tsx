@@ -265,7 +265,6 @@ export const usePreparation = () => {
     }
     if (previousSnapshot.current === snapshot) return
     previousSnapshot.current = snapshot
-    if (data?.presentation?.state === 'dismissed') return
     // Only while polling. A snapshot that changed used to be the only sign that
     // a work might have been published, so every poll that saw a difference
     // rebuilt the Library and the attention rail. With a stream, the cutover
@@ -280,18 +279,11 @@ export const usePreparation = () => {
   const adoptDismissal = useCallback(
     (runId: string, value: PreparationView) => {
       const dismissed = value.presentation
-      if (dismissed?.run_id !== runId || dismissed.state !== 'dismissed') return false
-      const responseIsStale = () => {
-        const current = queryClient.getQueryData<PreparationView>([
-          'review-preparation',
-        ])?.presentation
-        return (
-          current !== undefined &&
-          current !== null &&
-          (current.run_id !== runId || current.updated_at > dismissed.updated_at)
-        )
-      }
-      if (responseIsStale()) return false
+      if (dismissed !== null) return false
+      const current = queryClient.getQueryData<PreparationView>([
+        'review-preparation',
+      ])?.presentation
+      if (current !== undefined && current !== null && current.run_id !== runId) return false
       queryClient.setQueryData(['review-preparation'], value)
       const preparationDebt = queryClient.getQueryData(preparationInvalidationDebtKey) === true
       void Promise.all([
