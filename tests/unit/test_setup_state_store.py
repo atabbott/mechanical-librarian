@@ -3,8 +3,9 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 import threading
+from _thread import RLock
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 import pytest
 
@@ -31,6 +32,25 @@ from mechanical_librarian.domain.setup_state import SetupStateDocument, SetupSta
 
 _BOOTSTRAP = "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$hash"
 _OWNER = "$argon2id$v=19$m=65536,t=3,p=4$b3duZXI$hash"
+
+
+class _PostReleaseInterruptionLock:
+    def __init__(self, fault: BaseException) -> None:
+        self.lock = RLock()
+        self.fault = fault
+        self.armed = False
+
+    def acquire(self) -> None:
+        self.lock.acquire()
+
+    def release(self) -> None:
+        self.lock.release()
+        if self.armed and self.lock._recursion_count() == 0:
+            self.armed = False
+            raise self.fault
+
+    def _recursion_count(self) -> int:
+        return self.lock._recursion_count()
 
 
 def _store() -> tuple[sqlite3.Connection, SetupStateStore]:
@@ -61,6 +81,37 @@ def _claimed(store: SetupStateStore, state: SetupStateDocument) -> SetupStateDoc
         expected_revision=state.revision,
         owner_verifier=_OWNER,
     )
+
+
+def test_setup_write_propagates_post_commit_process_control() -> None:
+    connection = sqlite3.connect(":memory:", isolation_level=None)
+    _create_schema(connection)
+    fault = KeyboardInterrupt("private setup commit release")
+    lock = _PostReleaseInterruptionLock(fault)
+    setup = SetupStateStore(connection, cast(RLock, lock))
+    state = setup.initialize(_BOOTSTRAP)
+    successor = _next(state)
+    lock.armed = True
+
+    with pytest.raises(KeyboardInterrupt) as raised:
+        setup.write(successor, state.revision, _BOOTSTRAP)
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert setup.read(_BOOTSTRAP) == successor
+    assert lock._recursion_count() == 0
+    acquired = threading.Event()
+
+    def contend() -> None:
+        with lock.lock:
+            acquired.set()
+
+    contender = threading.Thread(target=contend)
+    contender.start()
+    assert acquired.wait(1)
+    contender.join(timeout=1)
+    assert not contender.is_alive()
+    connection.close()
 
 
 def _connected(store: SetupStateStore) -> SetupStateDocument:

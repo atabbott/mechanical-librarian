@@ -83,22 +83,28 @@ def _revoke_connection(connection: sqlite3.Connection) -> bool:
         return False
 
 
-def _release_lock_increment(lock: _SerializationLock, prior_depth: int) -> bool:
-    """Balance exactly this invocation's recursion increment."""
+def _release_lock_increment(
+    lock: _SerializationLock, prior_depth: int
+) -> tuple[bool, BaseException | None]:
+    """Balance this invocation's increment and retain its first release fault."""
+    failure: BaseException | None = None
     for _attempt in range(2):
         try:
-            if lock.depth() == prior_depth:
-                return True
-        except BaseException:
-            return False
+            depth = lock.depth()
+        except BaseException as error:
+            return False, failure or error
+        if depth == prior_depth:
+            return True, failure
+        if depth != prior_depth + 1:
+            return False, failure
         try:
             lock.release()
-        except BaseException:
-            pass
+        except BaseException as error:
+            failure = failure or error
     try:
-        return lock.depth() == prior_depth
-    except BaseException:
-        return False
+        return lock.depth() == prior_depth, failure
+    except BaseException as error:
+        return False, failure or error
 
 
 def _missing_savepoint(error: BaseException, savepoint: str) -> bool:
@@ -271,11 +277,19 @@ class TransactionScope:
             self._connection.execute(f"RELEASE SAVEPOINT {self._savepoint}")
         else:
             self._connection.commit()
-        if self._lock is not None and not _release_lock_increment(
-            self._lock, self._lock_depth
-        ):
+        balanced = True
+        release_error: BaseException | None = None
+        if self._lock is not None:
+            balanced, release_error = _release_lock_increment(
+                self._lock, self._lock_depth
+            )
+        if not balanced:
+            if release_error is not None and not isinstance(release_error, Exception):
+                raise release_error from None
             raise RuntimeError("transaction serialization release failed") from None
         self._started = False
+        if release_error is not None and not isinstance(release_error, Exception):
+            raise release_error from None
 
     def rollback(self) -> None:
         """Undo this scope's writes, leaving any enclosing transaction intact."""
@@ -292,16 +306,26 @@ class TransactionScope:
             else _unwind_outer(self._connection)
         )
         authority_releasable = cleanup_proven or _revoke_connection(self._connection)
+        release_error: BaseException | None = None
         if authority_releasable:
             if self._lock is not None:
-                if not _release_lock_increment(self._lock, self._lock_depth):
+                balanced, release_error = _release_lock_increment(
+                    self._lock, self._lock_depth
+                )
+                if not balanced:
                     authority_releasable = False
             if authority_releasable:
                 self._started = False
         if original is not None:
             return
+        if cleanup_error is not None and not isinstance(cleanup_error, Exception):
+            raise cleanup_error from None
+        if release_error is not None and not isinstance(release_error, Exception):
+            raise release_error from None
         if cleanup_error is not None:
             raise cleanup_error from None
+        if not authority_releasable:
+            raise RuntimeError("transaction serialization release failed") from None
 
 
 class ConnectionScoped:
