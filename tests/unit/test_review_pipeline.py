@@ -8914,6 +8914,35 @@ def test_supervisor_closes_observation_once_when_start_and_stop_are_interrupted(
     assert supervisor._threads == ()
 
 
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+def test_dormant_supervisor_preserves_start_interruption_during_failed_cleanup(
+    monkeypatch: pytest.MonkeyPatch, fault_type: type[BaseException]
+) -> None:
+    pipeline = _LifecyclePipeline()
+    original_start = threading.Thread.start
+    start_fault = fault_type("private dormant start sentinel")
+    stop_fault = fault_type("private dormant stop sentinel")
+
+    def start(thread: threading.Thread) -> None:
+        if thread.name == "review-preparation-1":
+            raise start_fault
+        original_start(thread)
+
+    def fail_stop() -> None:
+        raise stop_fault
+
+    monkeypatch.setattr(threading.Thread, "start", start)
+    supervisor = ReviewPreparationSupervisor(pipeline, on_stop=fail_stop)
+
+    with pytest.raises(fault_type) as raised:
+        supervisor.start_dormant()
+
+    assert raised.value is start_fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert pipeline.events.count("close") == 1
+    assert supervisor._threads == ()
+
+
 def test_supervisor_stops_then_closes_observation_in_existing_callback_order() -> None:
     pipeline = _LifecyclePipeline()
     supervisor = ReviewPreparationSupervisor(
@@ -9220,6 +9249,116 @@ def test_foreground_control_holds_observation_through_close_then_falls_back() ->
     pipeline.close_observation()
     assert observation.closed == 1
     assert regular_opens == 1
+
+
+@pytest.mark.parametrize("fault_order", ("before", "after"))
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+def test_interrupted_observation_close_blocks_reuse_until_retry_completes(
+    fault_order: str, fault_type: type[BaseException]
+) -> None:
+    fault = fault_type("private observation close sentinel")
+
+    class ObservationRepository:
+        def __init__(self, *, interrupted: bool) -> None:
+            self.interrupted = interrupted
+            self.close_attempts = 0
+            self.close_effects = 0
+            self.current_checks = 0
+            self.closed = False
+
+        def require_current(self) -> None:
+            self.current_checks += 1
+            if self.closed:
+                raise AssertionError("closed observation was reused")
+
+        def close(self) -> None:
+            self.close_attempts += 1
+            if self.interrupted and self.close_attempts == 1:
+                if fault_order == "after":
+                    self.closed = True
+                    self.close_effects += 1
+                raise fault
+            if not self.closed:
+                self.closed = True
+                self.close_effects += 1
+
+    interrupted = ObservationRepository(interrupted=True)
+    successor = ObservationRepository(interrupted=False)
+    repositories = iter((interrupted, successor))
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: cast(ReviewPipelineRepository, successor),
+        observation_repository_factory=lambda: cast(
+            ReviewPipelineRepository, next(repositories)
+        ),
+        libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+        discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_: (_ for _ in ()).throw(AssertionError()),
+    )
+    pipeline.open_observation()
+
+    with pytest.raises(fault_type) as raised:
+        pipeline.close_observation()
+
+    assert raised.value is fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    with pytest.raises(ReviewPipelineError, match="persistence"):
+        pipeline.open_observation()
+    with pytest.raises(ReviewPipelineError, match="persistence"):
+        pipeline.status()
+    assert interrupted.current_checks == 0
+
+    pipeline.close_observation()
+    assert interrupted.close_attempts == 2
+    assert interrupted.close_effects == 1
+    pipeline.open_observation()
+    pipeline.close_observation()
+    assert successor.close_effects == 1
+
+
+@pytest.mark.parametrize("fault_order", ("before", "after"))
+@pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
+def test_supervisor_retains_interrupted_observation_close_for_exact_retry(
+    fault_order: str, fault_type: type[BaseException]
+) -> None:
+    pipeline = _LifecyclePipeline()
+    supervisor = ReviewPreparationSupervisor(pipeline)
+    startup_fault = fault_type("private startup sentinel")
+    close_fault = fault_type("private close sentinel")
+    close_attempts = 0
+    close_effects = 0
+    closed = False
+
+    def close_observation() -> None:
+        nonlocal close_attempts, close_effects, closed
+        close_attempts += 1
+        if close_attempts == 1:
+            if fault_order == "after":
+                closed = True
+                close_effects += 1
+            raise close_fault
+        if not closed:
+            closed = True
+            close_effects += 1
+
+    with (
+        patch.object(pipeline, "recover", side_effect=startup_fault),
+        patch.object(pipeline, "close_observation", side_effect=close_observation),
+        pytest.raises(fault_type) as raised,
+    ):
+        supervisor.start()
+
+    assert raised.value is startup_fault
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert close_attempts == 1
+
+    with patch.object(pipeline, "close_observation", side_effect=close_observation):
+        supervisor.stop()
+    assert close_attempts == 2
+    assert close_effects == 1
 
 
 @pytest.fixture

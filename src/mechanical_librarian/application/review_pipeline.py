@@ -471,6 +471,7 @@ class ReviewPreparationPipeline:
         self._claim_lock = threading.Lock()
         self._observation_lock = threading.RLock()
         self._observation_repository: ReviewPipelineRepository | None = None
+        self._observation_close_unresolved = False
 
     @property
     def libraries(self) -> tuple[tuple[str, str, str], ...]:
@@ -496,6 +497,8 @@ class ReviewPreparationPipeline:
     ) -> _ForegroundResult:
         """Serialize one foreground snapshot or control on the lifecycle handle."""
         with self._observation_lock:
+            if self._observation_close_unresolved:
+                raise ReviewPipelineError("persistence")
             repository = self._observation_repository
             if repository is not None:
                 try:
@@ -660,6 +663,8 @@ class ReviewPreparationPipeline:
     def open_observation(self) -> None:
         """Validate the foreground preparation reader before workers start."""
         with self._observation_lock:
+            if self._observation_close_unresolved:
+                raise ReviewPipelineError("persistence")
             if self._observation_repository is None:
                 try:
                     self._observation_repository = (
@@ -671,11 +676,13 @@ class ReviewPreparationPipeline:
                     raise ReviewPipelineError("persistence") from error
 
     def close_observation(self) -> None:
-        """Release the foreground reader after the preparation lanes stop."""
+        """Release the retry-safe reader, quarantining it until close succeeds."""
         with self._observation_lock:
             if self._observation_repository is not None:
+                self._observation_close_unresolved = True
                 self._observation_repository.close()
                 self._observation_repository = None
+                self._observation_close_unresolved = False
 
     def check_connection(self, connection: str) -> bool:
         """One owner-triggered, epoch-bound connection check.
@@ -1231,13 +1238,30 @@ class ReviewPreparationSupervisor:
             for thread in threads:
                 thread.start()
                 started.append(thread)
-        except BaseException:
+        except BaseException as error:
             self._threads = tuple(started)
             self._stop.set()
             self._admission.set()
-            self.stop()
-            raise
-        self._threads = threads
+            try:
+                self.stop()
+            except BaseException as cleanup_error:
+                error.add_note(
+                    "review preparation dormant start cleanup failed: "
+                    + type(cleanup_error).__name__
+                )
+            if not self._threads:
+                try:
+                    self._close_observation()
+                except BaseException as cleanup_error:
+                    error.add_note(
+                        "review preparation dormant observation cleanup failed: "
+                        + type(cleanup_error).__name__
+                    )
+            failure = error
+        else:
+            self._threads = threads
+            return
+        raise failure from None
 
     def admit(self) -> None:
         """Open the already-started lanes after their generation is published."""
@@ -1290,8 +1314,8 @@ class ReviewPreparationSupervisor:
         """Relinquish this supervisor's observation ownership at most once."""
         if not self._observation_open:
             return
-        self._observation_open = False
         self._pipeline.close_observation()
+        self._observation_open = False
 
     def request(
         self,

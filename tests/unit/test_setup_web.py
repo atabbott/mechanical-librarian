@@ -357,10 +357,9 @@ def test_setup_surface_exposes_only_health_shell_session_and_redacted_state() ->
     assert "sessionStorage" not in script.text
     assert "csrf=state.csrf_token" in script.text
     assert "location.assign('/library')" not in script.text
-    assert (
-        "if(!visible){renderPreparation(progress,null);if(observed){stop()"
-        in script.text
-    )
+    assert "const retired=visible?.state==='dismissed'" in script.text
+    assert "if(!visible||retired){if(observed||retired)retire()" in script.text
+    assert "if(!open){open=document.createElement('a')" in script.text
     assert "open.href='/library?lens=all'" in script.text
     assert (
         "['completed_clean','completed_with_failures'].includes(visible.state)"
