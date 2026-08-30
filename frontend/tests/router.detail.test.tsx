@@ -8,7 +8,9 @@ import { createHttp, detail, renderRoute } from './fixtures'
 
 describe('Library review ownership', () => {
   it('opens readable direct Evidence and restores the exact Library selection', async () => {
-    const { router } = renderRoute('/review/case-1?lens=needs_attention&field=title&subview=evidence')
+    const { router } = renderRoute(
+      '/review/case-1?lens=needs_attention&field=title&subview=evidence',
+    )
     expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
     expect(router.state.location.pathname).toBe('/review/case-1')
     expect(screen.getByRole('heading', { name: 'Evidence' })).toBeVisible()
@@ -30,10 +32,18 @@ describe('Library review ownership', () => {
 
   it('cross-links diagnostics with URL-owned state and browser history', async () => {
     const user = userEvent.setup()
-    const { router } = renderRoute('/review/case-1?lens=no_attention_needed&field=title&subview=evidence')
+    const { router } = renderRoute(
+      '/review/case-1?lens=no_attention_needed&field=title&subview=evidence',
+    )
     await screen.findByRole('heading', { name: 'Evidence' })
     await user.click(screen.getByRole('link', { name: 'History' }))
-    await waitFor(() => expect(router.state.location.search).toEqual({ field: 'title', lens: 'no_attention_needed', subview: 'history' }))
+    await waitFor(() =>
+      expect(router.state.location.search).toEqual({
+        field: 'title',
+        lens: 'no_attention_needed',
+        subview: 'history',
+      }),
+    )
     expect(await screen.findByRole('heading', { name: 'History' })).toBeVisible()
     expect(screen.queryByRole('button', { name: /Choose|Return|Resume/u })).toBeNull()
     router.history.back()
@@ -43,16 +53,49 @@ describe('Library review ownership', () => {
   })
 
   it('renders semantic evidence, limitations, provider outcomes, and pagination', async () => {
-    const getEvidence = vi.fn<ReviewHttp['getEvidence']>(async (_id, cursor) => cursor ? {
-      items: [{ destinations: ['title'], observation: 'Title: <script>Second observation</script>', role: 'external_corroboration', source: 'Open Library' }],
-      missingLineageCount: 2, sourceLedger: [],
-    } : {
-      items: [{ destinations: ['title'], observation: 'Title: A Book', role: 'local_presence', source: 'This library' }],
-      missingLineageCount: 2, nextCursor: 'next-page', sourceLedger: [
-        { laneKind: 'identity', provider: 'Hardcover', providerRequests: 1, reason: 'Returned no matching metadata, so nothing was retained.', status: 'no_match' },
-        { laneKind: 'cover', provider: 'Open Library', providerRequests: 2, reason: 'Returned more than the accepted bound, so nothing was retained.', status: 'oversized' },
-      ],
-    })
+    const getEvidence = vi.fn<ReviewHttp['getEvidence']>(async (_id, cursor) =>
+      cursor
+        ? {
+            items: [
+              {
+                destinations: ['title'],
+                observation: 'Title: <script>Second observation</script>',
+                role: 'external_corroboration',
+                source: 'Open Library',
+              },
+            ],
+            missingLineageCount: 2,
+            sourceLedger: [],
+          }
+        : {
+            items: [
+              {
+                destinations: ['title'],
+                observation: 'Title: A Book',
+                role: 'local_presence',
+                source: 'This library',
+              },
+            ],
+            missingLineageCount: 2,
+            nextCursor: 'next-page',
+            sourceLedger: [
+              {
+                laneKind: 'identity',
+                provider: 'Hardcover',
+                providerRequests: 1,
+                reason: 'Returned no matching metadata, so nothing was retained.',
+                status: 'no_match',
+              },
+              {
+                laneKind: 'cover',
+                provider: 'Open Library',
+                providerRequests: 2,
+                reason: 'Returned more than the accepted bound, so nothing was retained.',
+                status: 'oversized',
+              },
+            ],
+          },
+    )
     const user = userEvent.setup()
     renderRoute('/review/case-1?field=title&subview=evidence', { ...createHttp(), getEvidence })
     expect(await screen.findByText('Title: A Book')).toBeVisible()
@@ -70,21 +113,110 @@ describe('Library review ownership', () => {
   it('renders history values only when the read model carries them', async () => {
     const getHistory = vi.fn<ReviewHttp['getHistory']>(async () => ({
       items: [
-        { category: 'owner', destination: 'title', outcome: 'accept', previousValue: { kind: 'text', value: '<script>previous</script>' }, selectedValue: { kind: 'text', value: '<script>chosen</script>' } },
-        { category: 'owner', destination: 'language', outcome: 'accept', previousValue: null, selectedValue: { kind: 'text', value: 'English' } },
-        { category: 'owner', destination: 'publisher', outcome: 'accept', previousValue: { kind: 'text', value: 'Former publisher' }, selectedValue: null },
-        { category: 'owner', destination: 'title_reversal', outcome: 'keep_current', previousValue: { kind: 'text', value: 'Applied candidate' }, selectedValue: { kind: 'text', value: 'Original value' } },
-        { category: 'owner', destination: 'subtitle', outcome: 'keep_current', previousValue: { kind: 'text', value: 'Existing subtitle' }, selectedValue: { kind: 'text', value: 'Existing subtitle' } },
-        { category: 'owner', destination: 'edition', outcome: 'keep_current', previousValue: null, selectedValue: null },
-        { category: 'automatic', destination: 'series', outcome: 'keep_current', previousValue: { kind: 'series', value: [{ name: 'Existing series', sequence: '2' }] }, selectedValue: { kind: 'series', value: [{ name: 'Existing series', sequence: '2' }] } },
-        { category: 'owner', destination: 'isbn', outcome: 'reject', previousValue: { kind: 'text', value: '9780000000001' }, selectedValue: null },
-        { category: 'automatic', destination: 'authors', outcome: 'candidate', previousValue: { kind: 'list', value: ['Old Author'] }, selectedValue: { kind: 'list', value: ['New Author'] } },
-        { category: 'automatic', destination: 'description', outcome: 'candidate', previousValue: null, selectedValue: null },
-        { category: 'automatic', destination: 'genres', outcome: 'ignore', previousValue: { kind: 'list', value: ['Preserved genre'] }, selectedValue: null },
-        { category: 'automatic', destination: 'tags', outcome: 'ignore', previousValue: null, selectedValue: null },
+        {
+          category: 'owner',
+          destination: 'title',
+          outcome: 'accept',
+          previousValue: { kind: 'text', value: '<script>previous</script>' },
+          selectedValue: { kind: 'text', value: '<script>chosen</script>' },
+        },
+        {
+          category: 'owner',
+          destination: 'language',
+          outcome: 'accept',
+          previousValue: null,
+          selectedValue: { kind: 'text', value: 'English' },
+        },
+        {
+          category: 'owner',
+          destination: 'publisher',
+          outcome: 'accept',
+          previousValue: { kind: 'text', value: 'Former publisher' },
+          selectedValue: null,
+        },
+        {
+          category: 'owner',
+          destination: 'title_reversal',
+          outcome: 'keep_current',
+          previousValue: { kind: 'text', value: 'Applied candidate' },
+          selectedValue: { kind: 'text', value: 'Original value' },
+        },
+        {
+          category: 'owner',
+          destination: 'subtitle',
+          outcome: 'keep_current',
+          previousValue: { kind: 'text', value: 'Existing subtitle' },
+          selectedValue: { kind: 'text', value: 'Existing subtitle' },
+        },
+        {
+          category: 'owner',
+          destination: 'edition',
+          outcome: 'keep_current',
+          previousValue: null,
+          selectedValue: null,
+        },
+        {
+          category: 'automatic',
+          destination: 'series',
+          outcome: 'keep_current',
+          previousValue: { kind: 'series', value: [{ name: 'Existing series', sequence: '2' }] },
+          selectedValue: { kind: 'series', value: [{ name: 'Existing series', sequence: '2' }] },
+        },
+        {
+          category: 'owner',
+          destination: 'isbn',
+          outcome: 'reject',
+          previousValue: { kind: 'text', value: '9780000000001' },
+          selectedValue: null,
+        },
+        {
+          category: 'automatic',
+          destination: 'authors',
+          outcome: 'candidate',
+          previousValue: { kind: 'list', value: ['Old Author'] },
+          selectedValue: { kind: 'list', value: ['New Author'] },
+        },
+        {
+          category: 'automatic',
+          destination: 'description',
+          outcome: 'candidate',
+          previousValue: null,
+          selectedValue: null,
+        },
+        {
+          category: 'automatic',
+          destination: 'genres',
+          outcome: 'ignore',
+          previousValue: { kind: 'list', value: ['Preserved genre'] },
+          selectedValue: null,
+        },
+        {
+          category: 'automatic',
+          destination: 'tags',
+          outcome: 'ignore',
+          previousValue: null,
+          selectedValue: null,
+        },
         { category: 'preview', dispositions: [{ count: 3, outcome: 'would_accept' }] },
-        { category: 'cover', candidateCount: 2, outcome: 'selected', ownerOutcome: 'accept', policyReasons: ['credible_source'], policyStatus: 'recommended', reviewerStatus: 'complete', supersedesAutomatic: false },
-        { automaticOutcome: 'candidate', category: 'cover', candidateCount: 3, outcome: 'automatic_prepared', policyReasons: [], reviewerStatus: 'complete', supersedesAutomatic: true },
+        {
+          category: 'cover',
+          candidateCount: 2,
+          outcome: 'selected',
+          ownerOutcome: 'accept',
+          policyReasons: ['credible_source'],
+          policyStatus: 'recommended',
+          reviewerStatus: 'complete',
+          supersedesAutomatic: false,
+        },
+        {
+          automaticOutcome: 'candidate',
+          category: 'cover',
+          candidateCount: 3,
+          outcome: 'automatic_prepared',
+          policyReasons: [],
+          reviewerStatus: 'complete',
+          supersedesAutomatic: true,
+        },
         { category: 'transition', outcome: 'admitted', reason: '<script>actionable</script>' },
       ],
     }))
@@ -142,7 +274,9 @@ describe('Library review ownership', () => {
     expect(keptAbsence).toHaveTextContent('Retained No value is recorded.')
     expect(keptAbsence).not.toHaveTextContent('From')
     expect(keptAbsence).not.toHaveTextContent('To')
-    const unmatchedCandidate = screen.getByRole('heading', { name: 'Description' }).closest('article')
+    const unmatchedCandidate = screen
+      .getByRole('heading', { name: 'Description' })
+      .closest('article')
     if (!unmatchedCandidate) throw new Error('unmatched automatic candidate article required')
     expect(unmatchedCandidate).not.toHaveTextContent('Retained')
     expect(unmatchedCandidate).toHaveTextContent('From No value is recorded.')
@@ -151,7 +285,11 @@ describe('Library review ownership', () => {
     expect(ignored).not.toHaveTextContent('New')
     expect(screen.getByText(/Visual review complete across 2 candidates/u)).toBeVisible()
     expect(screen.getByText('Automatic policy selected this cover.')).toBeVisible()
-    expect(screen.getByText('This strictly better confirmed cover replaced the earlier automatic choice.')).toBeVisible()
+    expect(
+      screen.getByText(
+        'This strictly better confirmed cover replaced the earlier automatic choice.',
+      ),
+    ).toBeVisible()
     expect(screen.getByText('This read-only preview recorded no decision authority.')).toBeVisible()
     expect(screen.getByText('This work entered the review queue.')).toBeVisible()
     expect(document.body).not.toHaveTextContent('<script>actionable</script>')
@@ -165,12 +303,15 @@ describe('Library review ownership', () => {
       const evidence = vi.fn()
       const history = vi.fn()
       const user = userEvent.setup()
-      const { router } = renderRoute(`/review/case-1?lens=needs_attention&field=title&subview=${subview}`, {
-        ...createHttp(),
-        getCaseDetail: vi.fn(async () => ({ ...detail, current: false })),
-        getEvidence: evidence,
-        getHistory: history,
-      })
+      const { router } = renderRoute(
+        `/review/case-1?lens=needs_attention&field=title&subview=${subview}`,
+        {
+          ...createHttp(),
+          getCaseDetail: vi.fn(async () => ({ ...detail, current: false })),
+          getEvidence: evidence,
+          getHistory: history,
+        },
+      )
 
       expect(
         await screen.findByRole('heading', {
@@ -182,19 +323,36 @@ describe('Library review ownership', () => {
       expect(evidence).not.toHaveBeenCalled()
       expect(history).not.toHaveBeenCalled()
       await user.click(screen.getByRole('link', { name: 'Back to work' }))
-      await waitFor(() => expect(router.state.location.search).toEqual({ lens: 'needs_attention', preview: 'case-1', field: 'title' }))
+      await waitFor(() =>
+        expect(router.state.location.search).toEqual({
+          lens: 'needs_attention',
+          preview: 'case-1',
+          field: 'title',
+        }),
+      )
     },
   )
 
   it('keeps Back first during diagnostic loading and typed read failure without retry', async () => {
     const pending = new Promise<CaseDetailView>(() => undefined)
-    renderRoute('/review/case-1?lens=needs_attention&field=title&subview=evidence', { ...createHttp(), getCaseDetail: vi.fn(() => pending) })
+    renderRoute('/review/case-1?lens=needs_attention&field=title&subview=evidence', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(() => pending),
+    })
     const loadingBack = await screen.findByRole('link', { name: 'Back to work' })
-    expect(document.querySelector('#main-content .diagnostic-route > :first-child')).toBe(loadingBack)
+    expect(document.querySelector('#main-content .diagnostic-route > :first-child')).toBe(
+      loadingBack,
+    )
     expect(screen.getByRole('heading', { name: 'Loading work diagnostics…' })).toBeVisible()
-    renderRoute('/review/case-failed?lens=no_attention_needed&field=authors&subview=history', { ...createHttp(), getCaseDetail: vi.fn(async () => Promise.reject(new ApiError(503, 'unavailable'))) })
+    renderRoute('/review/case-failed?lens=no_attention_needed&field=authors&subview=history', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => Promise.reject(new ApiError(503, 'unavailable'))),
+    })
     expect(await screen.findByRole('heading', { name: 'Work diagnostics are unavailable.' }))
-    expect(screen.getAllByRole('link', { name: 'Back to work' }).at(-1)).toHaveAttribute('href', '/library?lens=no_attention_needed&preview=case-failed&field=authors')
+    expect(screen.getAllByRole('link', { name: 'Back to work' }).at(-1)).toHaveAttribute(
+      'href',
+      '/library?lens=no_attention_needed&preview=case-failed&field=authors',
+    )
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
     expect(screen.queryByText(/503|Review API request failed/u)).toBeNull()
   })
@@ -421,7 +579,9 @@ describe('Library review ownership', () => {
     expect(screen.getByText('<script>untrusted</script>')).toBeVisible()
     expect(document.querySelector('script')).toBeNull()
     expect(
-      screen.getByText('The recorded outcome is marked below. You can select another eligible value.'),
+      screen.getByText(
+        'The recorded outcome is marked below. You can select another eligible value.',
+      ),
     ).toBeVisible()
     expect(screen.getByRole('button', { name: /Choose current value/u })).toBeVisible()
     expect(screen.queryByText('Current review case')).toBeNull()
@@ -596,7 +756,11 @@ describe('Library review ownership', () => {
     await waitFor(() => expect(router.state.location.pathname).toBe('/library'))
     router.history.forward()
     await waitFor(() =>
-      expect(router.state.location.search).toEqual({ field: 'title', lens: 'all', subview: 'evidence' }),
+      expect(router.state.location.search).toEqual({
+        field: 'title',
+        lens: 'all',
+        subview: 'evidence',
+      }),
     )
   })
 })

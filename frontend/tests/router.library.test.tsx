@@ -247,7 +247,11 @@ describe('Library route', () => {
       attention: 'no_attention_needed',
       detailUrl,
       detailKind: 'report' as const,
-      summary: { state: 'no_decision_recorded', reason: 'No review decision is recorded.', fields: [] },
+      summary: {
+        state: 'no_decision_recorded',
+        reason: 'No review decision is recorded.',
+        fields: [],
+      },
       // An audiobook's work ends `failed` because nothing follows its report.
       // The row must not read as a failure, and must open.
       preparation: {
@@ -269,10 +273,38 @@ describe('Library route', () => {
       coverPresent: true,
       coverSurface: 'container_stream',
       evidence: [
-        { basis: 'sidecar_libation', excerpt: 'B0CW1KL2QD', kind: 'asin', role: null, state: 'valid', value: 'B0CW1KL2QD' },
-        { basis: 'sidecar_libation', excerpt: 'Recorded Narrator', kind: 'contributor', role: 'narrator', state: 'valid', value: 'Recorded Narrator' },
-        { basis: 'container_format', excerpt: '43200.000', kind: 'duration', role: null, state: 'valid', value: '43200.000' },
-        { basis: 'path_file', excerpt: 'B0XXXXXXXX', kind: 'asin', role: null, state: 'malformed', value: 'B0XXXXXXXX' },
+        {
+          basis: 'sidecar_libation',
+          excerpt: 'B0CW1KL2QD',
+          kind: 'asin',
+          role: null,
+          state: 'valid',
+          value: 'B0CW1KL2QD',
+        },
+        {
+          basis: 'sidecar_libation',
+          excerpt: 'Recorded Narrator',
+          kind: 'contributor',
+          role: 'narrator',
+          state: 'valid',
+          value: 'Recorded Narrator',
+        },
+        {
+          basis: 'container_format',
+          excerpt: '43200.000',
+          kind: 'duration',
+          role: null,
+          state: 'valid',
+          value: '43200.000',
+        },
+        {
+          basis: 'path_file',
+          excerpt: 'B0XXXXXXXX',
+          kind: 'asin',
+          role: null,
+          state: 'malformed',
+          value: 'B0XXXXXXXX',
+        },
       ],
       evidenceTruncated: false,
       item: 'item-9',
