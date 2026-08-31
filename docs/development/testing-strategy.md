@@ -134,8 +134,8 @@ candidates cannot break `main` together in silence. Each job checks out
 `github.event.pull_request.head.sha || github.sha`, so exact-head semantics hold
 on both events, and only pull-request work is cancelled by a superseding head. A
 fourth `container-image` job builds the shipped image at that same revision, so
-a Dockerfile regression fails the gate; it never runs, loads, or pushes the
-image.
+a Dockerfile regression fails the gate; it loads the image solely to extract
+the pinned `ffprobe` for the probe tier, and never starts or pushes it.
 
 `protected-browser` restores the Chromium payload from a cache keyed on the
 installed Playwright version and saves it only after
