@@ -38,6 +38,8 @@ from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryPlan,
     MetadataLookup,
     ProviderLaneResult,
+    identifier_suppresses_discovery,
+    provider_discovery_lane_order,
     provider_isbn_applicability,
     provider_observation,
     qualify_provider_observation,
@@ -237,7 +239,16 @@ class GoogleBooksMetadataProvider:
             )
         self._session.ledger = ledger
         try:
-            for lane in plan.lanes:
+            for lane in provider_discovery_lane_order(plan):
+                if identifier_suppresses_discovery(plan, results, lane):
+                    ledger.suppress(
+                        kind=lane.kind.value,
+                        matched_family=lane.matched_family,
+                        title=lane.title,
+                        authors=lane.authors,
+                        projection=_FIELDS,
+                    )
+                    continue
                 lookup = MetadataLookup(
                     lane.kind,
                     plan.local_claims,

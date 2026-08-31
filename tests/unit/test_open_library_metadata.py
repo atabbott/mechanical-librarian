@@ -21,6 +21,8 @@ from mechanical_librarian.adapters.providers.open_library_metadata import (
     OpenLibraryPacer,
 )
 from mechanical_librarian.application.metadata_report import (
+    MetadataDiscoveryLane,
+    MetadataDiscoveryPlan,
     MetadataLookup,
     TargetSnapshot,
     metadata_discovery_plan,
@@ -103,6 +105,116 @@ def _work_lookup() -> MetadataLookup:
         "Local work title",
         ("Ada Example",),
     )
+
+
+def _identifier_first_plan() -> MetadataDiscoveryPlan:
+    claim = _isbn()
+    return MetadataDiscoveryPlan(
+        (claim,),
+        (
+            MetadataDiscoveryLane(
+                "lane_" + "1" * 64,
+                ProviderQueryKind.WORK,
+                (claim.reference,),
+                title="Local work title",
+                authors=("Ada Example",),
+            ),
+            MetadataDiscoveryLane(
+                "lane_" + "2" * 64,
+                ProviderQueryKind.ISBN,
+                (claim.reference,),
+                matched_family="9780306406157",
+                canonical_isbns=("9780306406157",),
+            ),
+        ),
+    )
+
+
+def test_identifier_no_match_falls_back_to_open_library_discovery() -> None:
+    queries: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        queries.append(request.url.params.get("q"))
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"numFound": 0, "docs": []},
+        )
+
+    observation = OpenLibraryMetadataProvider(
+        "open_library",
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        65_536,
+        pacer=OpenLibraryPacer(sleep=lambda _: None),
+    ).observe(_identifier_first_plan())
+
+    assert "isbn:9780306406157" == queries[0]
+    assert 2 == len(queries)
+    assert {ProviderQueryKind.ISBN, ProviderQueryKind.WORK} == {
+        lane.kind for lane in observation.lanes
+    }
+    assert 2 == observation.request_accounting.logical_requests
+
+
+def test_identifier_candidate_suppresses_open_library_discovery() -> None:
+    queries: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/search.json":
+            queries.append(request.url.params.get("q"))
+            value = _search("/books/OL1M")
+        elif request.url.path == "/books/OL1M.json":
+            value = _edition("/books/OL1M")
+        else:
+            assert "/works/OL5W.json" == request.url.path
+            value = _work()
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json=value,
+        )
+
+    observation = OpenLibraryMetadataProvider(
+        "open_library",
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        65_536,
+        pacer=OpenLibraryPacer(sleep=lambda _: None),
+    ).observe(_identifier_first_plan())
+
+    assert ["isbn:9780306406157"] == queries
+    assert [ProviderQueryKind.ISBN] == [lane.kind for lane in observation.lanes]
+    assert 3 == observation.request_accounting.logical_requests
+
+
+def test_malformed_identifier_falls_back_to_open_library_discovery() -> None:
+    queries: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        queries.append(request.url.params.get("q"))
+        if len(queries) == 1:
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                content=b"{",
+            )
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"numFound": 0, "docs": []},
+        )
+
+    observation = OpenLibraryMetadataProvider(
+        "open_library",
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        65_536,
+        pacer=OpenLibraryPacer(sleep=lambda _: None),
+    ).observe(_identifier_first_plan())
+
+    assert "isbn:9780306406157" == queries[0]
+    assert 2 == len(queries)
+    assert {ProviderQueryKind.ISBN, ProviderQueryKind.WORK} == {
+        lane.kind for lane in observation.lanes
+    }
 
 
 def test_work_query_ladder_is_bounded_and_accounted_as_retries() -> None:

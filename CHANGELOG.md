@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Ebook providers now try a usable ISBN before title/author discovery and skip
+  the latter only when the identifier yields candidates; all other outcomes keep
+  discovery, with request accounting exposing the executed lane kinds. (#881)
+
 - The hosted `container-image` check now extracts the pinned `ffprobe` from
   the image it builds, installs it in place of the runner's own, and executes
   the real-probe tests against it — audiobook inspection evidence is remote

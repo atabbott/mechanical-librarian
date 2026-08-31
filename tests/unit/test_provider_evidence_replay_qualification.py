@@ -16,19 +16,27 @@ import pytest
 from scripts import qualify_provider_evidence_replay as replay
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.providers.google_books_metadata import (
+    GoogleBooksMetadataProvider,
+)
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
     LibraryConfiguration,
     ProviderConnectionConfiguration,
     TargetConnectionConfiguration,
 )
-from mechanical_librarian.application.metadata_report import metadata_discovery_plan
+from mechanical_librarian.application.metadata_report import (
+    MetadataDiscoveryLane,
+    MetadataDiscoveryPlan,
+    metadata_discovery_plan,
+)
 from mechanical_librarian.domain.metadata_report import (
     REPORT_SCHEMA,
     ClaimKind,
     ClaimScope,
     LocalClaim,
     MetadataReport,
+    ProviderQueryKind,
     TargetDestination,
     TargetField,
     TargetFieldState,
@@ -37,6 +45,86 @@ from mechanical_librarian.domain.proposal_set import evaluate_report
 from tests.support.metadata_report_schemas import synthetic_report
 
 _HEAD = "1" * 40
+
+
+def test_recorded_identifier_hit_replays_without_discovery_spend() -> None:
+    claim = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780306406157",
+        canonical="9780306406157",
+        excerpt="ISBN: 9780306406157",
+        applicability="ebook",
+        checksum="valid_isbn_13",
+        applicability_basis="ebook",
+        scope=ClaimScope.EDITION,
+    )
+    plan = MetadataDiscoveryPlan(
+        (claim,),
+        (
+            MetadataDiscoveryLane(
+                "lane_" + "1" * 64,
+                ProviderQueryKind.WORK,
+                (claim.reference,),
+                title="Example Book",
+                authors=("Ada Example",),
+            ),
+            MetadataDiscoveryLane(
+                "lane_" + "2" * 64,
+                ProviderQueryKind.ISBN,
+                (claim.reference,),
+                matched_family="9780306406157",
+                canonical_isbns=("9780306406157",),
+            ),
+        ),
+    )
+    payload = {
+        "totalItems": 1,
+        "items": [
+            {
+                "id": "synthetic-volume",
+                "volumeInfo": {
+                    "title": "Example Book",
+                    "authors": ["Ada Example"],
+                    "industryIdentifiers": [
+                        {"type": "ISBN_13", "identifier": "9780306406157"}
+                    ],
+                },
+            }
+        ],
+    }
+    exchanges: list[dict[str, object]] = []
+    recorded = GoogleBooksMetadataProvider(
+        "google_books",
+        httpx.Client(
+            transport=replay.RecordingTransport(
+                exchanges,
+                "google_books",
+                httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=payload,
+                        request=request,
+                    )
+                ),
+            )
+        ),
+        65_536,
+        wall_clock=lambda: 1_700_000_000.0,
+    ).observe(plan)
+    transport = replay.ReplayTransport(exchanges, "google_books")
+    replayed = GoogleBooksMetadataProvider(
+        "google_books",
+        httpx.Client(transport=transport),
+        65_536,
+        wall_clock=lambda: 1_700_000_000.0,
+    ).observe(plan)
+
+    assert recorded.to_data() == replayed.to_data()
+    assert [ProviderQueryKind.ISBN] == [lane.kind for lane in replayed.lanes]
+    assert 1 == replayed.request_accounting.logical_requests
+    assert transport.cursor == len(exchanges) == 1
+    assert not transport.mismatch
 
 
 def _configuration() -> ApplicationConfiguration:

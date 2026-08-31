@@ -35,6 +35,7 @@ from mechanical_librarian.application.metadata_report import (
     audiobook_discovery_plan,
     metadata_discovery_plan,
     metadata_lookup,
+    provider_discovery_lane_order,
     provider_observation,
     qualify_provider_observation,
 )
@@ -110,6 +111,55 @@ def _work_dispatch(
     return WorkDispatchLineage.from_query(
         narrowing_work_query(query) if narrowed else query
     )
+
+
+def test_multi_family_provider_lane_order_is_the_original_plan_order() -> None:
+    first = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780306406157",
+        canonical="9780306406157",
+        excerpt="ISBN 9780306406157",
+        applicability="ebook",
+        checksum="valid_isbn_13",
+        applicability_basis="ebook",
+    )
+    second = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780140328721",
+        canonical="9780140328721",
+        excerpt="ISBN 9780140328721",
+        applicability="print",
+        checksum="valid_isbn_13",
+        applicability_basis="print",
+    )
+    plan = MetadataDiscoveryPlan(
+        (first, second),
+        (
+            MetadataDiscoveryLane(
+                "lane_" + "1" * 64,
+                ProviderQueryKind.ISBN,
+                (first.reference,),
+                matched_family="9780306406157",
+                canonical_isbns=("9780306406157",),
+            ),
+            MetadataDiscoveryLane(
+                "lane_" + "2" * 64,
+                ProviderQueryKind.WORK,
+                (first.reference,),
+                title="Example Book",
+                authors=("Ada Example",),
+            ),
+            MetadataDiscoveryLane(
+                "lane_" + "3" * 64,
+                ProviderQueryKind.ISBN,
+                (second.reference,),
+                matched_family="9780140328721",
+                canonical_isbns=("9780140328721",),
+            ),
+        ),
+    )
+
+    assert plan.lanes is provider_discovery_lane_order(plan)
 
 
 def test_lookup_prefers_one_isbn_family_and_otherwise_requires_complete_target_authors() -> (

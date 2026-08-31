@@ -504,6 +504,41 @@ def metadata_discovery_plan(
     return MetadataDiscoveryPlan(local_claims, ordered_lanes)
 
 
+def provider_discovery_lane_order(
+    plan: MetadataDiscoveryPlan,
+) -> tuple[MetadataDiscoveryLane, ...]:
+    """Schedule one unambiguous ISBN lane before its optional work fallback."""
+    identifier_count = sum(lane.kind is ProviderQueryKind.ISBN for lane in plan.lanes)
+    if identifier_count != 1:
+        return plan.lanes
+    return tuple(
+        sorted(
+            plan.lanes,
+            key=lambda lane: (
+                lane.kind is ProviderQueryKind.WORK,
+                lane.identity,
+            ),
+        )
+    )
+
+
+def identifier_suppresses_discovery(
+    plan: MetadataDiscoveryPlan,
+    results: list[ProviderLaneResult],
+    lane: MetadataDiscoveryLane,
+) -> bool:
+    """Keep discovery unspent after one admitted identifier result."""
+    identifier_results = tuple(
+        result for result in results if result.lane.kind is ProviderQueryKind.ISBN
+    )
+    return (
+        lane.kind is ProviderQueryKind.WORK
+        and sum(item.kind is ProviderQueryKind.ISBN for item in plan.lanes) == 1
+        and len(identifier_results) == 1
+        and identifier_results[0].status is ProviderStatus.CANDIDATES
+    )
+
+
 def audiobook_discovery_plan(
     target: TargetSnapshot, local_claims: tuple[LocalClaim, ...]
 ) -> MetadataDiscoveryPlan:
