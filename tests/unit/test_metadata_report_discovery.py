@@ -161,9 +161,11 @@ def test_multiple_usable_families_keep_provider_lane_order() -> None:
         ),
     )
 
-    assert (plan.lanes[0], plan.lanes[1], plan.lanes[2]) == provider_discovery_lane_order(
-        plan
-    )
+    assert (
+        plan.lanes[0],
+        plan.lanes[1],
+        plan.lanes[2],
+    ) == provider_discovery_lane_order(plan)
 
 
 @pytest.mark.parametrize(
