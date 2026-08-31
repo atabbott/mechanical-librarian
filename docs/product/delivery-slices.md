@@ -147,17 +147,31 @@ decisions into qualified automatic decisions.
 | F36 Language equivalence classes | #885 | Same-language representation variants collapse into one policy-rendered alternative; genuine conflicts survive. | Ready. |
 | F37 Empty-description tiebreaker | #886 | An empty description fills automatically under a qualified deterministic tiebreaker. | Ready. |
 | F38 Canonical contributor display | #887 | Canonical equivalence elects the display form as the stored value and the decision is stated plainly. | Ready. |
-| F39 Advised description rewrite | #892 | The configured reviewer engine offers one rewritten or fused description as marked authored content; an explicit owner policy may apply in-policy rewrites automatically, and otherwise candidates park for owner review. | Follows 0.18.0's #872/#873. |
+| F40 Series fill-empty decision | #895 | An empty series field fills automatically from one qualified work-scope authority. | Ready. |
+| F41 Title decoration equivalence | #896 | Decorated title variants collapse to the plain canonical form, qualifying applicable tidy and subtitle tranches and the explicit author-prefix-plus-underscores WORK-identity compound without admitting either part alone; genuine conflicts survive. | Blocked by #884. |
+| F42 Verified-manifestation ISBN decision | #897 | Competing edition ISBNs fill an empty field only when the already-verified manifestation identity decides them. | Ready. |
+| F39 Advised description rewrite | #892 | The configured reviewer engine offers one rewritten or fused description as marked authored content; an explicit owner policy may apply in-policy rewrites automatically, and otherwise candidates park for owner review. | Ready. |
 
-Focused work remains outside the slice sequence: #877 closes the checkpoint
-as its final measurement, grading 0.18.0 and 0.19.0 together against the
-#744 baselines (isolated 0.18.0 attribution is deliberately traded away;
-per-issue evidence and the preserved 2026-08-25 volume carry the interim
-proof); #881 then #882 make provider spending identifier-first and
-decisive-work-first within #876's pacing; #888 then #889 recover WORK-lane
-retrieval and reordered author sets, measure-first; #890 and #891 keep the
-fields rail and Library rail legible; each uses `Delivery slice: Not
-applicable`. The tranche slices F35–F38 qualify through the #445 route. The
+Focused work remains outside the slice sequence, each using `Delivery slice:
+Not applicable`. #954 is complete; it restored the exact-head delivery gate
+before this checkpoint. #908 is this documentation checkpoint and remains In
+progress until this document merges.
+#881 makes provider spending identifier-first and is Ready; #882 spends
+first-run budgets on decisive works within #876's pacing and is Blocked by
+#881. #888 is Ready to qualify one closed Latin combining-mark family for WORK
+retrieval and admission; broader transliteration remains excluded. #889 is
+Ready to admit reordered exact author sets in the WORK lane, measure-first;
+election-side normalization remains excluded. #898 is Ready to stop creator
+extraction admitting prose fragments as authorship claims, with an
+extraction-only boundary and no corroboration election. #890 and #891 are
+Ready to keep the fields rail and Library rail legible. #877 is Blocked by
+every other open milestone issue as the closing measurement, grading 0.18.0
+and 0.19.0 together against the #744 baselines (isolated 0.18.0 attribution is
+deliberately traded away; per-issue evidence and the preserved 2026-08-25
+volume carry the interim proof).
+
+The tranche slices F35–F38, F40, and F42 use the #445 qualification route.
+F41 uses that route for its applicable tidy and subtitle tranches. The
 audiobook evidence-source selection (#893) stays outside this checkpoint.
 
 ## Delivery checkpoint 0.20.0: audiobook foundation
