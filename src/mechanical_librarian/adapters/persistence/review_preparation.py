@@ -1012,6 +1012,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     "ELSE circuit_open_until END,updated_at=? WHERE singleton=1",
                     (completed_at, completed_at, completed_at),
                 )
+            refresh_preparation_work(self._connection, action.action_id, completed_at)
             next_action = (
                 self.claim_review_pipeline_action(completed_at)
                 if claim_next
@@ -1021,7 +1022,6 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     else None
                 )
             )
-            refresh_preparation_work(self._connection, action.action_id, completed_at)
             self._connection.commit()
             return next_action
         except BaseException as error:

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Refresh the completed work's Library presentation before terminal preparation
+  settlement, so an orderly completed-state restart accepts its exact durable
+  cohort without repair. (#954)
+
 - Capture an explicitly authorized bounded private provider cohort before
   parsing and replay it offline through current adapters into fresh current
   reports, proposals, and review admission. #938 remains the complete-library
