@@ -33,11 +33,13 @@ from mechanical_librarian.application.metadata_report import (
     TargetFile,
     TargetSnapshot,
     audiobook_discovery_plan,
+    identifier_suppresses_discovery,
     metadata_discovery_plan,
     metadata_lookup,
     provider_discovery_lane_order,
     provider_observation,
     qualify_provider_observation,
+    usable_isbn_families,
 )
 from mechanical_librarian.domain.audiobook_corroboration import (
     runtime_corroborated_candidate,
@@ -113,7 +115,7 @@ def _work_dispatch(
     )
 
 
-def test_multi_family_provider_lane_order_is_the_original_plan_order() -> None:
+def test_multiple_usable_families_keep_provider_lane_order() -> None:
     first = LocalClaim.create(
         kind=ClaimKind.ISBN,
         observed="9780306406157",
@@ -128,9 +130,9 @@ def test_multi_family_provider_lane_order_is_the_original_plan_order() -> None:
         observed="9780140328721",
         canonical="9780140328721",
         excerpt="ISBN 9780140328721",
-        applicability="print",
+        applicability="ebook",
         checksum="valid_isbn_13",
-        applicability_basis="print",
+        applicability_basis="ebook",
     )
     plan = MetadataDiscoveryPlan(
         (first, second),
@@ -159,7 +161,148 @@ def test_multi_family_provider_lane_order_is_the_original_plan_order() -> None:
         ),
     )
 
+    assert (plan.lanes[0], plan.lanes[1], plan.lanes[2]) == provider_discovery_lane_order(
+        plan
+    )
+
+
+@pytest.mark.parametrize(
+    "claim",
+    (
+        LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="9780306406157",
+            canonical="9780306406157",
+            excerpt="ISBN 9780306406157",
+            applicability="print",
+            checksum="valid_isbn_13",
+            applicability_basis="print",
+        ),
+        LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="9780306406157",
+            canonical="9780306406157",
+            excerpt="ISBN 9780306406157",
+            applicability="ambiguous",
+            checksum="valid_isbn_13",
+            applicability_basis="ambiguous",
+        ),
+        LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="9780306406157",
+            canonical="9780306406157",
+            excerpt="ISBN 9780306406157",
+            applicability="ebook",
+            checksum="valid_isbn_13",
+            applicability_basis="ebook",
+            rear_provenance=RearClaimProvenance("a" * 64, 1, 1, "isbn", "ISBN"),
+        ),
+    ),
+    ids=("print", "ambiguous", "rear"),
+)
+def test_nonusable_isbn_does_not_reorder_or_suppress_discovery(
+    claim: LocalClaim,
+) -> None:
+    plan = MetadataDiscoveryPlan(
+        (claim,),
+        (
+            MetadataDiscoveryLane(
+                "lane_" + "1" * 64,
+                ProviderQueryKind.WORK,
+                (claim.reference,),
+                title="Example Book",
+                authors=("Ada Example",),
+            ),
+            MetadataDiscoveryLane(
+                "lane_" + "2" * 64,
+                ProviderQueryKind.ISBN,
+                (claim.reference,),
+                matched_family="9780306406157",
+                canonical_isbns=("9780306406157",),
+            ),
+        ),
+    )
+
+    assert frozenset() == usable_isbn_families((claim,))
     assert plan.lanes is provider_discovery_lane_order(plan)
+    assert not identifier_suppresses_discovery(
+        plan,
+        [
+            ProviderLaneResult(
+                plan.lanes[1],
+                ProviderStatus.CANDIDATES,
+                (ProviderCandidate("edition-1", "work-1", ()),),
+            )
+        ],
+        plan.lanes[0],
+    )
+
+
+def test_one_usable_family_precedes_nonusable_identifier_lanes() -> None:
+    usable = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780306406157",
+        canonical="9780306406157",
+        excerpt="ISBN 9780306406157",
+        applicability="ebook",
+        checksum="valid_isbn_13",
+        applicability_basis="ebook",
+    )
+    print_only = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780140328721",
+        canonical="9780140328721",
+        excerpt="ISBN 9780140328721",
+        applicability="print",
+        checksum="valid_isbn_13",
+        applicability_basis="print",
+    )
+    work = MetadataDiscoveryLane(
+        "lane_" + "1" * 64,
+        ProviderQueryKind.WORK,
+        (usable.reference,),
+        title="Example Book",
+        authors=("Ada Example",),
+    )
+    print_lane = MetadataDiscoveryLane(
+        "lane_" + "2" * 64,
+        ProviderQueryKind.ISBN,
+        (print_only.reference,),
+        matched_family="9780140328721",
+        canonical_isbns=("9780140328721",),
+    )
+    usable_lane = MetadataDiscoveryLane(
+        "lane_" + "3" * 64,
+        ProviderQueryKind.ISBN,
+        (usable.reference,),
+        matched_family="9780306406157",
+        canonical_isbns=("9780306406157",),
+    )
+    plan = MetadataDiscoveryPlan((usable, print_only), (work, print_lane, usable_lane))
+
+    assert (usable_lane, work, print_lane) == provider_discovery_lane_order(plan)
+    assert identifier_suppresses_discovery(
+        plan,
+        [
+            ProviderLaneResult(
+                usable_lane,
+                ProviderStatus.CANDIDATES,
+                (ProviderCandidate("edition-1", "work-1", ()),),
+            )
+        ],
+        work,
+    )
+    assert not identifier_suppresses_discovery(
+        plan,
+        [
+            ProviderLaneResult(
+                print_lane,
+                ProviderStatus.CANDIDATES,
+                (ProviderCandidate("edition-1", "work-1", ()),),
+            )
+        ],
+        work,
+    )
 
 
 def test_lookup_prefers_one_isbn_family_and_otherwise_requires_complete_target_authors() -> (

@@ -128,8 +128,8 @@ def _discovery_plan() -> MetadataDiscoveryPlan:
     return MetadataDiscoveryPlan(claims, tuple(lanes))
 
 
-def _identifier_first_plan() -> MetadataDiscoveryPlan:
-    claim = _isbn()
+def _identifier_first_plan(claim: LocalClaim | None = None) -> MetadataDiscoveryPlan:
+    claim = _isbn() if claim is None else claim
     return MetadataDiscoveryPlan(
         (claim,),
         (
@@ -244,6 +244,37 @@ def test_terminal_identifier_failure_stays_typed_and_falls_back_to_discovery() -
     assert {ProviderQueryKind.ISBN, ProviderQueryKind.WORK} == {
         lane.kind for lane in observation.lanes
     }
+
+
+def test_print_isbn_keeps_google_books_discovery_in_plan_order() -> None:
+    claim = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780306406157",
+        canonical="9780306406157",
+        excerpt="ISBN 9780306406157",
+        applicability="print",
+        checksum="valid_isbn_13",
+        applicability_basis="print",
+    )
+    queries: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        queries.append(request.url.params["q"])
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"totalItems": 0},
+        )
+
+    observation = GoogleBooksMetadataProvider(
+        "google_books", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
+    ).observe(_identifier_first_plan(claim))
+
+    assert not queries[0].startswith("isbn:")
+    assert {ProviderQueryKind.ISBN, ProviderQueryKind.WORK} == {
+        lane.kind for lane in observation.lanes
+    }
+    assert 2 == observation.request_accounting.logical_requests
 
 
 class _InterruptedStream(httpx.SyncByteStream):

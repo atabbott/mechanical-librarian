@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Ebook providers now try a usable ISBN before title/author discovery and skip
+- Ebook providers now try an eligible usable ISBN before title/author discovery and skip
   the latter only when the identifier yields candidates; all other outcomes keep
   discovery, with request accounting exposing the executed lane kinds. (#881)
 

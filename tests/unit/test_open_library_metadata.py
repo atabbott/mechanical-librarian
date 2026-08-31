@@ -2379,23 +2379,13 @@ def test_discovery_converges_repeated_lane_evidence_authors_and_isbn_applicabili
                 search["docs"][0]["editions"]["docs"][0]["isbn"] = [
                     family_query.removeprefix("isbn:")
                 ]
-                publishers = (
-                    [
-                        "First Press",
-                        "Second Press",
-                        "Dup Press",
-                        "Dup Press",
-                        "bad\x00publisher",
-                    ]
-                    if family_query == "isbn:9780306406157"
-                    else [
-                        "Second Press",
-                        "First Press",
-                        "Dup Press",
-                        "Dup Press",
-                        "bad\x00publisher",
-                    ]
-                )
+                publishers = [
+                    "First Press",
+                    "Second Press",
+                    "Dup Press",
+                    "Dup Press",
+                    "bad\x00publisher",
+                ]
                 search["docs"][0]["publisher"] = publishers
                 value = search
             else:
@@ -2450,18 +2440,23 @@ def test_discovery_converges_repeated_lane_evidence_authors_and_isbn_applicabili
     observation = provider.observe(plan)
 
     assert ProviderStatus.CANDIDATES == observation.status
-    assert 7 == observation.diagnostics[0].count
+    assert 6 == observation.diagnostics[0].count
     assert 1 == len(observation.candidates)
     assert {ProviderStatus.CANDIDATES} == {lane.status for lane in observation.lanes}
     assert (
-        tuple(sorted(lane.identity for lane in plan.lanes))
+        tuple(
+            sorted(
+                lane.identity
+                for lane in plan.lanes
+                if lane.kind is ProviderQueryKind.ISBN
+            )
+        )
         == observation.convergence[0].lane_identities
     )
     lanes = {lane.matched_family: lane for lane in observation.lanes}
     assert (ebook.reference,) == lanes["9780306406157"].input_references
     assert (print_only.reference,) == lanes["9780140328721"].input_references
-    assert (title.reference,) == lanes[None].input_references
-    assert 3 == len(
+    assert 2 == len(
         {
             candidate.reference
             for lane in observation.lanes
@@ -2474,7 +2469,7 @@ def test_discovery_converges_repeated_lane_evidence_authors_and_isbn_applicabili
         for claim in observation.candidates[0].claims
         if claim.kind is ClaimKind.ISBN and claim.value is not None
     )
-    assert ("Zed Author", "Ada Author") == tuple(
+    assert () == tuple(
         claim.value
         for claim in observation.candidates[0].claims
         if claim.kind is ClaimKind.CREATOR
@@ -2486,19 +2481,7 @@ def test_discovery_converges_repeated_lane_evidence_authors_and_isbn_applicabili
         for evidence in observation.candidates[0].evidence
         if evidence.kind is ProviderEvidenceKind.CONTRIBUTOR_IDENTITY
     )
-    assert {
-        "open-library-author-OL7A",
-        "open-library-author-OL9A",
-    } == {evidence.value for evidence in identities}
-    extra_identity = next(
-        evidence
-        for evidence in identities
-        if evidence.value == "open-library-author-OL9A"
-    )
-    assert (
-        max(evidence.source_ordinal for evidence in observation.candidates[0].evidence)
-        == extra_identity.source_ordinal
-    )
+    assert {"open-library-author-OL7A"} == {evidence.value for evidence in identities}
     publishers = tuple(
         evidence
         for evidence in observation.candidates[0].evidence

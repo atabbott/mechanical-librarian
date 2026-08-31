@@ -809,14 +809,19 @@ def test_hardcover_converges_differing_isbn_applicability_and_shared_cover() -> 
     assert 1 == len(observation.candidates)
     assert {ProviderStatus.CANDIDATES} == {lane.status for lane in observation.lanes}
     assert (
-        tuple(sorted(lane.identity for lane in plan.lanes))
+        tuple(
+            sorted(
+                lane.identity
+                for lane in plan.lanes
+                if lane.kind is ProviderQueryKind.ISBN
+            )
+        )
         == observation.convergence[0].lane_identities
     )
     lanes = {lane.matched_family: lane for lane in observation.lanes}
     assert (ebook.reference,) == lanes["9780306406157"].input_references
     assert (print_only.reference,) == lanes["9780140328721"].input_references
-    assert (title.reference,) == lanes[None].input_references
-    assert 3 == len(
+    assert 2 == len(
         {
             candidate.reference
             for lane in observation.lanes
