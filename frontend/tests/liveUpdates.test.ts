@@ -137,7 +137,7 @@ describe('live invalidation', () => {
     const queryClient = new QueryClient()
     let aborted = false
     void queryClient
-      .fetchQuery({
+      .query({
         queryKey: ['review-preparation'],
         queryFn: ({ signal }) =>
           new Promise((_resolve, reject) => {

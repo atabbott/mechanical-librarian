@@ -131,7 +131,7 @@ export const useReviewDecisionController = ({
   // here; Library counts and the case's own history converge behind it.
   const refreshCase = async () => {
     try {
-      return await queryClient.fetchQuery({ ...detailQuery(http, reviewCaseId), staleTime: 0 })
+      return await queryClient.query({ ...detailQuery(http, reviewCaseId), staleTime: 0 })
     } catch {
       return undefined
     }

@@ -922,9 +922,10 @@ export const libraryRoute = createRoute({
   validateSearch: normalizeLibrarySearch,
   loaderDeps: ({ search }) => search,
   loader: ({ context, deps, abortController }) =>
-    context.queryClient.ensureQueryData({
+    context.queryClient.query({
       ...libraryQuery(context.http, deps),
       queryFn: () => context.http.getLibrary(deps, abortController.signal),
+      staleTime: 'static',
     }),
   component: LibraryRouteComponent,
 })
@@ -934,9 +935,10 @@ export const attentionRoute = createRoute({
   validateSearch: normalizeAttentionSearch,
   loaderDeps: ({ search }) => search,
   loader: ({ context, deps, abortController }) =>
-    context.queryClient.ensureQueryData({
+    context.queryClient.query({
       ...attentionQuery(context.http, deps),
       queryFn: () => context.http.getAttention(deps, abortController.signal),
+      staleTime: 'static',
     }),
   component: AttentionRouteComponent,
 })
@@ -968,17 +970,20 @@ export const policyRoute = createRoute({
   validateSearch: normalizePolicySearch,
   loader: async ({ context, abortController }) => {
     const [state, shadow, safety] = await Promise.allSettled([
-      context.queryClient.ensureQueryData({
+      context.queryClient.query({
         ...policyStateQuery(context.http),
         queryFn: () => context.http.getPolicyState(abortController.signal),
+        staleTime: 'static',
       }),
-      context.queryClient.ensureQueryData({
+      context.queryClient.query({
         ...shadowQuery(context.http),
         queryFn: () => context.http.getShadowPosture(abortController.signal),
+        staleTime: 'static',
       }),
-      context.queryClient.ensureQueryData({
+      context.queryClient.query({
         ...safetyQuery(context.http),
         queryFn: () => context.http.getAutomaticSafety(abortController.signal),
+        staleTime: 'static',
       }),
     ])
     for (const result of [state, shadow, safety]) {
@@ -1001,9 +1006,10 @@ export const activityRoute = createRoute({
   validateSearch: normalizeActivitySearch,
   loaderDeps: ({ search }) => search,
   loader: ({ context, deps, abortController }) =>
-    context.queryClient.ensureQueryData({
+    context.queryClient.query({
       ...activityQuery(context.http, deps),
       queryFn: () => context.http.getActivity(deps, abortController.signal),
+      staleTime: 'static',
     }),
   pendingMs: Infinity,
   component: () => <ActivityPage initial={activityRoute.useLoaderData()} />,
