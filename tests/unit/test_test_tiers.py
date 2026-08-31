@@ -226,6 +226,28 @@ def test_source_tiers_are_disjoint_and_all_tiers_own_every_public_test_file() ->
     } == expected_files
 
 
+def test_the_probe_cohort_is_exactly_the_audio_probe_slice_of_slow() -> None:
+    """The hosted gate runs the probe cases and only the probe cases (#929).
+
+    The file stays a member of `slow`, so the maintainer-local tier is still
+    complete; the probe cohort exists so the `container-image` job can execute
+    real ffprobe evidence without inheriting the scale and resource cases,
+    which need an installed artifact and a longer budget than a gate job has.
+    """
+
+    root = Path(__file__).resolve().parents[2]
+    probe = set(collect_cohort(root, "probe"))
+    slow = set(collect_cohort(root, "slow"))
+    assert probe
+    assert probe < slow
+    assert all(
+        identifier.startswith("tests.slow.test_audio_probe.") for identifier in probe
+    )
+    assert cohort_targets(root, "probe") == (
+        str(root / "tests" / "slow" / "test_audio_probe.py"),
+    )
+
+
 def test_required_installed_adds_the_exact_wheel_scale_node_to_fast_contracts() -> None:
     root = Path(__file__).resolve().parents[2]
     fast = set(collect_cohort(root, "fast"))
@@ -253,6 +275,7 @@ def test_the_tier_inventory_lists_standalone_and_a_bare_invocation_refuses() -> 
             "complete",
             "complete-installed",
             "fast",
+            "probe",
             "required-installed",
             "slow",
         ],

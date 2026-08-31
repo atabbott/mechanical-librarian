@@ -17,12 +17,14 @@ untracked artifact.
 
 ## Tiers
 
-The public suite has four explicit qualification tiers, declared in `COHORTS`.
+The public suite has five explicit qualification tiers, declared in `COHORTS`.
 The three source cohorts — `fast`, `browser` and `slow` — are disjoint by
 directory. `required-installed` is not: it is the existing fast-source subset
 plus one installed-only exact-wheel smoke, deliberately, because its distinct
 invariant is execution through the installed wheel rather than a different set
-of source tests.
+of source tests. `probe` overlaps the same way: it is exactly the audio-probe
+file `slow` already owns, because its distinct invariant is execution against
+the shipped image's pinned binary rather than a different set of tests.
 `scripts/run_test_tier.py` is the only way a tier is run
 or listed, so a cohort admits exactly the paths its declared patterns match.
 `scripts/run_test_tier.py --list`, with no tier, emits a
@@ -73,14 +75,17 @@ The browser asset build is not optional: the tier reads `ML_REACT_ASSET_DIR`
 with no fallback, and building into the checkout would leave untracked output
 where a clean tree is itself a check.
 
-The slow tier is also the only cohort that executes the audiobook probe, so it
-needs an `ffprobe` on one of the paths the parent resolves (Debian: `apt-get
-install ffmpeg`; macOS: `brew install ffmpeg`). The shipped image builds its
-own minimal probe instead, so this is a workstation prerequisite rather than a
-shared pin. A missing probe fails that cohort with a diagnostic naming the
-paths it searched rather than skipping, because a skip would report unproved
-evidence as covered. Every other tier reads recorded probe documents and needs
-no binary.
+The audiobook probe executes in two cohorts. The slow tier runs it as part of
+the complete maintainer-local pass, so a workstation needs an `ffprobe` on one
+of the paths the parent resolves (Debian: `apt-get install ffmpeg`; macOS:
+`brew install ffmpeg`) — a workstation prerequisite rather than a shared pin.
+The `probe` tier names exactly the same file and is what the hosted
+`container-image` job runs against the pinned binary extracted from the image
+it just built, so real-probe evidence is remote qualification, not
+maintainer-local practice (#929). A missing probe fails either cohort with a
+diagnostic naming the paths it searched rather than skipping, because a skip
+would report unproved evidence as covered. Every other tier reads recorded
+probe documents and needs no binary.
 
 A test may move out of routine qualification only when its expensive property
 is scale, endurance, exhaustive breadth, or resource measurement and a smaller
@@ -129,8 +134,8 @@ candidates cannot break `main` together in silence. Each job checks out
 `github.event.pull_request.head.sha || github.sha`, so exact-head semantics hold
 on both events, and only pull-request work is cancelled by a superseding head. A
 fourth `container-image` job builds the shipped image at that same revision, so
-a Dockerfile regression fails the gate; it never runs, loads, or pushes the
-image.
+a Dockerfile regression fails the gate; it loads the image solely to extract
+the pinned `ffprobe` for the probe tier, and never starts or pushes it.
 
 `protected-browser` restores the Chromium payload from a cache keyed on the
 installed Playwright version and saves it only after

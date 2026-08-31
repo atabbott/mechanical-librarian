@@ -149,7 +149,7 @@ of this table can be checked against the workflow rather than trusted.
 
 | Check | Enforced by | Command or job |
 | --- | --- | --- |
-| Lockfile currency | gate | `uv lock --check`, in all three qualification jobs |
+| Lockfile currency | gate | `uv lock --check`, in all four qualification jobs |
 | Python formatting | gate | `uv run ruff format --check src tests scripts` in `fast-source` |
 | Python lint | gate | `uv run ruff check src tests scripts` in `fast-source` |
 | Python typing | gate | `uv run mypy src tests scripts` in `fast-source` |
@@ -169,6 +169,8 @@ of this table can be checked against the workflow rather than trusted.
 | The Chromium payload is well formed, its digest is recorded, and it starts on the runner's own libraries | gate | `scripts/verify_playwright_browser.py` in `protected-browser` |
 | Browser tier against that recorded payload | gate | `scripts/run_test_tier.py browser` in `protected-browser` |
 | The shipped container image builds from the exact revision, restoring unchanged layers from the Actions cache | gate | `docker/build-push-action` with `tags: mechanical-librarian:gate` and `cache-to: type=gha,mode=max` in `container-image` |
+| The probe tier runs the image's own pinned binary, never the runner's | gate | `docker create mechanical-librarian:gate`, `docker cp`, `docker rm`, `sudo install -m 0755 "$RUNNER_TEMP/ffprobe" /usr/local/bin/ffprobe`, the `FFMPEG_VERSION` readback with `ffprobe -version`, and the removal of `/usr/bin/ffprobe`, in `container-image` |
+| Real-probe execution over generated media | gate | `scripts/run_test_tier.py probe` in `container-image` |
 | Advisories against the locked dependency closure | gate | `--lockfile=uv.lock` in `dependency-audit` |
 | Explicit slow tier: scale, endurance, resource ceilings | maintainer-manual | `qualify_exact_artifact.py --test-tier slow` |
 | One-command complete exact-head qualification | maintainer-manual | `run_test_tier.py complete` |
@@ -182,8 +184,9 @@ Four of the five maintainer-manual qualifiers have their own logic unit-tested
 in the fast tier, so for those, what is manual is running the qualification.
 `scripts/qualify_container_lifecycle.py` is the exception: nothing under
 `tests/` references it, so neither its logic nor its execution is checked by
-merging. The `container-image` job builds the image and never runs, loads, or
-pushes it, so nothing about the running image is proven by merging either.
+merging. The `container-image` job builds the image, loads it solely to
+extract the pinned `ffprobe` it carries, and never starts it or pushes it, so
+nothing about the running image is proven by merging either.
 
 There is no coverage threshold, and no separate contract, security, or
 documentation test tier. Security and documentation behaviour is proven by

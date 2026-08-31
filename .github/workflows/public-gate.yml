@@ -242,6 +242,30 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
+      - name: Install Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14.7"
+
+      - name: Install the exact frontend toolchain
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.19.0"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: true
+          version: "0.12.5"
+
+      - name: Verify the lockfile is current
+        run: uv lock --check
+
+      - name: Install locked development dependencies
+        run: uv sync --locked --all-groups
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
         with:
@@ -251,8 +275,10 @@ jobs:
           version: v0.36.1
 
       # The shipped image must assemble from the exact revision. The build is
-      # never pushed, loaded, or run here: running the built image's lifecycle
-      # qualifier stays a documented maintainer-manual step. Layers restore
+      # never pushed or run here: running the built image's lifecycle
+      # qualifier stays a documented maintainer-manual step. It is loaded into
+      # the runner's daemon for exactly one purpose -- extracting the pinned
+      # probe binary the tier below executes (#929). Layers restore
       # from the repository Actions cache; a step re-executes only when its
       # inputs change. Base-image freshness comes from the digest pins the
       # Dockerfile carries on every FROM line, not from `--pull` -- a base
@@ -263,8 +289,29 @@ jobs:
           context: .
           tags: mechanical-librarian:gate
           push: false
+          load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # The runner image preinstalls a distribution ffmpeg at
+      # `/usr/bin/ffprobe`, which is first in the closed candidate set the
+      # inspector resolves. It is removed so the tier can only ever execute
+      # the binary the shipped image pins -- a pass that ran the distribution
+      # probe would prove nothing about the pin. The version assertion reads
+      # the Dockerfile's own ARG, so a pin bump stays a one-file change.
+      - name: Install the image's pinned probe binary
+        run: |
+          sudo rm -f /usr/bin/ffprobe
+          container="$(docker create mechanical-librarian:gate)"
+          docker cp "${container}:/usr/local/bin/ffprobe" "$RUNNER_TEMP/ffprobe"
+          docker rm "${container}"
+          sudo install -m 0755 "$RUNNER_TEMP/ffprobe" /usr/local/bin/ffprobe
+          version="$(sed -n 's/^ARG FFMPEG_VERSION=//p' Dockerfile)"
+          /usr/local/bin/ffprobe -version | head -n 1 | grep -F "ffprobe version ${version:?}"
+          test ! -e /usr/bin/ffprobe
+
+      - name: Run the probe tier against the shipped binary
+        run: uv run python scripts/run_test_tier.py probe
 
   dependency-audit:
     runs-on: ubuntu-24.04

@@ -256,13 +256,55 @@ def test_builds_the_shipped_container_from_the_exact_revision() -> None:
     assert "cache-from: type=gha" in workflow
     assert "cache-to: type=gha,mode=max" in workflow
     assert "docker build --pull" not in workflow
-    # The built image is never pushed, loaded, or run by the gate: its tag
-    # is written once and never referenced again. The `docker run` in the
-    # dependency audit runs a different, digest-pinned scanner image and
-    # never touches this one.
+    # The built image is never pushed or run by the gate. It is loaded and
+    # its tag referenced exactly once more, by the extraction that hands the
+    # image's pinned probe binary to the probe tier (#929) -- a `docker
+    # create` never starts a process. The `docker run` in the dependency
+    # audit runs a different, digest-pinned scanner image and never touches
+    # this one.
     assert "push: false" in workflow
+    assert "load: true" in workflow
     assert "docker push" not in workflow
-    assert workflow.count("mechanical-librarian:gate") == 1
+    assert workflow.count("mechanical-librarian:gate") == 2
+    assert 'container="$(docker create mechanical-librarian:gate)"' in workflow
+    assert "docker run mechanical-librarian" not in workflow
+
+
+def test_the_probe_tier_executes_the_images_own_pinned_binary() -> None:
+    """The probe pass must be attributable to the image's pin, nothing else.
+
+    The runner image preinstalls a distribution ffmpeg at `/usr/bin/ffprobe`,
+    which is first in the inspector's closed candidate set, so leaving it in
+    place would let the tier pass against a binary the repository does not
+    pin. And a version literal repeated in the workflow would drift from the
+    Dockerfile ARG on the next pin bump, so the assertion must read the ARG.
+    """
+
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    assert "sudo rm -f /usr/bin/ffprobe" in workflow
+    assert 'docker cp "${container}:/usr/local/bin/ffprobe"' in workflow
+    assert (
+        'sudo install -m 0755 "$RUNNER_TEMP/ffprobe" /usr/local/bin/ffprobe' in workflow
+    )
+    assert "version=\"$(sed -n 's/^ARG FFMPEG_VERSION=//p' Dockerfile)\"" in workflow
+    # `${version:?}` fails the step when the ARG read comes back empty, so a
+    # renamed Dockerfile ARG cannot silently turn the grep into a no-op match.
+    assert (
+        '/usr/local/bin/ffprobe -version | head -n 1 | grep -F "ffprobe version ${version:?}"'
+        in workflow
+    )
+    assert "test ! -e /usr/bin/ffprobe" in workflow
+    assert "uv run python scripts/run_test_tier.py probe" in workflow
+    # The extraction and the tier both live in the job that built the image,
+    # so the binary executed is the one this exact revision assembled.
+    jobs = workflow.split("\n  container-image:\n")
+    assert len(jobs) == 2
+    tail = jobs[1].split("\n  dependency-audit:\n")[0]
+    assert "docker create mechanical-librarian:gate" in tail
+    assert "scripts/run_test_tier.py probe" in tail
+    # `fast-source` stays ffprobe-free: unit tests consume recorded probe
+    # documents, and the probe binary exists only where the image supplies it.
+    assert "ffprobe" not in jobs[0]
 
 
 def test_caches_the_pinned_chromium_payload_but_still_verifies_it() -> None:
@@ -316,7 +358,7 @@ def test_every_action_is_sha_pinned_without_persisted_credentials() -> None:
         for line in workflow.splitlines()
         if line.strip().startswith("uses:")
     ]
-    assert len(uses) == 18
+    assert len(uses) == 21
     # The references are read out of the workflow at run time, so they cannot
     # become parameters without making the collected case count -- and the
     # cohort identity digest built from it -- move whenever the workflow gains
