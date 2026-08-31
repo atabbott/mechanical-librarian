@@ -154,8 +154,8 @@ decisions into qualified automatic decisions.
 
 Focused work remains outside the slice sequence, each using `Delivery slice:
 Not applicable`. #954 is complete; it restored the exact-head delivery gate
-before this checkpoint. #908 is this documentation checkpoint and remains In
-progress until this document merges.
+before this checkpoint. #908 is complete after this documentation checkpoint
+merges.
 #881 makes provider spending identifier-first and is Ready; #882 spends
 first-run budgets on decisive works within #876's pacing and is Blocked by
 #881. #888 is Ready to qualify one closed Latin combining-mark family for WORK
