@@ -514,7 +514,10 @@ def provider_discovery_lane_order(
     return tuple(
         sorted(
             plan.lanes,
-            key=lambda lane: lane is not eligible,
+            key=lambda lane: (
+                lane.kind is ProviderQueryKind.WORK,
+                lane is not eligible,
+            ),
         )
     )
 
@@ -534,6 +537,12 @@ def identifier_suppresses_discovery(
             and result.status is ProviderStatus.CANDIDATES
             for result in results
         )
+        and not any(
+            result.lane.kind is ProviderQueryKind.ISBN
+            and result.lane.identity != eligible.identity
+            and result.status in PROVIDER_RECOVERY_ELIGIBLE_STATUSES
+            for result in results
+        )
     )
 
 
@@ -547,6 +556,17 @@ def _eligible_isbn_lane(
         and lane.matched_family in usable_isbn_families(plan.local_claims)
     )
     return eligible[0] if len(eligible) == 1 else None
+
+
+PROVIDER_RECOVERY_ELIGIBLE_STATUSES = frozenset(
+    {
+        ProviderStatus.AUTHENTICATION,
+        ProviderStatus.AUTHORIZATION,
+        ProviderStatus.RATE_LIMITED,
+        ProviderStatus.UNAVAILABLE,
+        ProviderStatus.INCOMPLETE,
+    }
+)
 
 
 def audiobook_discovery_plan(

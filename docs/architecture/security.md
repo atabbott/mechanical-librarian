@@ -197,8 +197,9 @@ currentness checks precede the short SQLite write transaction, which retains
 its local expected-pointer check; one slow external read cannot hold the writer
 lock against the other lane. A complete report retains each executed lane's
 bounded terminal status; only an admitted candidate from an eligible usable ISBN
-family may suppress its planned discovery sibling. Every other identifier outcome dispatches that
-sibling, and technical failure remains typed and inspectable but
+family, with no recovery-eligible identifier sibling, may suppress its planned
+discovery sibling. Every other identifier outcome dispatches that sibling, and
+technical failure remains typed and inspectable but
 cannot erase coherent sibling evidence or prevent proposal creation; only a
 failure before a complete report exists terminalizes the work. Public
 projection allowlists safe provider identity, lane kind, aggregate bounded

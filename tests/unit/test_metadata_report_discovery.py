@@ -280,7 +280,7 @@ def test_one_usable_family_precedes_nonusable_identifier_lanes() -> None:
     )
     plan = MetadataDiscoveryPlan((usable, print_only), (work, print_lane, usable_lane))
 
-    assert (usable_lane, work, print_lane) == provider_discovery_lane_order(plan)
+    assert (usable_lane, print_lane, work) == provider_discovery_lane_order(plan)
     assert identifier_suppresses_discovery(
         plan,
         [
@@ -300,6 +300,18 @@ def test_one_usable_family_precedes_nonusable_identifier_lanes() -> None:
                 ProviderStatus.CANDIDATES,
                 (ProviderCandidate("edition-1", "work-1", ()),),
             )
+        ],
+        work,
+    )
+    assert not identifier_suppresses_discovery(
+        plan,
+        [
+            ProviderLaneResult(
+                usable_lane,
+                ProviderStatus.CANDIDATES,
+                (ProviderCandidate("edition-1", "work-1", ()),),
+            ),
+            ProviderLaneResult(print_lane, ProviderStatus.UNAVAILABLE),
         ],
         work,
     )

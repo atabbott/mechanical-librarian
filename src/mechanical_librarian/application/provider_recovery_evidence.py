@@ -13,6 +13,7 @@ import json
 from typing import TYPE_CHECKING, Protocol
 
 from mechanical_librarian.application.metadata_report import (
+    PROVIDER_RECOVERY_ELIGIBLE_STATUSES,
     CredentialError,
     CurrentnessError,
     TargetNotFoundError,
@@ -141,18 +142,13 @@ def provider_recovery_jobs(
 ) -> tuple[ProviderRecoveryJob, ...]:
     """Create bounded retry work only from a published terminal package."""
     adapters = {provider.name: provider.adapter for provider in configuration.providers}
-    retryable = {
-        ProviderStatus.AUTHENTICATION,
-        ProviderStatus.AUTHORIZATION,
-        ProviderStatus.RATE_LIMITED,
-        ProviderStatus.UNAVAILABLE,
-        ProviderStatus.INCOMPLETE,
-    }
     jobs = []
     for observation in report.providers:
         lane_ids = tuple(
             sorted(
-                lane.identity for lane in observation.lanes if lane.status in retryable
+                lane.identity
+                for lane in observation.lanes
+                if lane.status in PROVIDER_RECOVERY_ELIGIBLE_STATUSES
             )
         )
         if not lane_ids:
