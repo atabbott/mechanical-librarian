@@ -44,7 +44,7 @@ dev = [
   # keeps them out of a tier run even though `coverage` ships a `.pth`. That
   # `.pth` is inert unless `COVERAGE_PROCESS_START` is set, which only the
   # documented coverage command does.
-  "coverage==7.13.0",
+  "coverage==7.15.4",
   "hypothesis==6.165.10",
   # `starlette.testclient` prefers `httpx2` and warns on the
   # `StarletteDeprecationWarning` class when it has to fall back to `httpx`.
@@ -53,8 +53,8 @@ dev = [
   # failure, not cosmetic. This is the transport the test client uses; the
   # runtime `httpx==0.28.1` the adapters call remains a separate distribution
   # with a separate import name and is unaffected by it.
-  "httpx2==2.10.0",
-  "mutmut==3.5.0",
+  "httpx2==2.12.0",
+  "mutmut==3.7.0",
   "mypy==2.3.1",
   "playwright==1.62.0",
   "pytest==9.1.1",
