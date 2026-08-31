@@ -6158,6 +6158,97 @@ def test_claims_keep_discovery_order_across_normal_successor_stages(
     ]
 
 
+def test_final_claim_next_refreshes_presentation_before_terminalizing(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        10,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry("item", "1" * 64),), 12
+    )
+    action = repository.claim_review_pipeline_action(13)
+    assert action is not None and action.stage == "extraction"
+    for completed_at, expected_stage in (
+        (14, "provider"),
+        (15, "proposal"),
+        (16, "admission"),
+    ):
+        action = repository.advance_review_pipeline_action(
+            action, None, completed_at, claim_next=True
+        )
+        assert action is not None and action.stage == expected_stage
+
+    assert (
+        repository.advance_review_pipeline_action(action, None, 17, claim_next=True)
+        is None
+    )
+    authoritative = repository._connection.execute(
+        "SELECT stage,state FROM review_preparation_work"
+    ).fetchone()
+    scan = repository._connection.execute(
+        "SELECT state FROM review_preparation_scans"
+    ).fetchone()
+    presentation = repository._connection.execute(
+        "SELECT current_work_state FROM review_preparation_presentation "
+        "WHERE row_kind='work'"
+    ).fetchone()
+    enrollment = repository._connection.execute(
+        "SELECT cycle_state FROM review_preparation_presentation "
+        "WHERE row_kind='enrollment'"
+    ).fetchone()
+    run = repository._connection.execute(
+        "SELECT state FROM review_preparation_presentation WHERE row_kind='run'"
+    ).fetchone()
+    validate_preparation_presentation(repository._connection)
+    repository.close()
+
+    assert authoritative == ("complete", "complete")
+    assert scan == ("completed",)
+    assert presentation == ("complete",)
+    assert enrollment == ("completed",)
+    assert run == (PreparationRunState.COMPLETED_CLEAN.value,)
+    reopened = open_repository(application_path, create=False)
+    validate_preparation_presentation(reopened._connection)
+    reopened.close()
+
+
+def test_exact_next_claims_the_named_successor_after_refresh(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry("item", "1" * 64),), 12
+    )
+    action = repository.claim_review_pipeline_action(13)
+    assert action is not None and action.stage == "extraction"
+    work_id = action.action_id
+    for completed_at, expected_stage in (
+        (14, "provider"),
+        (15, "proposal"),
+        (16, "admission"),
+    ):
+        action = repository.advance_review_pipeline_action(
+            action, None, completed_at, exact_next=True
+        )
+        assert action is not None and (action.action_id, action.stage) == (
+            work_id,
+            expected_stage,
+        )
+    repository.close()
+
+
 def test_advance_atomically_claims_recoverable_next_action(
     application_path: Path,
 ) -> None:
