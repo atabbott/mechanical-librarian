@@ -381,7 +381,7 @@ _TOOLCHAIN_PINS: dict[str, tuple[_PinSite, ...]] = {
         _PinSite(
             ".github/workflows/public-gate.yml",
             r'^\s+node-version: "(\d+\.\d+\.\d+)"$',
-            3,
+            4,
         ),
         _PinSite(
             ".github/workflows/public-gate.yml",

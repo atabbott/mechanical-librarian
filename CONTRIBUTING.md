@@ -184,8 +184,9 @@ Four of the five maintainer-manual qualifiers have their own logic unit-tested
 in the fast tier, so for those, what is manual is running the qualification.
 `scripts/qualify_container_lifecycle.py` is the exception: nothing under
 `tests/` references it, so neither its logic nor its execution is checked by
-merging. The `container-image` job builds the image and never runs, loads, or
-pushes it, so nothing about the running image is proven by merging either.
+merging. The `container-image` job builds the image, loads it solely to
+extract the pinned `ffprobe` it carries, and never starts it or pushes it, so
+nothing about the running image is proven by merging either.
 
 There is no coverage threshold, and no separate contract, security, or
 documentation test tier. Security and documentation behaviour is proven by

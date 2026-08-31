@@ -358,7 +358,7 @@ def test_every_action_is_sha_pinned_without_persisted_credentials() -> None:
         for line in workflow.splitlines()
         if line.strip().startswith("uses:")
     ]
-    assert len(uses) == 20
+    assert len(uses) == 21
     # The references are read out of the workflow at run time, so they cannot
     # become parameters without making the collected case count -- and the
     # cohort identity digest built from it -- move whenever the workflow gains
