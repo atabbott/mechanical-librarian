@@ -31,7 +31,9 @@ from mechanical_librarian.application.metadata_report import (
     MetadataLookup,
     ProviderCoverDescriptor,
     ProviderLaneResult,
+    identifier_suppresses_discovery,
     merge_provider_cover_descriptors,
+    provider_discovery_lane_order,
     provider_isbn_applicability,
     provider_observation,
     qualify_provider_observation,
@@ -297,7 +299,16 @@ class OpenLibraryMetadataProvider:
         self._ledger = ledger
         descriptors: tuple[ProviderCoverDescriptor, ...] = ()
         try:
-            for lane in plan.lanes:
+            for lane in provider_discovery_lane_order(plan):
+                if identifier_suppresses_discovery(plan, results, lane):
+                    ledger.suppress(
+                        kind=lane.kind.value,
+                        matched_family=lane.matched_family,
+                        title=lane.title,
+                        authors=lane.authors,
+                        projection=_WORK_SEARCH_PROJECTION,
+                    )
+                    continue
                 self.cover_descriptors = ()
                 lookup = MetadataLookup(
                     lane.kind,

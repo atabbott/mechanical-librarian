@@ -165,9 +165,12 @@ source capability
 provenance, and bounded occurrence/rear-spine provenance needed to replay the
 observation, plus source-scoped finite provider evidence with occurrence
 ordinals and canonical provider discovery lanes. Distinct ISBN-10/13 families
-and the optional
-complete-title/author lane remain separate; provider-local work convergence is
-recorded without becoming independent corroboration. The relational
+and the optional complete-title/author lane remain separate: where there is
+one exact usable ISBN family, adapters dispatch it first, run remaining ISBN
+lanes before work, and suppress that work only after an admitted identifier
+candidate leaves no recovery-eligible identifier sibling. Every other outcome
+retains the work fallback. Provider-local work convergence
+is recorded without becoming independent corroboration. The relational
 envelope remains only its scope, identity, digest, and schema-version index.
 The domain owns one closed work-title transformation table, bounded query ladder,
 and work-identity admission decision. Provider adapters render its values into

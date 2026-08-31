@@ -17,6 +17,8 @@ from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HardcoverMetadataProvider,
 )
 from mechanical_librarian.application.metadata_report import (
+    MetadataDiscoveryLane,
+    MetadataDiscoveryPlan,
     TargetSnapshot,
     metadata_discovery_plan,
 )
@@ -35,6 +37,7 @@ from mechanical_librarian.domain.metadata_report import (
     LocalClaim,
     MetadataReport,
     ProviderObservation,
+    ProviderQueryKind,
     ProviderStatus,
     TargetDestination,
     TargetFacts,
@@ -49,6 +52,98 @@ from tests.support.hardcover_evidence import (
     isbn_lookup,
     title_claim,
 )
+
+
+def _identifier_first_plan() -> MetadataDiscoveryPlan:
+    claim = isbn_claim()
+    return MetadataDiscoveryPlan(
+        (claim,),
+        (
+            MetadataDiscoveryLane(
+                "lane_" + "1" * 64,
+                ProviderQueryKind.WORK,
+                (claim.reference,),
+                title="Current title",
+                authors=("Ada Example",),
+            ),
+            MetadataDiscoveryLane(
+                "lane_" + "2" * 64,
+                ProviderQueryKind.ISBN,
+                (claim.reference,),
+                matched_family="9780306406157",
+                canonical_isbns=("9780306406157",),
+            ),
+        ),
+    )
+
+
+def test_identifier_candidate_suppresses_hardcover_discovery() -> None:
+    operations: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        operations.append(json.loads(request.content)["operationName"])
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json=hardcover_envelope(
+                [{"id": 1, "book_id": 10, "isbn_13": "9780306406157"}],
+                [{"id": 10, "title": "Current title"}],
+            ),
+        )
+
+    observation = HardcoverMetadataProvider(
+        "catalogue", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
+    ).observe(_identifier_first_plan())
+
+    assert ["MetadataEvidenceByIsbn"] == operations
+    assert [ProviderQueryKind.ISBN] == [lane.kind for lane in observation.lanes]
+    assert 1 == observation.request_accounting.logical_requests
+
+
+def test_identifier_no_match_falls_back_to_hardcover_discovery() -> None:
+    operations: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        operations.append(json.loads(request.content)["operationName"])
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json=hardcover_envelope([], []),
+        )
+
+    observation = HardcoverMetadataProvider(
+        "catalogue", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
+    ).observe(_identifier_first_plan())
+
+    assert ["MetadataEvidenceByIsbn", "MetadataEvidenceByWork"] == operations
+    assert {ProviderQueryKind.ISBN, ProviderQueryKind.WORK} == {
+        lane.kind for lane in observation.lanes
+    }
+    assert 2 == observation.request_accounting.logical_requests
+
+
+def test_malformed_identifier_falls_back_to_hardcover_discovery() -> None:
+    operations: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        operations.append(json.loads(request.content)["operationName"])
+        value: dict[str, object]
+        if len(operations) == 1:
+            value = {"data": {"editions": "invalid", "books": [], "tags": []}}
+        else:
+            value = hardcover_envelope([], [])
+        return httpx.Response(
+            200, headers={"content-type": "application/json"}, json=value
+        )
+
+    observation = HardcoverMetadataProvider(
+        "catalogue", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
+    ).observe(_identifier_first_plan())
+
+    assert ["MetadataEvidenceByIsbn", "MetadataEvidenceByWork"] == operations
+    assert {ProviderQueryKind.ISBN, ProviderQueryKind.WORK} == {
+        lane.kind for lane in observation.lanes
+    }
 
 
 def test_one_request_retains_all_candidates_in_identity_order() -> None:
@@ -714,14 +809,19 @@ def test_hardcover_converges_differing_isbn_applicability_and_shared_cover() -> 
     assert 1 == len(observation.candidates)
     assert {ProviderStatus.CANDIDATES} == {lane.status for lane in observation.lanes}
     assert (
-        tuple(sorted(lane.identity for lane in plan.lanes))
+        tuple(
+            sorted(
+                lane.identity
+                for lane in plan.lanes
+                if lane.kind is ProviderQueryKind.ISBN
+            )
+        )
         == observation.convergence[0].lane_identities
     )
     lanes = {lane.matched_family: lane for lane in observation.lanes}
     assert (ebook.reference,) == lanes["9780306406157"].input_references
     assert (print_only.reference,) == lanes["9780140328721"].input_references
-    assert (title.reference,) == lanes[None].input_references
-    assert 3 == len(
+    assert 2 == len(
         {
             candidate.reference
             for lane in observation.lanes

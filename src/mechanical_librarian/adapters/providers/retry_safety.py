@@ -172,6 +172,34 @@ class _DiscoveryRequestLedger:
     def register_detail(self, identity: str) -> None:
         self._register((self._authority, self._revision, "detail", identity))
 
+    def suppress(
+        self,
+        *,
+        kind: str,
+        matched_family: str | None,
+        title: str | None,
+        authors: tuple[str, ...],
+        projection: str,
+    ) -> None:
+        """Remove planned lookup work that an admitted sibling made unnecessary."""
+        key = self._key(
+            kind=kind,
+            matched_family=matched_family,
+            title=title,
+            authors=authors,
+            projection=projection,
+        )
+        unresolved = self._unresolved.pop(key, 0)
+        if unresolved < 1 or key in self._completed:
+            raise RuntimeError("provider request suppression is invalid")
+        self.logical -= unresolved
+        registered = self._registered[key] - unresolved
+        if registered:
+            self._registered[key] = registered
+        else:
+            del self._registered[key]
+        self._pending.discard(key)
+
     def begin_detail(self, identity: str) -> None:
         """Reserve compatibility for the detail dispatch boundary."""
         self._pending.discard((self._authority, self._revision, "detail", identity))

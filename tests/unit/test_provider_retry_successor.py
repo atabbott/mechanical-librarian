@@ -5,6 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -28,6 +29,9 @@ from mechanical_librarian.application.metadata_report import (
     audiobook_discovery_plan,
     metadata_discovery_plan,
     provider_observation,
+)
+from mechanical_librarian.application.provider_recovery_evidence import (
+    provider_recovery_jobs,
 )
 from mechanical_librarian.application.provider_retry_successor import (
     ConfiguredProviderRetry,
@@ -292,6 +296,138 @@ def test_retries_only_selected_failed_lane_and_preserves_sibling(retry: _Retry) 
     assert before == after
     assert retry.report.report_id != successor.report_id
     assert retry.report.report_id == retry.repository.package[1]
+
+
+def test_mixed_identifier_recovery_keeps_work_for_retry_successor(
+    retry: _Retry,
+) -> None:
+    title = LocalClaim.create(
+        kind=ClaimKind.TITLE,
+        observed="Current title",
+        canonical="Current title",
+        excerpt="Current title",
+        applicability="not_applicable",
+        basis="target_metadata",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.WORK,
+    )
+    print_only = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780140328721",
+        canonical="9780140328721",
+        excerpt="9780140328721",
+        applicability="print",
+        checksum="valid_isbn_13",
+        applicability_basis="print",
+    )
+    base_snapshot = TargetSnapshot(
+        "ebook",
+        "Current title",
+        (TargetFile("b" * 64, "book.epub", "epub"),),
+    )
+    fields = tuple(
+        replace(field, state=TargetFieldState.VALUE, value=("Ada Example",))
+        if field.destination is TargetDestination.AUTHORS
+        else field
+        for field in base_snapshot.fields
+    )
+    claims = (title, retry.claims[0], print_only)
+    snapshot = TargetSnapshot(
+        "ebook",
+        "Current title",
+        base_snapshot.files,
+        fields=fields,
+    )
+    plan = metadata_discovery_plan(snapshot, claims)
+    eligible = next(
+        lane for lane in plan.lanes if lane.matched_family == "9780306406157"
+    )
+    nonusable = next(
+        lane for lane in plan.lanes if lane.matched_family == "9780140328721"
+    )
+    work = next(lane for lane in plan.lanes if lane.kind is ProviderQueryKind.WORK)
+    original = provider_observation(
+        "catalogue",
+        (
+            ProviderLaneResult(
+                eligible,
+                ProviderStatus.CANDIDATES,
+                (ProviderCandidate("old", "work", ()),),
+            ),
+            ProviderLaneResult(nonusable, ProviderStatus.UNAVAILABLE),
+            ProviderLaneResult(work, ProviderStatus.NO_MATCH),
+        ),
+        authority="open_library",
+    )
+    report = MetadataReport.create(
+        target=TargetFacts("primary", "ebooks", "item", snapshot.fields),
+        file=FileFacts(0, "b" * 64, "c" * 64),
+        local_claims=claims,
+        local_reasons=("opening_matter_isbn",),
+        providers=(original,),
+    )
+
+    jobs = provider_recovery_jobs(
+        report,
+        package=(None, report.report_id, None, None, "report_only"),
+        configuration=SimpleNamespace(
+            providers=(SimpleNamespace(name="catalogue", adapter="open_library"),),
+            provider_recovery_generation=2,
+        ),
+        scope="ebooks",
+    )
+    assert ProviderStatus.CANDIDATES is original.status
+    assert {lane.identity for lane in plan.lanes} == {
+        lane.identity for lane in original.lanes
+    }
+    assert ProviderStatus.NO_MATCH is next(
+        lane.status for lane in original.lanes if lane.identity == work.identity
+    )
+    assert (nonusable.identity,) == tuple(json.loads(jobs[0].lane_ids))
+
+    replacement = provider_observation(
+        "catalogue",
+        (
+            ProviderLaneResult(
+                nonusable,
+                ProviderStatus.CANDIDATES,
+                (ProviderCandidate("new", "work", ()),),
+            ),
+        ),
+        authority="open_library",
+    )
+    provider = _Provider(replacement)
+    mixed = _Retry(
+        claims=claims,
+        snapshot=snapshot,
+        plan=plan,
+        failed=nonusable,
+        success=eligible,
+        report=report,
+        repository=_Repository(report),
+    )
+    successor = MetadataReport.from_json(
+        mixed.service(
+            ConfiguredProviderRetry(
+                ProviderBinding("catalogue", True, lambda: provider, "open_library"),
+                "open_library",
+                2,
+            )
+        ).run(
+            report.report_id,
+            tuple(json.loads(jobs[0].lane_ids)),
+            provider_name="catalogue",
+            adapter="open_library",
+            generation=2,
+        )
+    )
+    assert (nonusable.identity,) == tuple(
+        lane.identity for lane in provider.plans[0].lanes
+    )
+    assert {lane.identity for lane in plan.lanes} == {
+        lane.identity for lane in successor.providers[0].lanes
+    }
 
 
 def test_observe_wrapped_credential_error_remains_authentication_for_recovery(

@@ -504,6 +504,71 @@ def metadata_discovery_plan(
     return MetadataDiscoveryPlan(local_claims, ordered_lanes)
 
 
+def provider_discovery_lane_order(
+    plan: MetadataDiscoveryPlan,
+) -> tuple[MetadataDiscoveryLane, ...]:
+    """Schedule one unambiguous ISBN lane before its optional work fallback."""
+    eligible = _eligible_isbn_lane(plan)
+    if eligible is None:
+        return plan.lanes
+    return tuple(
+        sorted(
+            plan.lanes,
+            key=lambda lane: (
+                lane.kind is ProviderQueryKind.WORK,
+                lane is not eligible,
+            ),
+        )
+    )
+
+
+def identifier_suppresses_discovery(
+    plan: MetadataDiscoveryPlan,
+    results: list[ProviderLaneResult],
+    lane: MetadataDiscoveryLane,
+) -> bool:
+    """Keep discovery unspent after one admitted identifier result."""
+    eligible = _eligible_isbn_lane(plan)
+    return (
+        lane.kind is ProviderQueryKind.WORK
+        and eligible is not None
+        and any(
+            result.lane.identity == eligible.identity
+            and result.status is ProviderStatus.CANDIDATES
+            for result in results
+        )
+        and not any(
+            result.lane.kind is ProviderQueryKind.ISBN
+            and result.lane.identity != eligible.identity
+            and result.status in PROVIDER_RECOVERY_ELIGIBLE_STATUSES
+            for result in results
+        )
+    )
+
+
+def _eligible_isbn_lane(
+    plan: MetadataDiscoveryPlan,
+) -> MetadataDiscoveryLane | None:
+    eligible = tuple(
+        lane
+        for lane in plan.lanes
+        if lane.kind is ProviderQueryKind.ISBN
+        and lane.matched_family in usable_isbn_families(plan.local_claims)
+    )
+    return eligible[0] if len(eligible) == 1 else None
+
+
+PROVIDER_RECOVERY_ELIGIBLE_STATUSES = frozenset(
+    {
+        ProviderStatus.AUTHENTICATION,
+        ProviderStatus.AUTHORIZATION,
+        ProviderStatus.RATE_LIMITED,
+        ProviderStatus.UNAVAILABLE,
+        ProviderStatus.INCOMPLETE,
+    }
+)
+
+
 def audiobook_discovery_plan(
     target: TargetSnapshot, local_claims: tuple[LocalClaim, ...]
 ) -> MetadataDiscoveryPlan:
@@ -1050,20 +1115,24 @@ def observe_provider(
     )
 
 
-def metadata_lookup(
-    target: TargetSnapshot, local_claims: tuple[LocalClaim, ...]
-) -> MetadataLookup:
-    usable = tuple(
-        claim
+def usable_isbn_families(local_claims: tuple[LocalClaim, ...]) -> frozenset[str]:
+    """Return only exact opening ISBN families eligible for ebook lookup."""
+    return frozenset(
+        family
         for claim in local_claims
         if claim.kind is ClaimKind.ISBN
         and claim.canonical is not None
         and claim.applicability in {"ebook", "unknown"}
         and claim.basis == "opening_matter"
         and claim.rear_provenance is None
-        and isbn_family(claim.canonical) is not None
+        and (family := isbn_family(claim.canonical)) is not None
     )
-    families = {isbn_family(claim.canonical) for claim in usable}
+
+
+def metadata_lookup(
+    target: TargetSnapshot, local_claims: tuple[LocalClaim, ...]
+) -> MetadataLookup:
+    families = usable_isbn_families(local_claims)
     if len(families) == 1:
         return MetadataLookup(ProviderQueryKind.ISBN, local_claims)
     if families:

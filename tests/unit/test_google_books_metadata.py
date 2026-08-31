@@ -128,6 +128,155 @@ def _discovery_plan() -> MetadataDiscoveryPlan:
     return MetadataDiscoveryPlan(claims, tuple(lanes))
 
 
+def _identifier_first_plan(claim: LocalClaim | None = None) -> MetadataDiscoveryPlan:
+    claim = _isbn() if claim is None else claim
+    return MetadataDiscoveryPlan(
+        (claim,),
+        (
+            MetadataDiscoveryLane(
+                "lane_" + "1" * 64,
+                ProviderQueryKind.WORK,
+                (claim.reference,),
+                title="Example Book",
+                authors=("Ada Example",),
+            ),
+            MetadataDiscoveryLane(
+                "lane_" + "2" * 64,
+                ProviderQueryKind.ISBN,
+                (claim.reference,),
+                matched_family="9780306406157",
+                canonical_isbns=("9780306406157",),
+            ),
+        ),
+    )
+
+
+def test_identifier_candidate_suppresses_google_books_discovery() -> None:
+    queries: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        queries.append(request.url.params["q"])
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"totalItems": 1, "items": [_volume()]},
+        )
+
+    observation = GoogleBooksMetadataProvider(
+        "google_books", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
+    ).observe(_identifier_first_plan())
+
+    assert ["isbn:9780306406157"] == queries
+    assert [ProviderQueryKind.ISBN] == [lane.kind for lane in observation.lanes]
+    assert 1 == observation.request_accounting.logical_requests
+
+
+def test_identifier_no_match_falls_back_to_google_books_discovery() -> None:
+    queries: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        queries.append(request.url.params["q"])
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"totalItems": 0},
+        )
+
+    observation = GoogleBooksMetadataProvider(
+        "google_books", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
+    ).observe(_identifier_first_plan())
+
+    assert "isbn:9780306406157" == queries[0]
+    assert 2 == len(queries)
+    assert {ProviderQueryKind.ISBN, ProviderQueryKind.WORK} == {
+        lane.kind for lane in observation.lanes
+    }
+    assert 2 == observation.request_accounting.logical_requests
+
+
+def test_malformed_identifier_falls_back_to_google_books_discovery() -> None:
+    queries: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        queries.append(request.url.params["q"])
+        if len(queries) == 1:
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                content=b"not json",
+            )
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"totalItems": 0},
+        )
+
+    observation = GoogleBooksMetadataProvider(
+        "google_books", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
+    ).observe(_identifier_first_plan())
+
+    assert "isbn:9780306406157" == queries[0]
+    assert 2 == len(queries)
+    assert {ProviderQueryKind.ISBN, ProviderQueryKind.WORK} == {
+        lane.kind for lane in observation.lanes
+    }
+    assert 2 == observation.request_accounting.logical_requests
+
+
+def test_terminal_identifier_failure_stays_typed_and_falls_back_to_discovery() -> None:
+    queries: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        queries.append(request.url.params["q"])
+        return httpx.Response(503, headers={"content-type": "application/json"})
+
+    observation = GoogleBooksMetadataProvider(
+        "google_books",
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        65_536,
+        sleep=lambda _: None,
+        jitter=lambda: 0.0,
+    ).observe(_identifier_first_plan())
+
+    assert "isbn:9780306406157" == queries[0]
+    assert 12 == len(queries)
+    assert ProviderStatus.UNAVAILABLE == observation.status
+    assert {ProviderQueryKind.ISBN, ProviderQueryKind.WORK} == {
+        lane.kind for lane in observation.lanes
+    }
+
+
+def test_print_isbn_keeps_google_books_discovery_in_plan_order() -> None:
+    claim = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780306406157",
+        canonical="9780306406157",
+        excerpt="ISBN 9780306406157",
+        applicability="print",
+        checksum="valid_isbn_13",
+        applicability_basis="print",
+    )
+    queries: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        queries.append(request.url.params["q"])
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"totalItems": 0},
+        )
+
+    observation = GoogleBooksMetadataProvider(
+        "google_books", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
+    ).observe(_identifier_first_plan(claim))
+
+    assert not queries[0].startswith("isbn:")
+    assert {ProviderQueryKind.ISBN, ProviderQueryKind.WORK} == {
+        lane.kind for lane in observation.lanes
+    }
+    assert 2 == observation.request_accounting.logical_requests
+
+
 class _InterruptedStream(httpx.SyncByteStream):
     def __iter__(self):
         yield b"x"
