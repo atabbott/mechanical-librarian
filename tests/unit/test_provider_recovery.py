@@ -1736,6 +1736,64 @@ def test_shared_failure_during_fanout_stops_uncontacted_siblings_and_reopens_sco
         store.close()
 
 
+def test_shared_failure_keeps_late_unstamped_work_in_another_scope_reachable() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        store = _due_store(
+            Path(directory) / "recovery.sqlite", "library-a", "library-b"
+        )
+        first = replace(
+            _job("first"),
+            scope="library-a",
+            library="library-a",
+            dispatch_reason="missing_corroboration",
+            dispatch_rank=0,
+        )
+        failing = replace(_job("failing"), scope="library-b", library="library-b")
+        late = replace(_job("late"), scope="library-a", library="library-a")
+        assert 2 == store.enqueue_jobs((first, failing), enqueued_at=0)
+        calls: list[str] = []
+        interrupted = False
+
+        def retry(_, member, __):
+            nonlocal interrupted
+            calls.append(member.member_id)
+            if member.member_id == "first":
+                # Claiming the provider cohort fixed its finite membership
+                # before this independently published package arrived.
+                assert 1 == store.enqueue_jobs((late,), enqueued_at=1)
+            if member.member_id == "failing" and not interrupted:
+                interrupted = True
+                raise RuntimeError("rate limited")
+
+        runner = ScopedProviderRecoveryRunner(
+            store=store,
+            generation=1,
+            retry=retry,
+            classify_failure=lambda _: ("rate_limited", 19),
+        )
+        assert "waiting" == runner.run_one(now=1, token="owner").state
+        assert ["first", "failing"] == calls
+        assert [
+            ("library-a", "waiting", 20, "late", "queued", None),
+            ("library-b", "waiting", 20, "failing", "queued", None),
+        ] == store._connection.execute(
+            "SELECT h.scope,h.state,h.next_eligible_at,j.member_id,j.state,j.cohort_epoch "
+            "FROM provider_recovery_health h JOIN provider_recovery_jobs j "
+            "USING(connection,adapter,scope) WHERE j.state='queued' ORDER BY h.scope"
+        ).fetchall()
+
+        calls.clear()
+        assert "recovered" == runner.run_one(now=20, token="next").state
+        assert ["failing", "late"] == calls
+        assert [
+            ("library-a", "recovered"),
+            ("library-b", "recovered"),
+        ] == store._connection.execute(
+            "SELECT scope,state FROM provider_recovery_health ORDER BY scope"
+        ).fetchall()
+        store.close()
+
+
 def test_burst_throttle_during_fanout_defers_without_spending_attempts() -> None:
     with tempfile.TemporaryDirectory() as directory:
         store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")

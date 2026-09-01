@@ -606,8 +606,11 @@ export interface ActivitySuspensionView {
   scope: string
   updated_at: number
 }
+export type ProviderRecoveryDispatchReason =
+  'missing_corroboration' | 'zero_provider_evidence' | 'settleable_disagreement' | 'blanket_scan'
 export interface ProviderRecoveryActivityView {
   affected_count: number
+  dispatch_reasons?: readonly ProviderRecoveryDispatchReason[]
   next_eligible_at: number | null
   state: 'waiting' | 'checking' | 'dormant' | 'recovered' | 'fanout' | 'exhausted'
 }
@@ -1881,9 +1884,33 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
         : integerValue(item.next_eligible_at, 'provider_recovery_next_eligible_at')
     if (next !== null && (!Number.isSafeInteger(next) || next < 0 || next > 8640000000000))
       throw new ApiError(502, 'invalid_provider_recovery_timestamp')
+    const rawDispatchReasons = item.dispatch_reasons
+    const dispatchReasons =
+      rawDispatchReasons === undefined
+        ? undefined
+        : (() => {
+            if (
+              !Array.isArray(rawDispatchReasons) ||
+              rawDispatchReasons.length < 1 ||
+              rawDispatchReasons.length > 4 ||
+              new Set(rawDispatchReasons).size !== rawDispatchReasons.length ||
+              rawDispatchReasons.some(
+                (reason) =>
+                  ![
+                    'missing_corroboration',
+                    'zero_provider_evidence',
+                    'settleable_disagreement',
+                    'blanket_scan',
+                  ].includes(typeof reason === 'string' ? reason : ''),
+              )
+            )
+              throw new ApiError(502, `invalid_provider_recovery_dispatch_${String(index)}`)
+            return rawDispatchReasons as ProviderRecoveryDispatchReason[]
+          })()
     return {
       state: item.state as ProviderRecoveryActivityView['state'],
       affected_count: integerValue(item.affected_count, 'provider_recovery_affected_count'),
+      ...(dispatchReasons === undefined ? {} : { dispatch_reasons: dispatchReasons }),
       next_eligible_at: next,
     }
   })

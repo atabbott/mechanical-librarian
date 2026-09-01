@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import json
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
 import pytest
 
+from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.provider_recovery import (
     SQLiteProviderRecoveryStore,
 )
@@ -29,7 +31,14 @@ from mechanical_librarian.application.metadata_report import (
     CredentialError,
     CurrentnessError,
     MetadataReportError,
+    ProviderLaneResult,
     TargetNotFoundError,
+    TargetSnapshot,
+    metadata_discovery_plan,
+    provider_observation,
+)
+from mechanical_librarian.application.provider_recovery_activation import (
+    ProviderRecoveryActivation,
 )
 from mechanical_librarian.application.provider_recovery_evidence import (
     TargetConnectionHeld,
@@ -57,9 +66,11 @@ from mechanical_librarian.domain.failure_diagnostics import (
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
+    FileFacts,
     MetadataReport,
     ProviderObservation,
     ProviderStatus,
+    TargetFacts,
 )
 from mechanical_librarian.domain.proposal_set import (
     ProposalOutcome,
@@ -68,15 +79,12 @@ from mechanical_librarian.domain.proposal_set import (
 )
 from mechanical_librarian.domain.provider_recovery import (
     ProviderRecovery,
-    ProviderRecoveryJob,
 )
 from tests.support.proposal_evidence import (
     _claim,
     _fields,
     _provider,
-)
-from tests.support.proposal_evidence import (
-    _report as _proposal_report,
+    _publication_local_isbn,
 )
 
 _CONFIGURATION = ApplicationConfiguration(
@@ -313,10 +321,22 @@ def test_zero_evidence_requires_every_report_provider_to_be_empty(
 
 
 def test_fixed_budget_replay_counts_actual_decided_fields_not_reason_labels() -> None:
-    """Two real runner starts beat exact historical member-id selection."""
-    cases = []
-    for ordinal in range(4):
+    """Two persisted, production-path runner starts beat member-id selection."""
+
+    def recovery_case(
+        ordinal: int, *, decisive: bool
+    ) -> tuple[MetadataReport, MetadataReport]:
         value = f"Corrected title {ordinal}"
+        fields = _fields(current_title=f"Current title {ordinal}")
+        local_claims = (_publication_local_isbn(),)
+        candidate_lane = metadata_discovery_plan(
+            TargetSnapshot("ebook", f"Current title {ordinal}", (), fields=fields),
+            local_claims,
+        ).lanes[0]
+        failed_lane = replace(
+            candidate_lane,
+            identity="lane_" + f"{ordinal + 999:064x}",
+        )
         first = _provider(
             "catalogue-a",
             f"edition-a-{ordinal}",
@@ -345,56 +365,54 @@ def test_fixed_budget_replay_counts_actual_decided_fields_not_reason_labels() ->
             ),
             authority="open_library",
         )
-        fields = _fields(current_title=f"Current title {ordinal}")
-        base = _proposal_report(fields=fields, providers=(first,))
-        successor = _proposal_report(fields=fields, providers=(first, support))
-        cases.append((base, successor, evaluate_report(base)))
-
-    # Historical dispatch was the exact canonical member-id sort. Assigning
-    # the first two of that fixed order to non-decisive packages makes the
-    # oracle explicit without relying on a hand-picked hash or private value.
-    cases.sort(key=lambda value: value[0].report_id)
-    jobs: list[ProviderRecoveryJob] = []
-    successors = {}
-    for index, (base, successor, proposal) in enumerate(cases):
-        decisive = index >= 2
-        observation = SimpleNamespace(
-            provider="catalogue-b",
-            candidates=() if decisive else (SimpleNamespace(claims=()),),
-            lanes=(
-                SimpleNamespace(
-                    identity=f"work-{index}",
-                    status=ProviderStatus.RATE_LIMITED,
-                    candidates=(),
+        recovering = provider_observation(
+            "catalogue-b",
+            (
+                *(
+                    ()
+                    if decisive
+                    else (
+                        ProviderLaneResult(
+                            candidate_lane,
+                            ProviderStatus.CANDIDATES,
+                            support.candidates,
+                        ),
+                    )
                 ),
+                ProviderLaneResult(failed_lane, ProviderStatus.RATE_LIMITED),
             ),
+            authority="open_library",
         )
-        report = SimpleNamespace(
-            report_id=base.report_id,
+        base = MetadataReport.create(
+            target=TargetFacts("primary", "books", f"item-{ordinal}", fields),
+            file=FileFacts(
+                0,
+                f"{ordinal + 1:064x}",
+                f"{ordinal + 101:064x}",
+            ),
+            local_claims=local_claims,
+            local_reasons=("package_metadata_identifier",),
+            providers=(first, recovering) if decisive else (recovering,),
+        )
+        successor = MetadataReport.create(
             target=base.target,
             file=base.file,
-            providers=(observation,),
+            local_claims=local_claims,
+            local_reasons=base.local_reasons,
+            providers=(first, support) if decisive else (support,),
         )
-        classified = provider_recovery_jobs(
-            cast("MetadataReport", report),
-            package=(
-                proposal.proposal_set_id,
-                base.report_id,
-                None,
-                0,
-                "no_case",
-            ),
-            proposal=proposal if decisive else None,
-            configuration=_CONFIGURATION,
-            scope="books",
-        )
-        assert 1 == len(classified)
-        jobs.extend(classified)
-        successors[base.report_id] = successor if decisive else base
+        return base, successor
 
-    ordered_jobs = tuple(sorted(jobs, key=lambda job: job.member_id))
-    historical = ordered_jobs[:2]
-    assert {"blanket_scan"} == {job.dispatch_reason for job in historical}
+    # These four immutable reports pin the old member-id ordering: the two
+    # blanket scans sort before the two missing-corroboration packages. The
+    # production classifier, rather than the fixture, assigns those reasons.
+    cases = (
+        (*recovery_case(12, decisive=False), False),
+        (*recovery_case(22, decisive=False), False),
+        (*recovery_case(52, decisive=True), True),
+        (*recovery_case(54, decisive=True), True),
+    )
+    successors = {base.report_id: successor for base, successor, _ in cases}
 
     with tempfile.TemporaryDirectory() as directory:
         store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
@@ -410,9 +428,52 @@ def test_fixed_budget_replay_counts_actual_decided_fields_not_reason_labels() ->
             ),
             occurred_at=0,
         )
+        repository = open_repository(Path(directory) / "reports.sqlite")
+        activation = ProviderRecoveryActivation(
+            configuration=_CONFIGURATION,
+            repository_factory=lambda: repository,
+            observers=lambda *_: (_ for _ in ()).throw(AssertionError("unused")),
+            provider_resolver=lambda *_: None,
+            pipeline=lambda: None,
+            enqueue=lambda jobs, enqueued_at: store.enqueue_jobs(
+                jobs, enqueued_at=enqueued_at
+            ),
+            clock=lambda: 1,
+        )
+        for base, _, _ in cases:
+            proposal = evaluate_report(base)
+            repository.publish(base, lambda: True)
+            repository.publish_proposal(proposal)
+            repository.admit_review_case(proposal)
+            package = repository.current_review_package(
+                base.target.connection, base.target.library, base.target.item
+            )
+            assert package is not None
+            repository._connection.execute("BEGIN IMMEDIATE")
+            repository._recovery_outbox.enqueue(
+                base.target.connection,
+                base.target.library,
+                base.target.item,
+                package,
+                0,
+            )
+            repository._connection.execute("COMMIT")
+        assert () == activation.drain_outbox(repository)
+
+        actual_jobs = store._connection.execute(
+            "SELECT member_id,dispatch_reason FROM provider_recovery_jobs "
+            "ORDER BY member_id"
+        ).fetchall()
+        assert 4 == len(actual_jobs)
+        historical = tuple(member_id for member_id, _ in actual_jobs[:2])
+        assert {"blanket_scan"} == {reason for _, reason in actual_jobs[:2]}
+
         decided: list[int] = []
+        activated: list[str] = []
+        budget = 2
 
         def retry(_, job, __) -> None:
+            activated.append(job.member_id)
             proposal = evaluate_report(successors[job.member_id])
             decided.append(
                 sum(
@@ -426,20 +487,23 @@ def test_fixed_budget_replay_counts_actual_decided_fields_not_reason_labels() ->
             generation=4,
             retry=retry,
             classify_failure=lambda _: ("transient", None),
-            cancelled=lambda: len(decided) >= 2,
+            cancelled=lambda: len(activated) >= budget,
         )
-        assert 4 == runner.enqueue(ordered_jobs, enqueued_at=0)
         assert "fanout" == runner.run_one(now=1, token="ranked").state
-        assert 2 == len(decided)
+        assert budget == len(activated) == len(decided)
+        assert {"missing_corroboration"} == {
+            reason for member_id, reason in actual_jobs if member_id in activated
+        }
         ranked_yield = sum(decided)
+        repository.close()
         store.close()
 
     historical_yield = sum(
         sum(
             result.outcome is ProposalOutcome.PROPOSE_CHANGE
-            for result in evaluate_report(successors[job.member_id]).results
+            for result in evaluate_report(successors[member_id]).results
         )
-        for job in historical
+        for member_id in historical
     )
     assert 2 == ranked_yield
     assert 0 == historical_yield

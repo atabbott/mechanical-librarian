@@ -1420,6 +1420,14 @@ describe('ReviewApiClient', () => {
         retrying: 4,
         scheduled: 5,
       },
+      provider_recovery: [
+        {
+          state: 'waiting',
+          affected_count: 2,
+          next_eligible_at: 2,
+          dispatch_reasons: ['missing_corroboration', 'blanket_scan'],
+        },
+      ],
       events: [
         {
           destination: 'title',
@@ -1482,6 +1490,22 @@ describe('ReviewApiClient', () => {
       retrying: 4,
       scheduled: 5,
     })
+    expect(activity.provider_recovery?.[0]?.dispatch_reasons).toEqual([
+      'missing_corroboration',
+      'blanket_scan',
+    ])
+    for (const dispatch_reasons of [
+      ['private-detail'],
+      ['blanket_scan', 'blanket_scan'],
+      [],
+      'blanket_scan',
+    ])
+      expect(() =>
+        mapActivity({
+          ...activity,
+          provider_recovery: [{ ...activity.provider_recovery?.[0], dispatch_reasons }],
+        }),
+      ).toThrow(ApiError)
     expect(() => mapActivity({ ...activity, waiting: { applying: 1 } })).toThrow(ApiError)
     expect(activity.events[0]).toMatchObject({
       library: 'Fiction',

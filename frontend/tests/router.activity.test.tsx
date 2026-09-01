@@ -595,7 +595,12 @@ describe('Activity route', () => {
       getActivity: vi.fn(async () =>
         activity({
           provider_recovery: [
-            { state: 'waiting', affected_count: 2, next_eligible_at: 1 },
+            {
+              state: 'waiting',
+              affected_count: 2,
+              next_eligible_at: 1,
+              dispatch_reasons: ['missing_corroboration', 'blanket_scan'],
+            },
             { state: 'checking', affected_count: 1, next_eligible_at: null },
             { state: 'fanout', affected_count: 3, next_eligible_at: null },
             { state: 'recovered', affected_count: 1, next_eligible_at: null },
@@ -610,6 +615,9 @@ describe('Activity route', () => {
     expect(await screen.findByRole('heading', { name: 'Provider recovery' })).toBeVisible()
     expect(screen.getByText('Waiting for a safe retry').parentElement).toHaveTextContent(
       '2 affected scopes',
+    )
+    expect(screen.getByText('Waiting for a safe retry').parentElement).toHaveTextContent(
+      'Priority: needs independent evidence, general recovery scan',
     )
     expect(screen.getByText('Checking provider health').parentElement).toHaveTextContent(
       '1 affected scope',

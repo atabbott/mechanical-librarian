@@ -2334,14 +2334,13 @@ class SQLiteProviderRecoveryStore:
                     ).fetchone()
                     active = self._connection.execute(
                         "SELECT 1 FROM provider_recovery_jobs WHERE connection=? AND adapter=? "
-                        "AND scope=? AND generation=? AND cohort_epoch=? "
+                        "AND scope=? AND generation=? "
                         "AND state IN ('queued','running') LIMIT 1",
                         (
                             recovery.connection,
                             recovery.adapter,
                             scope,
                             recovery.generation,
-                            state[4],
                         ),
                     ).fetchone()
                     failed = self._connection.execute(
