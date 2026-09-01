@@ -46,6 +46,9 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase, ReviewTransition
+from mechanical_librarian.domain.rich_metadata_qualification import (
+    F20_QUALIFICATION_CANDIDATE_SHA256,
+)
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 from tests.support.proposal_evidence import (
     _claim as _proposal_claim,

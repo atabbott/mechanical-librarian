@@ -953,39 +953,9 @@ def test_automatic_subtitle_fill_projects_the_locally_attested_value() -> None:
     assert len(selected.source_evidence_references) > 1
 
 
-def test_automatic_subtitle_fill_uses_the_closed_colon_title_signal() -> None:
+def test_title_derived_colon_subtitle_stays_an_owner_proposal_not_automatic() -> None:
     title = "Secret History: A Mistborn Novella"
-    corroborator = LocalClaim.create(
-        kind=ClaimKind.TITLE,
-        observed=title,
-        canonical=title,
-        state=FieldState.VALID,
-        scope=ClaimScope.WORK,
-        basis="package_metadata",
-        excerpt=title,
-        applicability="not_applicable",
-        checksum="not_applicable",
-        applicability_basis="not_applicable",
-        occurrence=0,
-    )
-
-    selected = _automatic_subtitle_fill_preview((corroborator,))
-
-    assert ("projected", "A Mistborn Novella") == (
-        selected.outcome,
-        selected.desired_value,
-    )
-    assert corroborator.reference in selected.source_evidence_references
-
-
-@pytest.mark.parametrize(
-    ("title", "expected"),
-    (("Secret History: A Mistborn Novella", "no_candidate"),),
-)
-def test_colon_subtitle_signal_never_elects_without_a_matching_provider_value(
-    title: str, expected: str
-) -> None:
-    local = LocalClaim.create(
+    local_title = LocalClaim.create(
         kind=ClaimKind.TITLE,
         observed=title,
         canonical=title,
@@ -1000,42 +970,28 @@ def test_colon_subtitle_signal_never_elects_without_a_matching_provider_value(
     )
     report = _bibliographic_report(
         current_title="Secret History",
-        providers=(_source("catalogue", "edition-1", titles=("Secret History",)),),
-        local_claims=(local,),
+        providers=(
+            _source(
+                "catalogue",
+                "edition-1",
+                titles=("Secret History",),
+                subtitle="A Mistborn Novella",
+            ),
+        ),
+        local_claims=(local_title,),
     )
     policy = resolve_policy(MetadataPolicyProfile.builtin(), report.target.library)
     proposal = evaluate_report(report, policy.resolved_id, dict(policy.destinations))
+    subtitle = next(
+        result for result in proposal.results if result.destination is TargetDestination.SUBTITLE
+    )
     selected = next(
         value
         for value in compile_rich_metadata_preview(policy, report, proposal).fields
         if value.field == "subtitle"
     )
 
-    assert ("abstain", expected, None) == (
-        selected.outcome,
-        selected.reason,
-        selected.desired_value,
-    )
-
-
-def test_colon_subtitle_signal_rejects_a_mismatching_provider_subtitle() -> None:
-    title = "Secret History: Another subtitle"
-    local = LocalClaim.create(
-        kind=ClaimKind.TITLE,
-        observed=title,
-        canonical=title,
-        state=FieldState.VALID,
-        scope=ClaimScope.WORK,
-        basis="package_metadata",
-        excerpt=title,
-        applicability="not_applicable",
-        checksum="not_applicable",
-        applicability_basis="not_applicable",
-        occurrence=0,
-    )
-
-    selected = _automatic_subtitle_fill_preview((local,))
-
+    assert subtitle.alternatives
     assert ("abstain", "subtitle_local_corroboration_required", None) == (
         selected.outcome,
         selected.reason,
