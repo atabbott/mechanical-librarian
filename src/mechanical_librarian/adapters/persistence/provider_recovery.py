@@ -262,7 +262,7 @@ class SQLiteProviderRecoveryStore:
                 )
                 if has_jobs:
                     self._connection.execute(
-                        "UPDATE provider_recovery_health SET generation=?,state=?,attempt=?,next_eligible_at=?,claim_token=NULL,claim_expires_at=NULL WHERE connection=? AND adapter=? AND scope=?",
+                        "UPDATE provider_recovery_health SET generation=?,state=?,attempt=?,next_eligible_at=?,claim_token=NULL,claim_expires_at=NULL,fanout_cutoff=NULL WHERE connection=? AND adapter=? AND scope=?",
                         (
                             successor.generation,
                             successor.state,
@@ -276,7 +276,7 @@ class SQLiteProviderRecoveryStore:
                 else:
                     self._connection.execute(
                         "UPDATE provider_recovery_health SET generation=?,state=?,attempt=?,"
-                        "next_eligible_at=?,claim_token=NULL,claim_expires_at=NULL "
+                        "next_eligible_at=?,claim_token=NULL,claim_expires_at=NULL,fanout_cutoff=NULL "
                         "WHERE connection=? AND adapter=? AND scope=?",
                         (
                             successor.generation,
@@ -945,9 +945,9 @@ class SQLiteProviderRecoveryStore:
                 row = self._connection.execute(
                     "SELECT connection,adapter,scope,generation,state,attempt,next_eligible_at,claim_token,claim_expires_at,fanout_cutoff "
                     "FROM provider_recovery_health h WHERE generation=? AND state='fanout' AND claim_expires_at<=? "
-                    "AND EXISTS (SELECT 1 FROM provider_recovery_jobs j WHERE j.connection=h.connection AND j.adapter=h.adapter AND j.scope=h.scope AND j.generation=h.generation AND j.enrollment_ordinal<=h.fanout_cutoff AND j.state IN ('queued','running')"
+                    "AND (NOT EXISTS (SELECT 1 FROM provider_recovery_jobs j WHERE j.connection=h.connection AND j.adapter=h.adapter AND j.scope=h.scope AND j.generation=h.generation AND j.enrollment_ordinal<=h.fanout_cutoff AND j.state IN ('queued','running')) OR EXISTS (SELECT 1 FROM provider_recovery_jobs j WHERE j.connection=h.connection AND j.adapter=h.adapter AND j.scope=h.scope AND j.generation=h.generation AND j.enrollment_ordinal<=h.fanout_cutoff AND j.state IN ('queued','running')"
                     + excluded
-                    + ") "
+                    + ") ) "
                     "ORDER BY connection,adapter,scope LIMIT 1",
                     (generation, now, *parameters),
                 ).fetchone()
@@ -1208,6 +1208,30 @@ class SQLiteProviderRecoveryStore:
                         values,
                     )
                     inserted += result.rowcount
+                    if result.rowcount == 1:
+                        reopened = self._connection.execute(
+                            "UPDATE provider_recovery_health SET state='waiting',attempt=0,next_eligible_at=?,claim_token=NULL,claim_expires_at=NULL,fanout_cutoff=NULL WHERE connection=? AND adapter=? AND scope=? AND state IN ('recovered','exhausted')",
+                            (
+                                enqueued_at,
+                                job.connection,
+                                job.adapter,
+                                job.scope,
+                            ),
+                        ).rowcount
+                        if reopened == 1:
+                            self._connection.execute(
+                                "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at) VALUES(?,?,?,?,?,?,?,?)",
+                                (
+                                    job.connection,
+                                    job.adapter,
+                                    job.scope,
+                                    job.generation,
+                                    "waiting",
+                                    0,
+                                    enqueued_at,
+                                    enqueued_at,
+                                ),
+                            )
                 self._connection.execute("COMMIT")
                 return inserted
         except (sqlite3.Error, OverflowError) as error:
@@ -2096,7 +2120,7 @@ def _validate(connection: sqlite3.Connection) -> None:
                 "provider recovery database is unavailable or incompatible"
             )
         for row in connection.execute(
-            "SELECT connection,adapter,scope,generation,state,attempt,next_eligible_at,claim_token,claim_expires_at FROM provider_recovery_health"
+            "SELECT connection,adapter,scope,generation,state,attempt,next_eligible_at,claim_token,claim_expires_at,enrollment_cursor,fanout_cutoff FROM provider_recovery_health"
         ):
             ProviderRecovery(*row[:7])
             if row[:3] not in members or (
@@ -2107,6 +2131,15 @@ def _validate(connection: sqlite3.Connection) -> None:
                     and type(row[8]) is int
                     and row[8] >= 0
                 )
+            ):
+                raise ProviderRecoveryStoreError(
+                    "provider recovery database is unavailable or incompatible"
+                )
+            if (
+                type(row[9]) is not int
+                or row[9] < 0
+                or (row[4] == "fanout") != (type(row[10]) is int)
+                or (type(row[10]) is int and not 0 <= row[10] <= row[9])
             ):
                 raise ProviderRecoveryStoreError(
                     "provider recovery database is unavailable or incompatible"
