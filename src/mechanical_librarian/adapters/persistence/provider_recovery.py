@@ -1882,13 +1882,15 @@ class SQLiteProviderRecoveryStore:
     def _shared_failure_scopes(
         self, *, recovery: ProviderRecovery, cohort_epoch: int
     ) -> list[tuple[str]]:
-        """Name the frozen cohort and every active next-cohort scope."""
+        """Name the frozen cohort and waiting active next-cohort scopes."""
         return cast(
             "list[tuple[str]]",
             self._connection.execute(
-                "SELECT DISTINCT scope FROM provider_recovery_jobs WHERE connection=? "
-                "AND adapter=? AND generation=? AND (cohort_epoch=? OR state IN ('queued','running')) "
-                "ORDER BY scope",
+                "SELECT DISTINCT j.scope FROM provider_recovery_jobs j "
+                "JOIN provider_recovery_health h USING(connection,adapter,scope) "
+                "WHERE j.connection=? AND j.adapter=? AND j.generation=? "
+                "AND h.generation=j.generation AND (j.cohort_epoch=? OR (j.cohort_epoch IS NULL "
+                "AND j.state IN ('queued','running') AND h.state='waiting')) ORDER BY j.scope",
                 (
                     recovery.connection,
                     recovery.adapter,
