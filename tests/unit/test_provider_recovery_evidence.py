@@ -47,11 +47,27 @@ from mechanical_librarian.domain.failure_diagnostics import (
     FailureStage,
 )
 from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    ClaimScope,
     MetadataReport,
     ProviderObservation,
     ProviderStatus,
+    TargetDestination,
 )
-from mechanical_librarian.domain.proposal_set import ProposalOutcome, ProposalSet
+from mechanical_librarian.domain.proposal_set import (
+    ProposalOutcome,
+    ProposalSet,
+    evaluate_report,
+)
+from tests.support.proposal_evidence import (
+    _claim,
+    _fields,
+    _provider,
+    _result,
+)
+from tests.support.proposal_evidence import (
+    _report as _proposal_report,
+)
 
 _CONFIGURATION = ApplicationConfiguration(
     (
@@ -264,6 +280,82 @@ def test_provider_budget_reason_prioritises_the_provider_that_can_add_independen
     )
     assert ("missing_corroboration", 0) == provider_budget_dispatch_reason(
         report, proposal, independent_provider
+    )
+
+
+def test_fixed_budget_replay_counts_actual_decided_fields_not_reason_labels() -> None:
+    """The same two requests settle a real field only in the ranked replay."""
+    initial_title = _provider(
+        "first",
+        "edition-1",
+        (
+            _claim(
+                "first",
+                "edition-1",
+                ClaimKind.TITLE,
+                "Corrected title",
+                scope=ClaimScope.WORK,
+            ),
+        ),
+        authority="hardcover",
+    )
+    initial_subtitle = _provider(
+        "second",
+        "edition-2",
+        (
+            _claim(
+                "second",
+                "edition-2",
+                ClaimKind.SUBTITLE,
+                "Corrected subtitle",
+                scope=ClaimScope.WORK,
+            ),
+        ),
+        authority="hardcover",
+    )
+    title_support = _provider(
+        "third",
+        "edition-3",
+        (
+            _claim(
+                "third",
+                "edition-3",
+                ClaimKind.TITLE,
+                "Corrected title",
+                scope=ClaimScope.WORK,
+            ),
+        ),
+        authority="open_library",
+    )
+    subtitle_support = _provider(
+        "fourth",
+        "edition-4",
+        (
+            _claim(
+                "fourth",
+                "edition-4",
+                ClaimKind.SUBTITLE,
+                "Corrected subtitle",
+                scope=ClaimScope.WORK,
+            ),
+        ),
+        authority="open_library",
+    )
+    fields = _fields()
+
+    def decided(providers: tuple[ProviderObservation, ...]) -> int:
+        proposal = evaluate_report(_proposal_report(fields=fields, providers=providers))
+        return sum(
+            _result(proposal, destination).outcome is ProposalOutcome.PROPOSE_CHANGE
+            for destination in (TargetDestination.TITLE, TargetDestination.SUBTITLE)
+        )
+
+    # The prior member order spends its two starts on recoveries that reproduce
+    # the original authority. Ranked recovery spends the same budget on the two
+    # independent successor observations, then evaluates the real proposal set.
+    assert 0 == decided((initial_title, initial_subtitle))
+    assert 1 == decided(
+        (initial_title, initial_subtitle, title_support, subtitle_support)
     )
 
 
