@@ -340,13 +340,13 @@ def test_description_citations_exclude_retained_unproved_sources() -> None:
 
     unproved_references = {claim.reference for claim in unproved.claims}
     assert all(preview.outcome == "projected" for preview in fields.values())
-    assert not (
-        set(fields["description_fill"].source_evidence_references)
-        & unproved_references
+    assert all(
+        not (set(fields[field].source_evidence_references) & unproved_references)
+        for field in ("description_fill", "tags")
     )
     assert all(
         set(fields[field].source_evidence_references) & unproved_references
-        for field in ("series", "genres", "tags")
+        for field in ("series", "genres")
     )
 
 
@@ -433,8 +433,14 @@ def test_unproved_work_only_blocks_automatic_description(
         (),
     )
     assert fields["genres"].outcome == "projected"
-    assert fields["tags"].outcome == "projected"
     assert fields["series"].reason != "target_work_applicability_unproved"
+    assert (
+        fields["tags"].outcome,
+        fields["tags"].reason,
+    ) == (
+        "abstain",
+        "target_work_applicability_unproved",
+    )
 
 
 def _with_state(report, destination, state):

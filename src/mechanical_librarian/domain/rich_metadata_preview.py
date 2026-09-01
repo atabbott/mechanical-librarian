@@ -56,7 +56,7 @@ class _RetainedClaim:
 
 
 @dataclass(frozen=True, slots=True)
-class _AutomaticDescriptionEvidence:
+class _AutomaticWorkEvidence:
     alternatives: tuple[ProposalAlternative, ...]
     references: dict[str, tuple[str, ...]]
 
@@ -79,12 +79,12 @@ def _remember_claim(values: dict[str, _RetainedClaim], reference: object, value:
     values[reference] = value
 
 
-def _automatic_description_evidence(
+def _automatic_work_evidence(
     report: MetadataReport,
     result: ProposalResult,
     retained_claims: dict[str, _RetainedClaim],
-) -> _AutomaticDescriptionEvidence:
-    """Keep automatic descriptions backed by the exact target work."""
+) -> _AutomaticWorkEvidence:
+    """Keep automatic work fields backed by the exact target work."""
     alternatives: list[ProposalAlternative] = []
     references: dict[str, tuple[str, ...]] = {}
     for alternative in result.alternatives:
@@ -101,7 +101,7 @@ def _automatic_description_evidence(
         if admitted:
             alternatives.append(alternative)
             references[alternative.alternative_id] = admitted
-    return _AutomaticDescriptionEvidence(tuple(alternatives), references)
+    return _AutomaticWorkEvidence(tuple(alternatives), references)
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,28 +206,28 @@ def _project(
         or (field in {"genres", "tags"} and option == "fill_empty")
     ):
         return _preserved(field, option, target, current)
+    automatic_work = (
+        _automatic_work_evidence(report, result, retained_claims)
+        if destination == "automatic" and field in {"description_fill", "tags"}
+        else None
+    )
+    if (
+        automatic_work is not None
+        and result.alternatives
+        and not automatic_work.alternatives
+    ):
+        return _abstain(
+            field,
+            option,
+            target,
+            current,
+            "target_work_applicability_unproved",
+        )
     if field == "subtitle" and option == "corroborated_split":
         return _subtitle_bundle(field, option, target, result, proposal, report)
     if field == "description_fill":
-        automatic_evidence = (
-            _automatic_description_evidence(report, result, retained_claims)
-            if destination == "automatic"
-            else None
-        )
-        if (
-            automatic_evidence is not None
-            and result.alternatives
-            and not automatic_evidence.alternatives
-        ):
-            return _abstain(
-                field,
-                option,
-                target,
-                current,
-                "target_work_applicability_unproved",
-            )
         return _description(
-            field, option, target, result, retained_claims, automatic_evidence
+            field, option, target, result, retained_claims, automatic_work
         )
     if field == "isbn_form":
         return _isbn(field, option, target, result, report)
@@ -238,7 +238,10 @@ def _project(
         if field == "series" and option == "primary_narrative"
         else _series_candidate(result)
         if field == "series"
-        else _one_list_candidate(result)
+        else _one_list_candidate(
+            result,
+            None if automatic_work is None else automatic_work.alternatives,
+        )
         if field in {"genres", "tags"}
         else _candidate(result)
     )
@@ -255,7 +258,11 @@ def _project(
     if candidate is None:
         reason = _candidate_reason(result)
         return RichFieldPreview(field, option, target.state.value, current, "abstain", None, reason)
-    references = candidate.evidence_references
+    references = (
+        candidate.evidence_references
+        if automatic_work is None
+        else automatic_work.references[candidate.alternative_id]
+    )
     if field == "subtitle" and destination == "automatic":
         # The corroborating local claim is the decisive eligibility evidence;
         # the durable record cites it alongside the provider claim.
@@ -497,8 +504,17 @@ def _series_membership_positions(
     return tuple(values)
 
 
-def _one_list_candidate(result: ProposalResult) -> ProposalAlternative | None:
-    values = tuple(value for value in result.alternatives if value.value.kind is ProposalValueKind.LIST)
+def _one_list_candidate(
+    result: ProposalResult,
+    alternatives: tuple[ProposalAlternative, ...] | None = None,
+) -> ProposalAlternative | None:
+    values = tuple(
+        value
+        for value in (
+            result.alternatives if alternatives is None else alternatives
+        )
+        if value.value.kind is ProposalValueKind.LIST
+    )
     return values[0] if len(values) == 1 else None
 
 
@@ -548,7 +564,7 @@ def _description(
     target: TargetField,
     result: ProposalResult,
     retained_claims: dict[str, _RetainedClaim],
-    automatic_evidence: _AutomaticDescriptionEvidence | None = None,
+    automatic_evidence: _AutomaticWorkEvidence | None = None,
 ) -> RichFieldPreview:
     candidate, reason = _one_typed_candidate(
         result,

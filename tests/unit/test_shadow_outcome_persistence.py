@@ -1647,17 +1647,6 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
         )
         for index, value in enumerate(("Fantasy", "Adventure"))
     )
-    tag_claims = tuple(
-        _claim(
-            "catalogue",
-            "edition-1",
-            ClaimKind.TAG,
-            value,
-            scope=ClaimScope.WORK,
-            order=index,
-        )
-        for index, value in enumerate(("Quest", "Found family"))
-    )
     genre_report = _proposal_report(
         fields=_fields(
             genres=TargetField(
@@ -1677,26 +1666,7 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
         ),
         providers=(_provider("catalogue", "edition-1", genre_claims),),
     )
-    tag_empty_report = _proposal_report(
-        fields=_fields(
-            tags=TargetField(
-                TargetDestination.TAGS,
-                TargetFieldState.MISSING,
-            )
-        ),
-        providers=(_provider("catalogue", "edition-1", tag_claims),),
-    )
-    tag_value_report = _proposal_report(
-        fields=_fields(
-            tags=TargetField(
-                TargetDestination.TAGS,
-                TargetFieldState.VALUE,
-                ("Existing",),
-            )
-        ),
-        providers=(_provider("catalogue", "edition-1", tag_claims),),
-    )
-    description_report = _target_work_report(
+    work_report = _target_work_report(
         (
             (
                 "catalogue",
@@ -1706,6 +1676,27 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
             ),
         )
     )
+    tag_empty_report = work_report
+    tag_value_report = MetadataReport.create(
+        target=replace(
+            work_report.target,
+            fields=tuple(
+                TargetField(
+                    TargetDestination.TAGS,
+                    TargetFieldState.VALUE,
+                    ("Existing",),
+                )
+                if field.destination is TargetDestination.TAGS
+                else field
+                for field in work_report.target.fields
+            ),
+        ),
+        file=work_report.file,
+        local_claims=work_report.local_claims,
+        local_reasons=work_report.local_reasons,
+        providers=work_report.providers,
+    )
+    description_report = work_report
     subtitle_report = _bibliographic_report(
         current_title="Book",
         providers=(
@@ -1774,7 +1765,7 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
             "fill_empty",
             tag_empty_report,
             "tags",
-            {"kind": "list", "value": ["Quest", "Found family"]},
+            {"kind": "list", "value": ["Espionage"]},
         ),
         (
             "tags",
@@ -1785,8 +1776,7 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
                 "kind": "list",
                 "value": [
                     "Existing",
-                    "Quest",
-                    "Found family",
+                    "Espionage",
                 ],
             },
         ),
@@ -1795,7 +1785,7 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
             "replace",
             tag_value_report,
             "tags",
-            {"kind": "list", "value": ["Quest", "Found family"]},
+            {"kind": "list", "value": ["Espionage"]},
         ),
         (
             "description_fill",
