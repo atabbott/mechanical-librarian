@@ -8,6 +8,7 @@ import re
 from dataclasses import dataclass
 from typing import TypedDict, cast
 
+from mechanical_librarian.domain.proposal_set import PROVIDER_CONSENSUS_TITLE_REASONS
 from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
 from mechanical_librarian.domain.shadow_review_actions import (
     ACTION_POLICY_VERSION,
@@ -18,7 +19,7 @@ from mechanical_librarian.domain.shadow_review_actions import (
 )
 
 DECISION_SET_SCHEMA = "shadow-decision-set-v1"
-DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v9"
+DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v10"
 MAX_DECISION_SET_BYTES = 1_048_576
 
 _SUPPORTED_DESTINATIONS = frozenset(
@@ -81,6 +82,12 @@ _RULE_TABLE = {
             "candidate": "year_month_or_day",
             "independent_correlation": "required",
         },
+    },
+    "provider_consensus_title": {
+        "candidate_local_evidence": 0,
+        "minimum_independent_provider_correlations": 2,
+        "proposal_target_only_preservation": 1,
+        "reasons": sorted(PROVIDER_CONSENSUS_TITLE_REASONS),
     },
     "supported_destinations": sorted(_SUPPORTED_DESTINATIONS),
     "unsupported_disposition": "manual",
@@ -462,19 +469,32 @@ def _candidate_is_eligible(
         "associated_work_only" if destination in _WORK_DESTINATIONS else "established"
     )
     source_evidence_report_only = destination in _REPORT_ONLY_SOURCE_DESTINATIONS
+    reasons = proposal.get("reasons")
+    provider_consensus_title = (
+        destination == "title"
+        and type(reasons) is list
+        and len(reasons) == 1
+        and reasons[0] in PROVIDER_CONSENSUS_TITLE_REASONS
+    )
+    proposal_target_only_preservation = cast(
+        "_ProposalSummary", proposal["decision_summary"]
+    )["target_only_preservation"]
+    minimum_provider_correlations = 2 if provider_consensus_title else 1
     if (
         (
             not source_evidence_report_only
-            and cast("_ProposalSummary", proposal["decision_summary"])[
-                "target_only_preservation"
-            ]
-            != 0
+            and proposal_target_only_preservation
+            != (1 if provider_consensus_title else 0)
         )
         or support["target_only_preservation"] != 0
-        or (destination != "publishedDate" and support["local_evidence"] != 1)
+        or (
+            destination != "publishedDate"
+            and support["local_evidence"] != (0 if provider_consensus_title else 1)
+        )
         or (
             not source_evidence_report_only
-            and support["independent_provider_correlations"] < 1
+            and support["independent_provider_correlations"]
+            < minimum_provider_correlations
         )
         or candidate["scope"] != expected_scope
         or summary["evidence_scope"] != expected_scope

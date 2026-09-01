@@ -33,6 +33,11 @@ and diff every existing F19a option before re-pinning the F19a manifest; the
 sealed current F19a digest remains readable for its historical decisions but
 cannot authorize F35. Title remains excluded from F20.
 
+The bracketed-source class currently grants election authority only to the
+exact `[retail]` suffix. The broader bracket transformation remains available
+for query shaping, but every other bracketed suffix abstains until corpus
+evidence expands the closed election lexicon.
+
 The publication projection retains one independently corroborated canonical
 fact at the strongest shared year, month, or day precision. It never pads a
 date, accepts local-only precision, or turns the derived Published year context

@@ -68,6 +68,7 @@ from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
 from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.domain.activity_records import readable_activity_event
 from mechanical_librarian.domain.automatic_decision import (
+    F19A_QUALIFICATION_MANIFEST_SHA256,
     AutomaticDecision,
     AutomaticDecisionError,
     AutomaticSafetyState,
@@ -145,6 +146,12 @@ from tests.unit.test_cover_packets import (
 )
 from tests.unit.test_cover_packets import (
     _source as _cover_source,
+)
+from tests.unit.test_provider_consensus_titles import (
+    _local_title as _consensus_local_title,
+)
+from tests.unit.test_provider_consensus_titles import (
+    _provider_title as _consensus_provider_title,
 )
 
 
@@ -4617,6 +4624,86 @@ def test_generic_subtitle_preservation_records_only_the_title_no_op() -> None:
         reopened.publish(newer, lambda: True, report.report_id)
         assert "stale" == reopened.persist_shadow_outcome(case_id, 6)
         reopened.close()
+
+
+def test_provider_consensus_title_persists_the_exact_qualified_automatic_tranche() -> (
+    None
+):
+    local = "Plain Work [retail]"
+    report = _proposal_report(
+        fields=_fields(
+            local,
+            title=TargetField(
+                TargetDestination.TITLE,
+                TargetFieldState.VALUE,
+                local,
+            ),
+        ),
+        local_claims=(_consensus_local_title(local),),
+        providers=(
+            _consensus_provider_title("open_library", "Plain Work"),
+            _consensus_provider_title("hardcover", "Plain Work"),
+        ),
+    )
+    profile = _preview_automatic_profile()
+
+    with tempfile.TemporaryDirectory() as temporary:
+        repository = open_repository(Path(temporary) / "reports.sqlite")
+        repository.enter_shadow_preview(1)
+        repository.create_metadata_policy_draft(profile.canonical_json)
+        resolved = resolve_policy(profile, report.target.library)
+        repository.activate_metadata_policy(
+            profile.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            2,
+        )
+        repository.activate_qualified_automatic(3)
+        proposal = evaluate_report(
+            report, resolved.resolved_id, dict(resolved.destinations)
+        )
+        repository.publish(report, lambda: True)
+        repository.publish_proposal(proposal)
+        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+
+        outcome = ShadowOutcomeSet.from_json(
+            repository.persist_shadow_outcome(case_id, 4)
+        )
+        title = next(
+            value for value in outcome.outcomes if value.destination == "title"
+        )
+        document = repository._connection.execute(
+            "SELECT document FROM automatic_decisions WHERE destination='title'"
+        ).fetchone()
+
+        assert title.candidate_id is not None
+        assert title.policy_category == "title"
+        assert title.policy_option == "replace_target:provider_consensus_noise"
+        assert document is not None
+        decision = AutomaticDecision.from_json(document[0])
+        assert decision.candidate_id == title.candidate_id
+        assert decision.policy_category == "title"
+        assert decision.policy_option == "replace_target:provider_consensus_noise"
+        assert (
+            decision.qualification_manifest_sha256 == F19A_QUALIFICATION_MANIFEST_SHA256
+        )
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(case_id))["case"]
+        )
+        assert {"kind": "text", "value": "Plain Work"} == (
+            _automatic_decision_value(decision, case, report, proposal, outcome)
+        )
+        detail = InspectCurrentReviewCase(repository).run(case_id)
+        projected = next(
+            value for value in detail["fields"] if value["destination"] == "title"
+        )
+        assert projected["automatic_decision"] is not None
+        assert projected["automatic_decision"]["selected_value"] == {
+            "kind": "text",
+            "value": "Plain Work",
+        }
+        assert projected["notices"] == ["provider_consensus_title_bracket_source_tag"]
+        repository.close()
 
 
 def test_incomplete_series_memberships_remain_in_attention_after_persistence() -> None:

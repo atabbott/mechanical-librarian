@@ -148,6 +148,19 @@ def test_provider_consensus_requires_two_authority_correlations() -> None:
     assert result.reasons == ("competing_evidence",)
 
 
+def test_provider_consensus_rejects_non_source_bracket_qualifiers() -> None:
+    result = _title_result(
+        local="Plain Work [Illustrated Edition]",
+        providers=(
+            _provider_title("open_library", "Plain Work"),
+            _provider_title("hardcover", "Plain Work"),
+        ),
+    )
+
+    assert ProposalOutcome.UNRESOLVED_CHOICE is result.outcome
+    assert result.reasons == ("competing_evidence",)
+
+
 def test_provider_consensus_abstains_for_dissent_or_non_current_local_title() -> None:
     dissent = _title_result(
         local="Plain Work [retail]",

@@ -86,6 +86,8 @@ def test_consensus_election_grammar_returns_closed_reversible_matches(
         "Plain Work ASIN B012345678",
         "Plain Work ISBN 9780306406158",
         "Plain Work 9780306406157",
+        "Plain Work [Illustrated Edition]",
+        "Plain Work [RETAIL]",
         "Plain Work - A subtitle",
         "Plain Work: First: Second",
     ),

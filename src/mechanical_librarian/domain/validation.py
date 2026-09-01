@@ -46,6 +46,11 @@ boolean = exact_type(bool)
 text = exact_type(str)
 
 
+def nonempty_text(value: object) -> bool:
+    """Accept exact text carrying at least one character."""
+    return text(value) and bool(value)
+
+
 def bounded_utf8_text(maximum_bytes: int) -> FieldCheck:
     """Accept exact, nonempty text within one UTF-8 byte bound."""
 

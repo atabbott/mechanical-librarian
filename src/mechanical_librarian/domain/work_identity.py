@@ -7,6 +7,8 @@ import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
 
+from mechanical_librarian.domain.validation import exact_type, nonempty_text
+
 
 class WorkDispatchRung(StrEnum):
     NORMALIZED = "normalized"
@@ -44,14 +46,10 @@ class WorkTitleElectionMatch:
 
     def __post_init__(self) -> None:
         if (
-            type(self.family) is not WorkTitleTransformationFamily
-            or type(self.clean_title) is not str
-            or not self.clean_title
+            not exact_type(WorkTitleTransformationFamily)(self.family)
+            or not nonempty_text(self.clean_title)
             or self.preserved_component is not None
-            and (
-                type(self.preserved_component) is not str
-                or not self.preserved_component
-            )
+            and not nonempty_text(self.preserved_component)
         ):
             raise ValueError("work title election match is invalid")
 
@@ -256,6 +254,10 @@ _RULE_ORDINAL = {
 
 _ASCII_SPACE = re.compile(r"[\t\n\r\f\v ]+")
 _BRACKET_SOURCE = re.compile(r"[\t\n\r\f\v ]*\[[^\[\]]{1,80}\][\t\n\r\f\v ]*$")
+_ELECTION_BRACKET_SOURCE = re.compile(
+    r"[\t\n\r\f\v ]*\[(?P<tag>[^\[\]]{1,80})\][\t\n\r\f\v ]*$"
+)
+_ELECTION_BRACKET_SOURCE_TAGS = frozenset({"retail"})
 _EDITION = re.compile(
     r"[\t\n\r\f\v ]*(?:[-,:][\t\n\r\f\v ]*)?"
     r"(?:\d+(?:st|nd|rd|th)[\t\n\r\f\v ]+)?"
@@ -605,6 +607,13 @@ def _direct_work_title_election_matches(
         WorkTitleTransformationFamily.PARENTHESIZED_YEAR,
         WorkTitleTransformationFamily.SUBTITLE_SEGMENT,
     ):
+        if family is WorkTitleTransformationFamily.BRACKET_SOURCE_TAG:
+            bracket_source = _ELECTION_BRACKET_SOURCE.search(title)
+            if (
+                bracket_source is None
+                or bracket_source.group("tag") not in _ELECTION_BRACKET_SOURCE_TAGS
+            ):
+                continue
         clean_title = apply_work_title_transformation(family, title, authors)
         if clean_title == title or not clean_title:
             continue

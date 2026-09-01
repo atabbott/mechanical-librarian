@@ -817,8 +817,8 @@ def test_identity_replay_and_document_validation_are_canonical() -> None:
         )
 
 
-def test_v9_policy_identity_rejects_public_base_v5_replay() -> None:
-    assert "deterministic-shadow-decision-policy-v9" == DECISION_POLICY_VERSION
+def test_v10_policy_identity_rejects_public_base_v5_replay() -> None:
+    assert "deterministic-shadow-decision-policy-v10" == DECISION_POLICY_VERSION
     packet = _packet()
     document = json.loads(decide_shadow_packet(packet).to_json())
     document["policy_version"] = "deterministic-shadow-decision-policy-v5"

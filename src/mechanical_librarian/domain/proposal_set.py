@@ -214,6 +214,9 @@ _TITLE_CONSENSUS_FAMILIES = (
     WorkTitleTransformationFamily.PARENTHESIZED_YEAR,
     WorkTitleTransformationFamily.SUBTITLE_SEGMENT,
 )
+PROVIDER_CONSENSUS_TITLE_REASONS = frozenset(
+    f"provider_consensus_title_{family.value}" for family in _TITLE_CONSENSUS_FAMILIES
+)
 
 _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
     ProposalOutcome.PROPOSE_CHANGE: frozenset(
@@ -222,10 +225,7 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
             ("unique_typed_candidate",),
             ("explicit_author_corroborates_untyped_creator",),
             ("local_attested_subtitle",),
-            *(
-                (f"provider_consensus_title_{family.value}",)
-                for family in _TITLE_CONSENSUS_FAMILIES
-            ),
+            *((reason,) for reason in PROVIDER_CONSENSUS_TITLE_REASONS),
         }
     ),
     ProposalOutcome.ACCEPTABLE_CHOICE: frozenset({("field_policy_acceptable_choice",)}),
