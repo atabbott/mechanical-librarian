@@ -756,27 +756,27 @@ def _optional_entity_label(
     if type(labels) is not dict or not labels or len(labels) > _MAX_ENTITY_BATCH:
         reject(1)
         return None
-    ordered = (
-        "en",
-        "fromclaims",
-        *(key for key in sorted(labels) if key not in {"en", "fromclaims"}),
-    )
+    valid: dict[str, str] = {}
     rejected = False
-    for key in ordered:
-        if key not in labels:
-            continue
-        value = labels.get(key)
+    for key, value in labels.items():
         if type(key) is not str or type(value) is not str:
             reject(1)
             rejected = True
             continue
         try:
-            return validate_projection_text(
+            valid[key] = validate_projection_text(
                 value, "provider entity label", MAX_SCALAR_CHARACTERS
             )
         except (EvidenceValueError, ValueError):
             reject(1)
             rejected = True
+    for key in (
+        "en",
+        "fromclaims",
+        *(key for key in sorted(valid) if key not in {"en", "fromclaims"}),
+    ):
+        if key in valid:
+            return valid[key]
     if not rejected:
         reject(1)
     return None

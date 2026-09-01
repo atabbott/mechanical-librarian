@@ -35,7 +35,7 @@ The current installed contract is intentionally narrow:
   provider-declared GraphQL errors before considering partial data; safely
   anchored records retain independently valid bounded optional fields and
   members while strict response shape, candidate identity, cardinality and
-  required edition/work joins fail closed; all three providers share
+  required edition/work joins fail closed; all four ebook providers share
   one-second request-start pacing across foreground and recovery work, and
   exact Google Books and Hardcover authority distinguishes burst waits from
   daily reset waits;

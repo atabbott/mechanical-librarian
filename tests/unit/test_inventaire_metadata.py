@@ -438,6 +438,85 @@ def test_optional_label_failures_preserve_other_candidate_evidence(
     assert observation.diagnostics[0].count >= 1
 
 
+def test_mixed_label_keys_omit_only_the_dependent_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _provider(
+        httpx.MockTransport(
+            lambda request: (_ for _ in ()).throw(AssertionError(request.url))
+        )
+    )
+
+    def request(
+        _url: str,
+        params: dict[str, str] | httpx.QueryParams,
+        *,
+        deadline: float | None,
+        query_retry: bool = False,
+    ) -> dict[str, object]:
+        del deadline, query_retry
+        query = httpx.QueryParams(params)
+        uris = query.get_list("uris")
+        if uris == ["isbn:9780306406157"]:
+            return {
+                "entities": {
+                    "inv:edition-one": {
+                        "uri": "inv:edition-one",
+                        "labels": {"en": "Example Book"},
+                        "image": {
+                            "url": "/img/entities/0123456789abcdef0123456789abcdef01234567"
+                        },
+                        "claims": {
+                            "wdt:P212": ["9780306406157"],
+                            "wdt:P1476": ["Example Book"],
+                            "wdt:P123": ["wd:Q200"],
+                            "wdt:P629": ["wd:Q100"],
+                        },
+                    }
+                },
+                "redirects": {"isbn:9780306406157": "inv:edition-one"},
+            }
+        if uris == ["wd:Q100"]:
+            return {
+                "entities": {
+                    "wd:Q100": {
+                        "uri": "wd:Q100",
+                        "labels": {"en": "Example Book"},
+                        "claims": {},
+                    }
+                },
+                "redirects": {},
+            }
+        assert uris == ["wd:Q200"]
+        return {
+            "entities": {
+                "wd:Q200": {
+                    "uri": "wd:Q200",
+                    "labels": {1: "numeric key", "en": 7},
+                }
+            },
+            "redirects": {},
+        }
+
+    monkeypatch.setattr(provider, "_request", request)
+
+    observation = provider.observe(_lookup())
+
+    assert observation.status is ProviderStatus.CANDIDATES
+    claims = observation.candidates[0].claims
+    assert any(
+        claim.kind is ClaimKind.ISBN and claim.value == "9780306406157"
+        for claim in claims
+    )
+    assert any(
+        claim.kind is ClaimKind.TITLE and claim.value == "Example Book"
+        for claim in claims
+    )
+    assert not any(claim.kind is ClaimKind.PUBLISHER for claim in claims)
+    assert provider.cover_descriptors
+    assert observation.diagnostics[0].count == 2
+
+
 def test_rate_limit_without_recovery_window_is_terminal() -> None:
     calls = 0
 
