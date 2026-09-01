@@ -247,7 +247,7 @@ def _target_work_report(
         _local_isbn("9780306406157", "valid_isbn_13"),
     )
     lane = metadata_discovery_plan(
-        TargetSnapshot("ebook", "Real Tigers", ("Mick Herron",), fields=fields),
+        TargetSnapshot("ebook", "Real Tigers", (), fields=fields),
         local_isbns,
     ).lanes[0]
     providers = tuple(
@@ -293,7 +293,9 @@ def _target_work_preview(report: MetadataReport):
         }
     )
     policy = resolve_policy(
-        MetadataPolicyProfile.create("Target work applicability", options, destinations),
+        MetadataPolicyProfile.create(
+            "Target work applicability", options, destinations
+        ),
         report.target.library,
     )
     proposal = evaluate_report(report, policy.resolved_id, destinations)
@@ -410,9 +412,7 @@ def test_unproved_work_only_blocks_automatic_tags(
     with_lane: bool,
 ) -> None:
     proposal, fields = _target_work_preview(
-        _target_work_report(
-            (("catalogue", "hardcover", candidates, with_lane),)
-        )
+        _target_work_report((("catalogue", "hardcover", candidates, with_lane),))
     )
 
     tags = next(
