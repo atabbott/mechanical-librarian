@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Audiobook preparation now feeds the Audiobookshelf-asserted ASIN and any
+  ASIN the runtime-corroboration gate promotes into the per-ASIN providers
+  within the same pass, ordered after embedded ASINs and bounded by the same
+  four-lane limit; candidates reached that way keep edition identity only when
+  the recording's own running time corroborates them. (#956)
+
 - Language aliases and regional variants now form one decision alternative,
   while different base languages, script variants, and malformed tags remain
   unresolved. Existing pre-release proposal state requires a clean rebuild

@@ -1803,9 +1803,42 @@ def test_an_isbn_shaped_asin_is_retained_as_local_evidence() -> None:
     )
 
 
-def test_an_abs_asserted_field_other_than_title_is_still_refused() -> None:
+@pytest.mark.parametrize(
+    "kind",
+    (ClaimKind.DURATION, ClaimKind.SERIES, ClaimKind.CONTRIBUTOR),
+    ids=("duration", "series", "contributor"),
+)
+def test_an_abs_asserted_field_outside_title_and_asin_is_still_refused(
+    kind: ClaimKind,
+) -> None:
     with pytest.raises(ReportValueError):
-        _audio_claim(ClaimKind.ASIN, "B0CW1KL2QD", "target_metadata")
+        _audio_claim(kind, "asserted", "target_metadata")
+
+
+def test_an_asserted_asin_is_a_target_metadata_claim_reported_valid() -> None:
+    """The assertion is citable evidence, and nothing more than that.
+
+    It is stated on its own surface with its own basis, so the report can name
+    where a fed ASIN lane came from. `TARGET_METADATA` reports `valid` for the
+    ASIN because a claim of that kind is present, and stays `unsupported` for
+    every kind that surface still cannot carry.
+    """
+    asserted = _audio_claim(ClaimKind.ASIN, "B0CW1KL2QD", "target_metadata")
+    report = _audio_report((asserted,))
+
+    assert ClaimScope.EDITION is asserted.scope
+    assert "target_metadata" == asserted.basis
+    asin = next(value for value in report.field_results if value.kind is ClaimKind.ASIN)
+    assert (FieldSource.TARGET_METADATA, FieldState.VALID) in {
+        (value.source, value.state) for value in asin.sources
+    }
+    duration = next(
+        value for value in report.field_results if value.kind is ClaimKind.DURATION
+    )
+    assert (FieldSource.TARGET_METADATA, FieldState.UNSUPPORTED) in {
+        (value.source, value.state) for value in duration.sources
+    }
+    assert MetadataReport.from_json(report.to_json()).local_claims == (asserted,)
 
 
 @pytest.mark.parametrize(

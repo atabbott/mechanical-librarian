@@ -167,7 +167,27 @@ file, or the exported file and folder names. Chapters are a bounded structured
 section rather than claims, and the embedded cover is a presence fact that
 grants no cover authority. Every configured audiobook provider is contacted
 while the report is built, and its observations are retained beside the local
-evidence. The two authorities that state a cover asset of their own — the
+evidence. Discovery runs in two phases within that one preparation. The first
+is the item's own plan: one product lane per ASIN its tags, sidecars, or path
+carry, or a title-and-author search when it carries none. The second feeds the
+per-ASIN providers the ASINs no local surface named — those the runtime
+corroboration gate promoted from the first phase's candidates, then the one
+Audiobookshelf asserts on the item — and is dispatched only to providers whose
+first-phase observation answered no lane at all. Their first-phase observation
+is replaced rather than merged, so every provider still states exactly one
+observation per report. Across all three origins an item runs at most four ASIN
+lanes, in the order local, promoted, asserted, and there is no second promotion
+round. An item that already carries its own ASIN feeds nothing. A lane's origin
+is read off its input references: an asserted lane names the ASIN claim whose
+source is the target, and a promoted lane names the same references the search
+lane used. A candidate returned on a promoted or asserted lane keeps
+edition-scope claims only when the recording's own running time corroborates
+it, exactly as an uncorroborated search candidate is demoted to work scope: an
+assertion obtains evidence and never settles identity, under
+[ADR-0061](../architecture/decisions/0061-audiobook-provider-posture.md). In
+the field results the asserted ASIN reads as `valid` on the `target_metadata`
+source, which continues to read `unsupported` for every field that surface does
+not carry. The two authorities that state a cover asset of their own — the
 Audible catalog and iTunes Search — have their covers acquired through the same
 bounded cover pipeline an ebook's use, each behind its own `cover_enabled`
 switch, and the retained cover evidence records where two independent

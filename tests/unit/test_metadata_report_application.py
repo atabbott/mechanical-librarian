@@ -26,13 +26,17 @@ from mechanical_librarian.application.metadata_report import (
     GenerateMetadataReport,
     InspectionResult,
     MetadataDiscoveryPlan,
+    MetadataLookup,
     MetadataReportError,
     ProviderBinding,
+    ProviderLaneResult,
     ReportRepository,
     TargetCover,
     TargetFile,
     TargetSnapshot,
     UnsupportedMediaError,
+    provider_observation,
+    qualify_provider_observation,
     require_report_current,
 )
 from mechanical_librarian.application.operations import StageTimer, StageTiming
@@ -64,6 +68,8 @@ from mechanical_librarian.domain.metadata_report import (
     FileFacts,
     LocalClaim,
     MetadataReport,
+    ProviderCandidate,
+    ProviderClaim,
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
@@ -72,6 +78,11 @@ from mechanical_librarian.domain.metadata_report import (
     TargetField,
     TargetFieldState,
     default_target_fields,
+    finalize_candidate_comparisons,
+)
+from mechanical_librarian.domain.work_identity import (
+    WorkDispatchLineage,
+    work_query_ladder,
 )
 from tests.support.metadata_report_doubles import (
     FakeAudioInspector,
@@ -1133,6 +1144,329 @@ def test_audiobook_publishes_local_evidence_and_dispatches_its_asin_plan() -> No
     )
     assert (FieldSource.AUDIO_PATH, FieldState.VALID) in {
         (value.source, value.state) for value in series.sources
+    }
+
+
+_FED_TITLE = "Recorded title"
+_FED_AUTHOR = "Ada Author"
+_FED_RUNTIME = "43200.000"
+
+
+def _fed_snapshot(selected: TargetFile, *, asin: str | None = None) -> TargetSnapshot:
+    """One audiobook target with an author, and optionally an asserted ASIN."""
+    overrides = {
+        TargetDestination.AUTHORS: TargetField(
+            TargetDestination.AUTHORS, TargetFieldState.VALUE, (_FED_AUTHOR,)
+        )
+    }
+    if asin is not None:
+        overrides[TargetDestination.ASIN] = TargetField(
+            TargetDestination.ASIN, TargetFieldState.VALUE, asin
+        )
+    return TargetSnapshot(
+        "audiobook",
+        _FED_TITLE,
+        (selected,),
+        fields=tuple(
+            overrides.get(field.destination, field)
+            for field in default_target_fields(_FED_TITLE)
+        ),
+    )
+
+
+def _fed_candidate(
+    local_claims: tuple[LocalClaim, ...], provider: str, asin: str
+) -> ProviderCandidate:
+    """One candidate shaped as an audiobook adapter builds it, runtime included."""
+    identity = f"{provider}-{asin}"
+    specifications: tuple[tuple[ClaimKind, str, ClaimScope, str | None], ...] = (
+        (ClaimKind.TITLE, _FED_TITLE, ClaimScope.WORK, None),
+        (ClaimKind.CREATOR, _FED_AUTHOR, ClaimScope.WORK, "author"),
+        (ClaimKind.ASIN, asin, ClaimScope.EDITION, None),
+        (ClaimKind.DURATION, _FED_RUNTIME, ClaimScope.EDITION, None),
+    )
+    return finalize_candidate_comparisons(
+        ProviderCandidate(
+            identity,
+            "unresolved",
+            tuple(
+                ProviderClaim.create(
+                    provider=provider,
+                    candidate=identity,
+                    kind=kind,
+                    value=value,
+                    state=FieldState.VALID,
+                    scope=scope,
+                    applicability="not_applicable",
+                    role=role,
+                    raw_order=order,
+                )
+                for order, (kind, value, scope, role) in enumerate(specifications)
+            ),
+        ),
+        local_claims,
+        provider,
+    )
+
+
+class _WorkAnsweringProvider:
+    """A catalogue that answers the search lane with one corroborated candidate.
+
+    It observes every lane kind, so it always records lanes and is structurally
+    never re-dispatched by the feed -- which is exactly how the real Audible
+    catalogue behaves.
+    """
+
+    def __init__(
+        self, name: str, asin: str, plans: list[MetadataDiscoveryPlan]
+    ) -> None:
+        self._name = name
+        self._asin = asin
+        self._plans = plans
+
+    def observe(
+        self, plan: MetadataDiscoveryPlan, *, deadline: float | None = None
+    ) -> ProviderObservation:
+        self._plans.append(plan)
+        lanes = tuple(
+            lane for lane in plan.lanes if lane.kind is ProviderQueryKind.WORK
+        )
+        if not lanes:
+            return ProviderObservation(
+                self._name,
+                ProviderStatus.INSUFFICIENT_INPUT,
+                authority="audible_catalog",
+            )
+        lane = lanes[0]
+        title = cast("str", lane.title)
+        qualified = qualify_provider_observation(
+            ProviderObservation(
+                self._name,
+                ProviderStatus.CANDIDATES,
+                (),
+                (_fed_candidate(plan.local_claims, self._name, self._asin),),
+                ProviderQueryKind.WORK,
+                "audible_catalog",
+                dispatch_lineage=WorkDispatchLineage.from_query(
+                    work_query_ladder(title, lane.authors)[0]
+                ),
+            ),
+            MetadataLookup(
+                ProviderQueryKind.WORK, plan.local_claims, title, lane.authors
+            ),
+        )
+        return provider_observation(
+            self._name,
+            (
+                ProviderLaneResult(
+                    lane,
+                    qualified.status,
+                    qualified.candidates,
+                    dispatch_lineage=qualified.dispatch_lineage,
+                    transformation_lineage=qualified.transformation_lineage,
+                ),
+            ),
+            authority="audible_catalog",
+        )
+
+
+class _AsinAnsweringProvider:
+    """A per-ASIN provider: a plan naming no product names nothing it can answer."""
+
+    def __init__(self, name: str, plans: list[MetadataDiscoveryPlan]) -> None:
+        self._name = name
+        self._plans = plans
+
+    def observe(
+        self, plan: MetadataDiscoveryPlan, *, deadline: float | None = None
+    ) -> ProviderObservation:
+        self._plans.append(plan)
+        lanes = tuple(
+            lane for lane in plan.lanes if lane.kind is ProviderQueryKind.ASIN
+        )
+        if not lanes:
+            return ProviderObservation(
+                self._name, ProviderStatus.INSUFFICIENT_INPUT, authority="audnexus"
+            )
+        return provider_observation(
+            self._name,
+            tuple(ProviderLaneResult(lane, ProviderStatus.NO_MATCH) for lane in lanes),
+            authority="audnexus",
+        )
+
+
+def _fed_audiobook_service(
+    target: FakeTarget,
+    repository: FakeReportRepository,
+    audio_inspector: FakeAudioInspector,
+    bindings: tuple[ProviderBinding, ...],
+) -> GenerateMetadataReport:
+    return GenerateMetadataReport(
+        target=target,
+        inspector=FakeInspector(InspectionResult("c" * 64, ())),
+        repository_factory=lambda: cast(ReportRepository, repository),
+        providers=bindings,
+        connection=TargetConnectionConfiguration(
+            "primary", "https://example.invalid", "/private/target"
+        ),
+        library=LibraryConfiguration(
+            "audio",
+            "primary",
+            "library-id",
+            "audiobook",
+            "audiobooks",
+            tuple(sorted(binding.name for binding in bindings)),
+        ),
+        mount=MediaMountConfiguration("audiobooks", "/media", "/library", True),
+        limits=ReportLimits(),
+        audio_inspector=audio_inspector,
+    )
+
+
+def _fed_inspector(
+    *extra: tuple[ClaimKind, str, str, str | None],
+) -> FakeAudioInspector:
+    return FakeAudioInspector(
+        audio_result(((ClaimKind.DURATION, _FED_RUNTIME, "embedded_tag", None), *extra))
+    )
+
+
+def test_a_promoted_asin_is_fed_to_the_per_asin_providers_in_pass() -> None:
+    """The gate promotes an ASIN and the same preparation spends it.
+
+    Before this, an item without its own ASIN could have an ASIN corroborated
+    and still reach no per-ASIN provider: the plan was fixed before any
+    provider answered. Phase two closes that within the one pass.
+    """
+    selected = TargetFile("a" * 64, "book.m4b", "m4b")
+    target = FakeTarget([_fed_snapshot(selected), _fed_snapshot(selected)])
+    repository = FakeReportRepository()
+    search_plans: list[MetadataDiscoveryPlan] = []
+    asin_plans: list[MetadataDiscoveryPlan] = []
+
+    published = MetadataReport.from_json(
+        _fed_audiobook_service(
+            target,
+            repository,
+            _fed_inspector(),
+            (
+                ProviderBinding(
+                    "catalogue",
+                    True,
+                    lambda: _WorkAnsweringProvider(
+                        "catalogue", "B0CW1KL2QD", search_plans
+                    ),
+                    authority="audible_catalog",
+                ),
+                ProviderBinding(
+                    "audnexus",
+                    True,
+                    lambda: _AsinAnsweringProvider("audnexus", asin_plans),
+                    authority="audnexus",
+                ),
+            ),
+        ).run("item-1", 0)
+    )
+
+    # The catalogue answered its lane, so it is never re-dispatched; the
+    # per-ASIN provider saw the search plan first and the promoted ASIN second.
+    assert 1 == len(search_plans)
+    assert [ProviderQueryKind.WORK] == [lane.kind for lane in search_plans[0].lanes]
+    assert 2 == len(asin_plans)
+    assert ["B0CW1KL2QD"] == [lane.canonical_asin for lane in asin_plans[1].lanes]
+    assert ["audnexus", "catalogue"] == [
+        value.provider for value in published.providers
+    ]
+    audnexus = next(
+        value for value in published.providers if value.provider == "audnexus"
+    )
+    assert ProviderStatus.NO_MATCH is audnexus.status
+    assert [ProviderQueryKind.ASIN] == [lane.kind for lane in audnexus.lanes]
+    assert search_plans[0].lanes[0].input_references == (
+        audnexus.lanes[0].input_references
+    )
+
+
+def test_an_asserted_asin_feeds_the_per_asin_providers_and_keeps_the_work_lane() -> (
+    None
+):
+    """An assertion buys enrichment, not identity, and never costs the search."""
+    selected = TargetFile("a" * 64, "book.m4b", "m4b")
+    snapshot = _fed_snapshot(selected, asin="B0ASSERTED")
+    target = FakeTarget([snapshot, snapshot])
+    repository = FakeReportRepository()
+    asin_plans: list[MetadataDiscoveryPlan] = []
+
+    published = MetadataReport.from_json(
+        _fed_audiobook_service(
+            target,
+            repository,
+            _fed_inspector(),
+            (
+                ProviderBinding(
+                    "audnexus",
+                    True,
+                    lambda: _AsinAnsweringProvider("audnexus", asin_plans),
+                    authority="audnexus",
+                ),
+            ),
+        ).run("item-1", 0)
+    )
+
+    assert [ProviderQueryKind.WORK] == [lane.kind for lane in asin_plans[0].lanes]
+    assert ["B0ASSERTED"] == [lane.canonical_asin for lane in asin_plans[1].lanes]
+    assert 1 == len(published.providers)
+    assert [ProviderQueryKind.ASIN] == [
+        lane.kind for lane in published.providers[0].lanes
+    ]
+    asserted = next(
+        value
+        for value in published.local_claims
+        if value.kind is ClaimKind.ASIN and value.basis == "target_metadata"
+    )
+    assert (asserted.reference,) == published.providers[0].lanes[0].input_references
+    asin = next(
+        value for value in published.field_results if value.kind is ClaimKind.ASIN
+    )
+    assert (FieldSource.TARGET_METADATA, FieldState.VALID) in {
+        (value.source, value.state) for value in asin.sources
+    }
+
+
+def test_a_local_asin_item_feeds_no_asserted_asin() -> None:
+    """An item that names its own product already has what a feed would buy."""
+    selected = TargetFile("a" * 64, "book.m4b", "m4b")
+    snapshot = _fed_snapshot(selected, asin="B0ASSERTED")
+    target = FakeTarget([snapshot, snapshot])
+    repository = FakeReportRepository()
+    asin_plans: list[MetadataDiscoveryPlan] = []
+
+    published = MetadataReport.from_json(
+        _fed_audiobook_service(
+            target,
+            repository,
+            _fed_inspector((ClaimKind.ASIN, "B0CW1KL2QD", "embedded_tag", None)),
+            (
+                ProviderBinding(
+                    "audnexus",
+                    True,
+                    lambda: _AsinAnsweringProvider("audnexus", asin_plans),
+                    authority="audnexus",
+                ),
+            ),
+        ).run("item-1", 0)
+    )
+
+    assert 1 == len(asin_plans)
+    assert ["B0CW1KL2QD"] == [lane.canonical_asin for lane in asin_plans[0].lanes]
+    assert [asin_plans[0].lanes[0].identity] == [
+        lane.identity for lane in published.providers[0].lanes
+    ]
+    # The assertion is still recorded; it simply bought nothing here.
+    assert "B0ASSERTED" in {
+        value.canonical
+        for value in published.local_claims
+        if value.basis == "target_metadata"
     }
 
 

@@ -32,10 +32,12 @@ from mechanical_librarian.application.metadata_report import (
     ReportRepository,
     TargetFile,
     TargetSnapshot,
+    audiobook_asin_feed_plan,
     audiobook_discovery_plan,
     identifier_suppresses_discovery,
     metadata_discovery_plan,
     metadata_lookup,
+    promoted_asins,
     provider_discovery_lane_order,
     provider_observation,
     qualify_provider_observation,
@@ -98,6 +100,11 @@ from mechanical_librarian.domain.work_identity import (
     WorkTitleTransformationFamily,
     narrowing_work_query,
     work_query_ladder,
+)
+from tests.support.audiobook_providers import (
+    asserted_target,
+    target_asin_claim,
+    target_title_claim,
 )
 from tests.support.metadata_report_doubles import (
     FakeInspector,
@@ -497,6 +504,13 @@ def test_audiobook_plan_searches_only_when_no_identifier_is_present() -> None:
     assert [ProviderQueryKind.WORK] == [lane.kind for lane in unidentified.lanes]
     assert ("Ada Author",) == unidentified.lanes[0].authors
     assert () == audiobook_discovery_plan(_audio_target(None, ()), ()).lanes
+    # An assertion is not one of the item's own surfaces, so it neither builds
+    # a product lane here nor suppresses the search that reaches the item.
+    asserted = audiobook_discovery_plan(
+        target,
+        (_target_title_claim("The Recording"), target_asin_claim("B002V1BFKM")),
+    )
+    assert unidentified.lanes == asserted.lanes
 
 
 def test_audiobook_plan_refuses_an_unbounded_identifier_fan_out() -> None:
@@ -541,6 +555,216 @@ def test_asin_lane_requires_one_canonical_identifier_and_nothing_else() -> None:
         MetadataDiscoveryLane(
             identity, ProviderQueryKind.ASIN, (), canonical_asin="B002V1BFKM"
         )
+
+
+def _feed_claims(asin: str | None = "B08G9PRS1K") -> tuple[LocalClaim, ...]:
+    """One asserted audiobook's evidence: no local ASIN, one running time."""
+    return (
+        target_title_claim(),
+        *_audio_local_claims(),
+        *(() if asin is None else (target_asin_claim(asin),)),
+    )
+
+
+def _search_observation(
+    plan: MetadataDiscoveryPlan,
+    local_claims: tuple[LocalClaim, ...],
+    *,
+    provider: str = "catalogue",
+    asin: str = "B08G9PRS1K",
+) -> ProviderObservation:
+    """One work-lane observation whose candidate the runtime band admitted."""
+    lane = next(value for value in plan.lanes if value.kind is ProviderQueryKind.WORK)
+    qualified = qualify_provider_observation(
+        ProviderObservation(
+            provider,
+            ProviderStatus.CANDIDATES,
+            (),
+            (
+                _audiobook_candidate(
+                    local_claims,
+                    identity=f"audible-product-{asin}",
+                    asin=asin,
+                    provider=provider,
+                ),
+            ),
+            ProviderQueryKind.WORK,
+            "audible_catalog",
+            dispatch_lineage=_work_dispatch("Project Hail Mary", ("Andy Weir",)),
+        ),
+        MetadataLookup(
+            ProviderQueryKind.WORK,
+            local_claims,
+            "Project Hail Mary",
+            ("Andy Weir",),
+        ),
+    )
+    return provider_observation(
+        provider,
+        (ProviderLaneResult(lane, qualified.status, qualified.candidates),),
+        authority="audible_catalog",
+    )
+
+
+def test_asserted_asin_feeds_one_lane_after_local_lanes() -> None:
+    """An assertion obtains per-ASIN enrichment without becoming a surface."""
+    local_claims = _feed_claims("B0CW1KL2QD")
+    target = asserted_target("B0CW1KL2QD")
+    plan = audiobook_discovery_plan(target, local_claims)
+    assert [ProviderQueryKind.WORK] == [lane.kind for lane in plan.lanes]
+
+    feed = audiobook_asin_feed_plan(target, plan, ())
+
+    assert feed is not None
+    assert [ProviderQueryKind.ASIN] == [lane.kind for lane in feed.lanes]
+    assert ["B0CW1KL2QD"] == [lane.canonical_asin for lane in feed.lanes]
+    asserted = next(
+        claim
+        for claim in local_claims
+        if claim.basis == "target_metadata"
+        if claim.kind is ClaimKind.ASIN
+    )
+    assert (asserted.reference,) == feed.lanes[0].input_references
+    assert local_claims == feed.local_claims
+    assert feed == audiobook_asin_feed_plan(target, plan, ())
+    # An assertion the target no longer carries feeds nothing, whatever claim
+    # an older document retained.
+    assert (
+        audiobook_asin_feed_plan(
+            _audio_target("Project Hail Mary", ("Andy Weir",)), plan, ()
+        )
+        is None
+    )
+
+
+def test_feed_plan_is_bounded_and_ordered_local_promoted_asserted() -> None:
+    """Four lanes is the whole budget, and promotion is spent before assertion.
+
+    The local origin comes first by exclusion rather than by rank: an item that
+    already names its own product has its identifier, so re-asking about the
+    same one would spend egress to learn what the report already states.
+    """
+    local_claims = _feed_claims("B0ASSERTED")
+    target = asserted_target("B0ASSERTED")
+    plan = audiobook_discovery_plan(target, local_claims)
+    promoted = ("B0PROMOTE1", "B0PROMOTE2", "B0PROMOTE3", "B0PROMOTE4")
+    observations = tuple(
+        _search_observation(
+            plan, local_claims, provider=f"catalogue-{index}", asin=asin
+        )
+        for index, asin in enumerate(promoted)
+    )
+
+    feed = audiobook_asin_feed_plan(target, plan, observations)
+
+    assert promoted == promoted_asins(observations)
+    assert feed is not None
+    assert MAX_ASIN_DISCOVERY_LANES == len(feed.lanes)
+    assert set(promoted) == {lane.canonical_asin for lane in feed.lanes}
+    identified = audiobook_discovery_plan(
+        target, (*local_claims, _audio_claim(ClaimKind.ASIN, "B0LOCALASN", 9))
+    )
+    assert [ProviderQueryKind.ASIN] == [lane.kind for lane in identified.lanes]
+    assert audiobook_asin_feed_plan(target, identified, observations) is None
+
+
+def test_feed_lane_identities_never_collide_across_origins() -> None:
+    """One ASIN is one lane whatever fed it, keyed on the references it names."""
+    local_claims = _feed_claims()
+    target = asserted_target()
+    plan = audiobook_discovery_plan(target, local_claims)
+    work_lane = plan.lanes[0]
+    asserted = next(
+        claim
+        for claim in local_claims
+        if claim.basis == "target_metadata" and claim.kind is ClaimKind.ASIN
+    )
+    search = (_search_observation(plan, local_claims),)
+    unasserted = _audio_target("Project Hail Mary", ("Andy Weir",))
+
+    asserted_only = audiobook_asin_feed_plan(target, plan, ())
+    promoted_only = audiobook_asin_feed_plan(unasserted, plan, search)
+    both = audiobook_asin_feed_plan(target, plan, search)
+
+    assert asserted_only is not None
+    assert promoted_only is not None
+    assert both is not None
+    assert (asserted.reference,) == asserted_only.lanes[0].input_references
+    assert work_lane.input_references == promoted_only.lanes[0].input_references
+    assert 1 == len(both.lanes)
+    assert (
+        tuple(sorted({asserted.reference, *work_lane.input_references}))
+        == both.lanes[0].input_references
+    )
+    assert 3 == len(
+        {
+            asserted_only.lanes[0].identity,
+            promoted_only.lanes[0].identity,
+            both.lanes[0].identity,
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("provider_duration", "expected"),
+    (
+        (
+            "58200.000",
+            {
+                ClaimKind.TITLE,
+                ClaimKind.CREATOR,
+                ClaimKind.ASIN,
+                ClaimKind.DURATION,
+                ClaimKind.CONTRIBUTOR,
+            },
+        ),
+        ("51000.000", {ClaimKind.TITLE, ClaimKind.CREATOR}),
+    ),
+    ids=("corroborated", "uncorroborated"),
+)
+def test_an_asin_lane_without_a_local_asin_is_corroboration_gated(
+    provider_duration: str, expected: set[ClaimKind]
+) -> None:
+    """A fed lane never settles identity; the runtime band still decides.
+
+    The lane names a product, but nothing on the recording said so, so an
+    answer to it is treated exactly as an answer to a search is: only the
+    candidate the band admits keeps its edition scope.
+    """
+    local_claims = _feed_claims()
+    qualified = qualify_provider_observation(
+        ProviderObservation(
+            "catalogue",
+            ProviderStatus.CANDIDATES,
+            (),
+            (_audiobook_candidate(local_claims, duration=provider_duration),),
+            ProviderQueryKind.ASIN,
+            "audnexus",
+        ),
+        MetadataLookup(ProviderQueryKind.ASIN, local_claims),
+    )
+
+    assert ProviderStatus.CANDIDATES is qualified.status
+    assert expected == {claim.kind for claim in qualified.candidates[0].claims}
+
+
+def test_a_local_asin_lane_is_never_corroboration_gated() -> None:
+    """The item's own identifier is the warrant, so nothing re-derives it."""
+    local_claims = (*_feed_claims(), _audio_claim(ClaimKind.ASIN, "B08G9PRS1K", 9))
+    candidate = _audiobook_candidate(local_claims, duration="51000.000")
+    qualified = qualify_provider_observation(
+        ProviderObservation(
+            "catalogue",
+            ProviderStatus.CANDIDATES,
+            (),
+            (candidate,),
+            ProviderQueryKind.ASIN,
+            "audnexus",
+        ),
+        MetadataLookup(ProviderQueryKind.ASIN, local_claims),
+    )
+
+    assert (candidate,) == qualified.candidates
 
 
 def test_a_plan_refuses_two_lanes_for_one_asin() -> None:

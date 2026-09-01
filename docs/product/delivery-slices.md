@@ -185,6 +185,34 @@ posture of [ADR-0061](../architecture/decisions/0061-audiobook-provider-posture.
 | F43 Local audiobook evidence | #749 | Each single-audio-file item of a mounted audiobook library produces a closed local evidence set — ASIN, narrator, series and sequence, duration, embedded chapters, performance type, language, description, embedded-cover presence — with per-surface provenance, projected read-only to the owner. | In delivery. |
 | F43 Audiobook provider evidence | #749 | The same item is compared against four keyless providers — Audible, Audnexus, AudioSilo, iTunes — configurable from Settings and the first-run wizard. An ASIN is adopted only where a second authority corroborates the recording's own running time, chapter structure, or perceptual cover hash; nothing corroborated leaves the item at `evidence_only`. Read-only throughout. | In delivery. |
 
+## Delivery checkpoint 0.21.0: audiobook decisions
+
+This checkpoint takes audiobooks from read-only evidence to decided fields:
+multi-file items join the evidence surface, corroborated evidence becomes
+proposals and owner decisions, qualified classes become automatic decisions,
+and guarded application follows the existing consent and effect path. It is
+shaped from the 0.20.0 production measurement recorded on #749.
+
+| Slice | Tracker | Demonstrable outcome | Planning state |
+| --- | --- | --- | --- |
+| F44 Multi-file audiobook evidence | #965 | Every multi-file item of a mounted audiobook library produces the F43 closed evidence set with per-file provenance, composed duration and chapters, and cross-file consistency evidence, then enters the same provider path. | Ready. |
+| F45 Audiobook review cases | #966 | An audiobook with an admitted work identity produces proposals and, where policy leaves a choice, a review case; every prepared audiobook ends in a first-class completed state; decisions are recorded but not applied. | Blocked by #884 and #896. |
+| F46 Qualified automatic audiobook decisions | #967 | The dominant audiobook decision classes earn automatic authority through the #445 route against an audiobook golden corpus and sealed holdout. | Blocked by #966, #895, and #964. |
+| F47 Guarded audiobook application | #968 | Exact-current human and qualified automatic audiobook decisions apply through the existing guarded Audiobookshelf path, canary first. | Blocked by #966. |
+| F08 Audiobook media-health observations | #144 | The audiobook report states typed, cited media-health observations distinct from metadata evidence. | Ready. |
+
+Focused work remains outside the slice sequence, each using `Delivery slice:
+Not applicable`. #956 feeds gate-promoted and target-asserted ASINs into the
+per-ASIN lanes within one preparation pass, bounded and corroboration-gated,
+and is the checkpoint's first unit. #940 is delivered inside F45's lane and
+closes with it. #969 is Blocked by every other 0.21.0 issue as the closing
+read-only measurement of the reference audiobook library against the 0.20.0
+baselines.
+
+No release, tag, deployment, chapter or cover or media write, transcription
+(#24), ebook-provider audio dispatch (#962), or ebook format-ladder work
+(#751 rungs 1–2) is included.
+
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
 
 Write-capable slices use fake or disposable services until their explicit

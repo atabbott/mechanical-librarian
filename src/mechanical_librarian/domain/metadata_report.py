@@ -1071,7 +1071,16 @@ class LocalClaim:
             or type(self.scope) is not ClaimScope
         ):
             raise ReportValueError("local claim kind is invalid")
-        if self.basis == "target_metadata" and self.kind is not ClaimKind.TITLE:
+        # The target asserts exactly two things this product reads as claims:
+        # the title it displays, and the ASIN an owner or an earlier tool bound
+        # to the item. Both are assertions rather than readings of the media,
+        # so nothing here settles identity on them; the ASIN is admitted so the
+        # audiobook path can obtain enrichment evidence the runtime band then
+        # judges (ADR-0061).
+        if self.basis == "target_metadata" and self.kind not in {
+            ClaimKind.TITLE,
+            ClaimKind.ASIN,
+        }:
             raise ReportValueError("target metadata claim kind is invalid")
         if self.role is not None:
             if self.kind not in {
@@ -3052,13 +3061,21 @@ def derive_field_results(
     )
 
     def source_state(kind: ClaimKind, source: FieldSource) -> FieldState:
-        # The ABS-asserted surface is title-only by construction: `LocalClaim`
-        # refuses a `target_metadata` basis for any other kind. Reporting that
-        # as `unsupported` rather than `absent` keeps "this surface cannot
-        # carry the field" distinct from "this surface carried nothing".
-        if source is FieldSource.TARGET_METADATA and kind is not ClaimKind.TITLE:
-            return FieldState.UNSUPPORTED
+        # The ABS-asserted surface carries only the kinds `LocalClaim` admits a
+        # `target_metadata` basis for. Reporting every other kind as
+        # `unsupported` rather than `absent` keeps "this surface cannot carry
+        # the field" distinct from "this surface carried nothing". The reading
+        # follows the claims rather than a second list of kinds: a surface that
+        # actually stated this field is reported from what it stated.
         bases = _SOURCE_CLAIM_BASES[source]
+        if (
+            source is FieldSource.TARGET_METADATA
+            and kind is not ClaimKind.TITLE
+            and not any(
+                claim.kind is kind and claim.basis in bases for claim in local_claims
+            )
+        ):
+            return FieldState.UNSUPPORTED
         return next(
             (
                 state

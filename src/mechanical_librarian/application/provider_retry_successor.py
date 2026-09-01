@@ -32,6 +32,7 @@ from mechanical_librarian.application.metadata_report import (
     ProviderLaneResult,
     ReportRepository,
     TargetReader,
+    audiobook_asin_feed_plan,
     audiobook_discovery_plan,
     metadata_discovery_plan,
     provider_observation,
@@ -46,6 +47,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderCandidate,
     ProviderLaneObservation,
     ProviderObservation,
+    ProviderQueryKind,
     ProviderRequestAccounting,
     ProviderStatus,
     ReportValueError,
@@ -208,9 +210,12 @@ class GenerateProviderRetrySuccessor:
         try:
             source = self._source(repository, source_report_id)
             current = self._current_source(repository, source)
-            plan = self._plan(source)
+            # The provider and its retained observation are resolved before the
+            # plan: which plan a per-ASIN provider was observed under is a fact
+            # about that observation, not about the report alone.
             provider = self._provider(source, provider_name, adapter, generation)
             original = self._observation(source, provider)
+            plan = self._plan(source, original)
             selected = self._selected(
                 plan,
                 original,
@@ -360,7 +365,9 @@ class GenerateProviderRetrySuccessor:
             raise CurrentnessError("target or media changed")
         return document, package
 
-    def _plan(self, source: MetadataReport) -> MetadataDiscoveryPlan:
+    def _plan(
+        self, source: MetadataReport, original: ProviderObservation
+    ) -> MetadataDiscoveryPlan:
         """Rebuild the plan the source report was observed under.
 
         The media kind decides which plan builder rebuilds it: an audiobook's
@@ -368,6 +375,13 @@ class GenerateProviderRetrySuccessor:
         rather than the ISBN one. Both builders are deterministic in the local
         claims, so a rebuilt lane identity is the same lane identity the source
         observation recorded and the caller's reconciliation is unchanged.
+
+        One audiobook observation was made under a second plan: a per-ASIN
+        provider fed the ASINs its pass promoted or the target asserted, whose
+        lanes are all ASIN lanes over a report whose own plan has none. That
+        feed is rebuilt from the retained observations by the same function
+        that built it, and a feed that cannot be rebuilt is refused rather than
+        retried against a plan the provider never saw.
         """
         snapshot = self._target.read(source.target.item)
         audio = _is_audio(source)
@@ -384,6 +398,16 @@ class GenerateProviderRetrySuccessor:
         )
         if plan.overflow:
             raise ProviderRetrySuccessorError("provider retry source is invalid")
+        if (
+            audio
+            and original.lanes
+            and all(lane.kind is ProviderQueryKind.ASIN for lane in original.lanes)
+            and not any(lane.kind is ProviderQueryKind.ASIN for lane in plan.lanes)
+        ):
+            feed = audiobook_asin_feed_plan(snapshot, plan, source.providers)
+            if feed is None:
+                raise ProviderRetrySuccessorError("provider retry source is invalid")
+            return feed
         return plan
 
     def _provider(

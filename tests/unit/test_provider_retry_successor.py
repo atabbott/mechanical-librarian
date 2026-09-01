@@ -26,6 +26,7 @@ from mechanical_librarian.application.metadata_report import (
     ReportRepository,
     TargetFile,
     TargetSnapshot,
+    audiobook_asin_feed_plan,
     audiobook_discovery_plan,
     metadata_discovery_plan,
     provider_observation,
@@ -64,13 +65,16 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderStatus,
     TargetDestination,
     TargetFacts,
+    TargetField,
     TargetFieldState,
+    default_target_fields,
 )
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     WorkDispatchRung,
     work_query_ladder,
 )
+from tests.support.audiobook_providers import target_asin_claim, target_title_claim
 
 
 class _Target:
@@ -1565,3 +1569,161 @@ def test_an_audio_source_rebuilds_its_asin_plan_and_redispatches() -> None:
         value.status for value in successor.providers[0].lanes
     )
     assert report.report_id != successor.report_id
+
+
+def _fed_audio_source(
+    *, asserted: bool
+) -> tuple[TargetSnapshot, tuple[LocalClaim, ...], MetadataDiscoveryPlan]:
+    """One audiobook with no local ASIN, optionally asserting one."""
+    fields = tuple(
+        TargetField(TargetDestination.AUTHORS, TargetFieldState.VALUE, ("Andy Weir",))
+        if field.destination is TargetDestination.AUTHORS
+        else (
+            TargetField(TargetDestination.ASIN, TargetFieldState.VALUE, "B0ASSERTED")
+            if asserted and field.destination is TargetDestination.ASIN
+            else field
+        )
+        for field in default_target_fields("Project Hail Mary")
+    )
+    snapshot = TargetSnapshot(
+        "audiobook",
+        "Project Hail Mary",
+        (TargetFile("b" * 64, "book.m4b", "m4b"),),
+        fields=fields,
+    )
+    claims: tuple[LocalClaim, ...] = (
+        target_title_claim(),
+        *((target_asin_claim("B0ASSERTED"),) if asserted else ()),
+        LocalClaim.create(
+            kind=ClaimKind.DURATION,
+            observed="43200.000",
+            canonical="43200.000",
+            excerpt="43200.000",
+            applicability="not_applicable",
+            basis="embedded_tag",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            occurrence=1,
+        ),
+    )
+    return snapshot, claims, audiobook_discovery_plan(snapshot, claims)
+
+
+def _fed_successor(
+    snapshot: TargetSnapshot, report: MetadataReport, provider: _Provider
+) -> GenerateProviderRetrySuccessor:
+    return GenerateProviderRetrySuccessor(
+        target=_Target(snapshot),
+        inspector=_Inspector(),
+        repository_factory=lambda: cast(ReportRepository, _Repository(report)),
+        audio_inspector=cast("Any", _Inspector()),
+        provider_resolver=cast(
+            "ProviderRetryResolver",
+            lambda *_args: ConfiguredProviderRetry(
+                ProviderBinding("enrichment", True, lambda: provider, "audnexus"),
+                "audnexus",
+                2,
+            ),
+        ),
+        mount=MediaMountConfiguration("audiobooks", "/container", "/service", True),
+        limits=ReportLimits(),
+        after_publication=lambda *_args: None,
+    )
+
+
+def test_an_audio_source_rebuilds_its_asin_feed_plan_for_a_per_asin_provider() -> None:
+    """A fed lane is recovered under the feed that built it, not the source plan.
+
+    The report's own plan for this item is a search: it carries no local ASIN.
+    The retained observation is nonetheless all ASIN lanes, because phase two
+    fed it the asserted ASIN. Recovery rebuilds that same feed from the
+    retained document, so the selected lane reconciles exactly.
+    """
+    snapshot, claims, plan = _fed_audio_source(asserted=True)
+    feed = audiobook_asin_feed_plan(snapshot, plan, ())
+    assert feed is not None
+    (lane,) = feed.lanes
+    original = provider_observation(
+        "enrichment",
+        (ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE),),
+        authority="audnexus",
+    )
+    report = MetadataReport.create(
+        target=TargetFacts("primary", "audio", "item", snapshot.fields),
+        file=FileFacts(0, "b" * 64, "c" * 64, "m4b"),
+        local_claims=claims,
+        local_reasons=("embedded_tag_duration",),
+        providers=(original,),
+        audio=AudioFacts(),
+    )
+    provider = _Provider(
+        provider_observation(
+            "enrichment",
+            (
+                ProviderLaneResult(
+                    lane,
+                    ProviderStatus.CANDIDATES,
+                    (ProviderCandidate("audnexus-book-B0ASSERTED", "unresolved", ()),),
+                ),
+            ),
+            authority="audnexus",
+        )
+    )
+
+    successor = MetadataReport.from_json(
+        _fed_successor(snapshot, report, provider).run(
+            report.report_id,
+            (lane.identity,),
+            provider_name="enrichment",
+            adapter="audnexus",
+            generation=2,
+        )
+    )
+
+    assert (lane.identity,) == tuple(
+        value.identity for value in provider.plans[0].lanes
+    )
+    assert (ProviderQueryKind.ASIN,) == tuple(
+        value.kind for value in provider.plans[0].lanes
+    )
+    assert claims == provider.plans[0].local_claims
+    assert (ProviderStatus.CANDIDATES,) == tuple(
+        value.status for value in successor.providers[0].lanes
+    )
+
+
+def test_an_unrebuildable_asin_feed_fails_closed_before_any_dispatch() -> None:
+    """Nothing asserts or promotes this ASIN, so no plan can name it again."""
+    snapshot, claims, plan = _fed_audio_source(asserted=False)
+    assert [ProviderQueryKind.WORK] == [value.kind for value in plan.lanes]
+    lane = MetadataDiscoveryLane(
+        "lane_" + "e" * 64,
+        ProviderQueryKind.ASIN,
+        plan.lanes[0].input_references,
+        canonical_asin="B0PHANTOM1",
+    )
+    original = provider_observation(
+        "enrichment",
+        (ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE),),
+        authority="audnexus",
+    )
+    report = MetadataReport.create(
+        target=TargetFacts("primary", "audio", "item", snapshot.fields),
+        file=FileFacts(0, "b" * 64, "c" * 64, "m4b"),
+        local_claims=claims,
+        local_reasons=("embedded_tag_duration",),
+        providers=(original,),
+        audio=AudioFacts(),
+    )
+    provider = _Provider(original)
+
+    with pytest.raises(ProviderRetrySuccessorError, match="source is invalid"):
+        _fed_successor(snapshot, report, provider).run(
+            report.report_id,
+            (lane.identity,),
+            provider_name="enrichment",
+            adapter="audnexus",
+            generation=2,
+        )
+
+    assert [] == provider.plans
