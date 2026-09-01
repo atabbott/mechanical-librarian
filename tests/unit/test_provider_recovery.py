@@ -1968,6 +1968,68 @@ def test_canary_failure_preserves_a_queued_dormant_auth_scope() -> None:
         store.close()
 
 
+def test_canary_failure_preserves_a_frozen_scope_that_becomes_dormant() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        store = _due_store(
+            Path(directory) / "recovery.sqlite", "library-a", "library-b"
+        )
+        first = replace(
+            _job("first"),
+            scope="library-a",
+            library="library-a",
+            dispatch_reason="missing_corroboration",
+            dispatch_rank=0,
+        )
+        dormant = replace(_job("dormant"), scope="library-b", library="library-b")
+        store.enqueue_jobs((first, dormant), enqueued_at=0)
+        calls: list[str] = []
+        interrupted = False
+
+        def retry(_, member, __):
+            nonlocal interrupted
+            calls.append(member.member_id)
+            if not interrupted:
+                interrupted = True
+                frozen = store._connection.execute(
+                    "SELECT h.state,j.cohort_epoch FROM provider_recovery_health h "
+                    "JOIN provider_recovery_jobs j USING(connection,adapter,scope) "
+                    "WHERE h.scope='library-b'"
+                ).fetchone()
+                assert frozen == ("waiting", 1)
+                store.observe_failure(
+                    connection="google",
+                    adapter="google_books",
+                    scope="library-b",
+                    generation=1,
+                    failure="authentication",
+                    now=1,
+                )
+                raise RuntimeError("rate limited")
+
+        runner = ScopedProviderRecoveryRunner(
+            store=store,
+            generation=1,
+            retry=retry,
+            classify_failure=lambda _: ("rate_limited", 19),
+        )
+        assert "waiting" == runner.run_one(now=1, token="owner").state
+        assert [
+            ("library-a", "waiting", 20),
+            ("library-b", "dormant", None),
+        ] == store._connection.execute(
+            "SELECT scope,state,next_eligible_at FROM provider_recovery_health ORDER BY scope"
+        ).fetchall()
+        assert [("dormant", "queued", None)] == store._connection.execute(
+            "SELECT member_id,state,cohort_epoch FROM provider_recovery_jobs "
+            "WHERE member_id='dormant'"
+        ).fetchall()
+        assert "recovered" == runner.run_one(now=20, token="next").state
+        assert ["first", "first"] == calls
+        assert "idle" == runner.run_one(now=100_000, token="same-generation").state
+        assert ["first", "first"] == calls
+        store.close()
+
+
 def test_fanout_failure_defers_a_new_same_provider_scope() -> None:
     with tempfile.TemporaryDirectory() as directory:
         store = _due_store(
@@ -2059,6 +2121,76 @@ def test_fanout_failure_preserves_a_queued_dormant_auth_scope() -> None:
             ("library-a", "recovered", None),
             ("library-b", "waiting", 20),
             ("library-d", "dormant", None),
+        ] == store._connection.execute(
+            "SELECT scope,state,next_eligible_at FROM provider_recovery_health ORDER BY scope"
+        ).fetchall()
+        assert [("dormant", "queued", None)] == store._connection.execute(
+            "SELECT member_id,state,cohort_epoch FROM provider_recovery_jobs "
+            "WHERE member_id='dormant'"
+        ).fetchall()
+        assert "recovered" == runner.run_one(now=20, token="next").state
+        assert ["first", "failing", "failing"] == calls
+        assert "idle" == runner.run_one(now=100_000, token="same-generation").state
+        assert ["first", "failing", "failing"] == calls
+        store.close()
+
+
+def test_fanout_failure_preserves_a_frozen_scope_that_becomes_dormant() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        store = _due_store(
+            Path(directory) / "recovery.sqlite", "library-a", "library-b"
+        )
+        first = replace(
+            _job("first"),
+            scope="library-a",
+            library="library-a",
+            dispatch_reason="missing_corroboration",
+            dispatch_rank=0,
+        )
+        failing = replace(
+            _job("failing"),
+            scope="library-a",
+            library="library-a",
+            dispatch_reason="zero_provider_evidence",
+            dispatch_rank=1,
+        )
+        dormant = replace(_job("dormant"), scope="library-b", library="library-b")
+        store.enqueue_jobs((failing, first, dormant), enqueued_at=0)
+        calls: list[str] = []
+        interrupted = False
+
+        def retry(_, member, __):
+            nonlocal interrupted
+            calls.append(member.member_id)
+            if member.member_id == "failing" and not interrupted:
+                interrupted = True
+                frozen = store._connection.execute(
+                    "SELECT h.state,j.cohort_epoch FROM provider_recovery_health h "
+                    "JOIN provider_recovery_jobs j USING(connection,adapter,scope) "
+                    "WHERE h.scope='library-b'"
+                ).fetchone()
+                assert frozen == ("waiting", 1)
+                store.observe_failure(
+                    connection="google",
+                    adapter="google_books",
+                    scope="library-b",
+                    generation=1,
+                    failure="authorization",
+                    now=1,
+                )
+                raise RuntimeError("rate limited")
+
+        runner = ScopedProviderRecoveryRunner(
+            store=store,
+            generation=1,
+            retry=retry,
+            classify_failure=lambda _: ("rate_limited", 19),
+        )
+        assert "waiting" == runner.run_one(now=1, token="owner").state
+        assert ["first", "failing"] == calls
+        assert [
+            ("library-a", "waiting", 20),
+            ("library-b", "dormant", None),
         ] == store._connection.execute(
             "SELECT scope,state,next_eligible_at FROM provider_recovery_health ORDER BY scope"
         ).fetchall()

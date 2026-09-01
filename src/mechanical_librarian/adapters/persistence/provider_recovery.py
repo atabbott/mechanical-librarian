@@ -1962,8 +1962,8 @@ class SQLiteProviderRecoveryStore:
                 _append_checking(self._connection, recovery, now)
                 owner_successor = None
                 for (scope,) in scopes:
-                    attempt = self._connection.execute(
-                        "SELECT attempt FROM provider_recovery_health WHERE connection=? "
+                    health = self._connection.execute(
+                        "SELECT state,attempt FROM provider_recovery_health WHERE connection=? "
                         "AND adapter=? AND scope=? AND generation=?",
                         (
                             recovery.connection,
@@ -1972,17 +1972,19 @@ class SQLiteProviderRecoveryStore:
                             recovery.generation,
                         ),
                     ).fetchone()
-                    if attempt is None:
+                    if health is None:
                         raise ProviderRecoveryStoreError(
                             "provider recovery transition is invalid"
                         )
+                    if health[0] == "dormant":
+                        continue
                     successor = ProviderRecovery(
                         recovery.connection,
                         recovery.adapter,
                         scope,
                         recovery.generation,
                         "waiting",
-                        attempt[0],
+                        health[1],
                         now,
                     ).after_failure(
                         failure=failure,
@@ -2342,7 +2344,7 @@ class SQLiteProviderRecoveryStore:
                 owner_successor = None
                 for (scope,) in scopes:
                     health = self._connection.execute(
-                        "SELECT attempt FROM provider_recovery_health WHERE connection=? "
+                        "SELECT state,attempt FROM provider_recovery_health WHERE connection=? "
                         "AND adapter=? AND scope=? AND generation=?",
                         (
                             recovery.connection,
@@ -2377,6 +2379,8 @@ class SQLiteProviderRecoveryStore:
                         raise ProviderRecoveryStoreError(
                             "provider recovery transition is invalid"
                         )
+                    if health[0] == "dormant":
+                        continue
                     successor = (
                         ProviderRecovery(
                             recovery.connection,
@@ -2384,7 +2388,7 @@ class SQLiteProviderRecoveryStore:
                             scope,
                             recovery.generation,
                             "waiting",
-                            health[0],
+                            health[1],
                             now,
                         ).after_failure(
                             failure=failure,
@@ -2398,7 +2402,7 @@ class SQLiteProviderRecoveryStore:
                             scope,
                             recovery.generation,
                             "exhausted" if failed is not None else "recovered",
-                            health[0] if failed is not None else 0,
+                            health[1] if failed is not None else 0,
                             None,
                         )
                     )
