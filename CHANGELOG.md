@@ -20,9 +20,10 @@
   under `fixed-conservative-v13`. (#885)
 
 - When independent providers agree byte-for-byte on a clean work title, one
-  reversible local decoration can advance it for automatic review; ambiguous
-  and dissenting cases remain owner decisions. A stripped colon subtitle stays
-  diagnostic cross-source corroboration rather than discarded evidence. (#884)
+  reversible local decoration can advance it for automatic review; ambiguous,
+  dissenting, and uncorroborated or unpreserved colon-subtitle cases remain
+  owner decisions. Existing pre-release ProposalSets require a clean rebuild.
+  (#884)
 
 - Inventaire is available as a keyless ebook metadata and cover provider in
   Settings and first-run setup. It resolves edition claims, linked works and
