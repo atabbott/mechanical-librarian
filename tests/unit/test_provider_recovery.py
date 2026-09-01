@@ -2001,13 +2001,30 @@ def test_stale_cleanup_preserves_newer_quota_deadline() -> None:
             dispatch_reason="missing_corroboration",
             dispatch_rank=0,
         )
-        second = replace(_job("second"), scope="library-b", library="library-b")
-        store.enqueue_jobs((first, second), enqueued_at=0)
+        failed = replace(
+            _job("failed"),
+            scope="library-b",
+            library="library-b",
+            dispatch_reason="zero_provider_evidence",
+            dispatch_rank=1,
+        )
+        second = replace(
+            _job("second"),
+            scope="library-b",
+            library="library-b",
+            dispatch_reason="settleable_disagreement",
+            dispatch_rank=2,
+        )
+        store.enqueue_jobs((first, failed, second), enqueued_at=0)
         recovery = store.claim_one(generation=1, now=1, token="owner")
         assert recovery is not None
         stale_first = store.claim_job(recovery=recovery, token="owner", now=1)
         assert stale_first is not None
         store.complete_stale_job(job=stale_first, token="owner", now=1)
+        terminal = store.claim_job(recovery=recovery, token="owner", now=1)
+        assert terminal is not None
+        assert "failed" == terminal.member_id
+        store.complete_job(job=terminal, token="owner", now=1, success=False)
         stale_second = store.claim_job(recovery=recovery, token="owner", now=1)
         assert stale_second is not None
         assert "second" == stale_second.member_id
@@ -2023,6 +2040,11 @@ def test_stale_cleanup_preserves_newer_quota_deadline() -> None:
         authoritative = store._connection.execute(
             "SELECT state,attempt,next_eligible_at FROM provider_recovery_health "
             "WHERE scope='library-b'"
+        ).fetchone()
+        assert ("failed", "waiting", 1, 101) == store._connection.execute(
+            "SELECT j.state,h.state,h.attempt,h.next_eligible_at "
+            "FROM provider_recovery_jobs j JOIN provider_recovery_health h "
+            "USING(connection,adapter,scope) WHERE j.member_id='failed'"
         ).fetchone()
         store.complete_stale_job(job=stale_second, token="owner", now=1)
         assert store.claim_job(recovery=recovery, token="owner", now=1) is None
@@ -2081,6 +2103,8 @@ def test_stale_cleanup_preserves_newer_dormant_state() -> None:
             "SELECT state,attempt,next_eligible_at FROM provider_recovery_health "
             "WHERE scope='library-b'"
         ).fetchone()
+        later = replace(_job("later"), scope="library-b", library="library-b")
+        store.enqueue_jobs((later,), enqueued_at=2)
         store.complete_stale_job(job=stale_second, token="owner", now=1)
         assert store.claim_job(recovery=recovery, token="owner", now=1) is None
         store.complete_success(token="owner", recovery=recovery, now=1)
@@ -2093,8 +2117,6 @@ def test_stale_cleanup_preserves_newer_dormant_state() -> None:
                 "WHERE scope='library-b'"
             ).fetchone()
         )
-        later = replace(_job("later"), scope="library-b", library="library-b")
-        store.enqueue_jobs((later,), enqueued_at=2)
         assert (
             store.claim_one(generation=1, now=100_000, token="same-generation") is None
         )

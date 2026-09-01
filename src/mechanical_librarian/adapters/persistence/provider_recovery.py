@@ -426,14 +426,14 @@ class SQLiteProviderRecoveryStore:
                         and health[2] > now
                     )
                     state = (
-                        "waiting"
-                        if later is not None
-                        else "exhausted"
-                        if failed is not None
-                        else "dormant"
+                        "dormant"
                         if health[0] == "dormant"
                         else "waiting"
+                        if later is not None
+                        else "waiting"
                         if newer_deferral
+                        else "exhausted"
+                        if failed is not None
                         else "recovered"
                     )
                     attempt = health[1] if state != "recovered" else 0
@@ -445,9 +445,9 @@ class SQLiteProviderRecoveryStore:
                         state,
                         attempt,
                         health[2]
-                        if newer_deferral
+                        if state == "waiting" and newer_deferral
                         else now
-                        if later is not None
+                        if state == "waiting" and later is not None
                         else None,
                     )
                     self._connection.execute(
