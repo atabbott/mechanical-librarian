@@ -5807,6 +5807,20 @@
             "title": "Affected Count",
             "type": "integer"
           },
+          "dispatch_reasons": {
+            "items": {
+              "enum": [
+                "missing_corroboration",
+                "zero_provider_evidence",
+                "settleable_disagreement",
+                "blanket_scan"
+              ],
+              "type": "string"
+            },
+            "maxItems": 4,
+            "title": "Dispatch Reasons",
+            "type": "array"
+          },
           "next_eligible_at": {
             "anyOf": [
               {

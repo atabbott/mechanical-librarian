@@ -877,10 +877,28 @@ class SQLiteProviderRecoveryStore:
             try:
                 excluded, parameters = _blocked_targets(blocked_targets)
                 row = self._connection.execute(
-                    "SELECT connection,adapter,scope,generation,state,attempt,next_eligible_at,claim_token,claim_expires_at,fanout_cutoff FROM provider_recovery_health h WHERE generation=? AND ((state='waiting' AND next_eligible_at<=?) OR (state='checking' AND claim_expires_at<=?)) AND (NOT EXISTS (SELECT 1 FROM provider_recovery_jobs j WHERE j.connection=h.connection AND j.adapter=h.adapter AND j.scope=h.scope AND j.generation=h.generation AND j.state IN ('queued','running')) OR EXISTS (SELECT 1 FROM provider_recovery_jobs j WHERE j.connection=h.connection AND j.adapter=h.adapter AND j.scope=h.scope AND j.generation=h.generation AND j.state IN ('queued','running')"
+                    "WITH due AS ("
+                    "SELECT h.* FROM provider_recovery_health h WHERE generation=? "
+                    "AND ((state='waiting' AND next_eligible_at<=?) OR (state='checking' AND claim_expires_at<=?)) "
+                    "AND (NOT EXISTS (SELECT 1 FROM provider_recovery_jobs j WHERE j.connection=h.connection "
+                    "AND j.adapter=h.adapter AND j.scope=h.scope AND j.generation=h.generation "
+                    "AND j.state IN ('queued','running')) OR EXISTS (SELECT 1 FROM provider_recovery_jobs j "
+                    "WHERE j.connection=h.connection AND j.adapter=h.adapter AND j.scope=h.scope "
+                    "AND j.generation=h.generation AND j.state IN ('queued','running')"
                     + excluded
-                    + ")) ORDER BY next_eligible_at,connection,adapter,scope LIMIT 1",
-                    (generation, now, now, *parameters),
+                    + "))), provider AS ("
+                    "SELECT connection,adapter FROM due ORDER BY "
+                    "next_eligible_at,connection,adapter,scope LIMIT 1) "
+                    "SELECT h.connection,h.adapter,h.scope,h.generation,h.state,h.attempt,h.next_eligible_at,"
+                    "h.claim_token,h.claim_expires_at,h.fanout_cutoff FROM due h JOIN provider p "
+                    "ON p.connection=h.connection AND p.adapter=h.adapter ORDER BY COALESCE(("
+                    "SELECT printf('%d:%s',j.dispatch_rank,j.member_id) FROM provider_recovery_jobs j "
+                    "WHERE j.connection=h.connection AND j.adapter=h.adapter AND j.scope=h.scope "
+                    "AND j.generation=h.generation AND j.attempt<5 AND (j.state='queued' OR "
+                    "(j.state='running' AND j.claim_expires_at<=?))"
+                    + excluded
+                    + " ORDER BY j.dispatch_rank,j.member_id LIMIT 1),'4:'),h.scope LIMIT 1",
+                    (generation, now, now, *parameters, now, *parameters),
                 ).fetchone()
                 if row is None:
                     self._connection.execute("COMMIT")

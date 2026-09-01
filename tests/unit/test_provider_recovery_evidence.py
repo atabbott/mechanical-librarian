@@ -8,11 +8,16 @@ application module itself, which is where the decisions now live.
 from __future__ import annotations
 
 import json
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
 import pytest
 
+from mechanical_librarian.adapters.persistence.provider_recovery import (
+    SQLiteProviderRecoveryStore,
+)
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
     LibraryConfiguration,
@@ -34,6 +39,9 @@ from mechanical_librarian.application.provider_recovery_evidence import (
     provider_statuses,
     record_provider_recovery_observations,
 )
+from mechanical_librarian.application.provider_recovery_runner import (
+    ScopedProviderRecoveryRunner,
+)
 from mechanical_librarian.application.provider_retry_successor import (
     ProviderRetryDisabled,
     ProviderRetrySharedFailure,
@@ -52,18 +60,20 @@ from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ProviderObservation,
     ProviderStatus,
-    TargetDestination,
 )
 from mechanical_librarian.domain.proposal_set import (
     ProposalOutcome,
     ProposalSet,
     evaluate_report,
 )
+from mechanical_librarian.domain.provider_recovery import (
+    ProviderRecovery,
+    ProviderRecoveryJob,
+)
 from tests.support.proposal_evidence import (
     _claim,
     _fields,
     _provider,
-    _result,
 )
 from tests.support.proposal_evidence import (
     _report as _proposal_report,
@@ -284,79 +294,137 @@ def test_provider_budget_reason_prioritises_the_provider_that_can_add_independen
 
 
 def test_fixed_budget_replay_counts_actual_decided_fields_not_reason_labels() -> None:
-    """The same two requests settle a real field only in the ranked replay."""
-    initial_title = _provider(
-        "first",
-        "edition-1",
-        (
-            _claim(
-                "first",
-                "edition-1",
-                ClaimKind.TITLE,
-                "Corrected title",
-                scope=ClaimScope.WORK,
+    """Two real runner starts beat exact historical member-id selection."""
+    cases = []
+    for ordinal in range(4):
+        value = f"Corrected title {ordinal}"
+        first = _provider(
+            "catalogue-a",
+            f"edition-a-{ordinal}",
+            (
+                _claim(
+                    "catalogue-a",
+                    f"edition-a-{ordinal}",
+                    ClaimKind.TITLE,
+                    value,
+                    scope=ClaimScope.WORK,
+                ),
             ),
-        ),
-        authority="hardcover",
-    )
-    initial_subtitle = _provider(
-        "second",
-        "edition-2",
-        (
-            _claim(
-                "second",
-                "edition-2",
-                ClaimKind.SUBTITLE,
-                "Corrected subtitle",
-                scope=ClaimScope.WORK,
-            ),
-        ),
-        authority="hardcover",
-    )
-    title_support = _provider(
-        "third",
-        "edition-3",
-        (
-            _claim(
-                "third",
-                "edition-3",
-                ClaimKind.TITLE,
-                "Corrected title",
-                scope=ClaimScope.WORK,
-            ),
-        ),
-        authority="open_library",
-    )
-    subtitle_support = _provider(
-        "fourth",
-        "edition-4",
-        (
-            _claim(
-                "fourth",
-                "edition-4",
-                ClaimKind.SUBTITLE,
-                "Corrected subtitle",
-                scope=ClaimScope.WORK,
-            ),
-        ),
-        authority="open_library",
-    )
-    fields = _fields()
-
-    def decided(providers: tuple[ProviderObservation, ...]) -> int:
-        proposal = evaluate_report(_proposal_report(fields=fields, providers=providers))
-        return sum(
-            _result(proposal, destination).outcome is ProposalOutcome.PROPOSE_CHANGE
-            for destination in (TargetDestination.TITLE, TargetDestination.SUBTITLE)
+            authority="hardcover",
         )
+        support = _provider(
+            "catalogue-b",
+            f"edition-b-{ordinal}",
+            (
+                _claim(
+                    "catalogue-b",
+                    f"edition-b-{ordinal}",
+                    ClaimKind.TITLE,
+                    value,
+                    scope=ClaimScope.WORK,
+                ),
+            ),
+            authority="open_library",
+        )
+        fields = _fields(current_title=f"Current title {ordinal}")
+        base = _proposal_report(fields=fields, providers=(first,))
+        successor = _proposal_report(fields=fields, providers=(first, support))
+        cases.append((base, successor, evaluate_report(base)))
 
-    # The prior member order spends its two starts on recoveries that reproduce
-    # the original authority. Ranked recovery spends the same budget on the two
-    # independent successor observations, then evaluates the real proposal set.
-    assert 0 == decided((initial_title, initial_subtitle))
-    assert 1 == decided(
-        (initial_title, initial_subtitle, title_support, subtitle_support)
+    # Historical dispatch was the exact canonical member-id sort. Assigning
+    # the first two of that fixed order to non-decisive packages makes the
+    # oracle explicit without relying on a hand-picked hash or private value.
+    cases.sort(key=lambda value: value[0].report_id)
+    jobs: list[ProviderRecoveryJob] = []
+    successors = {}
+    for index, (base, successor, proposal) in enumerate(cases):
+        decisive = index >= 2
+        observation = SimpleNamespace(
+            provider="catalogue-b",
+            candidates=() if decisive else (SimpleNamespace(claims=()),),
+            lanes=(
+                SimpleNamespace(
+                    identity=f"work-{index}",
+                    status=ProviderStatus.RATE_LIMITED,
+                    candidates=(),
+                ),
+            ),
+        )
+        report = SimpleNamespace(
+            report_id=base.report_id,
+            target=base.target,
+            file=base.file,
+            providers=(observation,),
+        )
+        classified = provider_recovery_jobs(
+            cast("MetadataReport", report),
+            package=(
+                proposal.proposal_set_id,
+                base.report_id,
+                None,
+                0,
+                "no_case",
+            ),
+            proposal=proposal if decisive else None,
+            configuration=_CONFIGURATION,
+            scope="books",
+        )
+        assert 1 == len(classified)
+        jobs.extend(classified)
+        successors[base.report_id] = successor if decisive else base
+
+    ordered_jobs = tuple(sorted(jobs, key=lambda job: job.member_id))
+    historical = ordered_jobs[:2]
+    assert {"blanket_scan"} == {job.dispatch_reason for job in historical}
+
+    with tempfile.TemporaryDirectory() as directory:
+        store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+        store.record(
+            ProviderRecovery.failed(
+                connection="catalogue-b",
+                adapter="open_library",
+                scope="books",
+                generation=4,
+                failure="rate_limited",
+                now=0,
+                retry_after=1,
+            ),
+            occurred_at=0,
+        )
+        decided: list[int] = []
+
+        def retry(_, job, __) -> None:
+            proposal = evaluate_report(successors[job.member_id])
+            decided.append(
+                sum(
+                    result.outcome is ProposalOutcome.PROPOSE_CHANGE
+                    for result in proposal.results
+                )
+            )
+
+        runner = ScopedProviderRecoveryRunner(
+            store=store,
+            generation=4,
+            retry=retry,
+            classify_failure=lambda _: ("transient", None),
+            cancelled=lambda: len(decided) >= 2,
+        )
+        assert 4 == runner.enqueue(ordered_jobs, enqueued_at=0)
+        assert "fanout" == runner.run_one(now=1, token="ranked").state
+        assert 2 == len(decided)
+        ranked_yield = sum(decided)
+        store.close()
+
+    historical_yield = sum(
+        sum(
+            result.outcome is ProposalOutcome.PROPOSE_CHANGE
+            for result in evaluate_report(successors[job.member_id]).results
+        )
+        for job in historical
     )
+    assert 2 == ranked_yield
+    assert 0 == historical_yield
+    assert ranked_yield > historical_yield
 
 
 @pytest.mark.parametrize(
