@@ -3,10 +3,11 @@
 ## Unreleased
 
 - Audiobook preparation now feeds the Audiobookshelf-asserted ASIN and any
-  ASIN the runtime-corroboration gate promotes into the per-ASIN providers
-  within the same pass, ordered after embedded ASINs and bounded by the same
-  four-lane limit; candidates reached that way keep edition identity only when
-  the recording's own running time corroborates them. (#956)
+  ASIN the runtime-corroboration gate promotes into the per-ASIN providers in
+  the same pass, after embedded ASINs and within the same four-lane bound;
+  candidates reached that way keep edition identity only when the recording's
+  own running time corroborates them. Existing installs require a clean
+  `metadata-report-v34` database. (#956)
 
 - Language aliases and regional variants now form one decision alternative,
   while different base languages, script variants, and malformed tags remain
