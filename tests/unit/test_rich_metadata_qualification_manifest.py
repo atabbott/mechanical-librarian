@@ -77,10 +77,10 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
             "c1d672126449442b44b056c4cd7dc3c73346f90ab1fa4eb090e8203441cc0a33"
         ),
         "current_provider_comparison_sha256": (
-            "f3a1a46e04a19b0fe6a17636ce83586cbaeeb47adbe45765454053b341386dc5"
+            "70d80e1efdd55cd4e743aea74f9414c0db34727f2946225dd6e78cb4376622a3"
         ),
         "current_provider_result_sha256": (
-            "b2123b5903a68645dcf97ff6c8c8c26810fcab9650d9a86537fcf0f06af598b4"
+            "ffc23d9e52ffccc48742d5effcaf546508f0d18a105d049dc6453ac1736c8d85"
         ),
         "prior_candidate_sha256": (
             "99ba8426ee53e4d31e52ecf0f65a0fce4eb237d3e5acef42e4ee17217b57dae9"
