@@ -16,33 +16,16 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_PASSING_AUTOMATIC_OPTIONS,
 )
 from mechanical_librarian.domain.metadata_report import (
-    MAX_TAGS,
-    ClaimKind,
-    ClaimScope,
-    FieldState,
-    IdentifierRelation,
-    MetadataReport,
-    ProviderCandidate,
-    ProviderClaim,
-    ProviderEvidenceKind,
-    ProviderObservation,
-    ProviderStatus,
-    TargetDestination,
-    TargetField,
-    TargetFieldState,
-    isbn_family,
+    MAX_TAGS, ClaimKind, ClaimScope, FieldState, IdentifierRelation,
+    MetadataReport, ProviderCandidate, ProviderClaim, ProviderEvidenceKind,
+    ProviderObservation, ProviderStatus,
+    TargetDestination, TargetField, TargetFieldState, isbn_family,
     normalize_title,
 )
 from mechanical_librarian.domain.proposal_set import (
-    BibliographicSelectionKind,
-    ProposalAlternative,
-    ProposalAssessment,
-    ProposalOutcome,
-    ProposalResult,
-    ProposalScope,
-    ProposalSet,
-    ProposalValueKind,
-    provider_candidate_represents_target_work,
+    BibliographicSelectionKind, ProposalAlternative, ProposalAssessment,
+    ProposalOutcome, ProposalResult, ProposalScope, ProposalSet,
+    ProposalValueKind, provider_candidate_represents_target_work,
 )
 
 
@@ -56,12 +39,9 @@ _DESTINATIONS: Final = {
     "asin": TargetDestination.ASIN,
     "explicit": TargetDestination.EXPLICIT,
 }
-_EMPTY: Final = frozenset(
-    {TargetFieldState.MISSING, TargetFieldState.NULL, TargetFieldState.EMPTY}
-)
+_EMPTY: Final = frozenset({TargetFieldState.MISSING, TargetFieldState.NULL, TargetFieldState.EMPTY})
 _ISBN13: Final = re.compile(r"^97[89][0-9]{10}$")
 _SUBTITLE_SEPARATORS: Final = (": ", " — ", " – ", " - ")
-_TARGET_WORK_FIELDS: Final = frozenset({"description_fill"})
 
 
 class RichMetadataPreviewError(ValueError):
@@ -76,10 +56,9 @@ class _RetainedClaim:
 
 
 @dataclass(frozen=True, slots=True)
-class _AutomaticWorkEvidence:
+class _AutomaticDescriptionEvidence:
     alternatives: tuple[ProposalAlternative, ...]
     references: dict[str, tuple[str, ...]]
-    candidates: tuple[ProviderCandidate, ...]
 
 
 def _retained_claims(report: MetadataReport) -> dict[str, _RetainedClaim]:
@@ -90,55 +69,39 @@ def _retained_claims(report: MetadataReport) -> dict[str, _RetainedClaim]:
     for provider in report.providers:
         for candidate in provider.candidates:
             for claim in candidate.claims:
-                _remember_claim(
-                    values, claim.reference, _RetainedClaim(claim, provider, candidate)
-                )
+                _remember_claim(values, claim.reference, _RetainedClaim(claim, provider, candidate))
     return values
 
 
-def _remember_claim(
-    values: dict[str, _RetainedClaim], reference: object, value: _RetainedClaim
-) -> None:
+def _remember_claim(values: dict[str, _RetainedClaim], reference: object, value: _RetainedClaim) -> None:
     if type(reference) is not str or reference in values:
         raise RichMetadataPreviewError("rich preview evidence binding is invalid")
     values[reference] = value
 
 
-def _automatic_work_evidence(
+def _automatic_description_evidence(
     report: MetadataReport,
     result: ProposalResult,
     retained_claims: dict[str, _RetainedClaim],
-) -> _AutomaticWorkEvidence:
-    """Filter only automatic projection to exact target-work provider evidence."""
+) -> _AutomaticDescriptionEvidence:
+    """Keep automatic descriptions backed by the exact target work."""
     alternatives: list[ProposalAlternative] = []
     references: dict[str, tuple[str, ...]] = {}
-    candidates: list[ProviderCandidate] = []
     for alternative in result.alternatives:
-        admitted: list[str] = []
-        for reference in alternative.evidence_references:
-            retained = retained_claims.get(reference)
-            if (
-                retained is None
-                or type(retained.provider) is not ProviderObservation
-                or type(retained.candidate) is not ProviderCandidate
-                or not provider_candidate_represents_target_work(
-                    report,
-                    retained.provider,
-                    retained.candidate,
-                )
-            ):
-                continue
-            admitted.append(reference)
-            if retained.candidate not in candidates:
-                candidates.append(retained.candidate)
+        admitted = tuple(
+            reference
+            for reference in alternative.evidence_references
+            if (retained := retained_claims.get(reference)) is not None
+            and type(retained.provider) is ProviderObservation
+            and type(retained.candidate) is ProviderCandidate
+            and provider_candidate_represents_target_work(
+                report, retained.provider, retained.candidate
+            )
+        )
         if admitted:
             alternatives.append(alternative)
-            references[alternative.alternative_id] = tuple(admitted)
-    return _AutomaticWorkEvidence(
-        tuple(alternatives),
-        references,
-        tuple(candidates),
-    )
+            references[alternative.alternative_id] = admitted
+    return _AutomaticDescriptionEvidence(tuple(alternatives), references)
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,17 +141,10 @@ class RichMetadataPreview:
     fields: tuple[RichFieldPreview, ...]
 
     def to_data(self) -> dict[str, object]:
-        return {
-            "fields": [field.to_data() for field in self.fields],
-            "proposal_set_id": self.proposal_set_id,
-            "report_id": self.report_id,
-            "resolved_policy_id": self.resolved_policy_id,
-        }
+        return {"fields": [field.to_data() for field in self.fields], "proposal_set_id": self.proposal_set_id, "report_id": self.report_id, "resolved_policy_id": self.resolved_policy_id}
 
 
-def compile_rich_metadata_preview(
-    policy: ResolvedMetadataPolicy, report: MetadataReport, proposal: ProposalSet
-) -> RichMetadataPreview:
+def compile_rich_metadata_preview(policy: ResolvedMetadataPolicy, report: MetadataReport, proposal: ProposalSet) -> RichMetadataPreview:
     """Compile a no-effect preview from one exact, already-admitted pair."""
     if (
         type(policy) is not ResolvedMetadataPolicy
@@ -218,9 +174,7 @@ def compile_rich_metadata_preview(
         )
         for field, destination in _DESTINATIONS.items()
     )
-    return RichMetadataPreview(
-        report.report_id, proposal.proposal_set_id, policy.resolved_id, previews
-    )
+    return RichMetadataPreview(report.report_id, proposal.proposal_set_id, policy.resolved_id, previews)
 
 
 def _project(
@@ -235,84 +189,45 @@ def _project(
 ) -> RichFieldPreview:
     current = _data_value(target.value)
     if field == "explicit":
-        return RichFieldPreview(
-            field,
-            option,
-            target.state.value,
-            current,
-            "abstain",
-            None,
-            "explicit_unsupported",
-        )
+        return RichFieldPreview(field, option, target.state.value, current, "abstain", None, "explicit_unsupported")
     if destination == "ignore":
-        return RichFieldPreview(
-            field,
-            option,
-            target.state.value,
-            current,
-            "abstain",
-            None,
-            "policy_ignored",
-        )
+        return RichFieldPreview(field, option, target.state.value, current, "abstain", None, "policy_ignored")
     if (
         destination == "automatic"
         and f"{field}:{option}" not in F20_PASSING_AUTOMATIC_OPTIONS
     ):
-        return RichFieldPreview(
-            field,
-            option,
-            target.state.value,
-            current,
-            "abstain",
-            None,
-            "automatic_unqualified",
-        )
+        return RichFieldPreview(field, option, target.state.value, current, "abstain", None, "automatic_unqualified")
     if target.state not in _EMPTY and target.state is not TargetFieldState.VALUE:
-        return RichFieldPreview(
-            field,
-            option,
-            target.state.value,
-            current,
-            "abstain",
-            None,
-            "target_state_unusable",
-        )
+        return RichFieldPreview(field, option, target.state.value, current, "abstain", None, "target_state_unusable")
     if field == "tags" and option == "off":
-        return RichFieldPreview(
-            field, option, target.state.value, current, "abstain", None, "policy_off"
-        )
+        return RichFieldPreview(field, option, target.state.value, current, "abstain", None, "policy_off")
     if target.state is TargetFieldState.VALUE and (
         field in {"subtitle", "description_fill", "isbn_form", "asin"}
         or (field in {"genres", "tags"} and option == "fill_empty")
     ):
         return _preserved(field, option, target, current)
-    automatic_work = (
-        _automatic_work_evidence(report, result, retained_claims)
-        if destination == "automatic" and field in _TARGET_WORK_FIELDS
-        else None
-    )
-    if (
-        automatic_work is not None
-        and result.alternatives
-        and not automatic_work.alternatives
-    ):
-        return _abstain(
-            field,
-            option,
-            target,
-            current,
-            "target_work_applicability_unproved",
-        )
     if field == "subtitle" and option == "corroborated_split":
         return _subtitle_bundle(field, option, target, result, proposal, report)
     if field == "description_fill":
+        automatic_evidence = (
+            _automatic_description_evidence(report, result, retained_claims)
+            if destination == "automatic"
+            else None
+        )
+        if (
+            automatic_evidence is not None
+            and result.alternatives
+            and not automatic_evidence.alternatives
+        ):
+            return _abstain(
+                field,
+                option,
+                target,
+                current,
+                "target_work_applicability_unproved",
+            )
         return _description(
-            field,
-            option,
-            target,
-            result,
-            retained_claims,
-            automatic_work,
+            field, option, target, result, retained_claims, automatic_evidence
         )
     if field == "isbn_form":
         return _isbn(field, option, target, result, report)
@@ -321,27 +236,15 @@ def _project(
     candidate = (
         _combination_member(proposal, TargetDestination.SERIES)
         if field == "series" and option == "primary_narrative"
-        else _series_candidate(
-            result,
-            None if automatic_work is None else automatic_work.alternatives,
-        )
+        else _series_candidate(result)
         if field == "series"
-        else _one_list_candidate(
-            result,
-            None if automatic_work is None else automatic_work.alternatives,
-        )
+        else _one_list_candidate(result)
         if field in {"genres", "tags"}
         else _candidate(result)
     )
-    if automatic_work is not None and candidate not in automatic_work.alternatives:
-        candidate = None
     if field == "series" and destination == "automatic":
         reason = _automatic_series_abstention(
-            report,
-            result,
-            candidate,
-            retained_claims,
-            automatic_work,
+            report, result, candidate, retained_claims
         )
         if reason is not None:
             return _abstain(field, option, target, current, reason)
@@ -351,14 +254,8 @@ def _project(
             return _abstain(field, option, target, current, reason)
     if candidate is None:
         reason = _candidate_reason(result)
-        return RichFieldPreview(
-            field, option, target.state.value, current, "abstain", None, reason
-        )
-    references = (
-        candidate.evidence_references
-        if automatic_work is None
-        else automatic_work.references[candidate.alternative_id]
-    )
+        return RichFieldPreview(field, option, target.state.value, current, "abstain", None, reason)
+    references = candidate.evidence_references
     if field == "subtitle" and destination == "automatic":
         # The corroborating local claim is the decisive eligibility evidence;
         # the durable record cites it alongside the provider claim.
@@ -375,78 +272,39 @@ def _project(
         if candidate.value.kind is not ProposalValueKind.LIST:
             return _abstain(field, option, target, current, "no_candidate")
         if option == "add" and target.state is TargetFieldState.VALUE:
-            desired = tuple(
-                (
-                    *target.value,
-                    *(
-                        item
-                        for item in candidate.value.value
-                        if item not in target.value
-                    ),
-                )
-            )
+            desired = tuple((*target.value, *(item for item in candidate.value.value if item not in target.value)))
         elif option == "fill_empty" and target.state not in _EMPTY:
             return _preserved(field, option, target, current)
         elif option not in {"fill_empty", "add", "replace"}:
             return _abstain(field, option, target, current, "policy_option_unavailable")
         if len(desired) > MAX_TAGS:
-            return _abstain(
-                field, option, target, current, "target_projection_oversized"
-            )
+            return _abstain(field, option, target, current, "target_projection_oversized")
     elif field == "series":
         if candidate.value.kind is not ProposalValueKind.SERIES:
             return _abstain(field, option, target, current, "no_candidate")
         if option == "all_qualified":
             desired = (candidate.value.value[0],)
             if _data_value(desired) == current:
-                return RichFieldPreview(
-                    field,
-                    option,
-                    target.state.value,
-                    current,
-                    "no_op",
-                    current,
-                    "unchanged",
-                )
+                return RichFieldPreview(field, option, target.state.value, current, "no_op", current, "unchanged")
             return RichFieldPreview(
-                field,
-                option,
-                target.state.value,
-                current,
-                "projected",
-                _data_value(desired),
-                None,
-                True,
-                _data_value(candidate.value.value),
-                candidate.alternative_id,
-                references,
+                field, option, target.state.value, current, "projected",
+                _data_value(desired), None, True, _data_value(candidate.value.value),
+                candidate.alternative_id, candidate.evidence_references,
                 _candidate_combination_ids(proposal, candidate),
             )
         if option == "primary_narrative":
             member = _combination_member(proposal, TargetDestination.SERIES)
             if member is None:
-                return _abstain(
-                    field, option, target, current, "atomic_bundle_unavailable"
-                )
+                return _abstain(field, option, target, current, "atomic_bundle_unavailable")
             desired = (member.value.value[0],)
         if option in {"source_order", "primary_narrative"}:
             desired = (candidate.value.value[0],)
     if _data_value(desired) == current:
-        return RichFieldPreview(
-            field, option, target.state.value, current, "no_op", current, "unchanged"
-        )
+        return RichFieldPreview(field, option, target.state.value, current, "no_op", current, "unchanged")
     return RichFieldPreview(
-        field,
-        option,
-        target.state.value,
-        current,
-        "projected",
-        _data_value(desired),
-        None,
-        False,
-        None,
-        candidate.alternative_id,
-        references,
+        field, option, target.state.value, current, "projected",
+        _data_value(desired), None, False, None,
+        candidate.alternative_id, references,
         _candidate_combination_ids(proposal, candidate),
     )
 
@@ -472,23 +330,13 @@ def _candidate(
     return None
 
 
-def _series_candidate(
-    result: ProposalResult,
-    alternatives: tuple[ProposalAlternative, ...] | None = None,
-) -> ProposalAlternative | None:
+def _series_candidate(result: ProposalResult) -> ProposalAlternative | None:
     """Series projection may narrow an admitted target-preserving alternative."""
-    values = result.alternatives if alternatives is None else alternatives
-    if len(values) != 1:
+    if len(result.alternatives) != 1:
         return None
-    alternative = values[0]
+    alternative = result.alternatives[0]
     if alternative.value.kind is not ProposalValueKind.SERIES:
         return None
-    if alternatives is not None:
-        return (
-            alternative
-            if alternative.assessment is not ProposalAssessment.PRESERVES_TARGET
-            else None
-        )
     if result.outcome is ProposalOutcome.PROPOSE_CHANGE:
         return _candidate(result)
     if (
@@ -546,7 +394,6 @@ def _automatic_series_abstention(
     result: ProposalResult,
     candidate: ProposalAlternative | None,
     retained_claims: dict[str, _RetainedClaim],
-    automatic_work: _AutomaticWorkEvidence | None,
 ) -> str | None:
     """Keep automatic series authority within its existing two-lineage proof."""
     failed_statuses = {
@@ -579,7 +426,6 @@ def _automatic_series_abstention(
         membership
         for provider in report.providers
         for source in provider.candidates
-        if automatic_work is None or source in automatic_work.candidates
         for membership in _series_membership_positions(
             tuple(
                 claim
@@ -589,7 +435,8 @@ def _automatic_series_abstention(
         )
     )
     if any(
-        not positioned and sum(other_name == name for other_name, _ in memberships) > 1
+        not positioned
+        and sum(other_name == name for other_name, _ in memberships) > 1
         for name, positioned in memberships
     ):
         return "series_membership_incomplete"
@@ -622,9 +469,7 @@ def _series_membership_positions(
     values: list[tuple[str, bool]] = []
     index = 0
     while index < len(claims):
-        prior = (
-            claims[index] if claims[index].kind is ClaimKind.SERIES_SEQUENCE else None
-        )
+        prior = claims[index] if claims[index].kind is ClaimKind.SERIES_SEQUENCE else None
         if prior is not None:
             index += 1
         if index >= len(claims) or claims[index].kind is not ClaimKind.SERIES:
@@ -652,23 +497,13 @@ def _series_membership_positions(
     return tuple(values)
 
 
-def _one_list_candidate(
-    result: ProposalResult,
-    alternatives: tuple[ProposalAlternative, ...] | None = None,
-) -> ProposalAlternative | None:
-    source = result.alternatives if alternatives is None else alternatives
-    values = tuple(
-        value for value in source if value.value.kind is ProposalValueKind.LIST
-    )
+def _one_list_candidate(result: ProposalResult) -> ProposalAlternative | None:
+    values = tuple(value for value in result.alternatives if value.value.kind is ProposalValueKind.LIST)
     return values[0] if len(values) == 1 else None
 
 
 def _candidate_reason(result: ProposalResult) -> str:
-    if (
-        result.outcome
-        in {ProposalOutcome.UNRESOLVED_CHOICE, ProposalOutcome.ACCEPTABLE_CHOICE}
-        or len(result.alternatives) > 1
-    ):
+    if result.outcome in {ProposalOutcome.UNRESOLVED_CHOICE, ProposalOutcome.ACCEPTABLE_CHOICE} or len(result.alternatives) > 1:
         return "ambiguous_evidence"
     return "no_candidate"
 
@@ -691,9 +526,7 @@ def _one_typed_candidate(
 ) -> tuple[ProposalAlternative | None, str | None]:
     selected = _candidate(result, alternatives)
     if selected is not None:
-        return (
-            (selected, None) if selected.value.kind is kind else (None, "no_candidate")
-        )
+        return (selected, None) if selected.value.kind is kind else (None, "no_candidate")
     typed = (
         _typed_alternatives(result, kind)
         if alternatives is None
@@ -715,37 +548,23 @@ def _description(
     target: TargetField,
     result: ProposalResult,
     retained_claims: dict[str, _RetainedClaim],
-    automatic_work: _AutomaticWorkEvidence | None = None,
+    automatic_evidence: _AutomaticDescriptionEvidence | None = None,
 ) -> RichFieldPreview:
     candidate, reason = _one_typed_candidate(
         result,
         ProposalValueKind.TEXT,
-        None if automatic_work is None else automatic_work.alternatives,
+        None if automatic_evidence is None else automatic_evidence.alternatives,
     )
     if candidate is None:
-        return _abstain(
-            field, option, target, _data_value(target.value), reason or "no_candidate"
-        )
+        return _abstain(field, option, target, _data_value(target.value), reason or "no_candidate")
     if option not in {"safe_plain_text", "google_visible_text"}:
-        return _abstain(
-            field,
-            option,
-            target,
-            _data_value(target.value),
-            "policy_option_unavailable",
-        )
+        return _abstain(field, option, target, _data_value(target.value), "policy_option_unavailable")
     if not candidate.evidence_references:
-        return _abstain(
-            field,
-            option,
-            target,
-            _data_value(target.value),
-            "option_evidence_unavailable",
-        )
+        return _abstain(field, option, target, _data_value(target.value), "option_evidence_unavailable")
     admitted_references = (
         candidate.evidence_references
-        if automatic_work is None
-        else automatic_work.references[candidate.alternative_id]
+        if automatic_evidence is None
+        else automatic_evidence.references[candidate.alternative_id]
     )
     google_references = tuple(
         reference
@@ -758,21 +577,9 @@ def _description(
         if _ordinary_description_reference(reference, candidate, retained_claims)
     )
     if option == "google_visible_text" and not google_references:
-        return _abstain(
-            field,
-            option,
-            target,
-            _data_value(target.value),
-            "option_evidence_unavailable",
-        )
+        return _abstain(field, option, target, _data_value(target.value), "option_evidence_unavailable")
     if option == "safe_plain_text" and not ordinary_references:
-        return _abstain(
-            field,
-            option,
-            target,
-            _data_value(target.value),
-            "option_evidence_unavailable",
-        )
+        return _abstain(field, option, target, _data_value(target.value), "option_evidence_unavailable")
     source_references = (
         google_references if option == "google_visible_text" else ordinary_references
     )
@@ -847,39 +654,18 @@ def _isbn(
     alternatives = _typed_alternatives(result, ProposalValueKind.TEXT)
     candidate, reason = _one_typed_candidate(result, ProposalValueKind.TEXT)
     if candidate is None:
-        return _abstain(
-            field, option, target, _data_value(target.value), reason or "no_candidate"
-        )
+        return _abstain(field, option, target, _data_value(target.value), reason or "no_candidate")
     if option not in {"preserve_exact", "prefer_isbn13"}:
-        return _abstain(
-            field,
-            option,
-            target,
-            _data_value(target.value),
-            "policy_option_unavailable",
-        )
+        return _abstain(field, option, target, _data_value(target.value), "policy_option_unavailable")
     value = select_isbn_representation(report, candidate, option)
     if value is None:
-        return _abstain(
-            field,
-            option,
-            target,
-            _data_value(target.value),
-            "option_evidence_unavailable",
-        )
+        return _abstain(field, option, target, _data_value(target.value), "option_evidence_unavailable")
     return RichFieldPreview(
-        field,
-        option,
-        target.state.value,
-        _data_value(target.value),
-        "projected",
-        value,
-        None,
-        False,
-        None,
-        candidate.alternative_id,
-        candidate.evidence_references,
+        field, option, target.state.value, _data_value(target.value),
+        "projected", value, None, False, None,
+        candidate.alternative_id, candidate.evidence_references,
     )
+
 
 
 def select_isbn_representation(
@@ -935,42 +721,18 @@ def _asin(
 ) -> RichFieldPreview:
     candidate, reason = _one_typed_candidate(result, ProposalValueKind.TEXT)
     if candidate is None:
-        return _abstain(
-            field, option, target, _data_value(target.value), reason or "no_candidate"
-        )
+        return _abstain(field, option, target, _data_value(target.value), reason or "no_candidate")
     if option not in {"preserve_exact", "ebook_manifestation"}:
-        return _abstain(
-            field,
-            option,
-            target,
-            _data_value(target.value),
-            "policy_option_unavailable",
-        )
+        return _abstain(field, option, target, _data_value(target.value), "policy_option_unavailable")
     if option == "ebook_manifestation" and (
         not candidate.evidence_references
         or any(
-            not _identifier_reference(
-                reference, ClaimKind.ASIN, candidate, retained_claims, {"ebook"}
-            )
+            not _identifier_reference(reference, ClaimKind.ASIN, candidate, retained_claims, {"ebook"})
             for reference in candidate.evidence_references
         )
     ):
-        return _abstain(
-            field,
-            option,
-            target,
-            _data_value(target.value),
-            "option_evidence_unavailable",
-        )
-    return RichFieldPreview(
-        field,
-        option,
-        target.state.value,
-        _data_value(target.value),
-        "projected",
-        candidate.value.value,
-        None,
-    )
+        return _abstain(field, option, target, _data_value(target.value), "option_evidence_unavailable")
+    return RichFieldPreview(field, option, target.state.value, _data_value(target.value), "projected", candidate.value.value, None)
 
 
 def _identifier_reference(
@@ -985,26 +747,17 @@ def _identifier_reference(
     return bool(
         claim is not None
         and claim.kind is kind
-        and getattr(claim, "value", getattr(claim, "canonical", None))
-        == alternative.value.value
+        and getattr(claim, "value", getattr(claim, "canonical", None)) == alternative.value.value
         and getattr(claim, "applicability", None) in applicability
     )
 
 
-def _preserved(
-    field: str, option: str, target: TargetField, current: object
-) -> RichFieldPreview:
-    return RichFieldPreview(
-        field, option, target.state.value, current, "no_op", current, "target_preserved"
-    )
+def _preserved(field: str, option: str, target: TargetField, current: object) -> RichFieldPreview:
+    return RichFieldPreview(field, option, target.state.value, current, "no_op", current, "target_preserved")
 
 
-def _abstain(
-    field: str, option: str, target: TargetField, current: object, reason: str
-) -> RichFieldPreview:
-    return RichFieldPreview(
-        field, option, target.state.value, current, "abstain", None, reason
-    )
+def _abstain(field: str, option: str, target: TargetField, current: object, reason: str) -> RichFieldPreview:
+    return RichFieldPreview(field, option, target.state.value, current, "abstain", None, reason)
 
 
 def _subtitle_bundle(
@@ -1016,39 +769,22 @@ def _subtitle_bundle(
     report: MetadataReport,
 ) -> RichFieldPreview:
     """Expose only an admitted title/subtitle combination; never parse title text."""
-    alternatives = {
-        value.destination: {alt.alternative_id: alt for alt in value.alternatives}
-        for value in proposal.results
-    }
+    alternatives = {value.destination: {alt.alternative_id: alt for alt in value.alternatives} for value in proposal.results}
     matches = {}
     for combination in proposal.bibliographic_combinations:
-        selected = {
-            selection.destination: selection for selection in combination.selections
-        }
+        selected = {selection.destination: selection for selection in combination.selections}
         title = selected[TargetDestination.TITLE]
         subtitle = selected[TargetDestination.SUBTITLE]
-        if (
-            title.kind is BibliographicSelectionKind.CANDIDATE
-            and subtitle.kind is BibliographicSelectionKind.CANDIDATE
-        ):
+        if title.kind is BibliographicSelectionKind.CANDIDATE and subtitle.kind is BibliographicSelectionKind.CANDIDATE:
             left = alternatives[TargetDestination.TITLE].get(title.alternative_id)
-            right = alternatives[TargetDestination.SUBTITLE].get(
-                subtitle.alternative_id
-            )
+            right = alternatives[TargetDestination.SUBTITLE].get(subtitle.alternative_id)
             if left is not None and right is not None:
                 matches[(left.alternative_id, right.alternative_id)] = (left, right)
     if len(matches) != 1:
-        return _abstain(
-            field,
-            option,
-            target,
-            _data_value(target.value),
-            "atomic_bundle_unavailable" if not matches else "ambiguous_evidence",
-        )
+        return _abstain(field, option, target, _data_value(target.value), "atomic_bundle_unavailable" if not matches else "ambiguous_evidence")
     title_candidate, candidate = next(iter(matches.values()))
     current_title = next(
-        value
-        for value in report.target.fields
+        value for value in report.target.fields
         if value.destination is TargetDestination.TITLE
     )
     if (
@@ -1061,41 +797,18 @@ def _subtitle_bundle(
         )
     ):
         return _abstain(
-            field,
-            option,
-            target,
-            _data_value(target.value),
+            field, option, target, _data_value(target.value),
             "corroborated_split_unavailable",
         )
-    desired = {
-        "title": _data_value(title_candidate.value.value),
-        "subtitle": _data_value(candidate.value.value),
-    }
-    return RichFieldPreview(
-        field,
-        option,
-        target.state.value,
-        _data_value(target.value),
-        "projected",
-        desired,
-        None,
-    )
+    desired = {"title": _data_value(title_candidate.value.value), "subtitle": _data_value(candidate.value.value)}
+    return RichFieldPreview(field, option, target.state.value, _data_value(target.value), "projected", desired, None)
 
 
-def _combination_member(
-    proposal: ProposalSet, destination: TargetDestination
-) -> ProposalAlternative | None:
-    alternatives = {
-        value.destination: {alt.alternative_id: alt for alt in value.alternatives}
-        for value in proposal.results
-    }
+def _combination_member(proposal: ProposalSet, destination: TargetDestination) -> ProposalAlternative | None:
+    alternatives = {value.destination: {alt.alternative_id: alt for alt in value.alternatives} for value in proposal.results}
     matches = {}
     for combination in proposal.bibliographic_combinations:
-        selection = next(
-            value
-            for value in combination.selections
-            if value.destination is destination
-        )
+        selection = next(value for value in combination.selections if value.destination is destination)
         if selection.kind is BibliographicSelectionKind.CANDIDATE:
             candidate = alternatives[destination].get(selection.alternative_id)
             if candidate is not None:
@@ -1132,32 +845,19 @@ def project_f20_automatic_decision_value(
         raise RichMetadataPreviewError("rich automatic projection is invalid")
     if field == "series":
         values = candidate_value["value"]
-        if (
-            candidate_value["kind"] != "series"
-            or type(values) is not list
-            or not values
-        ):
+        if candidate_value["kind"] != "series" or type(values) is not list or not values:
             raise RichMetadataPreviewError("rich automatic projection is invalid")
         return {"kind": "series", "value": [values[0]]}
     if field == "isbn_form":
-        if (
-            candidate_value["kind"] != "text"
-            or type(candidate_value["value"]) is not str
-        ):
+        if candidate_value["kind"] != "text" or type(candidate_value["value"]) is not str:
             raise RichMetadataPreviewError("rich automatic projection is invalid")
         return {"kind": "text", "value": candidate_value["value"]}
     if field == "subtitle":
-        if (
-            candidate_value["kind"] != "text"
-            or type(candidate_value["value"]) is not str
-        ):
+        if candidate_value["kind"] != "text" or type(candidate_value["value"]) is not str:
             raise RichMetadataPreviewError("rich automatic projection is invalid")
         return {"kind": "text", "value": candidate_value["value"]}
     if field == "description_fill":
-        if (
-            candidate_value["kind"] != "text"
-            or type(candidate_value["value"]) is not str
-        ):
+        if candidate_value["kind"] != "text" or type(candidate_value["value"]) is not str:
             raise RichMetadataPreviewError("rich automatic projection is invalid")
         return {"kind": "text", "value": candidate_value["value"]}
     if field in {"genres", "tags"}:
@@ -1170,14 +870,12 @@ def project_f20_automatic_decision_value(
         ):
             raise RichMetadataPreviewError("rich automatic projection is invalid")
         if option == "add" and current_value is not None:
-            if type(current_value) not in {list, tuple} or any(
-                type(value) is not str for value in current_value
+            if (
+                type(current_value) not in {list, tuple}
+                or any(type(value) is not str for value in current_value)
             ):
                 raise RichMetadataPreviewError("rich automatic projection is invalid")
-            values = [
-                *current_value,
-                *(value for value in values if value not in current_value),
-            ]
+            values = [*current_value, *(value for value in values if value not in current_value)]
         if len(values) > MAX_TAGS:
             raise RichMetadataPreviewError("rich automatic projection is oversized")
         return {"kind": "list", "value": values}
@@ -1186,17 +884,12 @@ def project_f20_automatic_decision_value(
 
 def _data_value(value: object) -> object:
     if isinstance(value, tuple):
-        return tuple(
-            item.to_data() if hasattr(item, "to_data") else item for item in value
-        )
+        return tuple(item.to_data() if hasattr(item, "to_data") else item for item in value)
     return value
 
 
 __all__ = [
-    "RichFieldPreview",
-    "RichMetadataPreview",
-    "RichMetadataPreviewError",
-    "compile_rich_metadata_preview",
-    "project_f20_automatic_decision_value",
+    "RichFieldPreview", "RichMetadataPreview", "RichMetadataPreviewError",
+    "compile_rich_metadata_preview", "project_f20_automatic_decision_value",
     "select_isbn_representation",
 ]

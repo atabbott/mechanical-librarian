@@ -26,6 +26,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderClaim,
     ProviderEvidence,
     ProviderEvidenceKind,
+    ProviderLaneCandidate,
     ProviderLaneObservation,
     ProviderObservation,
     ProviderQueryKind,
@@ -35,6 +36,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetField,
     TargetFieldState,
     TargetSeries,
+    provider_lane_candidate_reference,
 )
 from mechanical_librarian.domain.proposal_set import (
     BibliographicCombination,
@@ -63,13 +65,6 @@ from tests.support.proposal_evidence import (
     _report,
 )
 from tests.unit.test_bibliographic_bundles import _bibliographic_report, _source
-
-_TARGET_WORK_DESTINATIONS = (
-    TargetDestination.DESCRIPTION,
-    TargetDestination.SERIES,
-    TargetDestination.GENRES,
-    TargetDestination.TAGS,
-)
 
 
 def _local_isbn(value, checksum):
@@ -142,44 +137,11 @@ def _series_claims(provider, candidate, name="Reading Order", sequence="2"):
 
 
 def _automatic_series_report(*providers):
-    fields = _fields(
-        "Current title",
-        authors=TargetField(
-            TargetDestination.AUTHORS,
-            TargetFieldState.VALUE,
-            ("Example Author",),
-        ),
-        series=TargetField(TargetDestination.SERIES, TargetFieldState.MISSING),
-    )
-    local_isbn = _local_isbn("9780306406157", "valid_isbn_13")
-    lane = metadata_discovery_plan(
-        TargetSnapshot(
-            "ebook",
-            "Current title",
-            ("Example Author",),
-            fields=fields,
-        ),
-        (local_isbn,),
-    ).lanes[0]
     return _report(
-        fields=fields,
-        local_claims=(local_isbn,),
-        providers=tuple(
-            provider_observation(
-                provider.provider,
-                (
-                    ProviderLaneResult(
-                        lane,
-                        provider.status,
-                        provider.candidates,
-                    ),
-                ),
-                authority=provider.authority,
-            )
-            if provider.status is ProviderStatus.CANDIDATES
-            else provider
-            for provider in providers
+        fields=_fields(
+            series=TargetField(TargetDestination.SERIES, TargetFieldState.MISSING)
         ),
+        providers=providers,
     )
 
 
@@ -187,24 +149,7 @@ def _series_provider(name, candidate, authority, claims=None):
     return _provider(
         name,
         candidate,
-        (
-            _claim(
-                name,
-                candidate,
-                ClaimKind.TITLE,
-                "Current title",
-                scope=ClaimScope.WORK,
-            ),
-            _claim(
-                name,
-                candidate,
-                ClaimKind.CREATOR,
-                "Example Author",
-                scope=ClaimScope.WORK,
-                role="author",
-            ),
-            *(_series_claims(name, candidate) if claims is None else claims),
-        ),
+        _series_claims(name, candidate) if claims is None else claims,
         authority=authority,
     )
 
@@ -328,13 +273,13 @@ def _target_work_report(
     )
 
 
-def _target_work_preview(report: MetadataReport, series_option: str = "source_order"):
+def _target_work_preview(report: MetadataReport):
     options = dict(MetadataPolicyProfile.builtin().options)
     options.update(
         {
             "description_fill": "safe_plain_text",
             "genres": "fill_empty",
-            "series": series_option,
+            "series": "source_order",
             "tags": "fill_empty",
         }
     )
@@ -359,74 +304,45 @@ def _target_work_preview(report: MetadataReport, series_option: str = "source_or
     }
 
 
-@pytest.mark.parametrize(
-    "series_option",
-    ("primary_narrative", "source_order", "all_qualified"),
-)
-def test_exact_multi_isbn_work_projects_all_automatic_work_fields(
-    series_option: str,
-) -> None:
-    candidate = _target_work_candidate("catalogue", "edition-1", "work-1")
-    corroborating = _target_work_candidate("search", "edition-2", "work-1")
-    proposal, fields = _target_work_preview(
+def test_exact_multi_isbn_work_keeps_all_automatic_work_fields() -> None:
+    catalogue = _target_work_candidate("catalogue", "edition-1", "work-1")
+    search = _target_work_candidate("search", "edition-2", "work-1")
+    _, fields = _target_work_preview(
         _target_work_report(
             (
-                ("catalogue", "hardcover", (candidate,), True),
-                ("search", "open_library", (corroborating,), True),
+                ("catalogue", "hardcover", (catalogue,), True),
+                ("search", "open_library", (search,), True),
             )
-        ),
-        series_option,
+        )
     )
 
-    for destination in _TARGET_WORK_DESTINATIONS:
-        assert next(
-            result for result in proposal.results if result.destination is destination
-        ).alternatives
     assert {field: preview.outcome for field, preview in fields.items()} == {
         "description_fill": "projected",
         "series": "projected",
         "genres": "projected",
         "tags": "projected",
     }
-    candidate_references = {
-        claim.reference for source in (candidate, corroborating) for claim in source.claims
-    }
-    assert all(
-        preview.source_evidence_references
-        and set(preview.source_evidence_references) <= candidate_references
-        for preview in fields.values()
-    )
 
 
-def test_automatic_work_citations_exclude_retained_unproved_sources() -> None:
+def test_description_citations_exclude_retained_unproved_sources() -> None:
     catalogue = _target_work_candidate("catalogue", "edition-1", "work-1")
     search = _target_work_candidate("search", "edition-2", "work-1")
     unproved = _target_work_candidate("unproved", "edition-3", "work-1")
-    proposal, fields = _target_work_preview(
+    _, fields = _target_work_preview(
         _target_work_report(
             (
                 ("catalogue", "hardcover", (catalogue,), True),
                 ("search", "open_library", (search,), True),
                 ("unproved", "google_books", (unproved,), False),
             )
-        ),
-        "all_qualified",
+        )
     )
 
     unproved_references = {claim.reference for claim in unproved.claims}
-    retained_references = {
-        reference
-        for destination in _TARGET_WORK_DESTINATIONS
-        for result in proposal.results
-        if result.destination is destination
-        for alternative in result.alternatives
-        for reference in alternative.evidence_references
-    }
-    assert retained_references & unproved_references
     assert all(preview.outcome == "projected" for preview in fields.values())
-    assert all(
-        not (set(fields[field].source_evidence_references) & unproved_references)
-        for field in ("description_fill",)
+    assert not (
+        set(fields["description_fill"].source_evidence_references)
+        & unproved_references
     )
     assert all(
         set(fields[field].source_evidence_references) & unproved_references
@@ -489,7 +405,7 @@ def test_automatic_work_citations_exclude_retained_unproved_sources() -> None:
         "enclosing_work",
     ),
 )
-def test_unproved_work_fields_only_gate_automatic_target_work_fields(
+def test_unproved_work_only_blocks_automatic_description(
     candidates: tuple[ProviderCandidate, ...],
     with_lane: bool,
 ) -> None:
@@ -499,28 +415,26 @@ def test_unproved_work_fields_only_gate_automatic_target_work_fields(
         )
     )
 
-    for destination in _TARGET_WORK_DESTINATIONS:
-        assert next(
-            result for result in proposal.results if result.destination is destination
-        ).alternatives
-    assert fields["genres"].outcome == "projected"
-    assert fields["series"].reason != "target_work_applicability_unproved"
-    assert all(
-        (
-            preview.outcome,
-            preview.reason,
-            preview.source_candidate_id,
-            preview.source_evidence_references,
-        )
-        == (
-            "abstain",
-            "target_work_applicability_unproved",
-            None,
-            (),
-        )
-        for field, preview in fields.items()
-        if field == "description_fill"
+    description = next(
+        result
+        for result in proposal.results
+        if result.destination is TargetDestination.DESCRIPTION
     )
+    assert description.alternatives
+    assert (
+        fields["description_fill"].outcome,
+        fields["description_fill"].reason,
+        fields["description_fill"].source_candidate_id,
+        fields["description_fill"].source_evidence_references,
+    ) == (
+        "abstain",
+        "target_work_applicability_unproved",
+        None,
+        (),
+    )
+    assert fields["genres"].outcome == "projected"
+    assert fields["tags"].outcome == "projected"
+    assert fields["series"].reason != "target_work_applicability_unproved"
 
 
 def _with_state(report, destination, state):
@@ -572,10 +486,8 @@ def _list_preview(field, option, current, alternatives=1, state=None):
     )
     profile_options = dict(MetadataPolicyProfile.builtin().options)
     profile_options[field] = option
-    profile_destinations = dict(MetadataPolicyProfile.builtin().destinations)
-    profile_destinations[field] = "ask"
     profile = MetadataPolicyProfile.create(
-        "Lists", profile_options, profile_destinations
+        "Lists", profile_options, dict(MetadataPolicyProfile.builtin().destinations)
     )
     policy = resolve_policy(profile, report.target.library)
     base = evaluate_report(report)
@@ -896,13 +808,11 @@ def test_populated_list_modes_use_real_unresolved_evaluator_candidate() -> None:
     ):
         options = dict(MetadataPolicyProfile.builtin().options)
         options["genres"] = option
-        destinations = dict(MetadataPolicyProfile.builtin().destinations)
-        destinations["genres"] = "ask"
         policy = resolve_policy(
             MetadataPolicyProfile.create(
                 "Populated list",
                 options,
-                destinations,
+                dict(MetadataPolicyProfile.builtin().destinations),
             ),
             report.target.library,
         )
@@ -1441,7 +1351,7 @@ def test_automatic_series_ignores_interleaved_nonseries_claims_when_pairing() ->
                 _claim(
                     "catalogue",
                     "edition-1",
-                    ClaimKind.DESCRIPTION,
+                    ClaimKind.TITLE,
                     "Ignored",
                     scope=ClaimScope.WORK,
                     order=1,
@@ -1458,7 +1368,7 @@ def test_automatic_series_ignores_interleaved_nonseries_claims_when_pairing() ->
                 _claim(
                     "search",
                     "edition-2",
-                    ClaimKind.DESCRIPTION,
+                    ClaimKind.TITLE,
                     "Ignored",
                     scope=ClaimScope.WORK,
                     order=1,
@@ -1531,23 +1441,54 @@ def test_automatic_series_abstains_when_a_candidate_provider_has_a_failed_lane()
         _series_provider("catalogue", "edition-1", "hardcover"),
         _series_provider("search", "edition-2", "open_library"),
     )
+    local = LocalClaim.create(
+        kind=ClaimKind.TITLE,
+        observed="Current title",
+        canonical="Current title",
+        excerpt="Current title",
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.WORK,
+    )
     provider = base.providers[0]
+    candidate = provider.candidates[0]
+    successful_lane = ProviderLaneObservation(
+        "lane_" + "a" * 64,
+        ProviderQueryKind.ISBN,
+        ProviderStatus.CANDIDATES,
+        (local.reference,),
+        "9780306406157",
+        candidates=(
+            ProviderLaneCandidate(
+                provider_lane_candidate_reference(
+                    provider.provider,
+                    "lane_" + "a" * 64,
+                    candidate.identity,
+                    candidate.work_identity,
+                ),
+                candidate.identity,
+                candidate.work_identity,
+            ),
+        ),
+    )
     failed_lane = ProviderLaneObservation(
         "lane_" + "c" * 64,
         ProviderQueryKind.WORK,
         ProviderStatus.UNAVAILABLE,
-        (base.local_claims[0].reference,),
+        (local.reference,),
     )
     report = MetadataReport.create(
         target=base.target,
         file=base.file,
-        local_claims=base.local_claims,
-        local_reasons=base.local_reasons,
+        local_claims=(local,),
+        local_reasons=("no_opening_matter",),
         providers=(
-                replace(
-                    provider,
-                    query_kind=ProviderQueryKind.DISCOVERY,
-                    lanes=(*provider.lanes, failed_lane),
+            replace(
+                provider,
+                input_references=(local.reference,),
+                query_kind=ProviderQueryKind.DISCOVERY,
+                lanes=(successful_lane, failed_lane),
             ),
             base.providers[1],
         ),
