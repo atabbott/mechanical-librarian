@@ -61,6 +61,10 @@ from mechanical_librarian.domain.metadata_report import (
     provider_candidate_set_work_identity_admission,
     publication_date_is_voting,
 )
+from mechanical_librarian.domain.work_identity import (
+    WorkTitleTransformationFamily,
+    work_title_election_matches,
+)
 
 if TYPE_CHECKING:
     from mechanical_librarian.domain.cover_evidence import CoverArtifact
@@ -202,6 +206,14 @@ _DESTINATION_DATE_SEMANTICS: dict[
     for destination in TargetDestination
 }
 
+_TITLE_CONSENSUS_FAMILIES = (
+    WorkTitleTransformationFamily.BRACKET_SOURCE_TAG,
+    WorkTitleTransformationFamily.EXPLICIT_IDENTIFIER,
+    WorkTitleTransformationFamily.PARENTHESIZED_BARE_NUMBER,
+    WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME,
+    WorkTitleTransformationFamily.PARENTHESIZED_YEAR,
+)
+
 _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
     ProposalOutcome.PROPOSE_CHANGE: frozenset(
         {
@@ -209,12 +221,28 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
             ("unique_typed_candidate",),
             ("explicit_author_corroborates_untyped_creator",),
             ("local_attested_subtitle",),
+            *(
+                (f"provider_consensus_title_{family.value}",)
+                for family in _TITLE_CONSENSUS_FAMILIES
+            ),
         }
     ),
     ProposalOutcome.ACCEPTABLE_CHOICE: frozenset({("field_policy_acceptable_choice",)}),
     ProposalOutcome.UNRESOLVED_CHOICE: frozenset(
         {
             ("competing_evidence",),
+            *(
+                (
+                    "competing_evidence",
+                    f"provider_consensus_title_{family.value}_unresolved",
+                )
+                for family in _TITLE_CONSENSUS_FAMILIES
+            ),
+            (
+                "competing_evidence",
+                "provider_consensus_title_series_unpreserved",
+            ),
+            ("competing_evidence", "provider_consensus_title_colon_unused"),
             ("date_refinement_requires_corroboration", "unique_typed_candidate"),
             ("date_year_conflict", "unique_typed_candidate"),
             ("insufficient_independent_corroboration",),
@@ -1088,6 +1116,12 @@ def evaluate_report(
                 ("local_attested_subtitle",),
                 _dependencies(destination),
             )
+        if (
+            destination is TargetDestination.TITLE
+            and result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+            and result.reasons == ("competing_evidence",)
+        ):
+            result = _provider_consensus_title_election(report, targets, result)
         results[destination] = _apply_policy_destination(result, ignored)
     publication = _publication_results(report, targets)
     results.update(
@@ -1280,6 +1314,18 @@ def _locally_attested_subtitle(
         and type(observed := claim.canonical or claim.observed) is str
         and observed
     }
+    attested.update(
+        match.preserved_component.casefold()
+        for claim in report.local_claims
+        if claim.kind is ClaimKind.TITLE
+        and claim.scope is ClaimScope.WORK
+        and claim.state is FieldState.VALID
+        and type(observed := claim.canonical or claim.observed) is str
+        and observed
+        for match in work_title_election_matches(observed, ())
+        if match.family is WorkTitleTransformationFamily.SUBTITLE_SEGMENT
+        and match.preserved_component is not None
+    )
     if not attested:
         return None
     matching = tuple(
@@ -1302,6 +1348,111 @@ def _locally_attested_subtitle(
         if alternative.scope is ProposalScope.EDITION:
             return alternative
     return None
+
+
+def _provider_consensus_title_election(
+    report: MetadataReport,
+    targets: Mapping[TargetDestination, TargetField],
+    result: ProposalResult,
+) -> ProposalResult:
+    """Elect one provider-only clean title from one reversible local decoration."""
+    target = targets[TargetDestination.TITLE]
+    if target.state is not TargetFieldState.VALUE or type(target.value) is not str:
+        return result
+    local_titles = tuple(
+        claim.canonical
+        for claim in report.local_claims
+        if claim.kind is ClaimKind.TITLE
+        and claim.scope is ClaimScope.WORK
+        and claim.state is FieldState.VALID
+        and claim.canonical is not None
+        and claim.basis != "target_metadata"
+    )
+    if len(local_titles) != 1 or target.value != local_titles[0]:
+        return result
+    matches = work_title_election_matches(local_titles[0], ())
+    if len(matches) != 1:
+        return result
+    match = matches[0]
+    if match.family is WorkTitleTransformationFamily.SUBTITLE_SEGMENT:
+        return _unresolved(result, "provider_consensus_title_colon_unused")
+    if (
+        match.family is WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME
+        and not _series_component_is_preserved(
+            match.preserved_component, report, targets
+        )
+    ):
+        return _unresolved(result, "provider_consensus_title_series_unpreserved")
+    provider_titles = tuple(
+        (provider, claim.value)
+        for provider in report.providers
+        for candidate in provider.candidates
+        for claim in candidate.claims
+        if claim.kind is ClaimKind.TITLE
+        and claim.scope is ClaimScope.WORK
+        and claim.state is FieldState.VALID
+        and claim.value is not None
+    )
+    if (
+        len(provider_titles) < 2
+        or any(value != provider_titles[0][1] for _, value in provider_titles)
+        or len({_provider_correlation(provider) for provider, _ in provider_titles}) < 2
+        or provider_titles[0][1] != match.clean_title
+    ):
+        return _unresolved(
+            result, f"provider_consensus_title_{match.family.value}_unresolved"
+        )
+    candidates = tuple(
+        alternative
+        for alternative in result.alternatives
+        if alternative.value.kind is ProposalValueKind.TEXT
+        and alternative.value.value == match.clean_title
+        and alternative.scope is ProposalScope.WORK
+        and alternative.assessment is ProposalAssessment.REPLACES_TARGET
+        and all(
+            reference.startswith("provider_")
+            for reference in alternative.evidence_references
+        )
+        and len(alternative.correlations) >= 2
+    )
+    if len(candidates) != 1:
+        return _unresolved(
+            result, f"provider_consensus_title_{match.family.value}_unresolved"
+        )
+    candidate = candidates[0]
+    return ProposalResult(
+        TargetDestination.TITLE,
+        ProposalOutcome.PROPOSE_CHANGE,
+        (candidate,),
+        candidate.alternative_id,
+        (f"provider_consensus_title_{match.family.value}",),
+        _dependencies(TargetDestination.TITLE),
+    )
+
+
+def _series_component_is_preserved(
+    component: str | None,
+    report: MetadataReport,
+    targets: Mapping[TargetDestination, TargetField],
+) -> bool:
+    if component is None:
+        return False
+    target = targets[TargetDestination.SERIES]
+    if target.state is TargetFieldState.VALUE and type(target.value) is tuple:
+        if any(
+            type(value) is TargetSeries
+            and normalize_title(value.name).casefold() == component.casefold()
+            for value in target.value
+        ):
+            return True
+    return any(
+        observed.value.kind is ProposalValueKind.SERIES
+        and any(
+            normalize_title(value.name).casefold() == component.casefold()
+            for value in cast("tuple[TargetSeries, ...]", observed.value.value)
+        )
+        for observed in _series_observations(report)
+    )
 
 
 def _has_generic_provider_subtitle(report: MetadataReport) -> bool:

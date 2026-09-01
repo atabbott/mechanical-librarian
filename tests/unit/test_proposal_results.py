@@ -109,6 +109,10 @@ def test_prior_policy_document_is_rejected_and_current_replay_is_exact() -> None
     with pytest.raises(ProposalValueError):
         ProposalSet.from_json(canonical_json(prior))
     prior = json.loads(current.to_json())
+    prior["policy_version"] = "fixed-conservative-v12"
+    with pytest.raises(ProposalValueError):
+        ProposalSet.from_json(canonical_json(prior))
+    prior = json.loads(current.to_json())
     prior["policy_version"] = "fixed-conservative-v4"
     with pytest.raises(ProposalValueError):
         ProposalSet.from_json(canonical_json(prior))

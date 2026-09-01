@@ -27,6 +27,10 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalOutcome, ProposalResult, ProposalScope, ProposalSet,
     ProposalValueKind, provider_candidate_represents_target_work,
 )
+from mechanical_librarian.domain.work_identity import (
+    WorkTitleTransformationFamily,
+    work_title_election_matches,
+)
 
 
 _DESTINATIONS: Final = {
@@ -373,15 +377,32 @@ def _corroborating_subtitle_references(
     if type(value) is not str:
         return ()
     desired = normalize_title(value).casefold()
-    return tuple(
-        claim.reference
-        for claim in report.local_claims
-        if claim.kind is ClaimKind.SUBTITLE
-        and claim.state is FieldState.VALID
-        and type(observed := claim.canonical or claim.observed) is str
-        and observed
-        and normalize_title(observed).casefold() == desired
-    )
+    references: list[str] = []
+    for claim in report.local_claims:
+        observed = claim.canonical or claim.observed
+        if (
+            claim.kind is ClaimKind.SUBTITLE
+            and claim.state is FieldState.VALID
+            and type(observed) is str
+            and observed
+            and normalize_title(observed).casefold() == desired
+        ):
+            references.append(claim.reference)
+        if (
+            claim.kind is ClaimKind.TITLE
+            and claim.scope is ClaimScope.WORK
+            and claim.state is FieldState.VALID
+            and type(observed) is str
+            and observed
+            and any(
+                match.family is WorkTitleTransformationFamily.SUBTITLE_SEGMENT
+                and match.preserved_component is not None
+                and normalize_title(match.preserved_component).casefold() == desired
+                for match in work_title_election_matches(observed, ())
+            )
+        ):
+            references.append(claim.reference)
+    return tuple(sorted(set(references)))
 
 
 def _automatic_series_abstention(

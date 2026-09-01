@@ -25,6 +25,12 @@ Only `proposal-set-v5` documents under `fixed-conservative-v13` and the exact cu
 and is rejected before mutation. A clean rebuild is required; there is no
 proposal migration, import, conversion, or compatibility parser.
 
+## Consensus title qualification
+
+The F35 (#884) provider-consensus title election is qualified through #445.
+Its successor qualification must replay and diff every existing F19a option
+before re-pinning the F19a manifest; title remains excluded from F20.
+
 The publication projection retains one independently corroborated canonical
 fact at the strongest shared year, month, or day precision. It never pads a
 date, accepts local-only precision, or turns the derived Published year context
