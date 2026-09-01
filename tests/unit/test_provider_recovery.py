@@ -1762,6 +1762,233 @@ def test_held_attempt_five_job_exhausts_before_blocked_selection() -> None:
         store.close()
 
 
+def test_reclaimed_blocked_running_member_survives_terminal_sibling() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "recovery.sqlite"
+        store = _due_store(path)
+        blocked_member = replace(
+            _job("blocked"),
+            target_connection="held-target",
+            dispatch_reason="missing_corroboration",
+            dispatch_rank=0,
+        )
+        terminal = replace(
+            _job("terminal"),
+            dispatch_reason="zero_provider_evidence",
+            dispatch_rank=1,
+        )
+        store.enqueue_jobs((blocked_member, terminal), enqueued_at=0)
+        claimed = store.claim_one(
+            generation=1, now=1, token="crashed-owner", lease_seconds=1
+        )
+        assert claimed is not None
+        running = store.claim_job(
+            recovery=claimed,
+            token="crashed-owner",
+            now=1,
+            lease_seconds=1,
+        )
+        assert running is not None
+        assert "blocked" == running.member_id
+        store.close()
+
+        held = frozenset(("held-target",))
+        store = SQLiteProviderRecoveryStore.open(path)
+        calls: list[str] = []
+
+        def retry(_, member, __):
+            calls.append(member.member_id)
+            if member.member_id == "terminal":
+                raise RuntimeError("terminal")
+
+        runner = ScopedProviderRecoveryRunner(
+            store=store,
+            generation=1,
+            retry=retry,
+            classify_failure=lambda _: ("terminal", None),
+            blocked_targets=lambda: held,
+        )
+        assert "waiting" == runner.run_one(now=2, token="reclaimed").state
+        assert ["terminal"] == calls
+        assert [("blocked", "queued", 1, None, None)] == store._connection.execute(
+            "SELECT member_id,state,attempt,cohort_epoch,claim_expires_at "
+            "FROM provider_recovery_jobs WHERE member_id='blocked'"
+        ).fetchall()
+        assert [("waiting", 2)] == store._connection.execute(
+            "SELECT state,next_eligible_at FROM provider_recovery_health"
+        ).fetchall()
+        store.close()
+
+        store = SQLiteProviderRecoveryStore.open(path)
+        runner = ScopedProviderRecoveryRunner(
+            store=store,
+            generation=1,
+            retry=retry,
+            classify_failure=lambda _: ("terminal", None),
+            blocked_targets=lambda: held,
+        )
+        assert "idle" == runner.run_one(now=3, token="still-held").state
+        held = frozenset()
+        assert "exhausted" == runner.run_one(now=3, token="released").state
+        assert ["terminal", "blocked"] == calls
+        assert [("blocked", "complete", 2)] == store._connection.execute(
+            "SELECT member_id,state,attempt FROM provider_recovery_jobs "
+            "WHERE member_id='blocked'"
+        ).fetchall()
+        assert "idle" == runner.run_one(now=304, token="finite").state
+        store.close()
+
+
+def test_later_exact_quota_scope_stays_out_of_current_provider_failure() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+        store.record(
+            ProviderRecovery.failed(
+                connection="google",
+                adapter="google_books",
+                scope="library-a",
+                generation=1,
+                failure="transient",
+                now=0,
+                retry_after=1,
+            ),
+            occurred_at=0,
+        )
+        store.record(
+            ProviderRecovery.failed(
+                connection="google",
+                adapter="google_books",
+                scope="library-b",
+                generation=1,
+                failure="quota_exhausted",
+                now=0,
+                retry_after=1000,
+            ),
+            occurred_at=0,
+        )
+        first = replace(
+            _job("first"),
+            scope="library-a",
+            library="library-a",
+            dispatch_reason="missing_corroboration",
+            dispatch_rank=0,
+        )
+        deferred = replace(_job("deferred"), scope="library-b", library="library-b")
+        store.enqueue_jobs((first, deferred), enqueued_at=0)
+        calls: list[str] = []
+        interrupted = False
+
+        def retry(_, member, __):
+            nonlocal interrupted
+            calls.append(member.member_id)
+            if not interrupted:
+                interrupted = True
+                assert [("deferred", None)] == store._connection.execute(
+                    "SELECT member_id,cohort_epoch FROM provider_recovery_jobs "
+                    "WHERE member_id='deferred'"
+                ).fetchall()
+                raise RuntimeError("rate limited")
+
+        runner = ScopedProviderRecoveryRunner(
+            store=store,
+            generation=1,
+            retry=retry,
+            classify_failure=lambda _: ("rate_limited", 19),
+        )
+        assert "waiting" == runner.run_one(now=1, token="owner").state
+        assert [
+            ("library-a", "waiting", 20),
+            ("library-b", "waiting", 1000),
+        ] == store._connection.execute(
+            "SELECT scope,state,next_eligible_at FROM provider_recovery_health ORDER BY scope"
+        ).fetchall()
+        assert [("deferred", "queued", 0, None)] == store._connection.execute(
+            "SELECT member_id,state,attempt,cohort_epoch FROM provider_recovery_jobs "
+            "WHERE member_id='deferred'"
+        ).fetchall()
+        assert "recovered" == runner.run_one(now=20, token="current-scope").state
+        assert ["first", "first"] == calls
+        assert "idle" == runner.run_one(now=999, token="too-soon").state
+        assert ["first", "first"] == calls
+        assert "recovered" == runner.run_one(now=1000, token="exact-deadline").state
+        assert ["first", "first", "deferred"] == calls
+        store.close()
+
+
+def test_restart_stale_cleanup_preserves_failed_canary_exhaustion() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "recovery.sqlite"
+        store = _due_store(path)
+        canary = replace(
+            _job("canary"),
+            attempt=4,
+            dispatch_reason="missing_corroboration",
+            dispatch_rank=0,
+        )
+        stale = replace(
+            _job("stale"),
+            dispatch_reason="zero_provider_evidence",
+            dispatch_rank=1,
+        )
+        store.enqueue_jobs((canary, stale), enqueued_at=0)
+        claimed = store.claim_one(
+            generation=1, now=1, token="crashed-owner", lease_seconds=1
+        )
+        assert claimed is not None
+        running = store.claim_job(
+            recovery=claimed,
+            token="crashed-owner",
+            now=1,
+            lease_seconds=1,
+        )
+        assert running is not None
+        assert "canary" == running.member_id
+        store.close()
+
+        store = SQLiteProviderRecoveryStore.open(path)
+        calls: list[str] = []
+
+        def retry(_, member, __):
+            calls.append(member.member_id)
+            raise RuntimeError("stale")
+
+        runner = ScopedProviderRecoveryRunner(
+            store=store,
+            generation=1,
+            retry=retry,
+            classify_failure=lambda _: ("stale", None),
+        )
+        assert "exhausted" == runner.run_one(now=2, token="reclaimed").state
+        assert ["stale"] == calls
+        assert [
+            ("canary", "failed", 5),
+            ("stale", "stale", 1),
+        ] == store._connection.execute(
+            "SELECT member_id,state,attempt FROM provider_recovery_jobs ORDER BY member_id"
+        ).fetchall()
+        assert "exhausted" == store.snapshot()[0].state
+        assert (
+            "exhausted"
+            == store._connection.execute(
+                "SELECT state FROM provider_recovery_events ORDER BY sequence DESC LIMIT 1"
+            ).fetchone()[0]
+        )
+        store.enqueue_jobs((_job("later"),), enqueued_at=3)
+
+        def later_retry(_, member, __):
+            calls.append(member.member_id)
+
+        runner = ScopedProviderRecoveryRunner(
+            store=store,
+            generation=1,
+            retry=later_retry,
+            classify_failure=lambda _: ("transient", None),
+        )
+        assert "exhausted" == runner.run_one(now=3, token="later-package").state
+        assert ["stale", "later"] == calls
+        store.close()
+
+
 def test_credential_failure_is_dormant_not_requeued() -> None:
     with tempfile.TemporaryDirectory() as directory:
         store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")

@@ -286,12 +286,12 @@ class ScopedProviderRecoveryRunner:
                 )
                 break
             if canary is None:
-                self._store.complete_success(
+                completed = self._store.complete_success(
                     token=token,
                     recovery=claimed,
                     now=self._current(current),
                 )
-                return RecoveryRun("recovered")
+                return RecoveryRun(completed.state)
         assert fanout_state is not None
         fanout = 0
         while not self._cancelled():

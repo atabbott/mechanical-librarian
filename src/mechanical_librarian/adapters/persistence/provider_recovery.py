@@ -385,6 +385,16 @@ class SQLiteProviderRecoveryStore:
                 _append_checking(self._connection, recovery, now)
                 owner_successor = None
                 for (scope,) in scopes:
+                    health = self._connection.execute(
+                        "SELECT attempt FROM provider_recovery_health WHERE connection=? "
+                        "AND adapter=? AND scope=? AND generation=?",
+                        (
+                            recovery.connection,
+                            recovery.adapter,
+                            scope,
+                            recovery.generation,
+                        ),
+                    ).fetchone()
                     later = self._connection.execute(
                         "SELECT 1 FROM provider_recovery_jobs WHERE connection=? AND adapter=? "
                         "AND scope=? AND generation=? AND cohort_epoch IS NULL "
@@ -396,21 +406,43 @@ class SQLiteProviderRecoveryStore:
                             recovery.generation,
                         ),
                     ).fetchone()
+                    failed = self._connection.execute(
+                        "SELECT 1 FROM provider_recovery_jobs WHERE connection=? AND adapter=? "
+                        "AND scope=? AND generation=? AND state='failed' LIMIT 1",
+                        (
+                            recovery.connection,
+                            recovery.adapter,
+                            scope,
+                            recovery.generation,
+                        ),
+                    ).fetchone()
+                    if health is None:
+                        raise ProviderRecoveryStoreError(
+                            "provider recovery transition is invalid"
+                        )
+                    state = (
+                        "waiting"
+                        if later is not None
+                        else "exhausted"
+                        if failed is not None
+                        else "recovered"
+                    )
                     successor = ProviderRecovery(
                         recovery.connection,
                         recovery.adapter,
                         scope,
                         recovery.generation,
-                        "waiting" if later is not None else "recovered",
-                        0,
+                        state,
+                        health[0] if state != "recovered" else 0,
                         now if later is not None else None,
                     )
                     self._connection.execute(
-                        "UPDATE provider_recovery_health SET state=?,attempt=0,next_eligible_at=?,"
+                        "UPDATE provider_recovery_health SET state=?,attempt=?,next_eligible_at=?,"
                         "claim_token=NULL,claim_expires_at=NULL,cohort_epoch=NULL,cohort_cutoff=NULL "
                         "WHERE connection=? AND adapter=? AND scope=? AND generation=?",
                         (
                             successor.state,
+                            successor.attempt,
                             successor.next_eligible_at,
                             successor.connection,
                             successor.adapter,
@@ -1048,8 +1080,8 @@ class SQLiteProviderRecoveryStore:
                     )
                     cutoff = self._connection.execute(
                         "SELECT COALESCE(MAX(enrollment_ordinal),0) FROM provider_recovery_jobs "
-                        "WHERE connection=? AND adapter=? AND generation=? AND cohort_epoch=?",
-                        (*provider, generation, epoch),
+                        "WHERE connection=? AND adapter=? AND generation=?",
+                        (*provider, generation),
                     ).fetchone()[0]
                     row = owner
                     changed = self._connection.execute(
@@ -1864,6 +1896,18 @@ class SQLiteProviderRecoveryStore:
                 ):
                     raise ProviderRecoveryStoreError("provider recovery claim is owned")
                 self._connection.execute(
+                    "UPDATE provider_recovery_jobs SET state='queued',claim_token=NULL,"
+                    "claim_expires_at=NULL WHERE connection=? AND adapter=? AND generation=? "
+                    "AND cohort_epoch=? AND state='running' AND claim_expires_at<=?",
+                    (
+                        recovery.connection,
+                        recovery.adapter,
+                        recovery.generation,
+                        current[3],
+                        now,
+                    ),
+                )
+                self._connection.execute(
                     "UPDATE provider_recovery_jobs SET cohort_epoch=NULL WHERE connection=? "
                     "AND adapter=? AND generation=? AND cohort_epoch=? AND state IN ('queued','running')",
                     (
@@ -1875,8 +1919,9 @@ class SQLiteProviderRecoveryStore:
                 )
                 later = self._connection.execute(
                     "SELECT 1 FROM provider_recovery_jobs WHERE connection=? AND adapter=? "
-                    "AND scope=? AND generation=? AND state='queued' LIMIT 1",
-                    (job.connection, job.adapter, job.scope, job.generation),
+                    "AND scope=? AND generation=? AND (state='queued' OR "
+                    "(state='running' AND claim_expires_at<=?)) LIMIT 1",
+                    (job.connection, job.adapter, job.scope, job.generation, now),
                 ).fetchone()
                 successor = ProviderRecovery(
                     recovery.connection,
@@ -1926,22 +1971,33 @@ class SQLiteProviderRecoveryStore:
                 return successor
 
     def _shared_failure_scopes(
-        self, *, recovery: ProviderRecovery, cohort_epoch: int
-    ) -> list[tuple[str]]:
+        self,
+        *,
+        recovery: ProviderRecovery,
+        cohort_epoch: int,
+        cohort_cutoff: int,
+        now: int,
+    ) -> list[tuple[str, int]]:
         """Name the frozen cohort and waiting active next-cohort scopes."""
         return cast(
-            "list[tuple[str]]",
+            "list[tuple[str, int]]",
             self._connection.execute(
-                "SELECT DISTINCT j.scope FROM provider_recovery_jobs j "
+                "SELECT j.scope,MAX(CASE WHEN j.cohort_epoch=? THEN 1 ELSE 0 END) "
+                "FROM provider_recovery_jobs j "
                 "JOIN provider_recovery_health h USING(connection,adapter,scope) "
                 "WHERE j.connection=? AND j.adapter=? AND j.generation=? "
                 "AND h.generation=j.generation AND (j.cohort_epoch=? OR (j.cohort_epoch IS NULL "
-                "AND j.state IN ('queued','running') AND h.state='waiting')) ORDER BY j.scope",
+                "AND j.state IN ('queued','running') AND h.state='waiting' "
+                "AND (h.next_eligible_at<=? OR j.enrollment_ordinal>?))) "
+                "GROUP BY j.scope ORDER BY j.scope",
                 (
+                    cohort_epoch,
                     recovery.connection,
                     recovery.adapter,
                     recovery.generation,
                     cohort_epoch,
+                    now,
+                    cohort_cutoff,
                 ),
             ).fetchall(),
         )
@@ -1993,7 +2049,10 @@ class SQLiteProviderRecoveryStore:
                 if changed != 1:
                     raise ProviderRecoveryStoreError("provider recovery claim is owned")
                 scopes = self._shared_failure_scopes(
-                    recovery=recovery, cohort_epoch=current[5]
+                    recovery=recovery,
+                    cohort_epoch=current[5],
+                    cohort_cutoff=current[6],
+                    now=now,
                 )
                 self._connection.execute(
                     "UPDATE provider_recovery_jobs SET cohort_epoch=NULL WHERE connection=? "
@@ -2007,9 +2066,9 @@ class SQLiteProviderRecoveryStore:
                 )
                 _append_checking(self._connection, recovery, now)
                 owner_successor = None
-                for (scope,) in scopes:
+                for scope, frozen in scopes:
                     health = self._connection.execute(
-                        "SELECT state,attempt FROM provider_recovery_health WHERE connection=? "
+                        "SELECT state,attempt,next_eligible_at FROM provider_recovery_health WHERE connection=? "
                         "AND adapter=? AND scope=? AND generation=?",
                         (
                             recovery.connection,
@@ -2022,7 +2081,12 @@ class SQLiteProviderRecoveryStore:
                         raise ProviderRecoveryStoreError(
                             "provider recovery transition is invalid"
                         )
-                    if health[0] == "dormant":
+                    if health[0] == "dormant" or (
+                        frozen == 1
+                        and health[0] == "waiting"
+                        and health[2] is not None
+                        and health[2] > now
+                    ):
                         continue
                     successor = ProviderRecovery(
                         recovery.connection,
@@ -2385,12 +2449,15 @@ class SQLiteProviderRecoveryStore:
                 ):
                     raise ProviderRecoveryStoreError("provider recovery claim is owned")
                 scopes = self._shared_failure_scopes(
-                    recovery=recovery, cohort_epoch=state[4]
+                    recovery=recovery,
+                    cohort_epoch=state[4],
+                    cohort_cutoff=state[5],
+                    now=now,
                 )
                 owner_successor = None
-                for (scope,) in scopes:
+                for scope, frozen in scopes:
                     health = self._connection.execute(
-                        "SELECT state,attempt FROM provider_recovery_health WHERE connection=? "
+                        "SELECT state,attempt,next_eligible_at FROM provider_recovery_health WHERE connection=? "
                         "AND adapter=? AND scope=? AND generation=?",
                         (
                             recovery.connection,
@@ -2425,7 +2492,12 @@ class SQLiteProviderRecoveryStore:
                         raise ProviderRecoveryStoreError(
                             "provider recovery transition is invalid"
                         )
-                    if health[0] == "dormant":
+                    if health[0] == "dormant" or (
+                        frozen == 1
+                        and health[0] == "waiting"
+                        and health[2] is not None
+                        and health[2] > now
+                    ):
                         continue
                     successor = (
                         ProviderRecovery(
