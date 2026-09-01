@@ -488,9 +488,13 @@ class InventaireMetadataProvider:
             maximum=_MAX_ENTITY_BATCH * _MAX_ENTITY_BATCH,
         )
         for offset in range(0, len(references), _MAX_ENTITY_BATCH):
-            for entity in self._optional_label_entities(
-                references[offset : offset + _MAX_ENTITY_BATCH], deadline=deadline
-            ):
+            try:
+                optional_entities = self._optional_label_entities(
+                    references[offset : offset + _MAX_ENTITY_BATCH], deadline=deadline
+                )
+            except ProviderFailure:
+                continue
+            for entity in optional_entities:
                 label = _optional_entity_label(entity, self._reject_schema_members)
                 if label is not None:
                     direct[_entity_uri(entity)] = label

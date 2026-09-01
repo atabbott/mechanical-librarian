@@ -438,6 +438,164 @@ def test_optional_label_failures_preserve_other_candidate_evidence(
     assert observation.diagnostics[0].count >= 1
 
 
+@pytest.mark.parametrize(
+    ("failure", "label_attempts", "category", "outcome"),
+    (
+        ("404", 1, "http_404", "terminal"),
+        ("503", 3, "http_503", "exhausted"),
+        ("timeout", 3, "transport_read_timeout", "exhausted"),
+    ),
+)
+def test_optional_label_transport_failures_preserve_edition_evidence(
+    failure: str,
+    label_attempts: int,
+    category: str,
+    outcome: str,
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        uris = request.url.params.get_list("uris")
+        if uris == ["isbn:9780306406157"]:
+            return httpx.Response(
+                200,
+                json={
+                    "entities": {
+                        "inv:edition-one": {
+                            "uri": "inv:edition-one",
+                            "labels": {"en": "Example Book"},
+                            "image": {
+                                "url": "/img/entities/0123456789abcdef0123456789abcdef01234567"
+                            },
+                            "claims": {
+                                "wdt:P212": ["9780306406157"],
+                                "wdt:P1476": ["Example Book"],
+                                "wdt:P123": ["wd:Q200"],
+                                "wdt:P407": ["wd:Q1860"],
+                                "wdt:P629": ["wd:Q100"],
+                            },
+                        }
+                    },
+                    "redirects": {"isbn:9780306406157": "inv:edition-one"},
+                },
+            )
+        if uris == ["wd:Q100"]:
+            return httpx.Response(
+                200,
+                json={
+                    "entities": {
+                        "wd:Q100": {
+                            "uri": "wd:Q100",
+                            "labels": {"en": "Example Book"},
+                            "claims": {},
+                        }
+                    },
+                    "redirects": {},
+                },
+            )
+        assert set(uris) == {"wd:Q1860", "wd:Q200"}
+        assert request.url.params.get_list("attributes") == ["labels"]
+        if failure == "404":
+            return httpx.Response(404, json={"status": 404})
+        if failure == "503":
+            return httpx.Response(503, json={"status": 503})
+        raise httpx.ReadTimeout("synthetic timeout", request=request)
+
+    provider = _provider(httpx.MockTransport(respond))
+    observation = provider.observe(_lookup())
+
+    assert observation.status is ProviderStatus.CANDIDATES
+    claims = observation.candidates[0].claims
+    assert {
+        (claim.kind, claim.value)
+        for claim in claims
+        if claim.kind in {ClaimKind.ISBN, ClaimKind.TITLE}
+    } == {
+        (ClaimKind.ISBN, "9780306406157"),
+        (ClaimKind.TITLE, "Example Book"),
+    }
+    assert not any(
+        claim.kind in {ClaimKind.PUBLISHER, ClaimKind.LANGUAGE} for claim in claims
+    )
+    assert provider.cover_descriptors[0].provenance is not None
+    assert (
+        provider.cover_descriptors[0].provenance.designation
+        is CoverDesignation.EXACT_EDITION
+    )
+    assert len(requests) == 2 + label_attempts
+    assert observation.request_accounting.logical_requests == 3
+    assert observation.request_accounting.initial_dispatches == 3
+    assert observation.request_accounting.retry_dispatches == label_attempts - 1
+    assert len(provider.attempt_records) == 2 + label_attempts
+    assert provider.attempt_records[-1].category == category
+    assert provider.attempt_records[-1].outcome == outcome
+    assert provider.incomplete_causes == ()
+    assert observation.diagnostics == ()
+
+
+def test_optional_label_absence_preserves_work_search_evidence() -> None:
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/api/search":
+            return httpx.Response(
+                200,
+                json={"results": [{"id": "Q100", "type": "works", "uri": "wd:Q100"}]},
+            )
+        uris = request.url.params.get_list("uris")
+        if uris == ["wd:Q100"]:
+            return httpx.Response(
+                200,
+                json={
+                    "entities": {
+                        "wd:Q100": {
+                            "uri": "wd:Q100",
+                            "labels": {"en": "Example Book"},
+                            "image": {
+                                "url": "/img/entities/abcdef0123456789abcdef0123456789abcdef01"
+                            },
+                            "claims": {
+                                "wdt:P1476": ["Example Book"],
+                                "wdt:P50": ["wd:Q42"],
+                            },
+                        }
+                    },
+                    "redirects": {},
+                },
+            )
+        assert uris == ["wd:Q42"]
+        return httpx.Response(404, json={"status": 404})
+
+    lookup = MetadataLookup(
+        ProviderQueryKind.WORK,
+        (_isbn(),),
+        title="Example Book",
+        authors=("Ada Example",),
+    )
+    provider = _provider(httpx.MockTransport(respond))
+    observation = provider.observe(lookup)
+
+    assert observation.status is ProviderStatus.CANDIDATES
+    candidate = observation.candidates[0]
+    assert any(
+        claim.kind is ClaimKind.TITLE and claim.value == "Example Book"
+        for claim in candidate.claims
+    )
+    assert not any(claim.kind is ClaimKind.CREATOR for claim in candidate.claims)
+    assert provider.cover_descriptors[0].provenance is not None
+    assert provider.cover_descriptors[0].provenance.designation is CoverDesignation.WORK
+    assert len(requests) == 3
+    assert observation.request_accounting.logical_requests == 3
+    assert observation.request_accounting.initial_dispatches == 3
+    assert observation.request_accounting.retry_dispatches == 0
+    assert len(provider.attempt_records) == 3
+    assert provider.attempt_records[-1].category == "http_404"
+    assert provider.attempt_records[-1].outcome == "terminal"
+    assert observation.diagnostics == ()
+
+
 def test_mixed_label_keys_omit_only_the_dependent_claim(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
