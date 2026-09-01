@@ -41,6 +41,7 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPreparationPipeline,
 )
 from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.proposal_set import ProposalSet
 
 if TYPE_CHECKING:
     from mechanical_librarian.application.configuration import (
@@ -69,6 +70,8 @@ class ProviderRecoveryRepository(ReportRepository, Protocol):
     ) -> str | None: ...
 
     def provider_retry_work_id(self, report_id: str) -> str: ...
+
+    def get_proposal(self, proposal_set_id: str) -> str: ...
 
 
 class ProviderRetryReceipt(Protocol):
@@ -336,9 +339,20 @@ class ProviderRecoveryActivation:
                 or report.target.item != item_id
             ):
                 raise ReviewPipelineError("projection")
+            proposal = (
+                None
+                if proposal_id is None
+                else ProposalSet.from_json(repository.get_proposal(proposal_id))
+            )
+            if proposal is not None and (
+                proposal.proposal_set_id != proposal_id
+                or proposal.report_id != report.report_id
+            ):
+                raise ReviewPipelineError("projection")
             jobs = provider_recovery_jobs(
                 report,
                 package=package,
+                proposal=proposal,
                 configuration=self._configuration,
                 scope=report.target.library,
             )

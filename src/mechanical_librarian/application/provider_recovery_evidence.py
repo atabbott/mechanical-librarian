@@ -28,6 +28,7 @@ from mechanical_librarian.application.provider_retry_successor import (
 )
 from mechanical_librarian.application.review_pipeline import ReviewPipelineError
 from mechanical_librarian.domain.metadata_report import MetadataReport, ProviderStatus
+from mechanical_librarian.domain.proposal_set import ProposalOutcome, ProposalSet
 from mechanical_librarian.domain.provider_recovery import ProviderRecoveryJob
 
 if TYPE_CHECKING:
@@ -37,10 +38,49 @@ __all__ = [
     "ProviderFailureObserver",
     "TargetConnectionHeld",
     "classify_provider_recovery_failure",
+    "provider_budget_dispatch_reason",
     "provider_recovery_jobs",
     "provider_statuses",
     "record_provider_recovery_observations",
 ]
+
+
+def provider_budget_dispatch_reason(
+    report: MetadataReport, proposal: ProposalSet | None
+) -> tuple[str, int]:
+    """Classify one published recovery package without provider-specific rules.
+
+    The result is stored with the recovery member because the SQLite claim is
+    the atomic dispatch boundary.  It deliberately uses only exact published
+    report/proposal facts: a live policy or a later package cannot relabel a
+    member after its cohort has started.
+    """
+    if proposal is not None and type(proposal) is not ProposalSet:
+        raise ReviewPipelineError("projection")
+    if proposal is not None and proposal.report_id != report.report_id:
+        raise ReviewPipelineError("projection")
+    if proposal is not None and any(
+        result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+        and result.reasons == ("insufficient_independent_corroboration",)
+        for result in proposal.results
+    ):
+        return "missing_corroboration", 0
+    if not any(
+        getattr(observation, "candidates", ())
+        or any(
+            getattr(lane, "candidates", ())
+            for lane in getattr(observation, "lanes", ())
+        )
+        for observation in report.providers
+    ):
+        return "zero_provider_evidence", 1
+    if proposal is not None and any(
+        result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+        and result.reasons == ("competing_evidence",)
+        for result in proposal.results
+    ):
+        return "settleable_disagreement", 2
+    return "blanket_scan", 3
 
 
 class ProviderFailureObserver(Protocol):
@@ -137,11 +177,15 @@ def provider_recovery_jobs(
     report: MetadataReport,
     *,
     package: tuple[str | None, str, str | None, int | None, str],
+    proposal: ProposalSet | None = None,
     configuration: ApplicationConfiguration,
     scope: str,
 ) -> tuple[ProviderRecoveryJob, ...]:
     """Create bounded retry work only from a published terminal package."""
     adapters = {provider.name: provider.adapter for provider in configuration.providers}
+    if proposal is not None and proposal.proposal_set_id != package[0]:
+        raise ReviewPipelineError("projection")
+    reason, rank = provider_budget_dispatch_reason(report, proposal)
     jobs = []
     for observation in report.providers:
         lane_ids = tuple(
@@ -170,6 +214,8 @@ def provider_recovery_jobs(
                 report.report_id,
                 *package,
                 json.dumps(lane_ids, separators=(",", ":")),
+                dispatch_reason=reason,
+                dispatch_rank=rank,
             )
         )
     return tuple(

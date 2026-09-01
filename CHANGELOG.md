@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Under provider quota pressure, exact-current recovery spends requests first
+  on missing corroboration, then zero evidence, then settleable disagreement,
+  before deterministic blanket scanning; fanout cohorts stay restart-safe and
+  fair to later work. Existing pre-release recovery state requires a clean
+  rebuild. (#882)
+
 - Ebook providers try eligible usable ISBNs before title/author discovery and skip
   the latter only when an identifier yields candidates with no recoverable sibling;
   all other outcomes keep discovery, with accounting exposing executed lane kinds. (#881)

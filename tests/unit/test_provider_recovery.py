@@ -151,6 +151,134 @@ def test_enqueue_enrolls_an_unseen_member_and_health_before_its_job() -> None:
             "SELECT state,attempt,next_eligible_at,occurred_at "
             "FROM provider_recovery_events"
         ).fetchall()
+
+
+def test_replayed_registration_preserves_ordinal_but_current_refresh_renews_it() -> (
+    None
+):
+    with tempfile.TemporaryDirectory() as directory:
+        store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+        original = _job("member")
+        assert 1 == store.enqueue_jobs((original,), enqueued_at=3)
+        assert 0 == store.enqueue_jobs((original,), enqueued_at=4)
+        assert [("member", 1)] == store._connection.execute(
+            "SELECT member_id,enrollment_ordinal FROM provider_recovery_jobs"
+        ).fetchall()
+        refreshed = replace(
+            original,
+            source_report_id="report-refreshed",
+            package_report_id="report-refreshed",
+        )
+        assert 1 == store.enqueue_jobs((refreshed,), enqueued_at=5)
+        assert [("member", 2)] == store._connection.execute(
+            "SELECT member_id,enrollment_ordinal FROM provider_recovery_jobs"
+        ).fetchall()
+
+
+def test_frozen_fanout_cohort_defers_later_arrivals_without_starving_them() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+        store.record(
+            ProviderRecovery.failed(
+                connection="google",
+                adapter="google_books",
+                scope="books",
+                generation=1,
+                failure="transient",
+                now=0,
+                retry_after=1,
+            ),
+            occurred_at=0,
+        )
+        store.enqueue_jobs((_job("canary"), _job("sibling")), enqueued_at=0)
+        dispatched: list[str] = []
+
+        def retry(_, job: ProviderRecoveryJob, __) -> None:
+            dispatched.append(job.member_id)
+            if job.member_id == "sibling":
+                store.enqueue_jobs((_job("later"),), enqueued_at=1)
+
+        runner = ScopedProviderRecoveryRunner(
+            store=store,
+            generation=1,
+            retry=retry,
+            classify_failure=lambda _: ("transient", None),
+        )
+        assert "waiting" == runner.run_one(now=1, token="first").state
+        assert ["canary", "sibling"] == dispatched
+        assert [("later", "queued")] == store._connection.execute(
+            "SELECT member_id,state FROM provider_recovery_jobs WHERE member_id='later'"
+        ).fetchall()
+        assert "recovered" == runner.run_one(now=1, token="second").state
+        assert ["canary", "sibling", "later"] == dispatched
+
+
+def test_constrained_replay_dispatches_decided_field_reasons_before_blanket_scan() -> (
+    None
+):
+    with tempfile.TemporaryDirectory() as directory:
+        store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+        store.record(
+            ProviderRecovery.failed(
+                connection="google",
+                adapter="google_books",
+                scope="books",
+                generation=1,
+                failure="transient",
+                now=0,
+                retry_after=1,
+            ),
+            occurred_at=0,
+        )
+        jobs = (
+            replace(_job("a-blanket"), dispatch_reason="blanket_scan", dispatch_rank=3),
+            replace(
+                _job("b-disagreement"),
+                dispatch_reason="settleable_disagreement",
+                dispatch_rank=2,
+            ),
+            replace(
+                _job("c-zero"),
+                dispatch_reason="zero_provider_evidence",
+                dispatch_rank=1,
+            ),
+            replace(
+                _job("d-corroboration"),
+                dispatch_reason="missing_corroboration",
+                dispatch_rank=0,
+            ),
+        )
+        store.enqueue_jobs(jobs, enqueued_at=0)
+        dispatched: list[tuple[str, str]] = []
+        runner = ScopedProviderRecoveryRunner(
+            store=store,
+            generation=1,
+            retry=lambda _, job, __: dispatched.append(
+                (job.member_id, job.dispatch_reason)
+            ),
+            classify_failure=lambda _: ("transient", None),
+        )
+        assert "recovered" == runner.run_one(now=1, token="owner").state
+        assert [
+            ("d-corroboration", "missing_corroboration"),
+            ("c-zero", "zero_provider_evidence"),
+            ("b-disagreement", "settleable_disagreement"),
+            ("a-blanket", "blanket_scan"),
+        ] == dispatched
+        assert [
+            ("d-corroboration", "missing_corroboration"),
+            ("c-zero", "zero_provider_evidence"),
+        ] == dispatched[:2]
+        budget = 2
+        decided = {"missing_corroboration", "zero_provider_evidence"}
+        ranked_yield = sum(reason in decided for _, reason in dispatched[:budget])
+        blanket_yield = sum(
+            job.dispatch_reason in decided
+            for job in sorted(jobs, key=lambda job: job.member_id)[:budget]
+        )
+        assert 2 == ranked_yield
+        assert 0 == blanket_yield
+        assert ranked_yield > blanket_yield
         store.close()
 
 
@@ -1328,6 +1456,25 @@ def test_bootstrap_preserves_unrelated_objects_and_rejects_partial_or_rolled_bac
             ).fetchall()
         )
         connection.close()
+
+
+def test_bootstrap_rejects_pre_cutoff_recovery_schema_for_a_clean_rebuild() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "pre-cutoff.sqlite"
+        connection = sqlite3.connect(path)
+        connection.execute(recovery_persistence._MEMBERS)
+        connection.execute(
+            recovery_persistence._HEALTH.replace(
+                "enrollment_cursor INTEGER NOT NULL DEFAULT 0 CHECK(enrollment_cursor>=0),",
+                "",
+            )
+        )
+        for statement in recovery_persistence._CREATE[2:]:
+            connection.execute(statement)
+        connection.commit()
+        connection.close()
+        with pytest.raises(ProviderRecoveryStoreError, match="incompatible"):
+            SQLiteProviderRecoveryStore.open(path)
 
 
 def test_shared_store_serializes_worker_observation_and_closes_after_shutdown() -> None:

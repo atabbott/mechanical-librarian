@@ -35,6 +35,9 @@ class ProviderRecoveryJob:
     lane_ids: str
     state: str = "queued"
     attempt: int = 0
+    dispatch_reason: str = "blanket_scan"
+    dispatch_rank: int = 3
+    enrollment_ordinal: int = 0
 
     def __post_init__(self) -> None:
         strings = (
@@ -88,6 +91,22 @@ class ProviderRecoveryJob:
             or self.state not in {"queued", "running", "complete", "failed", "stale"}
             or type(self.attempt) is not int
             or not 0 <= self.attempt <= 5
+            or self.dispatch_reason
+            not in {
+                "missing_corroboration",
+                "zero_provider_evidence",
+                "settleable_disagreement",
+                "blanket_scan",
+            }
+            or self.dispatch_rank
+            != {
+                "missing_corroboration": 0,
+                "zero_provider_evidence": 1,
+                "settleable_disagreement": 2,
+                "blanket_scan": 3,
+            }[self.dispatch_reason]
+            or type(self.enrollment_ordinal) is not int
+            or self.enrollment_ordinal < 0
         ):
             raise ProviderRecoveryError("provider recovery job is invalid")
 

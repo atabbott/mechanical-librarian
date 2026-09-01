@@ -29,6 +29,7 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.application.provider_recovery_evidence import (
     TargetConnectionHeld,
     classify_provider_recovery_failure,
+    provider_budget_dispatch_reason,
     provider_recovery_jobs,
     provider_statuses,
     record_provider_recovery_observations,
@@ -50,6 +51,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderObservation,
     ProviderStatus,
 )
+from mechanical_librarian.domain.proposal_set import ProposalOutcome, ProposalSet
 
 _CONFIGURATION = ApplicationConfiguration(
     (
@@ -101,6 +103,22 @@ def _observation(provider: str, status: ProviderStatus, *lanes: object) -> objec
 
 def _lane(identity: str, status: ProviderStatus) -> object:
     return SimpleNamespace(identity=identity, status=status)
+
+
+def _proposal(reason: str, *, report_id: str = "report-1") -> ProposalSet:
+    """Make the smallest exact-type projection needed by this classifier test."""
+    proposal = object.__new__(ProposalSet)
+    object.__setattr__(proposal, "report_id", report_id)
+    object.__setattr__(
+        proposal,
+        "results",
+        (
+            SimpleNamespace(
+                outcome=ProposalOutcome.UNRESOLVED_CHOICE, reasons=(reason,)
+            ),
+        ),
+    )
+    return proposal
 
 
 class _Observer:
@@ -176,6 +194,47 @@ def _recognised_failures() -> dict[str, tuple[Exception, tuple[str, int | None]]
 
 
 _RECOGNISED_FAILURES = _recognised_failures()
+
+
+@pytest.mark.parametrize(
+    ("report", "proposal", "expected"),
+    (
+        (
+            _report(SimpleNamespace(candidates=("candidate",), lanes=())),
+            _proposal("insufficient_independent_corroboration"),
+            ("missing_corroboration", 0),
+        ),
+        (
+            _report(SimpleNamespace(candidates=(), lanes=())),
+            None,
+            ("zero_provider_evidence", 1),
+        ),
+        (
+            _report(SimpleNamespace(candidates=("candidate",), lanes=())),
+            _proposal("competing_evidence"),
+            ("settleable_disagreement", 2),
+        ),
+        (
+            _report(SimpleNamespace(candidates=("candidate",), lanes=())),
+            None,
+            ("blanket_scan", 3),
+        ),
+    ),
+    ids=("corroboration", "zero-evidence", "disagreement", "fallback"),
+)
+def test_provider_budget_dispatch_reason_has_closed_value_order(
+    report: MetadataReport, proposal: ProposalSet | None, expected: tuple[str, int]
+) -> None:
+    assert expected == provider_budget_dispatch_reason(report, proposal)
+
+
+def test_provider_budget_dispatch_reason_fails_closed_on_mismatched_projection() -> (
+    None
+):
+    with pytest.raises(ReviewPipelineError, match="projection"):
+        provider_budget_dispatch_reason(
+            _report(), _proposal("competing_evidence", report_id="other")
+        )
 
 
 @pytest.mark.parametrize(

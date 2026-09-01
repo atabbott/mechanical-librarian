@@ -75,6 +75,24 @@ spends a job execution attempt. This amendment changes no recovery-database
 shape. The two new persisted report diagnostics are governed by ADR-0017 and
 require the `metadata-report-v29` clean rebuild under ADR-0013.
 
+## Amendment: decided-field quota dispatch (2026-09-01)
+
+Once exact-current recovery work exists after provider quota pressure, its
+durable job records the closed, application-classified dispatch reason:
+missing independent corroboration, zero provider evidence, settleable
+disagreement, then blanket scan. Claims order those classes and retain the
+former `member_id` tie-break. The persisted reason is the recovery request's
+accounting diagnostic; it carries no provider payload or query text.
+
+Canary authorization freezes the enrolled-job ordinal cutoff for its fanout.
+Jobs registered later, including a refreshed current package, keep their
+renewed ordinal for the next ordinary recovery pass; replaying an unchanged
+registration preserves its ordinal. This bounded cohort makes restart and
+competing-worker claims deterministic while allowing ongoing arrivals to reach
+the next canary. The recovery-store schema is exact-current under ADR-0013:
+existing pre-release recovery state requires a clean rebuild, with no migration
+or repair.
+
 ## Consequences
 
 ### Positive
