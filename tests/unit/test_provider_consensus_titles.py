@@ -184,7 +184,9 @@ def test_provider_consensus_requires_byte_exact_provider_raw_titles() -> None:
     assert result.reasons == ("competing_evidence",)
 
 
-def test_provider_consensus_requires_every_provider_title_observation_to_match() -> None:
+def test_provider_consensus_requires_every_provider_title_observation_to_match() -> (
+    None
+):
     result = _title_result(
         local="Plain Work [retail]",
         providers=(
@@ -247,10 +249,15 @@ def test_colon_title_never_self_elects_and_keeps_a_closed_reason() -> None:
     )
 
     assert ProposalOutcome.UNRESOLVED_CHOICE is result.outcome
-    assert result.reasons == ("competing_evidence", "provider_consensus_title_colon_unused")
+    assert result.reasons == (
+        "competing_evidence",
+        "provider_consensus_title_colon_unused",
+    )
 
 
-def test_colon_title_does_not_use_local_or_mismatched_subtitle_as_corroboration() -> None:
+def test_colon_title_does_not_use_local_or_mismatched_subtitle_as_corroboration() -> (
+    None
+):
     local_only = _title_result(
         local="Plain Work: A subtitle",
         local_claims=(
@@ -277,7 +284,9 @@ def test_colon_title_does_not_use_local_or_mismatched_subtitle_as_corroboration(
     mismatch = _title_result(
         local="Plain Work: A subtitle",
         providers=(
-            _provider_title("open_library", "Plain Work", subtitle="Different subtitle"),
+            _provider_title(
+                "open_library", "Plain Work", subtitle="Different subtitle"
+            ),
             _provider_title("hardcover", "Plain Work"),
         ),
     )

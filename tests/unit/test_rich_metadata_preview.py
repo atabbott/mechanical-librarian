@@ -983,7 +983,9 @@ def test_title_derived_colon_subtitle_stays_an_owner_proposal_not_automatic() ->
     policy = resolve_policy(MetadataPolicyProfile.builtin(), report.target.library)
     proposal = evaluate_report(report, policy.resolved_id, dict(policy.destinations))
     subtitle = next(
-        result for result in proposal.results if result.destination is TargetDestination.SUBTITLE
+        result
+        for result in proposal.results
+        if result.destination is TargetDestination.SUBTITLE
     )
     selected = next(
         value

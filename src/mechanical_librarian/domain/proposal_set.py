@@ -1373,7 +1373,9 @@ def _provider_consensus_title_election(
     match = matches[0]
     if (
         match.family is WorkTitleTransformationFamily.SUBTITLE_SEGMENT
-        and not _subtitle_component_is_preserved(match.preserved_component, report, targets)
+        and not _subtitle_component_is_preserved(
+            match.preserved_component, report, targets
+        )
     ):
         return _unresolved(result, "provider_consensus_title_colon_unused")
     if (
