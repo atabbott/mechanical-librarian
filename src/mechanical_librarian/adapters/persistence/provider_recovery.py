@@ -531,13 +531,14 @@ class SQLiteProviderRecoveryStore:
                         for _, state, attempt in self._connection.execute(
                             "SELECT target_connection,state,attempt FROM provider_recovery_jobs "
                             "WHERE connection=? AND adapter=? AND generation=? AND cohort_epoch IS NULL "
-                            "AND state IN ('queued','running') AND target_connection IN ("
+                            "AND scope=? AND state IN ('queued','running') AND target_connection IN ("
                             + ",".join("?" for _ in blocked_targets)
                             + ")",
                             (
                                 recovery.connection,
                                 recovery.adapter,
                                 recovery.generation,
+                                recovery.scope,
                                 *sorted(blocked_targets),
                             ),
                         )
@@ -1034,9 +1035,15 @@ class SQLiteProviderRecoveryStore:
                         (*provider, generation),
                     ).fetchone()[0]
                     self._connection.execute(
+                        "UPDATE provider_recovery_jobs SET state='failed',claim_token=NULL,"
+                        "claim_expires_at=NULL WHERE connection=? AND adapter=? AND generation=? "
+                        "AND state='queued' AND attempt>=5",
+                        (*provider, generation),
+                    )
+                    self._connection.execute(
                         "UPDATE provider_recovery_jobs SET cohort_epoch=? WHERE connection=? AND adapter=? "
                         "AND generation=? AND (state='queued' OR "
-                        "(state='running' AND claim_expires_at<=?))"
+                        "(state='running' AND claim_expires_at<=?)) AND attempt<5"
                         + excluded
                         + " AND EXISTS (SELECT 1 FROM provider_recovery_health h WHERE "
                         "h.connection=provider_recovery_jobs.connection AND h.adapter=provider_recovery_jobs.adapter "
@@ -1187,8 +1194,16 @@ class SQLiteProviderRecoveryStore:
                     "FROM provider_recovery_health h LEFT JOIN provider_recovery_jobs j "
                     "ON j.connection=h.connection AND j.adapter=h.adapter AND j.generation=h.generation "
                     "AND ((h.state='fanout' AND j.cohort_epoch=h.cohort_epoch) "
-                    "OR (h.state!='fanout' AND j.scope=h.scope)) "
+                    "OR (h.state='waiting' AND j.scope=h.scope AND NOT EXISTS (SELECT 1 "
+                    "FROM provider_recovery_health owner WHERE owner.connection=j.connection "
+                    "AND owner.adapter=j.adapter AND owner.generation=j.generation "
+                    "AND owner.cohort_epoch=j.cohort_epoch AND owner.state IN ('checking','fanout'))) "
+                    "OR (h.state NOT IN ('waiting','fanout') AND j.scope=h.scope)) "
                     "AND j.state IN ('queued','running') "
+                    "WHERE h.state!='waiting' OR j.member_id IS NOT NULL OR NOT EXISTS (SELECT 1 "
+                    "FROM provider_recovery_jobs active WHERE active.connection=h.connection "
+                    "AND active.adapter=h.adapter AND active.scope=h.scope "
+                    "AND active.generation=h.generation AND active.state IN ('queued','running')) "
                     "GROUP BY h.state ORDER BY h.state"
                 ).fetchall()
                 reasons: dict[str, list[str]] = {state: [] for state, *_ in rows}
@@ -1197,7 +1212,11 @@ class SQLiteProviderRecoveryStore:
                     "JOIN provider_recovery_jobs j ON j.connection=h.connection "
                     "AND j.adapter=h.adapter AND j.generation=h.generation "
                     "AND ((h.state='fanout' AND j.cohort_epoch=h.cohort_epoch) "
-                    "OR (h.state!='fanout' AND j.scope=h.scope)) "
+                    "OR (h.state='waiting' AND j.scope=h.scope AND NOT EXISTS (SELECT 1 "
+                    "FROM provider_recovery_health owner WHERE owner.connection=j.connection "
+                    "AND owner.adapter=j.adapter AND owner.generation=j.generation "
+                    "AND owner.cohort_epoch=j.cohort_epoch AND owner.state IN ('checking','fanout'))) "
+                    "OR (h.state NOT IN ('waiting','fanout') AND j.scope=h.scope)) "
                     "WHERE j.state IN ('queued','running') ORDER BY h.state,j.dispatch_rank"
                 ):
                     reasons[state].append(reason)
@@ -1462,16 +1481,38 @@ class SQLiteProviderRecoveryStore:
                 ):
                     raise ProviderRecoveryStoreError("provider recovery claim is owned")
                 excluded, parameters = _blocked_targets(blocked_targets)
-                row = self._connection.execute(
-                    "SELECT connection,adapter,scope,generation,member_id,target_connection,library,item,file_identity,source_report_id,package_proposal_id,package_report_id,package_case_id,package_checkpoint,package_outcome,lane_ids,state,attempt,dispatch_reason,dispatch_rank,enrollment_ordinal,cohort_epoch,claim_token,claim_expires_at FROM provider_recovery_jobs WHERE connection=? AND adapter=? AND generation=? AND cohort_epoch=? AND enrollment_ordinal<=? AND attempt<5 AND (state='queued' OR (state='running' AND claim_expires_at<=?))"
-                    + excluded
-                    + " ORDER BY dispatch_rank,member_id,scope LIMIT 1",
+                self._connection.execute(
+                    "UPDATE provider_recovery_jobs SET cohort_epoch=NULL WHERE connection=? "
+                    "AND adapter=? AND generation=? AND cohort_epoch=? AND enrollment_ordinal<=? "
+                    "AND scope<>? AND state IN ('queued','running') AND NOT EXISTS (SELECT 1 "
+                    "FROM provider_recovery_health member_health WHERE "
+                    "member_health.connection=provider_recovery_jobs.connection AND "
+                    "member_health.adapter=provider_recovery_jobs.adapter AND "
+                    "member_health.scope=provider_recovery_jobs.scope AND "
+                    "member_health.generation=provider_recovery_jobs.generation AND "
+                    "member_health.state='waiting' AND member_health.next_eligible_at<=?)",
                     (
                         recovery.connection,
                         recovery.adapter,
                         recovery.generation,
                         health[5],
                         health[6],
+                        recovery.scope,
+                        now,
+                    ),
+                )
+                row = self._connection.execute(
+                    "SELECT j.connection,j.adapter,j.scope,j.generation,j.member_id,j.target_connection,j.library,j.item,j.file_identity,j.source_report_id,j.package_proposal_id,j.package_report_id,j.package_case_id,j.package_checkpoint,j.package_outcome,j.lane_ids,j.state,j.attempt,j.dispatch_reason,j.dispatch_rank,j.enrollment_ordinal,j.cohort_epoch,j.claim_token,j.claim_expires_at FROM provider_recovery_jobs j JOIN provider_recovery_health member_health ON member_health.connection=j.connection AND member_health.adapter=j.adapter AND member_health.scope=j.scope AND member_health.generation=j.generation WHERE j.connection=? AND j.adapter=? AND j.generation=? AND j.cohort_epoch=? AND j.enrollment_ordinal<=? AND j.attempt<5 AND (j.state='queued' OR (j.state='running' AND j.claim_expires_at<=?)) AND (j.scope=? OR (member_health.state='waiting' AND member_health.next_eligible_at<=?))"
+                    + excluded
+                    + " ORDER BY j.dispatch_rank,j.member_id,j.scope LIMIT 1",
+                    (
+                        recovery.connection,
+                        recovery.adapter,
+                        recovery.generation,
+                        health[5],
+                        health[6],
+                        now,
+                        recovery.scope,
                         now,
                         *parameters,
                     ),

@@ -1557,7 +1557,9 @@ def test_activity_accepts_activated_recovery_states_and_rejects_unknown_state() 
         {"state": "fanout", "affected_count": 3, "next_eligible_at": None},
         {"state": "exhausted", "affected_count": 1, "next_eligible_at": None},
     )
-    assert list(snapshot) == service(snapshot).activity()["provider_recovery"]
+    activity = service(snapshot).activity()
+    assert list(snapshot) == activity["provider_recovery"]
+    assert 1 == activity["waiting"]["held_for_recovery"]
     with pytest.raises(GuardedApplicationError, match="activity"):
         service(
             ({"state": "unknown", "affected_count": 1, "next_eligible_at": None},)
