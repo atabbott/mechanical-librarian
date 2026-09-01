@@ -386,7 +386,7 @@ class SQLiteProviderRecoveryStore:
                 owner_successor = None
                 for (scope,) in scopes:
                     health = self._connection.execute(
-                        "SELECT attempt FROM provider_recovery_health WHERE connection=? "
+                        "SELECT state,attempt,next_eligible_at FROM provider_recovery_health WHERE connection=? "
                         "AND adapter=? AND scope=? AND generation=?",
                         (
                             recovery.connection,
@@ -420,21 +420,35 @@ class SQLiteProviderRecoveryStore:
                         raise ProviderRecoveryStoreError(
                             "provider recovery transition is invalid"
                         )
+                    newer_deferral = (
+                        health[0] == "waiting"
+                        and health[2] is not None
+                        and health[2] > now
+                    )
                     state = (
                         "waiting"
                         if later is not None
                         else "exhausted"
                         if failed is not None
+                        else "dormant"
+                        if health[0] == "dormant"
+                        else "waiting"
+                        if newer_deferral
                         else "recovered"
                     )
+                    attempt = health[1] if state != "recovered" else 0
                     successor = ProviderRecovery(
                         recovery.connection,
                         recovery.adapter,
                         scope,
                         recovery.generation,
                         state,
-                        health[0] if state != "recovered" else 0,
-                        now if later is not None else None,
+                        attempt,
+                        health[2]
+                        if newer_deferral
+                        else now
+                        if later is not None
+                        else None,
                     )
                     self._connection.execute(
                         "UPDATE provider_recovery_health SET state=?,attempt=?,next_eligible_at=?,"

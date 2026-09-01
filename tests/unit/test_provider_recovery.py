@@ -1989,6 +1989,118 @@ def test_restart_stale_cleanup_preserves_failed_canary_exhaustion() -> None:
         store.close()
 
 
+def test_stale_cleanup_preserves_newer_quota_deadline() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        store = _due_store(
+            Path(directory) / "recovery.sqlite", "library-a", "library-b"
+        )
+        first = replace(
+            _job("first"),
+            scope="library-a",
+            library="library-a",
+            dispatch_reason="missing_corroboration",
+            dispatch_rank=0,
+        )
+        second = replace(_job("second"), scope="library-b", library="library-b")
+        store.enqueue_jobs((first, second), enqueued_at=0)
+        recovery = store.claim_one(generation=1, now=1, token="owner")
+        assert recovery is not None
+        stale_first = store.claim_job(recovery=recovery, token="owner", now=1)
+        assert stale_first is not None
+        store.complete_stale_job(job=stale_first, token="owner", now=1)
+        stale_second = store.claim_job(recovery=recovery, token="owner", now=1)
+        assert stale_second is not None
+        assert "second" == stale_second.member_id
+        store.observe_failure(
+            connection="google",
+            adapter="google_books",
+            scope="library-b",
+            generation=1,
+            failure="quota_exhausted",
+            now=1,
+            retry_after=100,
+        )
+        authoritative = store._connection.execute(
+            "SELECT state,attempt,next_eligible_at FROM provider_recovery_health "
+            "WHERE scope='library-b'"
+        ).fetchone()
+        store.complete_stale_job(job=stale_second, token="owner", now=1)
+        assert store.claim_job(recovery=recovery, token="owner", now=1) is None
+        store.complete_success(token="owner", recovery=recovery, now=1)
+
+        assert ("waiting", 1, 101) == authoritative
+        assert (
+            authoritative
+            == store._connection.execute(
+                "SELECT state,attempt,next_eligible_at FROM provider_recovery_health "
+                "WHERE scope='library-b'"
+            ).fetchone()
+        )
+        later = replace(_job("later"), scope="library-b", library="library-b")
+        store.enqueue_jobs((later,), enqueued_at=2)
+        assert store.claim_one(generation=1, now=100, token="early") is None
+        due = store.claim_one(generation=1, now=101, token="due")
+        assert due is not None
+        dispatched = store.claim_job(recovery=due, token="due", now=101)
+        assert dispatched is not None
+        assert "later" == dispatched.member_id
+        store.close()
+
+
+def test_stale_cleanup_preserves_newer_dormant_state() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        store = _due_store(
+            Path(directory) / "recovery.sqlite", "library-a", "library-b"
+        )
+        first = replace(
+            _job("first"),
+            scope="library-a",
+            library="library-a",
+            dispatch_reason="missing_corroboration",
+            dispatch_rank=0,
+        )
+        second = replace(_job("second"), scope="library-b", library="library-b")
+        store.enqueue_jobs((first, second), enqueued_at=0)
+        recovery = store.claim_one(generation=1, now=1, token="owner")
+        assert recovery is not None
+        stale_first = store.claim_job(recovery=recovery, token="owner", now=1)
+        assert stale_first is not None
+        store.complete_stale_job(job=stale_first, token="owner", now=1)
+        stale_second = store.claim_job(recovery=recovery, token="owner", now=1)
+        assert stale_second is not None
+        assert "second" == stale_second.member_id
+        store.observe_failure(
+            connection="google",
+            adapter="google_books",
+            scope="library-b",
+            generation=1,
+            failure="authentication",
+            now=1,
+        )
+        authoritative = store._connection.execute(
+            "SELECT state,attempt,next_eligible_at FROM provider_recovery_health "
+            "WHERE scope='library-b'"
+        ).fetchone()
+        store.complete_stale_job(job=stale_second, token="owner", now=1)
+        assert store.claim_job(recovery=recovery, token="owner", now=1) is None
+        store.complete_success(token="owner", recovery=recovery, now=1)
+
+        assert ("dormant", 0, None) == authoritative
+        assert (
+            authoritative
+            == store._connection.execute(
+                "SELECT state,attempt,next_eligible_at FROM provider_recovery_health "
+                "WHERE scope='library-b'"
+            ).fetchone()
+        )
+        later = replace(_job("later"), scope="library-b", library="library-b")
+        store.enqueue_jobs((later,), enqueued_at=2)
+        assert (
+            store.claim_one(generation=1, now=100_000, token="same-generation") is None
+        )
+        store.close()
+
+
 def test_credential_failure_is_dormant_not_requeued() -> None:
     with tempfile.TemporaryDirectory() as directory:
         store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
