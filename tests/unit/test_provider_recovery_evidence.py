@@ -406,11 +406,25 @@ def test_fixed_budget_replay_counts_actual_decided_fields_not_reason_labels() ->
     # These four immutable reports pin the old member-id ordering: the two
     # blanket scans sort before the two missing-corroboration packages. The
     # production classifier, rather than the fixture, assigns those reasons.
+    # A member id is the report's content digest, which embeds the report
+    # schema discriminator, so the two non-decisive ordinals are re-derived
+    # here rather than fixed: the pin must hold under whatever schema is
+    # current, not under the one it was first written against.
+    decisive_cases = (
+        recovery_case(52, decisive=True),
+        recovery_case(54, decisive=True),
+    )
+    lowest_decisive = min(base.report_id for base, _ in decisive_cases)
+    scan_cases: list[tuple[MetadataReport, MetadataReport]] = []
+    ordinal = 0
+    while len(scan_cases) < 2:
+        ordinal += 1
+        candidate = recovery_case(ordinal, decisive=False)
+        if candidate[0].report_id < lowest_decisive:
+            scan_cases.append(candidate)
     cases = (
-        (*recovery_case(12, decisive=False), False),
-        (*recovery_case(22, decisive=False), False),
-        (*recovery_case(52, decisive=True), True),
-        (*recovery_case(54, decisive=True), True),
+        *((base, successor, False) for base, successor in scan_cases),
+        *((base, successor, True) for base, successor in decisive_cases),
     )
     successors = {base.report_id: successor for base, successor, _ in cases}
 
