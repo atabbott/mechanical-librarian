@@ -68,7 +68,18 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     assert passing == set(manifest["passing_automatic_options"])
     assert ["explicit:unsupported"] == manifest["human_only_options"]
     assert ["narrators", "cover"] == manifest["excluded_destinations"]
-    assert 11 == manifest["candidate_execution_count"]
+    assert 10 == manifest["candidate_execution_count"]
+    assert {
+        "full_output_equivalence_receipt_sha256": (
+            "508b4fbfea70678cb093283269050c31746163880638b2c60e9720319bf8d528"
+        ),
+        "preflight_failure_sha256": (
+            "a9b26e1ad455fab3562b0da72295994435af1469b640fd3cb22dce8052d0a2ed"
+        ),
+        "prior_complete_result_sha256": (
+            "1fbc5cfa52320375d7fa5203d146c3093a9a8b40d6479d9f14d973dc4be08ddc"
+        ),
+    } == manifest["authority_rotation"]
     assert {
         "evaluated_reports": 49,
         "exposure_unit": "case_field_option",
@@ -212,6 +223,7 @@ def test_candidate_exposes_only_closed_aggregate_contract_data() -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
     assert {
         "automatic_authority",
+        "authority_rotation",
         "candidate_execution_count",
         "evidence_method",
         "excluded_destinations",

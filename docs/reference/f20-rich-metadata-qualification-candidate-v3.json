@@ -1,6 +1,11 @@
 {
   "automatic_authority": "decision_only",
-  "candidate_execution_count": 11,
+  "authority_rotation": {
+    "full_output_equivalence_receipt_sha256": "508b4fbfea70678cb093283269050c31746163880638b2c60e9720319bf8d528",
+    "preflight_failure_sha256": "a9b26e1ad455fab3562b0da72295994435af1469b640fd3cb22dce8052d0a2ed",
+    "prior_complete_result_sha256": "1fbc5cfa52320375d7fa5203d146c3093a9a8b40d6479d9f14d973dc4be08ddc"
+  },
+  "candidate_execution_count": 10,
   "evidence_method": {
     "evaluated_reports": 49,
     "exposure_unit": "case_field_option",

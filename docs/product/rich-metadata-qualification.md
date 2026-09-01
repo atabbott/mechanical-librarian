@@ -89,6 +89,15 @@ the projection began citing the corroborating local subtitle claim alongside
 the provider evidence, so a persisted automatic subtitle decision's durable
 record names its decisive corroborator.
 
+F36 rotates only the exact automatic-decision envelope around those results.
+Its attempted replay stopped in preflight when the current Open Library adapter
+requested beyond the retained response set, before scoring and without network
+access, so it did not consume an eleventh candidate execution. A source-bound
+full-output-equivalence receipt instead verifies the compiler, policy, target
+shape, option dispositions, and guarded persisted effect path unchanged, with
+the prior complete 49-report result retained. The candidate execution count
+therefore remains ten.
+
 The current policy separately treats the exact provider-edition label `A Novel`
 as a generic marketing subtitle. It preserves a blank target without creating
 a subtitle proposal. The vocabulary is provider-only and deliberately limited
