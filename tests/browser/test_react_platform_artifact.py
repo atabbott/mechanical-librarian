@@ -334,6 +334,17 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                         (390, 844, "compact"),
                     ):
                         page.set_viewport_size({"width": width, "height": height})
+                        if name == "activity-labels":
+                            expect(
+                                page.get_by_role("region", name="Provider recovery")
+                                .get_by_text("Waiting for a safe retry", exact=True)
+                                .locator("..")
+                            ).to_contain_text(
+                                "Priority: needs independent evidence, general recovery scan"
+                            )
+                            assert page.evaluate(
+                                "() => document.documentElement.scrollWidth <= window.innerWidth"
+                            )
                         assert page.evaluate(
                             """() => {
                                 const probe = document.createElement('span')
@@ -673,6 +684,13 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 for label, units in expected_recovery.items():
                     row = recovery.get_by_text(label, exact=True).locator("..")
                     expect(row).to_contain_text(units)
+                expect(
+                    recovery.get_by_text(
+                        "Waiting for a safe retry", exact=True
+                    ).locator("..")
+                ).to_contain_text(
+                    "Priority: needs independent evidence, general recovery scan"
+                )
                 recovery_text = recovery.inner_text().lower()
                 for forbidden in (
                     "provider_",
@@ -682,6 +700,10 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     "payload",
                     "/private/",
                     "x-api-key",
+                    "missing_corroboration",
+                    "zero_provider_evidence",
+                    "settleable_disagreement",
+                    "blanket_scan",
                 ):
                     assert forbidden not in recovery_text
                 assert (

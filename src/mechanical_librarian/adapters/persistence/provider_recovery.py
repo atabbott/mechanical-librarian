@@ -1879,6 +1879,25 @@ class SQLiteProviderRecoveryStore:
                 )
                 return successor
 
+    def _shared_failure_scopes(
+        self, *, recovery: ProviderRecovery, cohort_epoch: int
+    ) -> list[tuple[str]]:
+        """Name the frozen cohort and every active next-cohort scope."""
+        return cast(
+            "list[tuple[str]]",
+            self._connection.execute(
+                "SELECT DISTINCT scope FROM provider_recovery_jobs WHERE connection=? "
+                "AND adapter=? AND generation=? AND (cohort_epoch=? OR state IN ('queued','running')) "
+                "ORDER BY scope",
+                (
+                    recovery.connection,
+                    recovery.adapter,
+                    recovery.generation,
+                    cohort_epoch,
+                ),
+            ).fetchall(),
+        )
+
     def complete_canary_failure(
         self,
         *,
@@ -1925,16 +1944,9 @@ class SQLiteProviderRecoveryStore:
                 ).rowcount
                 if changed != 1:
                     raise ProviderRecoveryStoreError("provider recovery claim is owned")
-                scopes = self._connection.execute(
-                    "SELECT DISTINCT scope FROM provider_recovery_jobs WHERE connection=? "
-                    "AND adapter=? AND generation=? AND cohort_epoch=? ORDER BY scope",
-                    (
-                        recovery.connection,
-                        recovery.adapter,
-                        recovery.generation,
-                        current[5],
-                    ),
-                ).fetchall()
+                scopes = self._shared_failure_scopes(
+                    recovery=recovery, cohort_epoch=current[5]
+                )
                 self._connection.execute(
                     "UPDATE provider_recovery_jobs SET cohort_epoch=NULL WHERE connection=? "
                     "AND adapter=? AND generation=? AND cohort_epoch=? AND state IN ('queued','running')",
@@ -2165,7 +2177,7 @@ class SQLiteProviderRecoveryStore:
                 owner_successor = None
                 for (scope,) in scopes:
                     health = self._connection.execute(
-                        "SELECT attempt FROM provider_recovery_health WHERE connection=? "
+                        "SELECT state,attempt,next_eligible_at FROM provider_recovery_health WHERE connection=? "
                         "AND adapter=? AND scope=? AND generation=?",
                         (
                             recovery.connection,
@@ -2180,13 +2192,12 @@ class SQLiteProviderRecoveryStore:
                         )
                     failed = self._connection.execute(
                         "SELECT 1 FROM provider_recovery_jobs WHERE connection=? AND adapter=? "
-                        "AND scope=? AND generation=? AND cohort_epoch=? AND state='failed' LIMIT 1",
+                        "AND scope=? AND generation=? AND state='failed' LIMIT 1",
                         (
                             recovery.connection,
                             recovery.adapter,
                             scope,
                             recovery.generation,
-                            owner[0],
                         ),
                     ).fetchone()
                     later = self._connection.execute(
@@ -2200,14 +2211,23 @@ class SQLiteProviderRecoveryStore:
                             recovery.generation,
                         ),
                     ).fetchone()
+                    newer_deferral = (
+                        health[0] == "waiting"
+                        and health[2] is not None
+                        and health[2] > now
+                    )
                     state = (
                         "waiting"
                         if later is not None
                         else "exhausted"
                         if failed is not None
+                        else "dormant"
+                        if health[0] == "dormant"
+                        else "waiting"
+                        if newer_deferral
                         else "recovered"
                     )
-                    attempt = health[0] if failed is not None else 0
+                    attempt = health[1] if state != "recovered" else 0
                     successor = ProviderRecovery(
                         recovery.connection,
                         recovery.adapter,
@@ -2215,7 +2235,11 @@ class SQLiteProviderRecoveryStore:
                         recovery.generation,
                         state,
                         attempt,
-                        now if later is not None else None,
+                        health[2]
+                        if newer_deferral
+                        else now
+                        if later is not None
+                        else None,
                     )
                     changed = self._connection.execute(
                         "UPDATE provider_recovery_health SET state=?,attempt=?,next_eligible_at=?,"
@@ -2310,16 +2334,9 @@ class SQLiteProviderRecoveryStore:
                     != 1
                 ):
                     raise ProviderRecoveryStoreError("provider recovery claim is owned")
-                scopes = self._connection.execute(
-                    "SELECT DISTINCT scope FROM provider_recovery_jobs WHERE connection=? "
-                    "AND adapter=? AND generation=? AND cohort_epoch=? ORDER BY scope",
-                    (
-                        recovery.connection,
-                        recovery.adapter,
-                        recovery.generation,
-                        state[4],
-                    ),
-                ).fetchall()
+                scopes = self._shared_failure_scopes(
+                    recovery=recovery, cohort_epoch=state[4]
+                )
                 owner_successor = None
                 for (scope,) in scopes:
                     health = self._connection.execute(

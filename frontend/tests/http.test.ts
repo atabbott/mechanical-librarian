@@ -1497,7 +1497,6 @@ describe('ReviewApiClient', () => {
     for (const dispatch_reasons of [
       ['private-detail'],
       ['blanket_scan', 'blanket_scan'],
-      [],
       'blanket_scan',
     ])
       expect(() =>
@@ -1506,6 +1505,23 @@ describe('ReviewApiClient', () => {
           provider_recovery: [{ ...activity.provider_recovery?.[0], dispatch_reasons }],
         }),
       ).toThrow(ApiError)
+    const terminalRecovery = mapActivity({
+      ...activity,
+      provider_recovery: [
+        {
+          state: 'recovered',
+          affected_count: 1,
+          next_eligible_at: null,
+          dispatch_reasons: [],
+        },
+      ],
+    })
+    expect(terminalRecovery.provider_recovery?.[0]).toEqual({
+      state: 'recovered',
+      affected_count: 1,
+      next_eligible_at: null,
+      dispatch_reasons: [],
+    })
     expect(() => mapActivity({ ...activity, waiting: { applying: 1 } })).toThrow(ApiError)
     expect(activity.events[0]).toMatchObject({
       library: 'Fiction',

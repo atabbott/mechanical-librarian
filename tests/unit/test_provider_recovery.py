@@ -208,14 +208,17 @@ def test_replayed_registration_preserves_ordinal_but_current_refresh_renews_it()
         assert [("member", 1)] == store._connection.execute(
             "SELECT member_id,enrollment_ordinal FROM provider_recovery_jobs"
         ).fetchall()
+        store._connection.execute(
+            "UPDATE provider_recovery_jobs SET state='failed',attempt=5 WHERE member_id='member'"
+        )
         refreshed = replace(
             original,
             source_report_id="report-refreshed",
             package_report_id="report-refreshed",
         )
         assert 1 == store.enqueue_jobs((refreshed,), enqueued_at=5)
-        assert [("member", 2)] == store._connection.execute(
-            "SELECT member_id,enrollment_ordinal FROM provider_recovery_jobs"
+        assert [("member", "queued", 0, 2)] == store._connection.execute(
+            "SELECT member_id,state,attempt,enrollment_ordinal FROM provider_recovery_jobs"
         ).fetchall()
 
 
@@ -1437,9 +1440,9 @@ def test_blocked_active_member_releases_mixed_scope_after_open_member_exhausts()
             )
         ]
         held = frozenset()
-        assert "recovered" == runner.run_one(now=2, token="released").state
+        assert "exhausted" == runner.run_one(now=2, token="released").state
         assert ["blocked"] == calls
-        assert ["waiting", "checking", "fanout", "recovered"] == [
+        assert ["waiting", "checking", "fanout", "exhausted"] == [
             row[0]
             for row in store._connection.execute(
                 "SELECT state FROM provider_recovery_events ORDER BY sequence"
@@ -1791,6 +1794,201 @@ def test_shared_failure_keeps_late_unstamped_work_in_another_scope_reachable() -
         ] == store._connection.execute(
             "SELECT scope,state FROM provider_recovery_health ORDER BY scope"
         ).fetchall()
+        store.close()
+
+
+def test_participating_scope_keeps_newer_authoritative_quota_deadline() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        store = _due_store(
+            Path(directory) / "recovery.sqlite", "library-a", "library-b"
+        )
+        first = replace(
+            _job("first"),
+            scope="library-a",
+            library="library-a",
+            dispatch_reason="missing_corroboration",
+            dispatch_rank=0,
+        )
+        second = replace(_job("second"), scope="library-b", library="library-b")
+        store.enqueue_jobs((first, second), enqueued_at=0)
+        calls: list[str] = []
+        observed_health: list[tuple[object, ...]] = []
+
+        def retry(_, member, __):
+            calls.append(member.member_id)
+            if member.member_id == "second":
+                observed_health.append(
+                    tuple(
+                        store._connection.execute(
+                            "SELECT scope,state,next_eligible_at FROM provider_recovery_health ORDER BY scope"
+                        ).fetchall()
+                    )
+                )
+                store.observe_failure(
+                    connection="google",
+                    adapter="google_books",
+                    scope="library-b",
+                    generation=1,
+                    failure="quota_exhausted",
+                    now=1,
+                    retry_after=100,
+                )
+                observed_health.append(
+                    tuple(
+                        store._connection.execute(
+                            "SELECT scope,state,next_eligible_at FROM provider_recovery_health ORDER BY scope"
+                        ).fetchall()
+                    )
+                )
+
+        runner = ScopedProviderRecoveryRunner(
+            store=store,
+            generation=1,
+            retry=retry,
+            classify_failure=lambda _: ("transient", None),
+        )
+        assert "recovered" == runner.run_one(now=1, token="owner").state
+        assert ["first", "second"] == calls
+        assert [
+            (
+                ("library-a", "fanout", None),
+                ("library-b", "waiting", 1),
+            ),
+            (
+                ("library-a", "fanout", None),
+                ("library-b", "waiting", 101),
+            ),
+        ] == observed_health
+        assert [
+            ("library-a", "recovered", None),
+            ("library-b", "waiting", 101),
+        ] == store._connection.execute(
+            "SELECT scope,state,next_eligible_at FROM provider_recovery_health ORDER BY scope"
+        ).fetchall()
+        assert "idle" == runner.run_one(now=100, token="too-soon").state
+        assert ["first", "second"] == calls
+        store.close()
+
+
+def test_canary_failure_defers_a_new_same_provider_scope() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        store = _due_store(Path(directory) / "recovery.sqlite", "library-a")
+        first = replace(
+            _job("first"),
+            scope="library-a",
+            library="library-a",
+            dispatch_reason="missing_corroboration",
+            dispatch_rank=0,
+        )
+        late = replace(_job("late"), scope="library-c", library="library-c")
+        store.enqueue_jobs((first,), enqueued_at=0)
+        calls: list[str] = []
+        interrupted = False
+
+        def retry(_, member, __):
+            nonlocal interrupted
+            calls.append(member.member_id)
+            if not interrupted:
+                interrupted = True
+                store.enqueue_jobs((late,), enqueued_at=1)
+                raise RuntimeError("rate limited")
+
+        runner = ScopedProviderRecoveryRunner(
+            store=store,
+            generation=1,
+            retry=retry,
+            classify_failure=lambda _: ("rate_limited", 19),
+        )
+        assert "waiting" == runner.run_one(now=1, token="owner").state
+        assert [
+            ("library-a", "waiting", 20),
+            ("library-c", "waiting", 20),
+        ] == store._connection.execute(
+            "SELECT scope,state,next_eligible_at FROM provider_recovery_health ORDER BY scope"
+        ).fetchall()
+        assert [("late", None)] == store._connection.execute(
+            "SELECT member_id,cohort_epoch FROM provider_recovery_jobs WHERE member_id='late'"
+        ).fetchall()
+        assert "idle" == runner.run_one(now=19, token="too-soon").state
+        assert ["first"] == calls
+        store.close()
+
+
+def test_fanout_failure_defers_a_new_same_provider_scope() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        store = _due_store(
+            Path(directory) / "recovery.sqlite", "library-a", "library-b"
+        )
+        first = replace(
+            _job("first"),
+            scope="library-a",
+            library="library-a",
+            dispatch_reason="missing_corroboration",
+            dispatch_rank=0,
+        )
+        failing = replace(_job("failing"), scope="library-b", library="library-b")
+        late = replace(_job("late"), scope="library-c", library="library-c")
+        store.enqueue_jobs((first, failing), enqueued_at=0)
+        calls: list[str] = []
+
+        def retry(_, member, __):
+            calls.append(member.member_id)
+            if member.member_id == "failing":
+                store.enqueue_jobs((late,), enqueued_at=1)
+                raise RuntimeError("rate limited")
+
+        runner = ScopedProviderRecoveryRunner(
+            store=store,
+            generation=1,
+            retry=retry,
+            classify_failure=lambda _: ("rate_limited", 19),
+        )
+        assert "waiting" == runner.run_one(now=1, token="owner").state
+        assert ["first", "failing"] == calls
+        assert [
+            ("library-a", "recovered", None),
+            ("library-b", "waiting", 20),
+            ("library-c", "waiting", 20),
+        ] == store._connection.execute(
+            "SELECT scope,state,next_eligible_at FROM provider_recovery_health ORDER BY scope"
+        ).fetchall()
+        assert [("late", None)] == store._connection.execute(
+            "SELECT member_id,cohort_epoch FROM provider_recovery_jobs WHERE member_id='late'"
+        ).fetchall()
+        assert "idle" == runner.run_one(now=19, token="too-soon").state
+        assert ["first", "failing"] == calls
+        store.close()
+
+
+def test_later_successful_cohort_keeps_an_earlier_terminal_lane_exhausted() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        store = _due_store(Path(directory) / "recovery.sqlite")
+        store.enqueue_jobs((_job("terminal"),), enqueued_at=0)
+        calls: list[str] = []
+
+        def retry(_, member, __):
+            calls.append(member.member_id)
+            if member.member_id == "terminal":
+                raise RuntimeError("terminal")
+
+        runner = ScopedProviderRecoveryRunner(
+            store=store,
+            generation=1,
+            retry=retry,
+            classify_failure=lambda _: ("terminal", None),
+        )
+        assert "exhausted" == runner.run_one(now=1, token="first").state
+        store.enqueue_jobs((_job("later"),), enqueued_at=2)
+        eligible = store.snapshot()[0].next_eligible_at
+        assert eligible is not None
+        assert "exhausted" == runner.run_one(now=eligible, token="second").state
+        assert ["terminal", "later"] == calls
+        assert [("terminal", "failed"), ("later", "complete")] == (
+            store._connection.execute(
+                "SELECT member_id,state FROM provider_recovery_jobs ORDER BY member_id DESC"
+            ).fetchall()
+        )
+        assert "exhausted" == store.snapshot()[0].state
         store.close()
 
 

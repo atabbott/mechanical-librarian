@@ -603,7 +603,12 @@ describe('Activity route', () => {
             },
             { state: 'checking', affected_count: 1, next_eligible_at: null },
             { state: 'fanout', affected_count: 3, next_eligible_at: null },
-            { state: 'recovered', affected_count: 1, next_eligible_at: null },
+            {
+              state: 'recovered',
+              affected_count: 1,
+              next_eligible_at: null,
+              dispatch_reasons: [],
+            },
             { state: 'dormant', affected_count: 2, next_eligible_at: null },
             { state: 'exhausted', affected_count: 1, next_eligible_at: null },
           ],
@@ -626,6 +631,7 @@ describe('Activity route', () => {
       '3 affected works',
     )
     expect(screen.getByText('Recovered').parentElement).toHaveTextContent('1 affected scope')
+    expect(screen.getByText('Recovered').parentElement).not.toHaveTextContent('Priority:')
     expect(screen.getByText('Needs a configuration change').parentElement).toHaveTextContent(
       '2 affected scopes',
     )

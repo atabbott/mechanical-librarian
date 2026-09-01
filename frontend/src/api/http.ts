@@ -1891,7 +1891,6 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
         : (() => {
             if (
               !Array.isArray(rawDispatchReasons) ||
-              rawDispatchReasons.length < 1 ||
               rawDispatchReasons.length > 4 ||
               new Set(rawDispatchReasons).size !== rawDispatchReasons.length ||
               rawDispatchReasons.some(

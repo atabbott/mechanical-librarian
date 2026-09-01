@@ -1349,6 +1349,10 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
                 "state": "waiting",
                 "affected_count": 2,
                 "next_eligible_at": 1_754_900_000,
+                "dispatch_reasons": [
+                    "missing_corroboration",
+                    "blanket_scan",
+                ],
             },
             {"state": "checking", "affected_count": 1, "next_eligible_at": None},
             {"state": "fanout", "affected_count": 3, "next_eligible_at": None},
