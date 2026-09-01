@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 
 import pytest
@@ -22,6 +23,7 @@ from mechanical_librarian.application.configuration import (
     ReportLimits,
     TargetConnectionConfiguration,
 )
+from mechanical_librarian.domain.metadata_report import canonical_json
 
 
 def entry(item="one", eligible=True):
@@ -260,10 +262,13 @@ def test_open_library_call_maxima_cover_bounded_descriptor_fan_out_and_contact_i
     }
     undercounted = json.loads(inventaire)
     undercounted["call_maxima"]["remote_cover_requests"] = 2
+    body = {key: value for key, value in undercounted.items() if key != "id"}
+    undercounted["id"] = hashlib.sha256(
+        canonical_json(body).encode("utf-8") + b"\n"
+    ).hexdigest()
+    undercounted_raw = canonical_json(undercounted).encode("utf-8") + b"\n"
     with pytest.raises(BatchError, match="manifest is invalid"):
-        parse_manifest(
-            json.dumps(undercounted, sort_keys=True, separators=(",", ":")).encode()
-        )
+        parse_manifest(undercounted_raw)
     first = ApplicationConfiguration(
         (
             TargetConnectionConfiguration(
