@@ -208,7 +208,7 @@ def _project(
         return _preserved(field, option, target, current)
     automatic_work = (
         _automatic_work_evidence(report, result, retained_claims)
-        if destination == "automatic" and field in {"description_fill", "tags"}
+        if destination == "automatic" and field == "tags"
         else None
     )
     if (

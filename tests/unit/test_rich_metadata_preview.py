@@ -342,11 +342,11 @@ def test_description_citations_exclude_retained_unproved_sources() -> None:
     assert all(preview.outcome == "projected" for preview in fields.values())
     assert all(
         not (set(fields[field].source_evidence_references) & unproved_references)
-        for field in ("description_fill", "tags")
+        for field in ("tags",)
     )
     assert all(
         set(fields[field].source_evidence_references) & unproved_references
-        for field in ("series", "genres")
+        for field in ("description_fill", "series", "genres")
     )
 
 
@@ -405,7 +405,7 @@ def test_description_citations_exclude_retained_unproved_sources() -> None:
         "enclosing_work",
     ),
 )
-def test_unproved_work_only_blocks_automatic_description(
+def test_unproved_work_only_blocks_automatic_tags(
     candidates: tuple[ProviderCandidate, ...],
     with_lane: bool,
 ) -> None:
@@ -415,23 +415,13 @@ def test_unproved_work_only_blocks_automatic_description(
         )
     )
 
-    description = next(
+    tags = next(
         result
         for result in proposal.results
-        if result.destination is TargetDestination.DESCRIPTION
+        if result.destination is TargetDestination.TAGS
     )
-    assert description.alternatives
-    assert (
-        fields["description_fill"].outcome,
-        fields["description_fill"].reason,
-        fields["description_fill"].source_candidate_id,
-        fields["description_fill"].source_evidence_references,
-    ) == (
-        "abstain",
-        "target_work_applicability_unproved",
-        None,
-        (),
-    )
+    assert tags.alternatives
+    assert fields["description_fill"].outcome == "projected"
     assert fields["genres"].outcome == "projected"
     assert fields["series"].reason != "target_work_applicability_unproved"
     assert (
