@@ -54,7 +54,7 @@ depends on it.
   `F19A_QUALIFICATION_MANIFEST_SHA256` in
   `src/mechanical_librarian/domain/automatic_decision.py` pins this file's
   sha256; changing a byte changes what automatic authority admits
-- [F20 rich-metadata qualification candidate](reference/f20-rich-metadata-qualification-candidate-v3.json) —
+- [F20 rich-metadata qualification candidate](reference/f20-rich-metadata-qualification-candidate-v4.json) —
   `tests/unit/test_rich_metadata_qualification_manifest.py` and the ruff and
   mypy exemptions in `pyproject.toml` are bound to the sources it freezes
 

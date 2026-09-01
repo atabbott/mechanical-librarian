@@ -104,17 +104,30 @@ a subtitle proposal. The vocabulary is provider-only and deliberately limited
 to that exact normalized label; local package evidence and any longer subtitle
 remain ordinary evidence. This is a proposal-policy rule, not F20 automatic
 authority.
-Genre add and replace each made 3 exact predictions. Genre fill-empty was
-evaluated with only the target genre field varied across the supported
-`missing`, `null`, and `empty` states while preserving the observed provider
-evidence; it made 4/4 correct predictions in each state, 12 total. Tag
-fill-empty, add, and replace each made 3, and safe plaintext description made 9. All were
-correct under the provenance-and-operation model, with zero safety failures,
-so these options pass. Google visible-text made no predictions and remains
-`not_qualified`. ASIN remains `insufficient_coverage`. `tags:off` is still the
-default and policy-only, `explicit:unsupported` remains human-only, and
-narrators and cover remain excluded. The ordinary populated-genre case remains
-a no-op under fill-empty and is not rewritten.
+The eleventh candidate execution applies exact target-work applicability to
+automatic tag selection. Conflicting, component, enclosing, incomplete, and
+lane-less tag evidence remains available to the owner but cannot influence
+automatic uniqueness, quality, or authority. A fresh 49-work capture made 580
+requests through the three current provider adapters. Main and the candidate
+each produced seven correct decisions for every tag option at 100% precision,
+with no changed outcomes, lost correct projections, or gained incorrect
+projections. A separate replay of the retained provider documents also matched
+main's aggregate metrics exactly. An exposed real-library confirmation split
+retained 58 candidates across 23 cases and the applicability gate admitted 20
+at 100% precision with zero wrong-work admissions. The final F37 holdout was
+not used.
+
+The same current-provider evidence did not justify extending the rule to every
+other work-bound field. For descriptions, four previously correct decisions
+were lost while three different correct decisions were gained, moving the
+aggregate from 9 to 8. For genres, correct add and replace decisions each fell
+from 9 to 4, while fill-empty decisions across the three target states fell
+from 30 to 12. Current main and candidate adapters both produced zero series
+decisions, so they could not positively demonstrate preservation of the prior
+19/20/20 qualified series results. Description, genre, and series
+applicability are therefore deferred; their v3 automatic dispositions and
+metrics remain authoritative and unchanged rather than being dequalified by a
+different evidence mode.
 
 The machine-readable candidate is
-[`f20-rich-metadata-qualification-candidate-v3.json`](../reference/f20-rich-metadata-qualification-candidate-v3.json).
+[`f20-rich-metadata-qualification-candidate-v4.json`](../reference/f20-rich-metadata-qualification-candidate-v4.json).

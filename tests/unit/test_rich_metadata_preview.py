@@ -324,7 +324,7 @@ def test_exact_multi_isbn_work_keeps_all_automatic_work_fields() -> None:
     }
 
 
-def test_description_citations_exclude_retained_unproved_sources() -> None:
+def test_only_tag_citations_exclude_retained_unproved_sources() -> None:
     catalogue = _target_work_candidate("catalogue", "edition-1", "work-1")
     search = _target_work_candidate("search", "edition-2", "work-1")
     unproved = _target_work_candidate("unproved", "edition-3", "work-1")
