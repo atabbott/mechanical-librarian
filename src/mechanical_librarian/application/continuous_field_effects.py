@@ -163,7 +163,7 @@ def _waiting_reasons(
     prepared_by_destination: dict[tuple[str, str], int],
     capabilities: list[dict[str, object]],
     suspensions: list[dict[str, object]],
-    provider_recovery: list[dict[str, int | str | None]],
+    provider_recovery: list[dict[str, int | str | list[str] | None]],
 ) -> dict[str, int]:
     """Split "waiting safely" into the reasons an owner can act on.
 
@@ -235,7 +235,7 @@ class ContinuousGuardedApplication:
         scan_progress: Callable[[str, str], object] | None = None,
         activity_only: bool = False,
         provider_recovery_snapshot: Callable[
-            [], tuple[dict[str, int | str | None], ...]
+            [], tuple[dict[str, int | str | list[str] | None], ...]
         ]
         | None = None,
         activity_snapshot: Callable[
@@ -1078,7 +1078,11 @@ class ContinuousGuardedApplication:
         provider_recovery = list(self._provider_recovery_snapshot())
         if len(provider_recovery) > 100 or any(
             type(item) is not dict
-            or set(item) != {"state", "next_eligible_at", "affected_count"}
+            or set(item)
+            not in (
+                {"state", "next_eligible_at", "affected_count"},
+                {"state", "next_eligible_at", "affected_count", "dispatch_reasons"},
+            )
             or item["state"]
             not in {
                 "waiting",
@@ -1090,6 +1094,24 @@ class ContinuousGuardedApplication:
             }
             or type(item["affected_count"]) is not int
             or not 1 <= item["affected_count"] <= 1_000_000
+            or (
+                "dispatch_reasons" in item
+                and (
+                    type(item["dispatch_reasons"]) is not list
+                    or len(item["dispatch_reasons"])
+                    != len(set(item["dispatch_reasons"]))
+                    or any(
+                        reason
+                        not in {
+                            "missing_corroboration",
+                            "zero_provider_evidence",
+                            "settleable_disagreement",
+                            "blanket_scan",
+                        }
+                        for reason in item["dispatch_reasons"]
+                    )
+                )
+            )
             or (
                 item["next_eligible_at"] is not None
                 and (

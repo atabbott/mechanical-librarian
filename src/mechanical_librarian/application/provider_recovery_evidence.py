@@ -28,6 +28,7 @@ from mechanical_librarian.application.provider_retry_successor import (
 )
 from mechanical_librarian.application.review_pipeline import ReviewPipelineError
 from mechanical_librarian.domain.metadata_report import MetadataReport, ProviderStatus
+from mechanical_librarian.domain.proposal_set import ProposalOutcome, ProposalSet
 from mechanical_librarian.domain.provider_recovery import ProviderRecoveryJob
 
 if TYPE_CHECKING:
@@ -37,10 +38,72 @@ __all__ = [
     "ProviderFailureObserver",
     "TargetConnectionHeld",
     "classify_provider_recovery_failure",
+    "provider_budget_dispatch_reason",
     "provider_recovery_jobs",
     "provider_statuses",
     "record_provider_recovery_observations",
 ]
+
+
+def provider_budget_dispatch_reason(
+    report: MetadataReport, proposal: ProposalSet | None, observation: object
+) -> tuple[str, int]:
+    """Classify one published recovery package without provider-specific rules.
+
+    The result is stored with the recovery member because the SQLite claim is
+    the atomic dispatch boundary.  It deliberately uses only exact published
+    report/proposal facts: a live policy or a later package cannot relabel a
+    member after its cohort has started.
+    """
+    if proposal is not None and type(proposal) is not ProposalSet:
+        raise ReviewPipelineError("projection")
+    if proposal is not None and proposal.report_id != report.report_id:
+        raise ReviewPipelineError("projection")
+    references = {
+        getattr(claim, "reference", None)
+        for candidate in getattr(observation, "candidates", ())
+        for claim in getattr(candidate, "claims", ())
+    } | {
+        getattr(candidate, "reference", None)
+        for lane in getattr(observation, "lanes", ())
+        for candidate in getattr(lane, "candidates", ())
+    }
+    references.discard(None)
+    unresolved = () if proposal is None else proposal.results
+
+    def can_add_independence(result: object) -> bool:
+        alternatives = getattr(result, "alternatives", ())
+        return bool(alternatives) and not references.intersection(
+            {
+                reference
+                for alternative in alternatives
+                for reference in alternative.evidence_references
+            }
+        )
+
+    if any(
+        result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+        and result.reasons == ("insufficient_independent_corroboration",)
+        and can_add_independence(result)
+        for result in unresolved
+    ):
+        return "missing_corroboration", 0
+    if not any(
+        getattr(provider, "candidates", ())
+        or any(
+            getattr(lane, "candidates", ()) for lane in getattr(provider, "lanes", ())
+        )
+        for provider in report.providers
+    ):
+        return "zero_provider_evidence", 1
+    if any(
+        result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+        and result.reasons == ("competing_evidence",)
+        and can_add_independence(result)
+        for result in unresolved
+    ):
+        return "settleable_disagreement", 2
+    return "blanket_scan", 3
 
 
 class ProviderFailureObserver(Protocol):
@@ -137,11 +200,14 @@ def provider_recovery_jobs(
     report: MetadataReport,
     *,
     package: tuple[str | None, str, str | None, int | None, str],
+    proposal: ProposalSet | None = None,
     configuration: ApplicationConfiguration,
     scope: str,
 ) -> tuple[ProviderRecoveryJob, ...]:
     """Create bounded retry work only from a published terminal package."""
     adapters = {provider.name: provider.adapter for provider in configuration.providers}
+    if proposal is not None and proposal.proposal_set_id != package[0]:
+        raise ReviewPipelineError("projection")
     jobs = []
     for observation in report.providers:
         lane_ids = tuple(
@@ -156,6 +222,7 @@ def provider_recovery_jobs(
         adapter = adapters.get(observation.provider)
         if adapter is None:
             raise ReviewPipelineError("configuration")
+        reason, rank = provider_budget_dispatch_reason(report, proposal, observation)
         jobs.append(
             ProviderRecoveryJob(
                 observation.provider,
@@ -170,6 +237,8 @@ def provider_recovery_jobs(
                 report.report_id,
                 *package,
                 json.dumps(lane_ids, separators=(",", ":")),
+                dispatch_reason=reason,
+                dispatch_rank=rank,
             )
         )
     return tuple(

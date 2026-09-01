@@ -18,16 +18,17 @@ Persist a closed provider-connection, adapter, and scope recovery state. A
 transient or rate-limited failure waits for a bounded delay; authentication,
 authorization, and configuration failures are dormant until the operator
 increments `provider_recovery_generation` in `config-v6` and restarts. The
-store atomically leases one due canary for five minutes. Exact job and canary
-ownership is renewed from a fresh clock between target preflight, the bounded
+store atomically leases one due provider cohort for five minutes. Exact job and
+canary ownership is renewed from a fresh clock between target preflight, the bounded
 60-second provider call, publication, and each proposal, admission, and
 projection stage; no individual credential-bearing or local transaction stage
 may silently consume the next stage's lease. The existing preparation supervisor is its
 only wake, clock, drain, and shutdown owner; it has no independent queue or
 endpoint. A successful canary may process remaining durable members in that
-exact scope once. Canary success first commits an explicit durable fanout phase;
+finite provider cohort once. Canary success first commits an explicit durable
+fanout phase;
 each sibling then receives its own lease, so restart can continue partial fanout
-without extending a scope lease or repeating the canary. A shared failure
+without extending the provider lease or repeating the canary. A shared failure
 requeues the canary, publishes no successor, has zero fanout,
 and takes Retry-After when supplied before bounded backoff. Target and package
 drift close safely without a provider call.
@@ -75,6 +76,30 @@ spends a job execution attempt. This amendment changes no recovery-database
 shape. The two new persisted report diagnostics are governed by ADR-0017 and
 require the `metadata-report-v29` clean rebuild under ADR-0013.
 
+## Amendment: decided-field quota dispatch (2026-09-01)
+
+Once exact-current recovery work exists after provider quota pressure, its
+durable job records the closed, application-classified dispatch reason:
+missing independent corroboration, zero provider evidence, settleable
+disagreement, then blanket scan. Claims order those classes and retain the
+former `member_id` tie-break. The persisted reason is the recovery request's
+accounting diagnostic and is exposed through the existing bounded Activity
+recovery projection; it carries no provider payload or query text.
+
+For each `(connection, adapter, generation)`, one canonical health owner
+atomically freezes a finite cohort from every currently due, eligible and
+unblocked scope. Claims use strict `(dispatch reason rank, member_id, scope)`
+order inside that provider-wide cohort. Jobs registered or changed later are
+unstamped and cannot enter it, including a newly due higher-ranked job; they
+remain reachable in the next cohort, so arrivals cannot starve already frozen
+blanket work. Unchanged registration preserves its ordinal. Per-scope health
+continues to own eligibility, backoff and Activity outcomes, while only the
+canonical owner carries the cohort lease and cutoff. This bounded ownership
+makes restart and competing-worker claims deterministic without adding a queue
+or scheduler. The recovery-store schema is exact-current under ADR-0013:
+existing pre-release recovery state requires a clean rebuild, with no migration
+or repair.
+
 ## Consequences
 
 ### Positive
@@ -85,12 +110,12 @@ require the `metadata-report-v29` clean rebuild under ADR-0013.
 
 ### Negative
 
-- A claimed canary is bounded to one exact-current provider scope.
+- A claimed canary is bounded to one exact-current finite provider cohort.
 
 ### Neutral or deferred
 
-- Activity exposes aggregate recovery state only; there is no owner retry
-  control, bulk recovery, or target metadata write.
+- Activity exposes aggregate recovery state and closed dispatch-reason names;
+  there is no owner retry control, bulk recovery, or target metadata write.
 
 ## Validation
 

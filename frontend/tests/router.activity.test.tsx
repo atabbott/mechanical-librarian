@@ -595,10 +595,20 @@ describe('Activity route', () => {
       getActivity: vi.fn(async () =>
         activity({
           provider_recovery: [
-            { state: 'waiting', affected_count: 2, next_eligible_at: 1 },
+            {
+              state: 'waiting',
+              affected_count: 2,
+              next_eligible_at: 1,
+              dispatch_reasons: ['missing_corroboration', 'blanket_scan'],
+            },
             { state: 'checking', affected_count: 1, next_eligible_at: null },
             { state: 'fanout', affected_count: 3, next_eligible_at: null },
-            { state: 'recovered', affected_count: 1, next_eligible_at: null },
+            {
+              state: 'recovered',
+              affected_count: 1,
+              next_eligible_at: null,
+              dispatch_reasons: [],
+            },
             { state: 'dormant', affected_count: 2, next_eligible_at: null },
             { state: 'exhausted', affected_count: 1, next_eligible_at: null },
           ],
@@ -611,6 +621,9 @@ describe('Activity route', () => {
     expect(screen.getByText('Waiting for a safe retry').parentElement).toHaveTextContent(
       '2 affected scopes',
     )
+    expect(screen.getByText('Waiting for a safe retry').parentElement).toHaveTextContent(
+      'Priority: needs independent evidence, general recovery scan',
+    )
     expect(screen.getByText('Checking provider health').parentElement).toHaveTextContent(
       '1 affected scope',
     )
@@ -618,6 +631,7 @@ describe('Activity route', () => {
       '3 affected works',
     )
     expect(screen.getByText('Recovered').parentElement).toHaveTextContent('1 affected scope')
+    expect(screen.getByText('Recovered').parentElement).not.toHaveTextContent('Priority:')
     expect(screen.getByText('Needs a configuration change').parentElement).toHaveTextContent(
       '2 affected scopes',
     )

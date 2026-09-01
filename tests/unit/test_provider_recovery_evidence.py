@@ -8,11 +8,18 @@ application module itself, which is where the decisions now live.
 from __future__ import annotations
 
 import json
+import tempfile
+from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
 import pytest
 
+from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.provider_recovery import (
+    SQLiteProviderRecoveryStore,
+)
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
     LibraryConfiguration,
@@ -24,14 +31,25 @@ from mechanical_librarian.application.metadata_report import (
     CredentialError,
     CurrentnessError,
     MetadataReportError,
+    ProviderLaneResult,
     TargetNotFoundError,
+    TargetSnapshot,
+    metadata_discovery_plan,
+    provider_observation,
+)
+from mechanical_librarian.application.provider_recovery_activation import (
+    ProviderRecoveryActivation,
 )
 from mechanical_librarian.application.provider_recovery_evidence import (
     TargetConnectionHeld,
     classify_provider_recovery_failure,
+    provider_budget_dispatch_reason,
     provider_recovery_jobs,
     provider_statuses,
     record_provider_recovery_observations,
+)
+from mechanical_librarian.application.provider_recovery_runner import (
+    ScopedProviderRecoveryRunner,
 )
 from mechanical_librarian.application.provider_retry_successor import (
     ProviderRetryDisabled,
@@ -46,9 +64,27 @@ from mechanical_librarian.domain.failure_diagnostics import (
     FailureStage,
 )
 from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    ClaimScope,
+    FileFacts,
     MetadataReport,
     ProviderObservation,
     ProviderStatus,
+    TargetFacts,
+)
+from mechanical_librarian.domain.proposal_set import (
+    ProposalOutcome,
+    ProposalSet,
+    evaluate_report,
+)
+from mechanical_librarian.domain.provider_recovery import (
+    ProviderRecovery,
+)
+from tests.support.proposal_evidence import (
+    _claim,
+    _fields,
+    _provider,
+    _publication_local_isbn,
 )
 
 _CONFIGURATION = ApplicationConfiguration(
@@ -101,6 +137,26 @@ def _observation(provider: str, status: ProviderStatus, *lanes: object) -> objec
 
 def _lane(identity: str, status: ProviderStatus) -> object:
     return SimpleNamespace(identity=identity, status=status)
+
+
+def _proposal(reason: str, *, report_id: str = "report-1") -> ProposalSet:
+    """Make the smallest exact-type projection needed by this classifier test."""
+    proposal = object.__new__(ProposalSet)
+    object.__setattr__(proposal, "report_id", report_id)
+    object.__setattr__(
+        proposal,
+        "results",
+        (
+            SimpleNamespace(
+                outcome=ProposalOutcome.UNRESOLVED_CHOICE,
+                reasons=(reason,),
+                alternatives=(
+                    SimpleNamespace(evidence_references=("provider_" + "a" * 64,)),
+                ),
+            ),
+        ),
+    )
+    return proposal
 
 
 class _Observer:
@@ -176,6 +232,282 @@ def _recognised_failures() -> dict[str, tuple[Exception, tuple[str, int | None]]
 
 
 _RECOGNISED_FAILURES = _recognised_failures()
+
+
+@pytest.mark.parametrize(
+    ("report", "proposal", "expected"),
+    (
+        (
+            _report(SimpleNamespace(candidates=("candidate",), lanes=())),
+            _proposal("insufficient_independent_corroboration"),
+            ("missing_corroboration", 0),
+        ),
+        (
+            _report(SimpleNamespace(candidates=(), lanes=())),
+            None,
+            ("zero_provider_evidence", 1),
+        ),
+        (
+            _report(SimpleNamespace(candidates=("candidate",), lanes=())),
+            _proposal("competing_evidence"),
+            ("settleable_disagreement", 2),
+        ),
+        (
+            _report(SimpleNamespace(candidates=("candidate",), lanes=())),
+            None,
+            ("blanket_scan", 3),
+        ),
+    ),
+    ids=("corroboration", "zero-evidence", "disagreement", "fallback"),
+)
+def test_provider_budget_dispatch_reason_has_closed_value_order(
+    report: MetadataReport, proposal: ProposalSet | None, expected: tuple[str, int]
+) -> None:
+    assert expected == provider_budget_dispatch_reason(
+        report, proposal, report.providers[0]
+    )
+
+
+def test_provider_budget_dispatch_reason_fails_closed_on_mismatched_projection() -> (
+    None
+):
+    with pytest.raises(ReviewPipelineError, match="projection"):
+        provider_budget_dispatch_reason(
+            _report(),
+            _proposal("competing_evidence", report_id="other"),
+            SimpleNamespace(candidates=(), lanes=()),
+        )
+
+
+def test_provider_budget_reason_prioritises_the_provider_that_can_add_independence() -> (
+    None
+):
+    proposal = _proposal("insufficient_independent_corroboration")
+    sole_authority = SimpleNamespace(
+        candidates=(
+            SimpleNamespace(
+                claims=(SimpleNamespace(reference="provider_" + "a" * 64),),
+            ),
+        ),
+        lanes=(),
+    )
+    independent_provider = SimpleNamespace(candidates=(), lanes=())
+    assert ("blanket_scan", 3) == provider_budget_dispatch_reason(
+        _report(sole_authority), proposal, sole_authority
+    )
+    assert ("missing_corroboration", 0) == provider_budget_dispatch_reason(
+        _report(sole_authority, independent_provider), proposal, independent_provider
+    )
+
+
+@pytest.mark.parametrize(
+    "evidenced",
+    (
+        SimpleNamespace(candidates=("candidate",), lanes=()),
+        SimpleNamespace(
+            candidates=(),
+            lanes=(SimpleNamespace(candidates=("lane-candidate",)),),
+        ),
+    ),
+    ids=("provider-candidate", "lane-candidate"),
+)
+def test_zero_evidence_requires_every_report_provider_to_be_empty(
+    evidenced: object,
+) -> None:
+    recovering = SimpleNamespace(candidates=(), lanes=())
+    assert ("blanket_scan", 3) == provider_budget_dispatch_reason(
+        _report(recovering, evidenced), None, recovering
+    )
+
+
+def test_fixed_budget_replay_counts_actual_decided_fields_not_reason_labels() -> None:
+    """Two persisted, production-path runner starts beat member-id selection."""
+
+    def recovery_case(
+        ordinal: int, *, decisive: bool
+    ) -> tuple[MetadataReport, MetadataReport]:
+        value = f"Corrected title {ordinal}"
+        fields = _fields(current_title=f"Current title {ordinal}")
+        local_claims = (_publication_local_isbn(),)
+        candidate_lane = metadata_discovery_plan(
+            TargetSnapshot("ebook", f"Current title {ordinal}", (), fields=fields),
+            local_claims,
+        ).lanes[0]
+        failed_lane = replace(
+            candidate_lane,
+            identity="lane_" + f"{ordinal + 999:064x}",
+        )
+        first = _provider(
+            "catalogue-a",
+            f"edition-a-{ordinal}",
+            (
+                _claim(
+                    "catalogue-a",
+                    f"edition-a-{ordinal}",
+                    ClaimKind.TITLE,
+                    value,
+                    scope=ClaimScope.WORK,
+                ),
+            ),
+            authority="hardcover",
+        )
+        support = _provider(
+            "catalogue-b",
+            f"edition-b-{ordinal}",
+            (
+                _claim(
+                    "catalogue-b",
+                    f"edition-b-{ordinal}",
+                    ClaimKind.TITLE,
+                    value,
+                    scope=ClaimScope.WORK,
+                ),
+            ),
+            authority="open_library",
+        )
+        recovering = provider_observation(
+            "catalogue-b",
+            (
+                *(
+                    ()
+                    if decisive
+                    else (
+                        ProviderLaneResult(
+                            candidate_lane,
+                            ProviderStatus.CANDIDATES,
+                            support.candidates,
+                        ),
+                    )
+                ),
+                ProviderLaneResult(failed_lane, ProviderStatus.RATE_LIMITED),
+            ),
+            authority="open_library",
+        )
+        base = MetadataReport.create(
+            target=TargetFacts("primary", "books", f"item-{ordinal}", fields),
+            file=FileFacts(
+                0,
+                f"{ordinal + 1:064x}",
+                f"{ordinal + 101:064x}",
+            ),
+            local_claims=local_claims,
+            local_reasons=("package_metadata_identifier",),
+            providers=(first, recovering) if decisive else (recovering,),
+        )
+        successor = MetadataReport.create(
+            target=base.target,
+            file=base.file,
+            local_claims=local_claims,
+            local_reasons=base.local_reasons,
+            providers=(first, support) if decisive else (support,),
+        )
+        return base, successor
+
+    # These four immutable reports pin the old member-id ordering: the two
+    # blanket scans sort before the two missing-corroboration packages. The
+    # production classifier, rather than the fixture, assigns those reasons.
+    cases = (
+        (*recovery_case(12, decisive=False), False),
+        (*recovery_case(22, decisive=False), False),
+        (*recovery_case(52, decisive=True), True),
+        (*recovery_case(54, decisive=True), True),
+    )
+    successors = {base.report_id: successor for base, successor, _ in cases}
+
+    with tempfile.TemporaryDirectory() as directory:
+        store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+        store.record(
+            ProviderRecovery.failed(
+                connection="catalogue-b",
+                adapter="open_library",
+                scope="books",
+                generation=4,
+                failure="rate_limited",
+                now=0,
+                retry_after=1,
+            ),
+            occurred_at=0,
+        )
+        repository = open_repository(Path(directory) / "reports.sqlite")
+        activation = ProviderRecoveryActivation(
+            configuration=_CONFIGURATION,
+            repository_factory=lambda: repository,
+            observers=lambda *_: (_ for _ in ()).throw(AssertionError("unused")),
+            provider_resolver=lambda *_: None,
+            pipeline=lambda: None,
+            enqueue=lambda jobs, enqueued_at: store.enqueue_jobs(
+                jobs, enqueued_at=enqueued_at
+            ),
+            clock=lambda: 1,
+        )
+        for base, _, _ in cases:
+            proposal = evaluate_report(base)
+            repository.publish(base, lambda: True)
+            repository.publish_proposal(proposal)
+            repository.admit_review_case(proposal)
+            package = repository.current_review_package(
+                base.target.connection, base.target.library, base.target.item
+            )
+            assert package is not None
+            repository._connection.execute("BEGIN IMMEDIATE")
+            repository._recovery_outbox.enqueue(
+                base.target.connection,
+                base.target.library,
+                base.target.item,
+                package,
+                0,
+            )
+            repository._connection.execute("COMMIT")
+        assert () == activation.drain_outbox(repository)
+
+        actual_jobs = store._connection.execute(
+            "SELECT member_id,dispatch_reason FROM provider_recovery_jobs "
+            "ORDER BY member_id"
+        ).fetchall()
+        assert 4 == len(actual_jobs)
+        historical = tuple(member_id for member_id, _ in actual_jobs[:2])
+        assert {"blanket_scan"} == {reason for _, reason in actual_jobs[:2]}
+
+        decided: list[int] = []
+        activated: list[str] = []
+        budget = 2
+
+        def retry(_, job, __) -> None:
+            activated.append(job.member_id)
+            proposal = evaluate_report(successors[job.member_id])
+            decided.append(
+                sum(
+                    result.outcome is ProposalOutcome.PROPOSE_CHANGE
+                    for result in proposal.results
+                )
+            )
+
+        runner = ScopedProviderRecoveryRunner(
+            store=store,
+            generation=4,
+            retry=retry,
+            classify_failure=lambda _: ("transient", None),
+            cancelled=lambda: len(activated) >= budget,
+        )
+        assert "fanout" == runner.run_one(now=1, token="ranked").state
+        assert budget == len(activated) == len(decided)
+        assert {"missing_corroboration"} == {
+            reason for member_id, reason in actual_jobs if member_id in activated
+        }
+        ranked_yield = sum(decided)
+        repository.close()
+        store.close()
+
+    historical_yield = sum(
+        sum(
+            result.outcome is ProposalOutcome.PROPOSE_CHANGE
+            for result in evaluate_report(successors[member_id]).results
+        )
+        for member_id in historical
+    )
+    assert 2 == ranked_yield
+    assert 0 == historical_yield
+    assert ranked_yield > historical_yield
 
 
 @pytest.mark.parametrize(

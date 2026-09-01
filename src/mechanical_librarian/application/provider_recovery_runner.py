@@ -213,7 +213,7 @@ class ScopedProviderRecoveryRunner:
                 now=self._current(current),
                 blocked_targets=blocked,
             )
-            return RecoveryRun("exhausted" if missing is not None else "idle")
+            return RecoveryRun(missing.state if missing is not None else "idle")
         if fanout_state is None:
             assert claimed is not None
             while canary is not None:
@@ -261,13 +261,13 @@ class ScopedProviderRecoveryRunner:
                         )
                         continue
                     if failure not in RECOVERY_FAILURES:
-                        self._store.complete_exhausted_scope(
+                        exhausted = self._store.complete_exhausted_scope(
                             job=canary,
                             token=token,
                             recovery=claimed,
                             now=current,
                         )
-                        return RecoveryRun("exhausted")
+                        return RecoveryRun(exhausted.state)
                     self._store.complete_canary_failure(
                         job=canary,
                         token=token,
@@ -286,12 +286,12 @@ class ScopedProviderRecoveryRunner:
                 )
                 break
             if canary is None:
-                self._store.complete_success(
+                completed = self._store.complete_success(
                     token=token,
                     recovery=claimed,
                     now=self._current(current),
                 )
-                return RecoveryRun("recovered")
+                return RecoveryRun(completed.state)
         assert fanout_state is not None
         fanout = 0
         while not self._cancelled():

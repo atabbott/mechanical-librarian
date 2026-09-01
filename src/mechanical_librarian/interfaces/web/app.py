@@ -858,6 +858,14 @@ class _ActivityWaiting(_ClosedModel):
 
 class _ProviderRecoveryActivity(_ClosedModel):
     affected_count: int = Field(ge=1, le=1_000_000)
+    dispatch_reasons: list[
+        Literal[
+            "missing_corroboration",
+            "zero_provider_evidence",
+            "settleable_disagreement",
+            "blanket_scan",
+        ]
+    ] = Field(default_factory=list, max_length=4)
     next_eligible_at: int | None = Field(default=None, ge=0, le=8_640_000_000_000)
     state: Literal["waiting", "checking", "dormant", "recovered", "fanout", "exhausted"]
 

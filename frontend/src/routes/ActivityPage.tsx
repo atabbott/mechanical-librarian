@@ -8,6 +8,7 @@ import type {
   ActivitySearch,
   ActivityTransitionView,
   ActivityView,
+  ProviderRecoveryDispatchReason,
 } from '../api/http'
 import { activityOutcome } from '../activityState'
 import { Dropdown } from '../components/Dropdown'
@@ -63,6 +64,12 @@ const categoryLabel: Record<ActivityCategory, string> = {
   automatic: 'Automatic choice',
   policy: 'Policy change',
   recovery: 'Recovery',
+}
+const recoveryDispatchLabel: Record<ProviderRecoveryDispatchReason, string> = {
+  missing_corroboration: 'needs independent evidence',
+  zero_provider_evidence: 'no provider evidence yet',
+  settleable_disagreement: 'evidence disagreement',
+  blanket_scan: 'general recovery scan',
 }
 const typeOptions = [
   { id: 'all', label: 'All' },
@@ -1021,6 +1028,15 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                 {item.next_eligible_at === null
                   ? ''
                   : ` · next eligible ${dateParts(item.next_eligible_at).time}`}
+                {item.dispatch_reasons?.length ? (
+                  <span>
+                    {' '}
+                    · Priority:{' '}
+                    {item.dispatch_reasons
+                      .map((reason) => recoveryDispatchLabel[reason])
+                      .join(', ')}
+                  </span>
+                ) : null}
               </p>
             ))}
           </section>
