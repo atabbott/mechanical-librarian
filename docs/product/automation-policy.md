@@ -30,8 +30,8 @@ that exact envelope remains human-routed until separately qualified.
 
 F35 (#884) adds a closed, provider-consensus title election to the v13
 ProposalSet policy: one exact local noisy title, one exact reversible pattern,
-byte-identical clean provider titles from at least two independent authority
-correlations, and no dissent. Colon subtitles corroborate only across sources
+byte-identical clean work or edition title observations from at least two
+independent authority correlations, and no dissent. Colon subtitles corroborate only across sources
 and elect only when their exact suffix is safely retained as the current
 structured subtitle or an independent provider subtitle candidate. This is not
 yet automatic authority. #445 must replay and diff every existing F19a option

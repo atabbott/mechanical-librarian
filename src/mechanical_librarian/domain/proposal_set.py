@@ -1383,6 +1383,15 @@ def _provider_consensus_title_election(
         )
     ):
         return _unresolved(result, "provider_consensus_title_series_unpreserved")
+    provider_title_claims = tuple(
+        (provider, claim.value)
+        for provider in report.providers
+        for candidate in provider.candidates
+        for claim in candidate.claims
+        if claim.kind is ClaimKind.TITLE
+        and claim.state is FieldState.VALID
+        and claim.value is not None
+    )
     provider_titles = tuple(
         (provider, claim.value)
         for provider in report.providers
@@ -1395,9 +1404,8 @@ def _provider_consensus_title_election(
     )
     if (
         len(provider_titles) < 2
-        or any(value != provider_titles[0][1] for _, value in provider_titles)
+        or any(value != match.clean_title for _, value in provider_title_claims)
         or len({_provider_correlation(provider) for provider, _ in provider_titles}) < 2
-        or provider_titles[0][1] != match.clean_title
     ):
         return result
     candidates = tuple(

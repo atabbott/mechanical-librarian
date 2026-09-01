@@ -41,6 +41,7 @@ def _provider_title(
     *,
     authority: str | None = None,
     subtitle: str | None = None,
+    edition_title: str | None = None,
 ):
     claims = [
         _claim(
@@ -60,6 +61,16 @@ def _provider_title(
                 subtitle,
                 scope=ClaimScope.EDITION,
                 applicability="ebook",
+            )
+        )
+    if edition_title is not None:
+        claims.append(
+            _claim(
+                name,
+                f"{name}-edition",
+                ClaimKind.TITLE,
+                edition_title,
+                scope=ClaimScope.EDITION,
             )
         )
     return _provider(
@@ -166,6 +177,19 @@ def test_provider_consensus_requires_byte_exact_provider_raw_titles() -> None:
         providers=(
             _provider_title("open_library", "Café"),
             _provider_title("hardcover", "Cafe\u0301"),
+        ),
+    )
+
+    assert ProposalOutcome.UNRESOLVED_CHOICE is result.outcome
+    assert result.reasons == ("competing_evidence",)
+
+
+def test_provider_consensus_requires_every_provider_title_observation_to_match() -> None:
+    result = _title_result(
+        local="Plain Work [retail]",
+        providers=(
+            _provider_title("open_library", "Plain Work", edition_title="plain work"),
+            _provider_title("hardcover", "Plain Work"),
         ),
     )
 
