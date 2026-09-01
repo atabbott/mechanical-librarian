@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from mechanical_librarian.application.batch import (
@@ -248,6 +250,20 @@ def test_open_library_call_maxima_cover_bounded_descriptor_fan_out_and_contact_i
         "provider_metadata_requests": 54,
         "remote_cover_requests": 0,
     }
+
+    inventaire = manifest(base, "b" * 64, selected, ("inv",), ("inventaire",))
+    assert parse_manifest(inventaire)["call_maxima"] == {
+        "target_item_observations": 6,
+        "target_raw_cover_requests": 4,
+        "provider_metadata_requests": 27,
+        "remote_cover_requests": 4,
+    }
+    undercounted = json.loads(inventaire)
+    undercounted["call_maxima"]["remote_cover_requests"] = 2
+    with pytest.raises(BatchError, match="manifest is invalid"):
+        parse_manifest(
+            json.dumps(undercounted, sort_keys=True, separators=(",", ":")).encode()
+        )
     first = ApplicationConfiguration(
         (
             TargetConnectionConfiguration(

@@ -131,7 +131,7 @@ Exact-ID and current-scope replay apply only within the exact current schema;
 current-schema restart, replay, and crash safety remain mandatory.
 
 The F31 reviewer-access increment declares a clean rebuild. It admits only
-`setup-state-v2`, `owner-settings-v2`, `reviewer-access-v1`, and the exact
+`setup-state-v3`, `owner-settings-v3`, `reviewer-access-v1`, and the exact
 current application objects; the former offline exact-predecessor plans and
 their public command are retired. Reviewer engine/model provenance remains
 readable only inside `cover-consideration-v3` and its matching current report

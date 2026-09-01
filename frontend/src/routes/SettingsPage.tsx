@@ -241,7 +241,8 @@ const Row = ({
   </div>
 )
 
-// An added capability starts disabled and states only what its adapter owns.
+// Credential-bearing capabilities start disabled. Inventaire is keyless and
+// #883 defaults both its evidence lanes on, including after owner re-enable.
 // The four audiobook adapters are keyless (ADR-0061), and Audible's
 // marketplace order stays with the configuration file, so neither appears.
 const newProvider = (
@@ -256,7 +257,7 @@ const newProvider = (
     case 'google_books':
       return { ...base, adapter: 'google_books' }
     case 'inventaire':
-      return { ...base, adapter: 'inventaire' }
+      return { ...base, adapter: 'inventaire', cover_enabled: true, enabled: true }
     case 'audible_catalog':
       return {
         ...base,
@@ -729,6 +730,8 @@ const SettingsEditor = ({
                                   const item = value.providers.at(index)
                                   if (item) {
                                     item.enabled = event.currentTarget.checked
+                                    if (item.enabled && item.adapter === 'inventaire')
+                                      item.cover_enabled = true
                                     if (!item.enabled) {
                                       item.cover_enabled = false
                                       for (const library of value.libraries)

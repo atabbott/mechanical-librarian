@@ -157,7 +157,7 @@ class _State:
     def __init__(self, sessions: _Sessions | None = None) -> None:
         self.sessions = sessions
         self.document = SetupStateDocument(
-            schema_version="setup-state-v2",
+            schema_version="setup-state-v3",
             revision=1,
             bootstrap_verifier_digest="0" * 64,
         )

@@ -621,7 +621,7 @@
             "type": "integer"
           },
           "schema_version": {
-            "const": "owner-settings-v2",
+            "const": "owner-settings-v3",
             "title": "Schema Version",
             "type": "string"
           },

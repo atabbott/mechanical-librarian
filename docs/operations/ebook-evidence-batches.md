@@ -33,9 +33,10 @@ enabled provider names and adapter discriminators, and conservative call-count
 maxima. Each enabled Open Library adapter allows at most 49 metadata requests
 and four remote cover requests per selected item: up to 45 initial Search and
 detail requests plus four bounded retries. Hardcover permits at most 27
-metadata requests, and Google Books at most 54. The report gallery admits at most four
-cover sources per provider and eight overall. The maxima add the enabled
-adapters without a generic cost or scheduling framework.
+metadata requests, Inventaire at most 27 metadata requests and four remote cover
+requests, and Google Books at most 54 metadata requests. The report gallery
+admits at most four cover sources per provider and eight overall. The maxima add
+the enabled adapters without a generic cost or scheduling framework.
 Each enabled Google Books adapter permits at most 54 metadata requests and
 no cover requests per selected item.
 The manifest contains no title, author,

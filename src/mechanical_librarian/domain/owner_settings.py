@@ -262,7 +262,7 @@ class CoverPreferenceSettings(_Closed):
 
 
 class OwnerSettingsDocument(_Closed):
-    schema_version: Literal["owner-settings-v2"]
+    schema_version: Literal["owner-settings-v3"]
     revision: Annotated[StrictInt, Field(ge=1)]
     connections: Annotated[list[TargetSettings], Field(min_length=1, max_length=32)]
     providers: Annotated[list[ProviderSettings], Field(max_length=32)] = []

@@ -65,7 +65,7 @@ class SetupLibraryCandidate(_Closed):
 class SetupStateDocument(_Closed):
     """The only incomplete authority admitted before the owner is established."""
 
-    schema_version: Literal["setup-state-v2"]
+    schema_version: Literal["setup-state-v3"]
     revision: Annotated[StrictInt, Field(ge=1)]
     bootstrap_verifier_digest: StrictStr
     completed_steps: list[SetupStep] = Field(default_factory=list, max_length=6)
@@ -159,7 +159,7 @@ class SetupStateDocument(_Closed):
             raise SetupStateError("setup state is incomplete")
         return OwnerSettingsDocument.model_validate(
             {
-                "schema_version": "owner-settings-v2",
+                "schema_version": "owner-settings-v3",
                 "revision": 1,
                 "connections": [self.connection.model_dump()],
                 "providers": [item.model_dump() for item in self.providers],

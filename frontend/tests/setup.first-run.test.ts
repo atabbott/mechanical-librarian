@@ -38,7 +38,7 @@ const setupState = (nextStep: string, overrides: Record<string, unknown> = {}) =
   next_step: nextStep,
   providers: [],
   revision: 3,
-  schema_version: 'setup-state-v2',
+  schema_version: 'setup-state-v3',
   ...overrides,
 })
 

@@ -5,7 +5,8 @@
 - Inventaire is available as a keyless ebook metadata and cover provider in
   Settings and first-run setup. It resolves edition claims, linked works and
   English/fallback Wikidata labels through bounded fixed-host requests. Existing
-  installs require `config-v8` and a clean `metadata-report-v33` database. (#883)
+  installs require `config-v8`, `owner-settings-v3`, `setup-state-v3`, and a
+  clean `metadata-report-v33` database. (#883)
 
 - Under provider quota pressure, exact-current recovery spends requests first
   on missing corroboration, then zero evidence, then settleable disagreement,

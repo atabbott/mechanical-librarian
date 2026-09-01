@@ -145,7 +145,7 @@ def _report():
 
 _DEFAULT_SETTINGS_DOCUMENT = OwnerSettingsDocument.model_validate(
     {
-        "schema_version": "owner-settings-v2",
+        "schema_version": "owner-settings-v3",
         "revision": 1,
         "connections": [{"name": "primary", "endpoint": "https://library.invalid"}],
         "libraries": [
@@ -530,7 +530,7 @@ def _setup_asset_server(
     class State:
         def read(self, _verifier: str) -> SetupStateDocument:
             return SetupStateDocument(
-                schema_version="setup-state-v2",
+                schema_version="setup-state-v3",
                 revision=1,
                 bootstrap_verifier_digest="0" * 64,
             )
@@ -2519,7 +2519,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                 class State:
                     def read(self, _verifier: str) -> SetupStateDocument:
                         return SetupStateDocument(
-                            schema_version="setup-state-v2",
+                            schema_version="setup-state-v3",
                             revision=1,
                             bootstrap_verifier_digest="0" * 64,
                         )
@@ -3324,7 +3324,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
         certificate, key = _certificate(root)
         settings = OwnerSettingsDocument.model_validate(
             {
-                "schema_version": "owner-settings-v2",
+                "schema_version": "owner-settings-v3",
                 "revision": 1,
                 "connections": [
                     {
@@ -3411,6 +3411,10 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 expect(
                     page.get_by_role("heading", name="Loading settings…")
                 ).to_be_visible()
+                for _ in range(100):
+                    if held_initial_settings:
+                        break
+                    page.wait_for_timeout(10)
                 assert len(held_initial_settings) == 1
                 held_initial_settings[0].fulfill(status=200, json=initial_settings)
                 expect(
@@ -3662,14 +3666,14 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     "Google Books",
                     "Hardcover",
                     "iTunes",
+                    "Inventaire",
                     "Open Library",
                 ):
                     expect(
                         page.get_by_role("button", name=f"Add {provider}")
                     ).to_be_visible()
                 # One wrapped row per two or three capability buttons at 320px.
-                # The bound moved from 600 with the four audiobook providers
-                # (#749): seven buttons is four wrapped rows, and the guard is
+                # Eight buttons is four wrapped rows, and the guard is
                 # still that the add-list wraps rather than stacking one
                 # full-width button per row.
                 assert (
@@ -3682,6 +3686,27 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     """() => [...document.querySelectorAll('.settings-empty h3, .settings-capabilities h3')]
                       .every((heading) => heading.getBoundingClientRect().bottom < heading.nextElementSibling.getBoundingClientRect().top)"""
                 )
+                page.get_by_role("button", name="Add Inventaire").click()
+                inventaire_enabled = page.get_by_role(
+                    "checkbox", name="Provider state Enable inventaire"
+                )
+                expect(inventaire_enabled).to_be_checked()
+                inventaire_enabled.click()
+                expect(inventaire_enabled).not_to_be_checked()
+                inventaire_enabled.click()
+                expect(inventaire_enabled).to_be_checked()
+                page.get_by_role("button", name="Save settings").click()
+                expect(page.get_by_text("Settings saved and in use.")).to_be_visible()
+                saved_settings = page.request.get(origin + "/api/v1/settings").json()[
+                    "document"
+                ]
+                saved_inventaire = next(
+                    item
+                    for item in saved_settings["providers"]
+                    if item["adapter"] == "inventaire"
+                )
+                assert saved_inventaire["enabled"] is True
+                assert saved_inventaire["cover_enabled"] is True
                 compact_group.select_option("connection")
                 expect(page.get_by_text("Configured · ····cret")).to_be_visible()
                 page.get_by_role("button", name="Clear primary access key").click()
@@ -3790,6 +3815,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 expect(page.get_by_text("Saving settings…")).to_be_visible()
                 assert len(held_save) == 1
                 held_save[0].continue_()
+                expect(page.get_by_text("Saving settings…")).to_have_count(0)
                 expect(page.get_by_text("Settings saved and in use.")).to_be_visible()
                 page.unroute("**/api/v1/settings", hold_save)
                 assert max(page.evaluate("window.__settingsLongTasks"), default=0) <= 50

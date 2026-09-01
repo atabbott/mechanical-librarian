@@ -2,18 +2,18 @@
 
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
-The reviewer-access authority, `setup-state-v2`, `owner-settings-v2`,
+The reviewer-access authority, `setup-state-v3`, `owner-settings-v3`,
 `cover-consideration-v3`, `metadata-report-v33`, and the added application
 tables change the current SQLite objects in this build. Every earlier
 application database therefore requires a clean rebuild; no adoption,
 migration, conversion, import, repair, or downgrade is supplied by #872, #873,
 or #749.
 
-The exact predecessor for this change is `config-v7` with
-`metadata-report-v32`. Inventaire changes both closed vocabularies, so neither
-predecessor is parsed or adopted: supply a `config-v8` document and rebuild an
-absent application database. `owner-settings-v2` and `setup-state-v2` are
-unchanged and have no migration.
+The exact predecessors for this change are `config-v7`, `metadata-report-v32`,
+`owner-settings-v2`, and `setup-state-v2`. Inventaire changes all four closed
+vocabularies, so no predecessor is parsed or adopted: supply a `config-v8`
+document and rebuild an absent application database through first-run setup.
+No migration is supplied.
 
 `metadata-report-v31` in particular cannot carry an audiobook's provider
 evidence: it refuses a provider observation on an audio report outright, and

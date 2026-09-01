@@ -109,7 +109,7 @@ def test_settings_file_authority_transport_is_private_and_locked(
 ) -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v2",
+            "schema_version": "owner-settings-v3",
             "revision": 1,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}
@@ -179,7 +179,7 @@ def test_settings_store_transport_redacts_secret_and_derives_effects(
 ) -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v2",
+            "schema_version": "owner-settings-v3",
             "revision": 1,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}

@@ -40,7 +40,7 @@ from mechanical_librarian.domain.reviewer_access import (
 def _document(revision: int = 1) -> OwnerSettingsDocument:
     return OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v2",
+            "schema_version": "owner-settings-v3",
             "revision": revision,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}
@@ -66,6 +66,27 @@ def _document(revision: int = 1) -> OwnerSettingsDocument:
             ],
         }
     )
+
+
+def test_owner_settings_v2_is_rejected_and_clean_v3_restarts(tmp_path: Path) -> None:
+    previous = _document().model_dump()
+    previous["schema_version"] = "owner-settings-v2"
+    with pytest.raises(ValidationError):
+        OwnerSettingsDocument.model_validate(previous)
+
+    path = tmp_path / "owner-settings.sqlite3"
+    connection = sqlite3.connect(path)
+    store = _store(connection)
+    assert store.read().document.schema_version == "owner-settings-v3"
+    connection.close()
+
+    reopened = sqlite3.connect(path)
+    try:
+        assert OwnerSettingsStore(reopened).read().document.schema_version == (
+            "owner-settings-v3"
+        )
+    finally:
+        reopened.close()
 
 
 class _FailingCommitConnection(sqlite3.Connection):
