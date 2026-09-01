@@ -57,6 +57,7 @@ from mechanical_librarian.domain.metadata_report import (
     manifestation_publication_compatible,
     normalize_date_value,
     normalize_title,
+    provider_candidate_set_exact_work_identity_admission,
     provider_candidate_set_work_identity_admission,
     publication_date_is_voting,
 )
@@ -1783,6 +1784,76 @@ def _candidate_set_replays_work_qualification(
     )
 
 
+def provider_candidate_represents_target_work(
+    report: MetadataReport,
+    provider: ProviderObservation,
+    candidate: ProviderCandidate,
+) -> bool:
+    """Prove one retained candidate describes the target work through its lane."""
+    targets = {field.destination: field for field in report.target.fields}
+    title = targets[TargetDestination.TITLE]
+    authors = targets[TargetDestination.AUTHORS]
+    if (
+        title.state is not TargetFieldState.VALUE
+        or type(title.value) is not str
+        or authors.state is not TargetFieldState.VALUE
+        or type(authors.value) is not tuple
+        or not authors.value
+        or not all(type(value) is str for value in authors.value)
+        or not _target_backed_lookup_contains(report, provider, candidate)
+    ):
+        return False
+    expected_authors = tuple(
+        normalize_title(value) for value in cast("tuple[str, ...]", authors.value)
+    )
+    if len({value.casefold() for value in expected_authors}) != len(expected_authors):
+        return False
+    expected_title = normalize_title(title.value)
+    candidates_by_identity = {value.identity: value for value in provider.candidates}
+    for lane in provider.lanes:
+        if (
+            lane.status is not ProviderStatus.CANDIDATES
+            or not any(
+                member.edition_identity == candidate.identity
+                and member.work_identity == candidate.work_identity
+                for member in lane.candidates
+            )
+            or any(
+                value.edition_identity not in candidates_by_identity
+                for value in lane.candidates
+            )
+        ):
+            continue
+        lane_candidates = tuple(
+            candidates_by_identity[value.edition_identity] for value in lane.candidates
+        )
+        if lane.kind is ProviderQueryKind.WORK:
+            admission = provider_candidate_set_work_identity_admission(
+                lane_candidates,
+                expected_title,
+                expected_authors,
+                lane.dispatch_lineage,
+            )
+            lineage_matches = admission.transformation == lane.transformation_lineage
+        elif lane.kind is ProviderQueryKind.ISBN:
+            admission = provider_candidate_set_exact_work_identity_admission(
+                lane_candidates,
+                expected_title,
+                expected_authors,
+            )
+            lineage_matches = True
+        else:
+            continue
+        if (
+            admission.admitted
+            and admission.candidates == lane_candidates
+            and candidate in admission.candidates
+            and lineage_matches
+        ):
+            return True
+    return False
+
+
 def _creator_sets_match(
     authors: tuple[ProviderClaim, ...],
     author_bindings: tuple[ProviderIdentityBinding, ...] | None,
@@ -3465,4 +3536,5 @@ __all__ = [
     "ProposalValueError",
     "ProposalValueKind",
     "evaluate_report",
+    "provider_candidate_represents_target_work",
 ]

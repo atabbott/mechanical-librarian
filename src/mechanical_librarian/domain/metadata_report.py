@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Any, Mapping, Self, TypedDict, cast
+from typing import Any, Callable, Mapping, Self, TypedDict, cast
 
 from mechanical_librarian.domain.audio_inspection import (
     MAX_CHAPTERS as MAX_AUDIO_CHAPTERS,
@@ -60,6 +60,7 @@ from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     WorkIdentityAdmission,
     WorkTitleTransformationLineage,
+    admit_provider_work_identity,
     replay_provider_work_identity_admission,
     work_dispatch_lineage_from_data,
     work_title_has_variant_marker,
@@ -2492,6 +2493,45 @@ def provider_candidate_work_identity_admission(
     dispatch_lineage: WorkDispatchLineage | None,
 ) -> WorkIdentityAdmission:
     """Apply the closed WORK qualification floor to one retained candidate."""
+    claims = _provider_candidate_work_identity_claims(candidate)
+    if claims is None:
+        return WorkIdentityAdmission(False)
+    title, authors, work_identity, variant_excluded = claims
+    return replay_provider_work_identity_admission(
+        local_title=local_title,
+        local_authors=local_authors,
+        provider_title=title,
+        provider_authors=authors,
+        provider_work_identity=work_identity,
+        dispatch_lineage=dispatch_lineage,
+        variant_excluded=variant_excluded,
+    )
+
+
+def provider_candidate_exact_work_identity_admission(
+    candidate: ProviderCandidate,
+    local_title: str,
+    local_authors: tuple[str, ...],
+) -> WorkIdentityAdmission:
+    """Admit one candidate against the exact target work without dispatch replay."""
+    claims = _provider_candidate_work_identity_claims(candidate)
+    if claims is None:
+        return WorkIdentityAdmission(False)
+    title, authors, work_identity, variant_excluded = claims
+    return admit_provider_work_identity(
+        local_title=local_title,
+        local_authors=local_authors,
+        provider_title=title,
+        provider_authors=authors,
+        provider_work_identity=work_identity,
+        variant_excluded=variant_excluded,
+    )
+
+
+def _provider_candidate_work_identity_claims(
+    candidate: ProviderCandidate,
+) -> tuple[str, tuple[str, ...], str, bool] | None:
+    """Return one complete candidate work claim set, or reject it closed."""
     titles = tuple(
         claim.value
         for claim in candidate.claims
@@ -2529,19 +2569,16 @@ def provider_candidate_work_identity_admission(
         or neutral
         and complete_creator_identity_bindings(candidate, neutral) is None
     ):
-        return WorkIdentityAdmission(False)
-    return replay_provider_work_identity_admission(
-        local_title=local_title,
-        local_authors=local_authors,
-        provider_title=titles[0],
-        provider_authors=tuple(cast("str", claim.value) for claim in creators),
-        provider_work_identity=(
+        return None
+    return (
+        titles[0],
+        tuple(cast("str", claim.value) for claim in creators),
+        (
             candidate.identity
             if candidate.work_identity == "unresolved"
             else candidate.work_identity
         ),
-        dispatch_lineage=dispatch_lineage,
-        variant_excluded=variant_excluded,
+        variant_excluded,
     )
 
 
@@ -2575,6 +2612,33 @@ def provider_candidate_set_work_identity_admission(
     dispatch_lineage: WorkDispatchLineage | None,
 ) -> ProviderWorkIdentitySetAdmission:
     """Admit exactly one work identity and one lineage from a candidate set."""
+    return _provider_candidate_set_work_identity_admission(
+        candidates,
+        lambda candidate: provider_candidate_work_identity_admission(
+            candidate, local_title, local_authors, dispatch_lineage
+        ),
+    )
+
+
+def provider_candidate_set_exact_work_identity_admission(
+    candidates: tuple[ProviderCandidate, ...],
+    local_title: str,
+    local_authors: tuple[str, ...],
+) -> ProviderWorkIdentitySetAdmission:
+    """Admit one exact candidate work without requiring WORK dispatch lineage."""
+    return _provider_candidate_set_work_identity_admission(
+        candidates,
+        lambda candidate: provider_candidate_exact_work_identity_admission(
+            candidate, local_title, local_authors
+        ),
+    )
+
+
+def _provider_candidate_set_work_identity_admission(
+    candidates: tuple[ProviderCandidate, ...],
+    admit_candidate: Callable[[ProviderCandidate], WorkIdentityAdmission],
+) -> ProviderWorkIdentitySetAdmission:
+    """Apply one semantic admission entry point to an exact candidate set."""
     if type(candidates) is not tuple or any(
         type(candidate) is not ProviderCandidate for candidate in candidates
     ):
@@ -2592,9 +2656,7 @@ def provider_candidate_set_work_identity_admission(
         if _provider_candidate_has_work_identity_veto(candidate):
             blocked_work_identities.add(work_identity)
             continue
-        admission = provider_candidate_work_identity_admission(
-            candidate, local_title, local_authors, dispatch_lineage
-        )
+        admission = admit_candidate(candidate)
         if admission.admitted:
             qualified.setdefault(work_identity, []).append(
                 (candidate, admission.transformation)
@@ -5155,7 +5217,9 @@ __all__ = [
     "ProviderLaneCandidate",
     "ProviderLaneObservation",
     "ProviderObservation",
+    "provider_candidate_exact_work_identity_admission",
     "provider_candidate_work_identity_admission",
+    "provider_candidate_set_exact_work_identity_admission",
     "provider_candidate_set_work_identity_admission",
     "ProviderWorkIdentitySetAdmission",
     "ProviderQueryKind",

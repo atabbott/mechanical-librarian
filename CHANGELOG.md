@@ -9,6 +9,10 @@
   own running time corroborates them. Existing installs require a clean
   `metadata-report-v34` database. (#956)
 
+- Provider description, series, genre, and tag proposals now require exact
+  retained work identity before they can be elected automatically. Conflicting
+  or incomplete provider work evidence remains available for inspection. (#964)
+
 - Language aliases and regional variants now form one decision alternative,
   while different base languages, script variants, and malformed tags remain
   unresolved. Existing pre-release proposal state requires a clean rebuild

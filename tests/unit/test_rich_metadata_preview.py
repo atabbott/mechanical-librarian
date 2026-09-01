@@ -6,6 +6,12 @@ from dataclasses import replace
 
 import pytest
 
+from mechanical_librarian.application.metadata_report import (
+    ProviderLaneResult,
+    TargetSnapshot,
+    metadata_discovery_plan,
+    provider_observation,
+)
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
     resolve_policy,
@@ -16,10 +22,10 @@ from mechanical_librarian.domain.metadata_report import (
     FieldState,
     LocalClaim,
     MetadataReport,
+    ProviderCandidate,
     ProviderClaim,
     ProviderEvidence,
     ProviderEvidenceKind,
-    ProviderLaneCandidate,
     ProviderLaneObservation,
     ProviderObservation,
     ProviderQueryKind,
@@ -29,7 +35,6 @@ from mechanical_librarian.domain.metadata_report import (
     TargetField,
     TargetFieldState,
     TargetSeries,
-    provider_lane_candidate_reference,
 )
 from mechanical_librarian.domain.proposal_set import (
     BibliographicCombination,
@@ -58,6 +63,13 @@ from tests.support.proposal_evidence import (
     _report,
 )
 from tests.unit.test_bibliographic_bundles import _bibliographic_report, _source
+
+_TARGET_WORK_DESTINATIONS = (
+    TargetDestination.DESCRIPTION,
+    TargetDestination.SERIES,
+    TargetDestination.GENRES,
+    TargetDestination.TAGS,
+)
 
 
 def _local_isbn(value, checksum):
@@ -130,11 +142,44 @@ def _series_claims(provider, candidate, name="Reading Order", sequence="2"):
 
 
 def _automatic_series_report(*providers):
-    return _report(
-        fields=_fields(
-            series=TargetField(TargetDestination.SERIES, TargetFieldState.MISSING)
+    fields = _fields(
+        "Current title",
+        authors=TargetField(
+            TargetDestination.AUTHORS,
+            TargetFieldState.VALUE,
+            ("Example Author",),
         ),
-        providers=providers,
+        series=TargetField(TargetDestination.SERIES, TargetFieldState.MISSING),
+    )
+    local_isbn = _local_isbn("9780306406157", "valid_isbn_13")
+    lane = metadata_discovery_plan(
+        TargetSnapshot(
+            "ebook",
+            "Current title",
+            ("Example Author",),
+            fields=fields,
+        ),
+        (local_isbn,),
+    ).lanes[0]
+    return _report(
+        fields=fields,
+        local_claims=(local_isbn,),
+        providers=tuple(
+            provider_observation(
+                provider.provider,
+                (
+                    ProviderLaneResult(
+                        lane,
+                        provider.status,
+                        provider.candidates,
+                    ),
+                ),
+                authority=provider.authority,
+            )
+            if provider.status is ProviderStatus.CANDIDATES
+            else provider
+            for provider in providers
+        ),
     )
 
 
@@ -142,8 +187,332 @@ def _series_provider(name, candidate, authority, claims=None):
     return _provider(
         name,
         candidate,
-        _series_claims(name, candidate) if claims is None else claims,
+        (
+            _claim(
+                name,
+                candidate,
+                ClaimKind.TITLE,
+                "Current title",
+                scope=ClaimScope.WORK,
+            ),
+            _claim(
+                name,
+                candidate,
+                ClaimKind.CREATOR,
+                "Example Author",
+                scope=ClaimScope.WORK,
+                role="author",
+            ),
+            *(_series_claims(name, candidate) if claims is None else claims),
+        ),
         authority=authority,
+    )
+
+
+def _target_work_candidate(
+    provider: str,
+    identity: str,
+    work_identity: str,
+) -> ProviderCandidate:
+    return ProviderCandidate(
+        identity,
+        work_identity,
+        (
+            _claim(
+                provider,
+                identity,
+                ClaimKind.TITLE,
+                "Real Tigers",
+                scope=ClaimScope.WORK,
+            ),
+            _claim(
+                provider,
+                identity,
+                ClaimKind.CREATOR,
+                "Mick Herron",
+                scope=ClaimScope.WORK,
+                role="author",
+            ),
+            _claim(
+                provider,
+                identity,
+                ClaimKind.DESCRIPTION,
+                "A qualified description.",
+                scope=ClaimScope.WORK,
+                order=1,
+            ),
+            _claim(
+                provider,
+                identity,
+                ClaimKind.GENRE,
+                "Mystery",
+                scope=ClaimScope.WORK,
+                order=2,
+            ),
+            _claim(
+                provider,
+                identity,
+                ClaimKind.TAG,
+                "Espionage",
+                scope=ClaimScope.WORK,
+                order=3,
+            ),
+            _claim(
+                provider,
+                identity,
+                ClaimKind.SERIES,
+                "Slough House",
+                scope=ClaimScope.WORK,
+                order=4,
+            ),
+            _claim(
+                provider,
+                identity,
+                ClaimKind.SERIES_SEQUENCE,
+                "3",
+                scope=ClaimScope.WORK,
+                order=5,
+            ),
+        ),
+    )
+
+
+def _target_work_report(
+    candidates_by_provider: tuple[
+        tuple[str, str, tuple[ProviderCandidate, ...], bool], ...
+    ],
+) -> MetadataReport:
+    fields = _fields(
+        "Real Tigers",
+        authors=TargetField(
+            TargetDestination.AUTHORS,
+            TargetFieldState.VALUE,
+            ("Mick Herron",),
+        ),
+        description=TargetField(
+            TargetDestination.DESCRIPTION,
+            TargetFieldState.MISSING,
+        ),
+        series=TargetField(TargetDestination.SERIES, TargetFieldState.MISSING),
+        genres=TargetField(TargetDestination.GENRES, TargetFieldState.MISSING),
+        tags=TargetField(TargetDestination.TAGS, TargetFieldState.MISSING),
+    )
+    local_isbns = (
+        _local_isbn("0306406152", "valid_isbn_10"),
+        _local_isbn("9780306406157", "valid_isbn_13"),
+    )
+    lane = metadata_discovery_plan(
+        TargetSnapshot("ebook", "Real Tigers", ("Mick Herron",), fields=fields),
+        local_isbns,
+    ).lanes[0]
+    providers = tuple(
+        provider_observation(
+            provider,
+            (ProviderLaneResult(lane, ProviderStatus.CANDIDATES, candidates),),
+            authority=authority,
+        )
+        if with_lane
+        else ProviderObservation(
+            provider,
+            ProviderStatus.CANDIDATES,
+            candidates=candidates,
+            authority=authority,
+        )
+        for provider, authority, candidates, with_lane in candidates_by_provider
+    )
+    return _report(
+        title="Real Tigers",
+        fields=fields,
+        local_claims=local_isbns,
+        providers=providers,
+    )
+
+
+def _target_work_preview(report: MetadataReport, series_option: str = "source_order"):
+    options = dict(MetadataPolicyProfile.builtin().options)
+    options.update(
+        {
+            "description_fill": "safe_plain_text",
+            "genres": "fill_empty",
+            "series": series_option,
+            "tags": "fill_empty",
+        }
+    )
+    destinations = dict(MetadataPolicyProfile.builtin().destinations)
+    destinations.update(
+        {
+            "description_fill": "automatic",
+            "genres": "automatic",
+            "series": "automatic",
+            "tags": "automatic",
+        }
+    )
+    policy = resolve_policy(
+        MetadataPolicyProfile.create("Target work applicability", options, destinations),
+        report.target.library,
+    )
+    proposal = evaluate_report(report, policy.resolved_id, destinations)
+    preview = compile_rich_metadata_preview(policy, report, proposal)
+    return proposal, {
+        field: next(value for value in preview.fields if value.field == field)
+        for field in ("description_fill", "series", "genres", "tags")
+    }
+
+
+@pytest.mark.parametrize(
+    "series_option",
+    ("primary_narrative", "source_order", "all_qualified"),
+)
+def test_exact_multi_isbn_work_projects_all_automatic_work_fields(
+    series_option: str,
+) -> None:
+    candidate = _target_work_candidate("catalogue", "edition-1", "work-1")
+    corroborating = _target_work_candidate("search", "edition-2", "work-1")
+    proposal, fields = _target_work_preview(
+        _target_work_report(
+            (
+                ("catalogue", "hardcover", (candidate,), True),
+                ("search", "open_library", (corroborating,), True),
+            )
+        ),
+        series_option,
+    )
+
+    for destination in _TARGET_WORK_DESTINATIONS:
+        assert next(
+            result for result in proposal.results if result.destination is destination
+        ).alternatives
+    assert {field: preview.outcome for field, preview in fields.items()} == {
+        "description_fill": "projected",
+        "series": "projected",
+        "genres": "projected",
+        "tags": "projected",
+    }
+    candidate_references = {
+        claim.reference for source in (candidate, corroborating) for claim in source.claims
+    }
+    assert all(
+        preview.source_evidence_references
+        and set(preview.source_evidence_references) <= candidate_references
+        for preview in fields.values()
+    )
+
+
+def test_automatic_work_citations_exclude_retained_unproved_sources() -> None:
+    catalogue = _target_work_candidate("catalogue", "edition-1", "work-1")
+    search = _target_work_candidate("search", "edition-2", "work-1")
+    unproved = _target_work_candidate("unproved", "edition-3", "work-1")
+    proposal, fields = _target_work_preview(
+        _target_work_report(
+            (
+                ("catalogue", "hardcover", (catalogue,), True),
+                ("search", "open_library", (search,), True),
+                ("unproved", "google_books", (unproved,), False),
+            )
+        ),
+        "all_qualified",
+    )
+
+    unproved_references = {claim.reference for claim in unproved.claims}
+    retained_references = {
+        reference
+        for destination in _TARGET_WORK_DESTINATIONS
+        for result in proposal.results
+        if result.destination is destination
+        for alternative in result.alternatives
+        for reference in alternative.evidence_references
+    }
+    assert retained_references & unproved_references
+    assert all(preview.outcome == "projected" for preview in fields.values())
+    assert all(
+        not (set(preview.source_evidence_references) & unproved_references)
+        for preview in fields.values()
+    )
+
+
+@pytest.mark.parametrize(
+    ("candidates", "with_lane"),
+    (
+        ((_target_work_candidate("catalogue", "edition-1", "work-1"),), False),
+        (
+            (
+                _target_work_candidate("catalogue", "edition-1", "work-1"),
+                _target_work_candidate("catalogue", "edition-2", "work-2"),
+            ),
+            True,
+        ),
+        (
+            (
+                replace(
+                    _target_work_candidate("catalogue", "edition-1", "work-1"),
+                    claims=tuple(
+                        claim
+                        for claim in _target_work_candidate(
+                            "catalogue", "edition-1", "work-1"
+                        ).claims
+                        if claim.kind is not ClaimKind.CREATOR
+                    ),
+                ),
+            ),
+            True,
+        ),
+        (
+            (
+                replace(
+                    _target_work_candidate("catalogue", "edition-1", "work-1"),
+                    claims=(
+                        *_target_work_candidate(
+                            "catalogue", "edition-1", "work-1"
+                        ).claims,
+                        _claim(
+                            "catalogue",
+                            "edition-1",
+                            ClaimKind.TITLE,
+                            "Slough House Collection",
+                            scope=ClaimScope.WORK,
+                            order=6,
+                        ),
+                    ),
+                ),
+            ),
+            True,
+        ),
+    ),
+    ids=(
+        "no_lane",
+        "conflicting_work_identity",
+        "insufficient_work_evidence",
+        "enclosing_work",
+    ),
+)
+def test_unproved_work_fields_remain_manual_but_automatic_abstains(
+    candidates: tuple[ProviderCandidate, ...],
+    with_lane: bool,
+) -> None:
+    proposal, fields = _target_work_preview(
+        _target_work_report(
+            (("catalogue", "hardcover", candidates, with_lane),)
+        )
+    )
+
+    for destination in _TARGET_WORK_DESTINATIONS:
+        assert next(
+            result for result in proposal.results if result.destination is destination
+        ).alternatives
+    assert all(
+        (
+            preview.outcome,
+            preview.reason,
+            preview.source_candidate_id,
+            preview.source_evidence_references,
+        )
+        == (
+            "abstain",
+            "target_work_applicability_unproved",
+            None,
+            (),
+        )
+        for preview in fields.values()
     )
 
 
@@ -196,8 +565,10 @@ def _list_preview(field, option, current, alternatives=1, state=None):
     )
     profile_options = dict(MetadataPolicyProfile.builtin().options)
     profile_options[field] = option
+    profile_destinations = dict(MetadataPolicyProfile.builtin().destinations)
+    profile_destinations[field] = "ask"
     profile = MetadataPolicyProfile.create(
-        "Lists", profile_options, dict(MetadataPolicyProfile.builtin().destinations)
+        "Lists", profile_options, profile_destinations
     )
     policy = resolve_policy(profile, report.target.library)
     base = evaluate_report(report)
@@ -518,11 +889,13 @@ def test_populated_list_modes_use_real_unresolved_evaluator_candidate() -> None:
     ):
         options = dict(MetadataPolicyProfile.builtin().options)
         options["genres"] = option
+        destinations = dict(MetadataPolicyProfile.builtin().destinations)
+        destinations["genres"] = "ask"
         policy = resolve_policy(
             MetadataPolicyProfile.create(
                 "Populated list",
                 options,
-                dict(MetadataPolicyProfile.builtin().destinations),
+                destinations,
             ),
             report.target.library,
         )
@@ -1061,7 +1434,7 @@ def test_automatic_series_ignores_interleaved_nonseries_claims_when_pairing() ->
                 _claim(
                     "catalogue",
                     "edition-1",
-                    ClaimKind.TITLE,
+                    ClaimKind.DESCRIPTION,
                     "Ignored",
                     scope=ClaimScope.WORK,
                     order=1,
@@ -1078,7 +1451,7 @@ def test_automatic_series_ignores_interleaved_nonseries_claims_when_pairing() ->
                 _claim(
                     "search",
                     "edition-2",
-                    ClaimKind.TITLE,
+                    ClaimKind.DESCRIPTION,
                     "Ignored",
                     scope=ClaimScope.WORK,
                     order=1,
@@ -1151,54 +1524,23 @@ def test_automatic_series_abstains_when_a_candidate_provider_has_a_failed_lane()
         _series_provider("catalogue", "edition-1", "hardcover"),
         _series_provider("search", "edition-2", "open_library"),
     )
-    local = LocalClaim.create(
-        kind=ClaimKind.TITLE,
-        observed="Current title",
-        canonical="Current title",
-        excerpt="Current title",
-        applicability="not_applicable",
-        checksum="not_applicable",
-        applicability_basis="not_applicable",
-        scope=ClaimScope.WORK,
-    )
     provider = base.providers[0]
-    candidate = provider.candidates[0]
-    successful_lane = ProviderLaneObservation(
-        "lane_" + "a" * 64,
-        ProviderQueryKind.ISBN,
-        ProviderStatus.CANDIDATES,
-        (local.reference,),
-        "9780306406157",
-        candidates=(
-            ProviderLaneCandidate(
-                provider_lane_candidate_reference(
-                    provider.provider,
-                    "lane_" + "a" * 64,
-                    candidate.identity,
-                    candidate.work_identity,
-                ),
-                candidate.identity,
-                candidate.work_identity,
-            ),
-        ),
-    )
     failed_lane = ProviderLaneObservation(
         "lane_" + "c" * 64,
         ProviderQueryKind.WORK,
         ProviderStatus.UNAVAILABLE,
-        (local.reference,),
+        (base.local_claims[0].reference,),
     )
     report = MetadataReport.create(
         target=base.target,
         file=base.file,
-        local_claims=(local,),
-        local_reasons=("no_opening_matter",),
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
         providers=(
-            replace(
-                provider,
-                input_references=(local.reference,),
-                query_kind=ProviderQueryKind.DISCOVERY,
-                lanes=(successful_lane, failed_lane),
+                replace(
+                    provider,
+                    query_kind=ProviderQueryKind.DISCOVERY,
+                    lanes=(*provider.lanes, failed_lane),
             ),
             base.providers[1],
         ),
