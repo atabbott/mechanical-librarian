@@ -255,6 +255,8 @@ const newProvider = (
       return { ...base, adapter: 'hardcover' }
     case 'google_books':
       return { ...base, adapter: 'google_books' }
+    case 'inventaire':
+      return { ...base, adapter: 'inventaire' }
     case 'audible_catalog':
       return {
         ...base,

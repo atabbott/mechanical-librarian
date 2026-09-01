@@ -156,6 +156,22 @@ def google_books_client(
     )
 
 
+def inventaire_client(
+    timeout_seconds: int, *, transport: httpx.BaseTransport | None = None
+) -> httpx.Client:
+    return httpx.Client(
+        headers={
+            "User-Agent": "MechanicalLibrarian/0.19.0 (+https://github.com/atabbott/mechanical-librarian)"
+        },
+        follow_redirects=False,
+        trust_env=False,
+        verify=True,
+        timeout=httpx.Timeout(float(timeout_seconds)),
+        limits=httpx.Limits(max_connections=1, max_keepalive_connections=0),
+        transport=transport,
+    )
+
+
 def audible_catalog_client(
     timeout_seconds: int,
     *,
@@ -303,6 +319,7 @@ __all__ = [
     "hardcover_client",
     "hardcover_client_token",
     "google_books_client",
+    "inventaire_client",
     "itunes_search_client",
     "open_library_client",
     "read_secret",

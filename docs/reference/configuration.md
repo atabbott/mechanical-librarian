@@ -1,11 +1,11 @@
 # Configuration reference
 
 The installed `review-serve` runtime and the shared application composition
-accept one strict UTF-8 JSON document with schema version `config-v7`. The
+accept one strict UTF-8 JSON document with schema version `config-v8`. The
 source-only contributor workbench may load the same schema only inside its
 disposable or explicitly approved test context. Unknown and duplicate fields
 are rejected. The generated schema is
-[`config-v7.schema.json`](config-v7.schema.json) and is regenerated with:
+[`config-v8.schema.json`](config-v8.schema.json) and is regenerated with:
 
 ```text
 uv run --frozen python scripts/generate_configuration_schema.py
@@ -14,7 +14,7 @@ uv run --frozen python scripts/generate_configuration_schema.py
 The file remains the complete authority while `/data/config.json` exists.
 The accepted store-mode, first-boot, secret, authority, and apply rules are
 [ADR-0058](../architecture/decisions/0058-settings-authority-and-first-boot.md);
-this reference describes the file-managed `config-v7` contract. In that mode it
+this reference describes the file-managed `config-v8` contract. In that mode it
 also solely supplies the review TLS identity, canonical origin, and trusted
 proxy IPs; the store/setup bootstrap document is neither required nor read.
 
@@ -60,7 +60,7 @@ derive hashes, or accept environment overrides.
 
 ```json
 {
-  "schema_version": "config-v7",
+  "schema_version": "config-v8",
   "provider_recovery_generation": 1,
   "connections": [
     {
@@ -76,7 +76,7 @@ derive hashes, or accept environment overrides.
       "connection": "primary",
       "library_id": "01234567-89ab-4def-8123-456789abcdef",
       "mount": "books",
-      "provider_connections": ["google-books-main", "hardcover-main", "open-library-main"]
+      "provider_connections": ["inventaire-main", "google-books-main", "hardcover-main", "open-library-main"]
     }
   ],
   "mounts": [
@@ -88,6 +88,14 @@ derive hashes, or accept environment overrides.
     }
   ],
   "providers": [
+    {
+      "name": "inventaire-main",
+      "adapter": "inventaire",
+      "enabled": true,
+      "cover_enabled": true,
+      "secret_file": null,
+      "contact_email": null
+    },
     {
       "name": "google-books-main",
       "adapter": "google_books",
@@ -200,8 +208,11 @@ as before. Reading that local evidence requires the `ffprobe` binary the
 shipped image builds and carries; a deployment without it records no audiobook
 evidence.
 
-Every provider has explicit enablement and one of exactly seven built-in adapter
-values. Three read ebook metadata:
+Every provider has explicit enablement and one of exactly eight built-in adapter
+values. Four read ebook metadata:
+
+- `inventaire` is keyless and forbids both credential fields. It is preselected
+  during first-run setup, uses a fixed Inventaire host, and may retrieve covers.
 
 - `google_books` forbids `contact_email` and cover retrieval. When enabled,
   `secret_file` is optional: `null` uses credential-free access and an absolute
@@ -226,9 +237,9 @@ even as an optional upgrade. What each one reaches on the network is stated in
 - `audiosilo` is community corroboration and degraded mode.
 - `itunes_search` corroborates only, and may retrieve covers.
 
-`cover_enabled` defaults to `true` on an enabled `audible_catalog` or
-`itunes_search`, the two that state a cover asset of their own; `audnexus` and
-`audiosilo` restate Audible's and must leave it `false`.
+`cover_enabled` defaults to `true` on an enabled `inventaire`,
+`audible_catalog`, or `itunes_search`; `audnexus` and `audiosilo` restate
+Audible's cover and must leave it `false`.
 
 A disabled provider must set both adapter-specific authority fields to `null`.
 Adding or enabling a provider does nothing until a library explicitly

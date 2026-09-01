@@ -78,7 +78,7 @@ grant, because a reviewer assessing an update trusts it.
   domain code does not import Pydantic.
 - **HTTPX and HTTPcore** carry the application's service and provider traffic:
   Audiobookshelf catalogue, item, raw-cover and field-effect requests
-  (`adapters/library_services/`), and Hardcover, Open Library and Google Books
+  (`adapters/library_services/`), and Hardcover, Inventaire, Open Library and Google Books
   metadata requests (`adapters/providers/`). That includes **production writes**
   — a metadata `PATCH` and a cover `POST` in
   `audiobookshelf_field_effect.py` — and a **credential-bearing GraphQL POST**

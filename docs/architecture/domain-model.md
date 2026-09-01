@@ -106,7 +106,7 @@ access; aggregation, qualification, persistence, and replay cannot invent or
 refresh the value.
 Candidate claims record
 agreement, disagreement, incompatible, or not-comparable facts against stable
-local claim references. Google Books, Hardcover and Open Library candidates may
+local claim references. Google Books, Hardcover, Inventaire and Open Library candidates may
 also retain only the closed finite evidence kinds declared by
 `ProviderEvidenceKind`, never arbitrary upstream properties or raw payloads.
 Each evidence item retains its exact bounded value, work/edition scope,

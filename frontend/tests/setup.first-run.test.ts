@@ -193,11 +193,23 @@ describe('shipped first-run setup script', () => {
     expect(submitted).toEqual({
       expected_revision: 3,
       providers: [
+        {
+          name: 'inventaire',
+          adapter: 'inventaire',
+          enabled: true,
+          cover_enabled: true,
+          contact_email: null,
+          key: null,
+        },
         { name: 'audible', adapter: 'audible_catalog', enabled: true },
         { name: 'audnexus', adapter: 'audnexus', enabled: true },
         { name: 'audiosilo', adapter: 'audiosilo', enabled: true },
         { name: 'itunes', adapter: 'itunes_search', enabled: true },
-      ].map((value) => ({ ...value, cover_enabled: false, contact_email: null, key: null })),
+      ].map((value) =>
+        'cover_enabled' in value
+          ? value
+          : { ...value, cover_enabled: false, contact_email: null, key: null },
+      ),
     })
   })
 

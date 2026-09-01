@@ -1152,6 +1152,7 @@ _PUBLIC_PROVIDER_AUTHORITIES = frozenset(
         "audnexus",
         "google_books",
         "hardcover",
+        "inventaire",
         "itunes_search",
         "open_library",
     }
@@ -1337,6 +1338,7 @@ def _corroboration_source_labels(
         return []
     labels = {
         "hardcover": "Hardcover",
+        "inventaire": "Inventaire",
         "open_library": "Open Library",
         "google_books": "Google Books",
     }
@@ -1529,6 +1531,7 @@ def _choice_source_label(evidence: dict[str, str | None]) -> str:
     labels = {
         "google_books": "Google Books",
         "hardcover": "Hardcover",
+        "inventaire": "Inventaire",
         "open_library": "Open Library",
     }
     provider = evidence["provider"]
@@ -1899,6 +1902,7 @@ def _provider_label(authority: str | None) -> str:
             "google_books": "Google Books",
             "hardcover": "Hardcover",
             "itunes_search": "iTunes",
+            "inventaire": "Inventaire",
             "open_library": "Open Library",
         },
     ).get(authority, "Provider (name unavailable)")

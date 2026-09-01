@@ -1,4 +1,4 @@
-"""The `metadata-report-v32` audiobook provider grammar.
+"""The `metadata-report-v33` audiobook provider grammar.
 
 Marketplace provenance, the bounded chapter-structure value, the duration
 agreement band, and the lifted refusal that let an audio report carry a
@@ -291,14 +291,14 @@ def test_no_ebook_comparison_reaches_the_duration_band() -> None:
         assert ComparisonMethod.DURATION_BAND_AGREEMENT != links[0].method
 
 
-def test_a_v32_audio_report_may_carry_a_provider_observation() -> None:
+def test_a_v33_audio_report_may_carry_a_provider_observation() -> None:
     """ADR-0063 refused one because no audiobook provider existed.
 
     ADR-0061 admits four, so the refusal is gone; the pipeline still
     dispatches none until the activation packet, which is a different fact.
     """
     report = _audio_report(())
-    assert "metadata-report-v32" == report.schema_version
+    assert "metadata-report-v33" == report.schema_version
     assert ProviderQueryKind.ASIN == report.providers[0].query_kind
     assert "audible_catalog" == report.providers[0].authority
     assert report == MetadataReport.from_json(report.to_json())

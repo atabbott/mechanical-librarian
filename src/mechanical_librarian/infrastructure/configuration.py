@@ -128,6 +128,22 @@ class DisabledOpenLibraryProviderInput(_ProviderInput):
     contact_email: Literal[None] = None
 
 
+class EnabledInventaireProviderInput(_ProviderInput):
+    adapter: Literal["inventaire"]
+    enabled: Literal[True]
+    secret_file: Literal[None]
+    contact_email: Literal[None] = None
+    cover_enabled: StrictBool = True
+
+
+class DisabledInventaireProviderInput(_ProviderInput):
+    adapter: Literal["inventaire"]
+    enabled: Literal[False]
+    cover_enabled: Literal[False]
+    secret_file: Literal[None]
+    contact_email: Literal[None] = None
+
+
 class EnabledGoogleBooksProviderInput(_ProviderInput):
     adapter: Literal["google_books"]
     enabled: Literal[True]
@@ -221,6 +237,8 @@ class ProviderInput(
         | DisabledHardcoverProviderInput
         | EnabledOpenLibraryProviderInput
         | DisabledOpenLibraryProviderInput
+        | EnabledInventaireProviderInput
+        | DisabledInventaireProviderInput
         | EnabledGoogleBooksProviderInput
         | DisabledGoogleBooksProviderInput
         | EnabledAudibleCatalogProviderInput
@@ -301,7 +319,7 @@ class ReviewInput(_Closed):
 
 
 class ConfigurationInput(_Closed):
-    schema_version: Literal["config-v7"]
+    schema_version: Literal["config-v8"]
     provider_recovery_generation: Annotated[StrictInt, Field(ge=1)]
     connections: Annotated[list[ConnectionInput], Field(min_length=1, max_length=32)]
     libraries: Annotated[list[LibraryInput], Field(min_length=1, max_length=128)]

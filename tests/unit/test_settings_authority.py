@@ -148,6 +148,7 @@ def test_settings_projects_absent_fixed_provider_capabilities() -> None:
         "google_books",
         "hardcover",
         "itunes_search",
+        "inventaire",
         "open_library",
     ) == tuple(item.name for item in provider_capabilities(document))
     assert {item.credential for item in provider_capabilities(document)} == {
@@ -167,6 +168,7 @@ def test_settings_projects_absent_fixed_provider_capabilities() -> None:
         "audnexus",
         "hardcover",
         "itunes_search",
+        "inventaire",
         "open_library",
     ) == tuple(item.name for item in provider_capabilities(configured))
 
@@ -357,10 +359,9 @@ def test_the_settings_marketplace_vocabulary_stays_one_closed_set() -> None:
 
     assert get_args(Marketplace) == AUDIOBOOK_MARKETPLACES
     assert tuple(vocabulary["audible_marketplace_order"]) == AUDIOBOOK_MARKETPLACES
-    assert (
-        frozenset(vocabulary["keyless_provider_adapters"])
-        == AUDIOBOOK_PROVIDER_ADAPTERS
-    )
+    assert frozenset(
+        vocabulary["keyless_provider_adapters"]
+    ) == AUDIOBOOK_PROVIDER_ADAPTERS | {"inventaire"}
     assert not set(vocabulary["keyless_provider_adapters"]) & set(
         vocabulary["required_provider_keys"]
     )

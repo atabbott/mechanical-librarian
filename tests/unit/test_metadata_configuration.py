@@ -43,7 +43,7 @@ _SYNTHETIC_SECRET = str(_SYNTHETIC_ROOT / "provider.secret")
 
 def _source(root: Path) -> dict[str, object]:
     return {
-        "schema_version": "config-v7",
+        "schema_version": "config-v8",
         "provider_recovery_generation": 1,
         "connections": [
             {
@@ -496,7 +496,7 @@ def _original_schema_version(source: dict[str, object]) -> None:
 
 
 def _previous_schema_version(source: dict[str, object]) -> None:
-    source["schema_version"] = "config-v3"
+    source["schema_version"] = "config-v7"
 
 
 def _enabled_provider_without_a_secret(source: dict[str, object]) -> None:
@@ -516,7 +516,7 @@ def _enabled_provider_without_a_secret(source: dict[str, object]) -> None:
         "duplicate_reference",
         "unknown_field",
         "schema_v1",
-        "schema_v3",
+        "schema_v7",
         "enabled_provider_without_a_secret",
     ),
 )
@@ -549,7 +549,7 @@ def test_multiple_referenced_cover_providers_share_the_bounded_gallery() -> None
 
 def test_generated_schema_is_current() -> None:
     expected = (
-        Path(__file__).parents[2] / "docs" / "reference" / "config-v7.schema.json"
+        Path(__file__).parents[2] / "docs" / "reference" / "config-v8.schema.json"
     ).read_text(encoding="utf-8")
     assert configuration_schema_json() == expected
 
@@ -573,6 +573,7 @@ def test_generated_schema_enforces_provider_variants() -> None:
         "DisabledGoogleBooksProviderInput",
         "DisabledHardcoverProviderInput",
         "DisabledItunesSearchProviderInput",
+        "DisabledInventaireProviderInput",
         "DisabledOpenLibraryProviderInput",
         "EnabledAudibleCatalogProviderInput",
         "EnabledAudioSiloProviderInput",
@@ -580,6 +581,7 @@ def test_generated_schema_enforces_provider_variants() -> None:
         "EnabledGoogleBooksProviderInput",
         "EnabledHardcoverProviderInput",
         "EnabledItunesSearchProviderInput",
+        "EnabledInventaireProviderInput",
         "EnabledOpenLibraryProviderInput",
     } == {
         value["$ref"].rsplit("/", 1)[-1] for value in schema["ProviderInput"]["anyOf"]
@@ -740,6 +742,14 @@ def test_provider_adapters_have_closed_adapter_specific_fields() -> None:
                 "secret_file": None,
                 "contact_email": "operator@example.org",
             },
+            {
+                "name": "fourth",
+                "adapter": "inventaire",
+                "enabled": True,
+                "cover_enabled": True,
+                "secret_file": None,
+                "contact_email": None,
+            },
         ]
         path = root / "valid.json"
         path.write_text(json.dumps(valid), encoding="utf-8")
@@ -748,6 +758,7 @@ def test_provider_adapters_have_closed_adapter_specific_fields() -> None:
             (value.name, value.adapter) for value in configuration.providers
         ) == (
             ("first", "hardcover"),
+            ("fourth", "inventaire"),
             ("second", "google_books"),
             ("third", "open_library"),
         )
@@ -765,6 +776,8 @@ def test_provider_adapters_have_closed_adapter_specific_fields() -> None:
         ("open_library", None, "op..erator@example.org"),
         ("open_library", None, "a" * 65 + "@example.org"),
         ("hardcover", _SYNTHETIC_SECRET, "operator@example.org"),
+        ("inventaire", _SYNTHETIC_SECRET, None),
+        ("inventaire", None, "operator@example.org"),
         ("unknown", None, "operator@example.org"),
     ),
     ids=(
@@ -776,6 +789,8 @@ def test_provider_adapters_have_closed_adapter_specific_fields() -> None:
         "contact_consecutive_dots",
         "contact_local_part_too_long",
         "hardcover_with_contact",
+        "inventaire_with_secret",
+        "inventaire_with_contact",
         "unknown_adapter",
     ),
 )
@@ -964,7 +979,7 @@ def test_hardcover_raw_token_is_confined_to_the_exact_graphql_post() -> None:
 
 
 def test_the_audio_ceiling_is_a_default_a_config_document_need_not_carry() -> None:
-    """No schema increment: an older `config-v7` document still validates.
+    """No schema increment: an older `config-v8` document still validates.
 
     `LimitsInput` is closed, so a key added to it would reject every document
     written before it existed had it not carried a default. Both shapes an

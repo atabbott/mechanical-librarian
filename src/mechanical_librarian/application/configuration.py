@@ -27,7 +27,9 @@ _CONTACT_EMAIL = re.compile(
 )
 
 
-EBOOK_PROVIDER_ADAPTERS = frozenset({"google_books", "hardcover", "open_library"})
+EBOOK_PROVIDER_ADAPTERS = frozenset(
+    {"google_books", "hardcover", "inventaire", "open_library"}
+)
 # ADR-0061's admitted set, in its stated layer order: the anonymous Audible
 # catalog is primary discovery and enrichment, Audnexus is per-ASIN enrichment,
 # AudioSilo is community corroboration and degraded mode, and iTunes Search
@@ -211,6 +213,9 @@ class ProviderConnectionConfiguration:
                 not self.enabled and self.secret_file is not None
             ):
                 raise ConfigurationError("provider connection is invalid")
+        elif self.adapter == "inventaire":
+            if self.secret_file is not None or self.contact_email is not None:
+                raise ConfigurationError("provider connection is invalid")
         elif self.adapter == "google_books":
             if (
                 self.contact_email is not None
@@ -347,12 +352,12 @@ class ApplicationConfiguration:
     mounts: tuple[MediaMountConfiguration, ...]
     providers: tuple[ProviderConnectionConfiguration, ...]
     limits: ReportLimits = ReportLimits()
-    schema_version: str = "config-v7"
+    schema_version: str = "config-v8"
     provider_recovery_generation: int = 1
     review: ReviewWebConfiguration | None = None
 
     def __post_init__(self) -> None:
-        if self.schema_version != "config-v7":
+        if self.schema_version != "config-v8":
             raise ConfigurationError("configuration schema is unsupported")
         # Recovery is deliberately tied to an operator-visible configuration
         # generation.  There is no file watcher, hash, or environment override:

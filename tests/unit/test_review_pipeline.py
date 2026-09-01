@@ -10203,7 +10203,7 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
     assert presentation.passage.failed == 0
     assert presentation.recent_completions[0].outcome == "ready"
     assert presentation.throughput_per_minute > 0
-    assert retained.schema_version == "metadata-report-v32"
+    assert retained.schema_version == "metadata-report-v33"
     assert retained.audio is not None
     assert retained.providers == ()
     # The evidence is what the owner browses: a report, not a terminal card.
@@ -10214,7 +10214,7 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
     # And addressable by the identity of the package row that lists it, which
     # is the only route to an audiobook's evidence: it has no review case.
     assert addressed is not None
-    assert MetadataReport.from_json(addressed).schema_version == "metadata-report-v32"
+    assert MetadataReport.from_json(addressed).schema_version == "metadata-report-v33"
     assert browse_report(addressed)["audio"] is not None
     # No such work is a `None`, not a refusal: a store that cannot answer
     # raises, and the two must not read alike to the caller above.

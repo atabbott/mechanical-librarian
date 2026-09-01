@@ -170,7 +170,7 @@ def manifest(
         or any(not _name(value) for value in providers)
         or len(provider_adapters) != len(providers)
         or any(
-            value not in {"google_books", "hardcover", "open_library"}
+            value not in {"google_books", "hardcover", "inventaire", "open_library"}
             for value in provider_adapters
         )
         or any(not _entry_valid(asdict(value)) for value in selections)
@@ -245,7 +245,7 @@ def parse_manifest(raw: bytes) -> dict[str, object]:
         or type(body["provider_adapters"]) is not list
         or len(body["provider_adapters"]) != len(body["providers"])
         or any(
-            item not in {"google_books", "hardcover", "open_library"}
+            item not in {"google_books", "hardcover", "inventaire", "open_library"}
             for item in body["provider_adapters"]
         )
         or body["call_maxima"]
@@ -289,12 +289,14 @@ def _maxima(entries: int, adapters: tuple[str, ...]) -> dict[str, int]:
     hardcover = adapters.count("hardcover")
     google_books = adapters.count("google_books")
     open_library = adapters.count("open_library")
+    inventaire = adapters.count("inventaire")
     return {
         "target_item_observations": entries * 6,
         "target_raw_cover_requests": entries * 4,
         "provider_metadata_requests": entries
-        * (google_books * 54 + hardcover * 27 + open_library * 49),
-        "remote_cover_requests": entries * (hardcover * 5 * 4 + open_library * 4),
+        * (google_books * 54 + hardcover * 27 + inventaire * 27 + open_library * 49),
+        "remote_cover_requests": entries
+        * (hardcover * 5 * 4 + inventaire * 2 + open_library * 4),
     }
 
 

@@ -619,3 +619,103 @@ def test_foreground_report_shares_one_google_books_pacer():
             binding.factory()
     pacer.assert_called_once_with()
     assert [shared, shared] == constructed
+
+
+def test_foreground_report_shares_one_inventaire_pacer():
+    config = ApplicationConfiguration(
+        (
+            TargetConnectionConfiguration(
+                "primary", "https://example.invalid", "/target"
+            ),
+        ),
+        (
+            LibraryConfiguration(
+                "books", "primary", "library", "book", "media", ("first", "second")
+            ),
+        ),
+        (MediaMountConfiguration("media", "/media", "/books", True),),
+        (
+            ProviderConnectionConfiguration("first", True, True, None, "inventaire"),
+            ProviderConnectionConfiguration("second", True, True, None, "inventaire"),
+        ),
+    )
+    shared = object()
+    constructed = []
+    service = unittest.mock.Mock()
+    service.run.return_value = "report"
+    with (
+        patch.object(composition, "CoverArtifactStore"),
+        patch.object(composition, "AudiobookshelfItemReader"),
+        patch.object(composition, "InventairePacer", return_value=shared) as pacer,
+        patch.object(
+            composition, "inventaire_client", side_effect=(object(), object())
+        ),
+        patch.object(
+            composition,
+            "InventaireMetadataProvider",
+            side_effect=lambda *args, **kwargs: (
+                constructed.append(kwargs["pacer"]) or object()  # type: ignore[func-returns-value]  # reason: the recorder returns a provider double
+            ),
+        ),
+        patch.object(
+            composition, "GenerateMetadataReport", return_value=service
+        ) as generate,
+    ):
+        assert "report" == composition.run_metadata_report_loaded(
+            config,
+            Path("/reports"),
+            Path("/artifacts"),
+            "primary",
+            "books",
+            "item",
+            0,
+        )
+        for binding in generate.call_args.kwargs["providers"]:
+            binding.factory()
+    pacer.assert_called_once_with()
+    assert [shared, shared] == constructed
+
+
+def test_disabled_inventaire_constructs_no_client_or_pacer():
+    config = ApplicationConfiguration(
+        (
+            TargetConnectionConfiguration(
+                "primary", "https://example.invalid", "/target"
+            ),
+        ),
+        (
+            LibraryConfiguration(
+                "books", "primary", "library", "book", "media", ("inventaire",)
+            ),
+        ),
+        (MediaMountConfiguration("media", "/media", "/books", True),),
+        (
+            ProviderConnectionConfiguration(
+                "inventaire", False, False, None, "inventaire"
+            ),
+        ),
+    )
+    service = unittest.mock.Mock()
+    service.run.return_value = "report"
+    with (
+        patch.object(composition, "CoverArtifactStore"),
+        patch.object(composition, "AudiobookshelfItemReader"),
+        patch.object(composition, "InventairePacer") as pacer,
+        patch.object(composition, "inventaire_client") as client,
+        patch.object(
+            composition, "GenerateMetadataReport", return_value=service
+        ) as generate,
+    ):
+        assert "report" == composition.run_metadata_report_loaded(
+            config,
+            Path("/reports"),
+            Path("/artifacts"),
+            "primary",
+            "books",
+            "item",
+            0,
+        )
+        binding = generate.call_args.kwargs["providers"][0]
+        assert binding.enabled is False
+    pacer.assert_not_called()
+    client.assert_not_called()

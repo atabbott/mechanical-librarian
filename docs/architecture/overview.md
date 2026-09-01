@@ -65,7 +65,7 @@ manual-triggered pipeline rather than a general-purpose queue or scheduler.
 There is no central speculative ports module, generic provider registry, job
 broker, polling service, or plugin scheduler. Bootstrap
 explicitly composes Audiobookshelf, the isolated EPUB and cover children, the
-closed Hardcover/Open Library/Google Books adapter choice, private-file credentials, SQLite,
+closed Hardcover/Inventaire/Open Library/Google Books adapter choice, private-file credentials, SQLite,
 and the private artifact store. Generic contained-reviewer experiments remain
 workbench-only. The installed owner-confirmed cover flow composes only the
 cover-specific bounded observer contract: sanitized report-bound images enter
@@ -158,7 +158,7 @@ application performs one complete semantic parse of each visible row before
 returning its DTO. New canonical writes retain their complete validation and
 commit their derived facts atomically.
 
-The `metadata-report-v32` document retains all 16 ordered Audiobookshelf target
+The `metadata-report-v33` document retains all 16 ordered Audiobookshelf target
 destinations and their missing, null, empty, unloaded, malformed, oversized, or
 value state in target currentness. It also retains the closed ordered local-field states,
 source capability

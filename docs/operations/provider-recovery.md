@@ -28,7 +28,7 @@ burst or daily-quota result consumes neither a recovery-health attempt nor the
 job's three-attempt execution allowance.
 
 After correcting a dormant condition, increment the positive
-`provider_recovery_generation` in the `config-v7` file and restart the
+`provider_recovery_generation` in the `config-v8` file and restart the
 container. Startup first performs a read-only generation compatibility check;
 it rejects persisted generations newer than configuration before any outbox
 delivery or database mutation. It then drains committed package cutovers from
@@ -81,7 +81,7 @@ or, during fanout, work counts and any next eligible timestamp. It has no retry
 control and never exposes connection identifiers,
 provider payloads, or credentials.
 
-Google Books, Hardcover, and Open Library each use one shared one-second
+Google Books, Hardcover, Inventaire, and Open Library each use one shared one-second
 request-start pacer across foreground and recovery work inside a composed run.
 This serializes starts for one provider without holding a SQLite transaction or
 creating a separate request budget.

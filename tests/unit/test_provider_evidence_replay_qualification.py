@@ -411,6 +411,76 @@ def test_replay_preserves_credential_free_google_books_requests() -> None:
     )
 
 
+def test_replay_preserves_inventaire_repeated_query_parameters() -> None:
+    base = _configuration()
+    inventaire = ProviderConnectionConfiguration(
+        "inventaire", True, True, None, "inventaire", None
+    )
+    configuration = replace(
+        base,
+        libraries=(replace(base.libraries[0], provider_connections=("inventaire",)),),
+        providers=(inventaire,),
+    )
+    seed = _seed()
+    plan = metadata_discovery_plan(replay._target_snapshot(seed), seed.local_claims)
+    exchanges: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload: dict[str, object] = (
+            {"results": []}
+            if request.url.path == "/api/search"
+            else {
+                "entities": {
+                    "inv:edition-one": {
+                        "uri": "inv:edition-one",
+                        "claims": {"wdt:P212": ["9780306406157"]},
+                        "labels": {"fromclaims": "Example Book"},
+                    }
+                },
+                "redirects": {"isbn:9780306406157": "inv:edition-one"},
+            }
+        )
+        return httpx.Response(200, json=payload, request=request)
+
+    recorder = replay.RecordingTransport(
+        exchanges, "inventaire", httpx.MockTransport(handler)
+    )
+    live = replay.build_provider(
+        inventaire,
+        configuration,
+        recorder,
+        live=True,
+        capture_epoch=1_700_000_000.0,
+        pacers=replay.pacers(live=False),
+    )
+    replay.observe_provider(inventaire.name, inventaire.adapter, live, plan)
+    transport = replay.ReplayTransport(exchanges, "inventaire")
+    offline = replay.build_provider(
+        inventaire,
+        configuration,
+        transport,
+        live=False,
+        capture_epoch=1_700_000_000.0,
+        pacers=replay.pacers(live=False),
+    )
+
+    replay.observe_provider(inventaire.name, inventaire.adapter, offline, plan)
+
+    assert transport.mismatch is False
+    assert transport.cursor == len(exchanges)
+    entity = next(
+        exchange
+        for exchange in exchanges
+        if exchange["request"]["path"] == "/api/entities/by-uris"
+    )
+    query = entity["request"]["query"]
+    assert [value for key, value in query if key == "attributes"] == [
+        "claims",
+        "labels",
+        "image",
+    ]
+
+
 def test_capture_refuses_a_contact_echo_before_bundle_publication(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

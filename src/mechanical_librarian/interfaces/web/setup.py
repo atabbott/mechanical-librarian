@@ -124,6 +124,7 @@ class _ProviderRequest(BaseModel):
         "hardcover",
         "google_books",
         "open_library",
+        "inventaire",
         "audible_catalog",
         "audnexus",
         "audiosilo",

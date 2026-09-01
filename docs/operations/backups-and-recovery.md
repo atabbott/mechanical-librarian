@@ -139,7 +139,7 @@ state and action records. Pause and revoked authority still prevent new claims.
 
 Copy the complete stopped `/data` state under owner-only encrypted backup
 controls. A restorable configuration also preserves or reprovisions its mode's
-deploy-side authority: file mode needs its `config-v7` file and every referenced
+deploy-side authority: file mode needs its `config-v8` file and every referenced
 private secret/TLS file; store mode needs the private review bootstrap document
 and its referenced TLS material. Do not start a restored state without the
 matching material passing its ordinary validation. Cover recovery files are

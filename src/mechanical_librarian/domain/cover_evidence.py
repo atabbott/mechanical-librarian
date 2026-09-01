@@ -39,6 +39,7 @@ class CoverSourceKind(StrEnum):
     EPUB = "epub"
     HARDCOVER = "hardcover"
     OPEN_LIBRARY = "open_library"
+    INVENTAIRE = "inventaire"
     # The two audiobook authorities that state a cover asset of their own.
     # Audnexus and AudioSilo restate Audible's CDN asset, so they carry no
     # independent signal and emit no cover source at all.

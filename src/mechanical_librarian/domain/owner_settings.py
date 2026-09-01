@@ -80,6 +80,13 @@ class OpenLibraryProviderSettings(_Closed):
     contact_email: Email | None = None
 
 
+class InventaireProviderSettings(_Closed):
+    name: Name
+    adapter: Literal["inventaire"]
+    enabled: StrictBool
+    cover_enabled: StrictBool = False
+
+
 # ADR-0061 admits every audiobook provider keyless: no credential exists for
 # one even as an optional upgrade, so none of the four below carries a secret
 # or contact field of any kind. Covers are admitted on the two that state an
@@ -122,6 +129,7 @@ ProviderSettings = Annotated[
     HardcoverProviderSettings
     | GoogleBooksProviderSettings
     | OpenLibraryProviderSettings
+    | InventaireProviderSettings
     | AudibleCatalogProviderSettings
     | AudnexusProviderSettings
     | AudioSiloProviderSettings
@@ -136,6 +144,7 @@ class ProviderCapability(_Closed):
     name: Name
     adapter: Literal[
         "open_library",
+        "inventaire",
         "hardcover",
         "google_books",
         "audible_catalog",
@@ -182,6 +191,12 @@ _PROVIDER_CAPABILITIES: tuple[ProviderCapability, ...] = (
         name="itunes_search",
         adapter="itunes_search",
         label="iTunes",
+        credential="none",
+    ),
+    ProviderCapability(
+        name="inventaire",
+        adapter="inventaire",
+        label="Inventaire",
         credential="none",
     ),
     ProviderCapability(

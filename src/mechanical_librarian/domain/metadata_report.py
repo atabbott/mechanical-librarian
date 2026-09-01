@@ -66,7 +66,7 @@ from mechanical_librarian.domain.work_identity import (
     work_title_transformation_lineage_from_data,
 )
 
-REPORT_SCHEMA = "metadata-report-v32"
+REPORT_SCHEMA = "metadata-report-v33"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v5"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -2239,6 +2239,7 @@ class ProviderObservation:
                 "google_books",
                 "hardcover",
                 "itunes_search",
+                "inventaire",
                 "open_library",
             }
         ):

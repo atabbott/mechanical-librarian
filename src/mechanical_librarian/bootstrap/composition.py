@@ -100,6 +100,10 @@ from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HardcoverMetadataProvider,
     HardcoverPacer,
 )
+from mechanical_librarian.adapters.providers.inventaire_metadata import (
+    InventaireMetadataProvider,
+    InventairePacer,
+)
 from mechanical_librarian.adapters.providers.itunes_search_metadata import (
     ITunesSearchMetadataProvider,
     ITunesSearchPacer,
@@ -305,6 +309,7 @@ from mechanical_librarian.infrastructure.security.credentials import (
     google_books_client,
     hardcover_client,
     hardcover_client_token,
+    inventaire_client,
     itunes_search_client,
     open_library_client,
     read_secret,
@@ -1488,6 +1493,7 @@ def run_metadata_report_loaded(
     artifact_identity: tuple[int, int] | None = None,
     google_books_pacer: GoogleBooksPacer | None = None,
     open_library_pacer: OpenLibraryPacer | None = None,
+    inventaire_pacer: InventairePacer | None = None,
     hardcover_pacer: HardcoverPacer | None = None,
     audible_catalog_pacer: AudibleCatalogPacer | None = None,
     audnexus_pacer: AudnexusPacer | None = None,
@@ -1539,6 +1545,11 @@ def run_metadata_report_loaded(
         for provider in provider_configs
     ):
         open_library_pacer = OpenLibraryPacer()
+    if inventaire_pacer is None and any(
+        provider.enabled and provider.adapter == "inventaire"
+        for provider in provider_configs
+    ):
+        inventaire_pacer = InventairePacer()
     if hardcover_pacer is None and any(
         provider.enabled and provider.adapter == "hardcover"
         for provider in provider_configs
@@ -1617,6 +1628,14 @@ def run_metadata_report_loaded(
                     configuration.limits.provider_response_bytes,
                     configuration.limits.timeout_seconds,
                     pacer=open_library_pacer,
+                )
+            elif value.adapter == "inventaire":
+                instance = InventaireMetadataProvider(
+                    value.name,
+                    inventaire_client(configuration.limits.timeout_seconds),
+                    configuration.limits.provider_response_bytes,
+                    configuration.limits.timeout_seconds,
+                    pacer=inventaire_pacer,
                 )
             elif value.adapter == "audible_catalog":
                 instance = AudibleCatalogMetadataProvider(
@@ -1915,6 +1934,14 @@ def create_review_pipeline(
         )
         else None
     )
+    inventaire_pacer = (
+        InventairePacer()
+        if any(
+            provider.enabled and provider.adapter == "inventaire"
+            for provider in configuration.providers
+        )
+        else None
+    )
     hardcover_pacer = (
         HardcoverPacer()
         if any(
@@ -2048,6 +2075,14 @@ def create_review_pipeline(
                     configuration.limits.provider_response_bytes,
                     configuration.limits.timeout_seconds,
                     pacer=open_library_pacer,
+                )
+            if value.adapter == "inventaire":
+                return InventaireMetadataProvider(
+                    value.name,
+                    inventaire_client(configuration.limits.timeout_seconds),
+                    configuration.limits.provider_response_bytes,
+                    configuration.limits.timeout_seconds,
+                    pacer=inventaire_pacer,
                 )
             # The four audiobook adapters are keyless, so a retry constructs one
             # from the same configuration the foreground did. The marketplace
@@ -2193,6 +2228,7 @@ def create_review_pipeline(
             expected_file_identity=action.file_identity,
             google_books_pacer=google_books_pacer,
             open_library_pacer=open_library_pacer,
+            inventaire_pacer=inventaire_pacer,
             hardcover_pacer=hardcover_pacer,
             audible_catalog_pacer=audible_catalog_pacer,
             audnexus_pacer=audnexus_pacer,
@@ -2590,6 +2626,7 @@ def run_batch(
     open_library_pacer = (
         OpenLibraryPacer() if "open_library" in actual_adapters else None
     )
+    inventaire_pacer = InventairePacer() if "inventaire" in actual_adapters else None
     hardcover_pacer = HardcoverPacer() if "hardcover" in actual_adapters else None
     audible_catalog_pacer = (
         AudibleCatalogPacer() if "audible_catalog" in actual_adapters else None
@@ -2624,6 +2661,7 @@ def run_batch(
             artifact_identity=artifact_identity,
             google_books_pacer=google_books_pacer,
             open_library_pacer=open_library_pacer,
+            inventaire_pacer=inventaire_pacer,
             hardcover_pacer=hardcover_pacer,
             audible_catalog_pacer=audible_catalog_pacer,
             audnexus_pacer=audnexus_pacer,

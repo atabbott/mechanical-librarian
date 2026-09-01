@@ -83,6 +83,14 @@ def test_provider_keys_and_open_library_contact_are_recorded_without_exposure() 
         ),
         _PROVIDER.validate_python(
             {
+                "name": "inventaire",
+                "adapter": "inventaire",
+                "enabled": True,
+                "cover_enabled": True,
+            }
+        ),
+        _PROVIDER.validate_python(
+            {
                 "name": "open",
                 "adapter": "open_library",
                 "enabled": True,
@@ -96,7 +104,9 @@ def test_provider_keys_and_open_library_contact_are_recorded_without_exposure() 
         state.revision, providers, {"provider.hardcover.key": "provider-secret"}
     )
 
-    assert recorded.providers[1].contact_email == "operator@example.invalid"  # type: ignore[union-attr]
+    assert recorded.providers[1].adapter == "inventaire"
+    assert recorded.providers[1].cover_enabled is True
+    assert recorded.providers[2].contact_email == "operator@example.invalid"  # type: ignore[union-attr]
     assert "provider-secret" not in recorded.model_dump_json()
     assert connection.execute(
         "SELECT field_id FROM owner_setting_secrets ORDER BY field_id"

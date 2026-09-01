@@ -229,6 +229,37 @@
         "title": "HardcoverProviderSettings",
         "type": "object"
       },
+      "InventaireProviderSettings": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter": {
+            "const": "inventaire",
+            "title": "Adapter",
+            "type": "string"
+          },
+          "cover_enabled": {
+            "default": false,
+            "title": "Cover Enabled",
+            "type": "boolean"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "adapter",
+          "enabled"
+        ],
+        "title": "InventaireProviderSettings",
+        "type": "object"
+      },
       "ItunesSearchProviderSettings": {
         "additionalProperties": false,
         "properties": {
@@ -538,6 +569,7 @@
                   "audnexus": "#/components/schemas/AudnexusProviderSettings",
                   "google_books": "#/components/schemas/GoogleBooksProviderSettings",
                   "hardcover": "#/components/schemas/HardcoverProviderSettings",
+                  "inventaire": "#/components/schemas/InventaireProviderSettings",
                   "itunes_search": "#/components/schemas/ItunesSearchProviderSettings",
                   "open_library": "#/components/schemas/OpenLibraryProviderSettings"
                 },
@@ -552,6 +584,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/OpenLibraryProviderSettings"
+                },
+                {
+                  "$ref": "#/components/schemas/InventaireProviderSettings"
                 },
                 {
                   "$ref": "#/components/schemas/AudibleCatalogProviderSettings"
@@ -616,6 +651,7 @@
           "adapter": {
             "enum": [
               "open_library",
+              "inventaire",
               "hardcover",
               "google_books",
               "audible_catalog",
