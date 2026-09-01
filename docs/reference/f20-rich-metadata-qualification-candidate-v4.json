@@ -1,7 +1,7 @@
 {
   "automatic_authority": "decision_only",
   "authority_rotation": {
-    "applicability_confirmation_sha256": "d19354337549f3950d8c24b38060186685c07d8162574ac34c9f255eff439ce8",
+    "applicability_confirmation_sha256": "03e19f6b3524afc1c3409e55b652a252f39c14653fa636d340f13c6150e9ddb7",
     "current_provider_capture_sha256": "c1d672126449442b44b056c4cd7dc3c73346f90ab1fa4eb090e8203441cc0a33",
     "current_provider_comparison_sha256": "70d80e1efdd55cd4e743aea74f9414c0db34727f2946225dd6e78cb4376622a3",
     "current_provider_result_sha256": "ffc23d9e52ffccc48742d5effcaf546508f0d18a105d049dc6453ac1736c8d85",
