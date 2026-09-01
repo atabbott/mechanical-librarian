@@ -62,6 +62,39 @@ def audio_target(
     return TargetSnapshot("audiobook", title, (), fields=fields)
 
 
+def asserted_target(
+    asin: str = "B08G9PRS1K",
+    title: str | None = "Project Hail Mary",
+    authors: tuple[str, ...] = ("Andy Weir",),
+) -> TargetSnapshot:
+    """One target that asserts an ASIN beside its title and authors."""
+    asserted = TargetField(TargetDestination.ASIN, TargetFieldState.VALUE, asin)
+    return TargetSnapshot(
+        "audiobook",
+        title,
+        (),
+        fields=tuple(
+            asserted if field.destination is TargetDestination.ASIN else field
+            for field in audio_target(title, authors).fields
+        ),
+    )
+
+
+def target_asin_claim(asin: str = "B08G9PRS1K") -> LocalClaim:
+    """The claim the audiobook path records for a target-asserted ASIN."""
+    return LocalClaim.create(
+        kind=ClaimKind.ASIN,
+        observed=asin,
+        canonical=asin,
+        excerpt=asin,
+        applicability="not_applicable",
+        basis="target_metadata",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.EDITION,
+    )
+
+
 def audio_claim(
     kind: ClaimKind,
     value: str,
