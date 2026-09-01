@@ -2381,6 +2381,7 @@ def test_canary_failure_defers_a_new_same_provider_scope() -> None:
         store.enqueue_jobs((first,), enqueued_at=0)
         calls: list[str] = []
         interrupted = False
+        current = [1]
 
         def retry(_, member, __):
             nonlocal interrupted
@@ -2388,6 +2389,16 @@ def test_canary_failure_defers_a_new_same_provider_scope() -> None:
             if not interrupted:
                 interrupted = True
                 store.enqueue_jobs((late,), enqueued_at=1)
+                store.observe_failure(
+                    connection="google",
+                    adapter="google_books",
+                    scope="library-c",
+                    generation=1,
+                    failure="quota_exhausted",
+                    now=1,
+                    retry_after=1,
+                )
+                current[0] = 2
                 raise RuntimeError("rate limited")
 
         runner = ScopedProviderRecoveryRunner(
@@ -2395,19 +2406,90 @@ def test_canary_failure_defers_a_new_same_provider_scope() -> None:
             generation=1,
             retry=retry,
             classify_failure=lambda _: ("rate_limited", 19),
+            clock=lambda: current[0],
         )
         assert "waiting" == runner.run_one(now=1, token="owner").state
         assert [
-            ("library-a", "waiting", 20),
-            ("library-c", "waiting", 20),
+            ("library-a", "waiting", 21),
+            ("library-c", "waiting", 21),
         ] == store._connection.execute(
             "SELECT scope,state,next_eligible_at FROM provider_recovery_health ORDER BY scope"
         ).fetchall()
         assert [("late", None)] == store._connection.execute(
             "SELECT member_id,cohort_epoch FROM provider_recovery_jobs WHERE member_id='late'"
         ).fetchall()
-        assert "idle" == runner.run_one(now=19, token="too-soon").state
+        current[0] = 20
+        assert "idle" == runner.run_one(now=20, token="too-soon").state
         assert ["first"] == calls
+        store.close()
+
+
+def test_canary_failure_preserves_new_scope_exact_future_deadline() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        store = _due_store(Path(directory) / "recovery.sqlite", "library-a")
+        first = replace(
+            _job("first"),
+            scope="library-a",
+            library="library-a",
+            dispatch_reason="missing_corroboration",
+            dispatch_rank=0,
+        )
+        store.enqueue_jobs((first,), enqueued_at=0)
+        recovery = store.claim_one(generation=1, now=1, token="owner")
+        assert recovery is not None
+
+        future = replace(_job("future"), scope="library-c", library="library-c")
+        due = replace(_job("due"), scope="library-d", library="library-d")
+        store.enqueue_jobs((future, due), enqueued_at=1)
+        store.observe_failure(
+            connection="google",
+            adapter="google_books",
+            scope="library-c",
+            generation=1,
+            failure="quota_exhausted",
+            now=1,
+            retry_after=1000,
+        )
+        store.observe_failure(
+            connection="google",
+            adapter="google_books",
+            scope="library-d",
+            generation=1,
+            failure="quota_exhausted",
+            now=1,
+            retry_after=1,
+        )
+        exact_future = store._connection.execute(
+            "SELECT state,attempt,next_eligible_at FROM provider_recovery_health "
+            "WHERE scope='library-c'"
+        ).fetchone()
+        canary = store.claim_job(recovery=recovery, token="owner", now=2)
+        assert canary is not None
+        store.complete_canary_failure(
+            job=canary,
+            token="owner",
+            recovery=recovery,
+            now=2,
+            failure="rate_limited",
+            retry_after=19,
+        )
+
+        assert ("waiting", 1, 1001) == exact_future
+        assert (
+            exact_future
+            == store._connection.execute(
+                "SELECT state,attempt,next_eligible_at FROM provider_recovery_health "
+                "WHERE scope='library-c'"
+            ).fetchone()
+        )
+        assert ("waiting", 2, 21) == store._connection.execute(
+            "SELECT state,attempt,next_eligible_at FROM provider_recovery_health "
+            "WHERE scope='library-d'"
+        ).fetchone()
+        assert [("future", None), ("due", None)] == store._connection.execute(
+            "SELECT member_id,cohort_epoch FROM provider_recovery_jobs "
+            "WHERE member_id IN ('future','due') ORDER BY member_id DESC"
+        ).fetchall()
         store.close()
 
 
@@ -2543,11 +2625,22 @@ def test_fanout_failure_defers_a_new_same_provider_scope() -> None:
         late = replace(_job("late"), scope="library-c", library="library-c")
         store.enqueue_jobs((first, failing), enqueued_at=0)
         calls: list[str] = []
+        current = [1]
 
         def retry(_, member, __):
             calls.append(member.member_id)
             if member.member_id == "failing":
                 store.enqueue_jobs((late,), enqueued_at=1)
+                store.observe_failure(
+                    connection="google",
+                    adapter="google_books",
+                    scope="library-c",
+                    generation=1,
+                    failure="quota_exhausted",
+                    now=1,
+                    retry_after=1,
+                )
+                current[0] = 2
                 raise RuntimeError("rate limited")
 
         runner = ScopedProviderRecoveryRunner(
@@ -2555,21 +2648,104 @@ def test_fanout_failure_defers_a_new_same_provider_scope() -> None:
             generation=1,
             retry=retry,
             classify_failure=lambda _: ("rate_limited", 19),
+            clock=lambda: current[0],
         )
         assert "waiting" == runner.run_one(now=1, token="owner").state
         assert ["first", "failing"] == calls
         assert [
             ("library-a", "recovered", None),
-            ("library-b", "waiting", 20),
-            ("library-c", "waiting", 20),
+            ("library-b", "waiting", 21),
+            ("library-c", "waiting", 21),
         ] == store._connection.execute(
             "SELECT scope,state,next_eligible_at FROM provider_recovery_health ORDER BY scope"
         ).fetchall()
         assert [("late", None)] == store._connection.execute(
             "SELECT member_id,cohort_epoch FROM provider_recovery_jobs WHERE member_id='late'"
         ).fetchall()
-        assert "idle" == runner.run_one(now=19, token="too-soon").state
+        current[0] = 20
+        assert "idle" == runner.run_one(now=20, token="too-soon").state
         assert ["first", "failing"] == calls
+        store.close()
+
+
+def test_fanout_failure_preserves_new_scope_exact_future_deadline() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        store = _due_store(
+            Path(directory) / "recovery.sqlite", "library-a", "library-b"
+        )
+        first = replace(
+            _job("first"),
+            scope="library-a",
+            library="library-a",
+            dispatch_reason="missing_corroboration",
+            dispatch_rank=0,
+        )
+        failing = replace(_job("failing"), scope="library-b", library="library-b")
+        store.enqueue_jobs((first, failing), enqueued_at=0)
+        recovery = store.claim_one(generation=1, now=1, token="owner")
+        assert recovery is not None
+        canary = store.claim_job(recovery=recovery, token="owner", now=1)
+        assert canary is not None
+        fanout = store.authorize_fanout(
+            job=canary,
+            token="owner",
+            recovery=recovery,
+            now=1,
+        )
+
+        future = replace(_job("future"), scope="library-c", library="library-c")
+        due = replace(_job("due"), scope="library-d", library="library-d")
+        store.enqueue_jobs((future, due), enqueued_at=1)
+        store.observe_failure(
+            connection="google",
+            adapter="google_books",
+            scope="library-c",
+            generation=1,
+            failure="quota_exhausted",
+            now=1,
+            retry_after=1000,
+        )
+        store.observe_failure(
+            connection="google",
+            adapter="google_books",
+            scope="library-d",
+            generation=1,
+            failure="quota_exhausted",
+            now=1,
+            retry_after=1,
+        )
+        exact_future = store._connection.execute(
+            "SELECT state,attempt,next_eligible_at FROM provider_recovery_health "
+            "WHERE scope='library-c'"
+        ).fetchone()
+        member = store.claim_job(recovery=fanout, token="owner", now=2)
+        assert member is not None
+        assert "failing" == member.member_id
+        store.interrupt_fanout(
+            job=member,
+            token="owner",
+            recovery=fanout,
+            now=2,
+            failure="rate_limited",
+            retry_after=19,
+        )
+
+        assert ("waiting", 1, 1001) == exact_future
+        assert (
+            exact_future
+            == store._connection.execute(
+                "SELECT state,attempt,next_eligible_at FROM provider_recovery_health "
+                "WHERE scope='library-c'"
+            ).fetchone()
+        )
+        assert ("waiting", 2, 21) == store._connection.execute(
+            "SELECT state,attempt,next_eligible_at FROM provider_recovery_health "
+            "WHERE scope='library-d'"
+        ).fetchone()
+        assert [("future", None), ("due", None)] == store._connection.execute(
+            "SELECT member_id,cohort_epoch FROM provider_recovery_jobs "
+            "WHERE member_id IN ('future','due') ORDER BY member_id DESC"
+        ).fetchall()
         store.close()
 
 

@@ -1080,8 +1080,8 @@ class SQLiteProviderRecoveryStore:
                     )
                     cutoff = self._connection.execute(
                         "SELECT COALESCE(MAX(enrollment_ordinal),0) FROM provider_recovery_jobs "
-                        "WHERE connection=? AND adapter=? AND generation=?",
-                        (*provider, generation),
+                        "WHERE connection=? AND adapter=? AND generation=? AND cohort_epoch=?",
+                        (*provider, generation, epoch),
                     ).fetchone()[0]
                     row = owner
                     changed = self._connection.execute(
@@ -1975,7 +1975,6 @@ class SQLiteProviderRecoveryStore:
         *,
         recovery: ProviderRecovery,
         cohort_epoch: int,
-        cohort_cutoff: int,
         now: int,
     ) -> list[tuple[str, int]]:
         """Name the frozen cohort and waiting active next-cohort scopes."""
@@ -1988,7 +1987,7 @@ class SQLiteProviderRecoveryStore:
                 "WHERE j.connection=? AND j.adapter=? AND j.generation=? "
                 "AND h.generation=j.generation AND (j.cohort_epoch=? OR (j.cohort_epoch IS NULL "
                 "AND j.state IN ('queued','running') AND h.state='waiting' "
-                "AND (h.next_eligible_at<=? OR j.enrollment_ordinal>?))) "
+                "AND h.next_eligible_at<=?)) "
                 "GROUP BY j.scope ORDER BY j.scope",
                 (
                     cohort_epoch,
@@ -1997,7 +1996,6 @@ class SQLiteProviderRecoveryStore:
                     recovery.generation,
                     cohort_epoch,
                     now,
-                    cohort_cutoff,
                 ),
             ).fetchall(),
         )
@@ -2051,7 +2049,6 @@ class SQLiteProviderRecoveryStore:
                 scopes = self._shared_failure_scopes(
                     recovery=recovery,
                     cohort_epoch=current[5],
-                    cohort_cutoff=current[6],
                     now=now,
                 )
                 self._connection.execute(
@@ -2451,7 +2448,6 @@ class SQLiteProviderRecoveryStore:
                 scopes = self._shared_failure_scopes(
                     recovery=recovery,
                     cohort_epoch=state[4],
-                    cohort_cutoff=state[5],
                     now=now,
                 )
                 owner_successor = None
