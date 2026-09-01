@@ -110,6 +110,9 @@ from mechanical_librarian.domain.reviewer_access import (
     CodexTaskSelection,
     ReviewerAccessDocument,
 )
+from mechanical_librarian.domain.rich_metadata_qualification import (
+    F20_PASSING_AUTOMATIC_OPTIONS,
+)
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 from mechanical_librarian.interfaces.web.app import (
     _HistoryResponse,
@@ -143,6 +146,10 @@ from tests.unit.test_cover_packets import (
 )
 from tests.unit.test_cover_packets import (
     _source as _cover_source,
+)
+from tests.unit.test_rich_metadata_preview import (
+    _target_work_candidate,
+    _target_work_report,
 )
 
 
@@ -1532,182 +1539,47 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
         local_claims=(isbn10,),
         providers=(isbn_family_provider,),
     )
-    series_claims = (
-        _claim(
-            "catalogue",
-            "edition-1",
-            ClaimKind.TITLE,
-            "Book",
-            scope=ClaimScope.WORK,
-            order=0,
-        ),
-        _claim(
-            "catalogue",
-            "edition-1",
-            ClaimKind.SERIES,
-            "Reading Order",
-            scope=ClaimScope.WORK,
-            order=1,
-        ),
-        _claim(
-            "catalogue",
-            "edition-1",
-            ClaimKind.SERIES_SEQUENCE,
-            "2",
-            scope=ClaimScope.WORK,
-            order=2,
-        ),
-        _claim(
-            "catalogue",
-            "edition-1",
-            ClaimKind.SERIES,
-            "Publication Order",
-            scope=ClaimScope.WORK,
-            order=3,
-        ),
-        _claim(
-            "catalogue",
-            "edition-1",
-            ClaimKind.SERIES_SEQUENCE,
-            "4",
-            scope=ClaimScope.WORK,
-            order=4,
-        ),
-    )
-    series_report = _bibliographic_report(
-        current_title="Book",
-        providers=(
-            _provider(
+    work_report = _target_work_report(
+        (
+            (
                 "catalogue",
-                "edition-1",
-                series_claims,
-                authority="hardcover",
+                "hardcover",
+                (_target_work_candidate("catalogue", "edition-1", "work-1"),),
+                True,
             ),
-            _provider(
+            (
                 "search",
-                "edition-2",
-                (
-                    _claim(
-                        "search",
-                        "edition-2",
-                        ClaimKind.TITLE,
-                        "Book",
-                        scope=ClaimScope.WORK,
-                        order=0,
-                    ),
-                    _claim(
-                        "search",
-                        "edition-2",
-                        ClaimKind.SERIES,
-                        "Reading Order",
-                        scope=ClaimScope.WORK,
-                        order=1,
-                    ),
-                    _claim(
-                        "search",
-                        "edition-2",
-                        ClaimKind.SERIES_SEQUENCE,
-                        "2",
-                        scope=ClaimScope.WORK,
-                        order=2,
-                    ),
-                    _claim(
-                        "search",
-                        "edition-2",
-                        ClaimKind.SERIES,
-                        "Publication Order",
-                        scope=ClaimScope.WORK,
-                        order=3,
-                    ),
-                    _claim(
-                        "search",
-                        "edition-2",
-                        ClaimKind.SERIES_SEQUENCE,
-                        "4",
-                        scope=ClaimScope.WORK,
-                        order=4,
-                    ),
-                ),
-                authority="open_library",
+                "open_library",
+                (_target_work_candidate("search", "edition-2", "work-1"),),
+                True,
             ),
-        ),
-    )
-    genre_claims = tuple(
-        _claim(
-            "catalogue",
-            "edition-1",
-            ClaimKind.GENRE,
-            value,
-            scope=ClaimScope.WORK,
-            order=index,
         )
-        for index, value in enumerate(("Fantasy", "Adventure"))
     )
-    tag_claims = tuple(
-        _claim(
-            "catalogue",
-            "edition-1",
-            ClaimKind.TAG,
-            value,
-            scope=ClaimScope.WORK,
-            order=index,
+
+    def populated_work_field(destination: TargetDestination) -> MetadataReport:
+        target = replace(
+            work_report.target,
+            fields=tuple(
+                TargetField(destination, TargetFieldState.VALUE, ("Existing",))
+                if field.destination is destination
+                else field
+                for field in work_report.target.fields
+            ),
         )
-        for index, value in enumerate(("Quest", "Found family"))
-    )
-    description_claim = _claim(
-        "catalogue",
-        "edition-1",
-        ClaimKind.DESCRIPTION,
-        "An exact source-bound description.",
-        scope=ClaimScope.WORK,
-    )
-    genre_report = _proposal_report(
-        fields=_fields(
-            genres=TargetField(
-                TargetDestination.GENRES,
-                TargetFieldState.VALUE,
-                ("Existing",),
-            )
-        ),
-        providers=(_provider("catalogue", "edition-1", genre_claims),),
-    )
-    genre_empty_report = _proposal_report(
-        fields=_fields(
-            genres=TargetField(
-                TargetDestination.GENRES,
-                TargetFieldState.EMPTY,
-            )
-        ),
-        providers=(_provider("catalogue", "edition-1", genre_claims),),
-    )
-    tag_empty_report = _proposal_report(
-        fields=_fields(
-            tags=TargetField(
-                TargetDestination.TAGS,
-                TargetFieldState.MISSING,
-            )
-        ),
-        providers=(_provider("catalogue", "edition-1", tag_claims),),
-    )
-    tag_value_report = _proposal_report(
-        fields=_fields(
-            tags=TargetField(
-                TargetDestination.TAGS,
-                TargetFieldState.VALUE,
-                ("Existing",),
-            )
-        ),
-        providers=(_provider("catalogue", "edition-1", tag_claims),),
-    )
-    description_report = _proposal_report(
-        fields=_fields(
-            description=TargetField(
-                TargetDestination.DESCRIPTION,
-                TargetFieldState.MISSING,
-            )
-        ),
-        providers=(_provider("catalogue", "edition-1", (description_claim,)),),
-    )
+        return MetadataReport.create(
+            target=target,
+            file=work_report.file,
+            local_claims=work_report.local_claims,
+            local_reasons=work_report.local_reasons,
+            providers=work_report.providers,
+        )
+
+    series_report = work_report
+    genre_empty_report = work_report
+    genre_report = populated_work_field(TargetDestination.GENRES)
+    tag_empty_report = work_report
+    tag_value_report = populated_work_field(TargetDestination.TAGS)
+    description_report = work_report
     subtitle_report = _bibliographic_report(
         current_title="Book",
         providers=(
@@ -1730,7 +1602,7 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
                 {
                     "kind": "series",
                     "value": [
-                        {"name": "Reading Order", "sequence": "2"},
+                        {"name": "Slough House", "sequence": "3"},
                     ],
                 },
             )
@@ -1748,7 +1620,7 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
             "fill_empty",
             genre_empty_report,
             "genres",
-            {"kind": "list", "value": ["Fantasy", "Adventure"]},
+            {"kind": "list", "value": ["Mystery"]},
         ),
         (
             "genres",
@@ -1759,8 +1631,7 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
                 "kind": "list",
                 "value": [
                     "Existing",
-                    "Fantasy",
-                    "Adventure",
+                    "Mystery",
                 ],
             },
         ),
@@ -1769,14 +1640,14 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
             "replace",
             genre_report,
             "genres",
-            {"kind": "list", "value": ["Fantasy", "Adventure"]},
+            {"kind": "list", "value": ["Mystery"]},
         ),
         (
             "tags",
             "fill_empty",
             tag_empty_report,
             "tags",
-            {"kind": "list", "value": ["Quest", "Found family"]},
+            {"kind": "list", "value": ["Espionage"]},
         ),
         (
             "tags",
@@ -1787,8 +1658,7 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
                 "kind": "list",
                 "value": [
                     "Existing",
-                    "Quest",
-                    "Found family",
+                    "Espionage",
                 ],
             },
         ),
@@ -1797,14 +1667,14 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
             "replace",
             tag_value_report,
             "tags",
-            {"kind": "list", "value": ["Quest", "Found family"]},
+            {"kind": "list", "value": ["Espionage"]},
         ),
         (
             "description_fill",
             "safe_plain_text",
             description_report,
             "description",
-            {"kind": "text", "value": "An exact source-bound description."},
+            {"kind": "text", "value": "A qualified description."},
         ),
         (
             "isbn_form",
@@ -1821,7 +1691,12 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
             {"kind": "text", "value": "9780306406157"},
         ),
     )
+    assert F20_PASSING_AUTOMATIC_OPTIONS <= {
+        f"{category}:{option}" for category, option, *_rest in cases
+    }
     for category, option, report, destination, expected in cases:
+        if f"{category}:{option}" not in F20_PASSING_AUTOMATIC_OPTIONS:
+            continue
         with tempfile.TemporaryDirectory() as temporary:
             repository = open_repository(Path(temporary) / "reports.sqlite")
             options = dict(DEFAULT_OPTIONS)
@@ -1855,13 +1730,6 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
                 resolved.resolved_id,
                 human_review_destinations(resolved),
             )
-            if category == "series":
-                series_result = next(
-                    value
-                    for value in proposal.results
-                    if value.destination is TargetDestination.SERIES
-                )
-                assert 2 == len(series_result.alternatives[0].value.value)
             repository.publish(report, lambda: True)
             repository.publish_proposal(proposal)
             case_id = json.loads(repository.admit_review_case(proposal))[

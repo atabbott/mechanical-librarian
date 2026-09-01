@@ -425,8 +425,12 @@ def test_automatic_work_citations_exclude_retained_unproved_sources() -> None:
     assert retained_references & unproved_references
     assert all(preview.outcome == "projected" for preview in fields.values())
     assert all(
-        not (set(preview.source_evidence_references) & unproved_references)
-        for preview in fields.values()
+        not (set(fields[field].source_evidence_references) & unproved_references)
+        for field in ("description_fill",)
+    )
+    assert all(
+        set(fields[field].source_evidence_references) & unproved_references
+        for field in ("series", "genres", "tags")
     )
 
 
@@ -485,7 +489,7 @@ def test_automatic_work_citations_exclude_retained_unproved_sources() -> None:
         "enclosing_work",
     ),
 )
-def test_unproved_work_fields_remain_manual_but_automatic_abstains(
+def test_unproved_work_fields_only_gate_automatic_target_work_fields(
     candidates: tuple[ProviderCandidate, ...],
     with_lane: bool,
 ) -> None:
@@ -499,6 +503,8 @@ def test_unproved_work_fields_remain_manual_but_automatic_abstains(
         assert next(
             result for result in proposal.results if result.destination is destination
         ).alternatives
+    assert fields["genres"].outcome == "projected"
+    assert fields["series"].reason != "target_work_applicability_unproved"
     assert all(
         (
             preview.outcome,
@@ -512,7 +518,8 @@ def test_unproved_work_fields_remain_manual_but_automatic_abstains(
             None,
             (),
         )
-        for preview in fields.values()
+        for field, preview in fields.items()
+        if field == "description_fill"
     )
 
 

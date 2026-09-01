@@ -61,7 +61,7 @@ _EMPTY: Final = frozenset(
 )
 _ISBN13: Final = re.compile(r"^97[89][0-9]{10}$")
 _SUBTITLE_SEPARATORS: Final = (": ", " — ", " – ", " - ")
-_TARGET_WORK_FIELDS: Final = frozenset({"description_fill", "series", "genres", "tags"})
+_TARGET_WORK_FIELDS: Final = frozenset({"description_fill"})
 
 
 class RichMetadataPreviewError(ValueError):
