@@ -121,7 +121,7 @@ The policy is deliberately conservative:
 - populated replacement candidates normally need one unique value from at
   least two materially independent correlation groups. Otherwise, bounded
   choices remain `unresolved_choice`. Connections to the same upstream adapter
-  are one group; Hardcover and Open Library are distinct groups;
+  are one group; Hardcover, Inventaire and Open Library are distinct groups;
 - ordered author and narrator lists, series name/sequence, and date/year remain
   complete and linked rather than being edited piecemeal; untyped contributor
   evidence cannot become a partial narrator list;

@@ -1134,6 +1134,11 @@ def _cover_choice_contexts(
                     "external_corroboration",
                     "Retained catalogue cover supports this choice.",
                 ),
+                CoverSourceKind.INVENTAIRE: (
+                    "Inventaire",
+                    "external_corroboration",
+                    "Retained catalogue cover supports this choice.",
+                ),
                 CoverSourceKind.AUDIBLE_CATALOG: (
                     "Audible catalog",
                     "external_corroboration",

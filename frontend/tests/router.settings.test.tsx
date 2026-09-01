@@ -19,7 +19,7 @@ import type { ReviewerAccessView, SettingsView, SettingsWrite } from '../src/api
 import { createHttp, renderRoute } from './fixtures'
 
 const document: SettingsView['document'] = {
-  schema_version: 'owner-settings-v2',
+  schema_version: 'owner-settings-v3',
   revision: 3,
   connections: [{ adapter: 'audiobookshelf', endpoint: 'https://library.invalid', name: 'home' }],
   providers: [
@@ -263,6 +263,56 @@ describe('owner settings route', () => {
         name: 'itunes_search',
       },
     ])
+  })
+
+  it('adds and re-enables credential-free Inventaire covers through save readback', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    let savedRequest: SettingsWrite | undefined
+    http.getSettings = vi.fn(async () => ({
+      ...view(),
+      document: { ...document, providers: [], libraries: [] },
+      provider_capabilities: [
+        {
+          adapter: 'inventaire' as const,
+          credential: 'none' as const,
+          label: 'Inventaire',
+          name: 'inventaire',
+        },
+      ],
+    }))
+    http.writeSettings = vi.fn(async (request: SettingsWrite) => {
+      savedRequest = request
+      return { ...view(), document: request.document, provider_capabilities: [] }
+    })
+    renderRoute('/settings?group=providers', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Add Inventaire' }))
+    const enabled = screen.getByRole('checkbox', {
+      name: 'Provider state Enable inventaire',
+    })
+    expect(enabled).toBeChecked()
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /API key/u })).not.toBeInTheDocument()
+
+    await user.click(enabled)
+    expect(enabled).not.toBeChecked()
+    await user.click(enabled)
+    expect(enabled).toBeChecked()
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+
+    await waitFor(() => expect(http.writeSettings).toHaveBeenCalledOnce())
+    expect(savedRequest?.secrets).toEqual([])
+    expect(savedRequest?.document.providers).toEqual([
+      {
+        adapter: 'inventaire',
+        cover_enabled: true,
+        enabled: true,
+        name: 'inventaire',
+      },
+    ])
+    expect(screen.getByRole('checkbox', { name: 'Provider state Enable inventaire' })).toBeChecked()
+    expect(await screen.findByText('Settings saved and in use.')).toBeVisible()
   })
 
   it('keeps the primary shell intact and saves a redacted replacement with revision CAS', async () => {

@@ -62,7 +62,7 @@ def test_bootstrap_is_strict_private_and_closed(tmp_path: Path) -> None:
 def test_store_projection_combines_only_deploy_bootstrap_and_store_authority() -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v2",
+            "schema_version": "owner-settings-v3",
             "revision": 1,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}
@@ -128,7 +128,7 @@ def test_store_projection_combines_only_deploy_bootstrap_and_store_authority() -
 def test_settings_projects_absent_fixed_provider_capabilities() -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v2",
+            "schema_version": "owner-settings-v3",
             "revision": 1,
             "connections": [{"name": "primary", "endpoint": "https://library.invalid"}],
             "libraries": [
@@ -148,6 +148,7 @@ def test_settings_projects_absent_fixed_provider_capabilities() -> None:
         "google_books",
         "hardcover",
         "itunes_search",
+        "inventaire",
         "open_library",
     ) == tuple(item.name for item in provider_capabilities(document))
     assert {item.credential for item in provider_capabilities(document)} == {
@@ -167,6 +168,7 @@ def test_settings_projects_absent_fixed_provider_capabilities() -> None:
         "audnexus",
         "hardcover",
         "itunes_search",
+        "inventaire",
         "open_library",
     ) == tuple(item.name for item in provider_capabilities(configured))
 
@@ -183,7 +185,7 @@ def _audiobook_document(**overrides: object) -> OwnerSettingsDocument:
     )
     return OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v2",
+            "schema_version": "owner-settings-v3",
             "revision": 1,
             "connections": [{"name": "primary", "endpoint": "https://library.invalid"}],
             "providers": providers,
@@ -357,10 +359,9 @@ def test_the_settings_marketplace_vocabulary_stays_one_closed_set() -> None:
 
     assert get_args(Marketplace) == AUDIOBOOK_MARKETPLACES
     assert tuple(vocabulary["audible_marketplace_order"]) == AUDIOBOOK_MARKETPLACES
-    assert (
-        frozenset(vocabulary["keyless_provider_adapters"])
-        == AUDIOBOOK_PROVIDER_ADAPTERS
-    )
+    assert frozenset(
+        vocabulary["keyless_provider_adapters"]
+    ) == AUDIOBOOK_PROVIDER_ADAPTERS | {"inventaire"}
     assert not set(vocabulary["keyless_provider_adapters"]) & set(
         vocabulary["required_provider_keys"]
     )

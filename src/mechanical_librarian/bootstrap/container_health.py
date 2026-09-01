@@ -15,7 +15,7 @@ The server refuses to start without TLS, so the probe speaks HTTPS. It verifies
 that connection fully:
 
 - the operator's own configured certificate is the single trust anchor, loaded
-  by the path this module reads out of the same `config-v7` document the server
+  by the path this module reads out of the same `config-v8` document the server
   reads, so no system trust store and no other issuer can satisfy the probe;
 - the hostname is checked against the configured `canonical_origin`, the name
   that certificate is meant to carry, while the connection itself goes to

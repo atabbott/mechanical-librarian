@@ -40,6 +40,10 @@ from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HardcoverMetadataProvider,
     HardcoverPacer,
 )
+from mechanical_librarian.adapters.providers.inventaire_metadata import (
+    InventaireMetadataProvider,
+    InventairePacer,
+)
 from mechanical_librarian.adapters.providers.open_library_metadata import (
     OpenLibraryMetadataProvider,
     OpenLibraryPacer,
@@ -63,6 +67,7 @@ from mechanical_librarian.infrastructure.configuration import (
 from mechanical_librarian.infrastructure.security.credentials import (
     google_books_client,
     hardcover_client_token,
+    inventaire_client,
     open_library_client,
     read_secret,
 )
@@ -77,11 +82,13 @@ _MAX_COHORT = 100
 _MAX_EXCHANGES = {
     "google_books": 54,
     "hardcover": 27,
+    "inventaire": 27,
     "open_library": 49,
 }
 _EXPECTED_HOSTS = {
     "google_books": "www.googleapis.com",
     "hardcover": "api.hardcover.app",
+    "inventaire": "inventaire.io",
     "open_library": "openlibrary.org",
 }
 _HTTP_FAILURES: dict[str, type[httpx.HTTPError]] = {
@@ -752,6 +759,19 @@ def build_provider(
             sleep=sleep,
             jitter=lambda: 0.5,
         )
+    if provider.adapter == "inventaire":
+        client = inventaire_client(timeout, transport=transport)
+        return InventaireMetadataProvider(
+            provider.name,
+            client,
+            maximum,
+            timeout,
+            pacer=pacers[provider.adapter],
+            clock=clock,
+            wall_clock=lambda: capture_epoch,
+            sleep=sleep,
+            jitter=lambda: 0.5,
+        )
     raise ReplayFailure("provider_adapter_unsupported")
 
 
@@ -760,12 +780,14 @@ def pacers(*, live: bool) -> dict[str, ProviderRequestPacer]:
         return {
             "google_books": GoogleBooksPacer(),
             "hardcover": HardcoverPacer(),
+            "inventaire": InventairePacer(),
             "open_library": OpenLibraryPacer(),
         }
     virtual = VirtualTime()
     return {
         "google_books": GoogleBooksPacer(clock=virtual.clock, sleep=virtual.sleep),
         "hardcover": HardcoverPacer(clock=virtual.clock, sleep=virtual.sleep),
+        "inventaire": InventairePacer(clock=virtual.clock, sleep=virtual.sleep),
         "open_library": OpenLibraryPacer(clock=virtual.clock, sleep=virtual.sleep),
     }
 

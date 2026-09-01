@@ -249,10 +249,12 @@ class _DiscoveryRequestLedger:
             return completed, True  # type: ignore[return-value]
         self._pending.discard(key)
         initial_before = self.initial
-        result = execute()
+        try:
+            result = execute()
+        finally:
+            if self.initial == initial_before:
+                self.undispatched_incomplete += 1
         self._completed[key] = result
-        if self.initial == initial_before:
-            self.undispatched_incomplete += 1
         return result, False
 
     def finalize_pending_details(self) -> None:

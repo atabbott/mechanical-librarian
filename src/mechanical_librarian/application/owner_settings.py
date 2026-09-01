@@ -97,7 +97,7 @@ def file_settings_projection(
     review = configuration.review
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v2",
+            "schema_version": "owner-settings-v3",
             "revision": 1,
             "connections": [
                 {"name": value.name, "endpoint": value.endpoint}

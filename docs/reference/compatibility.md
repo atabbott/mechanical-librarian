@@ -9,9 +9,9 @@ proof.
 The current installed contract is intentionally narrow:
 
 - Python 3.13 or 3.14;
-- `config-v7` only;
+- `config-v8` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v32` plus `proposal-set-v5` under
+  `metadata-report-v33` plus `proposal-set-v5` under
   `fixed-conservative-v12`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v6`,
   `shadow-decision-set-v1` under
@@ -27,7 +27,7 @@ The current installed contract is intentionally narrow:
 - Audiobookshelf v2.35.1 library, library-items, and current-item responses for
   explicitly configured book libraries;
 - an explicitly selected EPUB on a mapped read-only mount; and
-- fixed Hardcover, Open Library, and Google Books metadata operations for
+- fixed Hardcover, Inventaire, Open Library, and Google Books metadata operations for
   referenced enabled providers: at most eight exact ISBN-family lanes plus one
   title-plus-complete-author work lane with at most three deterministic widening
   variants and one provider-grammar narrowing retry, with no partial egress on overflow;
@@ -35,7 +35,7 @@ The current installed contract is intentionally narrow:
   provider-declared GraphQL errors before considering partial data; safely
   anchored records retain independently valid bounded optional fields and
   members while strict response shape, candidate identity, cardinality and
-  required edition/work joins fail closed; all three providers share
+  required edition/work joins fail closed; all four ebook providers share
   one-second request-start pacing across foreground and recovery work, and
   exact Google Books and Hardcover authority distinguishes burst waits from
   daily reset waits;
@@ -131,7 +131,7 @@ Exact-ID and current-scope replay apply only within the exact current schema;
 current-schema restart, replay, and crash safety remain mandatory.
 
 The F31 reviewer-access increment declares a clean rebuild. It admits only
-`setup-state-v2`, `owner-settings-v2`, `reviewer-access-v1`, and the exact
+`setup-state-v3`, `owner-settings-v3`, `reviewer-access-v1`, and the exact
 current application objects; the former offline exact-predecessor plans and
 their public command are retired. Reviewer engine/model provenance remains
 readable only inside `cover-consideration-v3` and its matching current report

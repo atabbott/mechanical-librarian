@@ -50,7 +50,7 @@ provider call.
 - The container runs under a dedicated Unix identity with no untrusted
   same-identity processes. Privileged and hostile same-identity filesystem
   mutation is outside the supported unprivileged exclusion boundary.
-- The configuration uses `config-v7` and names the requested connection and
+- The configuration uses `config-v8` and names the requested connection and
   library explicitly.
 - The target secret and each enabled referenced provider secret are owner-only
   regular files.
@@ -153,8 +153,8 @@ source order. Front and rear subtitle/publisher/imprint canonical values share
 NFC and whitespace normalization. Rear position does not increase authority.
 Provider comparisons link only claims with the same role; no publisher/imprint
 hierarchy is inferred. The exact-current persisted report and database
-discriminator is `metadata-report-v32`. Every earlier report discriminator,
-including immediate prior `metadata-report-v31`, remains offline and requires a
+discriminator is `metadata-report-v33`. Every earlier report discriminator,
+including immediate prior `metadata-report-v32`, remains offline and requires a
 clean current database under ADR-0013.
 
 An audiobook item in a mounted audiobook library, with exactly one audio file
@@ -329,6 +329,7 @@ provider-specific narrowing retry and does not resume the widening ladder.
 | --- | --- | --- |
 | Google Books | quoted `intitle` plus one quoted `inauthor` per author | quoted `intitle` plus one joined, quoted `inauthor` phrase |
 | Hardcover | GraphQL title equality plus author-name membership in the complete author set | GraphQL title equality plus primary-author equality |
+| Inventaire | one `search` term containing the title and ordered authors | the same bounded term after the shared narrowing transformation |
 | Open Library | structured `title` and joined `author` search parameters | one quoted title phrase plus quoted author phrase in `q` |
 
 One observation coalesces semantically identical provider lookups only. Each
@@ -337,6 +338,11 @@ the completed immutable provider result; no result survives the observation or
 adds request authority.
 
 Every referenced, enabled Hardcover connection remains within 27 attempts.
+Every referenced, enabled Inventaire connection retains at most two candidates
+from a three-row work search and remains within three attempts per request and
+27 attempts per observation. Its aggregate response-byte allowance is the
+smaller of nine configured response limits and 2 MiB. Entity and label lookups
+use repeated query keys in batches of at most eight; they are never comma-joined.
 Every referenced, enabled Open Library connection keeps at most one transport
 retry per request, four transport retries per observation, and 49 aggregate
 attempts. Every referenced, enabled Google Books connection keeps at most five
@@ -344,8 +350,8 @@ transport retries per query and 54 aggregate attempts. Query-ladder and
 narrowing dispatches count as retry dispatches inside those existing ceilings;
 they do not create a separate provider-spend budget. All lanes share one client,
 response-byte envelope, and 60-second aggregate deadline; Google Books,
-Hardcover, and Open Library use shared one-second request-start pacers across
-foreground and recovery work. Google Books requests six
+Hardcover, Inventaire, and Open Library use shared one-second request-start
+pacers across foreground and recovery work. Google Books requests six
 rows to detect overflow while retaining no more than five candidates.
 Credential-free and API-key modes have identical evidence
 semantics; the optional key is read only by the controller and appears in no
@@ -366,6 +372,15 @@ An HTTP 200 response containing a valid bounded GraphQL `errors` envelope is
 candidate or cover evidence. Its aggregate diagnostic is
 `provider_declared_error`, never success. A malformed, empty, or over-bound
 error envelope is `malformed`; its content is never retained.
+
+Inventaire ISBN lookup maps only namespaced `wdt:P212` and `wdt:P957` edition
+identifiers. It follows at most one `wdt:P629` work relation, resolves bounded
+Wikidata entity labels in English, then `fromclaims`, then deterministic
+language-key order, and maps series plus ordinal from `wdt:P179`/`wdt:P1545` at
+work scope. Work-search rows are identities only: selected rows are hydrated
+through the entity endpoint before title, creator, series or ordinal mapping.
+Missing or unusable optional labels omit only their label-dependent claim and
+add a bounded schema diagnostic; other valid candidate evidence remains.
 
 Provider observations contain only bounded failure diagnostics: category,
 closed component/stage, optional retryability/currentness and aggregate count.

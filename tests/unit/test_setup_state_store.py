@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Literal, Never, cast
 
 import pytest
+from pydantic import ValidationError
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.owner_settings import (
@@ -466,6 +467,30 @@ def test_initialize_creates_the_only_verifier_free_resumable_setup_state() -> No
     assert store.read(_OWNER) == state
 
 
+def test_setup_state_v2_is_rejected_and_clean_v3_restarts(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError):
+        SetupStateDocument.model_validate(
+            {
+                "schema_version": "setup-state-v2",
+                "revision": 1,
+                "bootstrap_verifier_digest": "0" * 64,
+            }
+        )
+
+    path = tmp_path / "setup-state.sqlite3"
+    connection = sqlite3.connect(path)
+    _create_schema(connection)
+    state = SetupStateStore(connection).initialize(_BOOTSTRAP)
+    assert state.schema_version == "setup-state-v3"
+    connection.close()
+
+    reopened = sqlite3.connect(path)
+    try:
+        assert SetupStateStore(reopened).read().schema_version == "setup-state-v3"
+    finally:
+        reopened.close()
+
+
 def test_only_the_exact_seeded_schema_is_an_initialization_predecessor() -> None:
     connection, store = _real_store()
     assert store.is_exact_schema_only()
@@ -601,7 +626,7 @@ def test_promotion_replaces_incomplete_state_with_normal_owner_authority() -> No
     store.promote(_BOOTSTRAP, _OWNER)
 
     encoded = connection.execute("SELECT document FROM owner_settings").fetchone()[0]
-    assert '"schema_version":"owner-settings-v2"' in encoded
+    assert '"schema_version":"owner-settings-v3"' in encoded
     assert connection.execute(
         "SELECT field_id,value FROM owner_setting_secrets ORDER BY field_id"
     ).fetchall() == [
@@ -670,7 +695,7 @@ def test_promotion_failpoint_retains_exact_resumable_state_and_retry_succeeds() 
     )
     connection.execute(
         "CREATE TRIGGER fail_owner_promotion BEFORE UPDATE ON owner_settings "
-        "WHEN json_extract(NEW.document,'$.schema_version')='owner-settings-v2' "
+        "WHEN json_extract(NEW.document,'$.schema_version')='owner-settings-v3' "
         "BEGIN SELECT RAISE(ABORT,'failpoint'); END"
     )
 
@@ -712,7 +737,7 @@ def test_schema_admission_accepts_only_the_closed_incomplete_setup_document() ->
 def test_changing_a_recorded_step_removes_its_dependents() -> None:
     state = SetupStateDocument.model_validate(
         {
-            "schema_version": "setup-state-v2",
+            "schema_version": "setup-state-v3",
             "revision": 1,
             "bootstrap_verifier_digest": "0" * 64,
         }

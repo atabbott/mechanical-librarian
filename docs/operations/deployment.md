@@ -5,7 +5,7 @@
 `Dockerfile` and `compose.yaml` define the pre-release installed runtime. It is
 one non-root container, one named `/data` volume, one HTTPS port, a read-only
 root filesystem, and no runtime package installation or extra application
-process. Existing deployments may put the exact `config-v7` document at
+process. Existing deployments may put the exact `config-v8` document at
 `/data/config.json` and keep its referenced owner-only TLS, password and
 service-secret files within explicitly mounted private locations. When that
 file is absent, store mode instead requires the exact-current owner settings and
@@ -192,7 +192,7 @@ source-bound as documented in the
 
 ## Runtime prerequisites
 
-Run as a non-root dedicated identity with an explicit `config-v7` file and
+Run as a non-root dedicated identity with an explicit `config-v8` file and
 application and catalogue database paths on reliable local storage. Each
 database path is either absent for its clean first invocation or already holds
 the exact-current schema. The owner-controlled artifact-store directory must

@@ -531,10 +531,10 @@ Secret material is read only in infrastructure and represented nowhere in the
 report, catalogue, or manifest. Target authorization is attached only to the
 configured origin's exact library, library-items, and current-item GET route
 shapes used by the selected operation. Provider authorization is attached only
-to the fixed HTTPS Hardcover GraphQL URL. Open Library has no secret; its
-operational contact appears only in the User-Agent of requests to the fixed
-metadata and Covers origins. HTTP clients ignore ambient proxy/environment
-configuration and redirects.
+to the fixed HTTPS Hardcover GraphQL URL. Inventaire and Open Library have no
+secret; Open Library's operational contact appears only in the User-Agent of
+requests to the fixed metadata and Covers origins. HTTP clients ignore ambient
+proxy/environment configuration and redirects.
 The Hardcover secret file contains the bare provider token without an
 authorization scheme. Infrastructure adds the required `Bearer` scheme only to
 an exact POST to the fixed GraphQL URL.
@@ -641,9 +641,14 @@ query per lane and at most two edition plus two distinct work-detail queries per
 lane. An individual request may retry once, with at most four retries across the
 observation and 49 aggregate attempts. Each referenced enabled Google Books
 provider makes one fixed Volumes query per lane, with at most five retries and
-54 aggregate attempts. The lanes share one client, response-byte aggregate, and
-deadline; Google Books, Hardcover, and Open Library also use shared one-second
-request-start pacers across foreground and recovery work.
+54 aggregate attempts. Inventaire makes fixed-origin search and entity reads
+only, with three attempts per request, 27 attempts per observation, batches of
+eight, and an aggregate response ceiling of the smaller of nine configured
+response limits and 2 MiB. It sends the fixed
+`MechanicalLibrarian/0.19.0 (+https://github.com/atabbott/mechanical-librarian)`
+user agent and no credential. The lanes share one client, response-byte
+aggregate, and deadline; Google Books, Hardcover, Inventaire, and Open Library
+use shared one-second request-start pacers across foreground and recovery work.
 
 Within one provider observation, semantically identical provider lookups are
 coalesced before dispatch and later lanes replay the exact immutable result.
@@ -665,7 +670,7 @@ deadline, byte, and request-count authority. Attempt records are bounded and
 process-local. Provider adapters also count optional parser/schema rejections
 at their actual rejection points. The application canonically merges those
 counts once with the attempt categories and incomplete-outcome mapping for
-`metadata-report-v32`; provider, attempt ordinal, delay, elapsed time,
+`metadata-report-v33`; provider, attempt ordinal, delay, elapsed time,
 headers, bodies, and exception text are dropped. Application-created
 query-limit outcomes follow the same closed mapping and persist
 provider/lookup_construction/lookup without constructing or invoking a
@@ -706,6 +711,9 @@ Open Library cover requests use the same transport and decoder boundary, but
 allow no redirect, use constructed fixed-origin numeric-ID URLs, and share the
 adapter's one-second request-start pacer. Its bounded two-edition/two-distinct-
 work observation can make at most four remote cover requests.
+Inventaire cover requests use that same no-redirect transport and decoder
+boundary, accept only fixed-origin `/img/entities/` paths with a 40-character
+lowercase hexadecimal identity, and share the observation's one-second pacer.
 Provider cover admission is limited to four sources per provider and eight
 overall. Only descriptors bound to a qualified provider-local work are
 admitted. Reports retain safe allowlisted provenance and explicit truncation,
@@ -788,7 +796,7 @@ reviewer identity, decision, or target-write capability.
 
 ### Schema admission
 
-The report database, `catalogue-v2` database, `config-v7`, artifact records,
+The report database, `catalogue-v2` database, `config-v8`, artifact records,
 and `batch-manifest-v5` each accept only absent or their exact current schema.
 An earlier schema, an extra object, altered SQL, or a failed integrity check
 fails closed before mutation, and is never migrated, imported, preserved, or

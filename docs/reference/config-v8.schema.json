@@ -261,6 +261,51 @@
       "title": "DisabledHardcoverProviderInput",
       "type": "object"
     },
+    "DisabledInventaireProviderInput": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "const": "inventaire",
+          "title": "Adapter",
+          "type": "string"
+        },
+        "contact_email": {
+          "const": null,
+          "default": null,
+          "title": "Contact Email",
+          "type": "null"
+        },
+        "cover_enabled": {
+          "const": false,
+          "title": "Cover Enabled",
+          "type": "boolean"
+        },
+        "enabled": {
+          "const": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "secret_file": {
+          "const": null,
+          "title": "Secret File",
+          "type": "null"
+        }
+      },
+      "required": [
+        "name",
+        "cover_enabled",
+        "adapter",
+        "enabled",
+        "secret_file"
+      ],
+      "title": "DisabledInventaireProviderInput",
+      "type": "object"
+    },
     "DisabledItunesSearchProviderInput": {
       "additionalProperties": false,
       "properties": {
@@ -618,6 +663,50 @@
       "title": "EnabledHardcoverProviderInput",
       "type": "object"
     },
+    "EnabledInventaireProviderInput": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "const": "inventaire",
+          "title": "Adapter",
+          "type": "string"
+        },
+        "contact_email": {
+          "const": null,
+          "default": null,
+          "title": "Contact Email",
+          "type": "null"
+        },
+        "cover_enabled": {
+          "default": true,
+          "title": "Cover Enabled",
+          "type": "boolean"
+        },
+        "enabled": {
+          "const": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "secret_file": {
+          "const": null,
+          "title": "Secret File",
+          "type": "null"
+        }
+      },
+      "required": [
+        "name",
+        "adapter",
+        "enabled",
+        "secret_file"
+      ],
+      "title": "EnabledInventaireProviderInput",
+      "type": "object"
+    },
     "EnabledItunesSearchProviderInput": {
       "additionalProperties": false,
       "properties": {
@@ -892,6 +981,12 @@
           "$ref": "#/$defs/DisabledOpenLibraryProviderInput"
         },
         {
+          "$ref": "#/$defs/EnabledInventaireProviderInput"
+        },
+        {
+          "$ref": "#/$defs/DisabledInventaireProviderInput"
+        },
+        {
           "$ref": "#/$defs/EnabledGoogleBooksProviderInput"
         },
         {
@@ -1109,7 +1204,7 @@
       "default": null
     },
     "schema_version": {
-      "const": "config-v7",
+      "const": "config-v8",
       "title": "Schema Version",
       "type": "string"
     }

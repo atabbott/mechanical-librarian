@@ -7,6 +7,8 @@ from types import ModuleType
 
 import pytest
 
+from mechanical_librarian.infrastructure.configuration import ConfigurationInput
+
 
 def _qualifier() -> ModuleType:
     path = Path(__file__).parents[2] / "scripts" / "qualify_container_lifecycle.py"
@@ -18,6 +20,14 @@ def _qualifier() -> ModuleType:
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
+
+
+def test_generated_container_configuration_admits_the_current_schema() -> None:
+    configuration = _qualifier()._configuration()
+
+    admitted = ConfigurationInput.model_validate(configuration)
+
+    assert admitted.schema_version == "config-v8"
 
 
 def test_first_run_partial_volume_creation_enters_owned_cleanup(

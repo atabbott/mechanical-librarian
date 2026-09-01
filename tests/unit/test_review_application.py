@@ -129,7 +129,7 @@ def test_settings_commit_updates_live_cover_policy_inside_the_application_gate(
 ) -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v2",
+            "schema_version": "owner-settings-v3",
             "revision": 2,
             "connections": [{"name": "primary", "endpoint": "https://example.invalid"}],
             "libraries": [
@@ -203,7 +203,7 @@ def test_live_cover_binding_fault_is_a_fixed_settings_failure(
 ) -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v2",
+            "schema_version": "owner-settings-v3",
             "revision": 2,
             "connections": [{"name": "primary", "endpoint": "https://example.invalid"}],
             "libraries": [

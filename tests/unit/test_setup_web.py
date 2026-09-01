@@ -157,7 +157,7 @@ class _State:
     def __init__(self, sessions: _Sessions | None = None) -> None:
         self.sessions = sessions
         self.document = SetupStateDocument(
-            schema_version="setup-state-v2",
+            schema_version="setup-state-v3",
             revision=1,
             bootstrap_verifier_digest="0" * 64,
         )
@@ -880,6 +880,9 @@ def test_setup_library_step_uses_audiobookshelf_book_kind_without_owner_choice()
     assert "name:row.dataset.name" in SETUP_JS
     assert "Preparation will begin in the workspace." in SETUP_JS
     assert "className='provider-access'" in SETUP_JS
+    assert "['inventaire','inventaire','Inventaire']" in SETUP_JS
+    assert "enabled.checked=adapter==='inventaire'" in SETUP_JS
+    assert "cover_enabled:row.adapter==='inventaire'" in SETUP_JS
     assert "`${evidence?.name||humanName(item.library)}:" in SETUP_JS
     assert (
         "field(`${evidence?.name||humanName(library.name)} service path`,path)"

@@ -1498,7 +1498,7 @@ export const mapSettings = (value: unknown): SettingsView => {
     !record(value) ||
     (value.authority !== 'file' && value.authority !== 'store') ||
     !record(value.document) ||
-    value.document.schema_version !== 'owner-settings-v2' ||
+    value.document.schema_version !== 'owner-settings-v3' ||
     !Array.isArray(value.document.connections) ||
     !Array.isArray(value.document.providers) ||
     !Array.isArray(value.document.libraries) ||

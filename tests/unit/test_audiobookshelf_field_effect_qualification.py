@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
+import scripts.qualify_audiobookshelf_field_effect as qualification
 from scripts.qualify_audiobookshelf_field_effect import (
     QualificationError,
     _compose_review_client,
@@ -24,7 +25,41 @@ from scripts.qualify_audiobookshelf_field_effect import (
     _require_installed_return_lineage_progress,
 )
 
+from mechanical_librarian.infrastructure.configuration import ConfigurationInput
 from mechanical_librarian.interfaces.web.react_assets import ReactAssetRecovery
+
+
+class _ConfigurationAdmitted(Exception):
+    pass
+
+
+def test_generated_field_effect_configuration_admits_the_current_schema(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    library = tmp_path / "books"
+    library.mkdir()
+
+    def admit(path: Path) -> None:
+        document = json.loads(path.read_text(encoding="utf-8"))
+        admitted = ConfigurationInput.model_validate(document)
+        assert admitted.schema_version == "config-v8"
+        raise _ConfigurationAdmitted
+
+    monkeypatch.setattr(qualification, "load_configuration_file", admit)
+
+    with pytest.raises(_ConfigurationAdmitted):
+        qualification._installed_continuous_qualification(
+            tmp_path,
+            "https://127.0.0.1:9",
+            "synthetic-writer-key",
+            (("books", "01234567-89ab-4def-8123-456789abcdef", library),),
+            "drift-item",
+            {},
+            set(),
+            {},
+            {},
+            set(),
+        )
 
 
 def test_installed_mutations_bind_the_loaded_browser_identity() -> None:

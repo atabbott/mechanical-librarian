@@ -111,7 +111,15 @@ SETUP_JS = (
     )
     .replace(
         "const form=document.createElement('form');const specs=[['open','open_library','Open Library'],['hardcover','hardcover','Hardcover'],['google','google_books','Google Books'],['audible','audible_catalog','Audible'],['audnexus','audnexus','Audnexus'],['audiosilo','audiosilo','AudioSilo'],['itunes','itunes_search','iTunes']];",
-        "const links=document.createElement('nav');links.className='provider-links';links.setAttribute('aria-label','Provider account links');const lead=document.createElement('span');lead.textContent='Get provider access:';links.append(lead);for(const [label,href] of [['Open Library','https://openlibrary.org/account/create'],['Hardcover','https://hardcover.app/account/api'],['Google Books','https://console.cloud.google.com/apis/credentials']]){const link=document.createElement('a');link.href=href;link.rel='noreferrer';link.textContent=label;links.append(link)}section.append(links);const form=document.createElement('form');const specs=[['open','open_library','Open Library'],['hardcover','hardcover','Hardcover'],['google','google_books','Google Books'],['audible','audible_catalog','Audible'],['audnexus','audnexus','Audnexus'],['audiosilo','audiosilo','AudioSilo'],['itunes','itunes_search','iTunes']];",
+        "const links=document.createElement('nav');links.className='provider-links';links.setAttribute('aria-label','Provider account links');const lead=document.createElement('span');lead.textContent='Get provider access:';links.append(lead);for(const [label,href] of [['Open Library','https://openlibrary.org/account/create'],['Hardcover','https://hardcover.app/account/api'],['Google Books','https://console.cloud.google.com/apis/credentials']]){const link=document.createElement('a');link.href=href;link.rel='noreferrer';link.textContent=label;links.append(link)}section.append(links);const form=document.createElement('form');const specs=[['inventaire','inventaire','Inventaire'],['open','open_library','Open Library'],['hardcover','hardcover','Hardcover'],['google','google_books','Google Books'],['audible','audible_catalog','Audible'],['audnexus','audnexus','Audnexus'],['audiosilo','audiosilo','AudioSilo'],['itunes','itunes_search','iTunes']];",
+    )
+    .replace(
+        "const enabled=input(`${name}-enabled`,'checkbox');",
+        "const enabled=input(`${name}-enabled`,'checkbox');enabled.checked=adapter==='inventaire';",
+    )
+    .replace(
+        "cover_enabled:false,contact_email:row.email?.value||null",
+        "cover_enabled:row.adapter==='inventaire',contact_email:row.email?.value||null",
     )
     .replace(
         "loading.remove();for(const item of result.libraries){",
