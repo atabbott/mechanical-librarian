@@ -28,7 +28,10 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
 
 MANIFEST = (
     Path(__file__).parents[2]
-    / "docs/reference/f20-rich-metadata-qualification-candidate-v1.json"
+    / "docs/reference/f20-rich-metadata-qualification-candidate-v2.json"
+)
+F19A_MANIFEST = (
+    Path(__file__).parents[2] / "docs/reference/f19a-qualification-manifest-v2.json"
 )
 RICH_FIELDS = (
     "subtitle",
@@ -45,7 +48,7 @@ RICH_FIELDS = (
 def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
 
-    assert "f20-rich-metadata-qualification-candidate-v1" == manifest["schema"]
+    assert "f20-rich-metadata-qualification-candidate-v2" == manifest["schema"]
     assert "decision_only" == manifest["automatic_authority"]
     passing = {
         "description_fill:safe_plain_text",
@@ -65,7 +68,7 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     assert passing == set(manifest["passing_automatic_options"])
     assert ["explicit:unsupported"] == manifest["human_only_options"]
     assert ["narrators", "cover"] == manifest["excluded_destinations"]
-    assert 10 == manifest["candidate_execution_count"]
+    assert 11 == manifest["candidate_execution_count"]
     assert {
         "evaluated_reports": 49,
         "exposure_unit": "case_field_option",
@@ -280,7 +283,7 @@ def test_candidate_exposes_only_closed_aggregate_contract_data() -> None:
 
 def test_f19a_authority_is_preserved_and_exact_f20_is_added() -> None:
     assert (
-        "cb48d6a0dff269fd576ac9c8fbe7bbe313f291d0368251b097c9178ade456b37"
+        "3500623af9377ecaa30c3ed269e2de433313a18676891e159757dc4c842cb527"
         == F19A_QUALIFICATION_MANIFEST_SHA256
     )
     assert {
@@ -334,6 +337,27 @@ def test_f19a_authority_is_preserved_and_exact_f20_is_added() -> None:
         "isbn_form",
     }:
         assert "manual_only" == policy.qualification(field)
+
+
+def test_f19a_successor_manifest_binds_the_f36_holdout() -> None:
+    manifest_bytes = F19A_MANIFEST.read_bytes()
+    manifest = json.loads(manifest_bytes)
+
+    assert (
+        hashlib.sha256(manifest_bytes).hexdigest() == F19A_QUALIFICATION_MANIFEST_SHA256
+    )
+    assert "f19a-v10-result" == manifest["schema"]
+    assert 9 == manifest["replayed_prior_option_count"]
+    assert 2 == manifest["changed_prior_option_count"]
+    assert 0 == manifest["zero_tolerance_failures"]
+    assert {
+        "automatic_precision": 1.0,
+        "automatic_predictions": 16,
+        "automatic_recall": 1.0,
+        "case_count": 32,
+        "classification_accuracy": 1.0,
+        "zero_tolerance_failures": 0,
+    } == manifest["split_metrics"]["holdout"]
 
 
 def test_runtime_envelope_pins_every_terminal_disposition_and_authority() -> None:

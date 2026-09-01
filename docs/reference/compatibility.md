@@ -12,7 +12,7 @@ The current installed contract is intentionally narrow:
 - `config-v8` only;
 - an absent database or the installed exact current report database containing
   `metadata-report-v33` plus `proposal-set-v5` under
-  `fixed-conservative-v12`, or the separate `catalogue-v2` schema;
+  `fixed-conservative-v13`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v6`,
   `shadow-decision-set-v1` under
   `deterministic-shadow-decision-policy-v9`,
@@ -98,11 +98,13 @@ Shared `YYYY-MM` proposal candidates are qualification-only and report-only;
 partial-date service acceptance and exact read-back have not been qualified,
 so month candidates are not write-eligible.
 
-Language and publisher proposal alternatives retain their admitted bytes and
-provenance. `acceptable_choice` exposes multiple closed-policy-acceptable
-outcomes without choosing one. No earlier proposal policy is interpreted:
-pre-release databases using `fixed-conservative-v5` or earlier are rejected
-before mutation and require a clean rebuild.
+Language claims retain their admitted bytes and provenance in the immutable
+report. Valid ISO aliases and regional variants group into one
+base-and-exact-optional-script alternative; publisher alternatives remain
+distinct. `acceptable_choice` exposes multiple closed-policy-acceptable
+publisher outcomes without choosing one. No earlier proposal policy is
+interpreted: pre-release databases using `fixed-conservative-v12` or earlier
+are rejected before mutation and require a clean rebuild.
 
 Packet v6 decision summaries and typed provider evidence are exact deterministic
 projections of the current report, ProposalSet, ReviewCase, and bibliographic

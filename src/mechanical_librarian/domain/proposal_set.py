@@ -20,6 +20,7 @@ from mechanical_librarian.domain.evidence_bounds import (
     validate_projection_text,
 )
 from mechanical_librarian.domain.field_outcomes import (
+    language_equivalence_class,
     language_identity,
     language_outcomes_compatible,
     publisher_statement_valid,
@@ -64,7 +65,7 @@ if TYPE_CHECKING:
     from mechanical_librarian.domain.cover_evidence import CoverArtifact
 
 PROPOSAL_SCHEMA = "proposal-set-v5"
-POLICY_VERSION = "fixed-conservative-v12"
+POLICY_VERSION = "fixed-conservative-v13"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -588,6 +589,20 @@ class ProposalResult:
         ):
             raise ProposalValueError(
                 "proposal alternative is incompatible with destination"
+            )
+        if self.destination is TargetDestination.LANGUAGE and len(
+            {
+                (
+                    _observation_key(self.destination, value.value),
+                    value.scope,
+                    value.date_event,
+                    value.date_precision,
+                )
+                for value in self.alternatives
+            }
+        ) != len(self.alternatives):
+            raise ProposalValueError(
+                "language alternatives are not equivalence-class grouped"
             )
         expected_dates = _DESTINATION_DATE_SEMANTICS[self.destination]
         if any(
@@ -2602,14 +2617,9 @@ def _observation_key(destination: TargetDestination, value: ProposalValue) -> st
             _comparison(destination, item)
             for item in cast("tuple[str, ...]", value.value)
         )
-    elif (
-        destination
-        in {
-            TargetDestination.LANGUAGE,
-            TargetDestination.PUBLISHER,
-        }
-        and type(value.value) is str
-    ):
+    elif destination is TargetDestination.LANGUAGE and type(value.value) is str:
+        normalized = language_equivalence_class(value.value) or value.value
+    elif destination is TargetDestination.PUBLISHER and type(value.value) is str:
         normalized = value.value
     elif destination is TargetDestination.ISBN and type(value.value) is str:
         normalized = isbn_family(value.value) or value.value

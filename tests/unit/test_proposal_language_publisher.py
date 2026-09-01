@@ -1,5 +1,5 @@
-"""Proposal language and publisher policy: regional compatibility,
-alias mapping, base/script/region contradictions, distinct publisher
+"""Proposal language and publisher policy: equivalence-class grouping,
+alias mapping, base/script contradictions, distinct publisher
 business levels, and manifestation-bound anchors.
 """
 
@@ -69,24 +69,28 @@ def test_language_policy_preserves_supported_regional_target() -> None:
         ),
     )
 
-    result = _result(
-        evaluate_report(_report(fields=fields, providers=providers)),
-        TargetDestination.LANGUAGE,
-    )
+    report = _report(fields=fields, providers=providers)
+    proposal_set = evaluate_report(report)
+    result = _result(proposal_set, TargetDestination.LANGUAGE)
 
     assert ProposalOutcome.KEEP == result.outcome
     assert ("field_policy_preservation",) == result.reasons
     assert result.selected_alternative_id is None
+    assert 1 == len(result.alternatives)
+    assert "en" == result.alternatives[0].value.value
+    assert ProposalAssessment.PRESERVES_TARGET is result.alternatives[0].assessment
+    assert 2 == len(result.alternatives[0].evidence_references)
+    assert 1 == len(result.alternatives[0].correlations)
     assert {"en", "eng"} == {
-        alternative.value.value for alternative in result.alternatives
+        claim.value
+        for provider in report.providers
+        for candidate in provider.candidates
+        for claim in candidate.claims
+        if claim.kind is ClaimKind.LANGUAGE
     }
-    assert all(
-        alternative.assessment is ProposalAssessment.PRESERVES_TARGET
-        for alternative in result.alternatives
-    )
 
 
-def test_language_policy_rejects_candidate_that_contradicts_target_detail() -> None:
+def test_language_policy_strips_region_before_grouping() -> None:
     fields = _fields(
         language=TargetField(
             TargetDestination.LANGUAGE,
@@ -128,17 +132,17 @@ def test_language_policy_rejects_candidate_that_contradicts_target_detail() -> N
         TargetDestination.LANGUAGE,
     )
 
-    assert ProposalOutcome.UNRESOLVED_CHOICE == result.outcome
-    assert ("field_policy_conflict",) == result.reasons
-    assert {
-        ProposalAssessment.PRESERVES_TARGET,
-        ProposalAssessment.REPLACES_TARGET,
-    } == {alternative.assessment for alternative in result.alternatives}
+    assert ProposalOutcome.KEEP == result.outcome
+    assert ("field_policy_preservation",) == result.reasons
+    assert 1 == len(result.alternatives)
+    assert ProposalAssessment.PRESERVES_TARGET is result.alternatives[0].assessment
+    assert 2 == len(result.alternatives[0].evidence_references)
+    assert 1 == len(result.alternatives[0].correlations)
 
 
 _TARGET_DETAIL_CONTROLS = (
-    ("region", "en-US", "en-GB"),
     ("script", "en-Latn", "en-Cyrl"),
+    ("unspecified_script", "en", "en-Latn"),
 )
 
 
@@ -188,10 +192,11 @@ def test_language_policy_rejects_sole_target_detail_contradiction(
     assert ("field_policy_conflict",) == result.reasons
     assert 1 == len(result.alternatives)
     assert ProposalAssessment.REPLACES_TARGET == result.alternatives[0].assessment
+    assert 2 == len(result.alternatives[0].evidence_references)
     assert 2 == len(result.alternatives[0].correlations)
 
 
-def test_language_policy_keeps_sole_less_specific_evidence() -> None:
+def test_language_policy_keeps_unspecified_and_specific_scripts_distinct() -> None:
     fields = _fields(
         language=TargetField(
             TargetDestination.LANGUAGE,
@@ -218,13 +223,13 @@ def test_language_policy_keeps_sole_less_specific_evidence() -> None:
         TargetDestination.LANGUAGE,
     )
 
-    assert ProposalOutcome.KEEP == result.outcome
-    assert ("field_policy_preservation",) == result.reasons
+    assert ProposalOutcome.UNRESOLVED_CHOICE == result.outcome
+    assert ("field_policy_conflict",) == result.reasons
     assert 1 == len(result.alternatives)
-    assert ProposalAssessment.PRESERVES_TARGET == result.alternatives[0].assessment
+    assert ProposalAssessment.REPLACES_TARGET == result.alternatives[0].assessment
 
 
-def test_equivalent_language_candidates_are_an_acceptable_choice() -> None:
+def test_equivalent_language_candidates_form_one_unique_candidate() -> None:
     providers = (
         _provider(
             "alpha",
@@ -263,12 +268,13 @@ def test_equivalent_language_candidates_are_an_acceptable_choice() -> None:
     proposal_set = evaluate_report(_report(fields=fields, providers=providers))
     result = _result(proposal_set, TargetDestination.LANGUAGE)
 
-    assert ProposalOutcome.ACCEPTABLE_CHOICE == result.outcome
-    assert ("field_policy_acceptable_choice",) == result.reasons
-    assert result.selected_alternative_id is None
-    assert {"en", "eng"} == {
-        alternative.value.value for alternative in result.alternatives
-    }
+    assert ProposalOutcome.PROPOSE_CHANGE == result.outcome
+    assert ("unique_typed_candidate",) == result.reasons
+    assert 1 == len(result.alternatives)
+    assert result.alternatives[0].alternative_id == result.selected_alternative_id
+    assert "en" == result.alternatives[0].value.value
+    assert 2 == len(result.alternatives[0].evidence_references)
+    assert 1 == len(result.alternatives[0].correlations)
     assert proposal_set == ProposalSet.from_json(proposal_set.to_json())
 
 
@@ -299,17 +305,19 @@ def test_deprecated_bh_language_alias_maps_to_favored_bih() -> None:
     proposal_set = evaluate_report(_report(fields=fields, providers=providers))
     result = _result(proposal_set, TargetDestination.LANGUAGE)
 
-    assert ProposalOutcome.ACCEPTABLE_CHOICE == result.outcome
-    assert {"bh", "bih"} == {
-        alternative.value.value for alternative in result.alternatives
-    }
+    assert ProposalOutcome.PROPOSE_CHANGE == result.outcome
+    assert 1 == len(result.alternatives)
+    assert result.alternatives[0].alternative_id == result.selected_alternative_id
+    assert "bh" == result.alternatives[0].value.value
+    assert 2 == len(result.alternatives[0].evidence_references)
+    assert 1 == len(result.alternatives[0].correlations)
     assert proposal_set == ProposalSet.from_json(proposal_set.to_json())
 
 
 _LANGUAGE_CONFLICT_CONTROLS = (
     ("different_base", "fr", "eng"),
     ("different_script", "en-Latn", "en-Cyrl"),
-    ("different_region", "en-US", "en-GB"),
+    ("unspecified_script", "en", "en-Latn"),
     ("malformed", "en", "english"),
 )
 
@@ -321,7 +329,7 @@ _LANGUAGE_CONFLICT_CONTROLS = (
         for control in _LANGUAGE_CONFLICT_CONTROLS
     ),
 )
-def test_language_policy_rejects_base_script_region_and_malformed_conflicts(
+def test_language_policy_rejects_base_script_and_malformed_conflicts(
     left, right
 ) -> None:
     fields = _fields(

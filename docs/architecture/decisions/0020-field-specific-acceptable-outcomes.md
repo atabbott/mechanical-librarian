@@ -4,7 +4,7 @@
 - Date: 2026-07-30
 - Owners: project maintainers
 - Supersedes: none
-- Superseded by: none
+- Superseded by: ADR-0065 for language alternative grouping and regional equivalence
 
 ## Context
 

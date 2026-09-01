@@ -127,7 +127,7 @@ def _publication_decisions(
     )
 
 
-def test_acceptable_language_choice_replays_with_all_raw_candidates() -> None:
+def test_equivalent_language_forms_replay_as_one_candidate() -> None:
     report = _proposal_report(
         fields=_proposal_fields(
             language=TargetField(TargetDestination.LANGUAGE, TargetFieldState.MISSING)
@@ -167,10 +167,10 @@ def test_acceptable_language_choice_replays_with_all_raw_candidates() -> None:
     language = next(
         (value for value in packet.proposals if value["destination"] == "language")
     )
-    assert "acceptable_choice" == language["outcome"]
-    assert {"en", "eng"} == {
+    assert "propose_change" == language["outcome"]
+    assert ["en"] == [
         candidate["value"]["value"] for candidate in language["candidates"]
-    }
+    ]
     assert all(
         (
             candidate["decision_summary"]["support"]

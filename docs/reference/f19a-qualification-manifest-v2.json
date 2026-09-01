@@ -1,0 +1,139 @@
+{
+  "candidate_execution_count": 2,
+  "candidate_evaluator_sha256": "ebc638244e146abd7972a1bb43a7e6d6aae6fd098cf07fa67262cefd6da878e2",
+  "changed_prior_option_count": 2,
+  "corpus_contract": {
+    "adjudicated_sha256": "a90af15ea27707b3b1b9438d54578199bdb82dd8e79cd9e0e4e0f5d024f37ef0",
+    "confirmation_result_sha256": "aed9aaec9684b77d1523594dda64ad8fca9c387b382f30f24fc0bc3fbd035bed",
+    "design_sha256": "93bacf9e74cbd2d70562af8bcb67c6d2819bb464955660afb9ddaf58046ab8e8",
+    "final_candidate_equivalence_sha256": "462e3e31b19b1764dfebb39aef628451a91d321b5cb73a97b2e10b0b58842540",
+    "holdout_result_sha256": "5c97dfe79cdc0111b4b5d9a4193359a8b11f0b9d1eb4738b443e00f26eec7c7b"
+  },
+  "corpus_role": "confirmation_and_final_holdout",
+  "deferred_before_activation": [
+    {
+      "key": "publisher_preference:imprint",
+      "reason": "v5_has_no_imprint_field",
+      "status": "deferred_before_activation"
+    }
+  ],
+  "evaluator_contract": "f36-language-equivalence-v1",
+  "metrics": {
+    "bundle:publishedDate+publishedYear": {
+      "automatic_precision": 1.0,
+      "automatic_predictions": 46,
+      "automatic_recall": 0.92,
+      "eligible_opportunities": 50,
+      "qualified": true,
+      "unsupported_rate": 0.0
+    },
+    "bundle:title+subtitle+series": {
+      "automatic_precision": 1.0,
+      "automatic_predictions": 46,
+      "automatic_recall": 0.92,
+      "eligible_opportunities": 50,
+      "qualified": true,
+      "unsupported_rate": 0.0
+    },
+    "contributor_names:canonical": {
+      "automatic_precision": 1.0,
+      "automatic_predictions": 46,
+      "automatic_recall": 0.92,
+      "eligible_opportunities": 50,
+      "qualified": true,
+      "unsupported_rate": 0.0
+    },
+    "contributor_names:preserve": {
+      "automatic_precision": 1.0,
+      "automatic_predictions": 46,
+      "automatic_recall": 0.92,
+      "eligible_opportunities": 50,
+      "qualified": true,
+      "unsupported_rate": 0.0
+    },
+    "date_precision:full_date": {
+      "automatic_precision": 1.0,
+      "automatic_predictions": 46,
+      "automatic_recall": 0.92,
+      "eligible_opportunities": 50,
+      "qualified": true,
+      "unsupported_rate": 0.0
+    },
+    "date_precision:year": {
+      "automatic_precision": 1.0,
+      "automatic_predictions": 46,
+      "automatic_recall": 0.92,
+      "eligible_opportunities": 50,
+      "qualified": true,
+      "unsupported_rate": 0.0
+    },
+    "language_rendering:display_name": {
+      "automatic_precision": 1.0,
+      "automatic_predictions": 16,
+      "automatic_recall": 1.0,
+      "correct_predictions": 16,
+      "eligible_opportunities": 32,
+      "positive_opportunities": 16,
+      "qualified": true,
+      "unsupported_rate": 0.0
+    },
+    "language_rendering:preserve": {
+      "automatic_precision": 1.0,
+      "automatic_predictions": 16,
+      "automatic_recall": 1.0,
+      "correct_predictions": 16,
+      "eligible_opportunities": 32,
+      "positive_opportunities": 16,
+      "qualified": true,
+      "unsupported_rate": 0.0
+    },
+    "publisher_preference:publisher": {
+      "automatic_precision": 1.0,
+      "automatic_predictions": 46,
+      "automatic_recall": 0.92,
+      "eligible_opportunities": 50,
+      "qualified": true,
+      "unsupported_rate": 0.0
+    },
+    "title_layout:preserve": {
+      "automatic_precision": 1.0,
+      "automatic_predictions": 46,
+      "automatic_recall": 0.92,
+      "eligible_opportunities": 50,
+      "qualified": true,
+      "unsupported_rate": 0.0
+    },
+    "title_layout:title_and_subtitle": {
+      "automatic_precision": 1.0,
+      "automatic_predictions": 46,
+      "automatic_recall": 0.92,
+      "eligible_opportunities": 50,
+      "qualified": true,
+      "unsupported_rate": 0.0
+    }
+  },
+  "offline_only": true,
+  "prior_manifest_sha256": "cb48d6a0dff269fd576ac9c8fbe7bbe313f291d0368251b097c9178ade456b37",
+  "qualified": true,
+  "replayed_prior_option_count": 9,
+  "schema": "f19a-v10-result",
+  "split_metrics": {
+    "confirmation": {
+      "automatic_precision": 1.0,
+      "automatic_predictions": 16,
+      "automatic_recall": 1.0,
+      "case_count": 32,
+      "classification_accuracy": 1.0,
+      "zero_tolerance_failures": 0
+    },
+    "holdout": {
+      "automatic_precision": 1.0,
+      "automatic_predictions": 16,
+      "automatic_recall": 1.0,
+      "case_count": 32,
+      "classification_accuracy": 1.0,
+      "zero_tolerance_failures": 0
+    }
+  },
+  "zero_tolerance_failures": 0
+}

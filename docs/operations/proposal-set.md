@@ -6,7 +6,7 @@ preparation; source-only contributor inspection uses the typed workbench and is
 not an installed runtime capability. The operation reopens the exact report, revalidates its
 current Audiobookshelf target projection, selected EPUB bytes, ABS cover, and
 both blobs of every referenced private cover artifact, then evaluates the built-in
-`fixed-conservative-v12` policy. It does not construct or contact a metadata or
+`fixed-conservative-v13` policy. It does not construct or contact a metadata or
 cover provider.
 
 An exact ProposalSet can be reopened offline through the application repository
@@ -15,12 +15,13 @@ or typed source-only inspector.
 Success is exactly one canonical `proposal-set-v5` JSON document plus a
 newline. Failure emits no document and one value-free diagnostic.
 
-Only `proposal-set-v5` documents under `fixed-conservative-v12` and the exact current
+Only `proposal-set-v5` documents under `fixed-conservative-v13` and the exact current
 `proposal_sets` table envelope are accepted. A database with the earlier
 `fixed-conservative-v1`, `fixed-conservative-v2`, `fixed-conservative-v3`, or
 `fixed-conservative-v4`, `fixed-conservative-v5`, `fixed-conservative-v6`,
 `fixed-conservative-v7`, `fixed-conservative-v8`, `fixed-conservative-v9`,
-`fixed-conservative-v10`, or `fixed-conservative-v11` table shape is incompatible
+`fixed-conservative-v10`, `fixed-conservative-v11`, or
+`fixed-conservative-v12` table shape is incompatible
 and is rejected before mutation. A clean rebuild is required; there is no
 proposal migration, import, conversion, or compatibility parser.
 
@@ -87,15 +88,16 @@ exact target state remain unchanged in the raw result; the review projection
 marks all three tuple members manual without synthesizing evidence.
 
 `propose_change` carries exactly one selected safe candidate.
-`acceptable_choice` carries at least two language or publisher candidates that
+`acceptable_choice` carries at least two publisher candidates that
 the closed field policy accepts and selects none; it is not a conflict.
 `unresolved_choice` carries one or more bounded candidates but selects none
 because a material contradiction or another unresolved rule remains. `defer`
 carries no candidate because evidence or capability prevents a decision
-surface. `keep` normally records one positive preservation alternative; for
-language and publisher it may retain multiple alternatives when admitted
-evidence supports the current value and every retained candidate is
-policy-compatible. `reject` is a closed no-choice variant for a future
+surface. `keep` normally records one positive preservation alternative.
+Equivalent language evidence is grouped into that one alternative; publisher
+policy may retain multiple alternatives when admitted evidence supports the
+current value and every retained candidate is policy-compatible. `reject` is
+a closed no-choice variant for a future
 explicit policy rejection; the fixed evaluator has no deletion inference and
 does not emit it. `ineligible` likewise has no choice. Proposal evaluation
 grants no decision, apply, or write action.
@@ -103,12 +105,14 @@ grants no decision, apply, or write action.
 The policy is deliberately conservative:
 
 - populated values need positive preservation evidence for `keep`;
-- canonical ISO 639-1/639-2 aliases identify one base language. A valid
-  language-only observation can support a current, more specific script or
-  region when no observation contradicts it. The deprecated `bh` alias remains
-  accepted but resolves to LoC's favored `bih` identity. Different base
-  languages, specified scripts, or specified regions remain unresolved, as do
-  malformed or noncanonical tags;
+- canonical ISO 639-1/639-2 aliases and regional variants form one
+  base-and-exact-optional-script equivalence class before alternatives are
+  grouped. The representative retains admitted candidate bytes and merges every
+  evidence reference and correlation; the immutable report remains the
+  provenance authority for every original representation. The deprecated `bh`
+  alias resolves to LoC's favored `bih` identity. Different base languages,
+  specified scripts, absent-versus-specified scripts, and malformed or
+  noncanonical tags remain unresolved;
 - valid edition-bound publisher and imprint observations may each be an
   acceptable publisher-field outcome. Provider observations must also pass
   an exact `accepted` identifier relation for an ISBN claim on that same

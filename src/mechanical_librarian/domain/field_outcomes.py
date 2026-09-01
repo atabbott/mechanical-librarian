@@ -84,25 +84,21 @@ def language_identity(value: str) -> LanguageIdentity | None:
     return LanguageIdentity(base, script, region)
 
 
+def language_equivalence_class(value: str) -> tuple[str, str | None] | None:
+    """Return the base-and-script class used for language decisions."""
+    identity = language_identity(value)
+    if identity is None:
+        return None
+    return identity.base, identity.script
+
+
 def language_outcomes_compatible(left: str, right: str) -> bool:
-    """Return whether two tags describe one non-contradictory language outcome."""
-    left_identity = language_identity(left)
-    right_identity = language_identity(right)
-    if left_identity is None or right_identity is None:
+    """Return whether two tags belong to one language equivalence class."""
+    left_class = language_equivalence_class(left)
+    right_class = language_equivalence_class(right)
+    if left_class is None or right_class is None:
         return False
-    return (
-        left_identity.base == right_identity.base
-        and (
-            left_identity.script is None
-            or right_identity.script is None
-            or left_identity.script == right_identity.script
-        )
-        and (
-            left_identity.region is None
-            or right_identity.region is None
-            or left_identity.region == right_identity.region
-        )
-    )
+    return left_class == right_class
 
 
 def publisher_statement_valid(value: str) -> bool:
@@ -124,6 +120,7 @@ def publisher_statement_valid(value: str) -> bool:
 
 __all__ = [
     "LanguageIdentity",
+    "language_equivalence_class",
     "language_identity",
     "language_outcomes_compatible",
     "publisher_statement_valid",

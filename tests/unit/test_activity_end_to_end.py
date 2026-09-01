@@ -539,7 +539,7 @@ def test_verified_owner_replacement_retains_history_and_activity_predecessor(
                     "beta",
                     "beta-edition",
                     ClaimKind.LANGUAGE,
-                    "eng",
+                    "fr",
                     scope=ClaimScope.EDITION,
                 ),
             ),
@@ -568,7 +568,7 @@ def test_verified_owner_replacement_retains_history_and_activity_predecessor(
         for value in proposal["result"]["alternatives"]
         if value["assessment"] != "preserves_target"
     }
-    first_value, second_value = choices["en"], choices["eng"]
+    first_value, second_value = choices["en"], choices["fr"]
     proposal_id = proposal["proposal_id"]
     assert type(proposal_id) is str
 
@@ -643,7 +643,7 @@ def test_verified_owner_replacement_retains_history_and_activity_predecessor(
     verify(first, None, "en", 1_010)
     second = decision(second_value, "activity-replacement-second-0001", 1_020)
     effects.repository.record_human_decision(second)
-    verify(second, "en", "eng", 1_030)
+    verify(second, "en", "fr", 1_030)
 
     decisions = [
         HumanDecision.from_json(document)
@@ -671,11 +671,11 @@ def test_verified_owner_replacement_retains_history_and_activity_predecessor(
         if event["change_id"] != first.decision_id
         and event["destination"] == "language"
         and event["state"] == "verified"
-        and _facts(event).get("New value") == "eng"
+        and _facts(event).get("New value") == "fr"
     )
-    assert replacement["change"] == "en → eng"
+    assert replacement["change"] == "en → fr"
     assert _facts(replacement)["Previous value"] == "en"
-    assert _facts(replacement)["New value"] == "eng"
+    assert _facts(replacement)["New value"] == "fr"
 
 
 def _automatic_write(

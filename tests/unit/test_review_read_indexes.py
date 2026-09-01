@@ -29,7 +29,10 @@ from mechanical_librarian.application.review_web import (
     BrowseReviewLibrary,
     ReviewWebError,
 )
-from mechanical_librarian.domain.automatic_decision import AutomaticDecision
+from mechanical_librarian.domain.automatic_decision import (
+    F20_QUALIFICATION_CANDIDATE_SHA256,
+    AutomaticDecision,
+)
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_policy import OPTION_CATALOGUE
 from mechanical_librarian.domain.metadata_report import (
@@ -293,9 +296,7 @@ def _representative_database(path: Path, works: int = _WORKS) -> sqlite3.Connect
             rule_id=field["rule_id"],
             policy_category="isbn_form",
             policy_option="preserve_exact",
-            qualification_manifest_sha256=(
-                "770b56be2ce7ea9d1d809be189724e5f281a0dd8570af80d63429a5ab617ff99"
-            ),
+            qualification_manifest_sha256=F20_QUALIFICATION_CANDIDATE_SHA256,
             source_outcome_id=field["outcome_id"],
             bundle_id=None,
             occurred_at=works + index,

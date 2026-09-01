@@ -33,6 +33,33 @@ def test_values_match_keeps_a_near_match_actionable() -> None:
 
 
 @pytest.mark.parametrize(
+    ("current", "candidate", "matches"),
+    (
+        ("en-US", "eng-GB", True),
+        ("en", "eng", True),
+        ("zh-Hans-CN", "zho-Hans-TW", True),
+        ("zh-Hans", "zh-Hant", False),
+        ("zh", "zh-Hans", False),
+        ("en", "fr", False),
+        ("english", "english", False),
+    ),
+    ids=(
+        "region-stripped",
+        "iso-alias",
+        "same-script",
+        "different-script",
+        "unspecified-script",
+        "different-base",
+        "malformed",
+    ),
+)
+def test_language_values_match_only_within_one_base_and_script_class(
+    current: str, candidate: str, matches: bool
+) -> None:
+    assert matches is values_match(TargetDestination.LANGUAGE, current, candidate)
+
+
+@pytest.mark.parametrize(
     ("current", "candidate"),
     (
         ("0-306-40615-2", "0306406152"),
