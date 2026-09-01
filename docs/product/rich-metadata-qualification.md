@@ -108,4 +108,4 @@ narrators and cover remain excluded. The ordinary populated-genre case remains
 a no-op under fill-empty and is not rewritten.
 
 The machine-readable candidate is
-[`f20-rich-metadata-qualification-candidate-v2.json`](../reference/f20-rich-metadata-qualification-candidate-v2.json).
+[`f20-rich-metadata-qualification-candidate-v3.json`](../reference/f20-rich-metadata-qualification-candidate-v3.json).

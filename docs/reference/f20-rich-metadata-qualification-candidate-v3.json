@@ -53,7 +53,7 @@
     },
     "automatic_decision": {
       "identity": "src/mechanical_librarian/domain/automatic_decision.py",
-      "sha256": "f9b12aa50ff0ed7c95693c94c11a0a56c117c45e2a74d295bb0a8b72ef092bb1"
+      "sha256": "5048c1a2f51c06924dc1ae41fc1d04752cce18ed8e3e8aacb7be04e450ae7a15"
     },
     "compiler": {
       "identity": "src/mechanical_librarian/domain/rich_metadata_preview.py",
@@ -337,7 +337,7 @@
   "policy_only_options": [
     "tags:off"
   ],
-  "schema": "f20-rich-metadata-qualification-candidate-v2",
+  "schema": "f20-rich-metadata-qualification-candidate-v3",
   "zero_tolerance": {
     "evaluation_status": "passed",
     "failure_counts": {
