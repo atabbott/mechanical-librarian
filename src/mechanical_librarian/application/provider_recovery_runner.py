@@ -261,13 +261,13 @@ class ScopedProviderRecoveryRunner:
                         )
                         continue
                     if failure not in RECOVERY_FAILURES:
-                        self._store.complete_exhausted_scope(
+                        exhausted = self._store.complete_exhausted_scope(
                             job=canary,
                             token=token,
                             recovery=claimed,
                             now=current,
                         )
-                        return RecoveryRun("exhausted")
+                        return RecoveryRun(exhausted.state)
                     self._store.complete_canary_failure(
                         job=canary,
                         token=token,

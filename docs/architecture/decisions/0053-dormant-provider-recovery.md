@@ -82,7 +82,8 @@ durable job records the closed, application-classified dispatch reason:
 missing independent corroboration, zero provider evidence, settleable
 disagreement, then blanket scan. Claims order those classes and retain the
 former `member_id` tie-break. The persisted reason is the recovery request's
-accounting diagnostic; it carries no provider payload or query text.
+accounting diagnostic and is exposed through the existing bounded Activity
+recovery projection; it carries no provider payload or query text.
 
 Canary authorization freezes the enrolled-job ordinal cutoff for its fanout.
 Jobs registered later, including a refreshed current package, keep their
@@ -107,8 +108,8 @@ or repair.
 
 ### Neutral or deferred
 
-- Activity exposes aggregate recovery state only; there is no owner retry
-  control, bulk recovery, or target metadata write.
+- Activity exposes aggregate recovery state and closed dispatch-reason names;
+  there is no owner retry control, bulk recovery, or target metadata write.
 
 ## Validation
 

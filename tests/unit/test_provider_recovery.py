@@ -1152,9 +1152,9 @@ def test_terminal_successor_failure_exhausts_without_requeue() -> None:
                 None,
             ),
         )
-        assert "exhausted" == runner.run_one(now=1, token="owner").state
-        assert "exhausted" == store.snapshot()[0].state
-        assert {"failed"} == {
+        assert "waiting" == runner.run_one(now=1, token="owner").state
+        assert "waiting" == store.snapshot()[0].state
+        assert {"failed", "queued"} == {
             row[0]
             for row in store._connection.execute(
                 "SELECT state FROM provider_recovery_jobs"
@@ -1407,10 +1407,10 @@ def test_nonretryable_canary_exhausts_scope_without_sibling_egress() -> None:
             classify_failure=lambda _: ("disabled", None),
         )
         runner.enqueue((_job("canary"), _job("sibling")), enqueued_at=0)
-        assert "exhausted" == runner.run_one(now=1, token="owner").state
+        assert "waiting" == runner.run_one(now=1, token="owner").state
         assert ["canary"] == calls
-        assert "exhausted" == store.snapshot()[0].state
-        assert {"failed"} == {
+        assert "waiting" == store.snapshot()[0].state
+        assert {"failed", "queued"} == {
             row[0]
             for row in store._connection.execute(
                 "SELECT state FROM provider_recovery_jobs"
@@ -2235,6 +2235,29 @@ def test_activity_aggregates_128_distinct_deadlines_without_truncation() -> None
             {"state": "waiting", "next_eligible_at": 2, "affected_count": 127},
         ) == store.activity_snapshot()
         store.close()
+
+
+def test_activity_snapshot_exposes_closed_dispatch_reasons_to_its_projection() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+        store.enqueue_jobs(
+            (
+                replace(
+                    _job("reason"),
+                    dispatch_reason="missing_corroboration",
+                    dispatch_rank=0,
+                ),
+            ),
+            enqueued_at=0,
+        )
+        assert [
+            {
+                "state": "waiting",
+                "next_eligible_at": 7_200,
+                "affected_count": 1,
+                "dispatch_reasons": ["missing_corroboration"],
+            }
+        ] == list(store.activity_snapshot())
 
 
 def test_orphan_shape_valid_event_rejects_store_open() -> None:

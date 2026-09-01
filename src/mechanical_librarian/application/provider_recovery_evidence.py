@@ -46,7 +46,7 @@ __all__ = [
 
 
 def provider_budget_dispatch_reason(
-    report: MetadataReport, proposal: ProposalSet | None
+    report: MetadataReport, proposal: ProposalSet | None, observation: object
 ) -> tuple[str, int]:
     """Classify one published recovery package without provider-specific rules.
 
@@ -59,25 +59,44 @@ def provider_budget_dispatch_reason(
         raise ReviewPipelineError("projection")
     if proposal is not None and proposal.report_id != report.report_id:
         raise ReviewPipelineError("projection")
-    if proposal is not None and any(
+    references = {
+        getattr(claim, "reference", None)
+        for candidate in getattr(observation, "candidates", ())
+        for claim in getattr(candidate, "claims", ())
+    } | {
+        getattr(candidate, "reference", None)
+        for lane in getattr(observation, "lanes", ())
+        for candidate in getattr(lane, "candidates", ())
+    }
+    references.discard(None)
+    unresolved = () if proposal is None else proposal.results
+
+    def can_add_independence(result: object) -> bool:
+        alternatives = getattr(result, "alternatives", ())
+        return bool(alternatives) and not references.intersection(
+            {
+                reference
+                for alternative in alternatives
+                for reference in alternative.evidence_references
+            }
+        )
+
+    if any(
         result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
         and result.reasons == ("insufficient_independent_corroboration",)
-        for result in proposal.results
+        and can_add_independence(result)
+        for result in unresolved
     ):
         return "missing_corroboration", 0
-    if not any(
-        getattr(observation, "candidates", ())
-        or any(
-            getattr(lane, "candidates", ())
-            for lane in getattr(observation, "lanes", ())
-        )
-        for observation in report.providers
+    if not getattr(observation, "candidates", ()) and not any(
+        getattr(lane, "candidates", ()) for lane in getattr(observation, "lanes", ())
     ):
         return "zero_provider_evidence", 1
-    if proposal is not None and any(
+    if any(
         result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
         and result.reasons == ("competing_evidence",)
-        for result in proposal.results
+        and can_add_independence(result)
+        for result in unresolved
     ):
         return "settleable_disagreement", 2
     return "blanket_scan", 3
@@ -185,7 +204,6 @@ def provider_recovery_jobs(
     adapters = {provider.name: provider.adapter for provider in configuration.providers}
     if proposal is not None and proposal.proposal_set_id != package[0]:
         raise ReviewPipelineError("projection")
-    reason, rank = provider_budget_dispatch_reason(report, proposal)
     jobs = []
     for observation in report.providers:
         lane_ids = tuple(
@@ -200,6 +218,7 @@ def provider_recovery_jobs(
         adapter = adapters.get(observation.provider)
         if adapter is None:
             raise ReviewPipelineError("configuration")
+        reason, rank = provider_budget_dispatch_reason(report, proposal, observation)
         jobs.append(
             ProviderRecoveryJob(
                 observation.provider,

@@ -114,7 +114,11 @@ def _proposal(reason: str, *, report_id: str = "report-1") -> ProposalSet:
         "results",
         (
             SimpleNamespace(
-                outcome=ProposalOutcome.UNRESOLVED_CHOICE, reasons=(reason,)
+                outcome=ProposalOutcome.UNRESOLVED_CHOICE,
+                reasons=(reason,),
+                alternatives=(
+                    SimpleNamespace(evidence_references=("provider_" + "a" * 64,)),
+                ),
             ),
         ),
     )
@@ -225,7 +229,9 @@ _RECOGNISED_FAILURES = _recognised_failures()
 def test_provider_budget_dispatch_reason_has_closed_value_order(
     report: MetadataReport, proposal: ProposalSet | None, expected: tuple[str, int]
 ) -> None:
-    assert expected == provider_budget_dispatch_reason(report, proposal)
+    assert expected == provider_budget_dispatch_reason(
+        report, proposal, report.providers[0]
+    )
 
 
 def test_provider_budget_dispatch_reason_fails_closed_on_mismatched_projection() -> (
@@ -233,8 +239,32 @@ def test_provider_budget_dispatch_reason_fails_closed_on_mismatched_projection()
 ):
     with pytest.raises(ReviewPipelineError, match="projection"):
         provider_budget_dispatch_reason(
-            _report(), _proposal("competing_evidence", report_id="other")
+            _report(),
+            _proposal("competing_evidence", report_id="other"),
+            SimpleNamespace(candidates=(), lanes=()),
         )
+
+
+def test_provider_budget_reason_prioritises_the_provider_that_can_add_independence() -> (
+    None
+):
+    report = _report()
+    proposal = _proposal("insufficient_independent_corroboration")
+    sole_authority = SimpleNamespace(
+        candidates=(
+            SimpleNamespace(
+                claims=(SimpleNamespace(reference="provider_" + "a" * 64),),
+            ),
+        ),
+        lanes=(),
+    )
+    independent_provider = SimpleNamespace(candidates=(), lanes=())
+    assert ("blanket_scan", 3) == provider_budget_dispatch_reason(
+        report, proposal, sole_authority
+    )
+    assert ("missing_corroboration", 0) == provider_budget_dispatch_reason(
+        report, proposal, independent_provider
+    )
 
 
 @pytest.mark.parametrize(
