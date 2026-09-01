@@ -89,7 +89,7 @@ def test_exact_sixteen_results_are_deterministic_and_round_trip() -> None:
         proposal_set.proposal_set_id
         == ProposalSet.from_json(proposal_set.to_json()).proposal_set_id
     )
-    assert "fixed-conservative-v12" == POLICY_VERSION
+    assert "fixed-conservative-v13" == POLICY_VERSION
     assert POLICY_VERSION == proposal_set.policy_version
     assert (
         re.search(r"^resolved_policy_[0-9a-f]{64}$", proposal_set.resolved_policy_id)
@@ -311,6 +311,11 @@ def test_language_result_validation_encodes_target_compatibility() -> None:
         ProposalAssessment.PRESERVES_TARGET,
         "d",
     )
+    cross_base = language_alternative(
+        "fr",
+        ProposalAssessment.FILLS_EMPTY,
+        "e",
+    )
     mixed = tuple(
         sorted(
             (preserves, replaces_region),
@@ -326,6 +331,12 @@ def test_language_result_validation_encodes_target_compatibility() -> None:
     all_preserve = tuple(
         sorted(
             (preserves, compatible_preserves),
+            key=lambda value: value.alternative_id,
+        )
+    )
+    cross_class = tuple(
+        sorted(
+            (preserves, cross_base),
             key=lambda value: value.alternative_id,
         )
     )
@@ -362,12 +373,20 @@ def test_language_result_validation_encodes_target_compatibility() -> None:
             replaces_region.alternative_id,
             ("unique_typed_candidate",),
         )
+    with pytest.raises(ProposalValueError):
+        ProposalResult(
+            TargetDestination.LANGUAGE,
+            ProposalOutcome.UNRESOLVED_CHOICE,
+            mixed,
+            None,
+            ("field_policy_conflict",),
+        )
     assert (
         ProposalOutcome.UNRESOLVED_CHOICE
         == ProposalResult(
             TargetDestination.LANGUAGE,
             ProposalOutcome.UNRESOLVED_CHOICE,
-            mixed,
+            (replaces_region,),
             None,
             ("field_policy_conflict",),
         ).outcome
@@ -377,7 +396,7 @@ def test_language_result_validation_encodes_target_compatibility() -> None:
         == ProposalResult(
             TargetDestination.LANGUAGE,
             ProposalOutcome.UNRESOLVED_CHOICE,
-            (replaces_region,),
+            cross_class,
             None,
             ("field_policy_conflict",),
         ).outcome

@@ -34,7 +34,7 @@ context and consequences rather than reproducing code.
 | [0017](0017-bounded-failure-diagnostics.md) | accepted | Bound provider and reviewer failure diagnostics |
 | [0018](0018-closed-title-creator-comparison.md) | accepted | Close title and complete-creator comparison |
 | [0019](0019-publication-date-precision-comparison.md) | accepted | Close precision-aware publication-date comparison and manifestation binding |
-| [0020](0020-field-specific-acceptable-outcomes.md) | accepted | Model field-specific acceptable metadata outcomes without collapsing evidence |
+| [0020](0020-field-specific-acceptable-outcomes.md) | accepted; language grouping and regional rule superseded by 0065 | Model field-specific acceptable metadata outcomes without collapsing evidence |
 | [0021](0021-coherent-bibliographic-combinations.md) | accepted | Bind dependent bibliographic advice to coherent combinations |
 | [0022](0022-decision-ready-reviewer-packets.md) | accepted | Project source-validated decision summaries without deciding |
 | [0024](0024-contain-qualification-reviewer-provider-state.md) | accepted | Separate primary reviewer credentials from disposable provider state and execution provenance |
@@ -78,6 +78,7 @@ context and consequences rather than reproducing code.
 | [0062](0062-owner-managed-reviewer-access.md) | accepted | Keep reviewer access owner-managed and task-scoped |
 | [0063](0063-isolated-audiobook-inspector.md) | accepted | Read audiobook evidence through two isolated children |
 | [0064](0064-audiobook-provider-evidence-vocabularies.md) | accepted | Admit audiobook provider evidence vocabularies and corroboration rules |
+| [0065](0065-language-equivalence-classes.md) | accepted | Group valid language representations by base and exact optional script |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

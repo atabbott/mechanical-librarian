@@ -146,7 +146,7 @@ does not interpret reports from prior or intermediate development schemas.
 ## Explainable ProposalSet
 
 `ProposalSet` is the deterministic, content-addressed evaluation of one exact
-`MetadataReport` under `fixed-conservative-v12`. It binds the report ID and
+`MetadataReport` under `fixed-conservative-v13`. It binds the report ID and
 derived target fingerprint and fixed policy version. Its ordered result tuple
 contains exactly one result for every
 `TargetDestination`.
@@ -154,13 +154,15 @@ contains exactly one result for every
 Results use the closed outcome vocabulary `propose_change`,
 `acceptable_choice`, `unresolved_choice`, `keep`, `reject`, `defer`, or
 `ineligible`. A `propose_change` has one selected alternative;
-`acceptable_choice` retains multiple field-policy-acceptable alternatives
+`acceptable_choice` retains multiple field-policy-acceptable publisher alternatives
 without selecting or declaring a conflict; an `unresolved_choice` retains
 bounded alternatives without a selection because a material contradiction
 remains; `defer`, `reject`, and `ineligible` have no alternative. `keep`
-normally has one preservation alternative and may retain multiple language or
-publisher alternatives only when current metadata has positive compatible
-evidence. An alternative contains one bounded typed
+normally has one preservation alternative and may retain multiple publisher
+alternatives only when current metadata has positive compatible evidence.
+Valid language aliases and regional variants first group by base plus exact
+optional script into one alternative; their original representations remain in
+the immutable report provenance. An alternative contains one bounded typed
 value, its work/edition/cover scope, target assessment, stable evidence
 references, hashed correlation identities, and a closed event/target precision
 for publication candidates. `reject` is reserved for future explicit policy

@@ -17,7 +17,7 @@ class AutomaticDecisionError(ValueError):
     """Automatic authority is incomplete, stale, or outside its envelope."""
 
 
-F19A_QUALIFICATION_MANIFEST_SHA256 = "cb48d6a0dff269fd576ac9c8fbe7bbe313f291d0368251b097c9178ade456b37"
+F19A_QUALIFICATION_MANIFEST_SHA256 = "6708826d4891a228d9d2f664ea134ffad693974144c462370db851e50b330b56"
 F19A_QUALIFIED_POLICY_OPTIONS = frozenset({
     "title_layout:preserve", "title_layout:title_and_subtitle",
     "date_precision:year", "date_precision:full_date",
@@ -28,7 +28,17 @@ F19A_QUALIFIED_POLICY_OPTIONS = frozenset({
 QUALIFIED_POLICY_OPTIONS = (
     F19A_QUALIFIED_POLICY_OPTIONS | F20_PASSING_AUTOMATIC_OPTIONS
 )
+_PRIOR_F19A_QUALIFICATION_MANIFESTS = (
+    (
+        "cb48d6a0dff269fd576ac9c8fbe7bbe313f291d0368251b097c9178ade456b37",
+        F19A_QUALIFIED_POLICY_OPTIONS,
+    ),
+)
 _PRIOR_F20_QUALIFICATION_MANIFESTS = (
+    (
+        "770b56be2ce7ea9d1d809be189724e5f281a0dd8570af80d63429a5ab617ff99",
+        F20_PASSING_AUTOMATIC_OPTIONS,
+    ),
     (
         "901e25432750d3f02df1cd311f5a7146e56d5686bd4b6bc0ac589e5db3eb221a",
         frozenset({
@@ -87,6 +97,7 @@ def _qualification_manifest_is_valid(
     ) or any(
         manifest_sha256 == prior_digest and identity in qualified_options
         for prior_digest, qualified_options in _PRIOR_F20_QUALIFICATION_MANIFESTS
+        + _PRIOR_F19A_QUALIFICATION_MANIFESTS
     )
 
 

@@ -15,6 +15,11 @@ vocabularies, so no predecessor is parsed or adopted: supply a `config-v8`
 document and rebuild an absent application database through first-run setup.
 No migration is supplied.
 
+F36 advances the exact proposal policy from `fixed-conservative-v12` to
+`fixed-conservative-v13` because language alternatives and their identities
+change. Existing proposal, review, decision, and downstream field-effect state
+is not rewritten or adopted; rebuild the pre-release application database.
+
 `metadata-report-v31` in particular cannot carry an audiobook's provider
 evidence: it refuses a provider observation on an audio report outright, and
 has no ASIN query lane, marketplace provenance, chapter-structure evidence, or

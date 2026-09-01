@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Language aliases and regional variants now form one decision alternative,
+  while different base languages, script variants, and malformed tags remain
+  unresolved. Existing pre-release proposal state requires a clean rebuild
+  under `fixed-conservative-v13`. (#885)
+
 - Inventaire is available as a keyless ebook metadata and cover provider in
   Settings and first-run setup. It resolves edition claims, linked works and
   English/fallback Wikidata labels through bounded fixed-host requests. Existing
