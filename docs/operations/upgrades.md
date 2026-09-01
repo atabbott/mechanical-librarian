@@ -31,8 +31,10 @@ evidence: it refuses a provider observation on an audio report outright, and
 has no ASIN query lane, marketplace provenance, chapter-structure evidence, or
 recognized-sidecar manifest.
 
-The three earlier exact-predecessor plans have been retired because each names
-a schema older than this build. The installed runtime no longer exposes a
+The three earlier exact-predecessor plans, including #830's owner-decision
+action predecessor, have been retired because each names a schema older than
+this build. The v13 title-policy change supplies no adoption route for them.
+The installed runtime no longer exposes a
 `schema-adopt` command. Retain an older database and its matching artifact
 directory offline if it has historical value, then start this build with an
 absent application database and artifact store and repeat first-run setup.

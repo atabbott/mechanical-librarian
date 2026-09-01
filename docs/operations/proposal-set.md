@@ -27,9 +27,11 @@ proposal migration, import, conversion, or compatibility parser.
 
 ## Consensus title qualification
 
-The F35 (#884) provider-consensus title election is qualified through #445.
-Its successor qualification must replay and diff every existing F19a option
-before re-pinning the F19a manifest; title remains excluded from F20.
+The F35 (#884) provider-consensus title election requires a #445 successor
+qualification before it has automatic authority. That successor must replay
+and diff every existing F19a option before re-pinning the F19a manifest; the
+sealed current F19a digest remains readable for its historical decisions but
+cannot authorize F35. Title remains excluded from F20.
 
 The publication projection retains one independently corroborated canonical
 fact at the strongest shared year, month, or day precision. It never pads a

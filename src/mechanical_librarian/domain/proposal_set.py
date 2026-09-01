@@ -212,6 +212,7 @@ _TITLE_CONSENSUS_FAMILIES = (
     WorkTitleTransformationFamily.PARENTHESIZED_BARE_NUMBER,
     WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME,
     WorkTitleTransformationFamily.PARENTHESIZED_YEAR,
+    WorkTitleTransformationFamily.SUBTITLE_SEGMENT,
 )
 
 _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
@@ -231,13 +232,6 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
     ProposalOutcome.UNRESOLVED_CHOICE: frozenset(
         {
             ("competing_evidence",),
-            *(
-                (
-                    "competing_evidence",
-                    f"provider_consensus_title_{family.value}_unresolved",
-                )
-                for family in _TITLE_CONSENSUS_FAMILIES
-            ),
             (
                 "competing_evidence",
                 "provider_consensus_title_series_unpreserved",
@@ -1359,7 +1353,7 @@ def _provider_consensus_title_election(
     target = targets[TargetDestination.TITLE]
     if target.state is not TargetFieldState.VALUE or type(target.value) is not str:
         return result
-    local_titles = tuple(
+    local_titles = {
         claim.canonical
         for claim in report.local_claims
         if claim.kind is ClaimKind.TITLE
@@ -1367,14 +1361,20 @@ def _provider_consensus_title_election(
         and claim.state is FieldState.VALID
         and claim.canonical is not None
         and claim.basis != "target_metadata"
-    )
-    if len(local_titles) != 1 or target.value != local_titles[0]:
+    }
+    if len(local_titles) != 1:
         return result
-    matches = work_title_election_matches(local_titles[0], ())
+    local_title = next(iter(local_titles))
+    if target.value != local_title:
+        return result
+    matches = work_title_election_matches(local_title, ())
     if len(matches) != 1:
         return result
     match = matches[0]
-    if match.family is WorkTitleTransformationFamily.SUBTITLE_SEGMENT:
+    if (
+        match.family is WorkTitleTransformationFamily.SUBTITLE_SEGMENT
+        and not _subtitle_component_is_preserved(match.preserved_component, report, targets)
+    ):
         return _unresolved(result, "provider_consensus_title_colon_unused")
     if (
         match.family is WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME
@@ -1399,9 +1399,7 @@ def _provider_consensus_title_election(
         or len({_provider_correlation(provider) for provider, _ in provider_titles}) < 2
         or provider_titles[0][1] != match.clean_title
     ):
-        return _unresolved(
-            result, f"provider_consensus_title_{match.family.value}_unresolved"
-        )
+        return result
     candidates = tuple(
         alternative
         for alternative in result.alternatives
@@ -1416,9 +1414,7 @@ def _provider_consensus_title_election(
         and len(alternative.correlations) >= 2
     )
     if len(candidates) != 1:
-        return _unresolved(
-            result, f"provider_consensus_title_{match.family.value}_unresolved"
-        )
+        return result
     candidate = candidates[0]
     return ProposalResult(
         TargetDestination.TITLE,
@@ -1452,6 +1448,33 @@ def _series_component_is_preserved(
             for value in cast("tuple[TargetSeries, ...]", observed.value.value)
         )
         for observed in _series_observations(report)
+    )
+
+
+def _subtitle_component_is_preserved(
+    component: str | None,
+    report: MetadataReport,
+    targets: Mapping[TargetDestination, TargetField],
+) -> bool:
+    if component is None:
+        return False
+    target = targets[TargetDestination.SUBTITLE]
+    if target.state is TargetFieldState.VALUE and target.value == component:
+        return True
+    alternatives = _alternatives(
+        TargetDestination.SUBTITLE,
+        target,
+        _observations(report, TargetDestination.SUBTITLE),
+    )
+    return any(
+        alternative.value.kind is ProposalValueKind.TEXT
+        and alternative.value.value == component
+        and alternative.scope is ProposalScope.EDITION
+        and all(
+            reference.startswith("provider_")
+            for reference in alternative.evidence_references
+        )
+        for alternative in alternatives
     )
 
 

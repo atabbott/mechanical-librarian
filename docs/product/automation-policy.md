@@ -28,6 +28,18 @@ category suspension, and explicit recovery fail closed by retaining would-be
 automatic work in human Attention. Any field, option, or policy revision outside
 that exact envelope remains human-routed until separately qualified.
 
+F35 (#884) adds a closed, provider-consensus title election to the v13
+ProposalSet policy: one exact local noisy title, one exact reversible pattern,
+byte-identical clean provider titles from at least two independent authority
+correlations, and no dissent. Colon subtitles corroborate only across sources
+and elect only when their exact suffix is safely retained as the current
+structured subtitle or an independent provider subtitle candidate. This is not
+yet automatic authority. #445 must replay and diff every existing F19a option
+alongside the title tranche, then publish a successor manifest before it can
+create automatic decisions. The sealed F19a digest remains readable historical
+authority for its former options; it cannot authorize F35. F20 continues to
+exclude title.
+
 The published F20 rich-metadata candidate qualifies the three `series` options,
 both `isbn_form` options, genre fill/add/replace, tag fill/add/replace, safe
 plaintext description, and locally corroborated subtitle fill for decision-only

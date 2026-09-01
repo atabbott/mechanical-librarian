@@ -453,12 +453,8 @@ const materialComparisonReasons = new Set([
   'provider_consensus_title_parenthesized_bare_number',
   'provider_consensus_title_parenthesized_series_name',
   'provider_consensus_title_parenthesized_year',
+  'provider_consensus_title_subtitle_segment',
   'provider_consensus_title_colon_unused',
-  'provider_consensus_title_bracket_source_tag_unresolved',
-  'provider_consensus_title_explicit_identifier_unresolved',
-  'provider_consensus_title_parenthesized_bare_number_unresolved',
-  'provider_consensus_title_parenthesized_series_name_unresolved',
-  'provider_consensus_title_parenthesized_year_unresolved',
   'provider_consensus_title_series_unpreserved',
 ])
 const comparisonNotices = (field: ReviewField) =>
