@@ -379,6 +379,8 @@ Wikidata entity labels in English, then `fromclaims`, then deterministic
 language-key order, and maps series plus ordinal from `wdt:P179`/`wdt:P1545` at
 work scope. Work-search rows are identities only: selected rows are hydrated
 through the entity endpoint before title, creator, series or ordinal mapping.
+Missing or unusable optional labels omit only their label-dependent claim and
+add a bounded schema diagnostic; other valid candidate evidence remains.
 
 Provider observations contain only bounded failure diagnostics: category,
 closed component/stage, optional retryability/currentness and aggregate count.

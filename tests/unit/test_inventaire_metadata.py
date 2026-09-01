@@ -19,6 +19,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceKind,
 )
 from mechanical_librarian.domain.metadata_report import (
+    MAX_SCALAR_CHARACTERS,
     ClaimKind,
     ClaimScope,
     LocalClaim,
@@ -79,11 +80,11 @@ def test_isbn_hydrates_linked_work_labels_and_repeated_query_parameters() -> Non
             "(+https://github.com/atabbott/mechanical-librarian)"
         )
         uris = request.url.params.get_list("uris")
-        assert request.url.params.get_list("attributes") == [
-            "claims",
-            "labels",
-            "image",
-        ]
+        assert request.url.params.get_list("attributes") == (
+            ["labels"]
+            if set(uris) == {"wd:Q1860", "wd:Q200", "wd:Q300"}
+            else ["claims", "labels", "image"]
+        )
         if uris == ["isbn:9780306406157"]:
             entities = {
                 "inv:edition-one": {
@@ -347,6 +348,94 @@ def test_hostile_cover_path_rejects_the_candidate_projection() -> None:
     observation = _provider(httpx.MockTransport(respond)).observe(_lookup())
 
     assert observation.status is ProviderStatus.MALFORMED
+
+
+@pytest.mark.parametrize(
+    ("label_entities", "expected_publisher"),
+    (
+        ({}, None),
+        ({"wd:Q200": {"uri": "wd:Q200"}}, None),
+        (
+            {
+                "wd:Q200": {
+                    "uri": "wd:Q200",
+                    "labels": {"en": 7, "fromclaims": "Fallback Press"},
+                }
+            },
+            "Fallback Press",
+        ),
+        (
+            {
+                "wd:Q200": {
+                    "uri": "wd:Q200",
+                    "labels": {
+                        "en": "x" * (MAX_SCALAR_CHARACTERS + 1),
+                        "fromclaims": "Bounded Press",
+                    },
+                }
+            },
+            "Bounded Press",
+        ),
+        (
+            {
+                "wd:Q200": {
+                    "uri": "wd:Q200",
+                    "labels": {
+                        "en": 7,
+                        "fromclaims": "x" * (MAX_SCALAR_CHARACTERS + 1),
+                    },
+                }
+            },
+            None,
+        ),
+    ),
+    ids=(
+        "missing_entity",
+        "absent_labels",
+        "malformed_preferred_fallback",
+        "oversized_preferred_fallback",
+        "all_unusable",
+    ),
+)
+def test_optional_label_failures_preserve_other_candidate_evidence(
+    label_entities: dict[str, object], expected_publisher: str | None
+) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        uris = request.url.params.get_list("uris")
+        if uris == ["isbn:9780306406157"]:
+            return httpx.Response(
+                200,
+                json={
+                    "entities": {
+                        "inv:edition-one": {
+                            "uri": "inv:edition-one",
+                            "labels": {"en": "Example Book"},
+                            "claims": {
+                                "wdt:P212": ["9780306406157"],
+                                "wdt:P1476": ["Example Book"],
+                                "wdt:P123": ["wd:Q200"],
+                            },
+                        }
+                    },
+                    "redirects": {"isbn:9780306406157": "inv:edition-one"},
+                },
+            )
+        assert uris == ["wd:Q200"]
+        assert request.url.params.get_list("attributes") == ["labels"]
+        return httpx.Response(200, json={"entities": label_entities, "redirects": {}})
+
+    observation = _provider(httpx.MockTransport(respond)).observe(_lookup())
+
+    assert observation.status is ProviderStatus.CANDIDATES
+    claims = observation.candidates[0].claims
+    assert any(
+        claim.kind is ClaimKind.TITLE and claim.value == "Example Book"
+        for claim in claims
+    )
+    publishers = [claim.value for claim in claims if claim.kind is ClaimKind.PUBLISHER]
+    assert publishers == ([] if expected_publisher is None else [expected_publisher])
+    assert observation.diagnostics
+    assert observation.diagnostics[0].count >= 1
 
 
 def test_rate_limit_without_recovery_window_is_terminal() -> None:

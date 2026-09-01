@@ -9,7 +9,6 @@ from dataclasses import replace
 from typing import Any, Callable
 
 import httpx
-from httpx._types import QueryParamTypes
 
 from mechanical_librarian.adapters.providers.retry_safety import (
     ProviderAttemptRecord,
@@ -473,13 +472,11 @@ class InventaireMetadataProvider:
         *,
         deadline: float | None,
     ) -> dict[str, str]:
-        direct = {
-            uri: label
-            for entity in entities
-            for uri in (_entity_uri(entity),)
-            for label in (_entity_label(entity),)
-            if label is not None
-        }
+        direct: dict[str, str] = {}
+        for entity in entities:
+            label = _optional_entity_label(entity, self._reject_schema_members)
+            if label is not None:
+                direct[_entity_uri(entity)] = label
         references = _unique_uris(
             (
                 value
@@ -491,13 +488,70 @@ class InventaireMetadataProvider:
             maximum=_MAX_ENTITY_BATCH * _MAX_ENTITY_BATCH,
         )
         for offset in range(0, len(references), _MAX_ENTITY_BATCH):
-            for entity in self._entities(
+            for entity in self._optional_label_entities(
                 references[offset : offset + _MAX_ENTITY_BATCH], deadline=deadline
             ):
-                label = _entity_label(entity)
+                label = _optional_entity_label(entity, self._reject_schema_members)
                 if label is not None:
                     direct[_entity_uri(entity)] = label
         return direct
+
+    def _optional_label_entities(
+        self,
+        uris: tuple[str, ...],
+        *,
+        deadline: float | None,
+        detail: bool = True,
+    ) -> tuple[dict[str, Any], ...]:
+        if (
+            not uris
+            or len(uris) > _MAX_ENTITY_BATCH
+            or any(_ENTITY_URI.fullmatch(uri) is None for uri in uris)
+        ):
+            raise ValueError("provider label identities are malformed")
+        if detail:
+            result, _ = self._session.ledger.resolve_detail(
+                "labels|" + "|".join(uris),
+                execute=lambda: self._optional_label_entities(
+                    uris, deadline=deadline, detail=False
+                ),
+            )
+            return result
+        params = httpx.QueryParams(
+            [
+                *(("uris", uri) for uri in uris),
+                ("attributes", "labels"),
+                ("lang", "en"),
+            ]
+        )
+        payload = self._request(INVENTAIRE_ENTITIES_URL, params, deadline=deadline)
+        entities = payload.get("entities")
+        redirects = payload.get("redirects")
+        if (
+            type(entities) is not dict
+            or len(entities) > _MAX_ENTITY_BATCH
+            or type(redirects) is not dict
+            or redirects
+        ):
+            self._reject_schema_members()
+            return ()
+        requested = frozenset(uris)
+        self._reject_schema_members(len(requested - set(entities)))
+        admitted: list[dict[str, Any]] = []
+        for response_uri, value in entities.items():
+            if type(value) is not dict:
+                self._reject_schema_members()
+                continue
+            try:
+                entity_uri = _entity_uri(value)
+            except (EvidenceValueError, TypeError, ValueError):
+                self._reject_schema_members()
+                continue
+            if response_uri not in requested or entity_uri != response_uri:
+                self._reject_schema_members()
+                continue
+            admitted.append(value)
+        return tuple(admitted)
 
     def _entities(
         self,
@@ -518,11 +572,13 @@ class InventaireMetadataProvider:
                 execute=lambda: self._entities(uris, deadline=deadline, detail=False),
             )
             return result
-        params: list[tuple[str, str | int | float | bool | None]] = [
-            ("uris", uri) for uri in uris
-        ]
-        params.extend(("attributes", value) for value in _ENTITY_ATTRIBUTES)
-        params.append(("lang", "en"))
+        params = httpx.QueryParams(
+            [
+                *(("uris", uri) for uri in uris),
+                *(("attributes", value) for value in _ENTITY_ATTRIBUTES),
+                ("lang", "en"),
+            ]
+        )
         payload = self._request(INVENTAIRE_ENTITIES_URL, params, deadline=deadline)
         entities = payload.get("entities")
         if type(entities) is not dict or len(entities) > _MAX_ENTITY_BATCH:
@@ -562,7 +618,7 @@ class InventaireMetadataProvider:
     def _request(
         self,
         url: str,
-        params: QueryParamTypes,
+        params: dict[str, str] | httpx.QueryParams,
         *,
         deadline: float | None,
         query_retry: bool = False,
@@ -693,27 +749,36 @@ def _entity_uri(entity: dict[str, Any]) -> str:
     return value
 
 
-def _entity_label(entity: dict[str, Any]) -> str | None:
+def _optional_entity_label(
+    entity: dict[str, Any], reject: Callable[[int], None]
+) -> str | None:
     labels = entity.get("labels")
-    if labels is None:
+    if type(labels) is not dict or not labels or len(labels) > _MAX_ENTITY_BATCH:
+        reject(1)
         return None
-    if type(labels) is not dict or len(labels) > _MAX_ENTITY_BATCH:
-        raise ValueError("provider entity labels are malformed")
-    for key in ("en", "fromclaims"):
+    ordered = (
+        "en",
+        "fromclaims",
+        *(key for key in sorted(labels) if key not in {"en", "fromclaims"}),
+    )
+    rejected = False
+    for key in ordered:
+        if key not in labels:
+            continue
         value = labels.get(key)
-        if type(value) is str:
+        if type(key) is not str or type(value) is not str:
+            reject(1)
+            rejected = True
+            continue
+        try:
             return validate_projection_text(
                 value, "provider entity label", MAX_SCALAR_CHARACTERS
             )
-        if value is not None:
-            raise ValueError("provider entity label is malformed")
-    for key in sorted(labels):
-        value = labels[key]
-        if type(key) is str and type(value) is str:
-            label: str = value
-            return validate_projection_text(
-                label, "provider entity label", MAX_SCALAR_CHARACTERS
-            )
+        except (EvidenceValueError, ValueError):
+            reject(1)
+            rejected = True
+    if not rejected:
+        reject(1)
     return None
 
 
@@ -784,12 +849,9 @@ def _search_work_uris(
     return tuple(dict.fromkeys(uris))
 
 
-def _label_or_literal(value: str, labels: dict[str, str]) -> str:
+def _label_or_literal(value: str, labels: dict[str, str]) -> str | None:
     if _ENTITY_URI.fullmatch(value) is not None:
-        label = labels.get(value)
-        if label is None:
-            raise ValueError("provider label is unresolved")
-        return label
+        return labels.get(value)
     return value
 
 
@@ -884,6 +946,8 @@ def _add_values(
         return
     for value in values:
         text = _label_or_literal(value, labels)
+        if text is None:
+            continue
         claims.append(
             _claim(
                 provider,
@@ -1004,7 +1068,7 @@ def _work_candidate(
     identity = "inventaire-work-" + uri.replace(":", "-")
     claims: list[ProviderClaim] = []
     title_values = _claim_strings(work, "wdt:P1476")
-    title = title_values[0] if title_values else _entity_label(work)
+    title = title_values[0] if title_values else labels.get(uri)
     claims.append(
         _claim(
             provider,

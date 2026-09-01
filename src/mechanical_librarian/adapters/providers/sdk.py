@@ -20,7 +20,6 @@ from decimal import Decimal
 from typing import Any, Callable
 
 import httpx
-from httpx._types import QueryParamTypes
 
 from mechanical_librarian.adapters.providers.retry_safety import (
     ProviderAttemptRecord,
@@ -177,7 +176,7 @@ class BoundedProviderSession:
         url: str,
         *,
         method: str = "GET",
-        params: QueryParamTypes | None = None,
+        params: dict[str, str] | httpx.QueryParams | None = None,
         headers: dict[str, str],
         deadline: float | None,
         query_retry: bool = False,
@@ -277,7 +276,7 @@ class BoundedProviderSession:
         url: str,
         *,
         method: str,
-        params: QueryParamTypes | None,
+        params: dict[str, str] | httpx.QueryParams | None,
         headers: dict[str, str],
         deadline: float | None,
         is_retry: bool,
