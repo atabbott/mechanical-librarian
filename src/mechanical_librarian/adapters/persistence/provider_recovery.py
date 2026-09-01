@@ -978,6 +978,7 @@ class SQLiteProviderRecoveryStore:
         with self._rollback_on_failure(ProviderRecoveryError):
             self._connection.execute("BEGIN IMMEDIATE")
             try:
+                self._terminalize_exhausted_jobs(generation=generation, now=now)
                 excluded, parameters = _blocked_targets(blocked_targets)
                 row = self._connection.execute(
                     "SELECT connection,adapter,scope,generation,state,attempt,next_eligible_at,"
@@ -1035,12 +1036,6 @@ class SQLiteProviderRecoveryStore:
                         (*provider, generation),
                     ).fetchone()[0]
                     self._connection.execute(
-                        "UPDATE provider_recovery_jobs SET state='failed',claim_token=NULL,"
-                        "claim_expires_at=NULL WHERE connection=? AND adapter=? AND generation=? "
-                        "AND state='queued' AND attempt>=5",
-                        (*provider, generation),
-                    )
-                    self._connection.execute(
                         "UPDATE provider_recovery_jobs SET cohort_epoch=? WHERE connection=? AND adapter=? "
                         "AND generation=? AND (state='queued' OR "
                         "(state='running' AND claim_expires_at<=?)) AND attempt<5"
@@ -1091,6 +1086,15 @@ class SQLiteProviderRecoveryStore:
                 *cast(_HealthIdentity, row[:4]), "checking", row[5], None
             )
 
+    def _terminalize_exhausted_jobs(self, *, generation: int, now: int) -> None:
+        """Fail non-egress members without stealing a live worker lease."""
+        self._connection.execute(
+            "UPDATE provider_recovery_jobs SET state='failed',claim_token=NULL,"
+            "claim_expires_at=NULL WHERE generation=? AND attempt>=5 AND "
+            "(state='queued' OR (state='running' AND claim_expires_at<=?))",
+            (generation, now),
+        )
+
     def snapshot(self, *, limit: int = 32) -> tuple[ProviderRecovery, ...]:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ProviderRecoveryStoreError("provider recovery query is invalid")
@@ -1130,6 +1134,7 @@ class SQLiteProviderRecoveryStore:
         try:
             with self._lock:
                 self._connection.execute("BEGIN IMMEDIATE")
+                self._terminalize_exhausted_jobs(generation=generation, now=now)
                 excluded, parameters = _blocked_targets(blocked_targets)
                 row = self._connection.execute(
                     "SELECT connection,adapter,scope,generation,state,attempt,next_eligible_at,claim_token,claim_expires_at,cohort_epoch,cohort_cutoff "
