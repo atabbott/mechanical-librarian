@@ -38,6 +38,7 @@ class ProviderRecoveryJob:
     dispatch_reason: str = "blanket_scan"
     dispatch_rank: int = 3
     enrollment_ordinal: int = 0
+    cohort_epoch: int | None = None
 
     def __post_init__(self) -> None:
         strings = (
@@ -91,6 +92,8 @@ class ProviderRecoveryJob:
             or self.state not in {"queued", "running", "complete", "failed", "stale"}
             or type(self.attempt) is not int
             or not 0 <= self.attempt <= 5
+            or type(self.dispatch_reason) is not str
+            or type(self.dispatch_rank) is not int
             or self.dispatch_reason
             not in {
                 "missing_corroboration",
@@ -107,6 +110,10 @@ class ProviderRecoveryJob:
             }[self.dispatch_reason]
             or type(self.enrollment_ordinal) is not int
             or self.enrollment_ordinal < 0
+            or (
+                self.cohort_epoch is not None
+                and (type(self.cohort_epoch) is not int or self.cohort_epoch < 1)
+            )
         ):
             raise ProviderRecoveryError("provider recovery job is invalid")
 

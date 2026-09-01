@@ -213,7 +213,7 @@ class ScopedProviderRecoveryRunner:
                 now=self._current(current),
                 blocked_targets=blocked,
             )
-            return RecoveryRun("exhausted" if missing is not None else "idle")
+            return RecoveryRun(missing.state if missing is not None else "idle")
         if fanout_state is None:
             assert claimed is not None
             while canary is not None:

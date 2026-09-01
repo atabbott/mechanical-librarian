@@ -274,7 +274,6 @@ def test_provider_budget_dispatch_reason_fails_closed_on_mismatched_projection()
 def test_provider_budget_reason_prioritises_the_provider_that_can_add_independence() -> (
     None
 ):
-    report = _report()
     proposal = _proposal("insufficient_independent_corroboration")
     sole_authority = SimpleNamespace(
         candidates=(
@@ -286,10 +285,30 @@ def test_provider_budget_reason_prioritises_the_provider_that_can_add_independen
     )
     independent_provider = SimpleNamespace(candidates=(), lanes=())
     assert ("blanket_scan", 3) == provider_budget_dispatch_reason(
-        report, proposal, sole_authority
+        _report(sole_authority), proposal, sole_authority
     )
     assert ("missing_corroboration", 0) == provider_budget_dispatch_reason(
-        report, proposal, independent_provider
+        _report(sole_authority, independent_provider), proposal, independent_provider
+    )
+
+
+@pytest.mark.parametrize(
+    "evidenced",
+    (
+        SimpleNamespace(candidates=("candidate",), lanes=()),
+        SimpleNamespace(
+            candidates=(),
+            lanes=(SimpleNamespace(candidates=("lane-candidate",)),),
+        ),
+    ),
+    ids=("provider-candidate", "lane-candidate"),
+)
+def test_zero_evidence_requires_every_report_provider_to_be_empty(
+    evidenced: object,
+) -> None:
+    recovering = SimpleNamespace(candidates=(), lanes=())
+    assert ("blanket_scan", 3) == provider_budget_dispatch_reason(
+        _report(recovering, evidenced), None, recovering
     )
 
 

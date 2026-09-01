@@ -88,8 +88,12 @@ def provider_budget_dispatch_reason(
         for result in unresolved
     ):
         return "missing_corroboration", 0
-    if not getattr(observation, "candidates", ()) and not any(
-        getattr(lane, "candidates", ()) for lane in getattr(observation, "lanes", ())
+    if not any(
+        getattr(provider, "candidates", ())
+        or any(
+            getattr(lane, "candidates", ()) for lane in getattr(provider, "lanes", ())
+        )
+        for provider in report.providers
     ):
         return "zero_provider_evidence", 1
     if any(

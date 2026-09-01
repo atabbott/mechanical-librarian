@@ -23,10 +23,10 @@ class ProviderRecoveryStoreError(RuntimeError):
     pass
 
 
-_HEALTH = """CREATE TABLE provider_recovery_health(connection TEXT NOT NULL CHECK(length(connection) BETWEEN 1 AND 64),adapter TEXT NOT NULL CHECK(length(adapter) BETWEEN 1 AND 64),scope TEXT NOT NULL CHECK(length(scope) BETWEEN 1 AND 64),generation INTEGER NOT NULL CHECK(generation>=1),state TEXT NOT NULL CHECK(state IN ('waiting','dormant','checking','fanout','recovered','exhausted')),attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 5),next_eligible_at INTEGER,claim_token TEXT,claim_expires_at INTEGER,enrollment_cursor INTEGER NOT NULL DEFAULT 0 CHECK(enrollment_cursor>=0),fanout_cutoff INTEGER,PRIMARY KEY(connection,adapter,scope),FOREIGN KEY(connection,adapter,scope) REFERENCES provider_recovery_members(connection,adapter,scope),CHECK((state='waiting')=(next_eligible_at IS NOT NULL)),CHECK((state IN ('checking','fanout'))=(claim_token IS NOT NULL AND claim_expires_at IS NOT NULL)),CHECK(state IN ('checking','fanout') OR (claim_token IS NULL AND claim_expires_at IS NULL)),CHECK((state='fanout')=(fanout_cutoff IS NOT NULL)),CHECK(fanout_cutoff IS NULL OR fanout_cutoff>=0),CHECK(state!='recovered' OR (attempt=0 AND next_eligible_at IS NULL)),CHECK(claim_token IS NULL OR length(claim_token) BETWEEN 1 AND 128),CHECK(claim_expires_at IS NULL OR claim_expires_at BETWEEN 0 AND 8640000000000),CHECK(next_eligible_at IS NULL OR next_eligible_at BETWEEN 0 AND 8640000000000)) STRICT"""
+_HEALTH = """CREATE TABLE provider_recovery_health(connection TEXT NOT NULL CHECK(length(connection) BETWEEN 1 AND 64),adapter TEXT NOT NULL CHECK(length(adapter) BETWEEN 1 AND 64),scope TEXT NOT NULL CHECK(length(scope) BETWEEN 1 AND 64),generation INTEGER NOT NULL CHECK(generation>=1),state TEXT NOT NULL CHECK(state IN ('waiting','dormant','checking','fanout','recovered','exhausted')),attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 5),next_eligible_at INTEGER,claim_token TEXT,claim_expires_at INTEGER,cohort_epoch INTEGER,cohort_cutoff INTEGER,PRIMARY KEY(connection,adapter,scope),FOREIGN KEY(connection,adapter,scope) REFERENCES provider_recovery_members(connection,adapter,scope),CHECK((state='waiting')=(next_eligible_at IS NOT NULL)),CHECK((state IN ('checking','fanout'))=(claim_token IS NOT NULL AND claim_expires_at IS NOT NULL AND cohort_epoch IS NOT NULL AND cohort_cutoff IS NOT NULL)),CHECK(state IN ('checking','fanout') OR (claim_token IS NULL AND claim_expires_at IS NULL AND cohort_epoch IS NULL AND cohort_cutoff IS NULL)),CHECK(cohort_epoch IS NULL OR cohort_epoch>=1),CHECK(cohort_cutoff IS NULL OR cohort_cutoff>=0),CHECK(state!='recovered' OR (attempt=0 AND next_eligible_at IS NULL)),CHECK(claim_token IS NULL OR length(claim_token) BETWEEN 1 AND 128),CHECK(claim_expires_at IS NULL OR claim_expires_at BETWEEN 0 AND 8640000000000),CHECK(next_eligible_at IS NULL OR next_eligible_at BETWEEN 0 AND 8640000000000)) STRICT"""
 _MEMBERS = """CREATE TABLE provider_recovery_members(connection TEXT NOT NULL CHECK(length(connection) BETWEEN 1 AND 64),adapter TEXT NOT NULL CHECK(length(adapter) BETWEEN 1 AND 64),scope TEXT NOT NULL CHECK(length(scope) BETWEEN 1 AND 64),PRIMARY KEY(connection,adapter,scope)) STRICT"""
-_JOBS = """CREATE TABLE provider_recovery_jobs(connection TEXT NOT NULL,adapter TEXT NOT NULL,scope TEXT NOT NULL,generation INTEGER NOT NULL CHECK(generation>=1),member_id TEXT NOT NULL CHECK(length(member_id) BETWEEN 1 AND 128),target_connection TEXT NOT NULL CHECK(length(target_connection) BETWEEN 1 AND 64),library TEXT NOT NULL CHECK(length(library) BETWEEN 1 AND 128),item TEXT NOT NULL CHECK(length(item) BETWEEN 1 AND 256),file_identity TEXT NOT NULL CHECK(length(file_identity) BETWEEN 1 AND 256),source_report_id TEXT NOT NULL CHECK(length(source_report_id) BETWEEN 1 AND 128),package_proposal_id TEXT CHECK(package_proposal_id IS NULL OR length(package_proposal_id) BETWEEN 1 AND 128),package_report_id TEXT NOT NULL CHECK(length(package_report_id) BETWEEN 1 AND 128),package_case_id TEXT CHECK(package_case_id IS NULL OR length(package_case_id) BETWEEN 1 AND 128),package_checkpoint INTEGER CHECK(package_checkpoint IS NULL OR package_checkpoint>=0),package_outcome TEXT NOT NULL CHECK(package_outcome IN ('report_only','admitted','superseded','no_case','retired')),lane_ids TEXT NOT NULL CHECK(length(lane_ids) BETWEEN 2 AND 4096),state TEXT NOT NULL CHECK(state IN ('queued','running','complete','failed','stale')),attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 5),dispatch_reason TEXT NOT NULL CHECK(dispatch_reason IN ('missing_corroboration','zero_provider_evidence','settleable_disagreement','blanket_scan')),dispatch_rank INTEGER NOT NULL CHECK(dispatch_rank BETWEEN 0 AND 3),enrollment_ordinal INTEGER NOT NULL CHECK(enrollment_ordinal>=0),claim_token TEXT,claim_expires_at INTEGER,PRIMARY KEY(connection,adapter,scope,generation,member_id),FOREIGN KEY(connection,adapter,scope) REFERENCES provider_recovery_members(connection,adapter,scope),CHECK((dispatch_reason='missing_corroboration' AND dispatch_rank=0) OR (dispatch_reason='zero_provider_evidence' AND dispatch_rank=1) OR (dispatch_reason='settleable_disagreement' AND dispatch_rank=2) OR (dispatch_reason='blanket_scan' AND dispatch_rank=3)),CHECK((package_outcome='report_only' AND package_proposal_id IS NULL AND package_case_id IS NULL AND package_checkpoint IS NULL) OR (package_outcome IN ('admitted','superseded') AND package_proposal_id IS NOT NULL AND package_case_id IS NOT NULL AND package_checkpoint IS NOT NULL) OR (package_outcome IN ('no_case','retired') AND package_proposal_id IS NOT NULL AND package_case_id IS NULL AND package_checkpoint IS NOT NULL)),CHECK((state='running')=(claim_token IS NOT NULL AND claim_expires_at IS NOT NULL)),CHECK(state='running' OR (claim_token IS NULL AND claim_expires_at IS NULL)),CHECK(claim_token IS NULL OR length(claim_token) BETWEEN 1 AND 128),CHECK(claim_expires_at IS NULL OR claim_expires_at BETWEEN 0 AND 8640000000000)) STRICT"""
-_JOBS_CLAIM_INDEX = "CREATE INDEX provider_recovery_jobs_claim_order ON provider_recovery_jobs(connection,adapter,scope,generation,state,dispatch_rank,member_id,enrollment_ordinal)"
+_JOBS = """CREATE TABLE provider_recovery_jobs(connection TEXT NOT NULL,adapter TEXT NOT NULL,scope TEXT NOT NULL,generation INTEGER NOT NULL CHECK(generation>=1),member_id TEXT NOT NULL CHECK(length(member_id) BETWEEN 1 AND 128),target_connection TEXT NOT NULL CHECK(length(target_connection) BETWEEN 1 AND 64),library TEXT NOT NULL CHECK(length(library) BETWEEN 1 AND 128),item TEXT NOT NULL CHECK(length(item) BETWEEN 1 AND 256),file_identity TEXT NOT NULL CHECK(length(file_identity) BETWEEN 1 AND 256),source_report_id TEXT NOT NULL CHECK(length(source_report_id) BETWEEN 1 AND 128),package_proposal_id TEXT CHECK(package_proposal_id IS NULL OR length(package_proposal_id) BETWEEN 1 AND 128),package_report_id TEXT NOT NULL CHECK(length(package_report_id) BETWEEN 1 AND 128),package_case_id TEXT CHECK(package_case_id IS NULL OR length(package_case_id) BETWEEN 1 AND 128),package_checkpoint INTEGER CHECK(package_checkpoint IS NULL OR package_checkpoint>=0),package_outcome TEXT NOT NULL CHECK(package_outcome IN ('report_only','admitted','superseded','no_case','retired')),lane_ids TEXT NOT NULL CHECK(length(lane_ids) BETWEEN 2 AND 4096),state TEXT NOT NULL CHECK(state IN ('queued','running','complete','failed','stale')),attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 5),dispatch_reason TEXT NOT NULL CHECK(dispatch_reason IN ('missing_corroboration','zero_provider_evidence','settleable_disagreement','blanket_scan')),dispatch_rank INTEGER NOT NULL CHECK(dispatch_rank BETWEEN 0 AND 3),enrollment_ordinal INTEGER NOT NULL CHECK(enrollment_ordinal>=1),cohort_epoch INTEGER CHECK(cohort_epoch IS NULL OR cohort_epoch>=1),claim_token TEXT,claim_expires_at INTEGER,PRIMARY KEY(connection,adapter,scope,generation,member_id),FOREIGN KEY(connection,adapter,scope) REFERENCES provider_recovery_members(connection,adapter,scope),CHECK((dispatch_reason='missing_corroboration' AND dispatch_rank=0) OR (dispatch_reason='zero_provider_evidence' AND dispatch_rank=1) OR (dispatch_reason='settleable_disagreement' AND dispatch_rank=2) OR (dispatch_reason='blanket_scan' AND dispatch_rank=3)),CHECK((package_outcome='report_only' AND package_proposal_id IS NULL AND package_case_id IS NULL AND package_checkpoint IS NULL) OR (package_outcome IN ('admitted','superseded') AND package_proposal_id IS NOT NULL AND package_case_id IS NOT NULL AND package_checkpoint IS NOT NULL) OR (package_outcome IN ('no_case','retired') AND package_proposal_id IS NOT NULL AND package_case_id IS NULL AND package_checkpoint IS NOT NULL)),CHECK((state='running')=(claim_token IS NOT NULL AND claim_expires_at IS NOT NULL)),CHECK(state='running' OR (claim_token IS NULL AND claim_expires_at IS NULL)),CHECK(claim_token IS NULL OR length(claim_token) BETWEEN 1 AND 128),CHECK(claim_expires_at IS NULL OR claim_expires_at BETWEEN 0 AND 8640000000000)) STRICT"""
+_JOBS_CLAIM_INDEX = "CREATE INDEX provider_recovery_jobs_claim_order ON provider_recovery_jobs(connection,adapter,generation,cohort_epoch,state,dispatch_rank,member_id,scope,enrollment_ordinal)"
 _EVENTS = """CREATE TABLE provider_recovery_events(sequence INTEGER PRIMARY KEY,connection TEXT NOT NULL,adapter TEXT NOT NULL,scope TEXT NOT NULL,generation INTEGER NOT NULL CHECK(generation>=1),state TEXT NOT NULL CHECK(state IN ('waiting','dormant','checking','fanout','recovered','exhausted')),attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 5),next_eligible_at INTEGER,occurred_at INTEGER NOT NULL CHECK(occurred_at BETWEEN 0 AND 8640000000000),CHECK((state='waiting')=(next_eligible_at IS NOT NULL)),CHECK(state!='recovered' OR (attempt=0 AND next_eligible_at IS NULL)),CHECK(next_eligible_at IS NULL OR next_eligible_at BETWEEN 0 AND 8640000000000)) STRICT"""
 _NO_UPDATE = "CREATE TRIGGER provider_recovery_events_no_update BEFORE UPDATE ON provider_recovery_events BEGIN SELECT RAISE(ABORT, 'append only'); END"
 _NO_DELETE = "CREATE TRIGGER provider_recovery_events_no_delete BEFORE DELETE ON provider_recovery_events BEGIN SELECT RAISE(ABORT, 'append only'); END"
@@ -250,7 +250,7 @@ class SQLiteProviderRecoveryStore:
                 )
                 self._connection.execute(
                     "UPDATE provider_recovery_jobs SET generation=?,state='queued',attempt=0,"
-                    "claim_token=NULL,claim_expires_at=NULL WHERE connection=? AND adapter=? "
+                    "cohort_epoch=NULL,claim_token=NULL,claim_expires_at=NULL WHERE connection=? AND adapter=? "
                     "AND scope=? AND generation=? AND state!='complete'",
                     (
                         generation,
@@ -262,7 +262,7 @@ class SQLiteProviderRecoveryStore:
                 )
                 if has_jobs:
                     self._connection.execute(
-                        "UPDATE provider_recovery_health SET generation=?,state=?,attempt=?,next_eligible_at=?,claim_token=NULL,claim_expires_at=NULL,fanout_cutoff=NULL WHERE connection=? AND adapter=? AND scope=?",
+                        "UPDATE provider_recovery_health SET generation=?,state=?,attempt=?,next_eligible_at=?,claim_token=NULL,claim_expires_at=NULL,cohort_epoch=NULL,cohort_cutoff=NULL WHERE connection=? AND adapter=? AND scope=?",
                         (
                             successor.generation,
                             successor.state,
@@ -276,7 +276,7 @@ class SQLiteProviderRecoveryStore:
                 else:
                     self._connection.execute(
                         "UPDATE provider_recovery_health SET generation=?,state=?,attempt=?,"
-                        "next_eligible_at=?,claim_token=NULL,claim_expires_at=NULL,fanout_cutoff=NULL "
+                        "next_eligible_at=?,claim_token=NULL,claim_expires_at=NULL,cohort_epoch=NULL,cohort_cutoff=NULL "
                         "WHERE connection=? AND adapter=? AND scope=?",
                         (
                             successor.generation,
@@ -347,7 +347,7 @@ class SQLiteProviderRecoveryStore:
             with self._lock:
                 self._connection.execute("BEGIN IMMEDIATE")
                 current = self._connection.execute(
-                    "SELECT generation,state,attempt,claim_token,claim_expires_at FROM provider_recovery_health WHERE connection=? AND adapter=? AND scope=?",
+                    "SELECT generation,state,attempt,claim_token,claim_expires_at,cohort_epoch,cohort_cutoff FROM provider_recovery_health WHERE connection=? AND adapter=? AND scope=?",
                     (recovery.connection, recovery.adapter, recovery.scope),
                 ).fetchone()
                 if (
@@ -360,43 +360,83 @@ class SQLiteProviderRecoveryStore:
                     raise ProviderRecoveryStoreError("provider recovery claim is owned")
                 eligible = self._connection.execute(
                     "SELECT 1 FROM provider_recovery_jobs WHERE connection=? AND adapter=? "
-                    "AND scope=? AND generation=? AND state IN ('queued','running') LIMIT 1",
+                    "AND generation=? AND cohort_epoch=? AND enrollment_ordinal<=? "
+                    "AND state IN ('queued','running') LIMIT 1",
                     (
                         recovery.connection,
                         recovery.adapter,
-                        recovery.scope,
                         recovery.generation,
+                        current[5],
+                        current[6],
                     ),
                 ).fetchone()
                 if eligible is not None:
                     raise ProviderRecoveryStoreError("provider recovery members remain")
-                successor = ProviderRecovery(
-                    recovery.connection,
-                    recovery.adapter,
-                    recovery.scope,
-                    recovery.generation,
-                    "recovered",
-                    0,
-                    None,
-                )
-                _append_checking(self._connection, recovery, now)
-                self._connection.execute(
-                    "UPDATE provider_recovery_health SET state='recovered',attempt=0,next_eligible_at=NULL,claim_token=NULL,claim_expires_at=NULL WHERE connection=? AND adapter=? AND scope=?",
-                    (recovery.connection, recovery.adapter, recovery.scope),
-                )
-                self._connection.execute(
-                    "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at) VALUES(?,?,?,?,?,?,?,?)",
+                scopes = self._connection.execute(
+                    "SELECT DISTINCT scope FROM provider_recovery_jobs WHERE connection=? "
+                    "AND adapter=? AND generation=? AND cohort_epoch=? ORDER BY scope",
                     (
-                        successor.connection,
-                        successor.adapter,
-                        successor.scope,
-                        successor.generation,
-                        successor.state,
-                        successor.attempt,
-                        successor.next_eligible_at,
-                        now,
+                        recovery.connection,
+                        recovery.adapter,
+                        recovery.generation,
+                        current[5],
                     ),
-                )
+                ).fetchall() or [(recovery.scope,)]
+                _append_checking(self._connection, recovery, now)
+                owner_successor = None
+                for (scope,) in scopes:
+                    later = self._connection.execute(
+                        "SELECT 1 FROM provider_recovery_jobs WHERE connection=? AND adapter=? "
+                        "AND scope=? AND generation=? AND cohort_epoch IS NULL "
+                        "AND state IN ('queued','running') LIMIT 1",
+                        (
+                            recovery.connection,
+                            recovery.adapter,
+                            scope,
+                            recovery.generation,
+                        ),
+                    ).fetchone()
+                    successor = ProviderRecovery(
+                        recovery.connection,
+                        recovery.adapter,
+                        scope,
+                        recovery.generation,
+                        "waiting" if later is not None else "recovered",
+                        0,
+                        now if later is not None else None,
+                    )
+                    self._connection.execute(
+                        "UPDATE provider_recovery_health SET state=?,attempt=0,next_eligible_at=?,"
+                        "claim_token=NULL,claim_expires_at=NULL,cohort_epoch=NULL,cohort_cutoff=NULL "
+                        "WHERE connection=? AND adapter=? AND scope=? AND generation=?",
+                        (
+                            successor.state,
+                            successor.next_eligible_at,
+                            successor.connection,
+                            successor.adapter,
+                            successor.scope,
+                            successor.generation,
+                        ),
+                    )
+                    self._connection.execute(
+                        "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at) VALUES(?,?,?,?,?,?,?,?)",
+                        (
+                            successor.connection,
+                            successor.adapter,
+                            successor.scope,
+                            successor.generation,
+                            successor.state,
+                            successor.attempt,
+                            successor.next_eligible_at,
+                            now,
+                        ),
+                    )
+                    if scope == recovery.scope:
+                        owner_successor = successor
+                if owner_successor is None:
+                    raise ProviderRecoveryStoreError(
+                        "provider recovery transition is invalid"
+                    )
                 self._connection.execute("COMMIT")
                 self._claim_snapshots.pop(
                     (
@@ -408,7 +448,7 @@ class SQLiteProviderRecoveryStore:
                     ),
                     None,
                 )
-                return successor
+                return owner_successor
 
     def complete_missing_jobs(
         self,
@@ -430,7 +470,7 @@ class SQLiteProviderRecoveryStore:
             with self._lock:
                 self._connection.execute("BEGIN IMMEDIATE")
                 current = self._connection.execute(
-                    "SELECT generation,state,attempt,claim_token,claim_expires_at "
+                    "SELECT generation,state,attempt,claim_token,claim_expires_at,cohort_epoch,cohort_cutoff "
                     "FROM provider_recovery_health WHERE connection=? AND adapter=? AND scope=?",
                     (recovery.connection, recovery.adapter, recovery.scope),
                 ).fetchone()
@@ -444,12 +484,13 @@ class SQLiteProviderRecoveryStore:
                     raise ProviderRecoveryStoreError("provider recovery claim is owned")
                 excluded, parameters = _blocked_targets(blocked_targets)
                 active = self._connection.execute(
-                    "SELECT target_connection,state,attempt FROM provider_recovery_jobs WHERE connection=? AND adapter=? AND scope=? AND generation=? AND state IN ('queued','running')",
+                    "SELECT target_connection,state,attempt FROM provider_recovery_jobs WHERE connection=? AND adapter=? AND generation=? AND cohort_epoch=? AND enrollment_ordinal<=? AND state IN ('queued','running')",
                     (
                         recovery.connection,
                         recovery.adapter,
-                        recovery.scope,
                         recovery.generation,
+                        current[5],
+                        current[6],
                     ),
                 ).fetchall()
                 unblocked = tuple(
@@ -469,13 +510,14 @@ class SQLiteProviderRecoveryStore:
                         self._connection.execute("COMMIT")
                         return None
                     changed = self._connection.execute(
-                        "UPDATE provider_recovery_jobs SET state='failed',claim_token=NULL,claim_expires_at=NULL WHERE connection=? AND adapter=? AND scope=? AND generation=? AND state='queued' AND attempt>=5"
+                        "UPDATE provider_recovery_jobs SET state='failed',claim_token=NULL,claim_expires_at=NULL WHERE connection=? AND adapter=? AND generation=? AND cohort_epoch=? AND enrollment_ordinal<=? AND state='queued' AND attempt>=5"
                         + excluded,
                         (
                             recovery.connection,
                             recovery.adapter,
-                            recovery.scope,
                             recovery.generation,
+                            current[5],
+                            current[6],
                             *parameters,
                         ),
                     ).rowcount
@@ -483,6 +525,23 @@ class SQLiteProviderRecoveryStore:
                         raise ProviderRecoveryStoreError(
                             "provider recovery members changed"
                         )
+                if blocked_targets:
+                    blocked += tuple(
+                        (state, attempt)
+                        for _, state, attempt in self._connection.execute(
+                            "SELECT target_connection,state,attempt FROM provider_recovery_jobs "
+                            "WHERE connection=? AND adapter=? AND generation=? AND cohort_epoch IS NULL "
+                            "AND state IN ('queued','running') AND target_connection IN ("
+                            + ",".join("?" for _ in blocked_targets)
+                            + ")",
+                            (
+                                recovery.connection,
+                                recovery.adapter,
+                                recovery.generation,
+                                *sorted(blocked_targets),
+                            ),
+                        )
+                    )
                 if blocked:
                     snapshot = self._claim_snapshots.get(
                         (
@@ -497,8 +556,19 @@ class SQLiteProviderRecoveryStore:
                         raise ProviderRecoveryStoreError(
                             "provider recovery claim snapshot is unavailable"
                         )
+                    if snapshot[0][5] is None:
+                        self._connection.execute(
+                            "UPDATE provider_recovery_jobs SET cohort_epoch=NULL WHERE connection=? "
+                            "AND adapter=? AND generation=? AND cohort_epoch=?",
+                            (
+                                recovery.connection,
+                                recovery.adapter,
+                                recovery.generation,
+                                current[5],
+                            ),
+                        )
                     self._connection.execute(
-                        "UPDATE provider_recovery_health SET state=?,attempt=?,next_eligible_at=?,claim_token=?,claim_expires_at=?,fanout_cutoff=? WHERE connection=? AND adapter=? AND scope=?",
+                        "UPDATE provider_recovery_health SET state=?,attempt=?,next_eligible_at=?,claim_token=?,claim_expires_at=?,cohort_epoch=?,cohort_cutoff=? WHERE connection=? AND adapter=? AND scope=?",
                         (
                             *snapshot[0],
                             recovery.connection,
@@ -517,25 +587,42 @@ class SQLiteProviderRecoveryStore:
                         )
                     ]
                     return None
+                later = self._connection.execute(
+                    "SELECT 1 FROM provider_recovery_jobs WHERE connection=? AND adapter=? "
+                    "AND scope=? AND generation=? AND cohort_epoch IS NULL "
+                    "AND state IN ('queued','running') LIMIT 1",
+                    (
+                        recovery.connection,
+                        recovery.adapter,
+                        recovery.scope,
+                        recovery.generation,
+                    ),
+                ).fetchone()
                 successor = ProviderRecovery(
                     recovery.connection,
                     recovery.adapter,
                     recovery.scope,
                     recovery.generation,
-                    "exhausted",
+                    "waiting" if later is not None else "exhausted",
                     recovery.attempt,
-                    None,
+                    now if later is not None else None,
                 )
                 _append_checking(self._connection, recovery, now)
                 self._connection.execute(
-                    "UPDATE provider_recovery_health SET state='exhausted',"
-                    "next_eligible_at=NULL,claim_token=NULL,claim_expires_at=NULL "
+                    "UPDATE provider_recovery_health SET state=?,"
+                    "next_eligible_at=?,claim_token=NULL,claim_expires_at=NULL,cohort_epoch=NULL,cohort_cutoff=NULL "
                     "WHERE connection=? AND adapter=? AND scope=?",
-                    (recovery.connection, recovery.adapter, recovery.scope),
+                    (
+                        successor.state,
+                        successor.next_eligible_at,
+                        recovery.connection,
+                        recovery.adapter,
+                        recovery.scope,
+                    ),
                 )
                 self._connection.execute(
                     "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,"
-                    "state,attempt,next_eligible_at,occurred_at) VALUES(?,?,?,?,?,?,NULL,?)",
+                    "state,attempt,next_eligible_at,occurred_at) VALUES(?,?,?,?,?,?,?,?)",
                     (
                         successor.connection,
                         successor.adapter,
@@ -543,6 +630,7 @@ class SQLiteProviderRecoveryStore:
                         successor.generation,
                         successor.state,
                         successor.attempt,
+                        successor.next_eligible_at,
                         now,
                     ),
                 )
@@ -594,9 +682,23 @@ class SQLiteProviderRecoveryStore:
                 now=now,
                 retry_after=retry_after,
             )
+            self._connection.execute(
+                "UPDATE provider_recovery_jobs SET cohort_epoch=NULL WHERE connection=? "
+                "AND adapter=? AND generation=? AND cohort_epoch=(SELECT cohort_epoch "
+                "FROM provider_recovery_health WHERE connection=? AND adapter=? AND scope=?) "
+                "AND state IN ('queued','running')",
+                (
+                    recovery.connection,
+                    recovery.adapter,
+                    recovery.generation,
+                    recovery.connection,
+                    recovery.adapter,
+                    recovery.scope,
+                ),
+            )
             _append_checking(self._connection, recovery, now)
             self._connection.execute(
-                "UPDATE provider_recovery_health SET state=?,attempt=?,next_eligible_at=?,claim_token=NULL,claim_expires_at=NULL WHERE connection=? AND adapter=? AND scope=?",
+                "UPDATE provider_recovery_health SET state=?,attempt=?,next_eligible_at=?,claim_token=NULL,claim_expires_at=NULL,cohort_epoch=NULL,cohort_cutoff=NULL WHERE connection=? AND adapter=? AND scope=?",
                 (
                     successor.state,
                     successor.attempt,
@@ -670,7 +772,7 @@ class SQLiteProviderRecoveryStore:
                     (recovery.connection, recovery.adapter, recovery.scope),
                 )
                 self._connection.execute(
-                    "INSERT INTO provider_recovery_health(connection,adapter,scope,generation,state,attempt,next_eligible_at,claim_token,claim_expires_at) VALUES(?,?,?,?,?,?,?,NULL,NULL) ON CONFLICT(connection,adapter,scope) DO UPDATE SET generation=excluded.generation,state=excluded.state,attempt=excluded.attempt,next_eligible_at=excluded.next_eligible_at,claim_token=NULL,claim_expires_at=NULL",
+                    "INSERT INTO provider_recovery_health(connection,adapter,scope,generation,state,attempt,next_eligible_at,claim_token,claim_expires_at) VALUES(?,?,?,?,?,?,?,NULL,NULL) ON CONFLICT(connection,adapter,scope) DO UPDATE SET generation=excluded.generation,state=excluded.state,attempt=excluded.attempt,next_eligible_at=excluded.next_eligible_at,claim_token=NULL,claim_expires_at=NULL,cohort_epoch=NULL,cohort_cutoff=NULL",
                     (
                         recovery.connection,
                         recovery.adapter,
@@ -850,7 +952,7 @@ class SQLiteProviderRecoveryStore:
         blocked_targets: frozenset[str],
         lease_seconds: int,
     ) -> ProviderRecovery | None:
-        """Lease one due scope, keeping the lease once its ``COMMIT`` lands.
+        """Lease one finite provider cohort, keeping it once ``COMMIT`` lands.
 
         Two rules keep the reported failure truthful.  The rollback is guarded
         because SQLite ends the transaction itself when a statement fails with
@@ -877,36 +979,98 @@ class SQLiteProviderRecoveryStore:
             try:
                 excluded, parameters = _blocked_targets(blocked_targets)
                 row = self._connection.execute(
-                    "WITH due AS ("
-                    "SELECT h.* FROM provider_recovery_health h WHERE generation=? "
-                    "AND ((state='waiting' AND next_eligible_at<=?) OR (state='checking' AND claim_expires_at<=?)) "
-                    "AND (NOT EXISTS (SELECT 1 FROM provider_recovery_jobs j WHERE j.connection=h.connection "
-                    "AND j.adapter=h.adapter AND j.scope=h.scope AND j.generation=h.generation "
-                    "AND j.state IN ('queued','running')) OR EXISTS (SELECT 1 FROM provider_recovery_jobs j "
-                    "WHERE j.connection=h.connection AND j.adapter=h.adapter AND j.scope=h.scope "
-                    "AND j.generation=h.generation AND j.state IN ('queued','running')"
+                    "SELECT connection,adapter,scope,generation,state,attempt,next_eligible_at,"
+                    "claim_token,claim_expires_at,cohort_epoch,cohort_cutoff "
+                    "FROM provider_recovery_health h WHERE generation=? AND state='checking' "
+                    "AND claim_expires_at<=? AND (NOT EXISTS (SELECT 1 FROM provider_recovery_jobs j "
+                    "WHERE j.connection=h.connection AND j.adapter=h.adapter AND j.generation=h.generation "
+                    "AND j.cohort_epoch=h.cohort_epoch AND j.state IN ('queued','running')) OR EXISTS ("
+                    "SELECT 1 FROM provider_recovery_jobs j WHERE j.connection=h.connection "
+                    "AND j.adapter=h.adapter AND j.generation=h.generation AND j.cohort_epoch=h.cohort_epoch "
+                    "AND j.state IN ('queued','running')"
                     + excluded
-                    + "))), provider AS ("
-                    "SELECT connection,adapter FROM due ORDER BY "
-                    "next_eligible_at,connection,adapter,scope LIMIT 1) "
-                    "SELECT h.connection,h.adapter,h.scope,h.generation,h.state,h.attempt,h.next_eligible_at,"
-                    "h.claim_token,h.claim_expires_at,h.fanout_cutoff FROM due h JOIN provider p "
-                    "ON p.connection=h.connection AND p.adapter=h.adapter ORDER BY COALESCE(("
-                    "SELECT printf('%d:%s',j.dispatch_rank,j.member_id) FROM provider_recovery_jobs j "
-                    "WHERE j.connection=h.connection AND j.adapter=h.adapter AND j.scope=h.scope "
-                    "AND j.generation=h.generation AND j.attempt<5 AND (j.state='queued' OR "
-                    "(j.state='running' AND j.claim_expires_at<=?))"
-                    + excluded
-                    + " ORDER BY j.dispatch_rank,j.member_id LIMIT 1),'4:'),h.scope LIMIT 1",
-                    (generation, now, now, *parameters, now, *parameters),
+                    + ")) ORDER BY claim_expires_at,connection,adapter,scope LIMIT 1",
+                    (generation, now, *parameters),
                 ).fetchone()
                 if row is None:
-                    self._connection.execute("COMMIT")
-                    return None
-                changed = self._connection.execute(
-                    "UPDATE provider_recovery_health SET state='checking',next_eligible_at=NULL,claim_token=?,claim_expires_at=?,fanout_cutoff=NULL WHERE connection=? AND adapter=? AND scope=? AND ((state='waiting' AND next_eligible_at<=?) OR (state='checking' AND claim_expires_at<=?))",
-                    (token, now + lease_seconds, row[0], row[1], row[2], now, now),
-                ).rowcount
+                    provider = self._connection.execute(
+                        "SELECT h.connection,h.adapter FROM provider_recovery_health h "
+                        "WHERE h.generation=? AND h.state='waiting' AND h.next_eligible_at<=? "
+                        "AND NOT EXISTS (SELECT 1 FROM provider_recovery_health owner "
+                        "WHERE owner.connection=h.connection AND owner.adapter=h.adapter "
+                        "AND owner.generation=h.generation AND owner.state IN ('checking','fanout')) "
+                        "AND (NOT EXISTS (SELECT 1 FROM provider_recovery_jobs j WHERE j.connection=h.connection "
+                        "AND j.adapter=h.adapter AND j.scope=h.scope AND j.generation=h.generation "
+                        "AND j.state IN ('queued','running')) OR EXISTS (SELECT 1 FROM provider_recovery_jobs j "
+                        "WHERE j.connection=h.connection AND j.adapter=h.adapter AND j.scope=h.scope "
+                        "AND j.generation=h.generation AND j.state IN ('queued','running')"
+                        + excluded
+                        + ")) ORDER BY h.next_eligible_at,h.connection,h.adapter,h.scope LIMIT 1",
+                        (generation, now, *parameters),
+                    ).fetchone()
+                    if provider is None:
+                        self._connection.execute("COMMIT")
+                        return None
+                    owner = self._connection.execute(
+                        "SELECT h.connection,h.adapter,h.scope,h.generation,h.state,h.attempt,h.next_eligible_at,"
+                        "h.claim_token,h.claim_expires_at,h.cohort_epoch,h.cohort_cutoff "
+                        "FROM provider_recovery_health h LEFT JOIN provider_recovery_jobs j "
+                        "ON j.connection=h.connection AND j.adapter=h.adapter AND j.scope=h.scope "
+                        "AND j.generation=h.generation AND j.attempt<5 AND (j.state='queued' OR "
+                        "(j.state='running' AND j.claim_expires_at<=?))"
+                        + excluded.replace("target_connection", "j.target_connection")
+                        + " WHERE h.connection=? AND h.adapter=? AND h.generation=? "
+                        "AND h.state='waiting' AND h.next_eligible_at<=? "
+                        "ORDER BY COALESCE(j.dispatch_rank,4),j.member_id,h.scope LIMIT 1",
+                        (now, *parameters, *provider, generation, now),
+                    ).fetchone()
+                    if owner is None:
+                        raise ProviderRecoveryStoreError(
+                            "provider recovery cohort owner is unavailable"
+                        )
+                    epoch = self._connection.execute(
+                        "SELECT COALESCE(MAX(cohort_epoch),0)+1 FROM provider_recovery_jobs "
+                        "WHERE connection=? AND adapter=? AND generation=?",
+                        (*provider, generation),
+                    ).fetchone()[0]
+                    self._connection.execute(
+                        "UPDATE provider_recovery_jobs SET cohort_epoch=? WHERE connection=? AND adapter=? "
+                        "AND generation=? AND (state='queued' OR "
+                        "(state='running' AND claim_expires_at<=?))"
+                        + excluded
+                        + " AND EXISTS (SELECT 1 FROM provider_recovery_health h WHERE "
+                        "h.connection=provider_recovery_jobs.connection AND h.adapter=provider_recovery_jobs.adapter "
+                        "AND h.scope=provider_recovery_jobs.scope AND h.generation=provider_recovery_jobs.generation "
+                        "AND h.state='waiting' AND h.next_eligible_at<=?)",
+                        (epoch, *provider, generation, now, *parameters, now),
+                    )
+                    cutoff = self._connection.execute(
+                        "SELECT COALESCE(MAX(enrollment_ordinal),0) FROM provider_recovery_jobs "
+                        "WHERE connection=? AND adapter=? AND generation=? AND cohort_epoch=?",
+                        (*provider, generation, epoch),
+                    ).fetchone()[0]
+                    row = owner
+                    changed = self._connection.execute(
+                        "UPDATE provider_recovery_health SET state='checking',next_eligible_at=NULL,"
+                        "claim_token=?,claim_expires_at=?,cohort_epoch=?,cohort_cutoff=? "
+                        "WHERE connection=? AND adapter=? AND scope=? AND generation=? "
+                        "AND state='waiting' AND next_eligible_at<=?",
+                        (
+                            token,
+                            now + lease_seconds,
+                            epoch,
+                            cutoff,
+                            *row[:4],
+                            now,
+                        ),
+                    ).rowcount
+                else:
+                    changed = self._connection.execute(
+                        "UPDATE provider_recovery_health SET claim_token=?,claim_expires_at=? "
+                        "WHERE connection=? AND adapter=? AND scope=? AND generation=? "
+                        "AND state='checking' AND claim_expires_at<=?",
+                        (token, now + lease_seconds, *row[:4], now),
+                    ).rowcount
                 if changed != 1:
                     self._connection.execute("COMMIT")
                     return None
@@ -944,7 +1108,7 @@ class SQLiteProviderRecoveryStore:
         blocked_targets: frozenset[str] = frozenset(),
         lease_seconds: int = 300,
     ) -> ProviderRecovery | None:
-        """Claim one authorized scope before dispatching any remaining sibling."""
+        """Reclaim one authorized provider cohort after its owner lease expires."""
         if (
             type(generation) is not int
             or generation < 1
@@ -961,9 +1125,9 @@ class SQLiteProviderRecoveryStore:
                 self._connection.execute("BEGIN IMMEDIATE")
                 excluded, parameters = _blocked_targets(blocked_targets)
                 row = self._connection.execute(
-                    "SELECT connection,adapter,scope,generation,state,attempt,next_eligible_at,claim_token,claim_expires_at,fanout_cutoff "
+                    "SELECT connection,adapter,scope,generation,state,attempt,next_eligible_at,claim_token,claim_expires_at,cohort_epoch,cohort_cutoff "
                     "FROM provider_recovery_health h WHERE generation=? AND state='fanout' AND claim_expires_at<=? "
-                    "AND (NOT EXISTS (SELECT 1 FROM provider_recovery_jobs j WHERE j.connection=h.connection AND j.adapter=h.adapter AND j.scope=h.scope AND j.generation=h.generation AND j.enrollment_ordinal<=h.fanout_cutoff AND j.state IN ('queued','running')) OR EXISTS (SELECT 1 FROM provider_recovery_jobs j WHERE j.connection=h.connection AND j.adapter=h.adapter AND j.scope=h.scope AND j.generation=h.generation AND j.enrollment_ordinal<=h.fanout_cutoff AND j.state IN ('queued','running')"
+                    "AND (NOT EXISTS (SELECT 1 FROM provider_recovery_jobs j WHERE j.connection=h.connection AND j.adapter=h.adapter AND j.generation=h.generation AND j.cohort_epoch=h.cohort_epoch AND j.enrollment_ordinal<=h.cohort_cutoff AND j.state IN ('queued','running')) OR EXISTS (SELECT 1 FROM provider_recovery_jobs j WHERE j.connection=h.connection AND j.adapter=h.adapter AND j.generation=h.generation AND j.cohort_epoch=h.cohort_epoch AND j.enrollment_ordinal<=h.cohort_cutoff AND j.state IN ('queued','running')"
                     + excluded
                     + ") ) "
                     "ORDER BY connection,adapter,scope LIMIT 1",
@@ -995,10 +1159,10 @@ class SQLiteProviderRecoveryStore:
                 return (
                     self._connection.execute(
                         "SELECT 1 FROM provider_recovery_jobs j JOIN provider_recovery_health h "
-                        "ON h.connection=j.connection AND h.adapter=j.adapter AND h.scope=j.scope "
-                        "AND h.generation=j.generation WHERE j.connection=? AND j.adapter=? "
-                        "AND j.scope=? AND j.generation=? AND h.state='fanout' "
-                        "AND j.enrollment_ordinal<=h.fanout_cutoff "
+                        "ON h.connection=j.connection AND h.adapter=j.adapter "
+                        "AND h.generation=j.generation AND h.cohort_epoch=j.cohort_epoch "
+                        "WHERE h.connection=? AND h.adapter=? AND h.scope=? AND h.generation=? "
+                        "AND h.state='fanout' AND j.enrollment_ordinal<=h.cohort_cutoff "
                         "AND j.state IN ('queued','running') LIMIT 1",
                         (
                             recovery.connection,
@@ -1021,15 +1185,19 @@ class SQLiteProviderRecoveryStore:
                     "SELECT h.state,MIN(h.next_eligible_at),"
                     "CASE WHEN h.state='fanout' THEN count(j.member_id) ELSE count(DISTINCT h.connection||char(0)||h.adapter||char(0)||h.scope) END "
                     "FROM provider_recovery_health h LEFT JOIN provider_recovery_jobs j "
-                    "ON j.connection=h.connection AND j.adapter=h.adapter AND j.scope=h.scope "
-                    "AND j.generation=h.generation AND j.state IN ('queued','running') "
+                    "ON j.connection=h.connection AND j.adapter=h.adapter AND j.generation=h.generation "
+                    "AND ((h.state='fanout' AND j.cohort_epoch=h.cohort_epoch) "
+                    "OR (h.state!='fanout' AND j.scope=h.scope)) "
+                    "AND j.state IN ('queued','running') "
                     "GROUP BY h.state ORDER BY h.state"
                 ).fetchall()
                 reasons: dict[str, list[str]] = {state: [] for state, *_ in rows}
                 for state, reason in self._connection.execute(
                     "SELECT DISTINCT h.state,j.dispatch_reason FROM provider_recovery_health h "
                     "JOIN provider_recovery_jobs j ON j.connection=h.connection "
-                    "AND j.adapter=h.adapter AND j.scope=h.scope AND j.generation=h.generation "
+                    "AND j.adapter=h.adapter AND j.generation=h.generation "
+                    "AND ((h.state='fanout' AND j.cohort_epoch=h.cohort_epoch) "
+                    "OR (h.state!='fanout' AND j.scope=h.scope)) "
                     "WHERE j.state IN ('queued','running') ORDER BY h.state,j.dispatch_rank"
                 ):
                     reasons[state].append(reason)
@@ -1187,17 +1355,14 @@ class SQLiteProviderRecoveryStore:
                     if registered == package:
                         continue
                     ordinal = self._connection.execute(
-                        "SELECT enrollment_cursor+1 FROM provider_recovery_health WHERE connection=? AND adapter=? AND scope=?",
-                        (job.connection, job.adapter, job.scope),
+                        "SELECT COALESCE(MAX(enrollment_ordinal),0)+1 FROM provider_recovery_jobs "
+                        "WHERE connection=? AND adapter=? AND generation=?",
+                        (job.connection, job.adapter, job.generation),
                     ).fetchone()
                     if ordinal is None:
                         raise ProviderRecoveryStoreError(
                             "provider recovery enrollment is unavailable"
                         )
-                    self._connection.execute(
-                        "UPDATE provider_recovery_health SET enrollment_cursor=? WHERE connection=? AND adapter=? AND scope=?",
-                        (*ordinal, job.connection, job.adapter, job.scope),
-                    )
                     values = (
                         job.connection,
                         job.adapter,
@@ -1222,13 +1387,13 @@ class SQLiteProviderRecoveryStore:
                         ordinal[0],
                     )
                     result = self._connection.execute(
-                        "INSERT INTO provider_recovery_jobs(connection,adapter,scope,generation,member_id,target_connection,library,item,file_identity,source_report_id,package_proposal_id,package_report_id,package_case_id,package_checkpoint,package_outcome,lane_ids,state,attempt,dispatch_reason,dispatch_rank,enrollment_ordinal,claim_token,claim_expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL) ON CONFLICT(connection,adapter,scope,generation,member_id) DO UPDATE SET target_connection=excluded.target_connection,library=excluded.library,item=excluded.item,file_identity=excluded.file_identity,source_report_id=excluded.source_report_id,package_proposal_id=excluded.package_proposal_id,package_report_id=excluded.package_report_id,package_case_id=excluded.package_case_id,package_checkpoint=excluded.package_checkpoint,package_outcome=excluded.package_outcome,lane_ids=excluded.lane_ids,state=excluded.state,attempt=excluded.attempt,dispatch_reason=excluded.dispatch_reason,dispatch_rank=excluded.dispatch_rank,enrollment_ordinal=excluded.enrollment_ordinal,claim_token=NULL,claim_expires_at=NULL WHERE target_connection IS NOT excluded.target_connection OR library IS NOT excluded.library OR item IS NOT excluded.item OR file_identity IS NOT excluded.file_identity OR source_report_id IS NOT excluded.source_report_id OR package_proposal_id IS NOT excluded.package_proposal_id OR package_report_id IS NOT excluded.package_report_id OR package_case_id IS NOT excluded.package_case_id OR package_checkpoint IS NOT excluded.package_checkpoint OR package_outcome IS NOT excluded.package_outcome OR lane_ids IS NOT excluded.lane_ids OR dispatch_reason IS NOT excluded.dispatch_reason OR dispatch_rank IS NOT excluded.dispatch_rank",
+                        "INSERT INTO provider_recovery_jobs(connection,adapter,scope,generation,member_id,target_connection,library,item,file_identity,source_report_id,package_proposal_id,package_report_id,package_case_id,package_checkpoint,package_outcome,lane_ids,state,attempt,dispatch_reason,dispatch_rank,enrollment_ordinal,cohort_epoch,claim_token,claim_expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,NULL) ON CONFLICT(connection,adapter,scope,generation,member_id) DO UPDATE SET target_connection=excluded.target_connection,library=excluded.library,item=excluded.item,file_identity=excluded.file_identity,source_report_id=excluded.source_report_id,package_proposal_id=excluded.package_proposal_id,package_report_id=excluded.package_report_id,package_case_id=excluded.package_case_id,package_checkpoint=excluded.package_checkpoint,package_outcome=excluded.package_outcome,lane_ids=excluded.lane_ids,state=excluded.state,attempt=excluded.attempt,dispatch_reason=excluded.dispatch_reason,dispatch_rank=excluded.dispatch_rank,enrollment_ordinal=excluded.enrollment_ordinal,cohort_epoch=NULL,claim_token=NULL,claim_expires_at=NULL WHERE target_connection IS NOT excluded.target_connection OR library IS NOT excluded.library OR item IS NOT excluded.item OR file_identity IS NOT excluded.file_identity OR source_report_id IS NOT excluded.source_report_id OR package_proposal_id IS NOT excluded.package_proposal_id OR package_report_id IS NOT excluded.package_report_id OR package_case_id IS NOT excluded.package_case_id OR package_checkpoint IS NOT excluded.package_checkpoint OR package_outcome IS NOT excluded.package_outcome OR lane_ids IS NOT excluded.lane_ids OR dispatch_reason IS NOT excluded.dispatch_reason OR dispatch_rank IS NOT excluded.dispatch_rank",
                         values,
                     )
                     inserted += result.rowcount
                     if result.rowcount == 1:
                         reopened = self._connection.execute(
-                            "UPDATE provider_recovery_health SET state='waiting',attempt=0,next_eligible_at=?,claim_token=NULL,claim_expires_at=NULL,fanout_cutoff=NULL WHERE connection=? AND adapter=? AND scope=? AND state IN ('recovered','exhausted')",
+                            "UPDATE provider_recovery_health SET state='waiting',attempt=0,next_eligible_at=?,claim_token=NULL,claim_expires_at=NULL,cohort_epoch=NULL,cohort_cutoff=NULL WHERE connection=? AND adapter=? AND scope=? AND state IN ('recovered','exhausted')",
                             (
                                 enqueued_at,
                                 job.connection,
@@ -1281,7 +1446,7 @@ class SQLiteProviderRecoveryStore:
             with self._lock:
                 self._connection.execute("BEGIN IMMEDIATE")
                 health = self._connection.execute(
-                    "SELECT state,attempt,next_eligible_at,claim_token,claim_expires_at,fanout_cutoff FROM provider_recovery_health WHERE connection=? AND adapter=? AND scope=? AND generation=?",
+                    "SELECT state,attempt,next_eligible_at,claim_token,claim_expires_at,cohort_epoch,cohort_cutoff FROM provider_recovery_health WHERE connection=? AND adapter=? AND scope=? AND generation=?",
                     (
                         recovery.connection,
                         recovery.adapter,
@@ -1298,17 +1463,16 @@ class SQLiteProviderRecoveryStore:
                     raise ProviderRecoveryStoreError("provider recovery claim is owned")
                 excluded, parameters = _blocked_targets(blocked_targets)
                 row = self._connection.execute(
-                    "SELECT connection,adapter,scope,generation,member_id,target_connection,library,item,file_identity,source_report_id,package_proposal_id,package_report_id,package_case_id,package_checkpoint,package_outcome,lane_ids,state,attempt,dispatch_reason,dispatch_rank,enrollment_ordinal,claim_token,claim_expires_at FROM provider_recovery_jobs WHERE connection=? AND adapter=? AND scope=? AND generation=? AND attempt<5 AND (state='queued' OR (state='running' AND claim_expires_at<=?)) AND (? IS NULL OR enrollment_ordinal<=?)"
+                    "SELECT connection,adapter,scope,generation,member_id,target_connection,library,item,file_identity,source_report_id,package_proposal_id,package_report_id,package_case_id,package_checkpoint,package_outcome,lane_ids,state,attempt,dispatch_reason,dispatch_rank,enrollment_ordinal,cohort_epoch,claim_token,claim_expires_at FROM provider_recovery_jobs WHERE connection=? AND adapter=? AND generation=? AND cohort_epoch=? AND enrollment_ordinal<=? AND attempt<5 AND (state='queued' OR (state='running' AND claim_expires_at<=?))"
                     + excluded
-                    + " ORDER BY dispatch_rank,member_id LIMIT 1",
+                    + " ORDER BY dispatch_rank,member_id,scope LIMIT 1",
                     (
                         recovery.connection,
                         recovery.adapter,
-                        recovery.scope,
                         recovery.generation,
+                        health[5],
+                        health[6],
                         now,
-                        health[5],
-                        health[5],
                         *parameters,
                     ),
                 ).fetchone()
@@ -1337,7 +1501,7 @@ class SQLiteProviderRecoveryStore:
                 event_sequence = None if prior is None else prior[2]
                 self._claim_snapshots[key] = (
                     health_snapshot,
-                    (row[16], row[17], row[21], row[22]),
+                    (row[16], row[17], row[22], row[23]),
                     event_sequence,
                 )
                 return ProviderRecoveryJob(
@@ -1362,6 +1526,7 @@ class SQLiteProviderRecoveryStore:
                     row[18],
                     row[19],
                     row[20],
+                    row[21],
                 )
 
     def renew_job(
@@ -1406,9 +1571,9 @@ class SQLiteProviderRecoveryStore:
                 ):
                     raise ProviderRecoveryStoreError("provider recovery claim is owned")
                 health = self._connection.execute(
-                    "SELECT state,claim_token,claim_expires_at FROM provider_recovery_health "
-                    "WHERE connection=? AND adapter=? AND scope=? AND generation=?",
-                    (job.connection, job.adapter, job.scope, job.generation),
+                    "SELECT state,claim_token,claim_expires_at,scope FROM provider_recovery_health "
+                    "WHERE connection=? AND adapter=? AND generation=? AND cohort_epoch=?",
+                    (job.connection, job.adapter, job.generation, job.cohort_epoch),
                 ).fetchone()
                 if health is None:
                     raise ProviderRecoveryStoreError("provider recovery claim is owned")
@@ -1426,7 +1591,7 @@ class SQLiteProviderRecoveryStore:
                                 expires_at,
                                 job.connection,
                                 job.adapter,
-                                job.scope,
+                                health[3],
                                 job.generation,
                                 token,
                                 now,
@@ -1451,7 +1616,7 @@ class SQLiteProviderRecoveryStore:
                                 expires_at,
                                 job.connection,
                                 job.adapter,
-                                job.scope,
+                                health[3],
                                 job.generation,
                                 token,
                                 now,
@@ -1527,7 +1692,7 @@ class SQLiteProviderRecoveryStore:
             with self._lock:
                 self._connection.execute("BEGIN IMMEDIATE")
                 current = self._connection.execute(
-                    "SELECT state,attempt,next_eligible_at,claim_token,claim_expires_at,fanout_cutoff FROM provider_recovery_health "
+                    "SELECT state,attempt,next_eligible_at,claim_token,claim_expires_at,cohort_epoch,cohort_cutoff FROM provider_recovery_health "
                     "WHERE connection=? AND adapter=? AND scope=? AND generation=?",
                     (
                         recovery.connection,
@@ -1574,8 +1739,19 @@ class SQLiteProviderRecoveryStore:
                 ).rowcount
                 if changed != 1:
                     raise ProviderRecoveryStoreError("provider recovery claim is owned")
+                if health_snapshot[5] is None:
+                    self._connection.execute(
+                        "UPDATE provider_recovery_jobs SET cohort_epoch=NULL WHERE connection=? "
+                        "AND adapter=? AND generation=? AND cohort_epoch=?",
+                        (
+                            recovery.connection,
+                            recovery.adapter,
+                            recovery.generation,
+                            current[5],
+                        ),
+                    )
                 self._connection.execute(
-                    "UPDATE provider_recovery_health SET state=?,attempt=?,next_eligible_at=?,claim_token=?,claim_expires_at=?,fanout_cutoff=? WHERE connection=? AND adapter=? AND scope=?",
+                    "UPDATE provider_recovery_health SET state=?,attempt=?,next_eligible_at=?,claim_token=?,claim_expires_at=?,cohort_epoch=?,cohort_cutoff=? WHERE connection=? AND adapter=? AND scope=?",
                     (
                         *health_snapshot,
                         recovery.connection,
@@ -1607,7 +1783,7 @@ class SQLiteProviderRecoveryStore:
             with self._lock:
                 self._connection.execute("BEGIN IMMEDIATE")
                 current = self._connection.execute(
-                    "SELECT state,claim_token,claim_expires_at FROM provider_recovery_health "
+                    "SELECT state,claim_token,claim_expires_at,cohort_epoch,cohort_cutoff FROM provider_recovery_health "
                     "WHERE connection=? AND adapter=? AND scope=? AND generation=?",
                     (
                         recovery.connection,
@@ -1641,6 +1817,16 @@ class SQLiteProviderRecoveryStore:
                     < 1
                 ):
                     raise ProviderRecoveryStoreError("provider recovery claim is owned")
+                self._connection.execute(
+                    "UPDATE provider_recovery_jobs SET cohort_epoch=NULL WHERE connection=? "
+                    "AND adapter=? AND generation=? AND cohort_epoch=? AND state IN ('queued','running')",
+                    (
+                        recovery.connection,
+                        recovery.adapter,
+                        recovery.generation,
+                        current[3],
+                    ),
+                )
                 later = self._connection.execute(
                     "SELECT 1 FROM provider_recovery_jobs WHERE connection=? AND adapter=? "
                     "AND scope=? AND generation=? AND state='queued' LIMIT 1",
@@ -1658,7 +1844,7 @@ class SQLiteProviderRecoveryStore:
                 _append_checking(self._connection, recovery, now)
                 self._connection.execute(
                     "UPDATE provider_recovery_health SET state=?,next_eligible_at=?,"
-                    "claim_token=NULL,claim_expires_at=NULL,fanout_cutoff=NULL WHERE connection=? AND adapter=? AND scope=?",
+                    "claim_token=NULL,claim_expires_at=NULL,cohort_epoch=NULL,cohort_cutoff=NULL WHERE connection=? AND adapter=? AND scope=?",
                     (
                         successor.state,
                         successor.next_eligible_at,
@@ -1703,14 +1889,14 @@ class SQLiteProviderRecoveryStore:
         failure: str,
         retry_after: int | None,
     ) -> ProviderRecovery:
-        """Requeue the canary and back off its scope in one transaction."""
+        """Requeue the canary and back off its provider cohort atomically."""
         if failure not in RECOVERY_FAILURES:
             raise ProviderRecoveryStoreError("provider recovery claim is invalid")
         with self._rollback_on_failure(ProviderRecoveryError):
             with self._lock:
                 self._connection.execute("BEGIN IMMEDIATE")
                 current = self._connection.execute(
-                    "SELECT generation,state,attempt,claim_token,claim_expires_at "
+                    "SELECT generation,state,attempt,claim_token,claim_expires_at,cohort_epoch,cohort_cutoff "
                     "FROM provider_recovery_health WHERE connection=? AND adapter=? AND scope=?",
                     (recovery.connection, recovery.adapter, recovery.scope),
                 ).fetchone()
@@ -1739,48 +1925,91 @@ class SQLiteProviderRecoveryStore:
                 ).rowcount
                 if changed != 1:
                     raise ProviderRecoveryStoreError("provider recovery claim is owned")
-                base = ProviderRecovery(
-                    recovery.connection,
-                    recovery.adapter,
-                    recovery.scope,
-                    recovery.generation,
-                    "waiting",
-                    recovery.attempt,
-                    now,
-                )
-                successor = base.after_failure(
-                    failure=failure,
-                    now=now,
-                    retry_after=retry_after,
+                scopes = self._connection.execute(
+                    "SELECT DISTINCT scope FROM provider_recovery_jobs WHERE connection=? "
+                    "AND adapter=? AND generation=? AND cohort_epoch=? ORDER BY scope",
+                    (
+                        recovery.connection,
+                        recovery.adapter,
+                        recovery.generation,
+                        current[5],
+                    ),
+                ).fetchall()
+                self._connection.execute(
+                    "UPDATE provider_recovery_jobs SET cohort_epoch=NULL WHERE connection=? "
+                    "AND adapter=? AND generation=? AND cohort_epoch=? AND state IN ('queued','running')",
+                    (
+                        recovery.connection,
+                        recovery.adapter,
+                        recovery.generation,
+                        current[5],
+                    ),
                 )
                 _append_checking(self._connection, recovery, now)
-                self._connection.execute(
-                    "UPDATE provider_recovery_health SET state=?,attempt=?,next_eligible_at=?,"
-                    "claim_token=NULL,claim_expires_at=NULL,fanout_cutoff=NULL WHERE connection=? AND adapter=? AND scope=?",
-                    (
-                        successor.state,
-                        successor.attempt,
-                        successor.next_eligible_at,
-                        successor.connection,
-                        successor.adapter,
-                        successor.scope,
-                    ),
-                )
-                self._connection.execute(
-                    "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at) VALUES(?,?,?,?,?,?,?,?)",
-                    (
-                        successor.connection,
-                        successor.adapter,
-                        successor.scope,
-                        successor.generation,
-                        successor.state,
-                        successor.attempt,
-                        successor.next_eligible_at,
+                owner_successor = None
+                for (scope,) in scopes:
+                    attempt = self._connection.execute(
+                        "SELECT attempt FROM provider_recovery_health WHERE connection=? "
+                        "AND adapter=? AND scope=? AND generation=?",
+                        (
+                            recovery.connection,
+                            recovery.adapter,
+                            scope,
+                            recovery.generation,
+                        ),
+                    ).fetchone()
+                    if attempt is None:
+                        raise ProviderRecoveryStoreError(
+                            "provider recovery transition is invalid"
+                        )
+                    successor = ProviderRecovery(
+                        recovery.connection,
+                        recovery.adapter,
+                        scope,
+                        recovery.generation,
+                        "waiting",
+                        attempt[0],
                         now,
-                    ),
-                )
+                    ).after_failure(
+                        failure=failure,
+                        now=now,
+                        retry_after=retry_after,
+                    )
+                    self._connection.execute(
+                        "UPDATE provider_recovery_health SET state=?,attempt=?,next_eligible_at=?,"
+                        "claim_token=NULL,claim_expires_at=NULL,cohort_epoch=NULL,cohort_cutoff=NULL "
+                        "WHERE connection=? AND adapter=? AND scope=? AND generation=?",
+                        (
+                            successor.state,
+                            successor.attempt,
+                            successor.next_eligible_at,
+                            successor.connection,
+                            successor.adapter,
+                            successor.scope,
+                            successor.generation,
+                        ),
+                    )
+                    self._connection.execute(
+                        "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at) VALUES(?,?,?,?,?,?,?,?)",
+                        (
+                            successor.connection,
+                            successor.adapter,
+                            successor.scope,
+                            successor.generation,
+                            successor.state,
+                            successor.attempt,
+                            successor.next_eligible_at,
+                            now,
+                        ),
+                    )
+                    if scope == recovery.scope:
+                        owner_successor = successor
+                if owner_successor is None:
+                    raise ProviderRecoveryStoreError(
+                        "provider recovery transition is invalid"
+                    )
                 self._connection.execute("COMMIT")
-                return successor
+                return owner_successor
 
     def authorize_fanout(
         self,
@@ -1795,7 +2024,7 @@ class SQLiteProviderRecoveryStore:
             with self._lock:
                 self._connection.execute("BEGIN IMMEDIATE")
                 current = self._connection.execute(
-                    "SELECT state,claim_token,claim_expires_at FROM provider_recovery_health "
+                    "SELECT state,claim_token,claim_expires_at,cohort_epoch,cohort_cutoff FROM provider_recovery_health "
                     "WHERE connection=? AND adapter=? AND scope=? AND generation=?",
                     (
                         recovery.connection,
@@ -1814,29 +2043,19 @@ class SQLiteProviderRecoveryStore:
                 changed = self._connection.execute(
                     "UPDATE provider_recovery_jobs SET state='complete',claim_token=NULL,claim_expires_at=NULL "
                     "WHERE connection=? AND adapter=? AND scope=? AND generation=? AND member_id=? "
-                    "AND state='running' AND claim_token=? AND claim_expires_at>?",
+                    "AND cohort_epoch=? AND state='running' AND claim_token=? AND claim_expires_at>?",
                     (
                         job.connection,
                         job.adapter,
                         job.scope,
                         job.generation,
                         job.member_id,
+                        current[3],
                         token,
                         now,
                     ),
                 ).rowcount
                 if changed != 1:
-                    raise ProviderRecoveryStoreError("provider recovery claim is owned")
-                cutoff = self._connection.execute(
-                    "SELECT enrollment_cursor FROM provider_recovery_health WHERE connection=? AND adapter=? AND scope=? AND generation=?",
-                    (
-                        recovery.connection,
-                        recovery.adapter,
-                        recovery.scope,
-                        recovery.generation,
-                    ),
-                ).fetchone()
-                if cutoff is None:
                     raise ProviderRecoveryStoreError("provider recovery claim is owned")
                 successor = ProviderRecovery(
                     recovery.connection,
@@ -1848,12 +2067,11 @@ class SQLiteProviderRecoveryStore:
                     None,
                 )
                 _append_checking(self._connection, recovery, now)
-                self._connection.execute(
-                    "UPDATE provider_recovery_health SET state='fanout',next_eligible_at=NULL,fanout_cutoff=? "
+                transitioned = self._connection.execute(
+                    "UPDATE provider_recovery_health SET state='fanout',next_eligible_at=NULL "
                     "WHERE connection=? AND adapter=? AND scope=? AND generation=? AND state='checking' "
                     "AND claim_token=? AND claim_expires_at>?",
                     (
-                        cutoff[0],
                         recovery.connection,
                         recovery.adapter,
                         recovery.scope,
@@ -1861,7 +2079,11 @@ class SQLiteProviderRecoveryStore:
                         token,
                         now,
                     ),
-                )
+                ).rowcount
+                if transitioned != 1:
+                    raise ProviderRecoveryStoreError(
+                        "provider recovery transition is invalid"
+                    )
                 self._connection.execute(
                     "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at) VALUES(?,?,?,?,?,?,?,?)",
                     (
@@ -1891,12 +2113,12 @@ class SQLiteProviderRecoveryStore:
     def finish_fanout(
         self, *, recovery: ProviderRecovery, token: str, now: int
     ) -> ProviderRecovery:
-        """Close only after the exact generation has no eligible work."""
+        """Close every participating scope after the finite cohort drains."""
         with self._rollback_on_failure(ProviderRecoveryError):
             with self._lock:
                 self._connection.execute("BEGIN IMMEDIATE")
-                cutoff = self._connection.execute(
-                    "SELECT fanout_cutoff FROM provider_recovery_health WHERE connection=? "
+                owner = self._connection.execute(
+                    "SELECT cohort_epoch,cohort_cutoff FROM provider_recovery_health WHERE connection=? "
                     "AND adapter=? AND scope=? AND generation=? AND state='fanout' "
                     "AND claim_token=? AND claim_expires_at>?",
                     (
@@ -1908,101 +2130,132 @@ class SQLiteProviderRecoveryStore:
                         now,
                     ),
                 ).fetchone()
-                if cutoff is None:
+                if owner is None:
                     raise ProviderRecoveryStoreError(
                         "provider recovery transition is invalid"
                     )
                 active = self._connection.execute(
                     "SELECT 1 FROM provider_recovery_jobs WHERE connection=? AND adapter=? "
-                    "AND scope=? AND generation=? AND enrollment_ordinal<=? "
+                    "AND generation=? AND cohort_epoch=? AND enrollment_ordinal<=? "
                     "AND state IN ('queued','running') LIMIT 1",
                     (
                         recovery.connection,
                         recovery.adapter,
-                        recovery.scope,
                         recovery.generation,
-                        cutoff[0],
+                        owner[0],
+                        owner[1],
                     ),
                 ).fetchone()
                 if active is not None:
                     raise ProviderRecoveryStoreError("provider recovery members remain")
-                failed = self._connection.execute(
-                    "SELECT 1 FROM provider_recovery_jobs WHERE connection=? AND adapter=? "
-                    "AND scope=? AND generation=? AND enrollment_ordinal<=? "
-                    "AND state='failed' LIMIT 1",
+                scopes = self._connection.execute(
+                    "SELECT DISTINCT scope FROM provider_recovery_jobs WHERE connection=? "
+                    "AND adapter=? AND generation=? AND cohort_epoch=? AND enrollment_ordinal<=? "
+                    "ORDER BY scope",
                     (
                         recovery.connection,
                         recovery.adapter,
-                        recovery.scope,
                         recovery.generation,
-                        cutoff[0],
+                        owner[0],
+                        owner[1],
                     ),
-                ).fetchone()
-                later = self._connection.execute(
-                    "SELECT 1 FROM provider_recovery_jobs WHERE connection=? AND adapter=? "
-                    "AND scope=? AND generation=? AND enrollment_ordinal>? "
-                    "AND state IN ('queued','running') LIMIT 1",
-                    (
+                ).fetchall()
+                if not scopes:
+                    scopes = [(recovery.scope,)]
+                owner_successor = None
+                for (scope,) in scopes:
+                    health = self._connection.execute(
+                        "SELECT attempt FROM provider_recovery_health WHERE connection=? "
+                        "AND adapter=? AND scope=? AND generation=?",
+                        (
+                            recovery.connection,
+                            recovery.adapter,
+                            scope,
+                            recovery.generation,
+                        ),
+                    ).fetchone()
+                    if health is None:
+                        raise ProviderRecoveryStoreError(
+                            "provider recovery transition is invalid"
+                        )
+                    failed = self._connection.execute(
+                        "SELECT 1 FROM provider_recovery_jobs WHERE connection=? AND adapter=? "
+                        "AND scope=? AND generation=? AND cohort_epoch=? AND state='failed' LIMIT 1",
+                        (
+                            recovery.connection,
+                            recovery.adapter,
+                            scope,
+                            recovery.generation,
+                            owner[0],
+                        ),
+                    ).fetchone()
+                    later = self._connection.execute(
+                        "SELECT 1 FROM provider_recovery_jobs WHERE connection=? AND adapter=? "
+                        "AND scope=? AND generation=? AND cohort_epoch IS NULL "
+                        "AND state IN ('queued','running') LIMIT 1",
+                        (
+                            recovery.connection,
+                            recovery.adapter,
+                            scope,
+                            recovery.generation,
+                        ),
+                    ).fetchone()
+                    state = (
+                        "waiting"
+                        if later is not None
+                        else "exhausted"
+                        if failed is not None
+                        else "recovered"
+                    )
+                    attempt = health[0] if failed is not None else 0
+                    successor = ProviderRecovery(
                         recovery.connection,
                         recovery.adapter,
-                        recovery.scope,
+                        scope,
                         recovery.generation,
-                        cutoff[0],
-                    ),
-                ).fetchone()
-                state = (
-                    "waiting"
-                    if later is not None
-                    else "exhausted"
-                    if failed is not None
-                    else "recovered"
-                )
-                attempt = recovery.attempt if failed is not None else 0
-                next_eligible_at = now if later is not None else None
-                successor = ProviderRecovery(
-                    recovery.connection,
-                    recovery.adapter,
-                    recovery.scope,
-                    recovery.generation,
-                    state,
-                    attempt,
-                    next_eligible_at,
-                )
-                changed = self._connection.execute(
-                    "UPDATE provider_recovery_health SET state=?,attempt=?,next_eligible_at=?,claim_token=NULL,claim_expires_at=NULL,fanout_cutoff=NULL "
-                    "WHERE connection=? AND adapter=? AND scope=? AND generation=? AND state='fanout' "
-                    "AND claim_token=? AND claim_expires_at>?",
-                    (
                         state,
                         attempt,
-                        next_eligible_at,
-                        recovery.connection,
-                        recovery.adapter,
-                        recovery.scope,
-                        recovery.generation,
-                        token,
-                        now,
-                    ),
-                ).rowcount
-                if changed != 1:
+                        now if later is not None else None,
+                    )
+                    changed = self._connection.execute(
+                        "UPDATE provider_recovery_health SET state=?,attempt=?,next_eligible_at=?,"
+                        "claim_token=NULL,claim_expires_at=NULL,cohort_epoch=NULL,cohort_cutoff=NULL "
+                        "WHERE connection=? AND adapter=? AND scope=? AND generation=?",
+                        (
+                            successor.state,
+                            successor.attempt,
+                            successor.next_eligible_at,
+                            successor.connection,
+                            successor.adapter,
+                            successor.scope,
+                            successor.generation,
+                        ),
+                    ).rowcount
+                    if changed != 1:
+                        raise ProviderRecoveryStoreError(
+                            "provider recovery transition is invalid"
+                        )
+                    self._connection.execute(
+                        "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at) VALUES(?,?,?,?,?,?,?,?)",
+                        (
+                            successor.connection,
+                            successor.adapter,
+                            successor.scope,
+                            successor.generation,
+                            successor.state,
+                            successor.attempt,
+                            successor.next_eligible_at,
+                            now,
+                        ),
+                    )
+                    if scope == recovery.scope:
+                        owner_successor = successor
+                if owner_successor is None:
                     raise ProviderRecoveryStoreError(
                         "provider recovery transition is invalid"
                     )
-                self._connection.execute(
-                    "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at) VALUES(?,?,?,?,?,?,?,?)",
-                    (
-                        successor.connection,
-                        successor.adapter,
-                        successor.scope,
-                        successor.generation,
-                        successor.state,
-                        successor.attempt,
-                        successor.next_eligible_at,
-                        now,
-                    ),
-                )
                 self._connection.execute("COMMIT")
-                return successor
+                return owner_successor
 
     def interrupt_fanout(
         self,
@@ -2021,7 +2274,7 @@ class SQLiteProviderRecoveryStore:
             with self._lock:
                 self._connection.execute("BEGIN IMMEDIATE")
                 state = self._connection.execute(
-                    "SELECT state,attempt,claim_token,claim_expires_at FROM provider_recovery_health WHERE connection=? "
+                    "SELECT state,attempt,claim_token,claim_expires_at,cohort_epoch,cohort_cutoff FROM provider_recovery_health WHERE connection=? "
                     "AND adapter=? AND scope=? AND generation=?",
                     (
                         recovery.connection,
@@ -2057,47 +2310,125 @@ class SQLiteProviderRecoveryStore:
                     != 1
                 ):
                     raise ProviderRecoveryStoreError("provider recovery claim is owned")
-                base = ProviderRecovery(
-                    recovery.connection,
-                    recovery.adapter,
-                    recovery.scope,
-                    recovery.generation,
-                    "waiting",
-                    recovery.attempt,
-                    now,
-                )
-                successor = base.after_failure(
-                    failure=failure,
-                    now=now,
-                    retry_after=retry_after,
-                )
-                self._connection.execute(
-                    "UPDATE provider_recovery_health SET state=?,attempt=?,next_eligible_at=?,"
-                    "claim_token=NULL,claim_expires_at=NULL,fanout_cutoff=NULL WHERE connection=? AND adapter=? AND scope=?",
+                scopes = self._connection.execute(
+                    "SELECT DISTINCT scope FROM provider_recovery_jobs WHERE connection=? "
+                    "AND adapter=? AND generation=? AND cohort_epoch=? ORDER BY scope",
                     (
-                        successor.state,
-                        successor.attempt,
-                        successor.next_eligible_at,
-                        successor.connection,
-                        successor.adapter,
-                        successor.scope,
+                        recovery.connection,
+                        recovery.adapter,
+                        recovery.generation,
+                        state[4],
+                    ),
+                ).fetchall()
+                owner_successor = None
+                for (scope,) in scopes:
+                    health = self._connection.execute(
+                        "SELECT attempt FROM provider_recovery_health WHERE connection=? "
+                        "AND adapter=? AND scope=? AND generation=?",
+                        (
+                            recovery.connection,
+                            recovery.adapter,
+                            scope,
+                            recovery.generation,
+                        ),
+                    ).fetchone()
+                    active = self._connection.execute(
+                        "SELECT 1 FROM provider_recovery_jobs WHERE connection=? AND adapter=? "
+                        "AND scope=? AND generation=? AND cohort_epoch=? "
+                        "AND state IN ('queued','running') LIMIT 1",
+                        (
+                            recovery.connection,
+                            recovery.adapter,
+                            scope,
+                            recovery.generation,
+                            state[4],
+                        ),
+                    ).fetchone()
+                    failed = self._connection.execute(
+                        "SELECT 1 FROM provider_recovery_jobs WHERE connection=? AND adapter=? "
+                        "AND scope=? AND generation=? AND cohort_epoch=? AND state='failed' LIMIT 1",
+                        (
+                            recovery.connection,
+                            recovery.adapter,
+                            scope,
+                            recovery.generation,
+                            state[4],
+                        ),
+                    ).fetchone()
+                    if health is None:
+                        raise ProviderRecoveryStoreError(
+                            "provider recovery transition is invalid"
+                        )
+                    successor = (
+                        ProviderRecovery(
+                            recovery.connection,
+                            recovery.adapter,
+                            scope,
+                            recovery.generation,
+                            "waiting",
+                            health[0],
+                            now,
+                        ).after_failure(
+                            failure=failure,
+                            now=now,
+                            retry_after=retry_after,
+                        )
+                        if active is not None
+                        else ProviderRecovery(
+                            recovery.connection,
+                            recovery.adapter,
+                            scope,
+                            recovery.generation,
+                            "exhausted" if failed is not None else "recovered",
+                            health[0] if failed is not None else 0,
+                            None,
+                        )
+                    )
+                    self._connection.execute(
+                        "UPDATE provider_recovery_health SET state=?,attempt=?,next_eligible_at=?,"
+                        "claim_token=NULL,claim_expires_at=NULL,cohort_epoch=NULL,cohort_cutoff=NULL "
+                        "WHERE connection=? AND adapter=? AND scope=? AND generation=?",
+                        (
+                            successor.state,
+                            successor.attempt,
+                            successor.next_eligible_at,
+                            successor.connection,
+                            successor.adapter,
+                            successor.scope,
+                            successor.generation,
+                        ),
+                    )
+                    self._connection.execute(
+                        "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at) VALUES(?,?,?,?,?,?,?,?)",
+                        (
+                            successor.connection,
+                            successor.adapter,
+                            successor.scope,
+                            successor.generation,
+                            successor.state,
+                            successor.attempt,
+                            successor.next_eligible_at,
+                            now,
+                        ),
+                    )
+                    if scope == recovery.scope:
+                        owner_successor = successor
+                self._connection.execute(
+                    "UPDATE provider_recovery_jobs SET cohort_epoch=NULL WHERE connection=? "
+                    "AND adapter=? AND generation=? AND cohort_epoch=? AND state IN ('queued','running')",
+                    (
+                        recovery.connection,
+                        recovery.adapter,
+                        recovery.generation,
+                        state[4],
                     ),
                 )
-                self._connection.execute(
-                    "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at) VALUES(?,?,?,?,?,?,?,?)",
-                    (
-                        successor.connection,
-                        successor.adapter,
-                        successor.scope,
-                        successor.generation,
-                        successor.state,
-                        successor.attempt,
-                        successor.next_eligible_at,
-                        now,
-                    ),
-                )
+                if owner_successor is None:
+                    raise ProviderRecoveryStoreError(
+                        "provider recovery transition is invalid"
+                    )
                 self._connection.execute("COMMIT")
-                return successor
+                return owner_successor
 
 
 def _validate(connection: sqlite3.Connection) -> None:
@@ -2138,7 +2469,7 @@ def _validate(connection: sqlite3.Connection) -> None:
                 "provider recovery database is unavailable or incompatible"
             )
         for row in connection.execute(
-            "SELECT connection,adapter,scope,generation,state,attempt,next_eligible_at,claim_token,claim_expires_at,enrollment_cursor,fanout_cutoff FROM provider_recovery_health"
+            "SELECT connection,adapter,scope,generation,state,attempt,next_eligible_at,claim_token,claim_expires_at,cohort_epoch,cohort_cutoff FROM provider_recovery_health"
         ):
             ProviderRecovery(*row[:7])
             if row[:3] not in members or (
@@ -2154,10 +2485,20 @@ def _validate(connection: sqlite3.Connection) -> None:
                     "provider recovery database is unavailable or incompatible"
                 )
             if (
-                type(row[9]) is not int
-                or row[9] < 0
-                or (row[4] == "fanout") != (type(row[10]) is int)
-                or (type(row[10]) is int and not 0 <= row[10] <= row[9])
+                (row[4] in {"checking", "fanout"})
+                != (type(row[9]) is int and type(row[10]) is int)
+                or (type(row[9]) is int and row[9] < 1)
+                or (type(row[10]) is int and row[10] < 0)
+                or (
+                    type(row[10]) is int
+                    and row[10]
+                    > connection.execute(
+                        "SELECT COALESCE(MAX(enrollment_ordinal),0) "
+                        "FROM provider_recovery_jobs WHERE connection=? "
+                        "AND adapter=? AND generation=?",
+                        (row[0], row[1], row[3]),
+                    ).fetchone()[0]
+                )
             ):
                 raise ProviderRecoveryStoreError(
                     "provider recovery database is unavailable or incompatible"
@@ -2176,13 +2517,31 @@ def _validate(connection: sqlite3.Connection) -> None:
                     "provider recovery database is unavailable or incompatible"
                 )
         for row in connection.execute(
-            "SELECT connection,adapter,scope,generation,member_id,target_connection,library,item,file_identity,source_report_id,package_proposal_id,package_report_id,package_case_id,package_checkpoint,package_outcome,lane_ids,state,attempt,dispatch_reason,dispatch_rank,enrollment_ordinal FROM provider_recovery_jobs"
+            "SELECT connection,adapter,scope,generation,member_id,target_connection,library,item,file_identity,source_report_id,package_proposal_id,package_report_id,package_case_id,package_checkpoint,package_outcome,lane_ids,state,attempt,dispatch_reason,dispatch_rank,enrollment_ordinal,cohort_epoch FROM provider_recovery_jobs"
         ):
             ProviderRecoveryJob(*row)
-            if row[:3] not in members:
+            if row[:3] not in members or (row[16] == "running" and row[21] is None):
                 raise ProviderRecoveryStoreError(
                     "provider recovery database is unavailable or incompatible"
                 )
+        if (
+            connection.execute(
+                "SELECT 1 FROM provider_recovery_health GROUP BY connection,adapter,generation "
+                "HAVING SUM(state IN ('checking','fanout'))>1 LIMIT 1"
+            ).fetchone()
+            is not None
+            or connection.execute(
+                "SELECT 1 FROM provider_recovery_jobs j WHERE j.state IN ('queued','running') "
+                "AND j.cohort_epoch IS NOT NULL AND NOT EXISTS (SELECT 1 FROM provider_recovery_health h "
+                "WHERE h.connection=j.connection AND h.adapter=j.adapter AND h.generation=j.generation "
+                "AND h.cohort_epoch=j.cohort_epoch AND h.state IN ('checking','fanout') "
+                "AND j.enrollment_ordinal<=h.cohort_cutoff) LIMIT 1"
+            ).fetchone()
+            is not None
+        ):
+            raise ProviderRecoveryStoreError(
+                "provider recovery database is unavailable or incompatible"
+            )
     except (sqlite3.Error, ProviderRecoveryError, TypeError, OverflowError) as error:
         raise ProviderRecoveryStoreError(
             "provider recovery database is unavailable or incompatible"

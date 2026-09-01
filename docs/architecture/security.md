@@ -1062,11 +1062,16 @@ header, query, payload, response body, work identifier, or private path.
 After a quota-pressure recovery package is exact-current, application code
 classifies its durable job from that package and report only. The stored closed
 reason names a decided-field opportunity or blanket fallback, never provider
-heuristics or provider data. Fanout atomically freezes an enrollment cutoff;
-later or refreshed jobs cannot enter that credential-bearing cohort, but remain
-claimable on the next recovery pass. The recovery database accepts only this
-exact schema; earlier pre-release recovery state requires a clean rebuild under
-ADR-0013.
+heuristics or provider data. One canonical health owner atomically freezes a
+finite cohort of every currently due, eligible and unblocked job for the same
+provider connection, adapter and generation. Credential-bearing claims use
+strict reason-rank, member and scope order inside it. Later or refreshed jobs
+cannot enter that cohort, but remain claimable in the next one. Per-scope
+health remains authoritative for eligibility, backoff and Activity outcomes;
+only cohort participation shares provider transport failure effects. Target
+holds restore the exact owner, cohort and job snapshot. The recovery database
+accepts only this exact schema; earlier pre-release recovery state requires a
+clean rebuild under ADR-0013.
 
 ### Decision authority
 
