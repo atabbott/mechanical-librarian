@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any, Callable
+
 import httpx
 import pytest
 
@@ -55,14 +57,18 @@ def _lookup() -> MetadataLookup:
 
 
 def _provider(
-    handler: httpx.MockTransport, *, maximum_bytes: int = 65_536
+    handler: httpx.MockTransport,
+    *,
+    maximum_bytes: int = 65_536,
+    clock: Callable[[], float] | None = None,
 ) -> InventaireMetadataProvider:
+    active_clock = (lambda: 10.0) if clock is None else clock
     return InventaireMetadataProvider(
         "inventaire",
         inventaire_client(5, transport=handler),
         maximum_bytes,
-        pacer=InventairePacer(0.001),
-        clock=lambda: 10.0,
+        pacer=InventairePacer(0.001, clock=active_clock, sleep=lambda _: None),
+        clock=active_clock,
         wall_clock=lambda: 1_700_000_000.0,
         sleep=lambda _: None,
         jitter=lambda: 0.5,
@@ -531,6 +537,114 @@ def test_optional_label_transport_failures_preserve_edition_evidence(
     assert provider.attempt_records[-1].category == category
     assert provider.attempt_records[-1].outcome == outcome
     assert provider.incomplete_causes == ()
+    assert observation.diagnostics == ()
+
+
+@pytest.mark.parametrize(
+    ("guard", "cause"),
+    (("aggregate", "aggregate_bytes"), ("deadline", "deadline")),
+)
+def test_optional_label_predispatch_refusal_preserves_edition_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    guard: str,
+    cause: str,
+) -> None:
+    now = [10.0]
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        uris = request.url.params.get_list("uris")
+        if uris == ["isbn:9780306406157"]:
+            return httpx.Response(
+                200,
+                json={
+                    "entities": {
+                        "inv:edition-one": {
+                            "uri": "inv:edition-one",
+                            "labels": {"en": "Example Book"},
+                            "image": {
+                                "url": "/img/entities/0123456789abcdef0123456789abcdef01234567"
+                            },
+                            "claims": {
+                                "wdt:P212": ["9780306406157"],
+                                "wdt:P1476": ["Example Book"],
+                                "wdt:P123": ["wd:Q200"],
+                                "wdt:P407": ["wd:Q1860"],
+                                "wdt:P629": ["wd:Q100"],
+                            },
+                        }
+                    },
+                    "redirects": {"isbn:9780306406157": "inv:edition-one"},
+                },
+            )
+        assert uris == ["wd:Q100"]
+        return httpx.Response(
+            200,
+            json={
+                "entities": {
+                    "wd:Q100": {
+                        "uri": "wd:Q100",
+                        "labels": {"en": "Example Book"},
+                        "claims": {},
+                    }
+                },
+                "redirects": {},
+            },
+        )
+
+    provider = _provider(
+        httpx.MockTransport(respond),
+        clock=lambda: now[0],
+    )
+    optional_label_entities = provider._optional_label_entities  # noqa: SLF001
+
+    def refuse_optional_labels(
+        uris: tuple[str, ...],
+        *,
+        deadline: float | None,
+        detail: bool = True,
+    ) -> tuple[dict[str, Any], ...]:
+        if detail:
+            if guard == "aggregate":
+                provider._session.remaining_response_bytes = 0  # noqa: SLF001
+            else:
+                now[0] = 11.0
+        return optional_label_entities(uris, deadline=deadline, detail=detail)
+
+    monkeypatch.setattr(provider, "_optional_label_entities", refuse_optional_labels)
+    observation = provider.observe(
+        _lookup(),
+        deadline=11.0 if guard == "deadline" else None,
+    )
+
+    assert observation.status is ProviderStatus.CANDIDATES
+    claims = observation.candidates[0].claims
+    assert {
+        (claim.kind, claim.value)
+        for claim in claims
+        if claim.kind in {ClaimKind.ISBN, ClaimKind.TITLE}
+    } == {
+        (ClaimKind.ISBN, "9780306406157"),
+        (ClaimKind.TITLE, "Example Book"),
+    }
+    assert not any(
+        claim.kind in {ClaimKind.PUBLISHER, ClaimKind.LANGUAGE} for claim in claims
+    )
+    assert provider.cover_descriptors[0].provenance is not None
+    assert (
+        provider.cover_descriptors[0].provenance.designation
+        is CoverDesignation.EXACT_EDITION
+    )
+    assert [record.cause.value for record in provider.incomplete_causes] == [cause]
+    accounting = observation.request_accounting
+    assert accounting.logical_requests == 3
+    assert accounting.initial_dispatches == 2
+    assert accounting.retry_dispatches == 0
+    assert accounting.replays == 0
+    assert accounting.undispatched_incomplete == 1
+    assert len(provider.attempt_records) == 2
+    assert len(requests) == 2
     assert observation.diagnostics == ()
 
 

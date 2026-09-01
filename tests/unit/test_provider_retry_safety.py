@@ -101,6 +101,33 @@ def test_discovery_ledger_reserves_registered_initials_before_retry() -> None:
     assert ledger.allows_retry(47, 49)
 
 
+def test_detail_ledger_closes_a_predispatch_exception_without_caching_it() -> None:
+    ledger = _DiscoveryRequestLedger("provider", "revision")
+    failure = RuntimeError("synthetic pre-dispatch failure")
+
+    with pytest.raises(RuntimeError) as raised:
+        ledger.resolve_detail("record", execute=lambda: (_ for _ in ()).throw(failure))
+
+    assert raised.value is failure
+    assert ledger.accounting().logical_requests == 1
+    assert ledger.accounting().initial_dispatches == 0
+    assert ledger.accounting().replays == 0
+    assert ledger.accounting().undispatched_incomplete == 1
+
+    def succeed() -> str:
+        ledger.dispatch(retry=False)
+        return "fresh result"
+
+    result, replay = ledger.resolve_detail("record", execute=succeed)
+
+    assert result == "fresh result"
+    assert replay is False
+    assert ledger.accounting().logical_requests == 2
+    assert ledger.accounting().initial_dispatches == 1
+    assert ledger.accounting().replays == 0
+    assert ledger.accounting().undispatched_incomplete == 1
+
+
 def test_attempt_elapsed_is_finite_and_bounded() -> None:
     assert 0.0 == bounded_attempt_elapsed(2.0, 1.0)
     assert 0.0 == bounded_attempt_elapsed(0.0, float("inf"))
