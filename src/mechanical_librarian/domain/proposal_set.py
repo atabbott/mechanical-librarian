@@ -1353,6 +1353,10 @@ def _locally_attested_subtitle(
     # the corroboration, never the elected provider value itself.
     for alternative in matching:
         if alternative.scope is ProposalScope.EDITION:
+            if _explicit_subtitle_references(
+                report, cast(str, alternative.value.value)
+            ):
+                return alternative
             title_references = _title_derived_subtitle_references(
                 report, cast(str, alternative.value.value)
             )
@@ -1368,6 +1372,22 @@ def _locally_attested_subtitle(
                 )
             return alternative
     return None
+
+
+def _explicit_subtitle_references(
+    report: MetadataReport, value: str
+) -> frozenset[str]:
+    """Return local subtitle claims that independently attest one value."""
+    sought = normalize_title(value).casefold()
+    return frozenset(
+        claim.reference
+        for claim in report.local_claims
+        if claim.kind is ClaimKind.SUBTITLE
+        and claim.state is FieldState.VALID
+        and type(observed := claim.canonical or claim.observed) is str
+        and observed
+        and normalize_title(observed).casefold() == sought
+    )
 
 
 def _title_derived_subtitle_references(

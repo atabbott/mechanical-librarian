@@ -1001,6 +1001,73 @@ def test_title_derived_colon_subtitle_stays_an_owner_proposal_not_automatic() ->
     )
 
 
+def test_explicit_subtitle_attestation_preserves_f20_authority_over_colon_signal() -> (
+    None
+):
+    title = "Secret History: A Mistborn Novella"
+    local_title = LocalClaim.create(
+        kind=ClaimKind.TITLE,
+        observed=title,
+        canonical=title,
+        state=FieldState.VALID,
+        scope=ClaimScope.WORK,
+        basis="package_metadata",
+        excerpt=title,
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        occurrence=0,
+    )
+    local_subtitle = _local_subtitle("A Mistborn Novella", ClaimScope.WORK)
+    report = _bibliographic_report(
+        current_title="Secret History",
+        providers=(
+            _source(
+                "catalogue",
+                "edition-1",
+                titles=("Secret History",),
+                subtitle="A Mistborn Novella",
+            ),
+            _source(
+                "other-catalogue",
+                "edition-2",
+                titles=("Secret History",),
+                subtitle="Other subtitle",
+            ),
+        ),
+        local_claims=(local_title, local_subtitle),
+    )
+    policy = resolve_policy(MetadataPolicyProfile.builtin(), report.target.library)
+    proposal = evaluate_report(report, policy.resolved_id, dict(policy.destinations))
+    subtitle = next(
+        result
+        for result in proposal.results
+        if result.destination is TargetDestination.SUBTITLE
+    )
+    selected = next(
+        value
+        for value in compile_rich_metadata_preview(policy, report, proposal).fields
+        if value.field == "subtitle"
+    )
+
+    alternative = subtitle.alternatives[0]
+    provider_reference = next(
+        claim.reference
+        for provider in report.providers
+        for candidate in provider.candidates
+        for claim in candidate.claims
+        if claim.kind is ClaimKind.SUBTITLE and claim.value == "A Mistborn Novella"
+    )
+    assert alternative.scope.value == "edition"
+    assert alternative.evidence_references == (provider_reference,)
+    assert ("projected", "A Mistborn Novella") == (
+        selected.outcome,
+        selected.desired_value,
+    )
+    assert local_subtitle.reference in selected.source_evidence_references
+    assert provider_reference in selected.source_evidence_references
+
+
 @pytest.mark.parametrize(
     "option", ("primary_narrative", "source_order", "all_qualified")
 )
