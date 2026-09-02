@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Equivalent local author or narrator forms now adopt an exact provider-consensus
+  display only when independent providers agree; the original local form remains
+  in the decision evidence. Existing pre-release proposal state requires a clean
+  rebuild under `fixed-conservative-v15`. (#887)
+
 - Audiobook items whose file names carry characters the report cannot hold
   are now prepared normally: the track manifest records a projection of the
   name, so an item is no longer lost to an untyped failure over a value

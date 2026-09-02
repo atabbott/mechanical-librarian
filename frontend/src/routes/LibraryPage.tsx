@@ -456,6 +456,7 @@ const materialComparisonReasons = new Set([
   'provider_consensus_title_subtitle_segment',
   'provider_consensus_title_colon_unused',
   'provider_consensus_title_series_unpreserved',
+  'provider_consensus_contributor_display',
 ])
 const comparisonNotices = (field: ReviewField) =>
   field.choiceContexts.some((context) =>
@@ -865,6 +866,8 @@ function RecordedOutcome({
     : choiceContext(field, null)
   const evidenceId = `recorded-evidence-${field.destination}`
   const accepted = decision.outcome === 'accept' || decision.outcome === 'candidate'
+  const canonicalContributorDisplay =
+    accepted && field.notices.includes('provider_consensus_contributor_display')
   return (
     <section
       className="recorded-outcome"
@@ -890,6 +893,11 @@ function RecordedOutcome({
           </div>
         )}
       </dl>
+      {canonicalContributorDisplay ? (
+        <p>
+          Providers chose {decisionValue(field)}; normalized from {field.currentValue}.
+        </p>
+      ) : null}
       <button
         type="button"
         className="context-evidence-toggle"

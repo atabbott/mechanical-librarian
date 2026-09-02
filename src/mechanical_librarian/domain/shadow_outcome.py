@@ -18,6 +18,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import (
     MAX_BIBLIOGRAPHIC_COMBINATIONS,
+    PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON,
     PROVIDER_CONSENSUS_TITLE_REASONS,
     ProposalSet,
 )
@@ -376,6 +377,7 @@ class ShadowOutcomeSet:
         options = dict(policy.options)
         fields: list[ShadowFieldOutcome] = []
         title_layout_subtitle: ShadowFieldOutcome | None = None
+        provider_consensus_contributor_display_proposals: set[str] = set()
         provider_consensus_title_proposals: set[str] = set()
         for value in case.proposals:
             result = cast("dict[str, object]", value["result"])
@@ -387,6 +389,14 @@ class ShadowOutcomeSet:
                 and reasons[0] in PROVIDER_CONSENSUS_TITLE_REASONS
             ):
                 provider_consensus_title_proposals.add(
+                    cast("str", value["proposal_id"])
+                )
+            if (
+                value["destination"] in {"authors", "narrators"}
+                and type(reasons) is list
+                and reasons == [PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON]
+            ):
+                provider_consensus_contributor_display_proposals.add(
                     cast("str", value["proposal_id"])
                 )
         for decision in decisions.decisions:
@@ -411,6 +421,12 @@ class ShadowOutcomeSet:
                     "unsupported" if category is None else destinations[category]
                 )
                 policy_option = None if category is None else options[category]
+                if (
+                    decision.proposal_id
+                    in provider_consensus_contributor_display_proposals
+                    and policy_option != "canonical"
+                ):
+                    policy_destination = "ask"
             if policy_destination == "ignore":
                 disposition = "ignore"
             elif policy_destination == "ask":

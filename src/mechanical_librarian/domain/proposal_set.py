@@ -33,6 +33,7 @@ from mechanical_librarian.domain.metadata_policy import OPTION_CATALOGUE
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
+    Comparison,
     FieldState,
     IdentifierEvidence,
     IdentifierRelation,
@@ -70,7 +71,7 @@ if TYPE_CHECKING:
     from mechanical_librarian.domain.cover_evidence import CoverArtifact
 
 PROPOSAL_SCHEMA = "proposal-set-v5"
-POLICY_VERSION = "fixed-conservative-v14"
+POLICY_VERSION = "fixed-conservative-v15"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -217,6 +218,7 @@ _TITLE_CONSENSUS_FAMILIES = (
 PROVIDER_CONSENSUS_TITLE_REASONS = frozenset(
     f"provider_consensus_title_{family.value}" for family in _TITLE_CONSENSUS_FAMILIES
 )
+PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON = "provider_consensus_contributor_display"
 
 _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
     ProposalOutcome.PROPOSE_CHANGE: frozenset(
@@ -226,6 +228,7 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
             ("explicit_author_corroborates_untyped_creator",),
             ("local_attested_subtitle",),
             *((reason,) for reason in PROVIDER_CONSENSUS_TITLE_REASONS),
+            (PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON,),
         }
     ),
     ProposalOutcome.ACCEPTABLE_CHOICE: frozenset({("field_policy_acceptable_choice",)}),
@@ -1129,6 +1132,16 @@ def evaluate_report(
             and result.reasons == ("competing_evidence",)
         ):
             result = _provider_consensus_title_election(report, targets, result)
+        if destination in {TargetDestination.AUTHORS, TargetDestination.NARRATORS} and (
+            (
+                result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+                and result.reasons == ("competing_evidence",)
+            )
+            or result.outcome is ProposalOutcome.KEEP
+        ):
+            result = _provider_consensus_contributor_display_election(
+                report, targets, destination, result
+            )
         results[destination] = _apply_policy_destination(result, ignored)
     publication = _publication_results(report, targets)
     results.update(
@@ -1518,6 +1531,179 @@ def _provider_consensus_title_election(
         candidate.alternative_id,
         (f"provider_consensus_title_{match.family.value}",),
         _dependencies(TargetDestination.TITLE),
+    )
+
+
+def _provider_consensus_contributor_display_election(
+    report: MetadataReport,
+    targets: Mapping[TargetDestination, TargetField],
+    destination: TargetDestination,
+    result: ProposalResult,
+) -> ProposalResult:
+    """Elect an exact provider display only from existing contributor agreement."""
+    target = targets[destination]
+    if (
+        target.state is not TargetFieldState.VALUE
+        or type(target.value) is not tuple
+        or any(type(value) is not str for value in target.value)
+    ):
+        return result
+    observations = _list_observations(report, destination)
+    local_displays = _local_contributor_displays(report, destination, observations)
+    if len(local_displays) != 1:
+        return result
+    local_claims = local_displays[0]
+    local_value = tuple(cast("str", claim.canonical) for claim in local_claims)
+    if target.value != local_value:
+        return result
+    provider_displays = _provider_contributor_displays(
+        report, destination, observations
+    )
+    authority_displays = tuple(
+        display for display in provider_displays if display[0].authority is not None
+    )
+    if (
+        len(authority_displays) < 2
+        or len({value for _, _, value in provider_displays}) != 1
+        or len(
+            {_provider_correlation(provider) for provider, _, _ in authority_displays}
+        )
+        < 2
+    ):
+        return result
+    provider_value = authority_displays[0][2]
+    if not all(
+        _provider_contributor_claims_agree(provider_claims, local_claims)
+        for _, provider_claims, _ in authority_displays
+    ):
+        return result
+    elected = ProposalAlternative.create(
+        _value(destination, provider_value),
+        ProposalAssessment.REPLACES_TARGET,
+        (
+            *(
+                claim.reference
+                for _, claims, _ in provider_displays
+                for claim in claims
+            ),
+            *(claim.reference for claim in local_claims),
+        ),
+        (
+            *(_provider_correlation(provider) for provider, _, _ in provider_displays),
+            _correlation("local:selected_epub"),
+        ),
+        _contributor_scope(destination),
+    )
+    return ProposalResult(
+        destination,
+        ProposalOutcome.PROPOSE_CHANGE,
+        (elected,),
+        elected.alternative_id,
+        (PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON,),
+        _dependencies(destination),
+    )
+
+
+def _contributor_scope(destination: TargetDestination) -> ProposalScope:
+    return (
+        ProposalScope.WORK
+        if destination is TargetDestination.AUTHORS
+        else ProposalScope.EDITION
+    )
+
+
+def _contributor_claim_shape(
+    destination: TargetDestination,
+) -> tuple[ClaimKind, ClaimScope, str]:
+    if destination is TargetDestination.AUTHORS:
+        return ClaimKind.CREATOR, ClaimScope.WORK, "author"
+    return ClaimKind.CONTRIBUTOR, ClaimScope.EDITION, "narrator"
+
+
+def _local_contributor_displays(
+    report: MetadataReport,
+    destination: TargetDestination,
+    observations: tuple[_Observed, ...],
+) -> tuple[tuple[LocalClaim, ...], ...]:
+    kind, scope, role = _contributor_claim_shape(destination)
+    displays: list[tuple[LocalClaim, ...]] = []
+    for basis in sorted(
+        {
+            claim.basis
+            for claim in report.local_claims
+            if claim.basis != "target_metadata"
+        }
+    ):
+        claims = tuple(
+            claim
+            for claim in report.local_claims
+            if claim.basis == basis
+            and claim.kind is kind
+            and claim.scope is scope
+            and claim.role == role
+        )
+        if not claims or any(
+            claim.state is not FieldState.VALID or claim.canonical is None
+            for claim in claims
+        ):
+            continue
+        value = _value(
+            destination, tuple(cast("str", claim.canonical) for claim in claims)
+        )
+        if any(
+            observed.representation == _local_representation(basis)
+            and observed.value == value
+            and observed.references == tuple(claim.reference for claim in claims)
+            for observed in observations
+        ):
+            displays.append(claims)
+    return tuple(displays)
+
+
+def _provider_contributor_displays(
+    report: MetadataReport,
+    destination: TargetDestination,
+    observations: tuple[_Observed, ...],
+) -> tuple[tuple[ProviderObservation, tuple[ProviderClaim, ...], tuple[str, ...]], ...]:
+    kind, scope, role = _contributor_claim_shape(destination)
+    displays: list[
+        tuple[ProviderObservation, tuple[ProviderClaim, ...], tuple[str, ...]]
+    ] = []
+    for provider in report.providers:
+        for candidate in provider.candidates:
+            claims = tuple(
+                claim
+                for claim in candidate.claims
+                if claim.kind is kind and claim.scope is scope and claim.role == role
+            )
+            if not claims or any(
+                claim.state is not FieldState.VALID or claim.value is None
+                for claim in claims
+            ):
+                continue
+            value = tuple(cast("str", claim.value) for claim in claims)
+            proposal_value = _value(destination, value)
+            if any(
+                observed.representation == _provider_representation(provider, candidate)
+                and observed.value == proposal_value
+                and observed.references == tuple(claim.reference for claim in claims)
+                for observed in observations
+            ):
+                displays.append((provider, claims, value))
+    return tuple(displays)
+
+
+def _provider_contributor_claims_agree(
+    provider_claims: tuple[ProviderClaim, ...],
+    local_claims: tuple[LocalClaim, ...],
+) -> bool:
+    return len(provider_claims) == len(local_claims) and all(
+        any(
+            link.local_reference == local.reference
+            and link.outcome is Comparison.AGREEMENT
+            for link in provider.links
+        )
+        for provider, local in zip(provider_claims, local_claims, strict=True)
     )
 
 
@@ -3811,6 +3997,7 @@ __all__ = [
     "MAX_BIBLIOGRAPHIC_COMBINATIONS",
     "MAX_PROPOSAL_BYTES",
     "POLICY_VERSION",
+    "PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON",
     "PROPOSAL_SCHEMA",
     "ProposalAlternative",
     "ProposalAssessment",

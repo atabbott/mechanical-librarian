@@ -16,6 +16,8 @@ const ownerFieldLabels: Record<string, string> = {
     'The colon subtitle is local corroboration only; choose the title yourself',
   provider_consensus_title_series_unpreserved:
     'The parenthesized series name is not preserved as structured series evidence',
+  provider_consensus_contributor_display:
+    'Independent providers agree on the contributor display form',
 }
 
 // Sentence case is the one convention for every server-named field, enum,

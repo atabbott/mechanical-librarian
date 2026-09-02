@@ -29,6 +29,12 @@ persisted automatic-decision path. Existing proposal, review, decision, and
 downstream field-effect state is not rewritten or adopted; rebuild the
 pre-release application database.
 
+F38 advances the exact proposal policy from `fixed-conservative-v14` to
+`fixed-conservative-v15` because canonical contributor display can replace an
+equivalent local form through provider consensus. Existing pre-release proposal,
+review, decision, and downstream field-effect state is not rewritten or adopted;
+rebuild the application database.
+
 `metadata-report-v31` in particular cannot carry an audiobook's provider
 evidence: it refuses a provider observation on an audio report outright, and
 has no ASIN query lane, marketplace provenance, chapter-structure evidence, or
