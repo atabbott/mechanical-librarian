@@ -73,6 +73,11 @@ from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecisionError,
     AutomaticSafetyState,
 )
+from mechanical_librarian.domain.contributor_display_qualification import (
+    F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY,
+    F38_CONTRIBUTOR_DISPLAY_POLICY_OPTION,
+    F38_QUALIFICATION_MANIFEST_SHA256,
+)
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 from mechanical_librarian.domain.field_effect import (
@@ -4840,7 +4845,11 @@ def test_provider_consensus_contributor_display_preserves_local_provenance_and_o
             if AutomaticDecision.from_json(value).destination == "authors"
         )
         assert authors_outcome.policy_category == "contributor_names"
-        assert automatic.policy_option == "canonical"
+        assert automatic.policy_category == F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY
+        assert automatic.policy_option == F38_CONTRIBUTOR_DISPLAY_POLICY_OPTION
+        assert (
+            automatic.qualification_manifest_sha256 == F38_QUALIFICATION_MANIFEST_SHA256
+        )
         assert {"kind": "list", "value": ["Ada Example"]} == (
             _automatic_decision_value(
                 automatic,

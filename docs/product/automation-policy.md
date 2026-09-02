@@ -45,6 +45,15 @@ exclude title. A colon-derived title suffix can remain an owner-visible subtitle
 proposal, but is never F20 `subtitle:fill_empty` corroboration; that automatic
 option still requires an explicit local subtitle claim.
 
+F38 (#887) separately qualifies only
+`contributor_names:canonical:provider_consensus_display`: two independent
+present provider authorities must agree on one exact contributor display, the
+local equivalent display must be the sole dissent, and the original local claim
+remains immutable provenance. The persisted decision binds the F38
+aggregate-safe manifest, while contributor-name suspension remains the safety
+lane for this reason-specific authority. Ordinary `contributor_names:canonical`
+continues to bind its historical F19a manifest and gains no F38 authority.
+
 The published F20 rich-metadata candidate qualifies the three `series` options,
 both `isbn_form` options, genre fill/add/replace, tag fill/add/replace, safe
 plaintext description, and locally corroborated subtitle fill for decision-only

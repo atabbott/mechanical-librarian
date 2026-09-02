@@ -8,6 +8,10 @@ import re
 from dataclasses import dataclass
 from typing import cast
 
+from mechanical_librarian.domain.contributor_display_qualification import (
+    F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY,
+    F38_CONTRIBUTOR_DISPLAY_POLICY_OPTION,
+)
 from mechanical_librarian.domain.metadata_policy import (
     OPTION_CATALOGUE,
     ResolvedMetadataPolicy,
@@ -63,6 +67,10 @@ _POLICY_OPTIONS_BY_CATEGORY = {
     **OPTION_CATALOGUE,
     _PROVIDER_CONSENSUS_TITLE_POLICY_CATEGORY: (
         _PROVIDER_CONSENSUS_TITLE_POLICY_OPTION,
+    ),
+    F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY: (
+        *OPTION_CATALOGUE[F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY],
+        F38_CONTRIBUTOR_DISPLAY_POLICY_OPTION,
     ),
 }
 _DISPOSITIONS = frozenset(
@@ -416,17 +424,21 @@ class ShadowOutcomeSet:
                 category = _PROVIDER_CONSENSUS_TITLE_POLICY_CATEGORY
                 policy_destination = destinations["title_layout"]
                 policy_option = _PROVIDER_CONSENSUS_TITLE_POLICY_OPTION
+            elif (
+                decision.proposal_id in provider_consensus_contributor_display_proposals
+            ):
+                policy_destination = destinations["contributor_names"]
+                policy_option = options["contributor_names"]
+                if policy_option == "canonical":
+                    category = F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY
+                    policy_option = F38_CONTRIBUTOR_DISPLAY_POLICY_OPTION
+                else:
+                    policy_destination = "ask"
             else:
                 policy_destination = (
                     "unsupported" if category is None else destinations[category]
                 )
                 policy_option = None if category is None else options[category]
-                if (
-                    decision.proposal_id
-                    in provider_consensus_contributor_display_proposals
-                    and policy_option != "canonical"
-                ):
-                    policy_destination = "ask"
             if policy_destination == "ignore":
                 disposition = "ignore"
             elif policy_destination == "ask":

@@ -13,6 +13,11 @@ from mechanical_librarian.domain.automatic_decision import (
     F19A_QUALIFICATION_MANIFEST_SHA256,
     QUALIFIED_POLICY_OPTIONS,
 )
+from mechanical_librarian.domain.contributor_display_qualification import (
+    F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY,
+    F38_CONTRIBUTOR_DISPLAY_POLICY_OPTION,
+    F38_QUALIFICATION_MANIFEST_SHA256,
+)
 from mechanical_librarian.domain.metadata_policy import (
     OPTION_CATALOGUE,
     QUALIFIED_AUTOMATIC,
@@ -28,10 +33,14 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
 
 MANIFEST = (
     Path(__file__).parents[2]
-    / "docs/reference/f20-rich-metadata-qualification-candidate-v4.json"
+    / "docs/reference/f20-rich-metadata-qualification-candidate-v5.json"
 )
 F19A_MANIFEST = (
     Path(__file__).parents[2] / "docs/reference/f19a-qualification-manifest-v4.json"
+)
+F38_MANIFEST = (
+    Path(__file__).parents[2]
+    / "docs/reference/f38-contributor-display-qualification-manifest-v1.json"
 )
 RICH_FIELDS = (
     "subtitle",
@@ -48,7 +57,7 @@ RICH_FIELDS = (
 def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
 
-    assert "f20-rich-metadata-qualification-candidate-v4" == manifest["schema"]
+    assert "f20-rich-metadata-qualification-candidate-v5" == manifest["schema"]
     assert "decision_only" == manifest["automatic_authority"]
     passing = {
         "description_fill:safe_plain_text",
@@ -68,7 +77,7 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     assert passing == set(manifest["passing_automatic_options"])
     assert ["explicit:unsupported"] == manifest["human_only_options"]
     assert ["narrators", "cover"] == manifest["excluded_destinations"]
-    assert 12 == manifest["candidate_execution_count"]
+    assert 13 == manifest["candidate_execution_count"]
     assert {
         "applicability_confirmation_sha256": (
             "5cfb4892e12dc61bc0744fba3d882941c302f5d2e4eca665ce0d7ed78afec01e"
@@ -90,6 +99,15 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
         ),
         "retained_document_candidate_sha256": (
             "c7577b62ef911077a96768b3c274b9b7308ea2fb2164a2e25d20dcede2fb047f"
+        ),
+        "prior_manifest_sha256": (
+            "f5975691720b81452f2f2b3a41046329c4c600ade45458478aebaf7190392176"
+        ),
+        "retained_replay_baseline_sha256": (
+            "345dbb8c86769814f2e9f1ae91ad1dc307445c319335d694336be729c2624efa"
+        ),
+        "retained_replay_candidate_sha256": (
+            "13c43d20fa85103a4bafaa69bb60dd638f3a3b88c7540f85cff6feaa6e26ec1a"
         ),
     } == manifest["authority_rotation"]
     assert {
@@ -161,6 +179,14 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
         "retained_document_comparison": {
             "aggregate_metrics_equal": True,
             "case_count": 49,
+            "network_access": False,
+            "replayed_provider_requests": 421,
+        },
+        "f38_authority_rotation": {
+            "aggregate_metrics_equal": True,
+            "case_count": 49,
+            "gained_projections": 0,
+            "lost_projections": 0,
             "network_access": False,
             "replayed_provider_requests": 421,
         },
@@ -375,6 +401,7 @@ def test_f19a_authority_is_preserved_and_exact_f20_is_added() -> None:
         "language_rendering:display_name",
         "contributor_names:preserve",
         "contributor_names:canonical",
+        "contributor_names:canonical:provider_consensus_display",
         "publisher_preference:publisher",
         "title:replace_target:provider_consensus_noise",
         "description_fill:safe_plain_text",
@@ -457,6 +484,32 @@ def test_f19a_successor_manifest_binds_f35_and_preserves_f36_evidence() -> None:
         "replayed_prior_option_count": 11,
         "zero_tolerance_failures": 0,
     } == manifest["title_tranche"]
+
+
+def test_f38_manifest_separately_qualifies_provider_consensus_contributor_display() -> (
+    None
+):
+    manifest_bytes = F38_MANIFEST.read_bytes()
+    manifest = json.loads(manifest_bytes)
+
+    assert (
+        hashlib.sha256(manifest_bytes).hexdigest() == F38_QUALIFICATION_MANIFEST_SHA256
+    )
+    assert "f38-contributor-display-qualification-manifest-v1" == manifest["schema"]
+    assert (
+        f"{F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY}:"
+        f"{F38_CONTRIBUTOR_DISPLAY_POLICY_OPTION}" == manifest["policy_identity"]
+    )
+    assert "decision_only" == manifest["automatic_authority"]
+    assert "development_exposed" == manifest["corpus_role"]
+    assert False is manifest["holdout_claim"]
+    assert {
+        "automatic_precision": 1.0,
+        "automatic_predictions": 3,
+        "automatic_recall": 1.0,
+        "positive_opportunities": 3,
+        "zero_tolerance_failures": 0,
+    } == manifest["metrics"]
 
 
 def test_runtime_envelope_pins_every_terminal_disposition_and_authority() -> None:
