@@ -869,10 +869,7 @@ function DescriptionAutomaticStatement({ field }: { field: ReviewField }) {
   const providers = field.automaticSelectionSources ?? []
   if (!providers.length) return null
   return (
-    <p>
-      Selected automatically from {providers.join(' and ')} after target-work and description
-      quality checks.
-    </p>
+    <p>Selected automatically from {providers.join(' and ')} after matching the target work.</p>
   )
 }
 

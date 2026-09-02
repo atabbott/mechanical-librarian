@@ -1755,13 +1755,12 @@ describe('Library route', () => {
     expect(screen.queryByRole('button', { name: /Choose /u })).toBeNull()
   })
 
-  it('explains an automatically selected description beside its recorded outcome', async () => {
+  it('does not infer a quality check when only one of two descriptions is applicable', async () => {
     const titleField = detail.fields[0]
     if (!titleField) throw new Error('workspace fixture requires a title field')
     const candidate = {
       kind: 'text' as const,
-      value:
-        'A complete description with enough bounded plain text to satisfy the automatic quality floor.',
+      value: 'One short but otherwise valid description.',
     }
     const lowerAuthorityCandidate = {
       kind: 'text' as const,
@@ -1822,9 +1821,10 @@ describe('Library route', () => {
 
     expect(
       await screen.findByText(
-        'Selected automatically from Hardcover after target-work and description quality checks.',
+        'Selected automatically from Hardcover after matching the target work.',
       ),
     ).toBeVisible()
+    expect(screen.queryByText(/description quality checks/u)).toBeNull()
   })
 
   it('does not claim the multi-description quality floor for a single candidate', async () => {
@@ -1865,7 +1865,7 @@ describe('Library route', () => {
     })
 
     expect((await screen.findAllByText('Resolved automatically')).at(-1)).toBeVisible()
-    expect(screen.queryByText(/after target-work and description quality checks/u)).toBeNull()
+    expect(screen.queryByText(/after matching the target work/u)).toBeNull()
   })
 
   it('shows the provider-consensus title winner and matched pattern beside its selected value', async () => {
