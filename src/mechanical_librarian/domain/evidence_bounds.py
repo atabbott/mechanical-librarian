@@ -19,6 +19,9 @@ MAX_RISKS = 32
 MAX_NOTICES = 32
 MAX_PACKET_RECORDS = 32
 MAX_SERIALIZED_BYTES = 524_288
+# What a projection puts where a refused codepoint was, so the shape of the
+# value it was read from survives without the codepoint doing.
+REPLACEMENT_CHARACTER = "\ufffd"
 
 _BIDI_CONTROLS = frozenset(
     {
@@ -133,6 +136,22 @@ def validate_projection_text(value: object, label: str, maximum: int) -> str:
     if _credential_shaped(text):
         raise EvidenceValueError(f"{label} must not contain credential-shaped text")
     return text
+
+
+def replace_forbidden_codepoints(value: str) -> str:
+    """Substitute U+FFFD for every codepoint the validators above refuse.
+
+    The refusal set is this module's, so a caller that has to keep a value the
+    validators would reject asks for the substitution here rather than
+    restating which codepoints are forbidden and drifting from them.  This
+    loosens nothing: the projected text is still handed to a validator, which
+    still refuses it whole if anything else about it is inadmissible.
+    """
+
+    return "".join(
+        REPLACEMENT_CHARACTER if _forbidden_codepoint(ord(character)) else character
+        for character in value
+    )
 
 
 def validate_role_projection(value: object, label: str = "contributor role") -> str:

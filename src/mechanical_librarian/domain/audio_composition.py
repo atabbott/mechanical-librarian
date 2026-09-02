@@ -32,8 +32,10 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioObservationKind,
     AudioTrackDigest,
     normalize_duration_seconds,
+    unnamed_track_name,
 )
 from mechanical_librarian.domain.evidence_bounds import (
+    REPLACEMENT_CHARACTER,
     EvidenceValueError,
     validate_projection_text,
 )
@@ -362,10 +364,23 @@ def _offsets(durations: tuple[int | None, ...]) -> tuple[int, ...]:
 
 
 def _chapter_title(track: InspectedTrack) -> str | None:
-    """Name one track's chapter by the recording, then by the exported file."""
+    """Name one track's chapter by the recording, then by the exported file.
+
+    The manifest name is already a projection, so a file whose name carried
+    nothing admissible reaches here as its own position and a file that lost
+    part of one reaches here with replacement characters where those
+    codepoints were.  Neither is anything the recording or the exported file
+    said, so the chapter is left unnamed rather than titled after this build's
+    own repair -- an absent title is read as absent, and a wrong one is read
+    as the recording's.
+    """
     if track.inspection.title is not None:
         return track.inspection.title
+    if track.name == unnamed_track_name(track.ordinal):
+        return None
     stem = track.name.rsplit(".", 1)[0]
+    if not stem.replace(REPLACEMENT_CHARACTER, "").strip():
+        return None
     try:
         return validate_projection_text(
             stem, "audio chapter title", MAX_CHAPTER_TITLE_CHARACTERS

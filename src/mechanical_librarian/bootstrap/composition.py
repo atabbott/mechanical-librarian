@@ -263,6 +263,7 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioInspectionOutcome,
     AudioSidecarDigest,
     AudioTrackDigest,
+    project_track_name,
 )
 from mechanical_librarian.domain.audio_inspection import (
     MAX_FACTS as MAX_AUDIO_FACTS,
@@ -1117,7 +1118,12 @@ class _IsolatedAudioInspector:
                     track.identity,
                     digest,
                     track.format,
-                    components[-1],
+                    # The manifest carries the projection, never the raw name:
+                    # a mounted filesystem states names the retained document
+                    # refuses, and an item is not denied its evidence over one.
+                    # The child above is still handed the file's own name,
+                    # because what it reads there is evidence about the file.
+                    project_track_name(components[-1], ordinal),
                     inspection,
                     track.sequence,
                 )

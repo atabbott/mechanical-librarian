@@ -9,13 +9,16 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
 from typing import ClassVar, Mapping, cast
 
 from mechanical_librarian.domain.evidence_bounds import (
+    REPLACEMENT_CHARACTER,
     EvidenceValueError,
+    replace_forbidden_codepoints,
     validate_projection_text,
     validate_role_projection,
 )
@@ -214,6 +217,46 @@ def normalize_duration_seconds(value: str) -> str:
     if not 0 < milliseconds <= MAX_DURATION_MILLISECONDS:
         raise ValueError("audio duration is invalid")
     return f"{milliseconds // 1000}.{milliseconds % 1000:03d}"
+
+
+def unnamed_track_name(ordinal: int) -> str:
+    """Name the track this build could publish no file name for."""
+
+    return f"track-{ordinal}"
+
+
+def project_track_name(name: str, ordinal: int) -> str:
+    """Return the manifest name for one track, or the position it holds.
+
+    A file name is untrusted text read from a mounted filesystem, and a real
+    library states names no bounded evidence value admits: one 75-file
+    audiobook carries a double-encoded en dash, which leaves the C1 controls
+    U+0080 and U+0093 in 71 of its names.  Refusing the manifest entry there
+    denies the whole item its evidence set over a value nothing is decided
+    from -- currentness is witnessed by the per-track identities, digests, and
+    order, and ``unchanged`` compares no name at all -- so this projection is
+    total and deterministic instead.  Every codepoint the evidence bounds
+    refuse becomes U+FFFD in place, keeping the shape of what the filesystem
+    said, and a name with nothing admissible left of it is published as its
+    own position.  The domain validator is not loosened: this is what is
+    handed to it, and a retained document whose name still carries a raw
+    control character fails closed exactly as before.
+    """
+
+    normalized = replace_forbidden_codepoints(unicodedata.normalize("NFC", name))
+    # Truncation can expose whitespace the first strip did not reach, and a
+    # trimmed value is what the validator admits.
+    projected = normalized.strip()[:MAX_SIDECAR_NAME_CHARACTERS].strip()
+    if not projected.replace(REPLACEMENT_CHARACTER, "").strip():
+        # Nothing the filesystem said survived, so a row of replacement
+        # characters would state a name rather than admit there is none.
+        return unnamed_track_name(ordinal)
+    try:
+        return validate_projection_text(
+            projected, "audio track name", MAX_SIDECAR_NAME_CHARACTERS
+        )
+    except EvidenceValueError:
+        return unnamed_track_name(ordinal)
 
 
 @dataclass(frozen=True)
