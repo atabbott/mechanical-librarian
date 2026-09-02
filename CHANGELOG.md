@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Empty ISBNs now fill only when the selected provider ISBN matches the verified
+  ebook manifestation; every unverified or competing family remains owner-visible
+  for review. Existing pre-release proposal state requires a clean rebuild under
+  `fixed-conservative-v16`. (#897)
+
 - Equivalent local author or narrator forms now adopt an exact provider-consensus
   display only when independent providers agree; the original local form remains
   in the decision evidence. Existing pre-release proposal state requires a clean

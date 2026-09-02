@@ -1883,8 +1883,12 @@ def test_isbn_options_preserve_or_select_only_exact_admitted_forms() -> None:
     )
     exact = _preview_field(ten_report, "isbn_form", "preserve_exact")
     unavailable = _preview_field(ten_report, "isbn_form", "prefer_isbn13")
-    assert "0306406152" == exact.desired_value
-    assert ("abstain", "option_evidence_unavailable", None) == (
+    assert ("abstain", "manifestation_verification_required", None) == (
+        exact.outcome,
+        exact.reason,
+        exact.desired_value,
+    )
+    assert ("abstain", "manifestation_verification_required", None) == (
         unavailable.outcome,
         unavailable.reason,
         unavailable.desired_value,
@@ -1898,7 +1902,11 @@ def test_isbn_options_preserve_or_select_only_exact_admitted_forms() -> None:
         local_claims=(isbn13,),
     )
     preferred = _preview_field(thirteen_report, "isbn_form", "prefer_isbn13")
-    assert "9780306406157" == preferred.desired_value
+    assert ("abstain", "manifestation_verification_required", None) == (
+        preferred.outcome,
+        preferred.reason,
+        preferred.desired_value,
+    )
 
 
 def test_isbn_family_preview_selects_exact_local_or_isbn13_representation() -> None:
@@ -1928,10 +1936,15 @@ def test_isbn_family_preview_selects_exact_local_or_isbn13_representation() -> N
     exact = _preview_field(report, "isbn_form", "preserve_exact")
     preferred = _preview_field(report, "isbn_form", "prefer_isbn13")
 
-    assert ("projected", "0306406152") == (exact.outcome, exact.desired_value)
-    assert ("projected", "9780306406157") == (
+    assert ("projected", "0306406152", "verified_manifestation_isbn") == (
+        exact.outcome,
+        exact.desired_value,
+        exact.reason,
+    )
+    assert ("projected", "9780306406157", "verified_manifestation_isbn") == (
         preferred.outcome,
         preferred.desired_value,
+        preferred.reason,
     )
     assert 2 == len(exact.source_evidence_references)
     assert exact.source_evidence_references == preferred.source_evidence_references
@@ -1988,7 +2001,7 @@ def test_isbn_family_preview_rejects_distinct_or_invalid_identifiers() -> None:
     )
     for option in ("preserve_exact", "prefer_isbn13"):
         field = _preview_field(distinct, "isbn_form", option)
-        assert ("abstain", "ambiguous_evidence", None) == (
+        assert ("abstain", "manifestation_verification_required", None) == (
             field.outcome,
             field.reason,
             field.desired_value,
@@ -2009,7 +2022,7 @@ def test_isbn13_preference_abstains_on_two_exact_admitted_forms() -> None:
         ),
     )
     field = _preview_field(report, "isbn_form", "prefer_isbn13")
-    assert ("abstain", "ambiguous_evidence", None) == (
+    assert ("abstain", "manifestation_verification_required", None) == (
         field.outcome,
         field.reason,
         field.desired_value,

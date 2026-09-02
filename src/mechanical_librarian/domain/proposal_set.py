@@ -71,7 +71,7 @@ if TYPE_CHECKING:
     from mechanical_librarian.domain.cover_evidence import CoverArtifact
 
 PROPOSAL_SCHEMA = "proposal-set-v5"
-POLICY_VERSION = "fixed-conservative-v15"
+POLICY_VERSION = "fixed-conservative-v16"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -219,6 +219,8 @@ PROVIDER_CONSENSUS_TITLE_REASONS = frozenset(
     f"provider_consensus_title_{family.value}" for family in _TITLE_CONSENSUS_FAMILIES
 )
 PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON = "provider_consensus_contributor_display"
+VERIFIED_MANIFESTATION_ISBN_REASON = "verified_manifestation_isbn"
+MANIFESTATION_ISBN_VERIFICATION_REQUIRED_REASON = "manifestation_verification_required"
 
 _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
     ProposalOutcome.PROPOSE_CHANGE: frozenset(
@@ -227,6 +229,7 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
             ("unique_typed_candidate",),
             ("explicit_author_corroborates_untyped_creator",),
             ("local_attested_subtitle",),
+            (VERIFIED_MANIFESTATION_ISBN_REASON,),
             *((reason,) for reason in PROVIDER_CONSENSUS_TITLE_REASONS),
             (PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON,),
         }
@@ -235,6 +238,7 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
     ProposalOutcome.UNRESOLVED_CHOICE: frozenset(
         {
             ("competing_evidence",),
+            (MANIFESTATION_ISBN_VERIFICATION_REQUIRED_REASON,),
             (
                 "competing_evidence",
                 "provider_consensus_title_series_unpreserved",
@@ -1048,7 +1052,19 @@ def evaluate_report(
             TargetDestination.COVER,
         }:
             continue
-        observations = _observations(report, destination)
+        observations = _observations(
+            report,
+            destination,
+            allow_unverified_isbn=(
+                destination is TargetDestination.ISBN
+                and targets[destination].state
+                in {
+                    TargetFieldState.MISSING,
+                    TargetFieldState.NULL,
+                    TargetFieldState.EMPTY,
+                }
+            ),
+        )
         if destination in _BIBLIOGRAPHIC_DESTINATIONS:
             observed_by_destination[destination] = observations
         result = _evaluate(
@@ -1127,6 +1143,17 @@ def evaluate_report(
         ):
             result = _unresolved(result, "provider_consensus_title_colon_unused")
         if (
+            destination is TargetDestination.ISBN
+            and targets[destination].state
+            in {
+                TargetFieldState.MISSING,
+                TargetFieldState.NULL,
+                TargetFieldState.EMPTY,
+            }
+            and result.alternatives
+        ):
+            result = _verified_manifestation_isbn_election(report, result)
+        if (
             destination is TargetDestination.TITLE
             and result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
             and result.reasons == ("competing_evidence",)
@@ -1184,6 +1211,8 @@ def evaluate_report(
 def _observations(
     report: MetadataReport,
     destination: TargetDestination,
+    *,
+    allow_unverified_isbn: bool = False,
 ) -> tuple[_Observed, ...]:
     if destination is TargetDestination.EXPLICIT:
         return ()
@@ -1226,7 +1255,10 @@ def _observations(
             and claim.canonical is not None
             and claim.basis != "target_metadata"
             and _eligible_identifier(destination, claim.canonical, claim.applicability)
-            and _eligible_identifier_reference(report, destination, claim.reference)
+            and (
+                allow_unverified_isbn
+                or _eligible_identifier_reference(report, destination, claim.reference)
+            )
             and _eligible_description(destination, claim.canonical)
             and _eligible_field_value(destination, claim.canonical)
             and (
@@ -1254,8 +1286,11 @@ def _observations(
                     and _eligible_identifier(
                         destination, claim.value, claim.applicability
                     )
-                    and _eligible_identifier_reference(
-                        report, destination, claim.reference
+                    and (
+                        allow_unverified_isbn
+                        or _eligible_identifier_reference(
+                            report, destination, claim.reference
+                        )
                     )
                     and _eligible_provider_manifestation(
                         destination, claim.applicability
@@ -3245,6 +3280,81 @@ def _accepted_provider_manifestation_anchor(
         and claim.applicability == "ebook"
         and claim.reference in accepted_references
         for claim in candidate.claims
+    )
+
+
+def _verified_manifestation_isbn_election(
+    report: MetadataReport,
+    result: ProposalResult,
+) -> ProposalResult:
+    """Elect only the ISBN family whose own provider claim is accepted.
+
+    The helper is a single-caller extraction with a directly testable contract:
+    it keeps the manifestation-specific election separate from generic proposal
+    uniqueness, so a local claim or an accepted sibling cannot widen it.
+    """
+    claims = {
+        claim.reference: (provider, candidate, claim)
+        for provider in report.providers
+        for candidate in provider.candidates
+        for claim in candidate.claims
+    }
+    accepted = {
+        (
+            evidence.provider,
+            evidence.candidate_identity,
+            evidence.work_identity,
+            evidence.reference,
+        )
+        for evidence in report.identifier_evidence
+        if evidence.relation is IdentifierRelation.ACCEPTED
+    }
+    qualified: dict[str, ProposalAlternative] = {}
+    for alternative in result.alternatives:
+        family = isbn_family(
+            alternative.value.value
+            if alternative.value.kind is ProposalValueKind.TEXT
+            and type(alternative.value.value) is str
+            else None
+        )
+        if family is None:
+            continue
+        if any(
+            claim.kind is ClaimKind.ISBN
+            and claim.scope is ClaimScope.EDITION
+            and claim.state is FieldState.VALID
+            and claim.value is not None
+            and claim.applicability == "ebook"
+            and isbn_family(claim.value) == family
+            and (
+                provider.provider,
+                candidate.identity,
+                candidate.work_identity,
+                reference,
+            )
+            in accepted
+            for reference in alternative.evidence_references
+            if (bound := claims.get(reference)) is not None
+            for provider, candidate, claim in (bound,)
+        ):
+            qualified[family] = alternative
+    if len(qualified) == 1:
+        alternative = next(iter(qualified.values()))
+        return ProposalResult(
+            TargetDestination.ISBN,
+            ProposalOutcome.PROPOSE_CHANGE,
+            (alternative,),
+            alternative.alternative_id,
+            (VERIFIED_MANIFESTATION_ISBN_REASON,),
+            result.dependencies,
+        )
+    return ProposalResult(
+        TargetDestination.ISBN,
+        ProposalOutcome.UNRESOLVED_CHOICE,
+        result.alternatives,
+        None,
+        (MANIFESTATION_ISBN_VERIFICATION_REQUIRED_REASON,),
+        result.dependencies,
     )
 
 

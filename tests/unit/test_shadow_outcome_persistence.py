@@ -1194,7 +1194,7 @@ def test_year_current_reaches_one_durable_publication_keep_and_read_models() -> 
         assert (0,) == repository._connection.execute(
             "SELECT COUNT(*) FROM automatic_decisions WHERE destination='publishedYear'"
         ).fetchone()
-        assert 0 == repository.count_current_attention_fields(None)
+        assert 1 == repository.count_current_attention_fields(None)
         detail = InspectCurrentReviewCase(repository).run(case_id)
         publication = [
             value
@@ -1204,12 +1204,15 @@ def test_year_current_reaches_one_durable_publication_keep_and_read_models() -> 
         assert 1 == len(publication)
         assert "2001" == publication[0]["current"]["value"]
         assert not publication[0]["needs_attention"]
+        isbn = [value for value in detail["fields"] if value["destination"] == "isbn"]
+        assert 1 == len(isbn)
+        assert isbn[0]["needs_attention"]
         assert not [
             value
             for value in detail["fields"]
             if value["destination"] == "publishedYear"
         ]
-        assert 0 == repository.read_review_attention(None, 50, 0).total
+        assert 1 == repository.read_review_attention(None, 50, 0).total
         activity = repository.field_effect_activity_page(
             search=None, event_type="metadata", occurred_after=0, page=1, page_size=50
         )

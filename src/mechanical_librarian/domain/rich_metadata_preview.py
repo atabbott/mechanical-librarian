@@ -25,7 +25,8 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.proposal_set import (
     BibliographicSelectionKind, ProposalAlternative, ProposalAssessment,
     ProposalOutcome, ProposalResult, ProposalScope, ProposalSet,
-    ProposalValueKind, provider_candidate_represents_target_work,
+    ProposalValueKind, VERIFIED_MANIFESTATION_ISBN_REASON,
+    provider_candidate_represents_target_work,
 )
 
 
@@ -634,6 +635,17 @@ def _isbn(
     result: ProposalResult,
     report: MetadataReport,
 ) -> RichFieldPreview:
+    if (
+        target.state in _EMPTY
+        and result.reasons != (VERIFIED_MANIFESTATION_ISBN_REASON,)
+    ):
+        return _abstain(
+            field,
+            option,
+            target,
+            _data_value(target.value),
+            "manifestation_verification_required",
+        )
     alternatives = _typed_alternatives(result, ProposalValueKind.TEXT)
     candidate, reason = _one_typed_candidate(result, ProposalValueKind.TEXT)
     if candidate is None:
@@ -645,7 +657,7 @@ def _isbn(
         return _abstain(field, option, target, _data_value(target.value), "option_evidence_unavailable")
     return RichFieldPreview(
         field, option, target.state.value, _data_value(target.value),
-        "projected", value, None, False, None,
+        "projected", value, VERIFIED_MANIFESTATION_ISBN_REASON, False, None,
         candidate.alternative_id, candidate.evidence_references,
     )
 

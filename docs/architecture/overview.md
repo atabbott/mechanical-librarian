@@ -106,7 +106,7 @@ pointer per target/file scope in `current_metadata_reports`, and immutable
 report-bound cover references in `metadata_report_cover_references`.
 `proposal_sets` stores one content-addressed result document bound to an exact
 report and closed policy version and has no current pointer. Its exact-current
-table accepts only `fixed-conservative-v15`; earlier proposal-store shapes are
+table accepts only `fixed-conservative-v16`; earlier proposal-store shapes are
 rejected at bootstrap and require a clean rebuild, without migration. Report insert and pointer advance share one
 transaction. Proposal insertion separately rechecks the exact report and
 current pointer after external currentness. The report database also stores
