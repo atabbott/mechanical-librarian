@@ -16,69 +16,16 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalOutcome,
     evaluate_report,
 )
-from tests.support.proposal_evidence import _claim, _fields, _provider, _report
-
-
-def _local_title(value: str, *, occurrence: int = 0) -> LocalClaim:
-    return LocalClaim.create(
-        kind=ClaimKind.TITLE,
-        observed=value,
-        canonical=value,
-        state=FieldState.VALID,
-        scope=ClaimScope.WORK,
-        basis="package_metadata",
-        excerpt=value,
-        applicability="not_applicable",
-        checksum="not_applicable",
-        applicability_basis="not_applicable",
-        occurrence=occurrence,
-    )
-
-
-def _provider_title(
-    name: str,
-    title: str,
-    *,
-    authority: str | None = None,
-    subtitle: str | None = None,
-    edition_title: str | None = None,
-):
-    claims = [
-        _claim(
-            name,
-            f"{name}-edition",
-            ClaimKind.TITLE,
-            title,
-            scope=ClaimScope.WORK,
-        )
-    ]
-    if subtitle is not None:
-        claims.append(
-            _claim(
-                name,
-                f"{name}-edition",
-                ClaimKind.SUBTITLE,
-                subtitle,
-                scope=ClaimScope.EDITION,
-                applicability="ebook",
-            )
-        )
-    if edition_title is not None:
-        claims.append(
-            _claim(
-                name,
-                f"{name}-edition",
-                ClaimKind.TITLE,
-                edition_title,
-                scope=ClaimScope.EDITION,
-            )
-        )
-    return _provider(
-        name,
-        f"{name}-edition",
-        tuple(claims),
-        authority=name if authority is None else authority,
-    )
+from tests.support.proposal_evidence import (
+    _fields,
+    _report,
+)
+from tests.support.proposal_evidence import (
+    consensus_local_title as _local_title,
+)
+from tests.support.proposal_evidence import (
+    consensus_provider_title as _provider_title,
+)
 
 
 def _title_result(

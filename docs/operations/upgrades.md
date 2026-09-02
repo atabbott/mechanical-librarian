@@ -21,10 +21,11 @@ Audiobookshelf-asserted ASIN and audiobook preparation writes it, so a v33
 report is not exact-current. Rebuild an absent application database; no
 adoption is supplied.
 
-F36 advances the exact proposal policy from `fixed-conservative-v12` to
-`fixed-conservative-v13` because language alternatives and their identities
-change. Existing proposal, review, decision, and downstream field-effect state
-is not rewritten or adopted; rebuild the pre-release application database.
+F35 advances the exact proposal policy from `fixed-conservative-v13` to
+`fixed-conservative-v14` because provider-consensus title election adds a new
+persisted automatic-decision path. Existing proposal, review, decision, and
+downstream field-effect state is not rewritten or adopted; rebuild the
+pre-release application database.
 
 `metadata-report-v31` in particular cannot carry an audiobook's provider
 evidence: it refuses a provider observation on an audio report outright, and

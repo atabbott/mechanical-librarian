@@ -130,6 +130,12 @@ from tests.support.proposal_evidence import (
 from tests.support.proposal_evidence import (
     _report as _proposal_report,
 )
+from tests.support.proposal_evidence import (
+    consensus_local_title as _consensus_local_title,
+)
+from tests.support.proposal_evidence import (
+    consensus_provider_title as _consensus_provider_title,
+)
 from tests.support.review_cases import _report
 from tests.unit.test_bibliographic_bundles import (
     _bibliographic_report,
@@ -146,12 +152,6 @@ from tests.unit.test_cover_packets import (
 )
 from tests.unit.test_cover_packets import (
     _source as _cover_source,
-)
-from tests.unit.test_provider_consensus_titles import (
-    _local_title as _consensus_local_title,
-)
-from tests.unit.test_provider_consensus_titles import (
-    _provider_title as _consensus_provider_title,
 )
 
 

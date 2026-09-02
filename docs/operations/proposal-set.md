@@ -6,7 +6,7 @@ preparation; source-only contributor inspection uses the typed workbench and is
 not an installed runtime capability. The operation reopens the exact report, revalidates its
 current Audiobookshelf target projection, selected EPUB bytes, ABS cover, and
 both blobs of every referenced private cover artifact, then evaluates the built-in
-`fixed-conservative-v13` policy. It does not construct or contact a metadata or
+`fixed-conservative-v14` policy. It does not construct or contact a metadata or
 cover provider.
 
 An exact ProposalSet can be reopened offline through the application repository
@@ -15,23 +15,22 @@ or typed source-only inspector.
 Success is exactly one canonical `proposal-set-v5` JSON document plus a
 newline. Failure emits no document and one value-free diagnostic.
 
-Only `proposal-set-v5` documents under `fixed-conservative-v13` and the exact current
+Only `proposal-set-v5` documents under `fixed-conservative-v14` and the exact current
 `proposal_sets` table envelope are accepted. A database with the earlier
 `fixed-conservative-v1`, `fixed-conservative-v2`, `fixed-conservative-v3`, or
 `fixed-conservative-v4`, `fixed-conservative-v5`, `fixed-conservative-v6`,
 `fixed-conservative-v7`, `fixed-conservative-v8`, `fixed-conservative-v9`,
-`fixed-conservative-v10`, `fixed-conservative-v11`, or
-`fixed-conservative-v12` table shape is incompatible
+`fixed-conservative-v10`, `fixed-conservative-v11`, `fixed-conservative-v12`, or
+`fixed-conservative-v13` table shape is incompatible
 and is rejected before mutation. A clean rebuild is required; there is no
 proposal migration, import, conversion, or compatibility parser.
 
 ## Consensus title qualification
 
-The F35 (#884) provider-consensus title election requires a #445 successor
-qualification before it has automatic authority. That successor must replay
-and diff every existing F19a option before re-pinning the F19a manifest; the
-sealed current F19a digest remains readable for its historical decisions but
-cannot authorize F35. Title remains excluded from F20.
+The F35 (#884) provider-consensus title election is admitted by the current
+#445 F19a successor manifest. Its closed title tranche is qualified separately
+from the current F20 v4 route, which continues to exclude title. Earlier F19a
+digests remain readable for their historical decisions but cannot authorize F35.
 
 The bracketed-source class currently grants election authority only to the
 exact `[retail]` suffix. The broader bracket transformation remains available

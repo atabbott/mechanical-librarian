@@ -22,7 +22,8 @@
 - When independent providers agree byte-for-byte on a clean work title, one
   reversible local decoration can advance it for automatic review; ambiguous,
   dissenting, and uncorroborated or unpreserved colon-subtitle cases remain
-  owner decisions. Existing pre-release ProposalSets require a clean rebuild.
+  owner decisions. Existing pre-release ProposalSets require a clean rebuild
+  under `fixed-conservative-v14`.
   (#884)
 
 - Inventaire is available as a keyless ebook metadata and cover provider in

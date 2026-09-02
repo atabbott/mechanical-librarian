@@ -28,7 +28,7 @@ category suspension, and explicit recovery fail closed by retaining would-be
 automatic work in human Attention. Any field, option, or policy revision outside
 that exact envelope remains human-routed until separately qualified.
 
-F35 (#884) adds a closed, provider-consensus title election to the v13
+F35 (#884) adds a closed, provider-consensus title election to the v14
 ProposalSet policy: one exact local noisy title, one exact reversible pattern,
 byte-identical clean work or edition title observations from at least two
 independent authority correlations, and no dissent. Colon subtitles corroborate

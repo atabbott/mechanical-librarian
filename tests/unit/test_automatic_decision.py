@@ -223,6 +223,31 @@ def test_prior_f19a_language_decision_remains_readable_only() -> None:
         )
 
 
+def test_prior_f19a_manifest_cannot_grant_f35_authority() -> None:
+    with pytest.raises(AutomaticDecisionError):
+        AutomaticDecision.create(
+            review_case_id="review_case_" + "a" * 64,
+            report_id="report_" + "b" * 64,
+            proposal_set_id="proposal_set_" + "c" * 64,
+            proposal_id="review_proposal_" + "d" * 64,
+            target_fingerprint="e" * 64,
+            destination="title",
+            outcome="candidate",
+            candidate_id="alternative_" + "f" * 64,
+            resolved_policy_id="resolved_policy_" + "0" * 64,
+            policy_generation=1,
+            rule_id="shadow_rule_" + "1" * 64,
+            policy_category="title",
+            policy_option="replace_target:provider_consensus_noise",
+            qualification_manifest_sha256=(
+                "6708826d4891a228d9d2f664ea134ffad693974144c462370db851e50b330b56"
+            ),
+            source_outcome_id="shadow_outcome_" + "3" * 64,
+            occurred_at=1,
+            bundle_id=None,
+        )
+
+
 def test_ignore_has_no_candidate() -> None:
     with pytest.raises(AutomaticDecisionError):
         AutomaticDecision.create(
