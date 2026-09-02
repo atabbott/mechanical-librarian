@@ -103,7 +103,7 @@ report. Valid ISO aliases and regional variants group into one
 base-and-exact-optional-script alternative; publisher alternatives remain
 distinct. `acceptable_choice` exposes multiple closed-policy-acceptable
 publisher outcomes without choosing one. No earlier proposal policy is
-interpreted: pre-release databases using `fixed-conservative-v16` or earlier
+interpreted: pre-release databases using `fixed-conservative-v17` or earlier
 are rejected before mutation and require a clean rebuild.
 
 Packet v6 decision summaries and typed provider evidence are exact deterministic
