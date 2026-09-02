@@ -174,6 +174,9 @@ def _publish_audiobook(repository: Any) -> None:
             (ClaimKind.DURATION, "43200.000", "embedded_tag", None),
             (ClaimKind.PERFORMANCE_TYPE, "unabridged", "path", None),
         ),
+        # The one-track manifest the double writes must digest to the file the
+        # report is bound to, exactly as the composed inspector guarantees.
+        content_digest="2" * 64,
         chapters=(AudioChapter(1, 0, 1_800_000, "Chapter One"),),
         embedded_cover=AudioEmbeddedCover(True, AudioEvidenceSurface.CONTAINER_STREAM),
     )
