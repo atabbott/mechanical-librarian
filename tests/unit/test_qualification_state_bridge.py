@@ -246,7 +246,7 @@ def test_exact_predecessor_builds_fresh_current_state_without_mutating_source(
 
 def test_target_schema_binding_is_the_exact_installed_contract() -> None:
     assert bridge._TARGET_SCHEMA_OBJECTS_SHA256 == (
-        "122c64ba271b06852e3cb7e1189d332ae2df0b499ffe104d9bf21b05e30f5b50"
+        "378c4d55b2e9cfbed9aa516efadcdf40c8ca45cde28d3e80a74e9797ad076ed8"
     )
     assert (
         bridge._expected_schema_objects_digest() == bridge._TARGET_SCHEMA_OBJECTS_SHA256

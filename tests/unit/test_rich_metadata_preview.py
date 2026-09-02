@@ -960,7 +960,7 @@ def test_automatic_subtitle_fill_projects_the_locally_attested_value() -> None:
     assert len(selected.source_evidence_references) > 1
 
 
-def test_title_derived_colon_subtitle_stays_an_owner_proposal_not_automatic() -> None:
+def test_cross_source_title_segment_corroborates_an_automatic_subtitle_fill() -> None:
     title = "Secret History: A Mistborn Novella"
     local_title = LocalClaim.create(
         kind=ClaimKind.TITLE,
@@ -1001,6 +1001,35 @@ def test_title_derived_colon_subtitle_stays_an_owner_proposal_not_automatic() ->
     )
 
     assert subtitle.alternatives
+    assert ("projected", None, "A Mistborn Novella") == (
+        selected.outcome,
+        selected.reason,
+        selected.desired_value,
+    )
+    assert local_title.reference in selected.source_evidence_references
+
+
+def test_own_source_title_segment_never_corroborates_its_own_subtitle() -> None:
+    report = _bibliographic_report(
+        current_title="Secret History",
+        providers=(
+            _source(
+                "catalogue",
+                "edition-1",
+                titles=("Secret History: A Mistborn Novella",),
+                subtitle="A Mistborn Novella",
+            ),
+            _source("archive", "edition-2", titles=("Secret History",)),
+        ),
+    )
+    policy = resolve_policy(MetadataPolicyProfile.builtin(), report.target.library)
+    proposal = evaluate_report(report, policy.resolved_id, dict(policy.destinations))
+    selected = next(
+        value
+        for value in compile_rich_metadata_preview(policy, report, proposal).fields
+        if value.field == "subtitle"
+    )
+
     assert ("abstain", "subtitle_local_corroboration_required", None) == (
         selected.outcome,
         selected.reason,

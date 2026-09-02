@@ -33,19 +33,25 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
 
 MANIFEST = (
     Path(__file__).parents[2]
-    / "docs/reference/f20-rich-metadata-qualification-candidate-v6.json"
+    / "docs/reference/f20-rich-metadata-qualification-candidate-v7.json"
 )
 HISTORICAL_MANIFEST = (
     Path(__file__).parents[2]
-    / "docs/reference/f20-rich-metadata-qualification-candidate-v5.json"
+    / "docs/reference/f20-rich-metadata-qualification-candidate-v6.json"
 )
 F19A_MANIFEST = (
-    Path(__file__).parents[2] / "docs/reference/f19a-qualification-manifest-v4.json"
+    Path(__file__).parents[2] / "docs/reference/f19a-qualification-manifest-v5.json"
 )
 F38_MANIFEST = (
     Path(__file__).parents[2]
     / "docs/reference/f38-contributor-display-qualification-manifest-v1.json"
 )
+# The root binds the private qualification results into both manifests after
+# this head is measured; until then these literals stand in and
+# `test_qualification_digests_are_pinned` is the one red sentinel.
+ROOT_PLACEHOLDER = "ROOT-FILLS"
+PLACEHOLDER_DIGESTS = frozenset({"0" * 64, "1" * 64})
+
 RICH_FIELDS = (
     "subtitle",
     "series",
@@ -61,8 +67,8 @@ RICH_FIELDS = (
 def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
 
-    assert "f20-rich-metadata-qualification-candidate-v6" == manifest["schema"]
-    assert "fixed-conservative-v18" == manifest["proposal_policy_version"]
+    assert "f20-rich-metadata-qualification-candidate-v7" == manifest["schema"]
+    assert "fixed-conservative-v19" == manifest["proposal_policy_version"]
     assert "decision_only" == manifest["automatic_authority"]
     passing = {
         "description_fill:safe_plain_text",
@@ -82,15 +88,17 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     assert passing == set(manifest["passing_automatic_options"])
     assert ["explicit:unsupported"] == manifest["human_only_options"]
     assert ["narrators", "cover"] == manifest["excluded_destinations"]
-    assert 14 == manifest["candidate_execution_count"]
+    assert 15 == manifest["candidate_execution_count"]
     assert {
-        "archived_replay_result_sha256": "1918ded38c4b0b7075b589564647a94dba15c95c80d04aa45ce931e37f8c0272",
-        "development_result_sha256": "2bf55518f44cffff1ab90a0446f085790b3859310f865ff55a0e551b7363e876",
-        "holdout_continuity_receipt_sha256": "c540c44037e02961409e5a43d425c00a6ca71ba4800e817ad3dd0542a67973dc",
-        "holdout_result_sha256": "325e81e236630c12cac77bd01440e725b46b1f1fcf8cac5434daf1dd48b85241",
-        "prior_manifest_sha256": "9c1410dcc6d221478a2b96afdc51da19fd8a54f82d7023034a3063afdedefc37",
-        "prior_aggregate_receipt_sha256": "42d3d26461552ffa055321028927845e3fbc580101d8bb24414bb84b07cda080",
-    } == manifest["authority_rotation"]
+        "archived_replay_result_sha256",
+        "development_result_sha256",
+        "prior_aggregate_receipt_sha256",
+        "prior_manifest_sha256",
+    } == set(manifest["authority_rotation"])
+    assert (
+        "15cfb36db142e3783fa47a73157c72ecfd08bb282a967abc83fba152d1199205"
+        == manifest["authority_rotation"]["prior_manifest_sha256"]
+    )
     assert {
         "applicability_confirmation": {
             "automatic_precision": 1.0,
@@ -170,6 +178,15 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
             "lost_projections": 0,
             "network_access": False,
             "replayed_provider_requests": 421,
+        },
+        "subtitle_segment_corroboration": {
+            "adjudicated_counts": {"abstain": 37, "fill": 76, "unknown": 0},
+            "case_count": 113,
+            "holdout_claim": False,
+            "network_access": False,
+            "retained_49_report_route_predictions_at_base": 0,
+            "review_agreement_count": 110,
+            "route": "archived_744_development_challenge_set",
         },
         "subjective_field_truth_model": "exact_work_bound_source_projection",
         "series_truth_model": "valid_membership_with_preferred_value",
@@ -323,9 +340,12 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
         for entry in manifest["options"]
         if entry["identity"] == "subtitle:fill_empty"
     }["subtitle:fill_empty"]
-    assert 147 == subtitle_fill["eligible_opportunities"]
-    assert 12 == subtitle_fill["metrics"]["automatic_predictions"]
-    assert 1.0 == subtitle_fill["metrics"]["automatic_precision"]
+    assert 113 == subtitle_fill["eligible_opportunities"]
+    assert 0 == subtitle_fill["metrics"]["structural_or_sensitive_violations"]
+    assert 0 == subtitle_fill["metrics"]["unsupported_output"]
+    if subtitle_fill["metrics"]["automatic_precision"] != ROOT_PLACEHOLDER:
+        assert 1.0 == subtitle_fill["metrics"]["automatic_precision"]
+        assert 3 <= subtitle_fill["metrics"]["automatic_predictions"]
 
 
 def test_candidate_exposes_only_closed_aggregate_contract_data() -> None:
@@ -348,12 +368,13 @@ def test_candidate_exposes_only_closed_aggregate_contract_data() -> None:
     for name in ("automatic_decision", "compiler", "policy", "target_shape"):
         item = manifest["frozen_contract"][name]
         assert {"identity", "sha256"} == set(item)
-        assert (
-            hashlib.sha256(
-                (MANIFEST.parents[2] / item["identity"]).read_bytes()
-            ).hexdigest()
-            == item["sha256"]
-        )
+        if item["sha256"] != ROOT_PLACEHOLDER:
+            assert (
+                hashlib.sha256(
+                    (MANIFEST.parents[2] / item["identity"]).read_bytes()
+                ).hexdigest()
+                == item["sha256"]
+            )
     for name in ("adjudication", "evaluator", "evidence_execution", "thresholds"):
         item = manifest["frozen_contract"][name]
         assert {"identity", "sha256"} == set(item)
@@ -365,7 +386,7 @@ def test_candidate_exposes_only_closed_aggregate_contract_data() -> None:
         "proposal_policy_version",
     } == set(manifest["frozen_contract"]["isbn_manifestation_election"])
     assert (
-        "fixed-conservative-v18"
+        "fixed-conservative-v19"
         == manifest["frozen_contract"]["isbn_manifestation_election"][
             "proposal_policy_version"
         ]
@@ -375,18 +396,20 @@ def test_candidate_exposes_only_closed_aggregate_contract_data() -> None:
         "src/mechanical_librarian/domain/rich_metadata_preview.py": "preview_sha256",
         "src/mechanical_librarian/domain/proposal_set.py": "proposal_policy_sha256",
     }.items():
-        assert (
-            hashlib.sha256((MANIFEST.parents[2] / source).read_bytes()).hexdigest()
-            == (manifest["frozen_contract"]["isbn_manifestation_election"][name])
-        )
+        bound = manifest["frozen_contract"]["isbn_manifestation_election"][name]
+        if bound != ROOT_PLACEHOLDER:
+            assert (
+                hashlib.sha256((MANIFEST.parents[2] / source).read_bytes()).hexdigest()
+                == bound
+            )
 
 
-def test_v5_manifest_remains_historical_readable_after_v6_rotation() -> None:
+def test_v6_manifest_remains_historical_readable_after_v7_rotation() -> None:
     historical = json.loads(HISTORICAL_MANIFEST.read_text(encoding="utf-8"))
     current = json.loads(MANIFEST.read_text(encoding="utf-8"))
     manifest = current
 
-    assert "f20-rich-metadata-qualification-candidate-v5" == historical["schema"]
+    assert "f20-rich-metadata-qualification-candidate-v6" == historical["schema"]
     assert (
         hashlib.sha256(HISTORICAL_MANIFEST.read_bytes()).hexdigest()
         == current["authority_rotation"]["prior_manifest_sha256"]
@@ -441,10 +464,6 @@ def test_v5_manifest_remains_historical_readable_after_v6_rotation() -> None:
 
 
 def test_f19a_authority_is_preserved_and_exact_f20_is_added() -> None:
-    assert (
-        "e4dc35aa64e3e052f3866225a492fab9572e5727194691782b881b60a46144ec"
-        == F19A_QUALIFICATION_MANIFEST_SHA256
-    )
     assert {
         "title_layout:preserve",
         "title_layout:title_and_subtitle",
@@ -457,6 +476,7 @@ def test_f19a_authority_is_preserved_and_exact_f20_is_added() -> None:
         "contributor_names:canonical:provider_consensus_display",
         "publisher_preference:publisher",
         "title:replace_target:provider_consensus_noise",
+        "title:replace_target:decoration_tidy",
         "description_fill:safe_plain_text",
         "genres:fill_empty",
         "genres:add",
@@ -504,12 +524,18 @@ def test_f19a_successor_manifest_binds_f35_and_preserves_f36_evidence() -> None:
     manifest_bytes = F19A_MANIFEST.read_bytes()
     manifest = json.loads(manifest_bytes)
 
+    if F19A_QUALIFICATION_MANIFEST_SHA256 not in PLACEHOLDER_DIGESTS:
+        assert (
+            hashlib.sha256(manifest_bytes).hexdigest()
+            == F19A_QUALIFICATION_MANIFEST_SHA256
+        )
+    assert "f19a-v13-result" == manifest["schema"]
     assert (
-        hashlib.sha256(manifest_bytes).hexdigest() == F19A_QUALIFICATION_MANIFEST_SHA256
+        "e4dc35aa64e3e052f3866225a492fab9572e5727194691782b881b60a46144ec"
+        == manifest["prior_manifest_sha256"]
     )
-    assert "f19a-v12-result" == manifest["schema"]
-    assert 9 == manifest["replayed_prior_option_count"]
-    assert 3 == manifest["changed_prior_option_count"]
+    assert 12 == manifest["replayed_prior_option_count"]
+    assert 0 == manifest["changed_prior_option_count"]
     assert 0 == manifest["zero_tolerance_failures"]
     assert {
         "automatic_precision": 1.0,
@@ -529,14 +555,52 @@ def test_f19a_successor_manifest_binds_f35_and_preserves_f36_evidence() -> None:
         "qualified": True,
         "unsupported_rate": 0.0,
     } == manifest["metrics"]["title:replace_target:provider_consensus_noise"]
+    tranche = manifest["title_tranche"]
     assert {
-        "candidate_execution_count": 2,
-        "changed_prior_option_count": 0,
-        "corpus_role": "development_challenge_set",
-        "evaluator_contract": "f35-title-policy-v1",
-        "replayed_prior_option_count": 11,
-        "zero_tolerance_failures": 0,
-    } == manifest["title_tranche"]
+        "candidate_execution_count",
+        "changed_prior_option_count",
+        "corpus_role",
+        "decoration_equivalence",
+        "evaluator_contract",
+        "options",
+        "replayed_prior_option_count",
+        "zero_tolerance_failures",
+    } == set(tranche)
+    assert 0 == tranche["changed_prior_option_count"]
+    assert "development_challenge_set" == tranche["corpus_role"]
+    assert "f35-title-policy-v1+f41-decoration-tidy-v1" == tranche["evaluator_contract"]
+    assert 12 == tranche["replayed_prior_option_count"]
+    assert 0 == tranche["zero_tolerance_failures"]
+    assert [
+        "title:replace_target:provider_consensus_noise",
+        "title:replace_target:decoration_tidy",
+    ] == tranche["options"]
+    assert 75 == tranche["decoration_equivalence"]["case_count"]
+    assert 70 == tranche["decoration_equivalence"]["review_agreement_count"]
+    assert 25 == tranche["decoration_equivalence"]["stratum_sizes"]["tidy_eligible"]
+    assert (
+        "f35-title-policy-v1+f36-language-equivalence-v1+f41-decoration-tidy-v1"
+        == manifest["evaluator_contract"]
+    )
+    tidy = manifest["metrics"]["title:replace_target:decoration_tidy"]
+    assert 0.0 == tidy["unsupported_rate"]
+    assert tidy["qualified"] is True
+    if tidy["automatic_precision"] != ROOT_PLACEHOLDER:
+        assert 1.0 == tidy["automatic_precision"]
+        assert 3 <= tidy["automatic_predictions"]
+
+
+def test_qualification_digests_are_pinned() -> None:
+    """The one red sentinel until the root binds the private qualification.
+
+    It clears when both manifests carry real numbers and both runtime
+    constants bind their exact file digests.
+    """
+    assert F19A_MANIFEST.exists() and MANIFEST.exists()
+    assert F19A_QUALIFICATION_MANIFEST_SHA256 not in PLACEHOLDER_DIGESTS
+    assert F20_QUALIFICATION_CANDIDATE_SHA256 not in PLACEHOLDER_DIGESTS
+    assert ROOT_PLACEHOLDER not in F19A_MANIFEST.read_text(encoding="utf-8")
+    assert ROOT_PLACEHOLDER not in MANIFEST.read_text(encoding="utf-8")
 
 
 def test_f38_manifest_separately_qualifies_provider_consensus_contributor_display() -> (
@@ -567,10 +631,11 @@ def test_f38_manifest_separately_qualifies_provider_consensus_contributor_displa
 
 def test_runtime_envelope_pins_every_terminal_disposition_and_authority() -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
-    assert (
-        hashlib.sha256(MANIFEST.read_bytes()).hexdigest()
-        == F20_QUALIFICATION_CANDIDATE_SHA256
-    )
+    if F20_QUALIFICATION_CANDIDATE_SHA256 not in PLACEHOLDER_DIGESTS:
+        assert (
+            hashlib.sha256(MANIFEST.read_bytes()).hexdigest()
+            == F20_QUALIFICATION_CANDIDATE_SHA256
+        )
     passing = frozenset(
         {
             "description_fill:safe_plain_text",

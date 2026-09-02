@@ -24,9 +24,10 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import (
     BibliographicSelectionKind, ProposalAlternative, ProposalAssessment,
-    ProposalOutcome, ProposalResult, ProposalScope, ProposalSet,
+    ProposalOutcome, ProposalResult, ProposalSet,
     ProposalValueKind, VERIFIED_MANIFESTATION_ISBN_REASON,
     provider_candidate_represents_target_work,
+    subtitle_segment_evidence,
 )
 
 
@@ -367,18 +368,24 @@ def _automatic_subtitle_abstention(
     report: MetadataReport,
     candidate: ProposalAlternative | None,
 ) -> str | None:
-    """Fill an empty subtitle automatically only when local evidence attests it.
+    """Fill an empty subtitle automatically only when a second source attests it.
 
     Provider catalogues split combined titles and carry series-affiliation
-    lines as subtitles; without a matching local claim the projection cannot
-    distinguish a printed subtitle from a catalogue artifact, so it stays an
-    owner decision. The candidate itself must be provider-backed: subtitle
-    alternatives built from the book's own packaged claims carry work scope,
-    and a local claim never corroborates itself into an automatic fill.
+    lines as subtitles; without independent corroboration the projection
+    cannot distinguish a printed subtitle from a catalogue artifact, so it
+    stays an owner decision. The candidate itself must state a subtitle, and
+    the corroboration must come from a source other than the candidate's own:
+    a local subtitle claim, or a colon segment of another source's work title.
     """
     if candidate is None or type(candidate.value.value) is not str:
         return None
-    if candidate.scope is not ProposalScope.EDITION:
+    retained = _retained_claims(report)
+    if not any(
+        reference.startswith("provider_")
+        and (held := retained.get(reference)) is not None
+        and held.claim.kind is ClaimKind.SUBTITLE
+        for reference in candidate.evidence_references
+    ):
         return "subtitle_local_corroboration_required"
     if _corroborating_subtitle_references(report, candidate):
         return None
@@ -389,12 +396,12 @@ def _corroborating_subtitle_references(
     report: MetadataReport,
     candidate: ProposalAlternative,
 ) -> tuple[str, ...]:
-    """The valid local subtitle claims that attest the candidate's exact value."""
+    """The independent claims that attest the candidate's exact value."""
     value = candidate.value.value
     if type(value) is not str:
         return ()
     desired = normalize_title(value).casefold()
-    return tuple(
+    explicit = tuple(
         claim.reference
         for claim in report.local_claims
         if claim.kind is ClaimKind.SUBTITLE
@@ -403,6 +410,12 @@ def _corroborating_subtitle_references(
         and observed
         and normalize_title(observed).casefold() == desired
     )
+    segments = tuple(
+        segment.reference
+        for segment in subtitle_segment_evidence(report, value)
+        if segment.correlation not in candidate.correlations
+    )
+    return tuple(sorted({*explicit, *segments}))
 
 
 def _automatic_series_abstention(

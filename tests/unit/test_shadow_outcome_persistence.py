@@ -4760,6 +4760,129 @@ def test_provider_consensus_title_persists_the_exact_qualified_automatic_tranche
         repository.close()
 
 
+def test_decoration_tidy_title_persists_its_own_qualified_automatic_option() -> None:
+    local = "Plain Work [retail]"
+    report = _proposal_report(
+        fields=_fields(
+            local,
+            title=TargetField(
+                TargetDestination.TITLE,
+                TargetFieldState.VALUE,
+                local,
+            ),
+        ),
+        local_claims=(_consensus_local_title(local),),
+        providers=(
+            _consensus_provider_title("open_library", "Plain Work"),
+            _consensus_provider_title("hardcover", "Plain Work [retail]"),
+        ),
+    )
+    profile = _preview_automatic_profile()
+
+    with tempfile.TemporaryDirectory() as temporary:
+        repository = open_repository(Path(temporary) / "reports.sqlite")
+        repository.enter_shadow_preview(1)
+        repository.create_metadata_policy_draft(profile.canonical_json)
+        resolved = resolve_policy(profile, report.target.library)
+        repository.activate_metadata_policy(
+            profile.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            2,
+        )
+        repository.activate_qualified_automatic(3)
+        proposal = evaluate_report(
+            report, resolved.resolved_id, dict(resolved.destinations)
+        )
+        repository.publish(report, lambda: True)
+        repository.publish_proposal(proposal)
+        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+
+        outcome = ShadowOutcomeSet.from_json(
+            repository.persist_shadow_outcome(case_id, 4)
+        )
+        title = next(
+            value for value in outcome.outcomes if value.destination == "title"
+        )
+        document = repository._connection.execute(
+            "SELECT document FROM automatic_decisions WHERE destination='title'"
+        ).fetchone()
+
+        assert title.candidate_id is not None
+        assert title.policy_category == "title"
+        assert title.policy_option == "replace_target:decoration_tidy"
+        assert document is not None
+        decision = AutomaticDecision.from_json(document[0])
+        assert decision.policy_option == "replace_target:decoration_tidy"
+        assert (
+            decision.qualification_manifest_sha256 == F19A_QUALIFICATION_MANIFEST_SHA256
+        )
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(case_id))["case"]
+        )
+        assert {"kind": "text", "value": "Plain Work"} == (
+            _automatic_decision_value(decision, case, report, proposal, outcome)
+        )
+        detail = InspectCurrentReviewCase(repository).run(case_id)
+        projected = next(
+            value for value in detail["fields"] if value["destination"] == "title"
+        )
+        assert projected["notices"] == ["decoration_tidy_bracket_source_tag"]
+        repository.close()
+
+
+def test_decoration_equivalent_title_keeps_the_current_value_without_a_write() -> None:
+    local = "Plain Work"
+    report = _proposal_report(
+        fields=_fields(
+            local,
+            title=TargetField(
+                TargetDestination.TITLE,
+                TargetFieldState.VALUE,
+                local,
+            ),
+        ),
+        local_claims=(_consensus_local_title(local),),
+        providers=(
+            _consensus_provider_title("open_library", "Plain Work"),
+            _consensus_provider_title("hardcover", "Plain Work [retail]"),
+        ),
+    )
+    profile = _preview_automatic_profile()
+
+    with tempfile.TemporaryDirectory() as temporary:
+        repository = open_repository(Path(temporary) / "reports.sqlite")
+        repository.enter_shadow_preview(1)
+        repository.create_metadata_policy_draft(profile.canonical_json)
+        resolved = resolve_policy(profile, report.target.library)
+        repository.activate_metadata_policy(
+            profile.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            2,
+        )
+        repository.activate_qualified_automatic(3)
+        proposal = evaluate_report(
+            report, resolved.resolved_id, dict(resolved.destinations)
+        )
+        repository.publish(report, lambda: True)
+        repository.publish_proposal(proposal)
+        title = next(
+            value
+            for value in proposal.results
+            if value.destination is TargetDestination.TITLE
+        )
+        rows = repository._connection.execute(
+            "SELECT count(*) FROM automatic_decisions WHERE destination='title'"
+        ).fetchone()
+
+        assert ProposalOutcome.KEEP is title.outcome
+        assert ("decoration_equivalent_bracket_source_tag",) == title.reasons
+        assert title.selected_alternative_id is None
+        assert (0,) == rows
+        repository.close()
+
+
 def test_provider_consensus_contributor_display_preserves_local_provenance_and_owner_finality() -> (
     None
 ):

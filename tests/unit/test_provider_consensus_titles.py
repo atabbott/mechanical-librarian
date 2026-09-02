@@ -270,7 +270,7 @@ def test_colon_subtitle_corroboration_keeps_local_title_reference_and_work_scope
     assert subtitle.alternatives[0].scope.value == "work"
 
 
-def test_competing_provider_subtitles_keep_unmatched_colon_suffix_diagnostic() -> None:
+def test_competing_provider_subtitles_keep_an_uncorroborated_segment_visible() -> None:
     _, _, subtitle = _title_and_subtitle_results(
         local="Plain Work: A subtitle",
         providers=(
@@ -284,7 +284,7 @@ def test_competing_provider_subtitles_keep_unmatched_colon_suffix_diagnostic() -
     assert ProposalOutcome.UNRESOLVED_CHOICE is subtitle.outcome
     assert subtitle.reasons == (
         "competing_evidence",
-        "provider_consensus_title_colon_unused",
+        "subtitle_segment_uncorroborated",
     )
 
 

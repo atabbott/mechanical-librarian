@@ -271,6 +271,7 @@ def test_prior_f19a_language_decision_remains_readable_only() -> None:
     prior_digests = (
         "6708826d4891a228d9d2f664ea134ffad693974144c462370db851e50b330b56",
         "cb48d6a0dff269fd576ac9c8fbe7bbe313f291d0368251b097c9178ade456b37",
+        "e4dc35aa64e3e052f3866225a492fab9572e5727194691782b881b60a46144ec",
     )
     for prior_digest in prior_digests:
         prior_core = {
@@ -296,6 +297,62 @@ def test_prior_f19a_language_decision_remains_readable_only() -> None:
                 qualification_manifest_sha256=prior_digest,
                 occurred_at=2,
             )
+
+
+def _f19a_title_decision_document(prior_digest: str, policy_option: str) -> str:
+    core = {
+        "bundle_id": None,
+        "candidate_id": "alternative_" + "f" * 64,
+        "destination": "title",
+        "outcome": "candidate",
+        "policy_category": "title",
+        "policy_generation": 1,
+        "policy_option": policy_option,
+        "proposal_id": "review_proposal_" + "d" * 64,
+        "proposal_set_id": "proposal_set_" + "c" * 64,
+        "qualification_manifest_sha256": prior_digest,
+        "report_id": "report_" + "b" * 64,
+        "resolved_policy_id": "resolved_policy_" + "0" * 64,
+        "review_case_id": "review_case_" + "a" * 64,
+        "rule_id": "shadow_rule_" + "1" * 64,
+        "source_outcome_id": "shadow_outcome_" + "3" * 64,
+        "target_fingerprint": "e" * 64,
+    }
+    document = {
+        "decision_id": "automatic_decision_" + _digest({**core, "occurred_at": 1}),
+        **core,
+        "idempotency_digest": _digest(core),
+        "occurred_at": 1,
+        "origin": "automatic_policy",
+        "schema_version": "automatic-decision-v1",
+    }
+    return json.dumps(document, separators=(",", ":"), sort_keys=True)
+
+
+def test_prior_f19a_manifests_cannot_rehydrate_an_f41_decision() -> None:
+    for prior_digest in (
+        "6708826d4891a228d9d2f664ea134ffad693974144c462370db851e50b330b56",
+        "cb48d6a0dff269fd576ac9c8fbe7bbe313f291d0368251b097c9178ade456b37",
+        "e4dc35aa64e3e052f3866225a492fab9572e5727194691782b881b60a46144ec",
+    ):
+        with pytest.raises(AutomaticDecisionError):
+            AutomaticDecision.from_json(
+                _f19a_title_decision_document(
+                    prior_digest, "replace_target:decoration_tidy"
+                )
+            )
+
+
+def test_the_f35_manifest_still_rehydrates_its_own_title_decision() -> None:
+    document = _f19a_title_decision_document(
+        "e4dc35aa64e3e052f3866225a492fab9572e5727194691782b881b60a46144ec",
+        "replace_target:provider_consensus_noise",
+    )
+
+    assert (
+        "replace_target:provider_consensus_noise"
+        == AutomaticDecision.from_json(document).policy_option
+    )
 
 
 def test_prior_f19a_manifests_cannot_rehydrate_an_f35_decision() -> None:

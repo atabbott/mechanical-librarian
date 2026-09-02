@@ -677,7 +677,7 @@ def work_title_election_matches(
     seen = {title}
     while pending:
         source = pending.pop()
-        direct = _direct_work_title_election_matches(source, authors)
+        direct = direct_work_title_election_matches(source, authors)
         matches.extend(direct)
         for value in direct:
             if value.clean_title not in seen:
@@ -686,9 +686,20 @@ def work_title_election_matches(
     return tuple(matches)
 
 
-def _direct_work_title_election_matches(
+def direct_work_title_election_matches(
     title: str, authors: tuple[str, ...]
 ) -> tuple[WorkTitleElectionMatch, ...]:
+    """Return only the one-step decoration matches of a title.
+
+    `work_title_election_matches` takes the closure; equivalence-class
+    formation needs the single step so stacked decorations stay competing.
+    """
+    if (
+        type(title) is not str
+        or type(authors) is not tuple
+        or any(type(value) is not str for value in authors)
+    ):
+        raise ValueError("work title election input is invalid")
     isbn = _election_isbn_component(title)
     if isbn is not None:
         isbn_clean_title, identifier_component = isbn
@@ -924,6 +935,7 @@ __all__ = [
     "WorkTitleTransformationSide",
     "apply_work_title_transformation",
     "admit_provider_work_identity",
+    "direct_work_title_election_matches",
     "narrowing_work_query",
     "replay_provider_work_identity_admission",
     "work_dispatch_lineage_from_data",

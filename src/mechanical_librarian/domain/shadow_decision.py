@@ -8,7 +8,10 @@ import re
 from dataclasses import dataclass
 from typing import TypedDict, cast
 
-from mechanical_librarian.domain.proposal_set import PROVIDER_CONSENSUS_TITLE_REASONS
+from mechanical_librarian.domain.proposal_set import (
+    DECORATION_TIDY_TITLE_REASONS,
+    PROVIDER_CONSENSUS_TITLE_REASONS,
+)
 from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
 from mechanical_librarian.domain.shadow_review_actions import (
     ACTION_POLICY_VERSION,
@@ -19,7 +22,7 @@ from mechanical_librarian.domain.shadow_review_actions import (
 )
 
 DECISION_SET_SCHEMA = "shadow-decision-set-v1"
-DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v10"
+DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v11"
 MAX_DECISION_SET_BYTES = 1_048_576
 
 _SUPPORTED_DESTINATIONS = frozenset(
@@ -82,6 +85,12 @@ _RULE_TABLE = {
             "candidate": "year_month_or_day",
             "independent_correlation": "required",
         },
+    },
+    "decoration_tidy_title": {
+        "candidate_local_evidence": "any",
+        "minimum_independent_provider_correlations": 1,
+        "proposal_target_only_preservation": 1,
+        "reasons": sorted(DECORATION_TIDY_TITLE_REASONS),
     },
     "provider_consensus_title": {
         "candidate_local_evidence": 0,
@@ -476,6 +485,13 @@ def _candidate_is_eligible(
         and len(reasons) == 1
         and reasons[0] in PROVIDER_CONSENSUS_TITLE_REASONS
     )
+    decoration_tidy_title = (
+        destination == "title"
+        and type(reasons) is list
+        and len(reasons) == 1
+        and reasons[0] in DECORATION_TIDY_TITLE_REASONS
+    )
+    title_election = provider_consensus_title or decoration_tidy_title
     proposal_target_only_preservation = cast(
         "_ProposalSummary", proposal["decision_summary"]
     )["target_only_preservation"]
@@ -483,12 +499,12 @@ def _candidate_is_eligible(
     if (
         (
             not source_evidence_report_only
-            and proposal_target_only_preservation
-            != (1 if provider_consensus_title else 0)
+            and proposal_target_only_preservation != (1 if title_election else 0)
         )
         or support["target_only_preservation"] != 0
         or (
             destination != "publishedDate"
+            and not decoration_tidy_title
             and support["local_evidence"] != (0 if provider_consensus_title else 1)
         )
         or (
