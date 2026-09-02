@@ -131,18 +131,21 @@ decisions, so they could not positively demonstrate preservation of the prior
 deferred; their earlier automatic dispositions and metrics remain authoritative
 and unchanged rather than being dequalified by a different evidence mode.
 
-The fifteenth and sixteenth candidate executions qualify the automatic
+The fifteenth and sixteenth candidate executions qualified the automatic
 description tiebreaker after adopting the same target-work applicability rule.
 Applicable descriptions must pass the frozen 80-character, 16-word floor and
 must not end in a visible cutoff; the survivors then follow the fixed Hardcover,
 Google Books, Open Library authority order without combining text. The exposed
 confirmation selected 13 of 23 cases and the one-shot sealed holdout selected 14
-of 25, both at 100% precision with zero failures. The v7 manifest binds those
-private receipts and the previously unbound #971 live-capture and retained-replay
-digests while disclosing only aggregate results.
+of 25, both at 100% precision with zero failures. After review found the floor
+counting an inapplicable alternative, the seventeenth and eighteenth executions
+replayed both splits against the corrected compiler. Results were unchanged;
+the holdout is explicitly recorded as spent correction continuity, not a second
+unseen execution. The v8 manifest binds those correction receipts and retains
+the original one-shot receipt through its historical predecessor.
 
-F20 v7 separately qualifies the two ISBN-form options under the current
-deterministic identity rule. Its final development result and archived replay
+F20 v8 preserves the separately qualified two ISBN-form options under the
+current deterministic identity rule. Their final development result and archived replay
 show 100% precision across the supported empty-field states, while the sealed
 holdout is carried forward by a continuity receipt for the unresolved-work
 identity guard. The goal
@@ -151,5 +154,5 @@ A useful published-work ISBN carried by a proof remains eligible only through
 that bound identity evidence; proof status alone neither elects nor disqualifies it.
 
 The machine-readable candidate is
-[`f20-rich-metadata-qualification-candidate-v7.json`](../reference/f20-rich-metadata-qualification-candidate-v7.json).
-The v6 manifest remains a readable historical record.
+[`f20-rich-metadata-qualification-candidate-v8.json`](../reference/f20-rich-metadata-qualification-candidate-v8.json).
+The v7 manifest remains a readable historical record.

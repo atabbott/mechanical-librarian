@@ -33,11 +33,11 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
 
 MANIFEST = (
     Path(__file__).parents[2]
-    / "docs/reference/f20-rich-metadata-qualification-candidate-v7.json"
+    / "docs/reference/f20-rich-metadata-qualification-candidate-v8.json"
 )
 HISTORICAL_MANIFEST = (
     Path(__file__).parents[2]
-    / "docs/reference/f20-rich-metadata-qualification-candidate-v6.json"
+    / "docs/reference/f20-rich-metadata-qualification-candidate-v7.json"
 )
 F19A_MANIFEST = (
     Path(__file__).parents[2] / "docs/reference/f19a-qualification-manifest-v4.json"
@@ -61,7 +61,7 @@ RICH_FIELDS = (
 def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
 
-    assert "f20-rich-metadata-qualification-candidate-v7" == manifest["schema"]
+    assert "f20-rich-metadata-qualification-candidate-v8" == manifest["schema"]
     assert "fixed-conservative-v18" == manifest["proposal_policy_version"]
     assert "decision_only" == manifest["automatic_authority"]
     passing = {
@@ -82,12 +82,12 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     assert passing == set(manifest["passing_automatic_options"])
     assert ["explicit:unsupported"] == manifest["human_only_options"]
     assert ["narrators", "cover"] == manifest["excluded_destinations"]
-    assert 16 == manifest["candidate_execution_count"]
+    assert 18 == manifest["candidate_execution_count"]
     assert {
-        "prior_manifest_sha256": "15cfb36db142e3783fa47a73157c72ecfd08bb282a967abc83fba152d1199205",
+        "prior_manifest_sha256": "535348d225d6f160a4096c17c3379ee060741cb1d704ad0d741fc4631fc01d9b",
         "description_applicability_confirmation_sha256": "03e19f6b3524afc1c3409e55b652a252f39c14653fa636d340f13c6150e9ddb7",
-        "description_confirmation_sha256": "7a81773208600a70d63a5b46585d7c0253c0f27e1cf73dde6d03ba8003dfb4f0",
-        "description_holdout_sha256": "4637df813899ec39d2896fc626076d09924165433674cef35cfcc4fc0c6c48dd",
+        "description_confirmation_correction_sha256": "bcf746e16bdfd9ed8ee3174006546f4d3de7a375c3b52f62641d86470bbe136c",
+        "description_holdout_continuity_sha256": "16b87e09e1b51cf9162d583852bf54b8c964e8d12913fbf36486ce3d58faa024",
         "issue_971_capture_receipt_sha256": "c1d672126449442b44b056c4cd7dc3c73346f90ab1fa4eb090e8203441cc0a33",
         "issue_971_capture_receipt_head": "3d153a371b63abd5751f09254f218504da8e9f75",
         "issue_971_baseline_result_sha256": "093411b65e1f48f40011f40799388dc09784dc5bcc4a133c77b3478d964af0df",
@@ -150,6 +150,7 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
                 "automatic_precision": 1.0,
                 "automatic_predictions": 13,
                 "case_count": 23,
+                "correction_replays": 1,
                 "errors": 0,
             },
             "contract": {
@@ -164,7 +165,9 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
                 "automatic_predictions": 14,
                 "case_count": 25,
                 "errors": 0,
-                "executions": 1,
+                "executions": 2,
+                "initial_unseen_executions": 1,
+                "spent_correction_replays": 1,
             },
         },
         "evaluated_reports": 49,
@@ -401,10 +404,11 @@ def test_candidate_exposes_only_closed_aggregate_contract_data() -> None:
         ]
     )
     assert {
-        "candidate_head": "549e78c3d2e9b6466c2742f386cd93c1b533f894",
-        "confirmation_receipt_sha256": "7a81773208600a70d63a5b46585d7c0253c0f27e1cf73dde6d03ba8003dfb4f0",
-        "holdout_receipt_sha256": "4637df813899ec39d2896fc626076d09924165433674cef35cfcc4fc0c6c48dd",
-        "preview_sha256": "1f74f5f529b7b71088ffb16bb678adad913ee10761a60c778facb4276c3a41fa",
+        "candidate_head": "02977e2c8ff88d1ab3b5937286a017ccffe2d40f",
+        "confirmation_correction_receipt_sha256": "bcf746e16bdfd9ed8ee3174006546f4d3de7a375c3b52f62641d86470bbe136c",
+        "holdout_continuity_receipt_sha256": "16b87e09e1b51cf9162d583852bf54b8c964e8d12913fbf36486ce3d58faa024",
+        "initial_holdout_receipt_sha256": "4637df813899ec39d2896fc626076d09924165433674cef35cfcc4fc0c6c48dd",
+        "preview_sha256": "f7b68ac82f4966e0d41d700ab8d3509f9ec1a8f6b503eca0ceefa587a51f6f91",
     } == manifest["frozen_contract"]["description_tiebreaker"]
     for source, name in {
         "src/mechanical_librarian/domain/automatic_decision.py": "automatic_decision_sha256",
@@ -417,12 +421,12 @@ def test_candidate_exposes_only_closed_aggregate_contract_data() -> None:
         )
 
 
-def test_v6_manifest_remains_historical_readable_after_v7_rotation() -> None:
+def test_v7_manifest_remains_historical_readable_after_v8_rotation() -> None:
     historical = json.loads(HISTORICAL_MANIFEST.read_text(encoding="utf-8"))
     current = json.loads(MANIFEST.read_text(encoding="utf-8"))
     manifest = current
 
-    assert "f20-rich-metadata-qualification-candidate-v6" == historical["schema"]
+    assert "f20-rich-metadata-qualification-candidate-v7" == historical["schema"]
     assert (
         hashlib.sha256(HISTORICAL_MANIFEST.read_bytes()).hexdigest()
         == current["authority_rotation"]["prior_manifest_sha256"]
