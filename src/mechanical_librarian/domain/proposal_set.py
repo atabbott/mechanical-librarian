@@ -4379,6 +4379,11 @@ def _projection(value: object, maximum: int) -> str:
 
 __all__ = [
     "BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA",
+    "DECORATION_EQUIVALENCE_DECORATED_CONSENSUS_REASON",
+    "DECORATION_EQUIVALENCE_PROVIDER_DISSENT_REASON",
+    "DECORATION_EQUIVALENT_TITLE_REASONS",
+    "DECORATION_TIDY_SERIES_UNPRESERVED_REASON",
+    "DECORATION_TIDY_TITLE_REASONS",
     "BibliographicCombination",
     "BibliographicSelection",
     "BibliographicSelectionKind",
@@ -4386,7 +4391,10 @@ __all__ = [
     "MAX_PROPOSAL_BYTES",
     "POLICY_VERSION",
     "PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON",
+    "PROVIDER_SEGMENT_CORROBORATED_SUBTITLE_REASON",
     "PROPOSAL_SCHEMA",
+    "SUBTITLE_SEGMENT_UNCORROBORATED_REASON",
+    "SubtitleSegmentEvidence",
     "ProposalAlternative",
     "ProposalAssessment",
     "ProposalOutcome",
@@ -4398,4 +4406,5 @@ __all__ = [
     "ProposalValueKind",
     "evaluate_report",
     "provider_candidate_represents_target_work",
+    "subtitle_segment_evidence",
 ]
