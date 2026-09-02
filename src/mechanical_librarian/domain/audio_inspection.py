@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
@@ -16,6 +17,7 @@ from typing import ClassVar, Mapping, cast
 
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
+    replace_forbidden_codepoints,
     validate_projection_text,
     validate_role_projection,
 )
@@ -214,6 +216,85 @@ def normalize_duration_seconds(value: str) -> str:
     if not 0 < milliseconds <= MAX_DURATION_MILLISECONDS:
         raise ValueError("audio duration is invalid")
     return f"{milliseconds // 1000}.{milliseconds % 1000:03d}"
+
+
+def unnamed_track_name(ordinal: int) -> str:
+    """Name the track this build could publish no file name for."""
+
+    return f"track-{ordinal}"
+
+
+@dataclass(frozen=True, slots=True)
+class TrackNameProjection:
+    """The manifest name for one track, and how the projection arrived at it.
+
+    ``synthesized`` says the name is the track's position because nothing the
+    filesystem stated survived projection; ``repaired`` says at least one
+    refused codepoint became U+FFFD.  Both are carried as facts of the
+    projection rather than read back off the string, because a filesystem can
+    legitimately state a name of literal U+FFFD characters or a file literally
+    called ``track-1``, and neither of those is this build's doing.
+    """
+
+    name: str
+    synthesized: bool
+    repaired: bool
+
+
+def project_track_name_detail(name: str, ordinal: int) -> TrackNameProjection:
+    """Return the manifest name for one track, or the position it holds.
+
+    A file name is untrusted text read from a mounted filesystem, and a real
+    library states names no bounded evidence value admits: one 75-file
+    audiobook carries a double-encoded en dash, which leaves the C1 controls
+    U+0080 and U+0093 in 71 of its names.  Refusing the manifest entry there
+    denies the whole item its evidence set over a value nothing is decided
+    from -- currentness is witnessed by the per-track identities, digests, and
+    order, and ``unchanged`` compares no name at all -- so this projection is
+    total and deterministic instead.  Every codepoint the evidence bounds
+    refuse becomes U+FFFD in place, keeping the shape of what the filesystem
+    said, and a name with nothing of its own left is published as its own
+    position.  Survival is judged on the characters the filesystem stated and
+    kept, never on the substitution's output, so a name made of literal U+FFFD
+    is a name.  The domain validator is not loosened: this is what is handed
+    to it, and a retained document whose name still carries a raw control
+    character fails closed exactly as before.
+    """
+
+    normalized = unicodedata.normalize("NFC", name)
+    replaced = replace_forbidden_codepoints(normalized)
+    repaired = replaced != normalized
+    # Truncation can expose whitespace the first strip did not reach, and a
+    # trimmed value is what the validator admits.
+    projected = replaced.strip()[:MAX_SIDECAR_NAME_CHARACTERS].strip()
+    survived = any(
+        stated == kept and not stated.isspace()
+        for stated, kept in zip(
+            normalized[:MAX_SIDECAR_NAME_CHARACTERS],
+            replaced[:MAX_SIDECAR_NAME_CHARACTERS],
+            strict=True,
+        )
+    )
+    if not projected or not survived:
+        # Nothing the filesystem said survived, so a row of replacement
+        # characters would state a name rather than admit there is none.
+        return TrackNameProjection(unnamed_track_name(ordinal), True, repaired)
+    try:
+        return TrackNameProjection(
+            validate_projection_text(
+                projected, "audio track name", MAX_SIDECAR_NAME_CHARACTERS
+            ),
+            False,
+            repaired,
+        )
+    except EvidenceValueError:
+        return TrackNameProjection(unnamed_track_name(ordinal), True, repaired)
+
+
+def project_track_name(name: str, ordinal: int) -> str:
+    """Return only the manifest name; see ``project_track_name_detail``."""
+
+    return project_track_name_detail(name, ordinal).name
 
 
 @dataclass(frozen=True)
@@ -798,5 +879,9 @@ __all__ = [
     "MAX_PUBLIC_REPORT_BYTES",
     "MAX_SIDECAR_NAME_CHARACTERS",
     "MULTI_FILE_WALL_SECONDS",
+    "TrackNameProjection",
     "normalize_duration_seconds",
+    "project_track_name",
+    "project_track_name_detail",
+    "unnamed_track_name",
 ]

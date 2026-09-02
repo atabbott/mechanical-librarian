@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Audiobook items whose file names carry characters the report cannot hold
+  are now prepared normally: the track manifest records a projection of the
+  name, so an item is no longer lost to an untyped failure over a value
+  nothing is decided from. (#975)
+
 - Audiobook items made of several audio files are now prepared as one item:
   every file is read under its own bounded child, and composed into one running
   time, one chapter list, and one claim per observation carrying the files that

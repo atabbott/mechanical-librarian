@@ -230,7 +230,16 @@ three-hundred-file item names the one file to look at.
 The 512-file bound is measured on the files the service plays, after its own
 excluded records are dropped. Every audio section names at least one file: the
 manifest is what the item's content digest and per-file claim provenance are
-checked against. Sidecars and the folder name are item-level evidence, so an
+checked against. Each entry's `name` is a projection of the file name the mount
+states rather than the name itself: a character the retained report refuses —
+a control character left behind by a double-encoded dash, for instance —
+becomes U+FFFD where it stood, a name longer than 255 characters is cut to it,
+and a name with none of its own characters left is published as
+`track-<ordinal>`; whether a name was repaired or replaced is a fact of the
+projection, so a file really named `track-1` keeps its name.
+Nothing is decided from the name, and a per-track chapter whose file name
+projected to nothing readable is left unnamed rather than titled after the
+repair. Sidecars and the folder name are item-level evidence, so an
 item whose tracks are split across directories is given none of them rather
 than the first track's. A report is stale when a track is added, removed,
 reordered, edited, or renumbered: the position the service declares for each
