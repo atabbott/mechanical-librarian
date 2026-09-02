@@ -17,6 +17,7 @@ from mechanical_librarian.domain.audio_inspection import (
     MAX_SIDECAR_NAME_CHARACTERS,
     AudioTrackDigest,
     project_track_name,
+    project_track_name_detail,
 )
 
 # What a UTF-8 en dash becomes when it is decoded as Latin-1 and written back:
@@ -80,3 +81,28 @@ def test_the_projected_name_is_exactly_what_the_manifest_admits() -> None:
         5, f"{5:064x}", f"{6:064x}", "mp3", project_track_name(raw, 5)
     )
     assert admitted.to_data()["name"] == f"05 {PROJECTED_EN_DASH} Endgame.mp3"
+
+
+def test_a_name_of_literal_replacement_characters_is_a_name_the_filesystem_stated() -> (
+    None
+):
+    """Survival is judged on what was stated, not on what the substitution emits."""
+    projection = project_track_name_detail("\ufffd\ufffd", 4)
+
+    assert projection.name == "\ufffd\ufffd"
+    assert projection.synthesized is False
+    assert projection.repaired is False
+
+
+def test_the_projection_records_whether_it_repaired_or_synthesized() -> None:
+    repaired = project_track_name_detail(f"05 {MOJIBAKE_EN_DASH} Endgame.mp3", 5)
+    synthesized = project_track_name_detail("\u0080\u0093", 3)
+    plain = project_track_name_detail("track-1", 1)
+
+    assert (repaired.synthesized, repaired.repaired) == (False, True)
+    assert (synthesized.name, synthesized.synthesized, synthesized.repaired) == (
+        "track-3",
+        True,
+        True,
+    )
+    assert (plain.name, plain.synthesized, plain.repaired) == ("track-1", False, False)

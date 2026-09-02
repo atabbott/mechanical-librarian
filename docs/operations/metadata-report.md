@@ -234,7 +234,9 @@ checked against. Each entry's `name` is a projection of the file name the mount
 states rather than the name itself: a character the retained report refuses —
 a control character left behind by a double-encoded dash, for instance —
 becomes U+FFFD where it stood, a name longer than 255 characters is cut to it,
-and a name with nothing projectable left is published as `track-<ordinal>`.
+and a name with none of its own characters left is published as
+`track-<ordinal>`; whether a name was repaired or replaced is a fact of the
+projection, so a file really named `track-1` keeps its name.
 Nothing is decided from the name, and a per-track chapter whose file name
 projected to nothing readable is left unnamed rather than titled after the
 repair. Sidecars and the folder name are item-level evidence, so an
