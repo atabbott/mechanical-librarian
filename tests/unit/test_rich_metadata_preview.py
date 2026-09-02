@@ -6,12 +6,6 @@ from dataclasses import replace
 
 import pytest
 
-from mechanical_librarian.application.metadata_report import (
-    ProviderLaneResult,
-    TargetSnapshot,
-    metadata_discovery_plan,
-    provider_observation,
-)
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
     resolve_policy,
@@ -60,24 +54,14 @@ from mechanical_librarian.domain.rich_metadata_preview import (
 from tests.support.proposal_evidence import (
     _claim,
     _fields,
+    _local_isbn,
     _local_subtitle,
     _provider,
     _report,
+    _target_work_candidate,
+    _target_work_report,
 )
 from tests.unit.test_bibliographic_bundles import _bibliographic_report, _source
-
-
-def _local_isbn(value, checksum):
-    return LocalClaim.create(
-        kind=ClaimKind.ISBN,
-        observed=value,
-        canonical=value,
-        excerpt=value,
-        applicability="ebook",
-        checksum=checksum,
-        applicability_basis="ebook",
-        scope=ClaimScope.EDITION,
-    )
 
 
 def _preview_field(report, field, option):
@@ -151,135 +135,6 @@ def _series_provider(name, candidate, authority, claims=None):
         candidate,
         _series_claims(name, candidate) if claims is None else claims,
         authority=authority,
-    )
-
-
-def _target_work_candidate(
-    provider: str,
-    identity: str,
-    work_identity: str,
-) -> ProviderCandidate:
-    return ProviderCandidate(
-        identity,
-        work_identity,
-        (
-            _claim(
-                provider,
-                identity,
-                ClaimKind.TITLE,
-                "Real Tigers",
-                scope=ClaimScope.WORK,
-            ),
-            _claim(
-                provider,
-                identity,
-                ClaimKind.CREATOR,
-                "Mick Herron",
-                scope=ClaimScope.WORK,
-                role="author",
-            ),
-            _claim(
-                provider,
-                identity,
-                ClaimKind.ISBN,
-                "9780306406157",
-                scope=ClaimScope.EDITION,
-                applicability="ebook",
-            ),
-            _claim(
-                provider,
-                identity,
-                ClaimKind.DESCRIPTION,
-                "A qualified description.",
-                scope=ClaimScope.WORK,
-                order=1,
-            ),
-            _claim(
-                provider,
-                identity,
-                ClaimKind.GENRE,
-                "Mystery",
-                scope=ClaimScope.WORK,
-                order=2,
-            ),
-            _claim(
-                provider,
-                identity,
-                ClaimKind.TAG,
-                "Espionage",
-                scope=ClaimScope.WORK,
-                order=3,
-            ),
-            _claim(
-                provider,
-                identity,
-                ClaimKind.SERIES,
-                "Slough House",
-                scope=ClaimScope.WORK,
-                order=4,
-            ),
-            _claim(
-                provider,
-                identity,
-                ClaimKind.SERIES_SEQUENCE,
-                "3",
-                scope=ClaimScope.WORK,
-                order=5,
-            ),
-        ),
-    )
-
-
-def _target_work_report(
-    candidates_by_provider: tuple[
-        tuple[str, str, tuple[ProviderCandidate, ...], bool], ...
-    ],
-    *,
-    target_authors: tuple[str, ...] | None = ("Mick Herron",),
-) -> MetadataReport:
-    fields = _fields(
-        "Real Tigers",
-        authors=TargetField(TargetDestination.AUTHORS, TargetFieldState.MISSING)
-        if target_authors is None
-        else TargetField(
-            TargetDestination.AUTHORS, TargetFieldState.VALUE, target_authors
-        ),
-        description=TargetField(
-            TargetDestination.DESCRIPTION,
-            TargetFieldState.MISSING,
-        ),
-        series=TargetField(TargetDestination.SERIES, TargetFieldState.MISSING),
-        genres=TargetField(TargetDestination.GENRES, TargetFieldState.MISSING),
-        tags=TargetField(TargetDestination.TAGS, TargetFieldState.MISSING),
-    )
-    local_isbns = (
-        _local_isbn("0306406152", "valid_isbn_10"),
-        _local_isbn("9780306406157", "valid_isbn_13"),
-    )
-    lane = metadata_discovery_plan(
-        TargetSnapshot("ebook", "Real Tigers", (), fields=fields),
-        local_isbns,
-    ).lanes[0]
-    providers = tuple(
-        provider_observation(
-            provider,
-            (ProviderLaneResult(lane, ProviderStatus.CANDIDATES, candidates),),
-            authority=authority,
-        )
-        if with_lane
-        else ProviderObservation(
-            provider,
-            ProviderStatus.CANDIDATES,
-            candidates=candidates,
-            authority=authority,
-        )
-        for provider, authority, candidates, with_lane in candidates_by_provider
-    )
-    return _report(
-        title="Real Tigers",
-        fields=fields,
-        local_claims=local_isbns,
-        providers=providers,
     )
 
 
@@ -389,6 +244,29 @@ def test_isbn_intersection_does_not_replace_missing_work_identity() -> None:
         fields["tags"].outcome,
         fields["tags"].reason,
     )
+
+
+def test_unusable_retained_isbn_does_not_conflict_with_matching_edition() -> None:
+    candidate = _isbn_target_work_candidate("9780306406157", include_work_identity=True)
+    unusable = ProviderClaim.create(
+        provider="catalogue",
+        candidate="edition-1",
+        kind=ClaimKind.ISBN,
+        value=None,
+        state=FieldState.ABSENT,
+        scope=ClaimScope.EDITION,
+        applicability="ebook",
+        raw_order=len(candidate.claims),
+    )
+    candidate = replace(candidate, claims=(*candidate.claims, unusable))
+
+    _, fields = _target_work_preview(
+        _target_work_report(
+            (("catalogue", "hardcover", (candidate,), True),),
+        )
+    )
+
+    assert fields["tags"].outcome == "projected"
 
 
 @pytest.mark.parametrize(

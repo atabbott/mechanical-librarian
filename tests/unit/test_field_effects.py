@@ -90,6 +90,11 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
+from tests.support.automatic_decisions import _automatic_decisions
+from tests.support.proposal_evidence import (
+    _target_work_candidate,
+    _target_work_report,
+)
 from tests.unit.review_app_fixture import (
     TEST_REACT_BUILD_IDENTITY,
     create_transport_test_app,
@@ -2559,12 +2564,6 @@ def test_qualified_automatic_origin_uses_the_identical_plan_and_effect_path(
 def test_legacy_tag_decision_stays_readable_without_effect_authority(
     effects: _EffectEnvironment,
 ) -> None:
-    from tests.unit.test_activity_end_to_end import _automatic_decisions
-    from tests.unit.test_rich_metadata_preview import (
-        _target_work_candidate,
-        _target_work_report,
-    )
-
     current = next(
         decision
         for decision in _automatic_decisions(

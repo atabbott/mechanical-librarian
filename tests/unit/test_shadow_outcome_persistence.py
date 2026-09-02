@@ -123,6 +123,8 @@ from tests.support.proposal_evidence import (
     _provider,
     _publication_local_isbn,
     _publication_provider,
+    _target_work_candidate,
+    _target_work_report,
 )
 from tests.support.proposal_evidence import (
     _report as _proposal_report,
@@ -143,10 +145,6 @@ from tests.unit.test_cover_packets import (
 )
 from tests.unit.test_cover_packets import (
     _source as _cover_source,
-)
-from tests.unit.test_rich_metadata_preview import (
-    _target_work_candidate,
-    _target_work_report,
 )
 
 

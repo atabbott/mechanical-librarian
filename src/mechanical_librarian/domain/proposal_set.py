@@ -1828,18 +1828,20 @@ def provider_candidate_represents_target_work(
             candidates_by_identity[value.edition_identity] for value in lane.candidates
         )
         if lane.kind is ProviderQueryKind.ISBN:
-            provider_isbns = tuple(
-                claim for claim in candidate.claims if claim.kind is ClaimKind.ISBN
+            provider_isbn_families = tuple(
+                family
+                for claim in candidate.claims
+                if claim.kind is ClaimKind.ISBN
+                and claim.state is FieldState.VALID
+                and claim.scope is ClaimScope.EDITION
+                and type(claim.value) is str
+                and (family := isbn_family(claim.value)) is not None
             )
             if not (
                 lane.matched_family is not None
-                and provider_isbns
+                and provider_isbn_families
                 and all(
-                    claim.state is FieldState.VALID
-                    and claim.scope is ClaimScope.EDITION
-                    and type(claim.value) is str
-                    and isbn_family(claim.value) == lane.matched_family
-                    for claim in provider_isbns
+                    family == lane.matched_family for family in provider_isbn_families
                 )
             ):
                 continue
