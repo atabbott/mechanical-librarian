@@ -861,18 +861,12 @@ function DescriptionAutomaticStatement({ field }: { field: ReviewField }) {
   if (
     field.humanDecision !== null ||
     field.destination !== 'description' ||
-    decision?.outcome !== 'candidate'
+    decision?.outcome !== 'candidate' ||
+    field.proposedValues.length < 2
   ) {
     return null
   }
-  const context = field.choiceContexts.find((item) => item.alternativeId === decision.candidate_id)
-  const providers = [
-    ...new Set(
-      (context?.evidence ?? [])
-        .filter((row) => row.role === 'external_corroboration')
-        .map((row) => row.source),
-    ),
-  ]
+  const providers = field.automaticSelectionSources ?? []
   if (!providers.length) return null
   return (
     <p>

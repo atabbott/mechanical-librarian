@@ -27,6 +27,7 @@ from mechanical_librarian.application.field_effects import (
     AuthoritySnapshot,
     GuardedFieldApplication,
 )
+from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.domain.automatic_decision import (
     F19A_QUALIFICATION_MANIFEST_SHA256,
     AutomaticDecision,
@@ -145,6 +146,19 @@ def _automatic_candidate_decision(
 def _qualified_no_change_decision(environment: _EffectEnvironment) -> AutomaticDecision:
     decisions = _automatic_no_change_decisions(environment, qualified=True)
     return next(value for value in decisions if value.destination == "title")
+
+
+def test_automatic_description_read_model_names_only_its_bound_source(
+    effects: _EffectEnvironment,  # noqa: F811
+) -> None:
+    decision = _automatic_candidate_decision(effects)
+
+    detail = InspectCurrentReviewCase(effects.repository).run(decision.review_case_id)
+    description = next(
+        field for field in detail["fields"] if field["destination"] == "description"
+    )
+
+    assert description["automatic_selection_sources"] == ["Hardcover"]
 
 
 def test_a_qualified_automatic_decision_reaches_activity_without_raw_inserts(

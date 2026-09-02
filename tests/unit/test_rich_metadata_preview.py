@@ -292,6 +292,50 @@ def test_automatic_description_filters_applicability_before_provider_order() -> 
     assert description.source_evidence_references == (applicable.claims[3].reference,)
 
 
+def test_automatic_description_excludes_unproved_source_for_one_collapsed_value() -> None:
+    shared_description = _QUALIFIED_DESCRIPTION + " Shared source text."
+    unproved = _description_candidate(
+        "preferred", "edition-1", "work-1", shared_description
+    )
+    applicable = _description_candidate(
+        "fallback", "edition-2", "work-1", shared_description
+    )
+    _, fields = _target_work_preview(
+        _target_work_report(
+            (
+                ("preferred", "hardcover", (unproved,), False),
+                ("fallback", "google_books", (applicable,), True),
+            )
+        )
+    )
+
+    description = fields["description_fill"]
+    assert ("projected", shared_description) == (
+        description.outcome,
+        description.desired_value,
+    )
+    assert description.source_evidence_references == (applicable.claims[3].reference,)
+
+
+def test_single_automatic_description_preserves_the_preexisting_no_floor_path() -> None:
+    candidate = _description_candidate(
+        "catalogue",
+        "edition-1",
+        "work-1",
+        "One short but otherwise valid description.",
+    )
+    _, fields = _target_work_preview(
+        _target_work_report((("catalogue", "hardcover", (candidate,), True),))
+    )
+
+    description = fields["description_fill"]
+    assert ("projected", candidate.claims[3].value) == (
+        description.outcome,
+        description.desired_value,
+    )
+    assert description.source_evidence_references == (candidate.claims[3].reference,)
+
+
 def test_automatic_description_applies_quality_floor_then_provider_order() -> None:
     too_short = _description_candidate(
         "preferred",

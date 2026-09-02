@@ -421,6 +421,7 @@ class _ReviewField(_ClosedModel):
     automatic_decision: (
         _AutomaticDecisionProjection | _CoverAutomaticDecisionProjection | None
     )
+    automatic_selection_sources: list[str]
     manual_hold: bool
     manual_required: bool
     needs_attention: bool

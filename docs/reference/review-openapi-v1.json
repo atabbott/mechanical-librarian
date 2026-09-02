@@ -6211,6 +6211,13 @@
             ],
             "title": "Automatic Decision"
           },
+          "automatic_selection_sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Automatic Selection Sources",
+            "type": "array"
+          },
           "choice_contexts": {
             "items": {
               "$ref": "#/components/schemas/_ChoiceContext"
@@ -6371,6 +6378,7 @@
           "human_decision",
           "inventory_role",
           "automatic_decision",
+          "automatic_selection_sources",
           "manual_hold",
           "manual_required",
           "needs_attention",

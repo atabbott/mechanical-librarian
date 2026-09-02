@@ -43,6 +43,7 @@ from mechanical_librarian.domain.review_field_classification import (
     ReviewFieldCause,
     classify_review_field,
 )
+from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 
 
 class ReviewWebError(RuntimeError):
@@ -73,6 +74,7 @@ def _automatic_decision_projection(document: str) -> dict[str, object] | None:
         "proposal_id": decision.proposal_id,
         "review_case_id": decision.review_case_id,
         "selected_value": None,
+        "source_outcome_id": decision.source_outcome_id,
         "target_fingerprint": decision.target_fingerprint,
     }
     if type(decision) is CoverAutomaticDecision:
@@ -93,6 +95,7 @@ class CurrentReviewCaseSnapshot:
     report_document: str
     decision_documents: tuple[str, ...]
     history: tuple[dict[str, object], ...]
+    automatic_source_outcome_documents: tuple[str, ...] = ()
     automatic_attention_destinations: tuple[str, ...] = ()
     automatic_safety_suspended_destinations: tuple[str, ...] = ()
     shadow_abstention_destinations: tuple[str, ...] = ()
@@ -335,6 +338,17 @@ class InspectCurrentReviewCase:
                 raise ReviewWebError("unavailable")
             decisions: dict[str, HumanDecision] = {}
             automatic: dict[str, dict[str, object]] = {}
+            automatic_sources: dict[str, tuple[str, ...]] = {}
+            for document in snapshot.automatic_source_outcome_documents:
+                outcome_set = ShadowOutcomeSet.from_json(document)
+                if outcome_set.review_case_id != review_case_id:
+                    raise ReviewWebError("unavailable")
+                for outcome in outcome_set.outcomes:
+                    previous = automatic_sources.setdefault(
+                        outcome.outcome_id, outcome.citation_ids
+                    )
+                    if previous != outcome.citation_ids:
+                        raise ReviewWebError("unavailable")
             # Declared once: the parse loop below binds a decision, while the
             # per-field projection later looks one up and may find none.
             decision: HumanDecision | None
@@ -406,7 +420,15 @@ class InspectCurrentReviewCase:
             assert type(reasons) is list
             decision = decisions.get(destination)
             automatic_decision = automatic.get(destination)
+            automatic_selection_sources: list[str] = []
             if automatic_decision is not None:
+                source_outcome_id = cast(
+                    str, automatic_decision.pop("source_outcome_id")
+                )
+                automatic_selection_sources = _provider_source_labels(
+                    report,
+                    list(automatic_sources.get(source_outcome_id, ())),
+                )
                 candidate_id = automatic_decision.get("candidate_id")
                 selected = next(
                     (
@@ -490,6 +512,7 @@ class InspectCurrentReviewCase:
                     None if decision is None else _decision_projection(decision)
                 ),
                 "automatic_decision": automatic_decision,
+                "automatic_selection_sources": automatic_selection_sources,
                 "manual_hold": decision is not None and automatic_decision is not None,
                 "classification": classification.state,
                 "classification_reason": classification.reason,
@@ -1337,6 +1360,14 @@ def _corroboration_source_labels(
     """Project only closed provider authorities for #416 creator corroboration."""
     if reasons != ["explicit_author_corroborates_untyped_creator"]:
         return []
+    return _provider_source_labels(report, references)
+
+
+def _provider_source_labels(
+    report: MetadataReport,
+    references: list[str],
+) -> list[str]:
+    """Project provider labels for exact evidence references."""
     labels = {
         "hardcover": "Hardcover",
         "inventaire": "Inventaire",
