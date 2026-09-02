@@ -158,7 +158,8 @@ const fields: readonly FieldDefinition[] = [
   {
     key: 'description_fill',
     label: 'Description',
-    meaning: 'Use one applicable, quality-qualified description without combining provider text.',
+    meaning:
+      'Use one applicable plain-text description without combining provider text; compare competing values by quality.',
     options: ['safe_plain_text', 'google_visible_text'],
     optionLabels: {
       safe_plain_text: 'Safe plain text',

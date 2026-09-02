@@ -1373,23 +1373,16 @@ def _provider_source_labels(
     references: list[str],
 ) -> list[str]:
     """Project provider labels for exact evidence references."""
-    labels = {
-        "hardcover": "Hardcover",
-        "inventaire": "Inventaire",
-        "open_library": "Open Library",
-        "google_books": "Google Books",
-    }
     by_reference = {
-        claim.reference: provider.authority
+        claim.reference: _provider_label(provider.authority)
         for provider in report.providers
-        if provider.authority in labels
         for candidate in provider.candidates
         for claim in candidate.claims
     }
-    authorities = {
+    labels = {
         by_reference[reference] for reference in references if reference in by_reference
     }
-    return [labels[authority] for authority in sorted(authorities)]
+    return sorted(labels)
 
 
 def _choice_contexts(

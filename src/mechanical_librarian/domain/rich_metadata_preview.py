@@ -616,20 +616,19 @@ def _automatic_description_candidate(
                 by_authority.setdefault(retained.provider.authority, []).append(
                     reference
                 )
-        if by_authority:
-            authority = min(
-                by_authority,
-                key=_DESCRIPTION_AUTHORITY_ORDER.index,
+        if not by_authority:
+            return None, (), "ambiguous_evidence"
+        authority = min(
+            by_authority,
+            key=_DESCRIPTION_AUTHORITY_ORDER.index,
+        )
+        ranked.append(
+            (
+                _DESCRIPTION_AUTHORITY_ORDER.index(authority),
+                candidate,
+                tuple(by_authority[authority]),
             )
-            ranked.append(
-                (
-                    _DESCRIPTION_AUTHORITY_ORDER.index(authority),
-                    candidate,
-                    tuple(by_authority[authority]),
-                )
-            )
-    if not ranked:
-        return None, (), "option_evidence_unavailable"
+        )
     best_rank = min(rank for rank, _, _ in ranked)
     winners = tuple(item for item in ranked if item[0] == best_rank)
     if len(winners) != 1:

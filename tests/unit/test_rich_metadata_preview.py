@@ -464,6 +464,35 @@ def test_automatic_description_abstains_from_equal_authority_competition() -> No
     )
 
 
+def test_automatic_description_abstains_from_unranked_authority_competition() -> None:
+    ranked = _description_candidate(
+        "ranked",
+        "edition-1",
+        "work-1",
+        _QUALIFIED_DESCRIPTION + " Ranked source.",
+    )
+    unranked = _description_candidate(
+        "unranked",
+        "edition-2",
+        "work-1",
+        _QUALIFIED_DESCRIPTION + " Unranked source.",
+    )
+    _, fields = _target_work_preview(
+        _target_work_report(
+            (
+                ("ranked", "open_library", (ranked,), True),
+                ("unranked", "audnexus", (unranked,), True),
+            )
+        )
+    )
+
+    description = fields["description_fill"]
+    assert ("abstain", "ambiguous_evidence") == (
+        description.outcome,
+        description.reason,
+    )
+
+
 @pytest.mark.parametrize(
     "description",
     (

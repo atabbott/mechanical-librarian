@@ -17,6 +17,8 @@ import json
 from types import SimpleNamespace
 from typing import cast
 
+import pytest
+
 from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
@@ -118,12 +120,14 @@ def _automatic_no_change_decisions(
 
 def _automatic_candidate_decision(
     environment: _EffectEnvironment,
+    *,
+    authority: str = "hardcover",
 ) -> AutomaticDecision:
     report = _target_work_report(
         (
             (
                 "catalogue",
-                "hardcover",
+                authority,
                 (_target_work_candidate("catalogue", "edition-1", "work-1"),),
                 True,
             ),
@@ -148,17 +152,23 @@ def _qualified_no_change_decision(environment: _EffectEnvironment) -> AutomaticD
     return next(value for value in decisions if value.destination == "title")
 
 
+@pytest.mark.parametrize(
+    ("authority", "label"),
+    (("hardcover", "Hardcover"), ("audnexus", "Audnexus")),
+)
 def test_automatic_description_read_model_names_only_its_bound_source(
     effects: _EffectEnvironment,  # noqa: F811
+    authority: str,
+    label: str,
 ) -> None:
-    decision = _automatic_candidate_decision(effects)
+    decision = _automatic_candidate_decision(effects, authority=authority)
 
     detail = InspectCurrentReviewCase(effects.repository).run(decision.review_case_id)
     description = next(
         field for field in detail["fields"] if field["destination"] == "description"
     )
 
-    assert description["automatic_selection_sources"] == ["Hardcover"]
+    assert description["automatic_selection_sources"] == [label]
 
 
 def test_a_qualified_automatic_decision_reaches_activity_without_raw_inserts(
