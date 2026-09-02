@@ -3304,46 +3304,27 @@ def _verified_provider_manifestation_cover(
     )
 
 
-def _accepted_provider_opening_matter_isbn_anchor(
+def _accepted_provider_manifestation_isbn_anchor(
     report: MetadataReport,
     provider: ProviderObservation,
     candidate: ProviderCandidate,
     claim: ProviderClaim,
 ) -> bool:
-    """Require the provider ISBN's linked accepted local opening evidence."""
-    family = isbn_family(claim.value)
+    """Require the elected provider ISBN claim's exact accepted evidence."""
     if (
         claim.kind is not ClaimKind.ISBN
         or claim.scope is not ClaimScope.EDITION
         or claim.state is not FieldState.VALID
         or claim.value is None
         or claim.applicability != "ebook"
-        or family is None
     ):
         return False
-    accepted_local_references = {
-        evidence.reference
-        for evidence in report.identifier_evidence
-        if evidence.relation is IdentifierRelation.ACCEPTED
-        and evidence.provider is None
-    }
-    local_claims = {claim.reference: claim for claim in report.local_claims}
     return _verified_provider_manifestation_cover(report, provider, candidate) and any(
         evidence.relation is IdentifierRelation.ACCEPTED
         and evidence.provider == provider.provider
         and evidence.candidate_identity == candidate.identity
         and evidence.work_identity == candidate.work_identity
         and evidence.reference == claim.reference
-        and any(
-            reference in accepted_local_references
-            and (local := local_claims.get(reference)) is not None
-            and local.kind is ClaimKind.ISBN
-            and local.state is FieldState.VALID
-            and local.canonical is not None
-            and local.basis == "opening_matter"
-            and isbn_family(local.canonical) == family
-            for reference in evidence.related_references
-        )
         for evidence in report.identifier_evidence
     )
 
@@ -3376,7 +3357,7 @@ def _verified_manifestation_isbn_election(
             continue
         if any(
             isbn_family(claim.value) == family
-            and _accepted_provider_opening_matter_isbn_anchor(
+            and _accepted_provider_manifestation_isbn_anchor(
                 report, provider, candidate, claim
             )
             for reference in alternative.evidence_references
