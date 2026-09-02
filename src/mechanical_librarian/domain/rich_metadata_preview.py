@@ -576,19 +576,25 @@ def _automatic_description_candidate(
     evidence: _AutomaticWorkEvidence,
     retained_claims: dict[str, _RetainedClaim],
 ) -> tuple[ProposalAlternative | None, tuple[str, ...], str | None]:
-    candidates = tuple(
-        alternative
-        for alternative in evidence.alternatives
-        if alternative.value.kind is ProposalValueKind.TEXT
-    )
+    candidates: list[tuple[ProposalAlternative, tuple[str, ...]]] = []
+    for alternative in evidence.alternatives:
+        if alternative.value.kind is not ProposalValueKind.TEXT:
+            continue
+        references = tuple(
+            reference
+            for reference in evidence.references[alternative.alternative_id]
+            if _ordinary_description_reference(reference, alternative, retained_claims)
+        )
+        if references:
+            candidates.append((alternative, references))
     if len(candidates) <= 1:
         if len(candidates) == 1:
-            candidate = candidates[0]
-            return candidate, evidence.references[candidate.alternative_id], None
+            candidate, references = candidates[0]
+            return candidate, references, None
         return None, (), "no_candidate"
     qualified = tuple(
-        candidate
-        for candidate in candidates
+        (candidate, references)
+        for candidate, references in candidates
         if type(candidate.value.value) is str
         and len(candidate.value.value) >= _DESCRIPTION_MINIMUM_CHARACTERS
         and len(candidate.value.value.split()) >= _DESCRIPTION_MINIMUM_WORDS
@@ -599,16 +605,13 @@ def _automatic_description_candidate(
     if not qualified:
         return None, (), "description_quality_floor_not_met"
     ranked: list[tuple[int, ProposalAlternative, tuple[str, ...]]] = []
-    for candidate in qualified:
+    for candidate, references in qualified:
         by_authority: dict[str, list[str]] = {}
-        for reference in evidence.references[candidate.alternative_id]:
+        for reference in references:
             retained = retained_claims[reference]
             if (
                 type(retained.provider) is ProviderObservation
                 and retained.provider.authority in _DESCRIPTION_AUTHORITY_ORDER
-                and _ordinary_description_reference(
-                    reference, candidate, retained_claims
-                )
             ):
                 by_authority.setdefault(retained.provider.authority, []).append(
                     reference

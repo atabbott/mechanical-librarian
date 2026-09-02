@@ -292,6 +292,45 @@ def test_automatic_description_filters_applicability_before_floor_and_order() ->
     assert description.source_evidence_references == (applicable.claims[3].reference,)
 
 
+def test_automatic_description_filters_transformed_text_before_quality_floor() -> None:
+    transformed = replace(
+        _description_candidate(
+            "preferred",
+            "edition-1",
+            "work-1",
+            _QUALIFIED_DESCRIPTION + " Transformed source.",
+        ),
+        evidence=(
+            ProviderEvidence(
+                ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION,
+                "google-books-html-visible-text-v1",
+                ClaimScope.WORK,
+            ),
+        ),
+    )
+    ordinary = _description_candidate(
+        "fallback",
+        "edition-2",
+        "work-1",
+        "One short but otherwise valid description.",
+    )
+    _, fields = _target_work_preview(
+        _target_work_report(
+            (
+                ("preferred", "google_books", (transformed,), True),
+                ("fallback", "open_library", (ordinary,), True),
+            )
+        )
+    )
+
+    description = fields["description_fill"]
+    assert ("projected", ordinary.claims[3].value) == (
+        description.outcome,
+        description.desired_value,
+    )
+    assert description.source_evidence_references == (ordinary.claims[3].reference,)
+
+
 def test_automatic_description_excludes_unproved_source_for_one_collapsed_value() -> (
     None
 ):
