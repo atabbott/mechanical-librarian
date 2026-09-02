@@ -350,6 +350,35 @@ def test_automatic_description_uses_fixed_authority_order_not_source_order() -> 
     )
 
 
+def test_automatic_description_abstains_from_equal_authority_competition() -> None:
+    first = _description_candidate(
+        "first",
+        "edition-1",
+        "work-1",
+        _QUALIFIED_DESCRIPTION + " First source.",
+    )
+    second = _description_candidate(
+        "second",
+        "edition-2",
+        "work-1",
+        _QUALIFIED_DESCRIPTION + " Second source.",
+    )
+    _, fields = _target_work_preview(
+        _target_work_report(
+            (
+                ("first", "hardcover", (first,), True),
+                ("second", "hardcover", (second,), True),
+            )
+        )
+    )
+
+    description = fields["description_fill"]
+    assert ("abstain", "ambiguous_evidence") == (
+        description.outcome,
+        description.reason,
+    )
+
+
 @pytest.mark.parametrize(
     "description",
     (

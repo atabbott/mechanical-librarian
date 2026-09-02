@@ -10,7 +10,7 @@ from types import MappingProxyType
 from typing import Final, Mapping
 
 F20_QUALIFICATION_CANDIDATE_SHA256: Final = (
-    "15cfb36db142e3783fa47a73157c72ecfd08bb282a967abc83fba152d1199205"
+    "535348d225d6f160a4096c17c3379ee060741cb1d704ad0d741fc4631fc01d9b"
 )
 F20_RICH_FIELDS: Final = (
     "subtitle",

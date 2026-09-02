@@ -120,21 +120,28 @@ projections. A separate replay of the retained provider documents also matched
 main's aggregate metrics exactly. An exposed real-library confirmation split
 retained 58 candidates across 23 cases and the applicability gate admitted 20
 at 100% precision with zero wrong-work admissions. The final F37 holdout was
-not used.
+not used for tag qualification.
 
 The same current-provider evidence did not justify extending the rule to every
-other work-bound field. For descriptions, four previously correct decisions
-were lost while three different correct decisions were gained, moving the
-aggregate from 9 to 8. For genres, correct add and replace decisions each fell
+other work-bound field. For genres, correct add and replace decisions each fell
 from 9 to 4, while fill-empty decisions across the three target states fell
 from 30 to 12. Current main and candidate adapters both produced zero series
 decisions, so they could not positively demonstrate preservation of the prior
-19/20/20 qualified series results. Description, genre, and series
-applicability are therefore deferred; their v3 automatic dispositions and
-metrics remain authoritative and unchanged rather than being dequalified by a
-different evidence mode.
+19/20/20 qualified series results. Genre and series applicability are therefore
+deferred; their earlier automatic dispositions and metrics remain authoritative
+and unchanged rather than being dequalified by a different evidence mode.
 
-F20 v6 separately qualifies the two ISBN-form options under the current
+The fifteenth and sixteenth candidate executions qualify the automatic
+description tiebreaker after adopting the same target-work applicability rule.
+Applicable descriptions must pass the frozen 80-character, 16-word floor and
+must not end in a visible cutoff; the survivors then follow the fixed Hardcover,
+Google Books, Open Library authority order without combining text. The exposed
+confirmation selected 13 of 23 cases and the one-shot sealed holdout selected 14
+of 25, both at 100% precision with zero failures. The v7 manifest binds those
+private receipts and the previously unbound #971 live-capture and retained-replay
+digests while disclosing only aggregate results.
+
+F20 v7 separately qualifies the two ISBN-form options under the current
 deterministic identity rule. Its final development result and archived replay
 show 100% precision across the supported empty-field states, while the sealed
 holdout is carried forward by a continuity receipt for the unresolved-work
@@ -144,5 +151,5 @@ A useful published-work ISBN carried by a proof remains eligible only through
 that bound identity evidence; proof status alone neither elects nor disqualifies it.
 
 The machine-readable candidate is
-[`f20-rich-metadata-qualification-candidate-v6.json`](../reference/f20-rich-metadata-qualification-candidate-v6.json).
-The v5 manifest remains a readable historical record.
+[`f20-rich-metadata-qualification-candidate-v7.json`](../reference/f20-rich-metadata-qualification-candidate-v7.json).
+The v6 manifest remains a readable historical record.
