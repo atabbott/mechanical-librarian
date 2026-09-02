@@ -75,6 +75,8 @@ def _track(
     title: str | None = None,
     sequence: int | None = None,
     name: str | None = None,
+    synthesized: bool = False,
+    repaired: bool = False,
 ) -> InspectedTrack:
     return InspectedTrack(
         ordinal,
@@ -94,6 +96,8 @@ def _track(
             title,
         ),
         sequence,
+        synthesized,
+        repaired,
     )
 
 
@@ -562,3 +566,33 @@ def test_claim_references_must_line_up_with_the_composed_facts() -> None:
 
     with pytest.raises(ValueError):
         attach_claim_references(composed, ())
+
+
+def test_a_file_the_filesystem_really_named_track_one_keeps_that_title() -> None:
+    """The fallback is a fact of the projection, never read off the string."""
+    composed = compose_audio_inspections(
+        (
+            _track(1, (_duration(1, 1_000),), name="track-1"),
+            _track(2, (_duration(2, 1_000),), name="\ufffd\ufffd.mp3"),
+        )
+    )
+
+    assert [value.title for value in composed.chapters] == ["track-1", "\ufffd\ufffd"]
+
+
+def test_a_synthesized_or_wholly_repaired_name_titles_no_chapter() -> None:
+    """Neither the position nor a row of repairs is anything the file said."""
+    composed = compose_audio_inspections(
+        (
+            _track(1, (_duration(1, 1_000),), name="track-1", synthesized=True),
+            _track(
+                2,
+                (_duration(2, 1_000),),
+                name="\ufffd\ufffd.mp3",
+                repaired=True,
+            ),
+            _track(3, (_duration(3, 1_000),), name="03 \ufffd.mp3", repaired=True),
+        )
+    )
+
+    assert [value.title for value in composed.chapters] == [None, None, "03 \ufffd"]

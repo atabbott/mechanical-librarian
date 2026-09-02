@@ -34,6 +34,7 @@ from mechanical_librarian.domain.audio_inspection import (
     normalize_duration_seconds,
 )
 from mechanical_librarian.domain.evidence_bounds import (
+    REPLACEMENT_CHARACTER,
     EvidenceValueError,
     validate_projection_text,
 )
@@ -64,6 +65,10 @@ class InspectedTrack:
     name: str
     inspection: AudioInspection
     sequence: int | None = None
+    # Facts of the name's projection, carried rather than inferred from the
+    # string: a filesystem may state ``track-1`` or a literal U+FFFD itself.
+    name_synthesized: bool = False
+    name_repaired: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -362,10 +367,25 @@ def _offsets(durations: tuple[int | None, ...]) -> tuple[int, ...]:
 
 
 def _chapter_title(track: InspectedTrack) -> str | None:
-    """Name one track's chapter by the recording, then by the exported file."""
+    """Name one track's chapter by the recording, then by the exported file.
+
+    The manifest name is already a projection, so a file whose name carried
+    nothing of its own reaches here as its own position and a file that lost
+    part of one reaches here with replacement characters where those
+    codepoints were.  Neither is anything the recording or the exported file
+    said, so the chapter is left unnamed rather than titled after this build's
+    own repair -- an absent title is read as absent, and a wrong one is read
+    as the recording's.  Both are read from the projection's own record, so a
+    file the filesystem really named ``track-1`` or with a literal U+FFFD
+    keeps the title its name states.
+    """
     if track.inspection.title is not None:
         return track.inspection.title
+    if track.name_synthesized:
+        return None
     stem = track.name.rsplit(".", 1)[0]
+    if track.name_repaired and not stem.replace(REPLACEMENT_CHARACTER, "").strip():
+        return None
     try:
         return validate_projection_text(
             stem, "audio chapter title", MAX_CHAPTER_TITLE_CHARACTERS

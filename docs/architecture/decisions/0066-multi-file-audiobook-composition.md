@@ -149,7 +149,17 @@ The report discriminator advances `metadata-report-v34` to `metadata-report-v35`
 under the ADR-0013 clean-rebuild rule: `AudioFacts` gains `composition`,
 `tracks`, and `observations`, and no earlier document can be read forward.
 `tracks` always names at least one file, so every audio section states the
-source its digest and claim provenance are checked against.
+source its digest and claim provenance are checked against. A track's `name` is
+a projection of the file name the mount states rather than the name itself: a
+real library holds names no bounded evidence value admits — 71 files of one
+75-file item carry the C1 controls a double-encoded en dash leaves behind — and
+denying a whole item its evidence set over a value nothing is decided from is
+the wrong trade. Every refused codepoint becomes U+FFFD where it stood, the
+result is cut to 255 characters, and a name with nothing projectable left is
+published as `track-<ordinal>`. The validator is not loosened: a retained
+document whose name still carries a raw control character fails closed as
+before, and a per-track chapter whose file name projected to nothing readable is
+left unnamed rather than titled after this build's own repair.
 
 ## Consequences
 

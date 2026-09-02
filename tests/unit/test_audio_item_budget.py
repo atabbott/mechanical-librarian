@@ -38,6 +38,13 @@ from mechanical_librarian.domain.identifiers import Fingerprint
 from mechanical_librarian.domain.metadata_report import canonical_json
 
 _MAXIMUM = 1_048_576
+# What a UTF-8 en dash becomes when it is decoded as Latin-1 and written back,
+# which is what 71 of one real 75-file item's names carry.
+_MOJIBAKE_EN_DASH = "\u00e2\u0080\u0093"
+_PROJECTED_EN_DASH = "\u00e2\ufffd\ufffd"
+# The same two C1 controls with nothing legible beside them.
+_CONTROLS = "\u0080\u0093"
+_PROJECTED_CONTROLS = "\ufffd\ufffd"
 
 
 class _RecordedChild:
@@ -579,3 +586,77 @@ def test_a_track_that_cannot_be_opened_names_the_ordinal_that_refused(
 
     assert raised.value.outcome is AudioInspectionOutcome.UNAVAILABLE_SOURCE
     assert raised.value.track == ordinal
+
+
+def test_names_the_filesystem_states_reach_the_manifest_as_a_projection(
+    mount: MediaMountConfiguration, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A name no bounded value admits cost a whole 75-file item its evidence.
+
+    Every track was digested and probed, and the item ended as an untyped
+    internal failure because 71 of its names carried C1 controls. The manifest
+    now carries the projection, so the item is published; the child is still
+    handed the file's own name, because what it reads there is evidence about
+    the file rather than a value the report retains.
+    """
+    child = _RecordedChild()
+    monkeypatch.setattr(composition, "run_audio_inspector_child", child)
+    names = (
+        f"01 {_MOJIBAKE_EN_DASH} Part.mp3",
+        f"{_CONTROLS}.mp3",
+        _CONTROLS,
+    )
+    tracks = tuple(
+        _write(mount, name, f"track-{ordinal}".encode())
+        for ordinal, name in enumerate(names, 1)
+    )
+
+    result = _IsolatedAudioInspector().inspect(mount, tracks, _MAXIMUM)
+
+    assert [value.name for value in result.audio.tracks] == [
+        f"01 {_PROJECTED_EN_DASH} Part.mp3",
+        f"{_PROJECTED_CONTROLS}.mp3",
+        "track-3",
+    ]
+    assert [call["path_file"] for call in child.calls] == list(names)
+    assert result.audio.composition is AudioChapterComposition.PER_TRACK
+    assert [value.title for value in result.audio.chapters] == [
+        f"01 {_PROJECTED_EN_DASH} Part",
+        None,
+        None,
+    ]
+
+
+def test_a_single_file_item_publishes_its_projected_name_too(
+    mount: MediaMountConfiguration, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The defect is a name, not a track count, so one file meets it as well."""
+    monkeypatch.setattr(composition, "run_audio_inspector_child", _RecordedChild())
+    track = _write(mount, f"Only {_MOJIBAKE_EN_DASH} Recording.mp3", b"one")
+
+    result = _IsolatedAudioInspector().inspect(mount, (track,), _MAXIMUM)
+
+    assert result.audio.composition is AudioChapterComposition.SINGLE_FILE
+    assert [value.name for value in result.audio.tracks] == [
+        f"Only {_PROJECTED_EN_DASH} Recording.mp3"
+    ]
+
+
+def test_two_inspections_of_one_projected_set_compose_the_same_manifest(
+    mount: MediaMountConfiguration, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A projection that varied would re-prepare the item on every pass."""
+    monkeypatch.setattr(composition, "run_audio_inspector_child", _RecordedChild())
+    tracks = tuple(
+        _write(mount, f"{ordinal:02d} {_MOJIBAKE_EN_DASH}.mp3", f"t{ordinal}".encode())
+        for ordinal in (1, 2, 3)
+    )
+    inspector = _IsolatedAudioInspector()
+
+    first = inspector.inspect(mount, tracks, _MAXIMUM)
+    second = inspector.inspect(mount, tracks, _MAXIMUM)
+
+    assert canonical_json(
+        [value.to_data() for value in first.audio.tracks]
+    ) == canonical_json([value.to_data() for value in second.audio.tracks])
+    assert first.content_digest == second.content_digest
