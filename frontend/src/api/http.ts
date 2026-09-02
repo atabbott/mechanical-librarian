@@ -2358,7 +2358,7 @@ export const mapCaseDetail = (value: unknown): CaseDetailView => {
         inventoryRole: inventoryRole(field.inventory_role),
         automaticDecision: field.automatic_decision,
         automaticSelectionSources: stringArray(
-          field.automatic_selection_sources ?? [],
+          field.automatic_selection_sources,
           'automatic_selection_sources',
         ),
         notices: stringArray(field.notices, 'notices'),
