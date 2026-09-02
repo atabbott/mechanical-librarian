@@ -128,6 +128,7 @@ from mechanical_librarian.interfaces.web.app import (
 from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.proposal_evidence import (
     _claim,
+    _exact_edition_cover,
     _fields,
     _local_creator,
     _local_subtitle,
@@ -1194,7 +1195,7 @@ def test_year_current_reaches_one_durable_publication_keep_and_read_models() -> 
         assert (0,) == repository._connection.execute(
             "SELECT COUNT(*) FROM automatic_decisions WHERE destination='publishedYear'"
         ).fetchone()
-        assert 1 == repository.count_current_attention_fields(None)
+        assert 0 == repository.count_current_attention_fields(None)
         detail = InspectCurrentReviewCase(repository).run(case_id)
         publication = [
             value
@@ -1206,13 +1207,13 @@ def test_year_current_reaches_one_durable_publication_keep_and_read_models() -> 
         assert not publication[0]["needs_attention"]
         isbn = [value for value in detail["fields"] if value["destination"] == "isbn"]
         assert 1 == len(isbn)
-        assert isbn[0]["needs_attention"]
+        assert not isbn[0]["needs_attention"]
         assert not [
             value
             for value in detail["fields"]
             if value["destination"] == "publishedYear"
         ]
-        assert 1 == repository.read_review_attention(None, 50, 0).total
+        assert 0 == repository.read_review_attention(None, 50, 0).total
         activity = repository.field_effect_activity_page(
             search=None, event_type="metadata", occurred_after=0, page=1, page_size=50
         )
@@ -1553,6 +1554,7 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
         ),
         local_claims=(isbn10,),
         providers=(isbn_family_provider,),
+        covers=(_exact_edition_cover(),),
     )
     series_claims = (
         _claim(

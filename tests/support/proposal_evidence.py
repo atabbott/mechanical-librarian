@@ -12,7 +12,13 @@ from mechanical_librarian.application.metadata_report import (
     provider_observation,
 )
 from mechanical_librarian.domain.cover_evidence import (
+    CoverArtifact,
+    CoverDesignation,
+    CoverProvenance,
     CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
 )
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -175,6 +181,25 @@ def _explicit_local_ebook_isbn(
         applicability_basis="ebook",
         scope=ClaimScope.EDITION,
         basis=basis,
+    )
+
+
+def _exact_edition_cover(
+    provider: str = "catalogue",
+    candidate: str = "edition-1",
+    work_identity: str = "catalogue-work",
+) -> CoverSource:
+    return CoverSource(
+        cover_source_id(CoverSourceKind.HARDCOVER, f"{provider}:{candidate}:isbn"),
+        CoverSourceKind.HARDCOVER,
+        CoverSourceState.RETRIEVED,
+        CoverArtifact.create(b"cover", b"preview", "image/png", 10, 20),
+        provenance=CoverProvenance(
+            provider,
+            CoverDesignation.EXACT_EDITION,
+            work_identity,
+            candidate,
+        ),
     )
 
 

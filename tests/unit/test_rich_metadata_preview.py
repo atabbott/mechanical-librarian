@@ -58,6 +58,7 @@ from mechanical_librarian.domain.rich_metadata_preview import (
 )
 from tests.support.proposal_evidence import (
     _claim,
+    _exact_edition_cover,
     _fields,
     _local_isbn,
     _local_subtitle,
@@ -1937,6 +1938,7 @@ def test_isbn_family_preview_selects_exact_local_or_isbn13_representation() -> N
         ),
         local_claims=(local,),
         providers=(provider,),
+        covers=(_exact_edition_cover(),),
     )
 
     exact = _preview_field(report, "isbn_form", "preserve_exact")
@@ -1986,6 +1988,7 @@ def test_isbn_family_preview_selects_exact_local_or_isbn13_representation() -> N
         ),
         local_claims=(local13,),
         providers=(family_provider,),
+        covers=(_exact_edition_cover(),),
     )
     for option in ("preserve_exact", "prefer_isbn13"):
         field = _preview_field(family_report, "isbn_form", option)
@@ -2032,6 +2035,7 @@ def test_isbn_preview_projects_the_selected_verified_family_among_offers() -> No
         ),
         local_claims=(local,),
         providers=(verified, offered),
+        covers=(_exact_edition_cover(),),
     )
 
     for option, value in (

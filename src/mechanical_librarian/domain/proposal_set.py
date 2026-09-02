@@ -11,6 +11,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Mapping, Self, cast
 
 from mechanical_librarian.domain.cover_evidence import (
+    CoverDesignation,
     CoverSourceKind,
     CoverSourceState,
 )
@@ -1067,19 +1068,7 @@ def evaluate_report(
             TargetDestination.COVER,
         }:
             continue
-        observations = _observations(
-            report,
-            destination,
-            allow_unverified_isbn=(
-                destination is TargetDestination.ISBN
-                and targets[destination].state
-                in {
-                    TargetFieldState.MISSING,
-                    TargetFieldState.NULL,
-                    TargetFieldState.EMPTY,
-                }
-            ),
-        )
+        observations = _observations(report, destination)
         if destination in _BIBLIOGRAPHIC_DESTINATIONS:
             observed_by_destination[destination] = observations
         result = _evaluate(
@@ -1226,8 +1215,6 @@ def evaluate_report(
 def _observations(
     report: MetadataReport,
     destination: TargetDestination,
-    *,
-    allow_unverified_isbn: bool = False,
 ) -> tuple[_Observed, ...]:
     if destination is TargetDestination.EXPLICIT:
         return ()
@@ -1270,10 +1257,7 @@ def _observations(
             and claim.canonical is not None
             and claim.basis != "target_metadata"
             and _eligible_identifier(destination, claim.canonical, claim.applicability)
-            and (
-                allow_unverified_isbn
-                or _eligible_identifier_reference(report, destination, claim.reference)
-            )
+            and _eligible_identifier_reference(report, destination, claim.reference)
             and _eligible_description(destination, claim.canonical)
             and _eligible_field_value(destination, claim.canonical)
             and (
@@ -1301,11 +1285,8 @@ def _observations(
                     and _eligible_identifier(
                         destination, claim.value, claim.applicability
                     )
-                    and (
-                        allow_unverified_isbn
-                        or _eligible_identifier_reference(
-                            report, destination, claim.reference
-                        )
+                    and _eligible_identifier_reference(
+                        report, destination, claim.reference
                     )
                     and _eligible_provider_manifestation(
                         destination, claim.applicability
@@ -3298,6 +3279,31 @@ def _accepted_provider_manifestation_anchor(
     )
 
 
+def _verified_provider_manifestation_cover(
+    report: MetadataReport,
+    provider: ProviderObservation,
+    candidate: ProviderCandidate,
+) -> bool:
+    """Apply the existing exact provider-cover manifestation verifier."""
+    if any(
+        evidence.provider == provider.provider
+        and evidence.candidate_identity == candidate.identity
+        and evidence.work_identity == candidate.work_identity
+        and evidence.relation is IdentifierRelation.UNRELATED
+        for evidence in report.identifier_evidence
+    ):
+        return False
+    return manifestation_publication_compatible(candidate, report.local_claims) and any(
+        source.state is CoverSourceState.RETRIEVED
+        and source.provenance is not None
+        and source.provenance.designation is CoverDesignation.EXACT_EDITION
+        and source.provenance.provider == provider.provider
+        and source.provenance.edition_identity == candidate.identity
+        and source.provenance.work_identity == candidate.work_identity
+        for source in report.cover_sources
+    )
+
+
 def _accepted_provider_opening_matter_isbn_anchor(
     report: MetadataReport,
     provider: ProviderObservation,
@@ -3322,7 +3328,7 @@ def _accepted_provider_opening_matter_isbn_anchor(
         and evidence.provider is None
     }
     local_claims = {claim.reference: claim for claim in report.local_claims}
-    return any(
+    return _verified_provider_manifestation_cover(report, provider, candidate) and any(
         evidence.relation is IdentifierRelation.ACCEPTED
         and evidence.provider == provider.provider
         and evidence.candidate_identity == candidate.identity
