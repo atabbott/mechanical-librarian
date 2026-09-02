@@ -1110,6 +1110,19 @@ def evaluate_report(
                 ("local_attested_subtitle",),
                 _dependencies(destination),
             )
+        elif (
+            destination is TargetDestination.SUBTITLE
+            and result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+            and result.reasons == ("competing_evidence",)
+            and targets[destination].state
+            in {
+                TargetFieldState.MISSING,
+                TargetFieldState.NULL,
+                TargetFieldState.EMPTY,
+            }
+            and _has_unused_title_derived_subtitle(report, result.alternatives)
+        ):
+            result = _unresolved(result, "provider_consensus_title_colon_unused")
         if (
             destination is TargetDestination.TITLE
             and result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
@@ -1309,7 +1322,7 @@ def _locally_attested_subtitle(
         and observed
     }
     attested.update(
-        match.preserved_component.casefold()
+        normalize_title(match.preserved_component).casefold()
         for claim in report.local_claims
         if claim.kind is ClaimKind.TITLE
         and claim.scope is ClaimScope.WORK
@@ -1340,8 +1353,61 @@ def _locally_attested_subtitle(
     # the corroboration, never the elected provider value itself.
     for alternative in matching:
         if alternative.scope is ProposalScope.EDITION:
+            title_references = _title_derived_subtitle_references(
+                report, cast(str, alternative.value.value)
+            )
+            if title_references:
+                return ProposalAlternative.create(
+                    alternative.value,
+                    alternative.assessment,
+                    (*alternative.evidence_references, *title_references),
+                    alternative.correlations,
+                    ProposalScope.WORK,
+                    alternative.date_event,
+                    alternative.date_precision,
+                )
             return alternative
     return None
+
+
+def _title_derived_subtitle_references(
+    report: MetadataReport, value: str | None = None
+) -> frozenset[str]:
+    """Return WORK-scoped local-title evidence for one colon suffix."""
+    sought = None if value is None else normalize_title(value).casefold()
+    return frozenset(
+        claim.reference
+        for claim in report.local_claims
+        if claim.kind is ClaimKind.TITLE
+        and claim.scope is ClaimScope.WORK
+        and claim.state is FieldState.VALID
+        and type(observed := claim.canonical or claim.observed) is str
+        and observed
+        for match in work_title_election_matches(observed, ())
+        if match.family is WorkTitleTransformationFamily.SUBTITLE_SEGMENT
+        and match.preserved_component is not None
+        and (
+            sought is None
+            or normalize_title(match.preserved_component).casefold() == sought
+        )
+    )
+
+
+def _has_unused_title_derived_subtitle(
+    report: MetadataReport, alternatives: tuple[ProposalAlternative, ...]
+) -> bool:
+    """Keep a local title suffix visible when no independent subtitle uses it."""
+    return not any(
+        alternative.value.kind is ProposalValueKind.TEXT
+        and type(alternative.value.value) is str
+        and alternative.scope is ProposalScope.EDITION
+        and all(
+            reference.startswith("provider_")
+            for reference in alternative.evidence_references
+        )
+        and _title_derived_subtitle_references(report, alternative.value.value)
+        for alternative in alternatives
+    ) and bool(_title_derived_subtitle_references(report))
 
 
 def _provider_consensus_title_election(

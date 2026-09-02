@@ -36,6 +36,24 @@ def _title_result(
     current_subtitle: str | None = None,
     local_claims: tuple[LocalClaim, ...] | None = None,
 ):
+    _, title, _ = _title_and_subtitle_results(
+        local=local,
+        providers=providers,
+        current=current,
+        current_subtitle=current_subtitle,
+        local_claims=local_claims,
+    )
+    return title
+
+
+def _title_and_subtitle_results(
+    *,
+    local: str,
+    providers: tuple,
+    current: str | None = None,
+    current_subtitle: str | None = None,
+    local_claims: tuple[LocalClaim, ...] | None = None,
+):
     report = _report(
         title=local if current is None else current,
         fields=_fields(
@@ -60,11 +78,8 @@ def _title_result(
         local_claims=(_local_title(local),) if local_claims is None else local_claims,
         providers=providers,
     )
-    return next(
-        result
-        for result in evaluate_report(report).results
-        if result.destination is TargetDestination.TITLE
-    )
+    results = {result.destination: result for result in evaluate_report(report).results}
+    return report, results[TargetDestination.TITLE], results[TargetDestination.SUBTITLE]
 
 
 def test_exact_provider_consensus_elects_a_single_bracket_source_title() -> None:
@@ -197,6 +212,52 @@ def test_colon_title_elects_when_provider_subtitle_candidate_preserves_suffix() 
 
     assert ProposalOutcome.PROPOSE_CHANGE is result.outcome
     assert result.reasons == ("provider_consensus_title_subtitle_segment",)
+
+
+def test_colon_subtitle_corroboration_keeps_local_title_reference_and_work_scope() -> (
+    None
+):
+    report, _, subtitle = _title_and_subtitle_results(
+        local="Plain Work: A subtitle",
+        providers=(
+            _provider_title("open_library", "Plain Work", subtitle="A subtitle"),
+            _provider_title("hardcover", "Plain Work", subtitle="Other subtitle"),
+        ),
+    )
+
+    local_reference = report.local_claims[0].reference
+    provider_reference = next(
+        claim.reference
+        for provider in report.providers
+        for candidate in provider.candidates
+        for claim in candidate.claims
+        if claim.kind is ClaimKind.SUBTITLE
+        and claim.value == "A subtitle"
+    )
+    assert ProposalOutcome.PROPOSE_CHANGE is subtitle.outcome
+    assert subtitle.reasons == ("local_attested_subtitle",)
+    assert subtitle.alternatives[0].evidence_references == tuple(
+        sorted((local_reference, provider_reference))
+    )
+    assert subtitle.alternatives[0].scope.value == "work"
+
+
+def test_competing_provider_subtitles_keep_unmatched_colon_suffix_diagnostic() -> None:
+    _, _, subtitle = _title_and_subtitle_results(
+        local="Plain Work: A subtitle",
+        providers=(
+            _provider_title(
+                "open_library", "Plain Work", subtitle="Different subtitle"
+            ),
+            _provider_title("hardcover", "Plain Work", subtitle="Other subtitle"),
+        ),
+    )
+
+    assert ProposalOutcome.UNRESOLVED_CHOICE is subtitle.outcome
+    assert subtitle.reasons == (
+        "competing_evidence",
+        "provider_consensus_title_colon_unused",
+    )
 
 
 def test_colon_title_never_self_elects_and_keeps_a_closed_reason() -> None:

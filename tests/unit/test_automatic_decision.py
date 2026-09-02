@@ -201,51 +201,69 @@ def test_prior_f19a_language_decision_remains_readable_only() -> None:
         occurred_at=1,
         bundle_id=None,
     )
-    prior_digest = "cb48d6a0dff269fd576ac9c8fbe7bbe313f291d0368251b097c9178ade456b37"
-    prior_core = {**current._core(), "qualification_manifest_sha256": prior_digest}
-    prior = AutomaticDecision(
-        decision_id="automatic_decision_" + _digest({**prior_core, "occurred_at": 1}),
-        **prior_core,
-        idempotency_digest=_digest(prior_core),
-        occurred_at=1,
+    prior_digests = (
+        "6708826d4891a228d9d2f664ea134ffad693974144c462370db851e50b330b56",
+        "cb48d6a0dff269fd576ac9c8fbe7bbe313f291d0368251b097c9178ade456b37",
     )
-
-    assert prior == AutomaticDecision.from_json(prior.to_json())
-    with pytest.raises(AutomaticDecisionError):
-        AutomaticDecision.create(
-            **{
-                key: value
-                for key, value in current._core().items()
-                if key != "qualification_manifest_sha256"
-            },
-            qualification_manifest_sha256=prior_digest,
-            occurred_at=2,
-        )
-
-
-def test_prior_f19a_manifest_cannot_grant_f35_authority() -> None:
-    with pytest.raises(AutomaticDecisionError):
-        AutomaticDecision.create(
-            review_case_id="review_case_" + "a" * 64,
-            report_id="report_" + "b" * 64,
-            proposal_set_id="proposal_set_" + "c" * 64,
-            proposal_id="review_proposal_" + "d" * 64,
-            target_fingerprint="e" * 64,
-            destination="title",
-            outcome="candidate",
-            candidate_id="alternative_" + "f" * 64,
-            resolved_policy_id="resolved_policy_" + "0" * 64,
-            policy_generation=1,
-            rule_id="shadow_rule_" + "1" * 64,
-            policy_category="title",
-            policy_option="replace_target:provider_consensus_noise",
-            qualification_manifest_sha256=(
-                "6708826d4891a228d9d2f664ea134ffad693974144c462370db851e50b330b56"
-            ),
-            source_outcome_id="shadow_outcome_" + "3" * 64,
+    for prior_digest in prior_digests:
+        prior_core = {
+            **current._core(),
+            "qualification_manifest_sha256": prior_digest,
+        }
+        prior = AutomaticDecision(
+            decision_id="automatic_decision_"
+            + _digest({**prior_core, "occurred_at": 1}),
+            **prior_core,
+            idempotency_digest=_digest(prior_core),
             occurred_at=1,
-            bundle_id=None,
         )
+
+        assert prior == AutomaticDecision.from_json(prior.to_json())
+        with pytest.raises(AutomaticDecisionError):
+            AutomaticDecision.create(
+                **{
+                    key: value
+                    for key, value in current._core().items()
+                    if key != "qualification_manifest_sha256"
+                },
+                qualification_manifest_sha256=prior_digest,
+                occurred_at=2,
+            )
+
+
+def test_prior_f19a_manifests_cannot_rehydrate_an_f35_decision() -> None:
+    for prior_digest in (
+        "6708826d4891a228d9d2f664ea134ffad693974144c462370db851e50b330b56",
+        "cb48d6a0dff269fd576ac9c8fbe7bbe313f291d0368251b097c9178ade456b37",
+    ):
+        core = {
+            "bundle_id": None,
+            "candidate_id": "alternative_" + "f" * 64,
+            "destination": "title",
+            "outcome": "candidate",
+            "policy_category": "title",
+            "policy_generation": 1,
+            "policy_option": "replace_target:provider_consensus_noise",
+            "proposal_id": "review_proposal_" + "d" * 64,
+            "proposal_set_id": "proposal_set_" + "c" * 64,
+            "qualification_manifest_sha256": prior_digest,
+            "report_id": "report_" + "b" * 64,
+            "resolved_policy_id": "resolved_policy_" + "0" * 64,
+            "review_case_id": "review_case_" + "a" * 64,
+            "rule_id": "shadow_rule_" + "1" * 64,
+            "source_outcome_id": "shadow_outcome_" + "3" * 64,
+            "target_fingerprint": "e" * 64,
+        }
+        document = {
+            "decision_id": "automatic_decision_" + _digest({**core, "occurred_at": 1}),
+            **core,
+            "idempotency_digest": _digest(core),
+            "occurred_at": 1,
+            "origin": "automatic_policy",
+            "schema_version": "automatic-decision-v1",
+        }
+        with pytest.raises(AutomaticDecisionError):
+            AutomaticDecision.from_json(json.dumps(document, separators=(",", ":"), sort_keys=True))
 
 
 def test_ignore_has_no_candidate() -> None:
