@@ -57,11 +57,12 @@ provider call.
 - Ebook libraries map to a read-only media mount. An audiobook library may map
   to one too.
 - The selected item is an ebook whose selected file is EPUB, or an audiobook
-  whose one and only file is `m4b`, `m4a`, or `mp3`.
+  whose 1 to 512 audio files are all `m4b`, `m4a`, or `mp3`.
 
-Every other target — a multi-file audiobook, an unmounted audiobook library, a
-non-EPUB ebook file — fails before inspection, provider construction, provider
-credential access, egress, or report publication.
+Every other target — an unmounted audiobook library, an audiobook item over 512
+files or carrying a file outside those containers, a non-EPUB ebook file — fails
+before inspection, provider construction, provider credential access, egress, or
+report publication.
 
 Linux production retains the no-follow root-to-parent chain and opens the
 database through a private verified hard-link alias while holding the
@@ -153,12 +154,12 @@ source order. Front and rear subtitle/publisher/imprint canonical values share
 NFC and whitespace normalization. Rear position does not increase authority.
 Provider comparisons link only claims with the same role; no publisher/imprint
 hierarchy is inferred. The exact-current persisted report and database
-discriminator is `metadata-report-v34`. Every earlier report discriminator,
-including immediate prior `metadata-report-v33`, remains offline and requires a
+discriminator is `metadata-report-v35`. Every earlier report discriminator,
+including immediate prior `metadata-report-v34`, remains offline and requires a
 clean current database under ADR-0013.
 
-An audiobook item in a mounted audiobook library, with exactly one audio file
-in a supported container, is prepared as a local-evidence report and nothing
+An audiobook item in a mounted audiobook library, with 1 to 512 audio files in
+supported containers, is prepared as a local-evidence report and nothing
 further. Its closed evidence set carries ASIN, narrator contributions, series
 and sequence, running time, performance type, language, description, embedded
 chapters, and whether the file carries embedded cover art — each attributed to
@@ -203,12 +204,24 @@ it for a work that has no review case. The code raises no operational incident,
 counts toward nothing an owner is asked to unblock, and does not mark its scan
 as having failed — a prepared audiobook counted as a failure would discard
 every absence its scan staged, including a disappeared ebook's in a
-mixed-format library. Its digest is bounded by `audio_source_bytes` rather than
-the EPUB archive limit, and its catalogue fingerprint follows the audio file's
-own revision, so playing an audiobook does not re-prepare it.
-Multi-file audiobook items and audiobook libraries without a named read-only
-mount stay excluded, exactly as before. See
-[ADR-0063](../architecture/decisions/0063-isolated-audiobook-inspector.md).
+mixed-format library. Each file's digest is bounded by `audio_source_bytes` rather
+than the EPUB archive limit, and its catalogue fingerprint follows the audio
+files' own revisions, so playing an audiobook does not re-prepare it.
+
+A multi-file item is one preparable unit. Every file is read by its own isolated
+child, and the per-file documents are composed into one evidence set: one
+running time summed across the tracks, one chapter list stated as
+`embedded_concatenated` or `per_track`, and one claim per distinct observation
+carrying the ordinals of every track that stated it. Tracks that disagree keep
+both values and record the disagreement rather than electing one, and a
+cross-track ASIN disagreement opens a discovery lane for each. The item is
+bounded by file count, by summed bytes, and by a 600-second reading wall;
+exceeding any of them is the terminal `multi_file_budget_exceeded`. One
+unreadable or hostile track denies the whole item that track's own outcome, with
+its ordinal recorded — an item is one closed evidence set or none. Audiobook
+libraries without a named read-only mount stay excluded, exactly as before. See
+[ADR-0063](../architecture/decisions/0063-isolated-audiobook-inspector.md) and
+[ADR-0066](../architecture/decisions/0066-multi-file-audiobook-composition.md).
 
 Google Books descriptions use one inert, bounded
 `google-books-html-visible-text-v1` projection. Its report-bound transformation

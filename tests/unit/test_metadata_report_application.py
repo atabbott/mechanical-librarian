@@ -1497,14 +1497,26 @@ def test_an_audiobook_without_local_evidence_still_publishes_a_named_reason() ->
         (
             (
                 TargetFile("a" * 64, "part-1.m4b", "m4b"),
-                TargetFile("b" * 64, "part-2.m4b", "m4b"),
+                TargetFile("b" * 64, "book.wav", "wav"),
             ),
             True,
         ),
         ((TargetFile("a" * 64, "book.wav", "wav"),), True),
         ((TargetFile("a" * 64, "book.m4b", "m4b"),), False),
+        (
+            tuple(
+                TargetFile(f"{index:064x}", f"part-{index}.m4b", "m4b")
+                for index in range(513)
+            ),
+            True,
+        ),
     ),
-    ids=("multi-file", "unsupported-format", "no-composed-inspector"),
+    ids=(
+        "one-unsupported-track",
+        "unsupported-format",
+        "no-composed-inspector",
+        "past-the-track-bound",
+    ),
 )
 def test_audiobook_shapes_outside_the_slice_stay_unsupported(
     files: tuple[TargetFile, ...], inspector_present: bool
@@ -1646,7 +1658,9 @@ def test_audiobook_currentness_reruns_the_audio_inspector_not_the_epub_one() -> 
             local_claims=(),
             local_reasons=("no_local_audio_claims",),
             providers=(),
-            audio=AudioFacts(),
+            # The retained manifest is what currentness re-digests, so the
+            # report has to carry the one it was published with.
+            audio=audio_result().audio,
         ),
         audio_inspector=audio_inspector,
     )

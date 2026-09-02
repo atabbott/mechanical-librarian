@@ -21,6 +21,7 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_locatio
 )
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.metadata_report import (
+    AudioItemInspectionError,
     CoverReadError,
     CoverSourceChangedError,
     CoverTimeoutError,
@@ -29,6 +30,10 @@ from mechanical_librarian.application.metadata_report import (
     TargetFile,
     TargetNotFoundError,
     TargetSnapshot,
+)
+from mechanical_librarian.domain.audio_inspection import (
+    MAX_AUDIO_TRACKS,
+    AudioInspectionOutcome,
 )
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
@@ -262,8 +267,13 @@ def _snapshot(
         media_kind = "ebook"
     elif type(audio_source) is list:
         media_kind = "audiobook"
-        if len(audio_source) > 128:
-            raise MetadataReportError("target response is invalid")
+        if len(audio_source) > MAX_AUDIO_TRACKS:
+            # A set this build cannot compose is a bound this build states,
+            # not a target that answered badly: it is reported as the item's
+            # own typed terminal rather than as an invalid response.
+            raise AudioItemInspectionError(
+                AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED
+            )
         files = _audio_files(audio_source, service_path, root)
     else:
         media_kind = "unsupported"
@@ -535,6 +545,11 @@ def _audio_files(
     """
     values: list[TargetFile] = []
     for value in source:
+        if type(value) is dict and value.get("exclude") is True:
+            # Audiobookshelf drops an excluded file from the recording it
+            # plays, so it is not part of the service's own order and this
+            # build does not read it either.
+            continue
         try:
             location = normalize_ebook_location(
                 value, service_path=service_path, item=item
@@ -544,9 +559,29 @@ def _audio_files(
         if location.format not in AUDIO_FILE_FORMATS:
             return ()
         values.append(
-            TargetFile(location.identity, location.relative_path, location.format)
+            TargetFile(
+                location.identity,
+                location.relative_path,
+                location.format,
+                _track_sequence(value),
+            )
         )
     return tuple(values)
+
+
+def _track_sequence(value: object) -> int | None:
+    """Read the position the service declares for one track, or none at all.
+
+    The order is the service's own list order and this never changes it. The
+    declared index is separate evidence about that order, which is what makes
+    a missing or repeated part observable rather than invisible.
+    """
+    if type(value) is not dict:
+        return None
+    index = value.get("index")
+    if type(index) is not int or type(index) is bool or not 0 <= index <= 100_000:
+        return None
+    return index
 
 
 def _bounded_body(

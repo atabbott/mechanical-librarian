@@ -76,9 +76,10 @@ context and consequences rather than reproducing code.
 | [0060](0060-dedicated-review-session-database.md) | accepted | Move review-session state to a dedicated session database |
 | [0061](0061-audiobook-provider-posture.md) | accepted | Admit keyless audiobook providers with the anonymous Audible catalog primary |
 | [0062](0062-owner-managed-reviewer-access.md) | accepted | Keep reviewer access owner-managed and task-scoped |
-| [0063](0063-isolated-audiobook-inspector.md) | accepted | Read audiobook evidence through two isolated children |
+| [0063](0063-isolated-audiobook-inspector.md) | accepted; multi-file exclusion superseded by 0066 | Read audiobook evidence through two isolated children |
 | [0064](0064-audiobook-provider-evidence-vocabularies.md) | accepted | Admit audiobook provider evidence vocabularies and corroboration rules |
 | [0065](0065-language-equivalence-classes.md) | accepted | Group valid language representations by base and exact optional script |
+| [0066](0066-multi-file-audiobook-composition.md) | accepted | Compose multi-file audiobook items into one closed evidence set |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

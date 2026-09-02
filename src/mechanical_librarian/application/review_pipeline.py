@@ -142,6 +142,8 @@ def audio_inspection_failure_code(outcome: AudioInspectionOutcome) -> str:
         return "unsupported_media"
     if outcome is AudioInspectionOutcome.UNAVAILABLE_SOURCE:
         return "unreadable_media"
+    if outcome is AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED:
+        return "multi_file_budget_exceeded"
     if outcome in {
         AudioInspectionOutcome.MALFORMED,
         AudioInspectionOutcome.PROBE_FAILURE,

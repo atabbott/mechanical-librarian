@@ -37,7 +37,10 @@ from mechanical_librarian.application.metadata_report import (
     provider_observation,
 )
 from mechanical_librarian.bootstrap import composition
-from mechanical_librarian.domain.audio_inspection import AudioEmbeddedCover
+from mechanical_librarian.domain.audio_inspection import (
+    AudioEmbeddedCover,
+    AudioTrackDigest,
+)
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverProvenance,
@@ -127,7 +130,12 @@ def _audio_result() -> AudioInspectionResult:
             _local_claim(ClaimKind.ASIN, _ASIN, 1),
             _local_claim(ClaimKind.DURATION, _LOCAL_DURATION, 2),
         ),
-        AudioFacts(embedded_cover=AudioEmbeddedCover(False)),
+        AudioFacts(
+            embedded_cover=AudioEmbeddedCover(False),
+            tracks=(
+                AudioTrackDigest(1, _FILE_IDENTITY, _CONTENT_DIGEST, "m4b", "book.m4b"),
+            ),
+        ),
     )
 
 
@@ -135,16 +143,17 @@ class _AudioInspector:
     def __init__(self, *_args, **_kwargs) -> None:
         pass
 
-    def inspect(self, _mount, _relative_path, _maximum_bytes) -> AudioInspectionResult:
+    def inspect(self, _mount, _tracks, _maximum_bytes) -> AudioInspectionResult:
         return _audio_result()
 
     def unchanged(
         self,
         _mount,
-        _relative_path,
+        _relative_paths,
         expected_digest,
         _maximum_bytes,
         expected_sidecars=(),
+        expected_tracks=(),
     ) -> bool:
         return expected_digest == _CONTENT_DIGEST and not expected_sidecars
 
@@ -465,7 +474,7 @@ def test_an_audiobook_publishes_provider_evidence_and_ends_terminally(
             == enrichment.lanes[0].candidates[0].edition_identity
         )
         assert published.audio is not None
-        assert "metadata-report-v34" == published.schema_version
+        assert "metadata-report-v35" == published.schema_version
         # Preparation ended in the publishing transaction, under the renamed
         # terminal code. Nothing follows it, and the scan counts the item as
         # ready rather than as something asking the owner to unblock it.

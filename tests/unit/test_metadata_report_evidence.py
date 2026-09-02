@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -41,8 +42,12 @@ from mechanical_librarian.application.metadata_report import (
 )
 from mechanical_librarian.domain.audio_inspection import (
     AudioChapter,
+    AudioChapterComposition,
     AudioEmbeddedCover,
     AudioEvidenceSurface,
+    AudioObservation,
+    AudioObservationKind,
+    AudioTrackDigest,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
@@ -85,6 +90,7 @@ from mechanical_librarian.domain.metadata_report import (
     RearClaimProvenance,
     ReportValueError,
     TargetFacts,
+    audio_set_content_digest,
     canonical_json,
     claim_scope,
     comparison_links,
@@ -1792,6 +1798,145 @@ def test_an_embedded_cover_is_never_a_cover_source() -> None:
     assert report.cover_sources == ()
     assert report.audio is not None
     assert report.audio.embedded_cover.present is True
+
+
+def _audio_track(
+    ordinal: int, digest: str, *, claims: tuple[str, ...] = ()
+) -> AudioTrackDigest:
+    return AudioTrackDigest(
+        ordinal,
+        f"{ordinal:064x}",
+        digest,
+        "m4b",
+        f"part-{ordinal}.m4b",
+        ordinal,
+        60_000,
+        claims,
+    )
+
+
+def test_a_single_file_audio_section_still_names_the_one_file_it_composed() -> None:
+    """A v35 single-file report is the one-track case of the composed shape.
+
+    It keeps every v34 key and adds a composition kind and a one-entry
+    manifest, so a replay of the same mount reproduces the same document.
+    """
+    audio = AudioFacts(tracks=(_audio_track(1, "b" * 64),))
+    report = _audio_report(audio=audio)
+
+    assert report.audio is not None
+    assert report.audio.composition is AudioChapterComposition.SINGLE_FILE
+    assert len(report.audio.tracks) == 1
+    assert report.audio.observations == ()
+    assert MetadataReport.from_json(report.to_json()) == report
+    assert _audio_report(audio=audio).to_json() == report.to_json()
+
+
+def test_a_composed_audio_section_round_trips_its_manifest_and_observations() -> None:
+    claim = _audio_claim(ClaimKind.SERIES, "Discworld")
+    digests = (f"{1:064x}", f"{2:064x}")
+    report = MetadataReport.create(
+        target=TargetFacts(
+            "primary", "audio", "item-1", default_target_fields("Recorded title")
+        ),
+        file=FileFacts(0, "a" * 64, audio_set_content_digest(digests), "m4b"),
+        local_claims=(claim,),
+        local_reasons=("embedded_tag",),
+        providers=(),
+        audio=AudioFacts(
+            composition=AudioChapterComposition.PER_TRACK,
+            tracks=(
+                _audio_track(1, digests[0], claims=(claim.reference,)),
+                _audio_track(2, digests[1], claims=(claim.reference,)),
+            ),
+            observations=(
+                AudioObservation(AudioObservationKind.TRACK_SEQUENCE_GAP, (2,), None),
+            ),
+        ),
+    )
+
+    reopened = MetadataReport.from_json(report.to_json())
+
+    assert reopened == report
+    assert reopened.audio is not None
+    assert [value.claims for value in reopened.audio.tracks] == [
+        (claim.reference,),
+        (claim.reference,),
+    ]
+    assert reopened.audio.observations[0].kind is (
+        AudioObservationKind.TRACK_SEQUENCE_GAP
+    )
+
+
+def test_every_observation_the_vocabulary_names_survives_the_document() -> None:
+    """The vocabulary is closed, so the document has to admit all of it.
+
+    An observation a composition can state but a report cannot carry would be
+    evidence that exists only until it is written down.
+    """
+    kinds = tuple(AudioObservationKind)
+    report = _audio_report(
+        audio=AudioFacts(
+            tracks=(_audio_track(1, "b" * 64),),
+            observations=tuple(AudioObservation(kind, (1,), None) for kind in kinds),
+        )
+    )
+
+    reopened = MetadataReport.from_json(report.to_json())
+
+    assert reopened.audio is not None
+    assert tuple(value.kind for value in reopened.audio.observations) == kinds
+    assert len(kinds) == 6
+
+
+def test_the_item_content_digest_must_compose_the_manifest_it_names() -> None:
+    """A digest that is not the composition of the tracks describes no item."""
+    with pytest.raises(ReportValueError):
+        _audio_report(
+            audio=AudioFacts(tracks=(_audio_track(1, "c" * 64),)),
+        )
+
+
+def test_a_track_may_not_name_a_claim_the_report_does_not_carry() -> None:
+    with pytest.raises(ReportValueError):
+        _audio_report(
+            audio=AudioFacts(
+                tracks=(_audio_track(1, "b" * 64, claims=(f"local_{0:064x}",)),)
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    "build",
+    (
+        lambda: AudioFacts(
+            composition=AudioChapterComposition.PER_TRACK,
+            tracks=(_audio_track(1, "b" * 64),),
+        ),
+        lambda: AudioFacts(tracks=(_audio_track(2, "b" * 64),)),
+        lambda: AudioFacts(
+            composition=AudioChapterComposition.SINGLE_FILE,
+            tracks=(_audio_track(1, "b" * 64), _audio_track(2, "c" * 64)),
+        ),
+        lambda: AudioFacts(
+            tracks=(_audio_track(1, "b" * 64),),
+            observations=(
+                AudioObservation(AudioObservationKind.TRACK_SEQUENCE_GAP, (2,)),
+            ),
+        ),
+    ),
+    ids=(
+        "kind-disagrees-with-one-track",
+        "ordinals-not-contiguous",
+        "single-file-kind-with-two-tracks",
+        "observation-names-an-absent-track",
+    ),
+)
+def test_the_audio_manifest_refuses_a_set_it_cannot_describe(
+    build: Callable[[], AudioFacts],
+) -> None:
+    with pytest.raises(ReportValueError):
+        build()
 
 
 def test_an_isbn_shaped_asin_is_retained_as_local_evidence() -> None:

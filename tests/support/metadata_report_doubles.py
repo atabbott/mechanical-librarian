@@ -15,8 +15,11 @@ from mechanical_librarian.application.metadata_report import (
 )
 from mechanical_librarian.domain.audio_inspection import (
     AudioChapter,
+    AudioChapterComposition,
     AudioEmbeddedCover,
+    AudioObservation,
     AudioSidecarDigest,
+    AudioTrackDigest,
 )
 from mechanical_librarian.domain.metadata_report import (
     AudioFacts,
@@ -64,22 +67,25 @@ class FakeAudioInspector:
         self.inspections = 0
         self.verifications = 0
         self.ceilings: list[int] = []
+        self.tracks: list[tuple[str, ...]] = []
         # What the mount holds now, which starts as what inspection read and
         # can be reassigned to stage a sidecar added, removed, or edited since.
         self.current_sidecars = result.audio.sidecars
 
-    def inspect(self, mount, relative_path, maximum_bytes):
+    def inspect(self, mount, tracks, maximum_bytes):
         self.inspections += 1
         self.ceilings.append(maximum_bytes)
+        self.tracks.append(tuple(value.relative_path for value in tracks))
         return self.result
 
     def unchanged(
         self,
         mount,
-        relative_path,
+        relative_paths,
         expected_digest,
         maximum_bytes,
         expected_sidecars=(),
+        expected_tracks=(),
     ):
         self.verifications += 1
         return (
@@ -99,8 +105,16 @@ def audio_result(
     chapters_truncated: bool = False,
     embedded_cover: AudioEmbeddedCover = _NO_EMBEDDED_COVER,
     sidecars: tuple[AudioSidecarDigest, ...] = (),
+    tracks: tuple[AudioTrackDigest, ...] | None = None,
+    composition: AudioChapterComposition = AudioChapterComposition.SINGLE_FILE,
+    observations: tuple[AudioObservation, ...] = (),
 ) -> AudioInspectionResult:
-    """Build one audiobook evidence set from ``(kind, value, basis, role)`` facts."""
+    """Build one audiobook evidence set from ``(kind, value, basis, role)`` facts.
+
+    The default manifest is the one-track item the single-file cases use, so a
+    double still produces a document the report invariants accept: a published
+    audio section always names the files it was composed from.
+    """
     return AudioInspectionResult(
         content_digest,
         tuple(
@@ -118,7 +132,19 @@ def audio_result(
             )
             for occurrence, (kind, value, basis, role) in enumerate(facts, 1)
         ),
-        AudioFacts(chapters, chapters_truncated, embedded_cover, sidecars),
+        AudioFacts(
+            chapters,
+            chapters_truncated,
+            embedded_cover,
+            sidecars,
+            composition,
+            (
+                (AudioTrackDigest(1, "a" * 64, content_digest, "m4b", "book.m4b"),)
+                if tracks is None
+                else tracks
+            ),
+            observations,
+        ),
     )
 
 

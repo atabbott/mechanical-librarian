@@ -25,7 +25,9 @@ from mechanical_librarian.application.configuration import (
 )
 from mechanical_librarian.domain.metadata_report import (
     AUDIO_FILE_FORMATS,
+    MAX_AUDIO_TRACKS,
     ReportValueError,
+    audio_set_identity,
     canonical_json,
     validate_observed_title,
 )
@@ -248,39 +250,45 @@ def _entry(
         raise CatalogueError("catalogue item is unavailable")
     ebook = media.get("ebookFile")
     plural = media.get("ebookFiles")
-    metadata_file = None
+    audio_revisions: tuple[object, ...] = (None,)
     has_audio = type(media.get("audioFiles")) is list
     if ebook is None and (plural is None or plural == []):
         has_ebook = False
         # An audiobook library reaches preparation only through a named
-        # read-only mount and only as one single-file item, which mirrors the
-        # singular-supported posture the ebook branch below already holds. An
-        # unmounted audiobook library keeps exactly the disposition it had
-        # before F43: nothing to prepare, and nothing to attend to.
+        # read-only mount, and as one item however many files that item holds,
+        # which mirrors the singular-supported posture the ebook branch below
+        # already holds. An unmounted audiobook library keeps exactly the
+        # disposition it had before F43: nothing to prepare, and nothing to
+        # attend to.
         audio_mount = mount
-        # The audio file carries its own revision exactly as an EPUB does, and
-        # it is the one signal that moves when the media changes.  Without it
+        # Each audio file carries its own revision exactly as an EPUB does, and
+        # those are the signals that move when the media changes.  Without them
         # the fingerprint falls back to the item timestamp, which Audiobookshelf
         # also advances on playback -- so listening to an audiobook would
-        # re-prepare it, re-hashing multiple gigabytes for a file nobody wrote.
-        metadata_file = _singular_audio_metadata(media.get("audioFiles"))
-        audio_location = (
-            None
+        # re-prepare it, re-hashing multiple gigabytes for files nobody wrote.
+        audio_revisions = _audio_set_metadata(media.get("audioFiles"))
+        audio_locations = (
+            ()
             if audio_mount is None
-            else _singular_audio_location(media.get("audioFiles"), audio_mount, detail)
+            else _audio_set_locations(media.get("audioFiles"), audio_mount, detail)
         )
-        if audio_location is None or audio_mount is None:
+        if not audio_locations or audio_mount is None:
             classification = "none"
             file_identity = service_path = format_value = mount_name = None
         else:
+            # One item is one preparable unit whether it holds one file or
+            # three hundred, so the classification is unchanged and the
+            # identity is the ordered set's.
             classification = "singular-supported"
-            file_identity = audio_location.identity
-            service_path = audio_location.relative_path
-            format_value = audio_location.format
+            file_identity = audio_set_identity(
+                tuple(value.identity for value in audio_locations)
+            )
+            service_path = audio_locations[0].relative_path
+            format_value = audio_locations[0].format
             mount_name = audio_mount.name
     elif type(ebook) is dict and plural is None:
         has_ebook = True
-        metadata_file = ebook.get("metadata")
+        audio_revisions = (ebook.get("metadata"),)
         try:
             location = normalize_ebook_location(
                 ebook,
@@ -304,6 +312,7 @@ def _entry(
         classification = "needs-attention"
         file_identity = service_path = format_value = mount_name = None
         has_ebook = True
+        audio_revisions = (None,)
     if invalid_title:
         # This is deliberately an item disposition, never a target-health
         # condition.  Dropping the usable location prevents report preparation
@@ -353,16 +362,12 @@ def _entry(
         "present": "coverPath" in detail,
         "value": detail.get("coverPath"),
     }
-    media_revision = {
-        name: value
-        for name in ("mtimeMs", "mtime", "modifiedAt", "lastModified")
-        if type(metadata_file) is dict
-        and (value := metadata_file.get(name)) is not None
-        and (
-            (type(value) is int and value >= 0)
-            or (type(value) is str and 1 <= len(value) <= 128)
-        )
-    }
+    revisions = tuple(_file_revision(record) for record in audio_revisions)
+    # A one-file item keeps the exact revision shape it had before multi-file
+    # items were admitted, so every existing single-file fingerprint is
+    # unchanged; beyond one file the ordered list is what moves when any track
+    # does.
+    media_revision: object = revisions[0] if len(revisions) == 1 else list(revisions)
     # Audiobookshelf's item timestamp is also advanced by playback activity, so
     # prefer the file revision when it is available.  Without one, retain the
     # item timestamp as the conservative material-change signal.  A cover path
@@ -372,7 +377,7 @@ def _entry(
     # path does not make its fingerprint depend on a timestamp playback moves.
     item_revision_fallback = (
         detail["updatedAt"]
-        if not media_revision or (cover_reference is not None and has_ebook)
+        if not all(revisions) or (cover_reference is not None and has_ebook)
         else None
     )
     source_fingerprint = hashlib.sha256(
@@ -415,36 +420,66 @@ def _entry(
     )
 
 
-def _singular_audio_metadata(value: object) -> dict[str, Any] | None:
-    """Return the revision record of the one audio file, or none at all.
+def _audio_set_metadata(value: object) -> tuple[object, ...]:
+    """Return every track's revision record, in the service's own order.
 
-    Deliberately singular: a multi-file item is not prepared, and one member's
-    revision would state a currentness the whole item does not have.
+    One record per track, because a set is only as current as its least
+    current member: a list holding one empty record still falls back to the
+    item timestamp, exactly as a single missing revision always did.
     """
-    if type(value) is not list or len(value) != 1 or type(value[0]) is not dict:
-        return None
-    record = value[0].get("metadata")
-    return record if type(record) is dict else None
+    if type(value) is not list or not value:
+        return (None,)
+    return tuple(
+        record.get("metadata") if type(record) is dict else None
+        for record in value
+        if not (type(record) is dict and record.get("exclude") is True)
+    ) or (None,)
 
 
-def _singular_audio_location(
+def _file_revision(record: object) -> dict[str, object]:
+    return {
+        name: value
+        for name in ("mtimeMs", "mtime", "modifiedAt", "lastModified")
+        if type(record) is dict
+        and (value := record.get(name)) is not None
+        and (
+            (type(value) is int and value >= 0)
+            or (type(value) is str and 1 <= len(value) <= 128)
+        )
+    }
+
+
+def _audio_set_locations(
     value: object, mount: MediaMountConfiguration, detail: dict[str, Any]
-) -> EbookLocation | None:
-    """Admit exactly one supported audio file, or nothing at all.
+) -> tuple[EbookLocation, ...]:
+    """Admit one item's whole ordered audio set, or nothing at all.
 
     The location grammar itself is format-neutral -- it agrees a service
     path, a format token, and an identity -- so the audio branch reuses it
     rather than restating it, and narrows only which formats it will accept.
+    A set with one unusable member is admitted as nothing rather than as a
+    shorter set: a report bound to a subset of the recording is bound to a
+    recording the owner does not have.
     """
-    if type(value) is not list or len(value) != 1:
-        return None
-    try:
-        location = normalize_ebook_location(
-            value[0], service_path=mount.service_path, item=detail
-        )
-    except ValueError:
-        return None
-    return location if location.format in AUDIO_FILE_FORMATS else None
+    if type(value) is not list or not 1 <= len(value) <= MAX_AUDIO_TRACKS:
+        return ()
+    locations: list[EbookLocation] = []
+    for record in value:
+        if type(record) is dict and record.get("exclude") is True:
+            continue
+        try:
+            location = normalize_ebook_location(
+                record, service_path=mount.service_path, item=detail
+            )
+        except ValueError:
+            return ()
+        if location.format not in AUDIO_FILE_FORMATS:
+            return ()
+        locations.append(location)
+    identities = {value.identity for value in locations}
+    if len(identities) != len(locations):
+        return ()
+    return tuple(locations)
 
 
 def _observed_catalogue_title(value: object) -> tuple[str, bool]:

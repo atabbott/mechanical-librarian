@@ -21,7 +21,10 @@ from mechanical_librarian.application.failure_diagnostics import (
     provider_attempt_diagnostics,
 )
 from mechanical_librarian.application.operations import StageTimer
-from mechanical_librarian.domain.audio_inspection import AudioSidecarDigest
+from mechanical_librarian.domain.audio_inspection import (
+    AudioSidecarDigest,
+    AudioTrackDigest,
+)
 from mechanical_librarian.domain.audiobook_corroboration import (
     runtime_corroborated_candidate,
 )
@@ -41,6 +44,7 @@ from mechanical_librarian.domain.failure_diagnostics import (
 from mechanical_librarian.domain.metadata_report import (
     AUDIO_FILE_FORMATS,
     AUDIOBOOK_PROVIDER_AUTHORITIES,
+    MAX_AUDIO_TRACKS,
     MAX_CANDIDATES,
     AudioFacts,
     ClaimKind,
@@ -61,10 +65,12 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderRequestAccounting,
     ProviderStatus,
     PublicationDateRelation,
+    ReportValueError,
     TargetDestination,
     TargetFacts,
     TargetField,
     TargetFieldState,
+    audio_set_identity,
     canonical_asin,
     canonical_json,
     complete_creator_identity_bindings,
@@ -107,7 +113,17 @@ class ItemInspectionError(MetadataReportError):
 
 
 class AudioItemInspectionError(ItemInspectionError):
-    """One audiobook item could not be inspected, with its closed outcome."""
+    """One audiobook item could not be inspected, with its closed outcome.
+
+    ``track`` names the ordinal that stopped a composed item, so an owner is
+    told which of a hundred files could not be read rather than that the item
+    could not be.  It is ``None`` for a single-file item, which has no ordinal
+    to name, and for a bound the whole item exceeded.
+    """
+
+    def __init__(self, outcome: object = None, track: int | None = None) -> None:
+        super().__init__(outcome)
+        self.track = track
 
 
 class ArtifactAuthorityError(MetadataReportError):
@@ -149,6 +165,10 @@ class TargetFile:
     identity: str
     relative_path: str
     format: str
+    # The position the target itself declares for this file, where it declares
+    # one.  It orders nothing -- the service's own list order is the order --
+    # and exists so a set missing a part can be observed rather than assumed.
+    sequence: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1075,18 +1095,27 @@ class EpubInspector(Protocol):
 
 
 class AudioInspector(Protocol):
-    """The one application-visible call behind F43's two isolated children."""
+    """The one application-visible call behind F43's two isolated children.
+
+    Both calls take the item's ordered tracks rather than one path: an
+    audiobook's preparable unit is the item, and a single-file item is the
+    one-track case of it rather than a separate shape.
+    """
 
     def inspect(
-        self, mount: MediaMountConfiguration, relative_path: str, maximum_bytes: int
+        self,
+        mount: MediaMountConfiguration,
+        tracks: tuple[TargetFile, ...],
+        maximum_bytes: int,
     ) -> AudioInspectionResult: ...
     def unchanged(
         self,
         mount: MediaMountConfiguration,
-        relative_path: str,
+        relative_paths: tuple[str, ...],
         expected_digest: str,
         maximum_bytes: int,
         expected_sidecars: tuple[AudioSidecarDigest, ...] = (),
+        expected_tracks: tuple[AudioTrackDigest, ...] = (),
     ) -> bool: ...
 
 
@@ -1726,25 +1755,37 @@ class GenerateMetadataReport:
         ):
             raise UnsupportedMediaError("unsupported media")
         selected = initial.files[file_index]
-        if (
-            expected_file_identity is not None
-            and selected.identity != expected_file_identity
-        ):
-            raise CurrentnessError("target file changed")
         audiobook = initial.media_kind == "audiobook"
         if (
             selected.format != "epub"
             if not audiobook
-            # F43 admits exactly the singular-supported shape the catalogue
-            # admits: one audio file, in one of the container formats the
-            # isolated inspector understands, with an inspector composed for it.
+            # F44 admits the item the catalogue admits: one to
+            # `MAX_AUDIO_TRACKS` audio files, every one of them in a container
+            # format the isolated inspector understands, with an inspector
+            # composed for them, selected as the whole ordered set.
             else (
-                selected.format not in AUDIO_FILE_FORMATS
-                or len(initial.files) != 1
+                file_index != 0
+                or not 1 <= len(initial.files) <= MAX_AUDIO_TRACKS
+                or any(
+                    value.format not in AUDIO_FILE_FORMATS for value in initial.files
+                )
                 or self._audio_inspector is None
             )
         ):
             raise UnsupportedMediaError("unsupported media")
+        # An audiobook is prepared as one item, so the identity the catalogue
+        # bound the work to is the identity of its ordered track set, which for
+        # a one-track item is that track's own.
+        item_identity = (
+            audio_set_identity(tuple(value.identity for value in initial.files))
+            if audiobook
+            else selected.identity
+        )
+        if (
+            expected_file_identity is not None
+            and item_identity != expected_file_identity
+        ):
+            raise CurrentnessError("target file changed")
 
         repository: ReportRepository | None = None
         local: InspectionResult | None = None
@@ -1752,7 +1793,7 @@ class GenerateMetadataReport:
         try:
             repository = self._repository_factory()
             current_document = repository.current_optional(
-                self._connection.name, self._library.name, item, selected.identity
+                self._connection.name, self._library.name, item, item_identity
             )
             expected_current = (
                 None
@@ -1767,7 +1808,7 @@ class GenerateMetadataReport:
                         # the media gate above.
                         audio = cast("AudioInspector", self._audio_inspector).inspect(
                             self._mount,
-                            selected.relative_path,
+                            initial.files,
                             self._limits.audio_source_bytes,
                         )
                     else:
@@ -1840,6 +1881,7 @@ class GenerateMetadataReport:
                 repository,
                 item,
                 file_index,
+                item_identity,
                 selected,
                 initial,
                 audio,
@@ -2078,6 +2120,7 @@ class GenerateMetadataReport:
         repository: ReportRepository,
         item: str,
         file_index: int,
+        item_identity: str,
         selected: TargetFile,
         initial: TargetSnapshot,
         audio: AudioInspectionResult,
@@ -2162,7 +2205,7 @@ class GenerateMetadataReport:
                 ),
                 file=FileFacts(
                     file_index,
-                    selected.identity,
+                    item_identity,
                     audio.content_digest,
                     selected.format,
                 ),
@@ -2192,6 +2235,14 @@ class GenerateMetadataReport:
         if type(value) is not TargetSnapshot:
             raise MetadataReportError("target response is invalid")
         return value
+
+
+def _audio_set_identity_or_stale(identities: tuple[str, ...]) -> str | None:
+    """Name the current track set, or nothing a retained identity can equal."""
+    try:
+        return audio_set_identity(identities)
+    except ReportValueError:
+        return None
 
 
 def require_report_current(
@@ -2227,33 +2278,52 @@ def require_report_current(
         raise MetadataReportError("target read failed") from error
     if type(final) is not TargetSnapshot:
         raise MetadataReportError("target response is invalid")
-    matches = tuple(
-        value for value in final.files if value.identity == report.file.identity
-    )
-    if (
-        final.media_kind != ("audiobook" if audiobook else "ebook")
-        or final.title != report.target.current_title
-        or final.fields != report.target.fields
-        or ((require_singular or audiobook) and len(final.files) != 1)
-        or len(matches) != 1
-        or matches[0].format != report.file.format
-    ):
-        raise CurrentnessError("target or media changed")
     if audiobook:
-        # An audiobook's evidence is read from the file *and* from every
-        # recognized sidecar beside it, so the file's own digest alone proves
+        # An audiobook is bound to its whole ordered track set, so currentness
+        # compares the set: its composed identity, its per-track identities in
+        # order, and then every track's bytes. A track added, removed,
+        # reordered, or replaced moves one of those three.
+        retained = report.audio
+        identities = tuple(value.identity for value in final.files)
+        if (
+            final.media_kind != "audiobook"
+            or final.title != report.target.current_title
+            or final.fields != report.target.fields
+            or retained is None
+            or not retained.tracks
+            or len(final.files) != len(retained.tracks)
+            or identities != tuple(value.identity for value in retained.tracks)
+            or _audio_set_identity_or_stale(identities) != report.file.identity
+            or final.files[0].format != report.file.format
+        ):
+            raise CurrentnessError("target or media changed")
+        # An audiobook's evidence is read from the files *and* from every
+        # recognized sidecar beside them, so the files' own digests alone prove
         # only half the source. The inspector re-derives the recognized
         # candidate set and re-digests it through the one shared derivation
         # inspection used, and any sidecar added, removed, or edited since
         # publication makes the report stale.
         current = cast("AudioInspector", audio_inspector).unchanged(
             mount,
-            matches[0].relative_path,
+            tuple(value.relative_path for value in final.files),
             report.file.content_digest,
             limits.audio_source_bytes,
-            () if report.audio is None else report.audio.sidecars,
+            retained.sidecars,
+            retained.tracks,
         )
     else:
+        matches = tuple(
+            value for value in final.files if value.identity == report.file.identity
+        )
+        if (
+            final.media_kind != "ebook"
+            or final.title != report.target.current_title
+            or final.fields != report.target.fields
+            or (require_singular and len(final.files) != 1)
+            or len(matches) != 1
+            or matches[0].format != report.file.format
+        ):
+            raise CurrentnessError("target or media changed")
         current = inspector.unchanged(
             mount,
             matches[0].relative_path,

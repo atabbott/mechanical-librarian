@@ -9913,6 +9913,10 @@ def test_shutdown_deadline_retains_active_worker_and_durable_claim() -> None:
         (AudioInspectionOutcome.NO_APPLICABLE_EVIDENCE, "success"),
         (AudioInspectionOutcome.UNSUPPORTED_FORMAT, "unsupported_media"),
         (AudioInspectionOutcome.UNAVAILABLE_SOURCE, "unreadable_media"),
+        (
+            AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED,
+            "multi_file_budget_exceeded",
+        ),
         (AudioInspectionOutcome.MALFORMED, "parser_refused"),
         (AudioInspectionOutcome.PROBE_FAILURE, "parser_refused"),
         (AudioInspectionOutcome.RESOURCE_LIMIT, "parser_refused"),
@@ -9942,6 +9946,7 @@ def test_the_audio_outcome_vocabulary_is_exactly_what_the_mapping_answers() -> N
         "unsupported_media",
         "unreadable_media",
         "parser_refused",
+        "multi_file_budget_exceeded",
         "internal_failure",
     }
 
@@ -9984,6 +9989,92 @@ def test_an_audiobook_inspection_failure_is_named_at_the_extraction_stage() -> N
         )
 
     assert raised.value.code == "internal_failure"
+
+
+def test_the_failing_track_of_a_multi_file_item_is_named_in_recovery_evidence() -> None:
+    """Which file refused is the only thing an owner can act on.
+
+    A multi-file item names one failure for the whole set, so without the
+    ordinal the owner is told a folder of several hundred recordings is
+    unreadable and given nothing to look at.
+    """
+
+    def unreachable(*_arguments: object, **_keywords: object) -> None:
+        raise AssertionError
+
+    def refuse(*_arguments: object, **_keywords: object) -> str:
+        raise AudioItemInspectionError(AudioInspectionOutcome.MALFORMED, 3)
+
+    stages = ReviewPipelineStages(
+        configuration=ApplicationConfiguration((), (), (), ()),
+        catalogue=unreachable,
+        catalogue_reader=cast("CatalogueReader", unreachable),
+        probe_connection=unreachable,
+        connections=frozenset(),
+        repository_factory=unreachable,
+        recover_artifacts=lambda: None,
+        generate_report=refuse,
+        create_proposal_set=unreachable,
+        admit_review_case=unreachable,
+        cover_considerations=unreachable,
+        recovery_observer=cast("ProviderFailureObserver", unreachable),
+        drain_outbox=unreachable,
+        discovery_lock=threading.Lock(),
+        clock=lambda: 7,
+    )
+
+    with (
+        patch.object(stages, "_require_eligible_entry", lambda _action: None),
+        pytest.raises(ReviewPipelineError) as raised,
+    ):
+        stages.extract(
+            cast("ReviewPipelineRepository", object()),
+            cast("PipelineAction", object()),
+            False,
+        )
+
+    assert raised.value.code == "parser_refused"
+    assert raised.value.root == "track_3"
+
+
+def test_a_single_file_item_still_names_no_track_at_the_extraction_stage() -> None:
+    """One file is the item, so an ordinal would be noise rather than evidence."""
+
+    def unreachable(*_arguments: object, **_keywords: object) -> None:
+        raise AssertionError
+
+    def refuse(*_arguments: object, **_keywords: object) -> str:
+        raise AudioItemInspectionError(AudioInspectionOutcome.MALFORMED)
+
+    stages = ReviewPipelineStages(
+        configuration=ApplicationConfiguration((), (), (), ()),
+        catalogue=unreachable,
+        catalogue_reader=cast("CatalogueReader", unreachable),
+        probe_connection=unreachable,
+        connections=frozenset(),
+        repository_factory=unreachable,
+        recover_artifacts=lambda: None,
+        generate_report=refuse,
+        create_proposal_set=unreachable,
+        admit_review_case=unreachable,
+        cover_considerations=unreachable,
+        recovery_observer=cast("ProviderFailureObserver", unreachable),
+        drain_outbox=unreachable,
+        discovery_lock=threading.Lock(),
+        clock=lambda: 7,
+    )
+
+    with (
+        patch.object(stages, "_require_eligible_entry", lambda _action: None),
+        pytest.raises(ReviewPipelineError) as raised,
+    ):
+        stages.extract(
+            cast("ReviewPipelineRepository", object()),
+            cast("PipelineAction", object()),
+            False,
+        )
+
+    assert raised.value.root is None
 
 
 def test_a_terminal_stop_that_registers_no_package_refuses_to_pass_silently(
@@ -10203,7 +10294,7 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
     assert presentation.passage.failed == 0
     assert presentation.recent_completions[0].outcome == "ready"
     assert presentation.throughput_per_minute > 0
-    assert retained.schema_version == "metadata-report-v34"
+    assert retained.schema_version == "metadata-report-v35"
     assert retained.audio is not None
     assert retained.providers == ()
     # The evidence is what the owner browses: a report, not a terminal card.
@@ -10214,7 +10305,7 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
     # And addressable by the identity of the package row that lists it, which
     # is the only route to an audiobook's evidence: it has no review case.
     assert addressed is not None
-    assert MetadataReport.from_json(addressed).schema_version == "metadata-report-v34"
+    assert MetadataReport.from_json(addressed).schema_version == "metadata-report-v35"
     assert browse_report(addressed)["audio"] is not None
     # No such work is a `None`, not a refusal: a store that cannot answer
     # raises, and the two must not read alike to the caller above.

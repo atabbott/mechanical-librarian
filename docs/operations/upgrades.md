@@ -3,11 +3,11 @@
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
 The reviewer-access authority, `setup-state-v3`, `owner-settings-v3`,
-`cover-consideration-v3`, `metadata-report-v34`, and the added application
+`cover-consideration-v3`, `metadata-report-v35`, and the added application
 tables change the current SQLite objects in this build. Every earlier
 application database therefore requires a clean rebuild; no adoption,
 migration, conversion, import, repair, or downgrade is supplied by #872, #873,
-#749, or #956.
+#749, #956, or #965.
 
 The exact predecessors for this change are `config-v7`, `metadata-report-v32`,
 `owner-settings-v2`, and `setup-state-v2`. Inventaire changes all four closed
@@ -15,11 +15,13 @@ vocabularies, so no predecessor is parsed or adopted: supply a `config-v8`
 document and rebuild an absent application database through first-run setup.
 No migration is supplied.
 
-#956 advances the report discriminator from `metadata-report-v33` to
-`metadata-report-v34`: the retained local-claim grammar now admits the
-Audiobookshelf-asserted ASIN and audiobook preparation writes it, so a v33
-report is not exact-current. Rebuild an absent application database; no
-adoption is supplied.
+#965 advances the report discriminator from `metadata-report-v34` to
+`metadata-report-v35`: an audio report now carries its chapter-composition
+kind, the ordered per-file track manifest each claim is attributed to, and the
+closed cross-file observations, so a v34 report is not exact-current. Rebuild an
+absent application database; no adoption is supplied. The predecessor #956
+advanced v33 to v34 when the retained local-claim grammar admitted the
+Audiobookshelf-asserted ASIN.
 
 F36 advances the exact proposal policy from `fixed-conservative-v12` to
 `fixed-conservative-v13` because language alternatives and their identities
@@ -43,7 +45,7 @@ exact retained #744 test schema, an existing complete owner-only clone, an
 independent backup path, and an absent output path under the same private
 directory. The command name remains the frozen authority identifier from its
 original plan; its fresh output is always the exact current schema, now
-`metadata-report-v34`. It leaves the source untouched, verifies the backup, rebuilds a
+`metadata-report-v35`. It leaves the source untouched, verifies the backup, rebuilds a
 fresh exact-current report database through current derivation, and
 invalidates observations that lack current work-dispatch provenance plus all
 downstream state. Artifact-bearing cover references are also invalidated

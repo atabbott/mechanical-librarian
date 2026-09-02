@@ -1963,6 +1963,11 @@ _TERMINAL_PREPARATION_GUIDANCE: dict[str, tuple[str, str]] = {
         "The media file could not be safely read within supported parsing limits.",
         "Use a media file that meets the supported parsing limits, then scan this library again.",
     ),
+    "multi_file_budget_exceeded": (
+        "This audiobook's file set is larger than preparation can read as one item.",
+        "Reduce the item to the supported number, size, or reading time of audio "
+        "files, then scan this library again.",
+    ),
     "missing_required_input": (
         "Required preparation input is unavailable.",
         "Provide the required supported item input, then scan this library again.",

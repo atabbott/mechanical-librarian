@@ -21,7 +21,10 @@ from mechanical_librarian.domain.evidence_bounds import (
 )
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
 
-AUDIO_INSPECTION_SCHEMA = "audio-inspection-v1"
+# `v2` adds exactly one nullable member, `title`, so a per-track chapter can be
+# named by the recording rather than by its file name.  The child still reads
+# one file and still answers about that file alone.
+AUDIO_INSPECTION_SCHEMA = "audio-inspection-v2"
 AUDIO_LIMIT_PROFILE = "audio-inspection-limits-v1"
 # The retained report's own ceiling, and deliberately not a smaller one.  A
 # legal inspection of a file with 1,024 chapters titled to the full 280
@@ -47,12 +50,29 @@ MAX_DURATION_MILLISECONDS = 604_800_000
 # manifest records names the sibling listing already proved are single
 # components, so nothing wider can reach it.
 MAX_SIDECAR_NAME_CHARACTERS = 255
+# The largest track set one item may be composed from.  The reference library's
+# widest audiobook is 352 files, and every count, byte, and second below is
+# bounded against this number rather than against whatever a target answers.
+MAX_AUDIO_TRACKS = 512
+# One item's whole inspection: every track's digest, probe, and interpretation
+# together.  The per-file wall stays what F43 set, so this is the bound that
+# stops a wide item from occupying a worker for hours rather than the bound on
+# any single file.
+MULTI_FILE_WALL_SECONDS = 600
+# One track's declared position in the target's own order.  Wider than any
+# published recording, and narrow enough that the value stays arithmetic.
+MAX_TRACK_SEQUENCE = 100_000
 
 _FIELD_STATES = frozenset(
     {"valid", "malformed", "oversized", "unsupported", "untyped", "inapplicable"}
 )
 _DECIMAL_SECONDS = re.compile(r"^\d{1,9}(?:\.\d{1,9})?$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+# The format token the location grammar agreed for a track.  Spelled as a shape
+# here rather than as the report's own format set, which lives in a module that
+# imports this one.
+_FORMAT_TOKEN = re.compile(r"^[a-z0-9]{1,8}$")
+_CLAIM_REFERENCE = re.compile(r"^local_[0-9a-f]{64}$")
 
 
 class AudioInspectionOutcome(StrEnum):
@@ -75,11 +95,41 @@ class AudioInspectionOutcome(StrEnum):
     UNAVAILABLE_SOURCE = "unavailable_source"
     PROBE_FAILURE = "probe_failure"
     CHILD_FAILURE = "child_failure"
+    MULTI_FILE_BUDGET_EXCEEDED = "multi_file_budget_exceeded"
     INTERNAL_FAILURE = "internal_failure"
 
     @property
     def succeeded(self) -> bool:
         return self in {self.SUCCESS, self.NO_APPLICABLE_EVIDENCE}
+
+
+class AudioChapterComposition(StrEnum):
+    """How one item's retained chapter section was arrived at.
+
+    Named on the report because a concatenated vector and a per-track one are
+    different evidence about the same recording, and a reader comparing chapter
+    structure has to know which it is holding.
+    """
+
+    SINGLE_FILE = "single_file"
+    EMBEDDED_CONCATENATED = "embedded_concatenated"
+    PER_TRACK = "per_track"
+
+
+class AudioObservationKind(StrEnum):
+    """Exactly what composing one item's tracks can notice, and nothing else.
+
+    These are observations about the *set*, not evidence about the work: none
+    of them names a target field, and none can become a proposal.  The
+    vocabulary is closed so a reader can enumerate it.
+    """
+
+    TRACK_SEQUENCE_GAP = "track_sequence_gap"
+    TRACK_SEQUENCE_DISORDER = "track_sequence_disorder"
+    TRACK_DURATION_UNAVAILABLE = "track_duration_unavailable"
+    CHAPTER_ATOMS_PARTIAL = "chapter_atoms_partial"
+    TAG_DISAGREES_ACROSS_TRACKS = "tag_disagrees_across_tracks"
+    ASIN_DISAGREES_ACROSS_TRACKS = "asin_disagrees_across_tracks"
 
 
 class AudioEvidenceSurface(StrEnum):
@@ -261,6 +311,7 @@ class AudioEmbeddedCover:
 
     present: bool
     surface: AudioEvidenceSurface | None = None
+    tracks: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         if type(self.present) is not bool or (
@@ -269,8 +320,29 @@ class AudioEmbeddedCover:
             raise ValueError("audio embedded cover is malformed")
         if self.present != (self.surface is not None):
             raise ValueError("audio embedded cover provenance is inconsistent")
+        if (
+            type(self.tracks) is not tuple
+            or len(self.tracks) > MAX_AUDIO_TRACKS
+            or any(
+                type(value) is not int or not 1 <= value <= MAX_AUDIO_TRACKS
+                for value in self.tracks
+            )
+            or list(self.tracks) != sorted(set(self.tracks))
+            or (self.tracks and not self.present)
+        ):
+            raise ValueError("audio embedded cover provenance is inconsistent")
 
     def to_data(self) -> dict[str, object]:
+        """The report's own shape, which names which tracks carried the art."""
+        return {**self.to_protocol_data(), "tracks": list(self.tracks)}
+
+    def to_protocol_data(self) -> dict[str, object]:
+        """The child boundary's shape, which has no ordinals to state.
+
+        A child inspects one file and knows nothing about the set it belongs
+        to, so the ordinals are composed by the parent and deliberately never
+        cross the protocol.
+        """
         return {
             "present": self.present,
             "surface": None if self.surface is None else self.surface.value,
@@ -278,6 +350,114 @@ class AudioEmbeddedCover:
 
     def __repr__(self) -> str:
         return "AudioEmbeddedCover(<redacted>)"
+
+
+@dataclass(frozen=True, repr=False)
+class AudioObservation:
+    """One noticed property of a composed track set, never evidence about it."""
+
+    kind: AudioObservationKind
+    tracks: tuple[int, ...] = ()
+    field: AudioInspectionField | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.kind) is not AudioObservationKind
+            or (self.field is not None and type(self.field) is not AudioInspectionField)
+            or type(self.tracks) is not tuple
+            or len(self.tracks) > MAX_AUDIO_TRACKS
+            or any(
+                type(value) is not int or not 1 <= value <= MAX_AUDIO_TRACKS
+                for value in self.tracks
+            )
+            or list(self.tracks) != sorted(set(self.tracks))
+        ):
+            raise ValueError("audio observation is malformed")
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "field": None if self.field is None else self.field.value,
+            "kind": self.kind.value,
+            "tracks": list(self.tracks),
+        }
+
+    def __repr__(self) -> str:
+        return "AudioObservation(<redacted>)"
+
+
+@dataclass(frozen=True, repr=False)
+class AudioTrackDigest:
+    """One track of a composed item, with the provenance its claims carry.
+
+    ``digest`` is the currentness witness for the track's own bytes and
+    ``identity`` is the target's identity for it, so a track that is replaced,
+    reordered, or edited moves one of the two.  ``claims`` names every composed
+    claim this track carried, which is how per-file provenance survives the
+    collapse of identical tags into one claim.
+    """
+
+    ordinal: int
+    identity: str
+    digest: str
+    format: str
+    name: str
+    sequence: int | None = None
+    duration_milliseconds: int | None = None
+    claims: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.ordinal) is not int
+            or not 1 <= self.ordinal <= MAX_AUDIO_TRACKS
+            or type(self.identity) is not str
+            or _SHA256.fullmatch(self.identity) is None
+            or type(self.digest) is not str
+            or _SHA256.fullmatch(self.digest) is None
+            or type(self.format) is not str
+            or _FORMAT_TOKEN.fullmatch(self.format) is None
+        ):
+            raise ValueError("audio track is malformed")
+        try:
+            validate_projection_text(
+                self.name, "audio track name", MAX_SIDECAR_NAME_CHARACTERS
+            )
+        except EvidenceValueError as error:
+            raise ValueError("audio track name is malformed") from error
+        if self.sequence is not None and (
+            type(self.sequence) is not int
+            or not 0 <= self.sequence <= MAX_TRACK_SEQUENCE
+        ):
+            raise ValueError("audio track sequence is malformed")
+        if self.duration_milliseconds is not None and (
+            type(self.duration_milliseconds) is not int
+            or not 1 <= self.duration_milliseconds <= MAX_DURATION_MILLISECONDS
+        ):
+            raise ValueError("audio track duration is malformed")
+        if (
+            type(self.claims) is not tuple
+            or len(self.claims) > MAX_FACTS
+            or any(
+                type(value) is not str or _CLAIM_REFERENCE.fullmatch(value) is None
+                for value in self.claims
+            )
+            or len(set(self.claims)) != len(self.claims)
+        ):
+            raise ValueError("audio track claim provenance is malformed")
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "claims": list(self.claims),
+            "digest": self.digest,
+            "duration_milliseconds": self.duration_milliseconds,
+            "format": self.format,
+            "identity": self.identity,
+            "name": self.name,
+            "ordinal": self.ordinal,
+            "sequence": self.sequence,
+        }
+
+    def __repr__(self) -> str:
+        return "AudioTrackDigest(<redacted>)"
 
 
 @dataclass(frozen=True, repr=False)
@@ -415,8 +595,16 @@ class AudioInspection:
     chapters: tuple[AudioChapter, ...] = ()
     embedded_cover: AudioEmbeddedCover = AudioEmbeddedCover(False)
     chapters_truncated: bool = False
+    title: str | None = None
 
     def __post_init__(self) -> None:
+        if self.title is not None:
+            try:
+                validate_projection_text(
+                    self.title, "audio track title", MAX_CHAPTER_TITLE_CHARACTERS
+                )
+            except EvidenceValueError as error:
+                raise ValueError("audio inspection is malformed") from error
         if (
             type(self.outcome) is not AudioInspectionOutcome
             or (self.source is not None and type(self.source) is not Fingerprint)
@@ -440,11 +628,16 @@ class AudioInspection:
             range(1, len(self.chapters) + 1)
         ):
             raise ValueError("audio chapter ordinals are inconsistent")
+        if self.embedded_cover.tracks:
+            # The child reports one file and never a set, so an ordinal here
+            # could only have been forged by something other than the child.
+            raise ValueError("audio inspection cannot carry track provenance")
         if not self.outcome.succeeded and (
             self.facts
             or self.chapters
             or self.embedded_cover.present
             or self.chapters_truncated
+            or self.title is not None
         ):
             raise ValueError("failed audio inspection cannot retain evidence")
 
@@ -454,10 +647,11 @@ class AudioInspection:
             {
                 "chapters": [value.to_data() for value in self.chapters],
                 "chapters_truncated": self.chapters_truncated,
-                "embedded_cover": self.embedded_cover.to_data(),
+                "embedded_cover": self.embedded_cover.to_protocol_data(),
                 "facts": [value.to_data() for value in self.facts],
                 "outcome": self.outcome.value,
                 "schema": AUDIO_INSPECTION_SCHEMA,
+                "title": self.title,
                 "source": None
                 if self.source is None
                 else {
@@ -491,6 +685,7 @@ class AudioInspection:
                     "outcome",
                     "schema",
                     "source",
+                    "title",
                 }
                 or value["schema"] != AUDIO_INSPECTION_SCHEMA
             ):
@@ -562,6 +757,7 @@ class AudioInspection:
                     else AudioEvidenceSurface(cover_data["surface"]),
                 ),
                 value["chapters_truncated"],
+                value["title"],
             )
         except (KeyError, TypeError, ValueError):
             raise ValueError("audio inspection protocol is invalid") from None
@@ -578,6 +774,7 @@ __all__ = [
     "AUDIO_INSPECTION_SCHEMA",
     "AUDIO_SURFACE_BASIS",
     "AudioChapter",
+    "AudioChapterComposition",
     "AudioEmbeddedCover",
     "AudioEvidenceSurface",
     "AudioInspection",
@@ -585,10 +782,15 @@ __all__ = [
     "AudioInspectionField",
     "AudioInspectionLimits",
     "AudioInspectionOutcome",
+    "AudioObservation",
+    "AudioObservationKind",
     "AudioPerformanceType",
     "AudioSidecarDigest",
+    "AudioTrackDigest",
+    "MAX_AUDIO_TRACKS",
     "MAX_CHAPTERS",
     "MAX_PUBLIC_REPORT_BYTES",
     "MAX_SIDECAR_NAME_CHARACTERS",
+    "MULTI_FILE_WALL_SECONDS",
     "normalize_duration_seconds",
 ]

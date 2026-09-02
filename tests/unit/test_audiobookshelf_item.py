@@ -18,11 +18,16 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
 )
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.metadata_report import (
+    AudioItemInspectionError,
     CoverReadError,
     MetadataReportError,
     TargetCover,
     TargetNotFoundError,
     TargetSnapshot,
+)
+from mechanical_librarian.domain.audio_inspection import (
+    MAX_AUDIO_TRACKS,
+    AudioInspectionOutcome,
 )
 from mechanical_librarian.domain.metadata_report import (
     MAX_CONTRIBUTIONS,
@@ -1104,13 +1109,58 @@ def test_an_item_with_neither_ebook_nor_audio_files_stays_unsupported() -> None:
     assert _audiobook_snapshot({}).media_kind == "unsupported"
 
 
-def test_an_audio_set_beyond_the_bound_is_refused() -> None:
-    with pytest.raises(MetadataReportError):
+def test_an_audio_set_beyond_the_bound_is_its_own_typed_terminal() -> None:
+    """A set this build cannot compose is a bound, not a bad target response.
+
+    Reporting it as an invalid response would blame the library server for a
+    ceiling this build chose, and would reach the owner under a code that says
+    nothing about how to act on it.
+    """
+    with pytest.raises(AudioItemInspectionError) as raised:
         _audiobook_snapshot(
             {
                 "audioFiles": [
                     _audio_file(f"part-{index}.m4b", inode=f"inode-{index}")
-                    for index in range(129)
+                    for index in range(MAX_AUDIO_TRACKS + 1)
                 ]
             }
         )
+
+    assert raised.value.outcome is AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED
+
+
+def test_the_widest_admitted_set_still_reads_as_one_item() -> None:
+    snapshot = _audiobook_snapshot(
+        {
+            "audioFiles": [
+                _audio_file(f"part-{index}.m4b", inode=f"inode-{index}")
+                for index in range(MAX_AUDIO_TRACKS)
+            ]
+        }
+    )
+
+    assert len(snapshot.files) == MAX_AUDIO_TRACKS
+
+
+def test_the_declared_index_is_read_and_an_excluded_file_is_not_in_the_order() -> None:
+    """The order is the service's own list order; `index` is evidence about it.
+
+    An excluded file is not part of the recording Audiobookshelf plays, so it
+    is not part of the item this build reads either.
+    """
+    snapshot = _audiobook_snapshot(
+        {
+            "audioFiles": [
+                {**_audio_file("part-1.m4b", inode="inode-1"), "index": 1},
+                {**_audio_file("part-x.m4b", inode="inode-x"), "exclude": True},
+                {**_audio_file("part-2.m4b", inode="inode-2"), "index": 3},
+                _audio_file("part-3.m4b", inode="inode-3"),
+            ]
+        }
+    )
+
+    assert [(value.relative_path, value.sequence) for value in snapshot.files] == [
+        ("part-1.m4b", 1),
+        ("part-2.m4b", 3),
+        ("part-3.m4b", None),
+    ]
