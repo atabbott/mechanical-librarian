@@ -326,6 +326,26 @@ def _candidate(result: ProposalResult) -> ProposalAlternative | None:
     return None
 
 
+def _selected_verified_manifestation_isbn_candidate(
+    result: ProposalResult,
+) -> ProposalAlternative | None:
+    """Return the explicitly elected ISBN while retaining competing offers."""
+    if (
+        result.outcome is not ProposalOutcome.PROPOSE_CHANGE
+        or result.reasons != (VERIFIED_MANIFESTATION_ISBN_REASON,)
+        or result.selected_alternative_id is None
+    ):
+        return None
+    for alternative in result.alternatives:
+        if (
+            alternative.alternative_id == result.selected_alternative_id
+            and alternative.value.kind is ProposalValueKind.TEXT
+            and alternative.assessment is not ProposalAssessment.PRESERVES_TARGET
+        ):
+            return alternative
+    return None
+
+
 def _series_candidate(result: ProposalResult) -> ProposalAlternative | None:
     """Series projection may narrow an admitted target-preserving alternative."""
     if len(result.alternatives) != 1:
@@ -646,10 +666,9 @@ def _isbn(
             _data_value(target.value),
             "manifestation_verification_required",
         )
-    alternatives = _typed_alternatives(result, ProposalValueKind.TEXT)
-    candidate, reason = _one_typed_candidate(result, ProposalValueKind.TEXT)
+    candidate = _selected_verified_manifestation_isbn_candidate(result)
     if candidate is None:
-        return _abstain(field, option, target, _data_value(target.value), reason or "no_candidate")
+        return _abstain(field, option, target, _data_value(target.value), "no_candidate")
     if option not in {"preserve_exact", "prefer_isbn13"}:
         return _abstain(field, option, target, _data_value(target.value), "policy_option_unavailable")
     value = select_isbn_representation(report, candidate, option)

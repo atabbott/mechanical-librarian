@@ -1996,6 +1996,57 @@ def test_isbn_family_preview_selects_exact_local_or_isbn13_representation() -> N
         assert 3 == len(field.source_evidence_references)
 
 
+def test_isbn_preview_projects_the_selected_verified_family_among_offers() -> None:
+    local = _local_isbn("0306406152", "valid_isbn_10")
+    verified = _provider(
+        "catalogue",
+        "edition-1",
+        (
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.ISBN,
+                "9780306406157",
+                scope=ClaimScope.EDITION,
+                applicability="ebook",
+            ),
+        ),
+    )
+    offered = _provider(
+        "search",
+        "edition-2",
+        (
+            _claim(
+                "search",
+                "edition-2",
+                ClaimKind.ISBN,
+                "9780140328721",
+                scope=ClaimScope.EDITION,
+                applicability="ebook",
+            ),
+        ),
+    )
+    report = _report(
+        fields=_fields(
+            isbn=TargetField(TargetDestination.ISBN, TargetFieldState.MISSING)
+        ),
+        local_claims=(local,),
+        providers=(verified, offered),
+    )
+
+    for option, value in (
+        ("preserve_exact", "0306406152"),
+        ("prefer_isbn13", "9780306406157"),
+    ):
+        preview = _preview_field(report, "isbn_form", option)
+        assert ("projected", value, "verified_manifestation_isbn") == (
+            preview.outcome,
+            preview.desired_value,
+            preview.reason,
+        )
+        assert preview.source_candidate_id is not None
+
+
 def test_isbn_representation_uses_accepted_lexicals_within_the_elected_family() -> None:
     local = _local_isbn("0306406152", "valid_isbn_10")
     provider = _provider(
