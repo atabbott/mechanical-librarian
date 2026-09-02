@@ -141,10 +141,14 @@ of 25, both at 100% precision with zero failures. After review found the floor
 counting an inapplicable alternative, the seventeenth and eighteenth executions
 replayed both splits against the corrected compiler. Results were unchanged;
 the holdout is explicitly recorded as spent correction continuity, not a second
-unseen execution. The v8 manifest binds those correction receipts and retains
-the original one-shot receipt through its historical predecessor.
+unseen execution. A further review found transformed provider text still counted
+as safe plain-text competition. The nineteenth and twentieth executions replayed
+both splits after filtering that text before the single-versus-multiple-candidate
+decision; results again remained unchanged. The v9 manifest binds the latest
+correction receipts, whose chain retains the earlier correction and original
+one-shot receipts.
 
-F20 v8 preserves the separately qualified two ISBN-form options under the
+F20 v9 preserves the separately qualified two ISBN-form options under the
 current deterministic identity rule. Their final development result and archived replay
 show 100% precision across the supported empty-field states, while the sealed
 holdout is carried forward by a continuity receipt for the unresolved-work
@@ -154,5 +158,5 @@ A useful published-work ISBN carried by a proof remains eligible only through
 that bound identity evidence; proof status alone neither elects nor disqualifies it.
 
 The machine-readable candidate is
-[`f20-rich-metadata-qualification-candidate-v8.json`](../reference/f20-rich-metadata-qualification-candidate-v8.json).
-The v7 manifest remains a readable historical record.
+[`f20-rich-metadata-qualification-candidate-v9.json`](../reference/f20-rich-metadata-qualification-candidate-v9.json).
+The v8 manifest remains a readable historical record.

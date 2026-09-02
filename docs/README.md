@@ -57,7 +57,7 @@ depends on it.
 - [F38 contributor-display qualification manifest](reference/f38-contributor-display-qualification-manifest-v1.json) —
   `F38_QUALIFICATION_MANIFEST_SHA256` pins the separately qualified
   provider-consensus contributor-display authority
-- [F20 rich-metadata qualification candidate](reference/f20-rich-metadata-qualification-candidate-v8.json) —
+- [F20 rich-metadata qualification candidate](reference/f20-rich-metadata-qualification-candidate-v9.json) —
   `tests/unit/test_rich_metadata_qualification_manifest.py` and the ruff and
   mypy exemptions in `pyproject.toml` are bound to the sources it freezes
 
