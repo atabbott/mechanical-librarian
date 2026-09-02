@@ -495,6 +495,7 @@ def _field(
         "target_fingerprint": "f" * 64,
         "human_decision": human_decision,
         "automatic_decision": automatic_decision,
+        "automatic_selection_sources": [],
         "notices": notices or [],
         "provenance": provenance or [],
         "corroboration_sources": corroboration_sources or [],
