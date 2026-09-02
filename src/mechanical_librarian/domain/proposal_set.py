@@ -3575,11 +3575,15 @@ def _bibliographic_combinations(
         tuple[tuple[str, str, str | None, str | None], ...],
         tuple[tuple[BibliographicSelection, ...], set[str]],
     ] = {}
-    generic_subtitle_rejection = results[
-        TargetDestination.SUBTITLE
-    ].outcome is ProposalOutcome.INELIGIBLE and results[
-        TargetDestination.SUBTITLE
-    ].reasons == ("generic_provider_subtitle",)
+    generic_subtitle_rejection = (
+        results[TargetDestination.SUBTITLE].outcome is ProposalOutcome.INELIGIBLE
+        and results[TargetDestination.SUBTITLE].reasons
+        == ("generic_provider_subtitle",)
+        # The preservation branch below emits an all-PRESERVE combination, which
+        # the ProposalSet invariant tolerates only when the title is kept. An
+        # unresolved title with a preserving alternative otherwise raises.
+        and results[TargetDestination.TITLE].outcome is ProposalOutcome.KEEP
+    )
     for representation, represented in sorted(members.items()):
         component_destinations = represented.keys() & {
             TargetDestination.SUBTITLE,

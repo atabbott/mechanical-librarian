@@ -33,7 +33,14 @@ from mechanical_librarian.domain.shadow_review import (
 from mechanical_librarian.domain.shadow_review_actions import (
     compile_shadow_review_actions,
 )
-from tests.support.proposal_evidence import _claim, _fields, _provider, _report
+from tests.support.proposal_evidence import (
+    _claim,
+    _fields,
+    _provider,
+    _report,
+    consensus_local_title,
+    consensus_provider_title,
+)
 
 
 def _bibliographic_report(
@@ -319,6 +326,24 @@ def test_component_work_title_cannot_replace_manifestation_title() -> None:
         for claim in report.providers[0].candidates[0].claims
         if claim.kind is ClaimKind.TITLE
     }
+
+
+def test_generic_subtitle_preservation_needs_a_kept_title() -> None:
+    report = _report(
+        title="Plain Work",
+        local_claims=(consensus_local_title("Plain Work"),),
+        providers=(
+            consensus_provider_title("open_library", "Plain Work", subtitle="A Novel"),
+            consensus_provider_title("hardcover", "Other Work"),
+        ),
+    )
+
+    proposal = evaluate_report(report)
+
+    results = {value.destination: value for value in proposal.results}
+    assert ("competing_evidence",) == results[TargetDestination.TITLE].reasons
+    assert ("generic_provider_subtitle",) == results[TargetDestination.SUBTITLE].reasons
+    assert () == proposal.bibliographic_combinations
 
 
 def test_no_safe_combination_leaves_affected_results_unresolved() -> None:
