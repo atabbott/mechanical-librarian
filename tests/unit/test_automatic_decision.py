@@ -263,7 +263,9 @@ def test_prior_f19a_manifests_cannot_rehydrate_an_f35_decision() -> None:
             "schema_version": "automatic-decision-v1",
         }
         with pytest.raises(AutomaticDecisionError):
-            AutomaticDecision.from_json(json.dumps(document, separators=(",", ":"), sort_keys=True))
+            AutomaticDecision.from_json(
+                json.dumps(document, separators=(",", ":"), sort_keys=True)
+            )
 
 
 def test_ignore_has_no_candidate() -> None:

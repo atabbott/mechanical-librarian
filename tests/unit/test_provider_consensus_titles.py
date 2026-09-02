@@ -231,8 +231,7 @@ def test_colon_subtitle_corroboration_keeps_local_title_reference_and_work_scope
         for provider in report.providers
         for candidate in provider.candidates
         for claim in candidate.claims
-        if claim.kind is ClaimKind.SUBTITLE
-        and claim.value == "A subtitle"
+        if claim.kind is ClaimKind.SUBTITLE and claim.value == "A subtitle"
     )
     assert ProposalOutcome.PROPOSE_CHANGE is subtitle.outcome
     assert subtitle.reasons == ("local_attested_subtitle",)

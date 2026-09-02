@@ -1374,9 +1374,7 @@ def _locally_attested_subtitle(
     return None
 
 
-def _explicit_subtitle_references(
-    report: MetadataReport, value: str
-) -> frozenset[str]:
+def _explicit_subtitle_references(report: MetadataReport, value: str) -> frozenset[str]:
     """Return local subtitle claims that independently attest one value."""
     sought = normalize_title(value).casefold()
     return frozenset(
