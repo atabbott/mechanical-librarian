@@ -196,6 +196,7 @@ def test_prior_f20_decision_remains_readable_without_granting_new_authority() ->
         bundle_id=None,
     )
     prior_digests = (
+        "15cfb36db142e3783fa47a73157c72ecfd08bb282a967abc83fba152d1199205",
         "42a057407a736bfd86f115ae03879f4909fe1217f34ec552c170db1c74af7a8a",
         "9c1410dcc6d221478a2b96afdc51da19fd8a54f82d7023034a3063afdedefc37",
         "f5975691720b81452f2f2b3a41046329c4c600ade45458478aebaf7190392176",
@@ -204,6 +205,9 @@ def test_prior_f20_decision_remains_readable_without_granting_new_authority() ->
         "770b56be2ce7ea9d1d809be189724e5f281a0dd8570af80d63429a5ab617ff99",
         "901e25432750d3f02df1cd311f5a7146e56d5686bd4b6bc0ac589e5db3eb221a",
         "ba42a24185273170f024d861c5dc6865baf298a785068800ab0a0f3f4a6da31a",
+        "2628f9f02706e3e0e6afe244231e3fcab387b866007e016b8003f0978bd0780d",
+        "535348d225d6f160a4096c17c3379ee060741cb1d704ad0d741fc4631fc01d9b",
+        "1315e324edd78e698587e14497aa0ab11e33fd65612f00cd8a78a462fd6445fd",
     )
     for prior_digest in prior_digests:
         prior_core = {

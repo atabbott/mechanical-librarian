@@ -33,11 +33,11 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
 
 MANIFEST = (
     Path(__file__).parents[2]
-    / "docs/reference/f20-rich-metadata-qualification-candidate-v6.json"
+    / "docs/reference/f20-rich-metadata-qualification-candidate-v9.json"
 )
 HISTORICAL_MANIFEST = (
     Path(__file__).parents[2]
-    / "docs/reference/f20-rich-metadata-qualification-candidate-v5.json"
+    / "docs/reference/f20-rich-metadata-qualification-candidate-v8.json"
 )
 F19A_MANIFEST = (
     Path(__file__).parents[2] / "docs/reference/f19a-qualification-manifest-v4.json"
@@ -61,7 +61,7 @@ RICH_FIELDS = (
 def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
 
-    assert "f20-rich-metadata-qualification-candidate-v6" == manifest["schema"]
+    assert "f20-rich-metadata-qualification-candidate-v9" == manifest["schema"]
     assert "fixed-conservative-v18" == manifest["proposal_policy_version"]
     assert "decision_only" == manifest["automatic_authority"]
     passing = {
@@ -82,14 +82,29 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     assert passing == set(manifest["passing_automatic_options"])
     assert ["explicit:unsupported"] == manifest["human_only_options"]
     assert ["narrators", "cover"] == manifest["excluded_destinations"]
-    assert 14 == manifest["candidate_execution_count"]
+    assert 22 == manifest["candidate_execution_count"]
     assert {
-        "archived_replay_result_sha256": "1918ded38c4b0b7075b589564647a94dba15c95c80d04aa45ce931e37f8c0272",
-        "development_result_sha256": "2bf55518f44cffff1ab90a0446f085790b3859310f865ff55a0e551b7363e876",
-        "holdout_continuity_receipt_sha256": "c540c44037e02961409e5a43d425c00a6ca71ba4800e817ad3dd0542a67973dc",
-        "holdout_result_sha256": "325e81e236630c12cac77bd01440e725b46b1f1fcf8cac5434daf1dd48b85241",
-        "prior_manifest_sha256": "9c1410dcc6d221478a2b96afdc51da19fd8a54f82d7023034a3063afdedefc37",
-        "prior_aggregate_receipt_sha256": "42d3d26461552ffa055321028927845e3fbc580101d8bb24414bb84b07cda080",
+        "prior_manifest_sha256": "1315e324edd78e698587e14497aa0ab11e33fd65612f00cd8a78a462fd6445fd",
+        "description_applicability_confirmation_sha256": "03e19f6b3524afc1c3409e55b652a252f39c14653fa636d340f13c6150e9ddb7",
+        "description_confirmation_correction_sha256": "bcf746e16bdfd9ed8ee3174006546f4d3de7a375c3b52f62641d86470bbe136c",
+        "description_holdout_continuity_sha256": "16b87e09e1b51cf9162d583852bf54b8c964e8d12913fbf36486ce3d58faa024",
+        "description_confirmation_transform_filter_correction_sha256": "d7f27b3b68d7b87c1db75eeb310e2c9e5cb4882823eaf2f486c16773a548b1f7",
+        "description_holdout_transform_filter_continuity_sha256": "b1960e81d472d048a762aa6d9a440dcf9bd3401328a860850db9e671d4e64b2c",
+        "description_confirmation_unranked_authority_correction_sha256": "2bf2bcfac6e6b632bf0c8660a7bd5fa2541b2c1373a0d146bd32f55f38eaff29",
+        "description_holdout_unranked_authority_continuity_sha256": "10a88f1701b9c249e4d6fb6d5657bacf597cfa548a1d9f9dc8e74e4fa741216c",
+        "issue_971_capture_receipt_sha256": "c1d672126449442b44b056c4cd7dc3c73346f90ab1fa4eb090e8203441cc0a33",
+        "issue_971_capture_receipt_head": "3d153a371b63abd5751f09254f218504da8e9f75",
+        "issue_971_baseline_result_sha256": "093411b65e1f48f40011f40799388dc09784dc5bcc4a133c77b3478d964af0df",
+        "issue_971_baseline_result_head": "2323ad0b8fc52fe7701bc467a990e158c2a793f8",
+        "issue_971_candidate_result_sha256": "73b86a73ec7c93b2f17d499c9b2a8449c941142267e34a299996758fb8a073b3",
+        "issue_971_candidate_result_head": "3d153a371b63abd5751f09254f218504da8e9f75",
+        "issue_971_comparison_sha256": "aa4ed71d447f0a409eafac90eb22e360d5b5c78a8b4377d3781cf081a3f1d919",
+        "issue_971_comparison_head": "836901bf01f2d6e2874e1be3503b1473e402fb99",
+        "issue_971_evidence_mode": "live_current_provider_capture_and_offline_retained_document_replay",
+        "issue_971_integrity_receipt_sha256": "d4e6f725582b11cfeca6279bc8d122cf597e47b94883b66d6ac8837a1ce02866",
+        "issue_971_combined_artifact_sha256": "c6cbfbcc3ae43cd42b42bf5ef3bef20519bcd7220a5e8630f23c70c7aa7694b4",
+        "issue_971_retained_replay_sha256": "767b571602095ed07e4f79194dd46353bc205432bff1d7d782c8fac51f04c6a0",
+        "issue_971_retained_replay_head": "1a3878197cde7b06c215b15e51d1fd316a1e9fc7",
     } == manifest["authority_rotation"]
     assert {
         "applicability_confirmation": {
@@ -99,7 +114,7 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
             "retained_candidates": 58,
             "wrong_work_admitted": 0,
         },
-        "applicability_fields": ["tags"],
+        "applicability_fields": ["description_fill", "tags"],
         "current_provider_comparison": {
             "case_count": 49,
             "gained_incorrect_projections": 0,
@@ -110,13 +125,6 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
             "tags_correct_predictions_per_option": 7,
         },
         "deferred_applicability_fields": {
-            "description_fill": {
-                "baseline_correct_predictions": 9,
-                "candidate_correct_predictions": 8,
-                "gained_correct_projections": 3,
-                "lost_correct_projections": 4,
-                "reason": "live_correct_projection_churn",
-            },
             "genres": {
                 "baseline_correct_predictions": {
                     "add": 9,
@@ -139,6 +147,31 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
                     "source_order": 20,
                 },
                 "reason": "positive_preservation_unproved",
+            },
+        },
+        "description_tiebreaker": {
+            "confirmation": {
+                "automatic_precision": 1.0,
+                "automatic_predictions": 13,
+                "case_count": 23,
+                "correction_replays": 3,
+                "errors": 0,
+            },
+            "contract": {
+                "authority_order": ["hardcover", "google_books", "open_library"],
+                "minimum_characters": 80,
+                "minimum_words": 16,
+                "reject_visible_cutoff": True,
+                "selection_mode": "target_work_applicability_then_quality_floor_then_provider_authority",
+            },
+            "holdout": {
+                "automatic_precision": 1.0,
+                "automatic_predictions": 14,
+                "case_count": 25,
+                "errors": 0,
+                "executions": 4,
+                "initial_unseen_executions": 1,
+                "spent_correction_replays": 3,
             },
         },
         "evaluated_reports": 49,
@@ -318,6 +351,10 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     genre_fill = subjective["genres:fill_empty"]
     assert 147 == genre_fill["eligible_opportunities"]
     assert 15 == genre_fill["metrics"]["automatic_predictions"]
+    description_fill = subjective["description_fill:safe_plain_text"]
+    assert 48 == description_fill["eligible_opportunities"]
+    assert 27 == description_fill["metrics"]["automatic_predictions"]
+    assert 0.5625 == description_fill["metrics"]["automatic_recall"]
     subtitle_fill = {
         entry["identity"]: entry
         for entry in manifest["options"]
@@ -370,6 +407,17 @@ def test_candidate_exposes_only_closed_aggregate_contract_data() -> None:
             "proposal_policy_version"
         ]
     )
+    assert {
+        "candidate_head": "e1e13200a784229bcb5694e716c1c7b0e0a8128e",
+        "confirmation_correction_receipt_sha256": "bcf746e16bdfd9ed8ee3174006546f4d3de7a375c3b52f62641d86470bbe136c",
+        "confirmation_transform_filter_correction_receipt_sha256": "d7f27b3b68d7b87c1db75eeb310e2c9e5cb4882823eaf2f486c16773a548b1f7",
+        "confirmation_unranked_authority_correction_receipt_sha256": "2bf2bcfac6e6b632bf0c8660a7bd5fa2541b2c1373a0d146bd32f55f38eaff29",
+        "holdout_continuity_receipt_sha256": "16b87e09e1b51cf9162d583852bf54b8c964e8d12913fbf36486ce3d58faa024",
+        "holdout_transform_filter_continuity_receipt_sha256": "b1960e81d472d048a762aa6d9a440dcf9bd3401328a860850db9e671d4e64b2c",
+        "holdout_unranked_authority_continuity_receipt_sha256": "10a88f1701b9c249e4d6fb6d5657bacf597cfa548a1d9f9dc8e74e4fa741216c",
+        "initial_holdout_receipt_sha256": "4637df813899ec39d2896fc626076d09924165433674cef35cfcc4fc0c6c48dd",
+        "preview_sha256": "0ef317fd359db8c03e9f2cde31bc6dae124eb3417b24dd75944d3139cab14f4c",
+    } == manifest["frozen_contract"]["description_tiebreaker"]
     for source, name in {
         "src/mechanical_librarian/domain/automatic_decision.py": "automatic_decision_sha256",
         "src/mechanical_librarian/domain/rich_metadata_preview.py": "preview_sha256",
@@ -381,12 +429,12 @@ def test_candidate_exposes_only_closed_aggregate_contract_data() -> None:
         )
 
 
-def test_v5_manifest_remains_historical_readable_after_v6_rotation() -> None:
+def test_v8_manifest_remains_historical_readable_after_v9_rotation() -> None:
     historical = json.loads(HISTORICAL_MANIFEST.read_text(encoding="utf-8"))
     current = json.loads(MANIFEST.read_text(encoding="utf-8"))
     manifest = current
 
-    assert "f20-rich-metadata-qualification-candidate-v5" == historical["schema"]
+    assert "f20-rich-metadata-qualification-candidate-v8" == historical["schema"]
     assert (
         hashlib.sha256(HISTORICAL_MANIFEST.read_bytes()).hexdigest()
         == current["authority_rotation"]["prior_manifest_sha256"]

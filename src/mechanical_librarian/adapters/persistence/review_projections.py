@@ -197,6 +197,9 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 case_document=self.get_review_case(review_case_id),
                 report_document=self.get_review_case_report(review_case_id),
                 decision_documents=self.get_review_case_decisions(review_case_id),
+                automatic_source_outcome_documents=(
+                    self._automatic_source_outcome_documents(review_case_id)
+                ),
                 history=(
                     ()
                     if history_limit is None
@@ -230,6 +233,23 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 ),
             )
         return snapshot
+
+    def _automatic_source_outcome_documents(
+        self, review_case_id: str
+    ) -> tuple[str, ...]:
+        rows = self._connection.execute(
+            "SELECT DISTINCT outcome_set.document, outcome_set.evaluated_at, "
+            "outcome_set.outcome_set_id FROM automatic_decisions decision "
+            "JOIN shadow_decision_outcomes outcome_set "
+            "ON outcome_set.review_case_id=decision.review_case_id "
+            "JOIN json_each(outcome_set.document,'$.outcomes') outcome "
+            "ON json_extract(outcome.value,'$.outcome_id')="
+            "json_extract(decision.document,'$.source_outcome_id') "
+            "WHERE decision.review_case_id=? "
+            "ORDER BY outcome_set.evaluated_at,outcome_set.outcome_set_id",
+            (review_case_id,),
+        ).fetchall()
+        return tuple(cast(str, row[0]) for row in rows)
 
     def read_review_library(
         self,

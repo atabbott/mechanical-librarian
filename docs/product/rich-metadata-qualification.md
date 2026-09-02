@@ -120,22 +120,40 @@ projections. A separate replay of the retained provider documents also matched
 main's aggregate metrics exactly. An exposed real-library confirmation split
 retained 58 candidates across 23 cases and the applicability gate admitted 20
 at 100% precision with zero wrong-work admissions. The final F37 holdout was
-not used.
+not used for tag qualification.
 
 The same current-provider evidence did not justify extending the rule to every
-other work-bound field. For descriptions, four previously correct decisions
-were lost while three different correct decisions were gained, moving the
-aggregate from 9 to 8. For genres, correct add and replace decisions each fell
+other work-bound field. For genres, correct add and replace decisions each fell
 from 9 to 4, while fill-empty decisions across the three target states fell
 from 30 to 12. Current main and candidate adapters both produced zero series
 decisions, so they could not positively demonstrate preservation of the prior
-19/20/20 qualified series results. Description, genre, and series
-applicability are therefore deferred; their v3 automatic dispositions and
-metrics remain authoritative and unchanged rather than being dequalified by a
-different evidence mode.
+19/20/20 qualified series results. Genre and series applicability are therefore
+deferred; their earlier automatic dispositions and metrics remain authoritative
+and unchanged rather than being dequalified by a different evidence mode.
 
-F20 v6 separately qualifies the two ISBN-form options under the current
-deterministic identity rule. Its final development result and archived replay
+The fifteenth and sixteenth candidate executions qualified the automatic
+description tiebreaker after adopting the same target-work applicability rule.
+Applicable descriptions must pass the frozen 80-character, 16-word floor and
+must not end in a visible cutoff; the survivors then follow the fixed Hardcover,
+Google Books, Open Library authority order without combining text. The exposed
+confirmation selected 13 of 23 cases and the one-shot sealed holdout selected 14
+of 25, both at 100% precision with zero failures. After review found the floor
+counting an inapplicable alternative, the seventeenth and eighteenth executions
+replayed both splits against the corrected compiler. Results were unchanged;
+the holdout is explicitly recorded as spent correction continuity, not a second
+unseen execution. A further review found transformed provider text still counted
+as safe plain-text competition. The nineteenth and twentieth executions replayed
+both splits after filtering that text before the single-versus-multiple-candidate
+decision; results again remained unchanged. The v9 manifest binds the latest
+correction receipts, whose chain retains the earlier correction and original
+one-shot receipts. Review then found that an otherwise-qualified description
+from an authority outside the frozen order could disappear from a competition.
+The twenty-first and twenty-second executions replayed both splits after making
+that competition abstain; results again remained unchanged, and v9 binds those
+latest correction receipts.
+
+F20 v9 preserves the separately qualified two ISBN-form options under the
+current deterministic identity rule. Their final development result and archived replay
 show 100% precision across the supported empty-field states, while the sealed
 holdout is carried forward by a continuity receipt for the unresolved-work
 identity guard. The goal
@@ -144,5 +162,5 @@ A useful published-work ISBN carried by a proof remains eligible only through
 that bound identity evidence; proof status alone neither elects nor disqualifies it.
 
 The machine-readable candidate is
-[`f20-rich-metadata-qualification-candidate-v6.json`](../reference/f20-rich-metadata-qualification-candidate-v6.json).
-The v5 manifest remains a readable historical record.
+[`f20-rich-metadata-qualification-candidate-v9.json`](../reference/f20-rich-metadata-qualification-candidate-v9.json).
+The v8 manifest remains a readable historical record.

@@ -17,6 +17,8 @@ import json
 from types import SimpleNamespace
 from typing import cast
 
+import pytest
+
 from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
@@ -27,6 +29,7 @@ from mechanical_librarian.application.field_effects import (
     AuthoritySnapshot,
     GuardedFieldApplication,
 )
+from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.domain.automatic_decision import (
     F19A_QUALIFICATION_MANIFEST_SHA256,
     AutomaticDecision,
@@ -51,7 +54,13 @@ from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 from tests.support.automatic_decisions import _automatic_decisions
 from tests.support.automatic_no_change import _automatic_no_change_inputs
-from tests.support.proposal_evidence import _claim, _fields, _provider
+from tests.support.proposal_evidence import (
+    _claim,
+    _fields,
+    _provider,
+    _target_work_candidate,
+    _target_work_report,
+)
 from tests.support.proposal_evidence import _report as _proposal_report
 from tests.unit.test_field_effects import (  # noqa: F401
     CAPABILITY,
@@ -111,29 +120,18 @@ def _automatic_no_change_decisions(
 
 def _automatic_candidate_decision(
     environment: _EffectEnvironment,
+    *,
+    authority: str = "hardcover",
 ) -> AutomaticDecision:
-    description = "An exact source-bound description."
-    report = _proposal_report(
-        fields=_fields(
-            description=TargetField(
-                TargetDestination.DESCRIPTION, TargetFieldState.MISSING
-            )
-        ),
-        providers=(
-            _provider(
+    report = _target_work_report(
+        (
+            (
                 "catalogue",
-                "edition-1",
-                (
-                    _claim(
-                        "catalogue",
-                        "edition-1",
-                        ClaimKind.DESCRIPTION,
-                        description,
-                        scope=ClaimScope.WORK,
-                    ),
-                ),
+                authority,
+                (_target_work_candidate("catalogue", "edition-1", "work-1"),),
+                True,
             ),
-        ),
+        )
     )
     decisions = _automatic_decisions(
         environment,
@@ -152,6 +150,25 @@ def _automatic_candidate_decision(
 def _qualified_no_change_decision(environment: _EffectEnvironment) -> AutomaticDecision:
     decisions = _automatic_no_change_decisions(environment, qualified=True)
     return next(value for value in decisions if value.destination == "title")
+
+
+@pytest.mark.parametrize(
+    ("authority", "label"),
+    (("hardcover", "Hardcover"), ("audnexus", "Audnexus")),
+)
+def test_automatic_description_read_model_names_only_its_bound_source(
+    effects: _EffectEnvironment,  # noqa: F811
+    authority: str,
+    label: str,
+) -> None:
+    decision = _automatic_candidate_decision(effects, authority=authority)
+
+    detail = InspectCurrentReviewCase(effects.repository).run(decision.review_case_id)
+    description = next(
+        field for field in detail["fields"] if field["destination"] == "description"
+    )
+
+    assert description["automatic_selection_sources"] == [label]
 
 
 def test_a_qualified_automatic_decision_reaches_activity_without_raw_inserts(

@@ -331,6 +331,7 @@ export interface ReviewFieldView {
   inventoryRole?: 'primary' | 'contextual'
   automaticDecision:
     Schema<'_AutomaticDecisionProjection'> | Schema<'_CoverAutomaticDecisionProjection'> | null
+  automaticSelectionSources?: readonly string[]
   notices: readonly string[]
   provenance: readonly string[]
   preservationOnly: boolean
@@ -2356,6 +2357,10 @@ export const mapCaseDetail = (value: unknown): CaseDetailView => {
         humanDecision: field.human_decision,
         inventoryRole: inventoryRole(field.inventory_role),
         automaticDecision: field.automatic_decision,
+        automaticSelectionSources: stringArray(
+          field.automatic_selection_sources,
+          'automatic_selection_sources',
+        ),
         notices: stringArray(field.notices, 'notices'),
         provenance: stringArray(field.provenance, 'provenance'),
         preservationOnly: booleanValue(field.preservation_only, 'preservation_only'),

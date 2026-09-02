@@ -65,8 +65,12 @@ candidates stay owner decisions. When Subtitle routes to Automatic, the
 qualified fill owns the subtitle destination unless an acting title-combination
 candidate already covers it; a manual title-combination witness is replaced by
 the fill, and a later human title split proceeds through the existing override
-and revoke path. Corroborated split and Google visible-text
-remain `not_qualified`; ASIN remains
+and revoke path. Safe plaintext fills an empty Description from one exact
+target-work-applicable source. Competing descriptions first pass the fixed
+80-character, 16-word, no-visible-cutoff floor and then the fixed Hardcover,
+Google Books, Open Library authority order; provider text is never combined and
+an unavailable provider does not change the order. Corroborated split and
+Google visible-text remain `not_qualified`; ASIN remains
 `insufficient_coverage`; `tags:off` is policy-only and stays the default; and
 `explicit:unsupported` is human-only. Owners retain `Ask me` or `Ignore` for
 every non-automatic rich option. This authority records immutable decisions

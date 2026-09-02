@@ -1755,6 +1755,119 @@ describe('Library route', () => {
     expect(screen.queryByRole('button', { name: /Choose /u })).toBeNull()
   })
 
+  it('does not infer a quality check when only one of two descriptions is applicable', async () => {
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const candidate = {
+      kind: 'text' as const,
+      value: 'One short but otherwise valid description.',
+    }
+    const lowerAuthorityCandidate = {
+      kind: 'text' as const,
+      value:
+        'A different complete description with enough bounded plain text to satisfy the automatic quality floor.',
+    }
+    const description = {
+      ...titleField,
+      automaticSelectionSources: ['Hardcover'],
+      automaticDecision: {
+        candidate_id: 'alternative-description-1',
+        decision_id: 'automatic-description',
+        destination: 'description' as const,
+        occurred_at: 1,
+        outcome: 'candidate' as const,
+        proposal_id: 'proposal-description',
+        review_case_id: 'case-1',
+        selected_value: candidate,
+        target_fingerprint: 'fingerprint-description',
+      },
+      choiceContexts: [
+        {
+          alternativeId: 'alternative-description-1',
+          selection: 'proposed' as const,
+          rationale: 'Selected automatic description evidence.',
+          recommendation: 'recommended' as const,
+          recommendationReason: 'Selected automatic description evidence.',
+          limitations: [],
+          evidence: [
+            {
+              source: 'Hardcover',
+              observation: candidate.value,
+              role: 'external_corroboration' as const,
+            },
+            {
+              source: 'Google Books',
+              observation: 'Retained but not decisive evidence.',
+              role: 'external_corroboration' as const,
+            },
+          ],
+        },
+      ],
+      currentValue: '',
+      currentRaw: '',
+      decisionActions: [],
+      editable: false,
+      destination: 'description' as const,
+      needsAttention: false,
+      navigationRole: 'resolved' as const,
+      proposedValues: [candidate, lowerAuthorityCandidate],
+      proposalId: 'proposal-description',
+      targetFingerprint: 'fingerprint-description',
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=description', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [description] })),
+    })
+
+    expect(
+      await screen.findByText(
+        'Selected automatically from Hardcover after matching the target work.',
+      ),
+    ).toBeVisible()
+    expect(screen.queryByText(/description quality checks/u)).toBeNull()
+  })
+
+  it('does not claim the multi-description quality floor for a single candidate', async () => {
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const candidate = {
+      kind: 'text' as const,
+      value: 'One short but otherwise valid description.',
+    }
+    const description = {
+      ...titleField,
+      automaticDecision: {
+        candidate_id: 'alternative-description-1',
+        decision_id: 'automatic-description',
+        destination: 'description' as const,
+        occurred_at: 1,
+        outcome: 'candidate' as const,
+        proposal_id: 'proposal-description',
+        review_case_id: 'case-1',
+        selected_value: candidate,
+        target_fingerprint: 'fingerprint-description',
+      },
+      automaticSelectionSources: ['Hardcover'],
+      currentValue: '',
+      currentRaw: '',
+      decisionActions: [],
+      editable: false,
+      destination: 'description' as const,
+      needsAttention: false,
+      navigationRole: 'resolved' as const,
+      proposedValues: [candidate],
+      proposalId: 'proposal-description',
+      targetFingerprint: 'fingerprint-description',
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=description', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [description] })),
+    })
+
+    expect((await screen.findAllByText('Resolved automatically')).at(-1)).toBeVisible()
+    expect(screen.queryByText(/after matching the target work/u)).toBeNull()
+  })
+
   it('shows the provider-consensus title winner and matched pattern beside its selected value', async () => {
     const titleField = detail.fields[0]
     if (!titleField) throw new Error('workspace fixture requires a title field')
