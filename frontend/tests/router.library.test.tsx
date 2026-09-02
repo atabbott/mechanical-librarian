@@ -1796,6 +1796,80 @@ describe('Library route', () => {
     expect(within(canvas).getByText('New title')).toBeVisible()
   })
 
+  it('states the decoration rule that tidied the title to its plain form', async () => {
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const candidate = titleField.proposedValues[0]
+    if (!candidate) throw new Error('workspace fixture requires a proposed title')
+    const title = {
+      ...titleField,
+      automaticDecision: {
+        candidate_id: 'alternative-title-1',
+        decision_id: 'automatic-title',
+        destination: 'title' as const,
+        occurred_at: 1,
+        outcome: 'candidate' as const,
+        proposal_id: titleField.proposalId,
+        review_case_id: 'case-1',
+        selected_value: candidate,
+        target_fingerprint: titleField.targetFingerprint,
+      },
+      classification: 'automatic_recorded' as const,
+      decisionActions: [],
+      editable: false,
+      needsAttention: false,
+      navigationRole: 'resolved' as const,
+      notices: ['decoration_tidy_bracket_source_tag'],
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=title', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [title] })),
+    })
+
+    const notice = await screen.findByRole('complementary', {
+      name: 'Comparison condition',
+    })
+    expect(notice).toHaveTextContent(
+      'Providers agree once the bracketed source tag is removed; the current title is tidied to the plain form',
+    )
+  })
+
+  it('states the decoration rule that kept an equivalent title unchanged', async () => {
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const title = {
+      ...titleField,
+      automaticDecision: {
+        candidate_id: null,
+        decision_id: 'automatic-title-keep',
+        destination: 'title' as const,
+        occurred_at: 1,
+        outcome: 'keep_current' as const,
+        proposal_id: titleField.proposalId,
+        review_case_id: 'case-1',
+        selected_value: null,
+        target_fingerprint: titleField.targetFingerprint,
+      },
+      classification: 'automatic_recorded' as const,
+      decisionActions: [],
+      editable: false,
+      needsAttention: false,
+      navigationRole: 'resolved' as const,
+      notices: ['decoration_equivalent_subtitle_segment'],
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=title', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [title] })),
+    })
+
+    const notice = await screen.findByRole('complementary', {
+      name: 'Comparison condition',
+    })
+    expect(notice).toHaveTextContent(
+      'Providers agree once the colon subtitle is removed; the current title is kept',
+    )
+  })
+
   it('states the provider-chosen contributor display and local form it normalized', async () => {
     const base = detail.fields[0]
     if (!base) throw new Error('workspace fixture requires a field')

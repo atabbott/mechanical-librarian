@@ -16,6 +16,40 @@ const ownerFieldLabels: Record<string, string> = {
     'The colon subtitle is local corroboration only; choose the title yourself',
   provider_consensus_title_series_unpreserved:
     'The parenthesized series name is not preserved as structured series evidence',
+  decoration_equivalent_bracket_source_tag:
+    'Providers agree once the bracketed source tag is removed; the current title is kept',
+  decoration_equivalent_explicit_identifier:
+    'Providers agree once the labelled ISBN is removed; the current title is kept',
+  decoration_equivalent_parenthesized_bare_number:
+    'Providers agree once the parenthesized number is removed; the current title is kept',
+  decoration_equivalent_parenthesized_series_name:
+    'Providers agree once the parenthesized series name is removed; the current title is kept',
+  decoration_equivalent_parenthesized_year:
+    'Providers agree once the parenthesized year is removed; the current title is kept',
+  decoration_equivalent_subtitle_segment:
+    'Providers agree once the colon subtitle is removed; the current title is kept',
+  decoration_tidy_bracket_source_tag:
+    'Providers agree once the bracketed source tag is removed; the current title is tidied to the plain form',
+  decoration_tidy_explicit_identifier:
+    'Providers agree once the labelled ISBN is removed; the current title is tidied to the plain form',
+  decoration_tidy_parenthesized_bare_number:
+    'Providers agree once the parenthesized number is removed; the current title is tidied to the plain form',
+  decoration_tidy_parenthesized_series_name:
+    'Providers agree once the parenthesized series name is removed after preserving the structured series name; the current title is tidied to the plain form',
+  decoration_tidy_parenthesized_year:
+    'Providers agree once the parenthesized year is removed; the current title is tidied to the plain form',
+  decoration_tidy_subtitle_segment:
+    'Providers agree once the colon subtitle is removed; the current title is tidied to the plain form',
+  decoration_tidy_series_unpreserved:
+    'The parenthesized series name is not preserved as structured series evidence; choose the title yourself',
+  decoration_equivalence_provider_dissent:
+    'Another provider states a different work title; choose the title yourself',
+  decoration_equivalence_decorated_consensus:
+    'More providers state the decorated title than the plain one; choose the title yourself',
+  subtitle_segment_uncorroborated:
+    'A colon segment in a title matches no independent subtitle evidence',
+  provider_segment_corroborated_subtitle:
+    'An independent provider title carries this subtitle after its colon',
   provider_consensus_contributor_display:
     'Independent providers agree on the contributor display form',
 }
