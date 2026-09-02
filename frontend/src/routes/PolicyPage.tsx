@@ -456,7 +456,8 @@ const humanReason = (reason: string | null) => {
   if (reason === 'policy_ignored' || reason === 'policy_off')
     return 'this policy leaves the field unchanged'
   if (reason === 'explicit_unsupported') return 'this destination is not currently supported'
-  if (reason === 'verified_manifestation_isbn') return 'it matches the verified ebook manifestation'
+  if (reason === 'verified_manifestation_isbn')
+    return 'deterministic identity evidence binds it to this file’s work'
   if (reason === 'target_preserved' || reason === 'unchanged')
     return 'the exact current value is preserved'
   return 'no supported value found'

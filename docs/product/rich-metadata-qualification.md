@@ -37,9 +37,9 @@ All three series policies passed after series correctness was separated from
 preference: a prediction is correct when it is a valid membership for the
 bound work, while the corpus value remains the preferred membership. Primary
 narrative made 19 correct predictions; source order and all qualified each
-made 20, all at 100% precision. The two ISBN policies also passed:
-`isbn_form:prefer_isbn13` made 22 correct predictions from 41 eligible
-opportunities and both ISBN-form options made 22, each at 100% precision.
+made 20, all at 100% precision. The historical v5 record gave the two ISBN
+policies 22 correct predictions from 41 eligible opportunities, each at 100%
+precision.
 The admitted proposal and decision retain every qualified membership; the
 existing Audiobookshelf effect planner projects only the preferred first
 membership because that target accepts one series value.
@@ -134,5 +134,13 @@ applicability are therefore deferred; their v3 automatic dispositions and
 metrics remain authoritative and unchanged rather than being dequalified by a
 different evidence mode.
 
+F20 v6 separately qualifies the two ISBN-form options under the current
+deterministic identity rule. Its aggregate development and holdout receipts show
+100% precision across the supported empty-field states, while the archived replay
+retains alternatives and abstains outside the qualified boundary. A useful
+published-work ISBN carried by a proof remains eligible only through the same
+bound identity evidence; proof status alone neither elects nor disqualifies it.
+
 The machine-readable candidate is
-[`f20-rich-metadata-qualification-candidate-v5.json`](../reference/f20-rich-metadata-qualification-candidate-v5.json).
+[`f20-rich-metadata-qualification-candidate-v6.json`](../reference/f20-rich-metadata-qualification-candidate-v6.json).
+The v5 manifest remains a readable historical record.

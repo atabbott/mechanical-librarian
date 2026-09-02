@@ -33,6 +33,10 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
 
 MANIFEST = (
     Path(__file__).parents[2]
+    / "docs/reference/f20-rich-metadata-qualification-candidate-v6.json"
+)
+HISTORICAL_MANIFEST = (
+    Path(__file__).parents[2]
     / "docs/reference/f20-rich-metadata-qualification-candidate-v5.json"
 )
 F19A_MANIFEST = (
@@ -57,7 +61,8 @@ RICH_FIELDS = (
 def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
 
-    assert "f20-rich-metadata-qualification-candidate-v5" == manifest["schema"]
+    assert "f20-rich-metadata-qualification-candidate-v6" == manifest["schema"]
+    assert "fixed-conservative-v17" == manifest["proposal_policy_version"]
     assert "decision_only" == manifest["automatic_authority"]
     passing = {
         "description_fill:safe_plain_text",
@@ -77,38 +82,13 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     assert passing == set(manifest["passing_automatic_options"])
     assert ["explicit:unsupported"] == manifest["human_only_options"]
     assert ["narrators", "cover"] == manifest["excluded_destinations"]
-    assert 13 == manifest["candidate_execution_count"]
+    assert 14 == manifest["candidate_execution_count"]
     assert {
-        "applicability_confirmation_sha256": (
-            "5cfb4892e12dc61bc0744fba3d882941c302f5d2e4eca665ce0d7ed78afec01e"
-        ),
-        "current_provider_capture_sha256": (
-            "e30ca27ab87da001a8b0db04b40e3f4ba0c260aa2b4dafe69b175e9bceb46d7d"
-        ),
-        "current_provider_comparison_sha256": (
-            "9c5d769f763080164a7125cbc6ebf1c052a9acfd66b85cc48d559a23d1aedef4"
-        ),
-        "current_provider_result_sha256": (
-            "31e58dc08b708ac37f4191c501e804fc23d14cafcb0a60ec3b3d86ff80273423"
-        ),
-        "prior_candidate_sha256": (
-            "99ba8426ee53e4d31e52ecf0f65a0fce4eb237d3e5acef42e4ee17217b57dae9"
-        ),
-        "retained_document_baseline_sha256": (
-            "fe97bf65c0d544397987e3d078c4c65b1b453564a40b2808d550c63768feb533"
-        ),
-        "retained_document_candidate_sha256": (
-            "c7577b62ef911077a96768b3c274b9b7308ea2fb2164a2e25d20dcede2fb047f"
-        ),
-        "prior_manifest_sha256": (
-            "f5975691720b81452f2f2b3a41046329c4c600ade45458478aebaf7190392176"
-        ),
-        "retained_replay_baseline_sha256": (
-            "345dbb8c86769814f2e9f1ae91ad1dc307445c319335d694336be729c2624efa"
-        ),
-        "retained_replay_candidate_sha256": (
-            "13c43d20fa85103a4bafaa69bb60dd638f3a3b88c7540f85cff6feaa6e26ec1a"
-        ),
+        "aggregate_receipt_sha256": "42d3d26461552ffa055321028927845e3fbc580101d8bb24414bb84b07cda080",
+        "archived_replay_result_sha256": "ae1dbb6527c9b30172508562cc27bc57830d6ba65ac6118f78595cd613d71d25",
+        "development_result_sha256": "2f1214c193b5ddedbef4554b6c04930338de384b8774c1146f93b16a6c359f08",
+        "holdout_result_sha256": "325e81e236630c12cac77bd01440e725b46b1f1fcf8cac5434daf1dd48b85241",
+        "prior_manifest_sha256": "9c1410dcc6d221478a2b96afdc51da19fd8a54f82d7023034a3063afdedefc37",
     } == manifest["authority_rotation"]
     assert {
         "applicability_confirmation": {
@@ -205,7 +185,37 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
         "subtitle_fill_empty_target_states": ["missing", "null", "empty"],
         "subtitle_truth_model": "ebook_manifestation_bibliographic_subtitle",
         "unseen_holdout_required": False,
-    } == manifest["evidence_method"]
+    } == {
+        name: value
+        for name, value in manifest["evidence_method"].items()
+        if name != "isbn_manifestation_election"
+    }
+    assert {
+        "development": {
+            "automatic_precision": 1.0,
+            "automatic_predictions": 42,
+            "distinct_automatic_cases_per_option": 14,
+            "result_sha256": "2f1214c193b5ddedbef4554b6c04930338de384b8774c1146f93b16a6c359f08",
+            "target_states": ["missing", "null", "empty"],
+            "zero_failures": True,
+        },
+        "holdout": {
+            "automatic_precision": 1.0,
+            "automatic_predictions": 30,
+            "distinct_automatic_cases_per_option": 10,
+            "result_sha256": "325e81e236630c12cac77bd01440e725b46b1f1fcf8cac5434daf1dd48b85241",
+            "target_states": ["missing", "null", "empty"],
+            "zero_failures": True,
+        },
+        "archived_replay": {
+            "abstentions": 85,
+            "decisions": 22,
+            "result_sha256": "ae1dbb6527c9b30172508562cc27bc57830d6ba65ac6118f78595cd613d71d25",
+            "retained_alternatives": True,
+            "scenarios": 107,
+            "zero_forbidden_outcomes": True,
+        },
+    } == manifest["evidence_method"]["isbn_manifestation_election"]
 
     expected = {
         f"{field}:{option}"
@@ -275,9 +285,9 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
         if entry["identity"] in passing
     }
     assert 1.0 == isbn["isbn_form:preserve_exact"]["metrics"]["automatic_precision"]
-    assert 22 == isbn["isbn_form:preserve_exact"]["metrics"]["automatic_predictions"]
+    assert 42 == isbn["isbn_form:preserve_exact"]["metrics"]["automatic_predictions"]
     assert 1.0 == isbn["isbn_form:prefer_isbn13"]["metrics"]["automatic_precision"]
-    assert 22 == isbn["isbn_form:prefer_isbn13"]["metrics"]["automatic_predictions"]
+    assert 42 == isbn["isbn_form:prefer_isbn13"]["metrics"]["automatic_predictions"]
     series = {
         entry["identity"]: entry
         for entry in manifest["options"]
@@ -325,6 +335,7 @@ def test_candidate_exposes_only_closed_aggregate_contract_data() -> None:
         "options",
         "passing_automatic_options",
         "policy_only_options",
+        "proposal_policy_version",
         "schema",
         "zero_tolerance",
     } == set(manifest)
@@ -341,6 +352,42 @@ def test_candidate_exposes_only_closed_aggregate_contract_data() -> None:
         item = manifest["frozen_contract"][name]
         assert {"identity", "sha256"} == set(item)
         assert re.search(r"^[0-9a-f]{64}$", item["sha256"])
+    assert {
+        "automatic_decision_sha256",
+        "preview_sha256",
+        "proposal_policy_sha256",
+        "proposal_policy_version",
+    } == set(manifest["frozen_contract"]["isbn_manifestation_election"])
+    assert (
+        "fixed-conservative-v17"
+        == manifest["frozen_contract"]["isbn_manifestation_election"][
+            "proposal_policy_version"
+        ]
+    )
+    for source, name in {
+        "src/mechanical_librarian/domain/automatic_decision.py": "automatic_decision_sha256",
+        "src/mechanical_librarian/domain/rich_metadata_preview.py": "preview_sha256",
+        "src/mechanical_librarian/domain/proposal_set.py": "proposal_policy_sha256",
+    }.items():
+        assert (
+            hashlib.sha256((MANIFEST.parents[2] / source).read_bytes()).hexdigest()
+            == (manifest["frozen_contract"]["isbn_manifestation_election"][name])
+        )
+
+
+def test_v5_manifest_remains_historical_readable_after_v6_rotation() -> None:
+    historical = json.loads(HISTORICAL_MANIFEST.read_text(encoding="utf-8"))
+    current = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    manifest = current
+
+    assert "f20-rich-metadata-qualification-candidate-v5" == historical["schema"]
+    assert (
+        hashlib.sha256(HISTORICAL_MANIFEST.read_bytes()).hexdigest()
+        == current["authority_rotation"]["prior_manifest_sha256"]
+    )
+    assert (
+        historical["passing_automatic_options"] == current["passing_automatic_options"]
+    )
     assert {
         "evaluation_status",
         "failure_counts",
