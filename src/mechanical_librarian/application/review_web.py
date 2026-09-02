@@ -74,7 +74,6 @@ def _automatic_decision_projection(document: str) -> dict[str, object] | None:
         "proposal_id": decision.proposal_id,
         "review_case_id": decision.review_case_id,
         "selected_value": None,
-        "source_outcome_id": decision.source_outcome_id,
         "target_fingerprint": decision.target_fingerprint,
     }
     if type(decision) is CoverAutomaticDecision:
@@ -338,6 +337,7 @@ class InspectCurrentReviewCase:
                 raise ReviewWebError("unavailable")
             decisions: dict[str, HumanDecision] = {}
             automatic: dict[str, dict[str, object]] = {}
+            automatic_source_outcome_ids: dict[str, str] = {}
             automatic_sources: dict[str, tuple[str, ...]] = {}
             for document in snapshot.automatic_source_outcome_documents:
                 outcome_set = ShadowOutcomeSet.from_json(document)
@@ -358,7 +358,11 @@ class InspectCurrentReviewCase:
                     decision = HumanDecision.from_json(document)
                     decisions[decision.destination] = decision
                 else:
-                    automatic[str(projected["destination"])] = projected
+                    destination = str(projected["destination"])
+                    automatic[destination] = projected
+                    automatic_source_outcome_ids[destination] = (
+                        parse_automatic_authority(document).source_outcome_id
+                    )
         except ReviewWebError:
             raise
         except Exception as error:
@@ -422,12 +426,13 @@ class InspectCurrentReviewCase:
             automatic_decision = automatic.get(destination)
             automatic_selection_sources: list[str] = []
             if automatic_decision is not None:
-                source_outcome_id = cast(
-                    str, automatic_decision.pop("source_outcome_id")
-                )
                 automatic_selection_sources = _provider_source_labels(
                     report,
-                    list(automatic_sources.get(source_outcome_id, ())),
+                    list(
+                        automatic_sources.get(
+                            automatic_source_outcome_ids[destination], ()
+                        )
+                    ),
                 )
                 candidate_id = automatic_decision.get("candidate_id")
                 selected = next(
