@@ -4703,6 +4703,92 @@ def test_provider_consensus_title_persists_the_exact_qualified_automatic_tranche
             "value": "Plain Work",
         }
         assert projected["notices"] == ["provider_consensus_title_bracket_source_tag"]
+        authority = repository.field_effect_authority_source(decision)
+        repository.grant_field_effect_consents(
+            authority["connection"],
+            (authority["library"],),
+            ("title",),
+            5,
+        )
+        service = GuardedFieldApplication(
+            repository,
+            FakeTargetService(),
+            FakeBackupReadiness(),
+            FakeCapabilityObserver("c" * 64),
+            PersistedFieldEffectAuthority(repository),
+            FakeDependencyCurrentness(),
+            PersistedEffectConsent(repository),
+            SimpleNamespace(),
+            FakeForwardReevaluation(),
+            lambda: 5,
+        )
+        plan = service.plan(
+            decision,
+            connection=authority["connection"],
+            library=authority["library"],
+            work_id=authority["work_id"],
+            destination="title",
+            pre_value=authority["pre_value"],
+            desired_value=authority["decision_value"],
+            target_fingerprint=authority["target_fingerprint"],
+            target_version=authority["target_version"],
+            dependency_digests=authority["dependency_digests"],
+            capability_digest="c" * 64,
+        )
+        assert plan is not None
+        repository.set_automatic_safety_state(
+            AutomaticSafetyState(False, None, (("title_layout", "test"),)), 6
+        )
+        with pytest.raises(FieldEffectError, match="^authority$"):
+            repository.claim_field_effect(plan.plan.plan_id, "planned", "a" * 64, 7)
+        assert "planned" == repository.get_field_effect(plan.plan.plan_id).state
+        repository.close()
+
+
+def test_provider_consensus_title_respects_title_layout_suspension_at_admission() -> (
+    None
+):
+    local = "Plain Work [retail]"
+    report = _proposal_report(
+        fields=_fields(
+            local,
+            title=TargetField(TargetDestination.TITLE, TargetFieldState.VALUE, local),
+        ),
+        local_claims=(_consensus_local_title(local),),
+        providers=(
+            _consensus_provider_title("open_library", "Plain Work"),
+            _consensus_provider_title("hardcover", "Plain Work"),
+        ),
+    )
+    profile = _preview_automatic_profile()
+
+    with tempfile.TemporaryDirectory() as temporary:
+        repository = open_repository(Path(temporary) / "reports.sqlite")
+        repository.enter_shadow_preview(1)
+        repository.create_metadata_policy_draft(profile.canonical_json)
+        resolved = resolve_policy(profile, report.target.library)
+        repository.activate_metadata_policy(
+            profile.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            2,
+        )
+        repository.activate_qualified_automatic(3)
+        proposal = evaluate_report(
+            report, resolved.resolved_id, dict(resolved.destinations)
+        )
+        repository.publish(report, lambda: True)
+        repository.publish_proposal(proposal)
+        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+        repository.set_automatic_safety_state(
+            AutomaticSafetyState(False, None, (("title_layout", "test"),)), 4
+        )
+
+        repository.persist_shadow_outcome(case_id, 5)
+
+        assert (0,) == repository._connection.execute(
+            "SELECT COUNT(*) FROM automatic_decisions WHERE destination='title'"
+        ).fetchone()
         repository.close()
 
 

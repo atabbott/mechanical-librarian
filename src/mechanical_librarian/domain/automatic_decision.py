@@ -43,6 +43,10 @@ _PRIOR_F19A_QUALIFICATION_MANIFESTS = (
 )
 _PRIOR_F20_QUALIFICATION_MANIFESTS = (
     (
+        "6c6648598de1fcc175cbbec0f68908eb6f6ca67b2927e4ef05967551d6a9c542",
+        F20_PASSING_AUTOMATIC_OPTIONS,
+    ),
+    (
         "99ba8426ee53e4d31e52ecf0f65a0fce4eb237d3e5acef42e4ee17217b57dae9",
         frozenset({
             "subtitle:fill_empty",
@@ -88,6 +92,16 @@ _PRIOR_F20_QUALIFICATION_MANIFESTS = (
         }),
     ),
 )
+
+
+def automatic_safety_category(policy_category: str, policy_option: str) -> str:
+    """Return the suspension lane for one immutable policy identity."""
+    if (policy_category, policy_option) == (
+        "title",
+        "replace_target:provider_consensus_noise",
+    ):
+        return "title_layout"
+    return policy_category
 
 
 def _current_qualification_manifest_sha256(

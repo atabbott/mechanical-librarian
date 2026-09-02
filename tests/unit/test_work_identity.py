@@ -61,6 +61,12 @@ from mechanical_librarian.domain.work_identity import (
             "9780306406157",
         ),
         (
+            "Plain Work ISBN: 9780306406157",
+            WorkTitleTransformationFamily.EXPLICIT_IDENTIFIER,
+            "Plain Work",
+            "9780306406157",
+        ),
+        (
             "Plain Work: A subtitle",
             WorkTitleTransformationFamily.SUBTITLE_SEGMENT,
             "Plain Work",

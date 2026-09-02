@@ -599,6 +599,16 @@ def work_title_election_matches(
 def _direct_work_title_election_matches(
     title: str, authors: tuple[str, ...]
 ) -> tuple[WorkTitleElectionMatch, ...]:
+    isbn = _election_isbn_component(title)
+    if isbn is not None:
+        isbn_clean_title, identifier_component = isbn
+        return (
+            WorkTitleElectionMatch(
+                WorkTitleTransformationFamily.EXPLICIT_IDENTIFIER,
+                isbn_clean_title,
+                identifier_component,
+            ),
+        )
     matches: list[WorkTitleElectionMatch] = []
     for family in (
         WorkTitleTransformationFamily.BRACKET_SOURCE_TAG,
@@ -624,16 +634,6 @@ def _direct_work_title_election_matches(
         ):
             continue
         matches.append(WorkTitleElectionMatch(family, clean_title, component))
-    isbn = _election_isbn_component(title)
-    if isbn is not None:
-        clean_title, component = isbn
-        matches.append(
-            WorkTitleElectionMatch(
-                WorkTitleTransformationFamily.EXPLICIT_IDENTIFIER,
-                clean_title,
-                component,
-            )
-        )
     return tuple(matches)
 
 

@@ -39,7 +39,9 @@ _AUTOMATIC_SAFETY_ATTENTION_SQL = (
     "AND outcome.automatic_destination=1 AND ("
     "safety.paused=1 OR safety.global_suspension IS NOT NULL OR EXISTS("
     "SELECT 1 FROM json_each(safety.category_suspensions_document) category "
-    "WHERE json_extract(category.value,'$[0]')=outcome.policy_category)))"
+    "WHERE json_extract(category.value,'$[0]')=CASE WHEN "
+    "outcome.policy_category='title' "
+    "THEN 'title_layout' ELSE outcome.policy_category END)))"
 )
 _REVIEW_FIELD_ATTENTION_SQL = (
     "result.has_owner_decision_actions=1 AND (result.unresolved_choice=1 "

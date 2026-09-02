@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -103,6 +105,19 @@ def test_provider_consensus_requires_two_authority_correlations() -> None:
         providers=(
             _provider_title("first", "Plain Work", authority="open_library"),
             _provider_title("second", "Plain Work", authority="open_library"),
+        ),
+    )
+
+    assert ProposalOutcome.UNRESOLVED_CHOICE is result.outcome
+    assert result.reasons == ("competing_evidence",)
+
+
+def test_provider_consensus_excludes_null_authority_from_its_quorum() -> None:
+    result = _title_result(
+        local="Plain Work [retail]",
+        providers=(
+            _provider_title("open_library", "Plain Work"),
+            replace(_provider_title("hardcover", "Plain Work"), authority=None),
         ),
     )
 

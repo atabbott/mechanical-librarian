@@ -1472,6 +1472,7 @@ def _provider_consensus_title_election(
     provider_title_claims = tuple(
         (provider, claim.value)
         for provider in report.providers
+        if provider.authority is not None
         for candidate in provider.candidates
         for claim in candidate.claims
         if claim.kind is ClaimKind.TITLE
@@ -1481,6 +1482,7 @@ def _provider_consensus_title_election(
     provider_titles = tuple(
         (provider, claim.value)
         for provider in report.providers
+        if provider.authority is not None
         for candidate in provider.candidates
         for claim in candidate.claims
         if claim.kind is ClaimKind.TITLE

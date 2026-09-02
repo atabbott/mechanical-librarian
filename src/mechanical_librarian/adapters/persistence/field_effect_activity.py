@@ -67,6 +67,7 @@ from mechanical_librarian.domain.activity_records import activity_search_text
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
     AutomaticDecisionError,
+    automatic_safety_category,
     qualification_manifest_is_current,
 )
 from mechanical_librarian.domain.cover_automatic_decision import (
@@ -2687,7 +2688,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         safety is None
                         or safety[0] != 0
                         or safety[1] is not None
-                        or automatic["policy_category"] in suspended
+                        or automatic_safety_category(
+                            automatic["policy_category"], automatic["policy_option"]
+                        )
+                        in suspended
                         or (
                             persisted.plan.destination != "cover"
                             and not qualification_manifest_is_current(
