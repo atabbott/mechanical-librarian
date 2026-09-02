@@ -211,6 +211,37 @@ def _target_work_preview(report: MetadataReport):
     }
 
 
+def _description_candidate(
+    provider: str,
+    identity: str,
+    work_identity: str,
+    description: str,
+) -> ProviderCandidate:
+    candidate = _target_work_candidate(provider, identity, work_identity)
+    return replace(
+        candidate,
+        claims=tuple(
+            _claim(
+                provider,
+                identity,
+                ClaimKind.DESCRIPTION,
+                description,
+                scope=ClaimScope.WORK,
+                order=claim.raw_order,
+            )
+            if claim.kind is ClaimKind.DESCRIPTION
+            else claim
+            for claim in candidate.claims
+        ),
+    )
+
+
+_QUALIFIED_DESCRIPTION = (
+    "This complete provider description contains enough specific words to clear "
+    "the conservative quality floor while remaining ordinary readable book prose."
+)
+
+
 def test_exact_multi_isbn_work_keeps_all_automatic_work_fields() -> None:
     catalogue = _target_work_candidate("catalogue", "edition-1", "work-1")
     search = _target_work_candidate("search", "edition-2", "work-1")
@@ -229,6 +260,127 @@ def test_exact_multi_isbn_work_keeps_all_automatic_work_fields() -> None:
         "genres": "projected",
         "tags": "projected",
     }
+
+
+def test_automatic_description_filters_applicability_before_provider_order() -> None:
+    unproved = _description_candidate(
+        "preferred",
+        "edition-1",
+        "work-1",
+        _QUALIFIED_DESCRIPTION + " Preferred source.",
+    )
+    applicable = _description_candidate(
+        "fallback",
+        "edition-2",
+        "work-1",
+        _QUALIFIED_DESCRIPTION + " Applicable source.",
+    )
+    _, fields = _target_work_preview(
+        _target_work_report(
+            (
+                ("preferred", "hardcover", (unproved,), False),
+                ("fallback", "open_library", (applicable,), True),
+            )
+        )
+    )
+
+    description = fields["description_fill"]
+    assert ("projected", applicable.claims[3].value) == (
+        description.outcome,
+        description.desired_value,
+    )
+    assert description.source_evidence_references == (applicable.claims[3].reference,)
+
+
+def test_automatic_description_applies_quality_floor_then_provider_order() -> None:
+    too_short = _description_candidate(
+        "preferred",
+        "edition-1",
+        "work-1",
+        "A short description from the preferred provider.",
+    )
+    lower_authority = _description_candidate(
+        "fallback",
+        "edition-2",
+        "work-1",
+        _QUALIFIED_DESCRIPTION + " Lower authority source.",
+    )
+    _, fields = _target_work_preview(
+        _target_work_report(
+            (
+                ("fallback", "open_library", (lower_authority,), True),
+                ("preferred", "hardcover", (too_short,), True),
+            )
+        )
+    )
+
+    description = fields["description_fill"]
+    assert ("projected", lower_authority.claims[3].value) == (
+        description.outcome,
+        description.desired_value,
+    )
+
+
+def test_automatic_description_uses_fixed_authority_order_not_source_order() -> None:
+    lower_authority = _description_candidate(
+        "fallback",
+        "edition-1",
+        "work-1",
+        _QUALIFIED_DESCRIPTION + " Lower authority source.",
+    )
+    preferred = _description_candidate(
+        "preferred",
+        "edition-2",
+        "work-1",
+        _QUALIFIED_DESCRIPTION + " Preferred source.",
+    )
+    _, fields = _target_work_preview(
+        _target_work_report(
+            (
+                ("fallback", "open_library", (lower_authority,), True),
+                ("preferred", "hardcover", (preferred,), True),
+            )
+        )
+    )
+
+    description = fields["description_fill"]
+    assert ("projected", preferred.claims[3].value) == (
+        description.outcome,
+        description.desired_value,
+    )
+
+
+@pytest.mark.parametrize(
+    "description",
+    (
+        "A short description that cannot clear the frozen minimum length.",
+        _QUALIFIED_DESCRIPTION + " This source visibly cuts off...",
+    ),
+)
+def test_automatic_description_abstains_when_competing_text_misses_quality_floor(
+    description: str,
+) -> None:
+    first = _description_candidate("first", "edition-1", "work-1", description)
+    second_text = (
+        "Another " + description
+        if description.endswith("...")
+        else description + " Brief."
+    )
+    second = _description_candidate("second", "edition-2", "work-1", second_text)
+    _, fields = _target_work_preview(
+        _target_work_report(
+            (
+                ("first", "hardcover", (first,), True),
+                ("second", "open_library", (second,), True),
+            )
+        )
+    )
+
+    description_preview = fields["description_fill"]
+    assert ("abstain", "description_quality_floor_not_met") == (
+        description_preview.outcome,
+        description_preview.reason,
+    )
 
 
 def test_isbn_intersection_does_not_replace_missing_work_identity() -> None:
@@ -325,11 +477,11 @@ def test_only_tag_citations_exclude_retained_unproved_sources() -> None:
     assert all(preview.outcome == "projected" for preview in fields.values())
     assert all(
         not (set(fields[field].source_evidence_references) & unproved_references)
-        for field in ("tags",)
+        for field in ("description_fill", "tags")
     )
     assert all(
         set(fields[field].source_evidence_references) & unproved_references
-        for field in ("description_fill", "series", "genres")
+        for field in ("series", "genres")
     )
 
 
@@ -388,7 +540,7 @@ def test_only_tag_citations_exclude_retained_unproved_sources() -> None:
         "enclosing_work",
     ),
 )
-def test_unproved_work_only_blocks_automatic_tags(
+def test_unproved_work_blocks_automatic_work_scoped_fields(
     candidates: tuple[ProviderCandidate, ...],
     with_lane: bool,
 ) -> None:
@@ -402,7 +554,8 @@ def test_unproved_work_only_blocks_automatic_tags(
         if result.destination is TargetDestination.TAGS
     )
     assert tags.alternatives
-    assert fields["description_fill"].outcome == "projected"
+    assert fields["description_fill"].outcome == "abstain"
+    assert fields["description_fill"].reason == "target_work_applicability_unproved"
     assert fields["genres"].outcome == "projected"
     assert fields["series"].reason != "target_work_applicability_unproved"
     assert (

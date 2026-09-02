@@ -353,7 +353,7 @@ describe('Policy route', () => {
     const helpLines = within(description).getAllByRole('listitem')
     expect(helpLines).toHaveLength(2)
     expect(helpLines[0]).toHaveTextContent(
-      'Safe plain text: Fills an empty Description only; abstains when text is transformed, ambiguous, missing, or unsupported.',
+      'Safe plain text: Fills an empty Description only; abstains when target-work applicability is unproved, the quality floor has no survivor, or the result remains ambiguous, missing, transformed, or unsupported.',
     )
     expect(helpLines[1]).toHaveTextContent(
       'Visible Google text: Fills an empty Description only; abstains without it and never falls back to Hardcover.',

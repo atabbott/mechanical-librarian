@@ -43,6 +43,14 @@ _DESTINATIONS: Final = {
 _EMPTY: Final = frozenset({TargetFieldState.MISSING, TargetFieldState.NULL, TargetFieldState.EMPTY})
 _ISBN13: Final = re.compile(r"^97[89][0-9]{10}$")
 _SUBTITLE_SEPARATORS: Final = (": ", " — ", " – ", " - ")
+_DESCRIPTION_AUTHORITY_ORDER: Final = (
+    "hardcover",
+    "google_books",
+    "open_library",
+)
+_DESCRIPTION_MINIMUM_CHARACTERS: Final = 80
+_DESCRIPTION_MINIMUM_WORDS: Final = 16
+_DESCRIPTION_VISIBLE_CUTOFFS: Final = ("...", "…", "--")
 
 
 class RichMetadataPreviewError(ValueError):
@@ -57,7 +65,7 @@ class _RetainedClaim:
 
 
 @dataclass(frozen=True, slots=True)
-class _AutomaticTagEvidence:
+class _AutomaticWorkEvidence:
     alternatives: tuple[ProposalAlternative, ...]
     references: dict[str, tuple[str, ...]]
 
@@ -80,12 +88,12 @@ def _remember_claim(values: dict[str, _RetainedClaim], reference: object, value:
     values[reference] = value
 
 
-def _automatic_tag_evidence(
+def _automatic_work_evidence(
     report: MetadataReport,
     result: ProposalResult,
     retained_claims: dict[str, _RetainedClaim],
-) -> _AutomaticTagEvidence:
-    """Keep automatic tag evidence backed by the exact target work."""
+) -> _AutomaticWorkEvidence:
+    """Keep automatic field evidence backed by the exact target work."""
     alternatives: list[ProposalAlternative] = []
     references: dict[str, tuple[str, ...]] = {}
     for alternative in result.alternatives:
@@ -102,7 +110,7 @@ def _automatic_tag_evidence(
         if admitted:
             alternatives.append(alternative)
             references[alternative.alternative_id] = admitted
-    return _AutomaticTagEvidence(tuple(alternatives), references)
+    return _AutomaticWorkEvidence(tuple(alternatives), references)
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,15 +215,15 @@ def _project(
         or (field in {"genres", "tags"} and option == "fill_empty")
     ):
         return _preserved(field, option, target, current)
-    automatic_tags = (
-        _automatic_tag_evidence(report, result, retained_claims)
-        if destination == "automatic" and field == "tags"
+    automatic_work = (
+        _automatic_work_evidence(report, result, retained_claims)
+        if destination == "automatic" and field in {"description_fill", "tags"}
         else None
     )
     if (
-        automatic_tags is not None
+        automatic_work is not None
         and result.alternatives
-        and not automatic_tags.alternatives
+        and not automatic_work.alternatives
     ):
         return _abstain(
             field,
@@ -227,7 +235,14 @@ def _project(
     if field == "subtitle" and option == "corroborated_split":
         return _subtitle_bundle(field, option, target, result, proposal, report)
     if field == "description_fill":
-        return _description(field, option, target, result, retained_claims)
+        return _description(
+            field,
+            option,
+            target,
+            result,
+            retained_claims,
+            automatic_work,
+        )
     if field == "isbn_form":
         return _isbn(field, option, target, result, report)
     if field == "asin":
@@ -239,7 +254,7 @@ def _project(
         if field == "series"
         else _one_list_candidate(
             result,
-            None if automatic_tags is None else automatic_tags.alternatives,
+            None if automatic_work is None else automatic_work.alternatives,
         )
         if field in {"genres", "tags"}
         else _candidate(result)
@@ -259,8 +274,8 @@ def _project(
         return RichFieldPreview(field, option, target.state.value, current, "abstain", None, reason)
     references = (
         candidate.evidence_references
-        if automatic_tags is None
-        else automatic_tags.references[candidate.alternative_id]
+        if automatic_work is None
+        else automatic_work.references[candidate.alternative_id]
     )
     if field == "subtitle" and destination == "automatic":
         # The corroborating local claim is the decisive eligibility evidence;
@@ -556,28 +571,106 @@ def _one_typed_candidate(
     return None, "ambiguous_evidence" if len(alternatives) > 1 else "no_candidate"
 
 
+def _automatic_description_candidate(
+    result: ProposalResult,
+    evidence: _AutomaticWorkEvidence,
+    retained_claims: dict[str, _RetainedClaim],
+) -> tuple[ProposalAlternative | None, tuple[str, ...], str | None]:
+    candidates = tuple(
+        alternative
+        for alternative in evidence.alternatives
+        if alternative.value.kind is ProposalValueKind.TEXT
+    )
+    if len(_typed_alternatives(result, ProposalValueKind.TEXT)) <= 1:
+        if len(candidates) == 1:
+            candidate = candidates[0]
+            return candidate, evidence.references[candidate.alternative_id], None
+        return None, (), "no_candidate"
+    qualified = tuple(
+        candidate
+        for candidate in candidates
+        if type(candidate.value.value) is str
+        and len(candidate.value.value) >= _DESCRIPTION_MINIMUM_CHARACTERS
+        and len(candidate.value.value.split()) >= _DESCRIPTION_MINIMUM_WORDS
+        and not candidate.value.value.rstrip().endswith(
+            _DESCRIPTION_VISIBLE_CUTOFFS
+        )
+    )
+    if not qualified:
+        return None, (), "description_quality_floor_not_met"
+    ranked: list[tuple[int, ProposalAlternative, tuple[str, ...]]] = []
+    for candidate in qualified:
+        by_authority: dict[str, list[str]] = {}
+        for reference in evidence.references[candidate.alternative_id]:
+            retained = retained_claims[reference]
+            if (
+                type(retained.provider) is ProviderObservation
+                and retained.provider.authority in _DESCRIPTION_AUTHORITY_ORDER
+                and _ordinary_description_reference(
+                    reference, candidate, retained_claims
+                )
+            ):
+                by_authority.setdefault(retained.provider.authority, []).append(
+                    reference
+                )
+        if by_authority:
+            authority = min(
+                by_authority,
+                key=_DESCRIPTION_AUTHORITY_ORDER.index,
+            )
+            ranked.append(
+                (
+                    _DESCRIPTION_AUTHORITY_ORDER.index(authority),
+                    candidate,
+                    tuple(by_authority[authority]),
+                )
+            )
+    if not ranked:
+        return None, (), "option_evidence_unavailable"
+    best_rank = min(rank for rank, _, _ in ranked)
+    winners = tuple(item for item in ranked if item[0] == best_rank)
+    if len(winners) != 1:
+        return None, (), "ambiguous_evidence"
+    _, candidate, references = winners[0]
+    return candidate, references, None
+
+
 def _description(
     field: str,
     option: str,
     target: TargetField,
     result: ProposalResult,
     retained_claims: dict[str, _RetainedClaim],
+    automatic_evidence: _AutomaticWorkEvidence | None,
 ) -> RichFieldPreview:
-    candidate, reason = _one_typed_candidate(result, ProposalValueKind.TEXT)
+    source_references: tuple[str, ...] | None = None
+    if automatic_evidence is None:
+        candidate, reason = _one_typed_candidate(result, ProposalValueKind.TEXT)
+    else:
+        candidate, source_references, reason = _automatic_description_candidate(
+            result,
+            automatic_evidence,
+            retained_claims,
+        )
     if candidate is None:
         return _abstain(field, option, target, _data_value(target.value), reason or "no_candidate")
     if option not in {"safe_plain_text", "google_visible_text"}:
         return _abstain(field, option, target, _data_value(target.value), "policy_option_unavailable")
-    if not candidate.evidence_references:
+    candidate_references = (
+        candidate.evidence_references
+        if source_references is None
+        else source_references
+    )
+    if not candidate_references:
         return _abstain(field, option, target, _data_value(target.value), "option_evidence_unavailable")
     google_references = tuple(
         reference
-        for reference in candidate.evidence_references
+        for reference in candidate_references
         if _google_description_reference(reference, candidate, retained_claims)
     )
     ordinary_references = tuple(
         reference
-        for reference in candidate.evidence_references
+        for reference in candidate_references
         if _ordinary_description_reference(reference, candidate, retained_claims)
     )
     if option == "google_visible_text" and not google_references:

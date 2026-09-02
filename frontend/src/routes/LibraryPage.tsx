@@ -856,6 +856,32 @@ function ProviderConsensusAutomaticStatement({ field }: { field: ReviewField }) 
   )
 }
 
+function DescriptionAutomaticStatement({ field }: { field: ReviewField }) {
+  const decision = field.automaticDecision
+  if (
+    field.humanDecision !== null ||
+    field.destination !== 'description' ||
+    decision?.outcome !== 'candidate'
+  ) {
+    return null
+  }
+  const context = field.choiceContexts.find((item) => item.alternativeId === decision.candidate_id)
+  const providers = [
+    ...new Set(
+      (context?.evidence ?? [])
+        .filter((row) => row.role === 'external_corroboration')
+        .map((row) => row.source),
+    ),
+  ]
+  if (!providers.length) return null
+  return (
+    <p>
+      Selected automatically from {providers.join(' and ')} after target-work and description
+      quality checks.
+    </p>
+  )
+}
+
 function VerifiedManifestationIsbnAutomaticStatement({ field }: { field: ReviewField }) {
   if (
     field.humanDecision !== null ||
@@ -919,6 +945,7 @@ function RecordedOutcome({
         )}
       </dl>
       <ProviderConsensusAutomaticStatement field={field} />
+      <DescriptionAutomaticStatement field={field} />
       <VerifiedManifestationIsbnAutomaticStatement field={field} />
       <button
         type="button"
@@ -2937,6 +2964,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                         {selectedRevisitable ? (
                           <>
                             <ProviderConsensusAutomaticStatement field={selected} />
+                            <DescriptionAutomaticStatement field={selected} />
                             <VerifiedManifestationIsbnAutomaticStatement field={selected} />
                           </>
                         ) : null}
