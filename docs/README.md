@@ -50,7 +50,7 @@ depends on it.
 - [Review HTTP API](reference/review-openapi-v1.json) — the generated authority
   for the `/api/v1` surface; its boundary decision is
   [ADR-0030](architecture/decisions/0030-authenticated-review-web-boundary.md)
-- [F19a qualification manifest](reference/f19a-qualification-manifest-v3.json) —
+- [F19a qualification manifest](reference/f19a-qualification-manifest-v4.json) —
   `F19A_QUALIFICATION_MANIFEST_SHA256` in
   `src/mechanical_librarian/domain/automatic_decision.py` pins this file's
   sha256; changing a byte changes what automatic authority admits

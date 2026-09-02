@@ -7,6 +7,8 @@ import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
 
+from mechanical_librarian.domain.validation import exact_type, nonempty_text
+
 
 class WorkDispatchRung(StrEnum):
     NORMALIZED = "normalized"
@@ -32,6 +34,24 @@ class WorkTitleTransformationFamily(StrEnum):
 class WorkTitleTransformationSide(StrEnum):
     LOCAL = "local"
     PROVIDER = "provider"
+
+
+@dataclass(frozen=True, slots=True)
+class WorkTitleElectionMatch:
+    """One closed, reversible local title decoration for consensus review."""
+
+    family: WorkTitleTransformationFamily
+    clean_title: str
+    preserved_component: str | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            not exact_type(WorkTitleTransformationFamily)(self.family)
+            or not nonempty_text(self.clean_title)
+            or self.preserved_component is not None
+            and not nonempty_text(self.preserved_component)
+        ):
+            raise ValueError("work title election match is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,6 +254,10 @@ _RULE_ORDINAL = {
 
 _ASCII_SPACE = re.compile(r"[\t\n\r\f\v ]+")
 _BRACKET_SOURCE = re.compile(r"[\t\n\r\f\v ]*\[[^\[\]]{1,80}\][\t\n\r\f\v ]*$")
+_ELECTION_BRACKET_SOURCE = re.compile(
+    r"[\t\n\r\f\v ]*\[(?P<tag>[^\[\]]{1,80})\][\t\n\r\f\v ]*$"
+)
+_ELECTION_BRACKET_SOURCE_TAGS = frozenset({"retail"})
 _EDITION = re.compile(
     r"[\t\n\r\f\v ]*(?:[-,:][\t\n\r\f\v ]*)?"
     r"(?:\d+(?:st|nd|rd|th)[\t\n\r\f\v ]+)?"
@@ -544,6 +568,112 @@ def apply_work_title_transformation(
     raise RuntimeError("work title transformation table is incomplete")
 
 
+def work_title_election_matches(
+    title: str, authors: tuple[str, ...]
+) -> tuple[WorkTitleElectionMatch, ...]:
+    """Return every closed one-step decoration match for consensus election.
+
+    Query shaping stays deliberately broader.  This grammar is only the small
+    reversible subset whose removed component can be shown to the owner.
+    """
+    if (
+        type(title) is not str
+        or type(authors) is not tuple
+        or any(type(value) is not str for value in authors)
+    ):
+        raise ValueError("work title election input is invalid")
+    matches: list[WorkTitleElectionMatch] = []
+    pending = [title]
+    seen = {title}
+    while pending:
+        source = pending.pop()
+        direct = _direct_work_title_election_matches(source, authors)
+        matches.extend(direct)
+        for value in direct:
+            if value.clean_title not in seen:
+                seen.add(value.clean_title)
+                pending.append(value.clean_title)
+    return tuple(matches)
+
+
+def _direct_work_title_election_matches(
+    title: str, authors: tuple[str, ...]
+) -> tuple[WorkTitleElectionMatch, ...]:
+    isbn = _election_isbn_component(title)
+    if isbn is not None:
+        isbn_clean_title, identifier_component = isbn
+        return (
+            WorkTitleElectionMatch(
+                WorkTitleTransformationFamily.EXPLICIT_IDENTIFIER,
+                isbn_clean_title,
+                identifier_component,
+            ),
+        )
+    matches: list[WorkTitleElectionMatch] = []
+    for family in (
+        WorkTitleTransformationFamily.BRACKET_SOURCE_TAG,
+        WorkTitleTransformationFamily.PARENTHESIZED_BARE_NUMBER,
+        WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME,
+        WorkTitleTransformationFamily.PARENTHESIZED_YEAR,
+        WorkTitleTransformationFamily.SUBTITLE_SEGMENT,
+    ):
+        if family is WorkTitleTransformationFamily.BRACKET_SOURCE_TAG:
+            bracket_source = _ELECTION_BRACKET_SOURCE.search(title)
+            if (
+                bracket_source is None
+                or bracket_source.group("tag") not in _ELECTION_BRACKET_SOURCE_TAGS
+            ):
+                continue
+        clean_title = apply_work_title_transformation(family, title, authors)
+        if clean_title == title or not clean_title:
+            continue
+        component = _election_preserved_component(family, title)
+        if (
+            family is WorkTitleTransformationFamily.SUBTITLE_SEGMENT
+            and component is None
+        ):
+            continue
+        matches.append(WorkTitleElectionMatch(family, clean_title, component))
+    return tuple(matches)
+
+
+def _election_preserved_component(
+    family: WorkTitleTransformationFamily, title: str
+) -> str | None:
+    if family in {
+        WorkTitleTransformationFamily.PARENTHESIZED_BARE_NUMBER,
+        WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME,
+        WorkTitleTransformationFamily.PARENTHESIZED_YEAR,
+    }:
+        match = _PAREN.search(title)
+        return None if match is None else _clean(match.group(1)) or None
+    if family is WorkTitleTransformationFamily.SUBTITLE_SEGMENT:
+        # Election deliberately excludes the query ladder's dash splitters.
+        if title.count(":") != 1:
+            return None
+        prefix, suffix = title.split(":", 1)
+        return _clean(suffix) if _clean(prefix) and _clean(suffix) else None
+    return None
+
+
+def _election_isbn_component(title: str) -> tuple[str, str] | None:
+    match = re.fullmatch(
+        r"(?P<title>.+?)[\\t\\n\\r\\f\\v ]+"
+        r"(?P<label>isbn(?:-1[03])?)[\\t\\n\\r\\f\\v ]*[:#-]?"
+        r"[\\t\\n\\r\\f\\v ]*(?P<value>[0-9Xx][0-9Xx -]{7,20})"
+        r"[\\t\\n\\r\\f\\v ]*",
+        title,
+        re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    compact = re.sub(r"[^0-9X]", "", match.group("value").upper())
+    clean_title = apply_work_title_transformation(
+        WorkTitleTransformationFamily.EXPLICIT_IDENTIFIER, title, ()
+    )
+    return (clean_title, compact) if _valid_isbn(compact) and clean_title else None
+
+
 def _filename_author_title_prefix_query(
     value: str, authors: tuple[str, ...]
 ) -> str | None:
@@ -678,6 +808,7 @@ __all__ = [
     "WorkIdentityAdmission",
     "WorkQuery",
     "WorkTitleTransformationFamily",
+    "WorkTitleElectionMatch",
     "WorkTitleTransformationLineage",
     "WorkTitleTransformationRule",
     "WorkTitleTransformationSide",
@@ -688,5 +819,6 @@ __all__ = [
     "work_dispatch_lineage_from_data",
     "work_query_ladder",
     "work_title_has_variant_marker",
+    "work_title_election_matches",
     "work_title_transformation_lineage_from_data",
 ]

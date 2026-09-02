@@ -28,6 +28,23 @@ category suspension, and explicit recovery fail closed by retaining would-be
 automatic work in human Attention. Any field, option, or policy revision outside
 that exact envelope remains human-routed until separately qualified.
 
+F35 (#884) adds a closed, provider-consensus title election to the v14
+ProposalSet policy: one exact local noisy title, one exact reversible pattern,
+byte-identical clean work or edition title observations from at least two
+independent authority correlations, and no dissent. Colon subtitles corroborate
+only across sources and elect only when their exact suffix is safely retained
+as the current structured subtitle or an independent provider subtitle
+candidate. Bracket query shaping is deliberately broader than election
+authority: only the exact `[retail]` source suffix is in the current closed
+election lexicon, and any other bracketed suffix abstains. #445's successor
+manifest replays and diffs every existing F19a option alongside the title
+tranche; its 1.0 precision and zero safety failures authorize only this closed
+F35 title replacement. The sealed prior F19a digest remains readable historical
+authority for its former options; it cannot authorize F35. F20 continues to
+exclude title. A colon-derived title suffix can remain an owner-visible subtitle
+proposal, but is never F20 `subtitle:fill_empty` corroboration; that automatic
+option still requires an explicit local subtitle claim.
+
 The published F20 rich-metadata candidate qualifies the three `series` options,
 both `isbn_form` options, genre fill/add/replace, tag fill/add/replace, safe
 plaintext description, and locally corroborated subtitle fill for decision-only

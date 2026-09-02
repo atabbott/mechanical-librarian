@@ -12,6 +12,7 @@ from mechanical_librarian.domain.validation import (
     exact_type,
     literal,
     non_negative_integer,
+    nonempty_text,
     prefixed_hex_identity,
     text,
 )
@@ -52,6 +53,13 @@ def test_boolean_rejects_the_integers_that_equal_it() -> None:
 def test_text_rejects_a_string_subclass() -> None:
     assert text("")
     assert not text(_Text("value"))
+
+
+def test_nonempty_text_requires_exact_text_with_content() -> None:
+    assert nonempty_text("value")
+    assert not nonempty_text("")
+    assert not nonempty_text(_Text("value"))
+    assert not nonempty_text(None)
 
 
 def test_bounds_are_inclusive_at_both_ends() -> None:

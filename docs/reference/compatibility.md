@@ -12,10 +12,10 @@ The current installed contract is intentionally narrow:
 - `config-v8` only;
 - an absent database or the installed exact current report database containing
   `metadata-report-v35` plus `proposal-set-v5` under
-  `fixed-conservative-v13`, or the separate `catalogue-v2` schema;
+  `fixed-conservative-v14`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v6`,
   `shadow-decision-set-v1` under
-  `deterministic-shadow-decision-policy-v9`,
+  `deterministic-shadow-decision-policy-v10`,
   and the exact-current deterministic shadow decision/outcome schema;
 - `review-session-v1`, `review-case-detail-v2`, `review-case-evidence-v4`,
   `review-case-history-v2`, `human-decision-v1`,
@@ -103,7 +103,7 @@ report. Valid ISO aliases and regional variants group into one
 base-and-exact-optional-script alternative; publisher alternatives remain
 distinct. `acceptable_choice` exposes multiple closed-policy-acceptable
 publisher outcomes without choosing one. No earlier proposal policy is
-interpreted: pre-release databases using `fixed-conservative-v12` or earlier
+interpreted: pre-release databases using `fixed-conservative-v13` or earlier
 are rejected before mutation and require a clean rebuild.
 
 Packet v6 decision summaries and typed provider evidence are exact deterministic

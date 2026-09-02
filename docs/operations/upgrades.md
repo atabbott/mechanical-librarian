@@ -23,18 +23,21 @@ absent application database; no adoption is supplied. The predecessor #956
 advanced v33 to v34 when the retained local-claim grammar admitted the
 Audiobookshelf-asserted ASIN.
 
-F36 advances the exact proposal policy from `fixed-conservative-v12` to
-`fixed-conservative-v13` because language alternatives and their identities
-change. Existing proposal, review, decision, and downstream field-effect state
-is not rewritten or adopted; rebuild the pre-release application database.
+F35 advances the exact proposal policy from `fixed-conservative-v13` to
+`fixed-conservative-v14` because provider-consensus title election adds a new
+persisted automatic-decision path. Existing proposal, review, decision, and
+downstream field-effect state is not rewritten or adopted; rebuild the
+pre-release application database.
 
 `metadata-report-v31` in particular cannot carry an audiobook's provider
 evidence: it refuses a provider observation on an audio report outright, and
 has no ASIN query lane, marketplace provenance, chapter-structure evidence, or
 recognized-sidecar manifest.
 
-The three earlier exact-predecessor plans have been retired because each names
-a schema older than this build. The installed runtime no longer exposes a
+The three earlier exact-predecessor plans, including #830's owner-decision
+action predecessor, have been retired because each names a schema older than
+this build. The v13 title-policy change supplies no adoption route for them.
+The installed runtime no longer exposes a
 `schema-adopt` command. Retain an older database and its matching artifact
 directory offline if it has historical value, then start this build with an
 absent application database and artifact store and repeat first-run setup.

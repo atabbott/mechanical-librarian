@@ -31,7 +31,7 @@ MANIFEST = (
     / "docs/reference/f20-rich-metadata-qualification-candidate-v4.json"
 )
 F19A_MANIFEST = (
-    Path(__file__).parents[2] / "docs/reference/f19a-qualification-manifest-v3.json"
+    Path(__file__).parents[2] / "docs/reference/f19a-qualification-manifest-v4.json"
 )
 RICH_FIELDS = (
     "subtitle",
@@ -363,7 +363,7 @@ def test_candidate_exposes_only_closed_aggregate_contract_data() -> None:
 
 def test_f19a_authority_is_preserved_and_exact_f20_is_added() -> None:
     assert (
-        "6708826d4891a228d9d2f664ea134ffad693974144c462370db851e50b330b56"
+        "e4dc35aa64e3e052f3866225a492fab9572e5727194691782b881b60a46144ec"
         == F19A_QUALIFICATION_MANIFEST_SHA256
     )
     assert {
@@ -376,6 +376,7 @@ def test_f19a_authority_is_preserved_and_exact_f20_is_added() -> None:
         "contributor_names:preserve",
         "contributor_names:canonical",
         "publisher_preference:publisher",
+        "title:replace_target:provider_consensus_noise",
         "description_fill:safe_plain_text",
         "genres:fill_empty",
         "genres:add",
@@ -419,16 +420,16 @@ def test_f19a_authority_is_preserved_and_exact_f20_is_added() -> None:
         assert "manual_only" == policy.qualification(field)
 
 
-def test_f19a_successor_manifest_binds_the_f36_holdout() -> None:
+def test_f19a_successor_manifest_binds_f35_and_preserves_f36_evidence() -> None:
     manifest_bytes = F19A_MANIFEST.read_bytes()
     manifest = json.loads(manifest_bytes)
 
     assert (
         hashlib.sha256(manifest_bytes).hexdigest() == F19A_QUALIFICATION_MANIFEST_SHA256
     )
-    assert "f19a-v11-result" == manifest["schema"]
+    assert "f19a-v12-result" == manifest["schema"]
     assert 9 == manifest["replayed_prior_option_count"]
-    assert 2 == manifest["changed_prior_option_count"]
+    assert 3 == manifest["changed_prior_option_count"]
     assert 0 == manifest["zero_tolerance_failures"]
     assert {
         "automatic_precision": 1.0,
@@ -438,6 +439,24 @@ def test_f19a_successor_manifest_binds_the_f36_holdout() -> None:
         "classification_accuracy": 1.0,
         "zero_tolerance_failures": 0,
     } == manifest["split_metrics"]["holdout"]
+    assert {
+        "automatic_precision": 1.0,
+        "automatic_predictions": 5,
+        "automatic_recall": 1.0,
+        "correct_predictions": 5,
+        "eligible_opportunities": 50,
+        "positive_opportunities": 5,
+        "qualified": True,
+        "unsupported_rate": 0.0,
+    } == manifest["metrics"]["title:replace_target:provider_consensus_noise"]
+    assert {
+        "candidate_execution_count": 2,
+        "changed_prior_option_count": 0,
+        "corpus_role": "development_challenge_set",
+        "evaluator_contract": "f35-title-policy-v1",
+        "replayed_prior_option_count": 11,
+        "zero_tolerance_failures": 0,
+    } == manifest["title_tranche"]
 
 
 def test_runtime_envelope_pins_every_terminal_disposition_and_authority() -> None:

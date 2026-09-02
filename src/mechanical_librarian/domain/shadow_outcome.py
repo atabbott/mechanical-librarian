@@ -18,6 +18,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import (
     MAX_BIBLIOGRAPHIC_COMBINATIONS,
+    PROVIDER_CONSENSUS_TITLE_REASONS,
     ProposalSet,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
@@ -54,6 +55,14 @@ _POLICY_CATEGORY_BY_DESTINATION = {
     "cover": "cover_order",
     "asin": "asin",
     "explicit": "explicit",
+}
+_PROVIDER_CONSENSUS_TITLE_POLICY_CATEGORY = "title"
+_PROVIDER_CONSENSUS_TITLE_POLICY_OPTION = "replace_target:provider_consensus_noise"
+_POLICY_OPTIONS_BY_CATEGORY = {
+    **OPTION_CATALOGUE,
+    _PROVIDER_CONSENSUS_TITLE_POLICY_CATEGORY: (
+        _PROVIDER_CONSENSUS_TITLE_POLICY_OPTION,
+    ),
 }
 _DISPOSITIONS = frozenset(
     {
@@ -137,6 +146,11 @@ class ShadowFieldOutcome:
         # subtitle fill. Exactly one of them owns the destination per set.
         if self.destination == "subtitle" and self.policy_category == "subtitle":
             expected_category = "subtitle"
+        elif (
+            self.destination == "title"
+            and self.policy_category == _PROVIDER_CONSENSUS_TITLE_POLICY_CATEGORY
+        ):
+            expected_category = _PROVIDER_CONSENSUS_TITLE_POLICY_CATEGORY
         expected_disposition = (
             "ignore"
             if self.policy_destination == "ignore"
@@ -169,7 +183,8 @@ class ShadowFieldOutcome:
             )
             or (
                 expected_category is not None
-                and self.policy_option not in OPTION_CATALOGUE[expected_category]
+                and self.policy_option
+                not in _POLICY_OPTIONS_BY_CATEGORY[expected_category]
             )
             or self.policy_destination
             not in {"ask", "automatic", "ignore", "unsupported"}
@@ -361,6 +376,19 @@ class ShadowOutcomeSet:
         options = dict(policy.options)
         fields: list[ShadowFieldOutcome] = []
         title_layout_subtitle: ShadowFieldOutcome | None = None
+        provider_consensus_title_proposals: set[str] = set()
+        for value in case.proposals:
+            result = cast("dict[str, object]", value["result"])
+            reasons = result["reasons"]
+            if (
+                value["destination"] == "title"
+                and type(reasons) is list
+                and len(reasons) == 1
+                and reasons[0] in PROVIDER_CONSENSUS_TITLE_REASONS
+            ):
+                provider_consensus_title_proposals.add(
+                    cast("str", value["proposal_id"])
+                )
         for decision in decisions.decisions:
             if decision.destination in {
                 "series",
@@ -370,11 +398,19 @@ class ShadowOutcomeSet:
                 "isbn",
             }:
                 continue
-            category = _POLICY_CATEGORY_BY_DESTINATION.get(decision.destination)
-            policy_destination = (
-                "unsupported" if category is None else destinations[category]
+            category: str | None = _POLICY_CATEGORY_BY_DESTINATION.get(
+                decision.destination
             )
-            policy_option = None if category is None else options[category]
+            policy_option: str | None
+            if decision.proposal_id in provider_consensus_title_proposals:
+                category = _PROVIDER_CONSENSUS_TITLE_POLICY_CATEGORY
+                policy_destination = destinations["title_layout"]
+                policy_option = _PROVIDER_CONSENSUS_TITLE_POLICY_OPTION
+            else:
+                policy_destination = (
+                    "unsupported" if category is None else destinations[category]
+                )
+                policy_option = None if category is None else options[category]
             if policy_destination == "ignore":
                 disposition = "ignore"
             elif policy_destination == "ask":

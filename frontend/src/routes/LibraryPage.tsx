@@ -448,6 +448,14 @@ const materialComparisonReasons = new Set([
   'insufficient_independent_corroboration',
   'no_safe_bibliographic_combination',
   'populated_subjective_field',
+  'provider_consensus_title_bracket_source_tag',
+  'provider_consensus_title_explicit_identifier',
+  'provider_consensus_title_parenthesized_bare_number',
+  'provider_consensus_title_parenthesized_series_name',
+  'provider_consensus_title_parenthesized_year',
+  'provider_consensus_title_subtitle_segment',
+  'provider_consensus_title_colon_unused',
+  'provider_consensus_title_series_unpreserved',
 ])
 const comparisonNotices = (field: ReviewField) =>
   field.choiceContexts.some((context) =>

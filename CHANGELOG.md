@@ -31,6 +31,13 @@
   unresolved. Existing pre-release proposal state requires a clean rebuild
   under `fixed-conservative-v13`. (#885)
 
+- When independent providers agree byte-for-byte on a clean work title, one
+  reversible local decoration can advance it for automatic review; ambiguous,
+  dissenting, and uncorroborated or unpreserved colon-subtitle cases remain
+  owner decisions. Existing pre-release ProposalSets require a clean rebuild
+  under `fixed-conservative-v14`.
+  (#884)
+
 - Inventaire is available as a keyless ebook metadata and cover provider in
   Settings and first-run setup. It resolves edition claims, linked works and
   English/fallback Wikidata labels through bounded fixed-host requests. Existing

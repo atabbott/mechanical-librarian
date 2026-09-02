@@ -41,6 +41,7 @@ from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
     AutomaticDecisionError,
     AutomaticSafetyState,
+    automatic_safety_category,
     qualification_manifest_sha256,
 )
 from mechanical_librarian.domain.cover_automatic_decision import (
@@ -192,7 +193,11 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 or field.policy_category is None
                 or field.policy_option is None
                 or field.policy_destination != "automatic"
-                or not safety.permits(field.policy_category)
+                or not safety.permits(
+                    automatic_safety_category(
+                        field.policy_category, field.policy_option
+                    )
+                )
                 or (
                     field.policy_category in required_bundles
                     and field.policy_category not in bundle_ids
@@ -567,7 +572,11 @@ class SQLiteDecisionRepository(ConnectionScoped):
             # policy-control/suspension composition admits active posture.
             if posture != ("automatic",):
                 raise AutomaticDecisionError("unavailable")
-            if not self.automatic_safety_state().permits(decision.policy_category):
+            if not self.automatic_safety_state().permits(
+                automatic_safety_category(
+                    decision.policy_category, decision.policy_option
+                )
+            ):
                 raise AutomaticDecisionError("suspended")
             case = json.loads(self.get_review_case(decision.review_case_id))
             if type(case) is not dict or case.get("current") is not True:

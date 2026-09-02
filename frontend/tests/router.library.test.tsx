@@ -1755,6 +1755,47 @@ describe('Library route', () => {
     expect(screen.queryByRole('button', { name: /Choose /u })).toBeNull()
   })
 
+  it('shows the provider-consensus title winner and matched pattern beside its selected value', async () => {
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const candidate = titleField.proposedValues[0]
+    if (!candidate) throw new Error('workspace fixture requires a proposed title')
+    const title = {
+      ...titleField,
+      automaticDecision: {
+        candidate_id: 'alternative-title-1',
+        decision_id: 'automatic-title',
+        destination: 'title' as const,
+        occurred_at: 1,
+        outcome: 'candidate' as const,
+        proposal_id: titleField.proposalId,
+        review_case_id: 'case-1',
+        selected_value: candidate,
+        target_fingerprint: titleField.targetFingerprint,
+      },
+      classification: 'automatic_recorded' as const,
+      decisionActions: [],
+      editable: false,
+      needsAttention: false,
+      navigationRole: 'resolved' as const,
+      notices: ['provider_consensus_title_bracket_source_tag'],
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=title', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [title] })),
+    })
+
+    const notice = await screen.findByRole('complementary', {
+      name: 'Comparison condition',
+    })
+    expect(notice).toHaveTextContent(
+      'Independent providers agree after removing the bracketed source tag',
+    )
+    const canvas = notice.closest<HTMLElement>('.decision-canvas')
+    if (!canvas) throw new Error('provider-consensus notice is outside its selected field')
+    expect(within(canvas).getByText('New title')).toBeVisible()
+  })
+
   it('keeps the owner outcome final when automatic authority remains in history', async () => {
     const base = detail.fields[0]
     if (!base) throw new Error('owner-final fixture requires a field')

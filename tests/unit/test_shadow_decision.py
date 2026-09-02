@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import patch
@@ -817,8 +818,8 @@ def test_identity_replay_and_document_validation_are_canonical() -> None:
         )
 
 
-def test_v9_policy_identity_rejects_public_base_v5_replay() -> None:
-    assert "deterministic-shadow-decision-policy-v9" == DECISION_POLICY_VERSION
+def test_v10_policy_identity_rejects_public_base_v5_replay() -> None:
+    assert "deterministic-shadow-decision-policy-v10" == DECISION_POLICY_VERSION
     packet = _packet()
     document = json.loads(decide_shadow_packet(packet).to_json())
     document["policy_version"] = "deterministic-shadow-decision-policy-v5"
@@ -847,6 +848,14 @@ def test_v9_policy_identity_rejects_public_base_v5_replay() -> None:
             ),
             packet,
         )
+
+
+def test_compatibility_contract_names_current_decision_policy() -> None:
+    document = (
+        Path(__file__).parents[2] / "docs" / "reference" / "compatibility.md"
+    ).read_text(encoding="utf-8")
+    assert f"`{DECISION_POLICY_VERSION}`" in document
+    assert "`deterministic-shadow-decision-policy-v9`" not in document
 
 
 def test_bounded_parser_rejects_noncanonical_and_oversized_documents() -> None:

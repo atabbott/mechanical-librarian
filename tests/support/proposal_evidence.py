@@ -93,6 +93,62 @@ def _provider(
     )
 
 
+def consensus_local_title(value: str, *, occurrence: int = 0) -> LocalClaim:
+    return LocalClaim.create(
+        kind=ClaimKind.TITLE,
+        observed=value,
+        canonical=value,
+        state=FieldState.VALID,
+        scope=ClaimScope.WORK,
+        basis="package_metadata",
+        excerpt=value,
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        occurrence=occurrence,
+    )
+
+
+def consensus_provider_title(
+    name: str,
+    title: str,
+    *,
+    authority: str | None = None,
+    subtitle: str | None = None,
+    edition_title: str | None = None,
+) -> ProviderObservation:
+    claims = [
+        _claim(name, f"{name}-edition", ClaimKind.TITLE, title, scope=ClaimScope.WORK)
+    ]
+    if subtitle is not None:
+        claims.append(
+            _claim(
+                name,
+                f"{name}-edition",
+                ClaimKind.SUBTITLE,
+                subtitle,
+                scope=ClaimScope.EDITION,
+                applicability="ebook",
+            )
+        )
+    if edition_title is not None:
+        claims.append(
+            _claim(
+                name,
+                f"{name}-edition",
+                ClaimKind.TITLE,
+                edition_title,
+                scope=ClaimScope.EDITION,
+            )
+        )
+    return _provider(
+        name,
+        f"{name}-edition",
+        tuple(claims),
+        authority=name if authority is None else authority,
+    )
+
+
 def _publication_local_isbn() -> LocalClaim:
     return LocalClaim.create(
         kind=ClaimKind.ISBN,

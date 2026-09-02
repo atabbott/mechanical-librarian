@@ -119,7 +119,7 @@
     },
     "automatic_decision": {
       "identity": "src/mechanical_librarian/domain/automatic_decision.py",
-      "sha256": "5d114d8f032fd5c57127e0f89afb8cda0a08e5bc8877da6144a9f467f035d444"
+      "sha256": "b4f40a357b66d73c1818683d43588d4498a30731e2e12fdaca4096fd2e0a504b"
     },
     "compiler": {
       "identity": "src/mechanical_librarian/domain/rich_metadata_preview.py",

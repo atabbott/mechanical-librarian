@@ -21,9 +21,91 @@ from mechanical_librarian.domain.work_identity import (
     replay_provider_work_identity_admission,
     work_dispatch_lineage_from_data,
     work_query_ladder,
+    work_title_election_matches,
     work_title_has_variant_marker,
     work_title_transformation_lineage_from_data,
 )
+
+
+@pytest.mark.parametrize(
+    ("title", "family", "clean", "component"),
+    (
+        (
+            "Plain Work [retail]",
+            WorkTitleTransformationFamily.BRACKET_SOURCE_TAG,
+            "Plain Work",
+            None,
+        ),
+        (
+            "Plain Work (2)",
+            WorkTitleTransformationFamily.PARENTHESIZED_BARE_NUMBER,
+            "Plain Work",
+            "2",
+        ),
+        (
+            "Plain Work (The Sequence)",
+            WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME,
+            "Plain Work",
+            "The Sequence",
+        ),
+        (
+            "Plain Work (2012)",
+            WorkTitleTransformationFamily.PARENTHESIZED_YEAR,
+            "Plain Work",
+            "2012",
+        ),
+        (
+            "Plain Work ISBN 9780306406157",
+            WorkTitleTransformationFamily.EXPLICIT_IDENTIFIER,
+            "Plain Work",
+            "9780306406157",
+        ),
+        (
+            "Plain Work ISBN: 9780306406157",
+            WorkTitleTransformationFamily.EXPLICIT_IDENTIFIER,
+            "Plain Work",
+            "9780306406157",
+        ),
+        (
+            "Plain Work: A subtitle",
+            WorkTitleTransformationFamily.SUBTITLE_SEGMENT,
+            "Plain Work",
+            "A subtitle",
+        ),
+    ),
+)
+def test_consensus_election_grammar_returns_closed_reversible_matches(
+    title: str,
+    family: WorkTitleTransformationFamily,
+    clean: str,
+    component: str | None,
+) -> None:
+    assert ((family, clean, component),) == tuple(
+        (value.family, value.clean_title, value.preserved_component)
+        for value in work_title_election_matches(title, ())
+    )
+
+
+@pytest.mark.parametrize(
+    "title",
+    (
+        "Plain Work ASIN B012345678",
+        "Plain Work ISBN 9780306406158",
+        "Plain Work 9780306406157",
+        "Plain Work [Illustrated Edition]",
+        "Plain Work [RETAIL]",
+        "Plain Work - A subtitle",
+        "Plain Work: First: Second",
+    ),
+)
+def test_consensus_election_grammar_abstains_outside_or_stacked_patterns(
+    title: str,
+) -> None:
+    assert () == work_title_election_matches(title, ())
+
+
+def test_consensus_election_grammar_returns_each_stacked_pattern() -> None:
+    assert 2 == len(work_title_election_matches("Plain Work (2) [retail]", ()))
 
 
 def test_closed_rule_table_has_one_independent_row_per_family() -> None:

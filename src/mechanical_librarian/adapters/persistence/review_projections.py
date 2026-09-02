@@ -401,7 +401,9 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             "AND outcome.automatic_destination=1 AND (safety.paused=1 OR "
             "safety.global_suspension IS NOT NULL OR EXISTS(SELECT 1 FROM "
             "json_each(safety.category_suspensions_document) category WHERE "
-            "json_extract(category.value,'$[0]')=outcome.policy_category)) ORDER BY 1",
+            "json_extract(category.value,'$[0]')=CASE WHEN "
+            "outcome.policy_category='title' "
+            "THEN 'title_layout' ELSE outcome.policy_category END)) ORDER BY 1",
             (review_case_id,),
         ).fetchall()
         if any(type(row[0]) is not str for row in rows):
