@@ -181,6 +181,14 @@ def _target_work_candidate(
             _claim(
                 provider,
                 identity,
+                ClaimKind.ISBN,
+                "9780306406157",
+                scope=ClaimScope.EDITION,
+                applicability="ebook",
+            ),
+            _claim(
+                provider,
+                identity,
                 ClaimKind.DESCRIPTION,
                 "A qualified description.",
                 scope=ClaimScope.WORK,
@@ -226,13 +234,15 @@ def _target_work_report(
     candidates_by_provider: tuple[
         tuple[str, str, tuple[ProviderCandidate, ...], bool], ...
     ],
+    *,
+    target_authors: tuple[str, ...] | None = ("Mick Herron",),
 ) -> MetadataReport:
     fields = _fields(
         "Real Tigers",
-        authors=TargetField(
-            TargetDestination.AUTHORS,
-            TargetFieldState.VALUE,
-            ("Mick Herron",),
+        authors=TargetField(TargetDestination.AUTHORS, TargetFieldState.MISSING)
+        if target_authors is None
+        else TargetField(
+            TargetDestination.AUTHORS, TargetFieldState.VALUE, target_authors
         ),
         description=TargetField(
             TargetDestination.DESCRIPTION,
@@ -270,6 +280,39 @@ def _target_work_report(
         fields=fields,
         local_claims=local_isbns,
         providers=providers,
+    )
+
+
+def _isbn_target_work_candidate(
+    *isbns: str, include_work_identity: bool = False
+) -> ProviderCandidate:
+    candidate = _target_work_candidate("catalogue", "edition-1", "work-1")
+    retained = tuple(
+        claim
+        for claim in candidate.claims
+        if claim.kind is not ClaimKind.ISBN
+        and (
+            include_work_identity
+            or claim.kind not in {ClaimKind.TITLE, ClaimKind.CREATOR}
+        )
+    )
+    return replace(
+        candidate,
+        claims=(
+            *retained,
+            *(
+                _claim(
+                    "catalogue",
+                    "edition-1",
+                    ClaimKind.ISBN,
+                    value,
+                    scope=ClaimScope.EDITION,
+                    order=len(retained) + index,
+                    applicability="ebook",
+                )
+                for index, value in enumerate(isbns)
+            ),
+        ),
     )
 
 
@@ -324,6 +367,59 @@ def test_exact_multi_isbn_work_keeps_all_automatic_work_fields() -> None:
         "genres": "projected",
         "tags": "projected",
     }
+
+
+def test_isbn_intersection_does_not_replace_missing_work_identity() -> None:
+    candidate = _isbn_target_work_candidate("9780306406157")
+
+    proposal, fields = _target_work_preview(
+        _target_work_report(
+            (("catalogue", "hardcover", (candidate,), True),),
+            target_authors=None,
+        )
+    )
+
+    tags = next(
+        result
+        for result in proposal.results
+        if result.destination is TargetDestination.TAGS
+    )
+    assert tags.alternatives
+    assert ("abstain", "target_work_applicability_unproved") == (
+        fields["tags"].outcome,
+        fields["tags"].reason,
+    )
+
+
+@pytest.mark.parametrize(
+    "isbns",
+    (
+        ("9780140328721",),
+        ("9780306406157", "9780140328721"),
+    ),
+    ids=("different_family", "conflicting_families"),
+)
+def test_nonintersecting_or_conflicting_isbns_remain_manual(
+    isbns: tuple[str, ...],
+) -> None:
+    candidate = _isbn_target_work_candidate(*isbns, include_work_identity=True)
+
+    proposal, fields = _target_work_preview(
+        _target_work_report(
+            (("catalogue", "hardcover", (candidate,), True),),
+        )
+    )
+
+    tags = next(
+        result
+        for result in proposal.results
+        if result.destination is TargetDestination.TAGS
+    )
+    assert tags.alternatives
+    assert ("abstain", "target_work_applicability_unproved") == (
+        fields["tags"].outcome,
+        fields["tags"].reason,
+    )
 
 
 def test_only_tag_citations_exclude_retained_unproved_sources() -> None:

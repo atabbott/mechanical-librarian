@@ -68,19 +68,19 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     assert passing == set(manifest["passing_automatic_options"])
     assert ["explicit:unsupported"] == manifest["human_only_options"]
     assert ["narrators", "cover"] == manifest["excluded_destinations"]
-    assert 11 == manifest["candidate_execution_count"]
+    assert 12 == manifest["candidate_execution_count"]
     assert {
         "applicability_confirmation_sha256": (
-            "03e19f6b3524afc1c3409e55b652a252f39c14653fa636d340f13c6150e9ddb7"
+            "5cfb4892e12dc61bc0744fba3d882941c302f5d2e4eca665ce0d7ed78afec01e"
         ),
         "current_provider_capture_sha256": (
-            "c1d672126449442b44b056c4cd7dc3c73346f90ab1fa4eb090e8203441cc0a33"
+            "e30ca27ab87da001a8b0db04b40e3f4ba0c260aa2b4dafe69b175e9bceb46d7d"
         ),
         "current_provider_comparison_sha256": (
-            "70d80e1efdd55cd4e743aea74f9414c0db34727f2946225dd6e78cb4376622a3"
+            "9c5d769f763080164a7125cbc6ebf1c052a9acfd66b85cc48d559a23d1aedef4"
         ),
         "current_provider_result_sha256": (
-            "ffc23d9e52ffccc48742d5effcaf546508f0d18a105d049dc6453ac1736c8d85"
+            "31e58dc08b708ac37f4191c501e804fc23d14cafcb0a60ec3b3d86ff80273423"
         ),
         "prior_candidate_sha256": (
             "99ba8426ee53e4d31e52ecf0f65a0fce4eb237d3e5acef42e4ee17217b57dae9"
@@ -107,7 +107,7 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
             "lost_correct_projections": 0,
             "network_access": True,
             "outcome_changes": 0,
-            "provider_request_count": 580,
+            "provider_request_count": 456,
             "tags_correct_predictions_per_option": 7,
         },
         "deferred_applicability_fields": {

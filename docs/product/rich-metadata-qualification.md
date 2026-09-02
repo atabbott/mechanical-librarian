@@ -104,10 +104,15 @@ a subtitle proposal. The vocabulary is provider-only and deliberately limited
 to that exact normalized label; local package evidence and any longer subtitle
 remain ordinary evidence. This is a proposal-policy rule, not F20 automatic
 authority.
-The eleventh candidate execution applies exact target-work applicability to
+The twelfth candidate execution applies exact target-work applicability to
 automatic tag selection. Conflicting, component, enclosing, incomplete, and
 lane-less tag evidence remains available to the owner but cannot influence
-automatic uniqueness, quality, or authority. A fresh 49-work capture made 580
+automatic uniqueness, quality, or authority. A target-backed WORK lane proves
+identity through the exact normalized title and complete contributor set; a
+target-backed ISBN lane must additionally prove that every usable candidate
+ISBN resolves to the target family, because an edition identifier alone cannot
+bind enclosing or component work metadata. Prior-manifest tag decisions remain
+readable history but are not current effect authority. A fresh 49-work capture made 456
 requests through the three current provider adapters. Main and the candidate
 each produced seven correct decisions for every tag option at 100% precision,
 with no changed outcomes, lost correct projections, or gained incorrect

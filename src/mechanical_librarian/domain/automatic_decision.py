@@ -99,6 +99,20 @@ def qualification_manifest_sha256(policy_category: str, policy_option: str) -> s
     return _current_qualification_manifest_sha256(policy_category, policy_option)
 
 
+def qualification_manifest_is_current(
+    policy_category: str,
+    policy_option: str,
+    manifest_sha256: object,
+) -> bool:
+    """Return whether one persisted decision still carries effect authority."""
+    try:
+        return type(manifest_sha256) is str and manifest_sha256 == (
+            _current_qualification_manifest_sha256(policy_category, policy_option)
+        )
+    except AutomaticDecisionError:
+        return False
+
+
 def _qualification_manifest_is_valid(
     policy_category: str, policy_option: str, manifest_sha256: str
 ) -> bool:

@@ -1,15 +1,15 @@
 {
   "automatic_authority": "decision_only",
   "authority_rotation": {
-    "applicability_confirmation_sha256": "03e19f6b3524afc1c3409e55b652a252f39c14653fa636d340f13c6150e9ddb7",
-    "current_provider_capture_sha256": "c1d672126449442b44b056c4cd7dc3c73346f90ab1fa4eb090e8203441cc0a33",
-    "current_provider_comparison_sha256": "70d80e1efdd55cd4e743aea74f9414c0db34727f2946225dd6e78cb4376622a3",
-    "current_provider_result_sha256": "ffc23d9e52ffccc48742d5effcaf546508f0d18a105d049dc6453ac1736c8d85",
+    "applicability_confirmation_sha256": "5cfb4892e12dc61bc0744fba3d882941c302f5d2e4eca665ce0d7ed78afec01e",
+    "current_provider_capture_sha256": "e30ca27ab87da001a8b0db04b40e3f4ba0c260aa2b4dafe69b175e9bceb46d7d",
+    "current_provider_comparison_sha256": "9c5d769f763080164a7125cbc6ebf1c052a9acfd66b85cc48d559a23d1aedef4",
+    "current_provider_result_sha256": "31e58dc08b708ac37f4191c501e804fc23d14cafcb0a60ec3b3d86ff80273423",
     "prior_candidate_sha256": "99ba8426ee53e4d31e52ecf0f65a0fce4eb237d3e5acef42e4ee17217b57dae9",
     "retained_document_baseline_sha256": "fe97bf65c0d544397987e3d078c4c65b1b453564a40b2808d550c63768feb533",
     "retained_document_candidate_sha256": "c7577b62ef911077a96768b3c274b9b7308ea2fb2164a2e25d20dcede2fb047f"
   },
-  "candidate_execution_count": 11,
+  "candidate_execution_count": 12,
   "evidence_method": {
     "applicability_confirmation": {
       "automatic_precision": 1.0,
@@ -27,7 +27,7 @@
       "lost_correct_projections": 0,
       "network_access": true,
       "outcome_changes": 0,
-      "provider_request_count": 580,
+      "provider_request_count": 456,
       "tags_correct_predictions_per_option": 7
     },
     "deferred_applicability_fields": {
@@ -119,7 +119,7 @@
     },
     "automatic_decision": {
       "identity": "src/mechanical_librarian/domain/automatic_decision.py",
-      "sha256": "1610a05f4ca42464a6f638ac85b04d37e79ceb8e24f2e91666dda024ae799ad2"
+      "sha256": "5d114d8f032fd5c57127e0f89afb8cda0a08e5bc8877da6144a9f467f035d444"
     },
     "compiler": {
       "identity": "src/mechanical_librarian/domain/rich_metadata_preview.py",
@@ -130,8 +130,8 @@
       "sha256": "65bb86695248dd948a9e9159109b9611efb62d0d3a523b10731ebb063aa6249e"
     },
     "evidence_execution": {
-      "identity": "current-provider-tag-applicability-comparison-v9-exact-head",
-      "sha256": "70d80e1efdd55cd4e743aea74f9414c0db34727f2946225dd6e78cb4376622a3"
+      "identity": "current-provider-tag-applicability-comparison-v10-connector-remediation",
+      "sha256": "9c5d769f763080164a7125cbc6ebf1c052a9acfd66b85cc48d559a23d1aedef4"
     },
     "policy": {
       "identity": "src/mechanical_librarian/domain/metadata_policy.py",

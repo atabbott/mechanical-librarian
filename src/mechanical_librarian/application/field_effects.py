@@ -8,7 +8,10 @@ from dataclasses import dataclass, replace
 from typing import Callable, Literal, Protocol, cast
 
 from mechanical_librarian.application.operations import StageTimer
-from mechanical_librarian.domain.automatic_decision import AutomaticDecision
+from mechanical_librarian.domain.automatic_decision import (
+    AutomaticDecision,
+    qualification_manifest_is_current,
+)
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
 from mechanical_librarian.domain.field_effect import (
     EffectAuthority,
@@ -244,6 +247,12 @@ def authority_from_decision(
             None,
             None,
         )
+    if type(decision) is AutomaticDecision and not qualification_manifest_is_current(
+        decision.policy_category,
+        decision.policy_option,
+        decision.qualification_manifest_sha256,
+    ):
+        return None
     if type(decision) in (AutomaticDecision, CoverAutomaticDecision):
         automatic = cast(AutomaticDecision | CoverAutomaticDecision, decision)
         if automatic.outcome != "candidate":

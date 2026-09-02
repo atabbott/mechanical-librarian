@@ -11,7 +11,8 @@
 
 - Provider tag proposals now require exact retained work identity before they
   can be elected automatically. Conflicting or incomplete provider work
-  evidence remains available for inspection. (#964)
+  evidence remains available for inspection. Earlier automatic tag decisions
+  remain readable history but no longer authorize an effect. (#964)
 
 - Language aliases and regional variants now form one decision alternative,
   while different base languages, script variants, and malformed tags remain

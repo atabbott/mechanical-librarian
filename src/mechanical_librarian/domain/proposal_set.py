@@ -1803,12 +1803,12 @@ def provider_candidate_represents_target_work(
         or not _target_backed_lookup_contains(report, provider, candidate)
     ):
         return False
+    expected_title = normalize_title(title.value)
     expected_authors = tuple(
         normalize_title(value) for value in cast("tuple[str, ...]", authors.value)
     )
     if len({value.casefold() for value in expected_authors}) != len(expected_authors):
         return False
-    expected_title = normalize_title(title.value)
     candidates_by_identity = {value.identity: value for value in provider.candidates}
     for lane in provider.lanes:
         if (
@@ -1827,7 +1827,29 @@ def provider_candidate_represents_target_work(
         lane_candidates = tuple(
             candidates_by_identity[value.edition_identity] for value in lane.candidates
         )
-        if lane.kind is ProviderQueryKind.WORK:
+        if lane.kind is ProviderQueryKind.ISBN:
+            provider_isbns = tuple(
+                claim for claim in candidate.claims if claim.kind is ClaimKind.ISBN
+            )
+            if not (
+                lane.matched_family is not None
+                and provider_isbns
+                and all(
+                    claim.state is FieldState.VALID
+                    and claim.scope is ClaimScope.EDITION
+                    and type(claim.value) is str
+                    and isbn_family(claim.value) == lane.matched_family
+                    for claim in provider_isbns
+                )
+            ):
+                continue
+            admission = provider_candidate_set_exact_work_identity_admission(
+                lane_candidates,
+                expected_title,
+                expected_authors,
+            )
+            lineage_matches = True
+        elif lane.kind is ProviderQueryKind.WORK:
             admission = provider_candidate_set_work_identity_admission(
                 lane_candidates,
                 expected_title,
@@ -1835,13 +1857,6 @@ def provider_candidate_represents_target_work(
                 lane.dispatch_lineage,
             )
             lineage_matches = admission.transformation == lane.transformation_lineage
-        elif lane.kind is ProviderQueryKind.ISBN:
-            admission = provider_candidate_set_exact_work_identity_admission(
-                lane_candidates,
-                expected_title,
-                expected_authors,
-            )
-            lineage_matches = True
         else:
             continue
         if (
