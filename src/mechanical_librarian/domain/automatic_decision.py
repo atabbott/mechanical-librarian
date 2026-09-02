@@ -118,6 +118,14 @@ _PRIOR_F20_QUALIFICATION_MANIFESTS = (
             "isbn_form:preserve_exact", "isbn_form:prefer_isbn13",
         }),
     ),
+    (
+        "535348d225d6f160a4096c17c3379ee060741cb1d704ad0d741fc4631fc01d9b",
+        F20_PASSING_AUTOMATIC_OPTIONS,
+    ),
+    (
+        "1315e324edd78e698587e14497aa0ab11e33fd65612f00cd8a78a462fd6445fd",
+        F20_PASSING_AUTOMATIC_OPTIONS,
+    ),
 )
 
 
