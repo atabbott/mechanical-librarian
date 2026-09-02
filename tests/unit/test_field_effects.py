@@ -48,6 +48,7 @@ from mechanical_librarian.application.configuration import ReviewWebConfiguratio
 from mechanical_librarian.application.field_effects import (
     GuardedApplicationError,
     GuardedFieldApplication,
+    authority_from_decision,
 )
 from mechanical_librarian.application.operations import StageTimer, aggregate_incidents
 from mechanical_librarian.domain.automatic_decision import (
@@ -62,6 +63,7 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectNoChange,
     FieldEffectOperation,
     FieldEffectPlan,
+    project_decision_value,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_policy import (
@@ -88,6 +90,11 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
+from tests.support.automatic_decisions import _automatic_decisions
+from tests.support.proposal_evidence import (
+    _target_work_candidate,
+    _target_work_report,
+)
 from tests.unit.review_app_fixture import (
     TEST_REACT_BUILD_IDENTITY,
     create_transport_test_app,
@@ -2552,6 +2559,137 @@ def test_qualified_automatic_origin_uses_the_identical_plan_and_effect_path(
     assert result.plan.authority.origin == "automatic_policy"
     effects.target.seed(result.plan)
     assert effects.service.apply(result.plan.plan_id).state == "verified"
+
+
+def test_legacy_tag_decision_stays_readable_without_effect_authority(
+    effects: _EffectEnvironment,
+) -> None:
+    current = next(
+        decision
+        for decision in _automatic_decisions(
+            effects,
+            _target_work_report(
+                (
+                    (
+                        "catalogue",
+                        "hardcover",
+                        (_target_work_candidate("catalogue", "edition-1", "work-1"),),
+                        True,
+                    ),
+                )
+            ),
+            "tags",
+            "fill_empty",
+            qualified=True,
+        )
+        if decision.destination == "tags" and decision.outcome == "candidate"
+    )
+    legacy_core = {
+        **current._core(),
+        "qualification_manifest_sha256": (
+            "99ba8426ee53e4d31e52ecf0f65a0fce4eb237d3e5acef42e4ee17217b57dae9"
+        ),
+    }
+
+    def digest(value: object) -> str:
+        return hashlib.sha256(
+            json.dumps(
+                value,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
+
+    legacy = AutomaticDecision(
+        decision_id="automatic_decision_"
+        + digest({**legacy_core, "occurred_at": current.occurred_at}),
+        **legacy_core,
+        idempotency_digest=digest(legacy_core),
+        occurred_at=current.occurred_at,
+    )
+    assert legacy == AutomaticDecision.from_json(legacy.to_json())
+    assert authority_from_decision(legacy) is None
+
+    connection = effects.repository._connection
+    connection.execute("DROP TRIGGER automatic_decisions_no_update")
+    connection.execute("DROP TRIGGER automatic_decisions_no_delete")
+    connection.execute(
+        "DELETE FROM automatic_decisions WHERE decision_id=?",
+        (current.decision_id,),
+    )
+    connection.execute(
+        "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,"
+        "idempotency_digest,occurred_at,document) VALUES(?,?,?,?,?,?)",
+        (
+            legacy.decision_id,
+            legacy.review_case_id,
+            legacy.destination,
+            legacy.idempotency_digest,
+            legacy.occurred_at,
+            legacy.to_json(),
+        ),
+    )
+    connection.execute(
+        "CREATE TRIGGER automatic_decisions_no_update BEFORE UPDATE ON "
+        "automatic_decisions BEGIN SELECT RAISE(ABORT, 'automatic decisions are "
+        "append-only'); END"
+    )
+    connection.execute(
+        "CREATE TRIGGER automatic_decisions_no_delete BEFORE DELETE ON "
+        "automatic_decisions BEGIN SELECT RAISE(ABORT, 'automatic decisions are "
+        "append-only'); END"
+    )
+    connection.commit()
+    assert legacy.to_json() in effects.repository.get_review_case_decisions(
+        legacy.review_case_id
+    )
+
+    source = effects.repository.field_effect_authority_source(legacy)
+    consent = effects.repository.grant_field_effect_consents(
+        cast(str, source["connection"]),
+        (cast(str, source["library"]),),
+        (legacy.destination,),
+        5,
+    )[0]
+    authority = EffectAuthority(
+        legacy.decision_id,
+        legacy.review_case_id,
+        legacy.target_fingerprint,
+        "persisted_review_case",
+        "automatic_policy",
+        "candidate",
+        legacy.resolved_policy_id,
+        legacy.qualification_manifest_sha256,
+    )
+    plan = FieldEffectPlan.create(
+        connection=cast(str, source["connection"]),
+        library=cast(str, source["library"]),
+        work_id=cast(str, source["work_id"]),
+        destination=legacy.destination,
+        pre_value=source["pre_value"],
+        desired_value=project_decision_value(
+            legacy.destination, source["decision_value"]
+        ),
+        target_fingerprint=legacy.target_fingerprint,
+        target_version=cast(str, source["target_version"]),
+        dependency_digests=cast(tuple[str, ...], source["dependency_digests"]),
+        authority=authority,
+        consent=consent,
+        capability_digest=CAPABILITY,
+        created_at=5,
+    )
+    effects.repository.record_field_effect(FieldEffectOperation(plan, updated_at=5))
+
+    assert not effects.repository.field_effect_authority_is_current(authority)
+    with pytest.raises(FieldEffectError, match="^authority$"):
+        effects.repository.claim_field_effect(
+            plan.plan_id,
+            "planned",
+            "a" * 64,
+            6,
+        )
+    assert effects.repository.get_field_effect(plan.plan_id).state == "planned"
 
 
 def test_effect_modules_cannot_construct_audiobookshelf_or_media_writes(

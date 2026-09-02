@@ -28,7 +28,7 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
 
 MANIFEST = (
     Path(__file__).parents[2]
-    / "docs/reference/f20-rich-metadata-qualification-candidate-v3.json"
+    / "docs/reference/f20-rich-metadata-qualification-candidate-v4.json"
 )
 F19A_MANIFEST = (
     Path(__file__).parents[2] / "docs/reference/f19a-qualification-manifest-v3.json"
@@ -48,7 +48,7 @@ RICH_FIELDS = (
 def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
 
-    assert "f20-rich-metadata-qualification-candidate-v3" == manifest["schema"]
+    assert "f20-rich-metadata-qualification-candidate-v4" == manifest["schema"]
     assert "decision_only" == manifest["automatic_authority"]
     passing = {
         "description_fill:safe_plain_text",
@@ -68,19 +68,80 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     assert passing == set(manifest["passing_automatic_options"])
     assert ["explicit:unsupported"] == manifest["human_only_options"]
     assert ["narrators", "cover"] == manifest["excluded_destinations"]
-    assert 10 == manifest["candidate_execution_count"]
+    assert 12 == manifest["candidate_execution_count"]
     assert {
-        "full_output_equivalence_receipt_sha256": (
-            "508b4fbfea70678cb093283269050c31746163880638b2c60e9720319bf8d528"
+        "applicability_confirmation_sha256": (
+            "5cfb4892e12dc61bc0744fba3d882941c302f5d2e4eca665ce0d7ed78afec01e"
         ),
-        "preflight_failure_sha256": (
-            "a9b26e1ad455fab3562b0da72295994435af1469b640fd3cb22dce8052d0a2ed"
+        "current_provider_capture_sha256": (
+            "e30ca27ab87da001a8b0db04b40e3f4ba0c260aa2b4dafe69b175e9bceb46d7d"
         ),
-        "prior_complete_result_sha256": (
-            "1fbc5cfa52320375d7fa5203d146c3093a9a8b40d6479d9f14d973dc4be08ddc"
+        "current_provider_comparison_sha256": (
+            "9c5d769f763080164a7125cbc6ebf1c052a9acfd66b85cc48d559a23d1aedef4"
+        ),
+        "current_provider_result_sha256": (
+            "31e58dc08b708ac37f4191c501e804fc23d14cafcb0a60ec3b3d86ff80273423"
+        ),
+        "prior_candidate_sha256": (
+            "99ba8426ee53e4d31e52ecf0f65a0fce4eb237d3e5acef42e4ee17217b57dae9"
+        ),
+        "retained_document_baseline_sha256": (
+            "fe97bf65c0d544397987e3d078c4c65b1b453564a40b2808d550c63768feb533"
+        ),
+        "retained_document_candidate_sha256": (
+            "c7577b62ef911077a96768b3c274b9b7308ea2fb2164a2e25d20dcede2fb047f"
         ),
     } == manifest["authority_rotation"]
     assert {
+        "applicability_confirmation": {
+            "automatic_precision": 1.0,
+            "automatic_predictions": 20,
+            "case_count": 23,
+            "retained_candidates": 58,
+            "wrong_work_admitted": 0,
+        },
+        "applicability_fields": ["tags"],
+        "current_provider_comparison": {
+            "case_count": 49,
+            "gained_incorrect_projections": 0,
+            "lost_correct_projections": 0,
+            "network_access": True,
+            "outcome_changes": 0,
+            "provider_request_count": 456,
+            "tags_correct_predictions_per_option": 7,
+        },
+        "deferred_applicability_fields": {
+            "description_fill": {
+                "baseline_correct_predictions": 9,
+                "candidate_correct_predictions": 8,
+                "gained_correct_projections": 3,
+                "lost_correct_projections": 4,
+                "reason": "live_correct_projection_churn",
+            },
+            "genres": {
+                "baseline_correct_predictions": {
+                    "add": 9,
+                    "fill_empty": 30,
+                    "replace": 9,
+                },
+                "candidate_correct_predictions": {
+                    "add": 4,
+                    "fill_empty": 12,
+                    "replace": 4,
+                },
+                "reason": "live_correct_projection_loss",
+            },
+            "series": {
+                "current_baseline_predictions": 0,
+                "current_candidate_predictions": 0,
+                "historical_qualified_predictions": {
+                    "all_qualified": 20,
+                    "primary_narrative": 19,
+                    "source_order": 20,
+                },
+                "reason": "positive_preservation_unproved",
+            },
+        },
         "evaluated_reports": 49,
         "exposure_unit": "case_field_option",
         "genres_fill_empty_correct_predictions_by_state": {
@@ -97,6 +158,12 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
         "network_access": False,
         "prior_unrelated_work_use_allowed": True,
         "replayed_provider_requests": 421,
+        "retained_document_comparison": {
+            "aggregate_metrics_equal": True,
+            "case_count": 49,
+            "network_access": False,
+            "replayed_provider_requests": 421,
+        },
         "subjective_field_truth_model": "exact_work_bound_source_projection",
         "series_truth_model": "valid_membership_with_preferred_value",
         "subtitle_fill_empty_correct_predictions_by_state": {
@@ -264,6 +331,7 @@ def test_candidate_exposes_only_closed_aggregate_contract_data() -> None:
         "stale_target_apply",
         "taxonomy_translation",
         "unsafe_description",
+        "wrong_work_applicability",
         "wrong_manifestation_identifier",
     } == set(manifest["zero_tolerance"]["required_controls"])
     assert {

@@ -39,17 +39,9 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectPlan,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision
-from mechanical_librarian.domain.metadata_policy import (
-    DEFAULT_OPTIONS,
-    OPTION_CATALOGUE,
-    MetadataPolicyProfile,
-    human_review_destinations,
-    resolve_policy,
-)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
-    MetadataReport,
     TargetDestination,
     TargetField,
     TargetFieldState,
@@ -57,6 +49,7 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+from tests.support.automatic_decisions import _automatic_decisions
 from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.proposal_evidence import _claim, _fields, _provider
 from tests.support.proposal_evidence import _report as _proposal_report
@@ -100,52 +93,6 @@ def _facts(event: dict[str, object]) -> dict[str, str]:
     evidence = event["evidence"]
     assert isinstance(evidence, list)
     return {str(item["label"]): str(item["value"]) for item in evidence}
-
-
-def _automatic_decisions(
-    environment: _EffectEnvironment,
-    report: MetadataReport,
-    category: str,
-    option: str,
-    *,
-    qualified: bool,
-) -> tuple[AutomaticDecision, ...]:
-    """Persist naturally supported automatic outcomes through public seams."""
-    options = dict(DEFAULT_OPTIONS)
-    options[category] = option
-    destinations = {
-        name: "unsupported" if name == "explicit" else "ask"
-        for name in OPTION_CATALOGUE
-    }
-    destinations[category] = "automatic"
-    profile = MetadataPolicyProfile.create("Activity automatic", options, destinations)
-    resolved = resolve_policy(profile, report.target.library)
-    environment.repository.enter_shadow_preview(1)
-    environment.repository.create_metadata_policy_draft(profile.canonical_json)
-    environment.repository.activate_metadata_policy(
-        profile.policy_id,
-        MetadataPolicyProfile.builtin().policy_id,
-        ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
-        2,
-    )
-    if qualified:
-        environment.repository.activate_qualified_automatic(3)
-    proposal_set = evaluate_report(
-        report, resolved.resolved_id, human_review_destinations(resolved)
-    )
-    environment.repository.publish(report, lambda: True)
-    environment.repository.publish_proposal(proposal_set)
-    case_id = json.loads(environment.repository.admit_review_case(proposal_set))[
-        "review_case_id"
-    ]
-    assert type(case_id) is str
-    ShadowOutcomeSet.from_json(
-        environment.repository.persist_shadow_outcome(case_id, 4)
-    )
-    return tuple(
-        AutomaticDecision.from_json(value)
-        for value in environment.repository.get_review_case_decisions(case_id)
-    )
 
 
 def _automatic_no_change_decisions(

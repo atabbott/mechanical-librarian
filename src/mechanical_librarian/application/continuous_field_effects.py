@@ -16,7 +16,10 @@ from mechanical_librarian.application.field_effects import (
 )
 from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.domain.activity_records import readable_activity_event
-from mechanical_librarian.domain.automatic_decision import AutomaticDecision
+from mechanical_librarian.domain.automatic_decision import (
+    AutomaticDecision,
+    qualification_manifest_is_current,
+)
 from mechanical_librarian.domain.cover_automatic_decision import (
     CoverAutomaticDecision,
     parse_automatic_authority,
@@ -709,6 +712,15 @@ class ContinuousGuardedApplication:
         planned = 0
         for document in documents:
             decision = self._decision(document)
+            if type(
+                decision
+            ) is AutomaticDecision and not qualification_manifest_is_current(
+                decision.policy_category,
+                decision.policy_option,
+                decision.qualification_manifest_sha256,
+            ):
+                self._advance_schedule_cursor(decision, generation)
+                continue
             # This is intentionally before authority, consent and capability: an
             # equal automatic candidate is a terminal decision fact, not a write.
             no_change = getattr(

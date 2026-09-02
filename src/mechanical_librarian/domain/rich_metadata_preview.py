@@ -17,14 +17,15 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
 )
 from mechanical_librarian.domain.metadata_report import (
     MAX_TAGS, ClaimKind, ClaimScope, FieldState, IdentifierRelation,
-    MetadataReport, ProviderClaim, ProviderEvidenceKind, ProviderStatus,
+    MetadataReport, ProviderCandidate, ProviderClaim, ProviderEvidenceKind,
+    ProviderObservation, ProviderStatus,
     TargetDestination, TargetField, TargetFieldState, isbn_family,
     normalize_title,
 )
 from mechanical_librarian.domain.proposal_set import (
     BibliographicSelectionKind, ProposalAlternative, ProposalAssessment,
     ProposalOutcome, ProposalResult, ProposalScope, ProposalSet,
-    ProposalValueKind,
+    ProposalValueKind, provider_candidate_represents_target_work,
 )
 
 
@@ -54,6 +55,12 @@ class _RetainedClaim:
     candidate: object | None
 
 
+@dataclass(frozen=True, slots=True)
+class _AutomaticTagEvidence:
+    alternatives: tuple[ProposalAlternative, ...]
+    references: dict[str, tuple[str, ...]]
+
+
 def _retained_claims(report: MetadataReport) -> dict[str, _RetainedClaim]:
     """Index only evidence retained by this exact report; opaque IDs never infer."""
     values: dict[str, _RetainedClaim] = {}
@@ -70,6 +77,31 @@ def _remember_claim(values: dict[str, _RetainedClaim], reference: object, value:
     if type(reference) is not str or reference in values:
         raise RichMetadataPreviewError("rich preview evidence binding is invalid")
     values[reference] = value
+
+
+def _automatic_tag_evidence(
+    report: MetadataReport,
+    result: ProposalResult,
+    retained_claims: dict[str, _RetainedClaim],
+) -> _AutomaticTagEvidence:
+    """Keep automatic tag evidence backed by the exact target work."""
+    alternatives: list[ProposalAlternative] = []
+    references: dict[str, tuple[str, ...]] = {}
+    for alternative in result.alternatives:
+        admitted = tuple(
+            reference
+            for reference in alternative.evidence_references
+            if (retained := retained_claims.get(reference)) is not None
+            and type(retained.provider) is ProviderObservation
+            and type(retained.candidate) is ProviderCandidate
+            and provider_candidate_represents_target_work(
+                report, retained.provider, retained.candidate
+            )
+        )
+        if admitted:
+            alternatives.append(alternative)
+            references[alternative.alternative_id] = admitted
+    return _AutomaticTagEvidence(tuple(alternatives), references)
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,6 +206,23 @@ def _project(
         or (field in {"genres", "tags"} and option == "fill_empty")
     ):
         return _preserved(field, option, target, current)
+    automatic_tags = (
+        _automatic_tag_evidence(report, result, retained_claims)
+        if destination == "automatic" and field == "tags"
+        else None
+    )
+    if (
+        automatic_tags is not None
+        and result.alternatives
+        and not automatic_tags.alternatives
+    ):
+        return _abstain(
+            field,
+            option,
+            target,
+            current,
+            "target_work_applicability_unproved",
+        )
     if field == "subtitle" and option == "corroborated_split":
         return _subtitle_bundle(field, option, target, result, proposal, report)
     if field == "description_fill":
@@ -187,7 +236,10 @@ def _project(
         if field == "series" and option == "primary_narrative"
         else _series_candidate(result)
         if field == "series"
-        else _one_list_candidate(result)
+        else _one_list_candidate(
+            result,
+            None if automatic_tags is None else automatic_tags.alternatives,
+        )
         if field in {"genres", "tags"}
         else _candidate(result)
     )
@@ -204,7 +256,11 @@ def _project(
     if candidate is None:
         reason = _candidate_reason(result)
         return RichFieldPreview(field, option, target.state.value, current, "abstain", None, reason)
-    references = candidate.evidence_references
+    references = (
+        candidate.evidence_references
+        if automatic_tags is None
+        else automatic_tags.references[candidate.alternative_id]
+    )
     if field == "subtitle" and destination == "automatic":
         # The corroborating local claim is the decisive eligibility evidence;
         # the durable record cites it alongside the provider claim.
@@ -436,8 +492,17 @@ def _series_membership_positions(
     return tuple(values)
 
 
-def _one_list_candidate(result: ProposalResult) -> ProposalAlternative | None:
-    values = tuple(value for value in result.alternatives if value.value.kind is ProposalValueKind.LIST)
+def _one_list_candidate(
+    result: ProposalResult,
+    alternatives: tuple[ProposalAlternative, ...] | None = None,
+) -> ProposalAlternative | None:
+    values = tuple(
+        value
+        for value in (
+            result.alternatives if alternatives is None else alternatives
+        )
+        if value.value.kind is ProposalValueKind.LIST
+    )
     return values[0] if len(values) == 1 else None
 
 

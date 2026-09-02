@@ -16,6 +16,7 @@ from mechanical_librarian.domain.metadata_report import (
     FieldState,
     LocalClaim,
     MetadataReport,
+    ProviderCandidate,
     ProviderClaim,
     ProviderEvidence,
     ProviderEvidenceKind,
@@ -53,24 +54,14 @@ from mechanical_librarian.domain.rich_metadata_preview import (
 from tests.support.proposal_evidence import (
     _claim,
     _fields,
+    _local_isbn,
     _local_subtitle,
     _provider,
     _report,
+    _target_work_candidate,
+    _target_work_report,
 )
 from tests.unit.test_bibliographic_bundles import _bibliographic_report, _source
-
-
-def _local_isbn(value, checksum):
-    return LocalClaim.create(
-        kind=ClaimKind.ISBN,
-        observed=value,
-        canonical=value,
-        excerpt=value,
-        applicability="ebook",
-        checksum=checksum,
-        applicability_basis="ebook",
-        scope=ClaimScope.EDITION,
-    )
 
 
 def _preview_field(report, field, option):
@@ -144,6 +135,275 @@ def _series_provider(name, candidate, authority, claims=None):
         candidate,
         _series_claims(name, candidate) if claims is None else claims,
         authority=authority,
+    )
+
+
+def _isbn_target_work_candidate(
+    *isbns: str, include_work_identity: bool = False
+) -> ProviderCandidate:
+    candidate = _target_work_candidate("catalogue", "edition-1", "work-1")
+    retained = tuple(
+        claim
+        for claim in candidate.claims
+        if claim.kind is not ClaimKind.ISBN
+        and (
+            include_work_identity
+            or claim.kind not in {ClaimKind.TITLE, ClaimKind.CREATOR}
+        )
+    )
+    return replace(
+        candidate,
+        claims=(
+            *retained,
+            *(
+                _claim(
+                    "catalogue",
+                    "edition-1",
+                    ClaimKind.ISBN,
+                    value,
+                    scope=ClaimScope.EDITION,
+                    order=len(retained) + index,
+                    applicability="ebook",
+                )
+                for index, value in enumerate(isbns)
+            ),
+        ),
+    )
+
+
+def _target_work_preview(report: MetadataReport):
+    options = dict(MetadataPolicyProfile.builtin().options)
+    options.update(
+        {
+            "description_fill": "safe_plain_text",
+            "genres": "fill_empty",
+            "series": "source_order",
+            "tags": "fill_empty",
+        }
+    )
+    destinations = dict(MetadataPolicyProfile.builtin().destinations)
+    destinations.update(
+        {
+            "description_fill": "automatic",
+            "genres": "automatic",
+            "series": "automatic",
+            "tags": "automatic",
+        }
+    )
+    policy = resolve_policy(
+        MetadataPolicyProfile.create(
+            "Target work applicability", options, destinations
+        ),
+        report.target.library,
+    )
+    proposal = evaluate_report(report, policy.resolved_id, destinations)
+    preview = compile_rich_metadata_preview(policy, report, proposal)
+    return proposal, {
+        field: next(value for value in preview.fields if value.field == field)
+        for field in ("description_fill", "series", "genres", "tags")
+    }
+
+
+def test_exact_multi_isbn_work_keeps_all_automatic_work_fields() -> None:
+    catalogue = _target_work_candidate("catalogue", "edition-1", "work-1")
+    search = _target_work_candidate("search", "edition-2", "work-1")
+    _, fields = _target_work_preview(
+        _target_work_report(
+            (
+                ("catalogue", "hardcover", (catalogue,), True),
+                ("search", "open_library", (search,), True),
+            )
+        )
+    )
+
+    assert {field: preview.outcome for field, preview in fields.items()} == {
+        "description_fill": "projected",
+        "series": "projected",
+        "genres": "projected",
+        "tags": "projected",
+    }
+
+
+def test_isbn_intersection_does_not_replace_missing_work_identity() -> None:
+    candidate = _isbn_target_work_candidate("9780306406157")
+
+    proposal, fields = _target_work_preview(
+        _target_work_report(
+            (("catalogue", "hardcover", (candidate,), True),),
+            target_authors=None,
+        )
+    )
+
+    tags = next(
+        result
+        for result in proposal.results
+        if result.destination is TargetDestination.TAGS
+    )
+    assert tags.alternatives
+    assert ("abstain", "target_work_applicability_unproved") == (
+        fields["tags"].outcome,
+        fields["tags"].reason,
+    )
+
+
+def test_unusable_retained_isbn_does_not_conflict_with_matching_edition() -> None:
+    candidate = _isbn_target_work_candidate("9780306406157", include_work_identity=True)
+    unusable = ProviderClaim.create(
+        provider="catalogue",
+        candidate="edition-1",
+        kind=ClaimKind.ISBN,
+        value=None,
+        state=FieldState.ABSENT,
+        scope=ClaimScope.EDITION,
+        applicability="ebook",
+        raw_order=len(candidate.claims),
+    )
+    candidate = replace(candidate, claims=(*candidate.claims, unusable))
+
+    _, fields = _target_work_preview(
+        _target_work_report(
+            (("catalogue", "hardcover", (candidate,), True),),
+        )
+    )
+
+    assert fields["tags"].outcome == "projected"
+
+
+@pytest.mark.parametrize(
+    "isbns",
+    (
+        ("9780140328721",),
+        ("9780306406157", "9780140328721"),
+    ),
+    ids=("different_family", "conflicting_families"),
+)
+def test_nonintersecting_or_conflicting_isbns_remain_manual(
+    isbns: tuple[str, ...],
+) -> None:
+    candidate = _isbn_target_work_candidate(*isbns, include_work_identity=True)
+
+    proposal, fields = _target_work_preview(
+        _target_work_report(
+            (("catalogue", "hardcover", (candidate,), True),),
+        )
+    )
+
+    tags = next(
+        result
+        for result in proposal.results
+        if result.destination is TargetDestination.TAGS
+    )
+    assert tags.alternatives
+    assert ("abstain", "target_work_applicability_unproved") == (
+        fields["tags"].outcome,
+        fields["tags"].reason,
+    )
+
+
+def test_only_tag_citations_exclude_retained_unproved_sources() -> None:
+    catalogue = _target_work_candidate("catalogue", "edition-1", "work-1")
+    search = _target_work_candidate("search", "edition-2", "work-1")
+    unproved = _target_work_candidate("unproved", "edition-3", "work-1")
+    _, fields = _target_work_preview(
+        _target_work_report(
+            (
+                ("catalogue", "hardcover", (catalogue,), True),
+                ("search", "open_library", (search,), True),
+                ("unproved", "google_books", (unproved,), False),
+            )
+        )
+    )
+
+    unproved_references = {claim.reference for claim in unproved.claims}
+    assert all(preview.outcome == "projected" for preview in fields.values())
+    assert all(
+        not (set(fields[field].source_evidence_references) & unproved_references)
+        for field in ("tags",)
+    )
+    assert all(
+        set(fields[field].source_evidence_references) & unproved_references
+        for field in ("description_fill", "series", "genres")
+    )
+
+
+@pytest.mark.parametrize(
+    ("candidates", "with_lane"),
+    (
+        ((_target_work_candidate("catalogue", "edition-1", "work-1"),), False),
+        (
+            (
+                _target_work_candidate("catalogue", "edition-1", "work-1"),
+                _target_work_candidate("catalogue", "edition-2", "work-2"),
+            ),
+            True,
+        ),
+        (
+            (
+                replace(
+                    _target_work_candidate("catalogue", "edition-1", "work-1"),
+                    claims=tuple(
+                        claim
+                        for claim in _target_work_candidate(
+                            "catalogue", "edition-1", "work-1"
+                        ).claims
+                        if claim.kind is not ClaimKind.CREATOR
+                    ),
+                ),
+            ),
+            True,
+        ),
+        (
+            (
+                replace(
+                    _target_work_candidate("catalogue", "edition-1", "work-1"),
+                    claims=(
+                        *_target_work_candidate(
+                            "catalogue", "edition-1", "work-1"
+                        ).claims,
+                        _claim(
+                            "catalogue",
+                            "edition-1",
+                            ClaimKind.TITLE,
+                            "Slough House Collection",
+                            scope=ClaimScope.WORK,
+                            order=6,
+                        ),
+                    ),
+                ),
+            ),
+            True,
+        ),
+    ),
+    ids=(
+        "no_lane",
+        "conflicting_work_identity",
+        "insufficient_work_evidence",
+        "enclosing_work",
+    ),
+)
+def test_unproved_work_only_blocks_automatic_tags(
+    candidates: tuple[ProviderCandidate, ...],
+    with_lane: bool,
+) -> None:
+    proposal, fields = _target_work_preview(
+        _target_work_report((("catalogue", "hardcover", candidates, with_lane),))
+    )
+
+    tags = next(
+        result
+        for result in proposal.results
+        if result.destination is TargetDestination.TAGS
+    )
+    assert tags.alternatives
+    assert fields["description_fill"].outcome == "projected"
+    assert fields["genres"].outcome == "projected"
+    assert fields["series"].reason != "target_work_applicability_unproved"
+    assert (
+        fields["tags"].outcome,
+        fields["tags"].reason,
+    ) == (
+        "abstain",
+        "target_work_applicability_unproved",
     )
 
 

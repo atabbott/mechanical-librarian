@@ -36,6 +36,17 @@ _PRIOR_F19A_QUALIFICATION_MANIFESTS = (
 )
 _PRIOR_F20_QUALIFICATION_MANIFESTS = (
     (
+        "99ba8426ee53e4d31e52ecf0f65a0fce4eb237d3e5acef42e4ee17217b57dae9",
+        frozenset({
+            "subtitle:fill_empty",
+            "series:primary_narrative", "series:source_order", "series:all_qualified",
+            "genres:fill_empty", "genres:add", "genres:replace",
+            "tags:fill_empty", "tags:add", "tags:replace",
+            "description_fill:safe_plain_text",
+            "isbn_form:preserve_exact", "isbn_form:prefer_isbn13",
+        }),
+    ),
+    (
         "770b56be2ce7ea9d1d809be189724e5f281a0dd8570af80d63429a5ab617ff99",
         F20_PASSING_AUTOMATIC_OPTIONS,
     ),
@@ -86,6 +97,20 @@ def _current_qualification_manifest_sha256(
 def qualification_manifest_sha256(policy_category: str, policy_option: str) -> str:
     """Return the current manifest used to create a new decision."""
     return _current_qualification_manifest_sha256(policy_category, policy_option)
+
+
+def qualification_manifest_is_current(
+    policy_category: str,
+    policy_option: str,
+    manifest_sha256: object,
+) -> bool:
+    """Return whether one persisted decision still carries effect authority."""
+    try:
+        return type(manifest_sha256) is str and manifest_sha256 == (
+            _current_qualification_manifest_sha256(policy_category, policy_option)
+        )
+    except AutomaticDecisionError:
+        return False
 
 
 def _qualification_manifest_is_valid(

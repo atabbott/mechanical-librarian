@@ -249,6 +249,148 @@ def _report(
     )
 
 
+def _target_work_candidate(
+    provider: str,
+    identity: str,
+    work_identity: str,
+) -> ProviderCandidate:
+    return ProviderCandidate(
+        identity,
+        work_identity,
+        (
+            _claim(
+                provider,
+                identity,
+                ClaimKind.TITLE,
+                "Real Tigers",
+                scope=ClaimScope.WORK,
+            ),
+            _claim(
+                provider,
+                identity,
+                ClaimKind.CREATOR,
+                "Mick Herron",
+                scope=ClaimScope.WORK,
+                role="author",
+            ),
+            _claim(
+                provider,
+                identity,
+                ClaimKind.ISBN,
+                "9780306406157",
+                scope=ClaimScope.EDITION,
+                applicability="ebook",
+            ),
+            _claim(
+                provider,
+                identity,
+                ClaimKind.DESCRIPTION,
+                "A qualified description.",
+                scope=ClaimScope.WORK,
+                order=1,
+            ),
+            _claim(
+                provider,
+                identity,
+                ClaimKind.GENRE,
+                "Mystery",
+                scope=ClaimScope.WORK,
+                order=2,
+            ),
+            _claim(
+                provider,
+                identity,
+                ClaimKind.TAG,
+                "Espionage",
+                scope=ClaimScope.WORK,
+                order=3,
+            ),
+            _claim(
+                provider,
+                identity,
+                ClaimKind.SERIES,
+                "Slough House",
+                scope=ClaimScope.WORK,
+                order=4,
+            ),
+            _claim(
+                provider,
+                identity,
+                ClaimKind.SERIES_SEQUENCE,
+                "3",
+                scope=ClaimScope.WORK,
+                order=5,
+            ),
+        ),
+    )
+
+
+def _local_isbn(value, checksum):
+    return LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed=value,
+        canonical=value,
+        excerpt=value,
+        applicability="ebook",
+        checksum=checksum,
+        applicability_basis="ebook",
+        scope=ClaimScope.EDITION,
+    )
+
+
+def _target_work_report(
+    candidates_by_provider: tuple[
+        tuple[str, str, tuple[ProviderCandidate, ...], bool], ...
+    ],
+    *,
+    target_authors: tuple[str, ...] | None = ("Mick Herron",),
+) -> MetadataReport:
+    fields = _fields(
+        "Real Tigers",
+        authors=TargetField(TargetDestination.AUTHORS, TargetFieldState.MISSING)
+        if target_authors is None
+        else TargetField(
+            TargetDestination.AUTHORS, TargetFieldState.VALUE, target_authors
+        ),
+        description=TargetField(
+            TargetDestination.DESCRIPTION,
+            TargetFieldState.MISSING,
+        ),
+        series=TargetField(TargetDestination.SERIES, TargetFieldState.MISSING),
+        genres=TargetField(TargetDestination.GENRES, TargetFieldState.MISSING),
+        tags=TargetField(TargetDestination.TAGS, TargetFieldState.MISSING),
+    )
+    local_isbns = (
+        _local_isbn("0306406152", "valid_isbn_10"),
+        _local_isbn("9780306406157", "valid_isbn_13"),
+    )
+    lane = metadata_discovery_plan(
+        TargetSnapshot("ebook", "Real Tigers", (), fields=fields),
+        local_isbns,
+    ).lanes[0]
+    providers = tuple(
+        provider_observation(
+            provider,
+            (ProviderLaneResult(lane, ProviderStatus.CANDIDATES, candidates),),
+            authority=authority,
+        )
+        if with_lane
+        else ProviderObservation(
+            provider,
+            ProviderStatus.CANDIDATES,
+            candidates=candidates,
+            authority=authority,
+        )
+        for provider, authority, candidates, with_lane in candidates_by_provider
+    )
+    return _report(
+        title="Real Tigers",
+        fields=fields,
+        local_claims=local_isbns,
+        providers=providers,
+    )
+
+
 def _local_subtitle(value: str, scope: ClaimScope) -> LocalClaim:
     return LocalClaim.create(
         kind=ClaimKind.SUBTITLE,

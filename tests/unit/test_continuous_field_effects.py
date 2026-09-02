@@ -816,10 +816,14 @@ def _prior_f20_decision() -> AutomaticDecision:
     )
 
 
-def test_schedule_and_activity_accept_a_prior_persisted_f20_decision() -> None:
+def test_schedule_skips_prior_f20_before_no_change_authority_or_capability() -> None:
     decision = _prior_f20_decision()
+    assert AutomaticDecision.from_json(decision.to_json()) == decision
 
     class Repository(_PagedRepository):
+        def record_current_field_effect_no_change(self, *_arguments):
+            raise AssertionError("prior decision reached no-change persistence")
+
         def pending_field_effect_decision_counts(self):
             return (
                 {
@@ -841,21 +845,39 @@ def test_schedule_and_activity_accept_a_prior_persisted_f20_decision() -> None:
                 "suspensions": [],
             }
 
+    class CountingAuthority(_Authority):
+        calls = 0
+
+        def resolve(self, selected):
+            self.calls += 1
+            return super().resolve(selected)
+
+    class CountingCapability(_AllowedCapability):
+        calls = 0
+
+        def observe(self, probe):
+            self.calls += 1
+            return super().observe(probe)
+
     repository = Repository([decision])
+    authority = CountingAuthority()
+    capability = CountingCapability()
     service = ContinuousGuardedApplication(
         repository,
         cast(
             "dict[tuple[str, str], GuardedFieldApplication]",
             {("primary", "alpha"): _Planner()},
         ),
-        {("primary", "alpha"): _AllowedCapability()},
-        _Authority(),
+        {("primary", "alpha"): capability},
+        authority,
         (("primary", "alpha"),),
         lambda: 1,
         lambda *_: None,
     )
 
     assert 0 == service.schedule()
+    assert authority.calls == 0
+    assert capability.calls == 0
     activity = service.activity()
     assert "continuous-field-activity-v2" == activity["schema_version"]
     assert 1 == activity["prepared"]["automatic"]

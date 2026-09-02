@@ -1860,3 +1860,184 @@ def test_independent_corroboration_can_propose_a_populated_replacement() -> None
     )
     assert ProposalOutcome.PROPOSE_CHANGE == result.outcome
     assert 2 == len(result.alternatives[0].correlations)
+
+
+def _rich_work_candidate(
+    identity: str = "catalogue-edition",
+    work_identity: str = "catalogue-work",
+) -> ProviderCandidate:
+    return ProviderCandidate(
+        identity,
+        work_identity,
+        (
+            _claim(
+                "catalogue",
+                identity,
+                ClaimKind.TITLE,
+                "Real Tigers",
+                scope=ClaimScope.WORK,
+            ),
+            _claim(
+                "catalogue",
+                identity,
+                ClaimKind.CREATOR,
+                "Mick Herron",
+                scope=ClaimScope.WORK,
+                role="author",
+                order=1,
+            ),
+            _claim(
+                "catalogue",
+                identity,
+                ClaimKind.DESCRIPTION,
+                "A qualified description.",
+                scope=ClaimScope.WORK,
+                order=2,
+            ),
+            _claim(
+                "catalogue",
+                identity,
+                ClaimKind.GENRE,
+                "Mystery",
+                scope=ClaimScope.WORK,
+                order=3,
+            ),
+            _claim(
+                "catalogue",
+                identity,
+                ClaimKind.TAG,
+                "Espionage",
+                scope=ClaimScope.WORK,
+                order=4,
+            ),
+            _claim(
+                "catalogue",
+                identity,
+                ClaimKind.SERIES,
+                "Slough House",
+                scope=ClaimScope.WORK,
+                order=5,
+            ),
+            _claim(
+                "catalogue",
+                identity,
+                ClaimKind.SERIES_SEQUENCE,
+                "3",
+                scope=ClaimScope.WORK,
+                order=6,
+            ),
+        ),
+    )
+
+
+def _rich_work_report(candidates: tuple[ProviderCandidate, ...]) -> MetadataReport:
+    fields = _fields(
+        "Real Tigers",
+        authors=TargetField(
+            TargetDestination.AUTHORS, TargetFieldState.VALUE, ("Mick Herron",)
+        ),
+        description=TargetField(
+            TargetDestination.DESCRIPTION, TargetFieldState.MISSING
+        ),
+        series=TargetField(TargetDestination.SERIES, TargetFieldState.MISSING),
+        genres=TargetField(TargetDestination.GENRES, TargetFieldState.MISSING),
+        tags=TargetField(TargetDestination.TAGS, TargetFieldState.MISSING),
+    )
+    isbn_13 = _publication_local_isbn()
+    isbn_10 = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="0306406152",
+        canonical="0306406152",
+        excerpt="0306406152",
+        applicability="unknown",
+        checksum="valid_isbn_10",
+        applicability_basis="unlabelled",
+        scope=ClaimScope.EDITION,
+    )
+    lane = metadata_discovery_plan(
+        TargetSnapshot("ebook", "Real Tigers", ("Mick Herron",), fields=fields),
+        (isbn_13, isbn_10),
+    ).lanes[0]
+    source = provider_observation(
+        "catalogue",
+        (ProviderLaneResult(lane, ProviderStatus.CANDIDATES, candidates),),
+        authority="hardcover",
+    )
+    return _report(
+        title="Real Tigers",
+        fields=fields,
+        local_claims=(isbn_13, isbn_10),
+        providers=(source,),
+    )
+
+
+def test_multi_isbn_lookup_projects_rich_fields_only_after_exact_work_proof() -> None:
+    proposal = evaluate_report(_rich_work_report((_rich_work_candidate(),)))
+    for destination in (
+        TargetDestination.DESCRIPTION,
+        TargetDestination.SERIES,
+        TargetDestination.GENRES,
+        TargetDestination.TAGS,
+    ):
+        assert _result(proposal, destination).alternatives
+
+
+@pytest.mark.parametrize(
+    "candidates",
+    (
+        (
+            replace(
+                _rich_work_candidate(),
+                claims=(
+                    *_rich_work_candidate().claims,
+                    _claim(
+                        "catalogue",
+                        "catalogue-edition",
+                        ClaimKind.TITLE,
+                        "Component work",
+                        scope=ClaimScope.WORK,
+                        order=7,
+                    ),
+                    _claim(
+                        "catalogue",
+                        "catalogue-edition",
+                        ClaimKind.ISBN,
+                        "9780131103627",
+                        scope=ClaimScope.EDITION,
+                        order=8,
+                    ),
+                ),
+            ),
+        ),
+        (
+            _rich_work_candidate(),
+            _rich_work_candidate("other-edition", "other-work"),
+        ),
+        (
+            replace(
+                _rich_work_candidate(),
+                claims=tuple(
+                    claim
+                    for claim in _rich_work_candidate().claims
+                    if claim.kind is not ClaimKind.CREATOR
+                ),
+            ),
+        ),
+    ),
+    ids=(
+        "enclosing_multi_work_with_component_identifier",
+        "conflicting_work_identity",
+        "insufficient_work_evidence",
+    ),
+)
+def test_unproven_isbn_work_identity_remains_retained_for_owner_review(
+    candidates: tuple[ProviderCandidate, ...],
+) -> None:
+    proposal = evaluate_report(_rich_work_report(candidates))
+    for destination in (
+        TargetDestination.DESCRIPTION,
+        TargetDestination.SERIES,
+        TargetDestination.GENRES,
+        TargetDestination.TAGS,
+    ):
+        assert _result(proposal, destination).alternatives

@@ -67,6 +67,7 @@ from mechanical_librarian.domain.activity_records import activity_search_text
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
     AutomaticDecisionError,
+    qualification_manifest_is_current,
 )
 from mechanical_librarian.domain.cover_automatic_decision import (
     CoverAutomaticDecision,
@@ -619,6 +620,23 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         ).fetchone()
         if cover_history is not None and cover_selection != (authority.decision_id,):
             return False
+        if cover_history is None:
+            automatic_row = self._connection.execute(
+                "SELECT document FROM automatic_decisions WHERE decision_id=?",
+                (authority.decision_id,),
+            ).fetchone()
+            if automatic_row is None:
+                return False
+            try:
+                decision = AutomaticDecision.from_json(automatic_row[0])
+            except AutomaticDecisionError:
+                return False
+            if not qualification_manifest_is_current(
+                decision.policy_category,
+                decision.policy_option,
+                authority.qualification_identity,
+            ):
+                return False
         lineage = self._connection.execute(
             "SELECT library_name FROM current_review_case_lineages "
             "WHERE review_case_id=?",
@@ -2670,6 +2688,14 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         or safety[0] != 0
                         or safety[1] is not None
                         or automatic["policy_category"] in suspended
+                        or (
+                            persisted.plan.destination != "cover"
+                            and not qualification_manifest_is_current(
+                                automatic["policy_category"],
+                                automatic["policy_option"],
+                                automatic["qualification_manifest_sha256"],
+                            )
+                        )
                     ):
                         raise FieldEffectError("authority")
             operation = persisted.transition(
