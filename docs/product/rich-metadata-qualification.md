@@ -137,7 +137,8 @@ different evidence mode.
 F20 v6 separately qualifies the two ISBN-form options under the current
 deterministic identity rule. Its final development result and archived replay
 show 100% precision across the supported empty-field states, while the sealed
-holdout is carried forward by exact election-and-preview equivalence. The goal
+holdout is carried forward by a continuity receipt for the unresolved-work
+identity guard. The goal
 is useful work metadata; manifestation identity is the evidence that binds it.
 A useful published-work ISBN carried by a proof remains eligible only through
 that bound identity evidence; proof status alone neither elects nor disqualifies it.
