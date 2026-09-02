@@ -1124,9 +1124,8 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     page.set_viewport_size({"width": width, "height": height})
                     page_number = page.get_by_label("Activity page number")
                     page_url = page.url
-                    page_number.focus()
                     page_number.fill("2")
-                    page.keyboard.press("Escape")
+                    page_number.press("Escape")
                     assert "1" == page_number.input_value()
                     assert page_url == page.url
                     expect(page_number).to_be_focused()
@@ -1138,9 +1137,8 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     expect(date_range).to_be_focused()
                     page_number = page.get_by_label("Activity page number")
                     page_url = page.url
-                    page_number.focus()
                     page_number.fill("2")
-                    page.keyboard.press("Escape")
+                    page_number.press("Escape")
                     assert "1" == page_number.input_value()
                     assert page_url == page.url
                     expect(page_number).to_be_focused()
@@ -1682,23 +1680,25 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
 
         def attention_rail_clears_masthead() -> None:
             # Visibility does not wait for the fixed rail's `top` calculation.
-            # Measure only after the masthead-to-rail clearance reaches its
-            # accepted layout state.
-            page.wait_for_function(
+            # Take both measurements in one browser-side layout snapshot after
+            # the masthead-to-rail clearance reaches its accepted layout state.
+            snapshot = page.wait_for_function(
                 """() => {
                   const masthead = document.querySelector('.masthead')
                   const rail = document.querySelector('.attention-rail')
-                  return masthead !== null && rail !== null
-                    && rail.getBoundingClientRect().y >= masthead.getBoundingClientRect().bottom + 8
+                  if (masthead === null || rail === null) return false
+                  const mastheadBottom = masthead.getBoundingClientRect().bottom
+                  const railY = rail.getBoundingClientRect().y
+                  return railY >= mastheadBottom + 8 ? [railY, mastheadBottom] : false
                 }"""
-            )
+            ).json_value()
+            assert type(snapshot) is list and len(snapshot) == 2
+            rail_y, masthead_bottom = snapshot
+            assert type(rail_y) in {int, float}
+            assert type(masthead_bottom) in {int, float}
+            assert rail_y >= masthead_bottom + 8
 
         attention_rail_clears_masthead()
-        assert page.locator(".attention-rail").bounding_box()["y"] >= (
-            page.locator(".masthead").bounding_box()["y"]
-            + page.locator(".masthead").bounding_box()["height"]
-            + 8
-        )
         capture_visual_proof("library-attention-rail")
         page.set_viewport_size({"width": 900, "height": 900})
         expect(page.locator(".attention-rail")).to_be_visible()
@@ -1744,11 +1744,6 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         expect(page.locator(".attention-rail")).to_be_visible()
         expect(page.locator(".attention-rail")).to_be_focused()
         attention_rail_clears_masthead()
-        assert page.locator(".attention-rail").bounding_box()["y"] >= (
-            page.locator(".masthead").bounding_box()["y"]
-            + page.locator(".masthead").bounding_box()["height"]
-            + 8
-        )
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 760
 
         stage[0] = "library:viewport:390"
