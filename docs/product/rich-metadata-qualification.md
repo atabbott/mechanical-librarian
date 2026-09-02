@@ -135,11 +135,12 @@ metrics remain authoritative and unchanged rather than being dequalified by a
 different evidence mode.
 
 F20 v6 separately qualifies the two ISBN-form options under the current
-deterministic identity rule. Its aggregate development and holdout receipts show
-100% precision across the supported empty-field states, while the archived replay
-retains alternatives and abstains outside the qualified boundary. A useful
-published-work ISBN carried by a proof remains eligible only through the same
-bound identity evidence; proof status alone neither elects nor disqualifies it.
+deterministic identity rule. Its final development result and archived replay
+show 100% precision across the supported empty-field states, while the sealed
+holdout is carried forward by exact election-and-preview equivalence. The goal
+is useful work metadata; manifestation identity is the evidence that binds it.
+A useful published-work ISBN carried by a proof remains eligible only through
+that bound identity evidence; proof status alone neither elects nor disqualifies it.
 
 The machine-readable candidate is
 [`f20-rich-metadata-qualification-candidate-v6.json`](../reference/f20-rich-metadata-qualification-candidate-v6.json).

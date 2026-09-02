@@ -84,11 +84,12 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     assert ["narrators", "cover"] == manifest["excluded_destinations"]
     assert 14 == manifest["candidate_execution_count"]
     assert {
-        "aggregate_receipt_sha256": "42d3d26461552ffa055321028927845e3fbc580101d8bb24414bb84b07cda080",
-        "archived_replay_result_sha256": "ae1dbb6527c9b30172508562cc27bc57830d6ba65ac6118f78595cd613d71d25",
-        "development_result_sha256": "2f1214c193b5ddedbef4554b6c04930338de384b8774c1146f93b16a6c359f08",
+        "archived_replay_result_sha256": "7a360a3fcdc0c1e51a1b98327fd3669903ae64d120e120026f37d3178eb97de7",
+        "development_result_sha256": "eea9478c1f95f6ffe7d8668ea1f48e2177964990e5c5215ee2780fd6419ee1d0",
+        "final_head_equivalence_receipt_sha256": "5b9b1764e42bc2fce28f62aeee527d8448cf8414e97b6e841023be40e4543f60",
         "holdout_result_sha256": "325e81e236630c12cac77bd01440e725b46b1f1fcf8cac5434daf1dd48b85241",
         "prior_manifest_sha256": "9c1410dcc6d221478a2b96afdc51da19fd8a54f82d7023034a3063afdedefc37",
+        "prior_aggregate_receipt_sha256": "42d3d26461552ffa055321028927845e3fbc580101d8bb24414bb84b07cda080",
     } == manifest["authority_rotation"]
     assert {
         "applicability_confirmation": {
@@ -195,7 +196,7 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
             "automatic_precision": 1.0,
             "automatic_predictions": 42,
             "distinct_automatic_cases_per_option": 14,
-            "result_sha256": "2f1214c193b5ddedbef4554b6c04930338de384b8774c1146f93b16a6c359f08",
+            "result_sha256": "eea9478c1f95f6ffe7d8668ea1f48e2177964990e5c5215ee2780fd6419ee1d0",
             "target_states": ["missing", "null", "empty"],
             "zero_failures": True,
         },
@@ -210,10 +211,15 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
         "archived_replay": {
             "abstentions": 85,
             "decisions": 22,
-            "result_sha256": "ae1dbb6527c9b30172508562cc27bc57830d6ba65ac6118f78595cd613d71d25",
+            "result_sha256": "7a360a3fcdc0c1e51a1b98327fd3669903ae64d120e120026f37d3178eb97de7",
             "retained_alternatives": True,
             "scenarios": 107,
             "zero_forbidden_outcomes": True,
+        },
+        "final_head_equivalence": {
+            "receipt_sha256": "5b9b1764e42bc2fce28f62aeee527d8448cf8414e97b6e841023be40e4543f60",
+            "scope": "isbn_election_and_preview",
+            "spent_holdout_result_sha256": "325e81e236630c12cac77bd01440e725b46b1f1fcf8cac5434daf1dd48b85241",
         },
     } == manifest["evidence_method"]["isbn_manifestation_election"]
 

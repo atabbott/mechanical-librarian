@@ -35,7 +35,7 @@ LONG_DESCRIPTION = (
     "so a wrap that is allowed to happen has somewhere to happen."
 )
 _F20_CANDIDATE_SHA256 = (
-    "1659136f7bdca7e557c87aaaec9c1aaa93beb74936633d5781352a8f3b604e9c"
+    "42a057407a736bfd86f115ae03879f4909fe1217f34ec552c170db1c74af7a8a"
 )
 _COVER_CANDIDATE_SHA256 = (
     "b91ae72a8c4e55c9bfe1d514c28210e22427b57a03082d2b5d1ae0b40df7c457"
