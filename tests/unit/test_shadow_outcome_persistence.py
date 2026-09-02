@@ -128,6 +128,7 @@ from mechanical_librarian.interfaces.web.app import (
 from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.proposal_evidence import (
     _claim,
+    _exact_edition_cover,
     _fields,
     _local_creator,
     _local_subtitle,
@@ -1204,6 +1205,9 @@ def test_year_current_reaches_one_durable_publication_keep_and_read_models() -> 
         assert 1 == len(publication)
         assert "2001" == publication[0]["current"]["value"]
         assert not publication[0]["needs_attention"]
+        isbn = [value for value in detail["fields"] if value["destination"] == "isbn"]
+        assert 1 == len(isbn)
+        assert not isbn[0]["needs_attention"]
         assert not [
             value
             for value in detail["fields"]
@@ -1550,6 +1554,7 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
         ),
         local_claims=(isbn10,),
         providers=(isbn_family_provider,),
+        covers=(_exact_edition_cover(),),
     )
     series_claims = (
         _claim(

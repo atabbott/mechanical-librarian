@@ -35,6 +35,12 @@ equivalent local form through provider consensus. Existing pre-release proposal,
 review, decision, and downstream field-effect state is not rewritten or adopted;
 rebuild the application database.
 
+#897 advances the exact proposal policy from `fixed-conservative-v17` to
+`fixed-conservative-v18` because an empty provider ISBN needs deterministic
+identity evidence with a bound work identity before election. Existing pre-release
+proposal, review, decision, and downstream field-effect state is not rewritten
+or adopted; rebuild the application database.
+
 `metadata-report-v31` in particular cannot carry an audiobook's provider
 evidence: it refuses a provider observation on an audio report outright, and
 has no ASIN query lane, marketplace provenance, chapter-structure evidence, or
@@ -54,7 +60,7 @@ exact retained #744 test schema, an existing complete owner-only clone, an
 independent backup path, and an absent output path under the same private
 directory. The command name remains the frozen authority identifier from its
 original plan; its fresh output is always the exact current schema,
-`metadata-report-v35` with `fixed-conservative-v15`. It leaves the source
+`metadata-report-v35` with `fixed-conservative-v18`. It leaves the source
 untouched, verifies the backup, rebuilds a fresh exact-current report database
 through current derivation, and
 invalidates observations that lack current work-dispatch provenance plus all

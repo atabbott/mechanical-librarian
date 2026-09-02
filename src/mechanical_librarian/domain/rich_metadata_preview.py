@@ -25,7 +25,8 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.proposal_set import (
     BibliographicSelectionKind, ProposalAlternative, ProposalAssessment,
     ProposalOutcome, ProposalResult, ProposalScope, ProposalSet,
-    ProposalValueKind, provider_candidate_represents_target_work,
+    ProposalValueKind, VERIFIED_MANIFESTATION_ISBN_REASON,
+    provider_candidate_represents_target_work,
 )
 
 
@@ -322,6 +323,26 @@ def _candidate(result: ProposalResult) -> ProposalAlternative | None:
         and result.alternatives[0].assessment is not ProposalAssessment.PRESERVES_TARGET
     ):
         return result.alternatives[0]
+    return None
+
+
+def _selected_verified_manifestation_isbn_candidate(
+    result: ProposalResult,
+) -> ProposalAlternative | None:
+    """Return the explicitly elected ISBN while retaining competing offers."""
+    if (
+        result.outcome is not ProposalOutcome.PROPOSE_CHANGE
+        or result.reasons != (VERIFIED_MANIFESTATION_ISBN_REASON,)
+        or result.selected_alternative_id is None
+    ):
+        return None
+    for alternative in result.alternatives:
+        if (
+            alternative.alternative_id == result.selected_alternative_id
+            and alternative.value.kind is ProposalValueKind.TEXT
+            and alternative.assessment is not ProposalAssessment.PRESERVES_TARGET
+        ):
+            return alternative
     return None
 
 
@@ -634,10 +655,20 @@ def _isbn(
     result: ProposalResult,
     report: MetadataReport,
 ) -> RichFieldPreview:
-    alternatives = _typed_alternatives(result, ProposalValueKind.TEXT)
-    candidate, reason = _one_typed_candidate(result, ProposalValueKind.TEXT)
+    if (
+        target.state in _EMPTY
+        and result.reasons != (VERIFIED_MANIFESTATION_ISBN_REASON,)
+    ):
+        return _abstain(
+            field,
+            option,
+            target,
+            _data_value(target.value),
+            "manifestation_verification_required",
+        )
+    candidate = _selected_verified_manifestation_isbn_candidate(result)
     if candidate is None:
-        return _abstain(field, option, target, _data_value(target.value), reason or "no_candidate")
+        return _abstain(field, option, target, _data_value(target.value), "no_candidate")
     if option not in {"preserve_exact", "prefer_isbn13"}:
         return _abstain(field, option, target, _data_value(target.value), "policy_option_unavailable")
     value = select_isbn_representation(report, candidate, option)
@@ -645,7 +676,7 @@ def _isbn(
         return _abstain(field, option, target, _data_value(target.value), "option_evidence_unavailable")
     return RichFieldPreview(
         field, option, target.state.value, _data_value(target.value),
-        "projected", value, None, False, None,
+        "projected", value, VERIFIED_MANIFESTATION_ISBN_REASON, False, None,
         candidate.alternative_id, candidate.evidence_references,
     )
 
@@ -670,12 +701,13 @@ def select_isbn_representation(
         return None
     values: list[tuple[str, bool]] = []
     for reference in candidate.evidence_references:
+        if reference not in accepted:
+            continue
         retained = retained_claims.get(reference)
         claim = None if retained is None else retained.claim
         value = getattr(claim, "value", getattr(claim, "canonical", None))
         if (
-            reference not in accepted
-            or claim is None
+            claim is None
             or claim.kind is not ClaimKind.ISBN
             or type(value) is not str
             or getattr(claim, "applicability", None) not in {"ebook", "unknown"}

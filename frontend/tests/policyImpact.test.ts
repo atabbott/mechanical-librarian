@@ -34,6 +34,21 @@ describe('policy impact projections', () => {
     })
     expect(
       policyImpactDisplay({
+        current_value: null,
+        desired_value: '9780306406157',
+        field: 'isbn_form',
+        outcome: 'projected',
+        reason: 'verified_manifestation_isbn',
+        target_state: 'missing',
+      }),
+    ).toMatchObject({
+      changed: true,
+      title: 'Change',
+      detail:
+        'fills the empty field with 9780306406157 because deterministic identity evidence binds it to this file’s work',
+    })
+    expect(
+      policyImpactDisplay({
         current_value: 'Old subtitle',
         desired_value: null,
         field: 'subtitle',

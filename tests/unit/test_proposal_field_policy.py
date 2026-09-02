@@ -45,8 +45,10 @@ from mechanical_librarian.domain.proposal_set import (
 )
 from tests.support.proposal_evidence import (
     _claim,
+    _exact_edition_cover,
     _explicit_local_ebook_isbn,
     _fields,
+    _local_isbn,
     _local_subtitle,
     _provider,
     _report,
@@ -1096,8 +1098,8 @@ def test_identifier_and_explicit_rules_do_not_manufacture_evidence() -> None:
     proposal_set = evaluate_report(report)
     isbn_result = _result(proposal_set, TargetDestination.ISBN)
     assert ProposalOutcome.DEFER == isbn_result.outcome
-    assert () == isbn_result.alternatives
-    assert "identifier_applicability_unresolved" in isbn_result.reasons
+    assert not isbn_result.alternatives
+    assert ("identifier_applicability_unresolved",) == isbn_result.reasons
     assert (
         ProposalOutcome.DEFER
         == _result(proposal_set, TargetDestination.EXPLICIT).outcome
@@ -1205,7 +1207,7 @@ def test_isbn_lineage_does_not_override_populated_target_preservation() -> None:
     assert ("no_positive_preservation_evidence",) == result.reasons
 
 
-def test_explicit_local_ebook_isbn_remains_eligible() -> None:
+def test_local_only_isbn_remains_owner_visible_without_election() -> None:
     isbn = LocalClaim.create(
         kind=ClaimKind.ISBN,
         observed="0306406152",
@@ -1230,12 +1232,23 @@ def test_explicit_local_ebook_isbn_remains_eligible() -> None:
         ),
         TargetDestination.ISBN,
     )
-    assert ProposalOutcome.PROPOSE_CHANGE == result.outcome
+    assert ProposalOutcome.UNRESOLVED_CHOICE == result.outcome
+    assert ("manifestation_verification_required",) == result.reasons
     assert "0306406152" == result.alternatives[0].value.value
 
 
-def test_isbn_family_observations_form_one_empty_target_alternative() -> None:
-    local = _explicit_local_ebook_isbn()
+def test_not_for_sale_prepublication_proof_keeps_exact_work_isbn_electable() -> None:
+    proof_package_isbn = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780306406157",
+        canonical="9780306406157",
+        excerpt="9780306406157",
+        applicability="ebook",
+        checksum="valid_isbn_13",
+        applicability_basis="ebook",
+        scope=ClaimScope.EDITION,
+        basis="package_metadata",
+    )
     provider = _provider(
         "catalogue",
         "edition-1",
@@ -1268,14 +1281,317 @@ def test_isbn_family_observations_form_one_empty_target_alternative() -> None:
                         TargetFieldState.MISSING,
                     ),
                 ),
-                local_claims=(local,),
+                local_claims=(proof_package_isbn,),
                 providers=(provider,),
+                covers=(_exact_edition_cover(),),
             )
         ),
         TargetDestination.ISBN,
     )
     assert ProposalOutcome.PROPOSE_CHANGE == result.outcome
+    assert ("verified_manifestation_isbn",) == result.reasons
+    assert "package_metadata" == proof_package_isbn.basis
     assert 1 == len(result.alternatives)
     assert "9780306406157" == result.alternatives[0].value.value
     assert ProposalAssessment.FILLS_EMPTY == result.alternatives[0].assessment
     assert 3 == len(result.alternatives[0].evidence_references)
+
+
+def test_empty_isbn_rejects_an_unresolved_provider_work_identity() -> None:
+    local = _local_isbn("0306406152", "valid_isbn_10")
+    provider = _provider(
+        "catalogue",
+        "edition-1",
+        (
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.ISBN,
+                "9780306406157",
+                scope=ClaimScope.EDITION,
+                applicability="ebook",
+            ),
+        ),
+    )
+    unbound_provider = replace(
+        provider,
+        candidates=(replace(provider.candidates[0], work_identity="unresolved"),),
+    )
+    result = _result(
+        evaluate_report(
+            _report(
+                fields=_fields(
+                    isbn=TargetField(TargetDestination.ISBN, TargetFieldState.MISSING)
+                ),
+                local_claims=(local,),
+                providers=(unbound_provider,),
+                covers=(_exact_edition_cover(work_identity="unresolved"),),
+            )
+        ),
+        TargetDestination.ISBN,
+    )
+
+    assert ProposalOutcome.UNRESOLVED_CHOICE == result.outcome
+    assert ("manifestation_verification_required",) == result.reasons
+    assert 1 == len(result.alternatives)
+
+
+def test_empty_isbn_requires_an_exact_retrieved_provider_cover() -> None:
+    accepted = _explicit_local_ebook_isbn()
+    provider = _provider(
+        "catalogue",
+        "edition-1",
+        (
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.ISBN,
+                "9780306406157",
+                scope=ClaimScope.EDITION,
+                applicability="ebook",
+            ),
+        ),
+    )
+    result = _result(
+        evaluate_report(
+            _report(
+                fields=_fields(
+                    isbn=TargetField(TargetDestination.ISBN, TargetFieldState.MISSING)
+                ),
+                local_claims=(accepted,),
+                providers=(provider,),
+            )
+        ),
+        TargetDestination.ISBN,
+    )
+
+    assert ProposalOutcome.UNRESOLVED_CHOICE == result.outcome
+    assert ("manifestation_verification_required",) == result.reasons
+
+
+def test_empty_isbn_rejects_associated_only_provider_identifier() -> None:
+    accepted = _explicit_local_ebook_isbn()
+    provider = _provider(
+        "catalogue",
+        "edition-1",
+        (
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.ISBN,
+                "9780306406157",
+                scope=ClaimScope.EDITION,
+                applicability="unknown",
+            ),
+        ),
+    )
+    report = _report(
+        fields=_fields(
+            isbn=TargetField(TargetDestination.ISBN, TargetFieldState.MISSING)
+        ),
+        local_claims=(accepted,),
+        providers=(provider,),
+        covers=(_exact_edition_cover(),),
+    )
+    result = _result(evaluate_report(report), TargetDestination.ISBN)
+
+    assert {IdentifierRelation.ASSOCIATED} == {
+        evidence.relation
+        for evidence in report.identifier_evidence
+        if evidence.provider == "catalogue"
+    }
+    assert ProposalOutcome.UNRESOLVED_CHOICE == result.outcome
+    assert ("manifestation_verification_required",) == result.reasons
+
+
+@pytest.mark.parametrize(
+    ("provider_name", "candidate", "work_identity"),
+    (
+        ("other", "edition-1", "catalogue-work"),
+        ("catalogue", "edition-2", "catalogue-work"),
+        ("catalogue", "edition-1", "other-work"),
+    ),
+)
+def test_empty_isbn_requires_cover_provenance_bound_to_its_provider_candidate_work(
+    provider_name: str,
+    candidate: str,
+    work_identity: str,
+) -> None:
+    accepted = _explicit_local_ebook_isbn()
+    provider = _provider(
+        "catalogue",
+        "edition-1",
+        (
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.ISBN,
+                "9780306406157",
+                scope=ClaimScope.EDITION,
+                applicability="ebook",
+            ),
+        ),
+    )
+    result = _result(
+        evaluate_report(
+            _report(
+                fields=_fields(
+                    isbn=TargetField(TargetDestination.ISBN, TargetFieldState.MISSING)
+                ),
+                local_claims=(accepted,),
+                providers=(provider,),
+                covers=(_exact_edition_cover(provider_name, candidate, work_identity),),
+            )
+        ),
+        TargetDestination.ISBN,
+    )
+
+    assert ProposalOutcome.UNRESOLVED_CHOICE == result.outcome
+    assert ("manifestation_verification_required",) == result.reasons
+
+
+def test_empty_isbn_rejects_publication_incompatible_exact_cover() -> None:
+    accepted = _explicit_local_ebook_isbn()
+    provider = _provider(
+        "catalogue",
+        "edition-1",
+        (
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.ISBN,
+                "9780306406157",
+                scope=ClaimScope.EDITION,
+                applicability="ebook",
+            ),
+        ),
+        evidence=(
+            ProviderEvidence(
+                ProviderEvidenceKind.PHYSICAL_FORMAT,
+                "hardcover",
+                ClaimScope.EDITION,
+            ),
+        ),
+    )
+    result = _result(
+        evaluate_report(
+            _report(
+                fields=_fields(
+                    isbn=TargetField(TargetDestination.ISBN, TargetFieldState.MISSING)
+                ),
+                local_claims=(accepted,),
+                providers=(provider,),
+                covers=(_exact_edition_cover(),),
+            )
+        ),
+        TargetDestination.ISBN,
+    )
+
+    assert ProposalOutcome.UNRESOLVED_CHOICE == result.outcome
+    assert ("manifestation_verification_required",) == result.reasons
+
+
+@pytest.mark.parametrize(
+    "state",
+    (TargetFieldState.MISSING, TargetFieldState.NULL, TargetFieldState.EMPTY),
+)
+def test_empty_isbn_elects_only_the_family_with_its_own_accepted_anchor(
+    state: TargetFieldState,
+) -> None:
+    accepted = _explicit_local_ebook_isbn()
+    other_accepted = _local_isbn("9780140328721", "valid_isbn_13")
+    supported = _claim(
+        "catalogue",
+        "edition-1",
+        ClaimKind.ISBN,
+        "9780306406157",
+        scope=ClaimScope.EDITION,
+        applicability="ebook",
+    )
+    unverified = _claim(
+        "other",
+        "edition-2",
+        ClaimKind.ISBN,
+        "9780140328721",
+        scope=ClaimScope.EDITION,
+        applicability="ebook",
+    )
+    result = _result(
+        evaluate_report(
+            _report(
+                fields=_fields(isbn=TargetField(TargetDestination.ISBN, state)),
+                local_claims=(accepted, other_accepted),
+                providers=(
+                    _provider("catalogue", "edition-1", (supported,)),
+                    _provider("other", "edition-2", (unverified,)),
+                ),
+                covers=(_exact_edition_cover(),),
+            )
+        ),
+        TargetDestination.ISBN,
+    )
+
+    assert ProposalOutcome.PROPOSE_CHANGE == result.outcome
+    assert ("verified_manifestation_isbn",) == result.reasons
+    assert 2 == len(result.alternatives)
+    selected = next(
+        alternative
+        for alternative in result.alternatives
+        if alternative.alternative_id == result.selected_alternative_id
+    )
+    assert "9780306406157" == selected.value.value
+
+
+def test_multiple_accepted_isbn_families_remain_an_owner_choice() -> None:
+    first = _explicit_local_ebook_isbn()
+    second = _local_isbn("9780140328721", "valid_isbn_13")
+    providers = (
+        _provider(
+            "catalogue",
+            "edition-1",
+            (
+                _claim(
+                    "catalogue",
+                    "edition-1",
+                    ClaimKind.ISBN,
+                    "9780306406157",
+                    scope=ClaimScope.EDITION,
+                    applicability="ebook",
+                ),
+            ),
+        ),
+        _provider(
+            "other",
+            "edition-2",
+            (
+                _claim(
+                    "other",
+                    "edition-2",
+                    ClaimKind.ISBN,
+                    "9780140328721",
+                    scope=ClaimScope.EDITION,
+                    applicability="ebook",
+                ),
+            ),
+        ),
+    )
+    result = _result(
+        evaluate_report(
+            _report(
+                fields=_fields(
+                    isbn=TargetField(TargetDestination.ISBN, TargetFieldState.MISSING)
+                ),
+                local_claims=(first, second),
+                providers=providers,
+                covers=(
+                    _exact_edition_cover(),
+                    _exact_edition_cover("other", "edition-2", "other-work"),
+                ),
+            )
+        ),
+        TargetDestination.ISBN,
+    )
+
+    assert ProposalOutcome.UNRESOLVED_CHOICE == result.outcome
+    assert ("manifestation_verification_required",) == result.reasons
+    assert 2 == len(result.alternatives)

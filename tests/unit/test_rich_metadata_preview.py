@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
@@ -14,6 +16,8 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
     FieldState,
+    IdentifierEvidenceBasis,
+    IdentifierRelation,
     LocalClaim,
     MetadataReport,
     ProviderCandidate,
@@ -50,14 +54,17 @@ from mechanical_librarian.domain.rich_metadata_preview import (
     RichMetadataPreviewError,
     compile_rich_metadata_preview,
     project_f20_automatic_decision_value,
+    select_isbn_representation,
 )
 from tests.support.proposal_evidence import (
     _claim,
+    _exact_edition_cover,
     _fields,
     _local_isbn,
     _local_subtitle,
     _provider,
     _report,
+    _result,
     _target_work_candidate,
     _target_work_report,
 )
@@ -1883,8 +1890,12 @@ def test_isbn_options_preserve_or_select_only_exact_admitted_forms() -> None:
     )
     exact = _preview_field(ten_report, "isbn_form", "preserve_exact")
     unavailable = _preview_field(ten_report, "isbn_form", "prefer_isbn13")
-    assert "0306406152" == exact.desired_value
-    assert ("abstain", "option_evidence_unavailable", None) == (
+    assert ("abstain", "manifestation_verification_required", None) == (
+        exact.outcome,
+        exact.reason,
+        exact.desired_value,
+    )
+    assert ("abstain", "manifestation_verification_required", None) == (
         unavailable.outcome,
         unavailable.reason,
         unavailable.desired_value,
@@ -1898,7 +1909,11 @@ def test_isbn_options_preserve_or_select_only_exact_admitted_forms() -> None:
         local_claims=(isbn13,),
     )
     preferred = _preview_field(thirteen_report, "isbn_form", "prefer_isbn13")
-    assert "9780306406157" == preferred.desired_value
+    assert ("abstain", "manifestation_verification_required", None) == (
+        preferred.outcome,
+        preferred.reason,
+        preferred.desired_value,
+    )
 
 
 def test_isbn_family_preview_selects_exact_local_or_isbn13_representation() -> None:
@@ -1923,15 +1938,21 @@ def test_isbn_family_preview_selects_exact_local_or_isbn13_representation() -> N
         ),
         local_claims=(local,),
         providers=(provider,),
+        covers=(_exact_edition_cover(),),
     )
 
     exact = _preview_field(report, "isbn_form", "preserve_exact")
     preferred = _preview_field(report, "isbn_form", "prefer_isbn13")
 
-    assert ("projected", "0306406152") == (exact.outcome, exact.desired_value)
-    assert ("projected", "9780306406157") == (
+    assert ("projected", "0306406152", "verified_manifestation_isbn") == (
+        exact.outcome,
+        exact.desired_value,
+        exact.reason,
+    )
+    assert ("projected", "9780306406157", "verified_manifestation_isbn") == (
         preferred.outcome,
         preferred.desired_value,
+        preferred.reason,
     )
     assert 2 == len(exact.source_evidence_references)
     assert exact.source_evidence_references == preferred.source_evidence_references
@@ -1967,6 +1988,7 @@ def test_isbn_family_preview_selects_exact_local_or_isbn13_representation() -> N
         ),
         local_claims=(local13,),
         providers=(family_provider,),
+        covers=(_exact_edition_cover(),),
     )
     for option in ("preserve_exact", "prefer_isbn13"):
         field = _preview_field(family_report, "isbn_form", option)
@@ -1975,6 +1997,191 @@ def test_isbn_family_preview_selects_exact_local_or_isbn13_representation() -> N
             field.desired_value,
         )
         assert 3 == len(field.source_evidence_references)
+
+
+def test_automatic_isbn_abstains_for_an_unresolved_provider_work_identity() -> None:
+    provider = _provider(
+        "catalogue",
+        "edition-1",
+        (
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.ISBN,
+                "9780306406157",
+                scope=ClaimScope.EDITION,
+                applicability="ebook",
+            ),
+        ),
+    )
+    report = _report(
+        fields=_fields(
+            isbn=TargetField(TargetDestination.ISBN, TargetFieldState.MISSING)
+        ),
+        local_claims=(_local_isbn("0306406152", "valid_isbn_10"),),
+        providers=(
+            replace(
+                provider,
+                candidates=(
+                    replace(provider.candidates[0], work_identity="unresolved"),
+                ),
+            ),
+        ),
+        covers=(_exact_edition_cover(work_identity="unresolved"),),
+    )
+    options = dict(MetadataPolicyProfile.builtin().options)
+    options["isbn_form"] = "preserve_exact"
+    destinations = dict(MetadataPolicyProfile.builtin().destinations)
+    destinations["isbn_form"] = "automatic"
+    policy = resolve_policy(
+        MetadataPolicyProfile.create("Automatic ISBN", options, destinations),
+        report.target.library,
+    )
+    proposal = evaluate_report(report, policy.resolved_id, dict(policy.destinations))
+    field = next(
+        value
+        for value in compile_rich_metadata_preview(policy, report, proposal).fields
+        if value.field == "isbn_form"
+    )
+
+    assert ("abstain", "manifestation_verification_required", None) == (
+        field.outcome,
+        field.reason,
+        field.desired_value,
+    )
+
+
+def test_isbn_preview_projects_the_selected_verified_family_among_offers() -> None:
+    local = _local_isbn("0306406152", "valid_isbn_10")
+    verified = _provider(
+        "catalogue",
+        "edition-1",
+        (
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.ISBN,
+                "9780306406157",
+                scope=ClaimScope.EDITION,
+                applicability="ebook",
+            ),
+        ),
+    )
+    offered = _provider(
+        "search",
+        "edition-2",
+        (
+            _claim(
+                "search",
+                "edition-2",
+                ClaimKind.ISBN,
+                "9780140328721",
+                scope=ClaimScope.EDITION,
+                applicability="ebook",
+            ),
+        ),
+    )
+    report = _report(
+        fields=_fields(
+            isbn=TargetField(TargetDestination.ISBN, TargetFieldState.MISSING)
+        ),
+        local_claims=(local,),
+        providers=(verified, offered),
+        covers=(_exact_edition_cover(),),
+    )
+
+    for option, value in (
+        ("preserve_exact", "0306406152"),
+        ("prefer_isbn13", "9780306406157"),
+    ):
+        preview = _preview_field(report, "isbn_form", option)
+        assert ("projected", value, "verified_manifestation_isbn") == (
+            preview.outcome,
+            preview.desired_value,
+            preview.reason,
+        )
+        assert preview.source_candidate_id is not None
+
+
+def test_isbn_representation_uses_accepted_lexicals_within_the_elected_family() -> None:
+    local = _local_isbn("0306406152", "valid_isbn_10")
+    provider = _provider(
+        "catalogue",
+        "edition-1",
+        (
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.ISBN,
+                "9780306406157",
+                scope=ClaimScope.EDITION,
+                applicability="ebook",
+            ),
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.ISBN,
+                "0306406152",
+                scope=ClaimScope.EDITION,
+                applicability="ebook",
+                order=1,
+            ),
+        ),
+    )
+    report = _report(
+        fields=_fields(
+            isbn=TargetField(TargetDestination.ISBN, TargetFieldState.MISSING)
+        ),
+        local_claims=(local,),
+        providers=(provider,),
+    )
+    candidate = _result(evaluate_report(report), TargetDestination.ISBN).alternatives[0]
+    sibling = provider.candidates[0].claims[1].reference
+    mixed = cast(
+        MetadataReport,
+        SimpleNamespace(
+            local_claims=report.local_claims,
+            providers=report.providers,
+            identifier_evidence=tuple(
+                replace(
+                    evidence,
+                    relation=IdentifierRelation.ASSOCIATED,
+                    basis=IdentifierEvidenceBasis.PROVIDER_WORK_IDENTITY,
+                )
+                if evidence.reference == sibling
+                else evidence
+                for evidence in report.identifier_evidence
+            ),
+        ),
+    )
+
+    assert "0306406152" == select_isbn_representation(
+        mixed, candidate, "preserve_exact"
+    )
+    assert "9780306406157" == select_isbn_representation(
+        mixed, candidate, "prefer_isbn13"
+    )
+
+    without_isbn13 = cast(
+        MetadataReport,
+        SimpleNamespace(
+            local_claims=mixed.local_claims,
+            providers=mixed.providers,
+            identifier_evidence=tuple(
+                replace(
+                    evidence,
+                    relation=IdentifierRelation.ASSOCIATED,
+                    basis=IdentifierEvidenceBasis.PROVIDER_WORK_IDENTITY,
+                )
+                if evidence.reference == provider.candidates[0].claims[0].reference
+                else evidence
+                for evidence in mixed.identifier_evidence
+            ),
+        ),
+    )
+    assert (
+        select_isbn_representation(without_isbn13, candidate, "prefer_isbn13") is None
+    )
 
 
 def test_isbn_family_preview_rejects_distinct_or_invalid_identifiers() -> None:
@@ -1988,7 +2195,7 @@ def test_isbn_family_preview_rejects_distinct_or_invalid_identifiers() -> None:
     )
     for option in ("preserve_exact", "prefer_isbn13"):
         field = _preview_field(distinct, "isbn_form", option)
-        assert ("abstain", "ambiguous_evidence", None) == (
+        assert ("abstain", "manifestation_verification_required", None) == (
             field.outcome,
             field.reason,
             field.desired_value,
@@ -2009,7 +2216,7 @@ def test_isbn13_preference_abstains_on_two_exact_admitted_forms() -> None:
         ),
     )
     field = _preview_field(report, "isbn_form", "prefer_isbn13")
-    assert ("abstain", "ambiguous_evidence", None) == (
+    assert ("abstain", "manifestation_verification_required", None) == (
         field.outcome,
         field.reason,
         field.desired_value,
