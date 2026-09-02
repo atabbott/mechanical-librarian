@@ -581,7 +581,7 @@ def _automatic_description_candidate(
         for alternative in evidence.alternatives
         if alternative.value.kind is ProposalValueKind.TEXT
     )
-    if len(_typed_alternatives(result, ProposalValueKind.TEXT)) <= 1:
+    if len(candidates) <= 1:
         if len(candidates) == 1:
             candidate = candidates[0]
             return candidate, evidence.references[candidate.alternative_id], None

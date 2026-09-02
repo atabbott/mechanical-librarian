@@ -262,7 +262,7 @@ def test_exact_multi_isbn_work_keeps_all_automatic_work_fields() -> None:
     }
 
 
-def test_automatic_description_filters_applicability_before_provider_order() -> None:
+def test_automatic_description_filters_applicability_before_floor_and_order() -> None:
     unproved = _description_candidate(
         "preferred",
         "edition-1",
@@ -273,7 +273,7 @@ def test_automatic_description_filters_applicability_before_provider_order() -> 
         "fallback",
         "edition-2",
         "work-1",
-        _QUALIFIED_DESCRIPTION + " Applicable source.",
+        "One short but otherwise valid description.",
     )
     _, fields = _target_work_preview(
         _target_work_report(
