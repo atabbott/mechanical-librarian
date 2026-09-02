@@ -235,7 +235,7 @@ def test_exact_predecessor_builds_fresh_current_state_without_mutating_source(
     connection = sqlite3.connect(f"file:{output}?mode=ro", uri=True)
     document = connection.execute("SELECT document FROM metadata_reports").fetchone()[0]
     report = MetadataReport.from_json(document)
-    assert report.schema_version == "metadata-report-v35"
+    assert report.schema_version == "metadata-report-v36"
     assert connection.execute("SELECT count(*) FROM proposal_sets").fetchone() == (0,)
     assert connection.execute("SELECT count(*) FROM review_cases").fetchone() == (0,)
     assert connection.execute(
@@ -246,7 +246,7 @@ def test_exact_predecessor_builds_fresh_current_state_without_mutating_source(
 
 def test_target_schema_binding_is_the_exact_installed_contract() -> None:
     assert bridge._TARGET_SCHEMA_OBJECTS_SHA256 == (
-        "e0fe0397dc815891a42bae820bb16b07008481d2235b4dbf12830c145e61d653"
+        "122c64ba271b06852e3cb7e1189d332ae2df0b499ffe104d9bf21b05e30f5b50"
     )
     assert (
         bridge._expected_schema_objects_digest() == bridge._TARGET_SCHEMA_OBJECTS_SHA256

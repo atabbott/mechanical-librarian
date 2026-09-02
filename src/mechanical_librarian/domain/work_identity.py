@@ -73,6 +73,34 @@ class WorkTitleTransformationRule:
             raise ValueError("work title transformation rule is invalid")
 
 
+@dataclass(frozen=True, slots=True)
+class WorkTitleCompoundProduction:
+    """One closed, explicitly reviewed composition of transformation families.
+
+    Composition is never implicit: only a production named here admits, and a
+    production admitting never admits any of its constituent families alone.
+    """
+
+    name: str
+    families: tuple[WorkTitleTransformationFamily, ...]
+    admission_enabled: bool
+
+    def __post_init__(self) -> None:
+        if (
+            not nonempty_text(self.name)
+            or type(self.families) is not tuple
+            or len(self.families) < 2
+            or len(set(self.families)) != len(self.families)
+            or any(
+                type(value) is not WorkTitleTransformationFamily
+                or value not in _RULES_BY_FAMILY
+                for value in self.families
+            )
+            or type(self.admission_enabled) is not bool
+        ):
+            raise ValueError("work title compound production is invalid")
+
+
 WORK_TITLE_TRANSFORMATION_RULES = (
     WorkTitleTransformationRule(
         WorkTitleTransformationFamily.FILENAME_UNDERSCORES,
@@ -216,21 +244,30 @@ class WorkDispatchLineage:
 
 @dataclass(frozen=True, slots=True)
 class WorkTitleTransformationLineage:
-    family: WorkTitleTransformationFamily
+    """The ordered family lineage of one admission-enabled compound production."""
+
+    families: tuple[WorkTitleTransformationFamily, ...]
     side: WorkTitleTransformationSide
 
     def __post_init__(self) -> None:
         if (
-            type(self.family) is not WorkTitleTransformationFamily
+            type(self.families) is not tuple
+            or self.families not in _ADMITTED_PRODUCTIONS_BY_FAMILIES
             or type(self.side) is not WorkTitleTransformationSide
+            or self.side is not WorkTitleTransformationSide.LOCAL
         ):
             raise ValueError("work title transformation lineage is invalid")
-        # The v28 field remains a closed replay guard, but the reviewed 0.18.0
-        # admission subset is empty. No non-null lineage is canonical.
-        raise ValueError("work title transformation lineage is invalid")
 
-    def to_data(self) -> dict[str, str]:
-        return {"family": self.family.value, "side": self.side.value}
+    @property
+    def production(self) -> str:
+        return _ADMITTED_PRODUCTIONS_BY_FAMILIES[self.families].name
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "families": [value.value for value in self.families],
+            "production": self.production,
+            "side": self.side.value,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,7 +276,13 @@ class WorkIdentityAdmission:
     transformation: WorkTitleTransformationLineage | None = None
 
     def __post_init__(self) -> None:
-        if type(self.admitted) is not bool or self.transformation is not None:
+        if type(self.admitted) is not bool or (
+            self.transformation is not None
+            and (
+                type(self.transformation) is not WorkTitleTransformationLineage
+                or not self.admitted
+            )
+        ):
             raise ValueError("work identity admission is invalid")
 
 
@@ -251,6 +294,26 @@ if any(rule.admission_enabled for rule in WORK_TITLE_TRANSFORMATION_RULES):
 _RULE_ORDINAL = {
     rule.family: ordinal for ordinal, rule in enumerate(WORK_TITLE_TRANSFORMATION_RULES)
 }
+
+WORK_TITLE_COMPOUND_PRODUCTIONS = (
+    WorkTitleCompoundProduction(
+        "author_prefix_then_underscores",
+        (
+            WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
+            WorkTitleTransformationFamily.FILENAME_UNDERSCORES,
+        ),
+        True,
+    ),
+)
+_ADMITTED_PRODUCTIONS_BY_FAMILIES = {
+    production.families: production
+    for production in WORK_TITLE_COMPOUND_PRODUCTIONS
+    if production.admission_enabled
+}
+if len({production.name for production in WORK_TITLE_COMPOUND_PRODUCTIONS}) != len(
+    WORK_TITLE_COMPOUND_PRODUCTIONS
+):
+    raise RuntimeError("work title compound production table is ambiguous")
 
 _ASCII_SPACE = re.compile(r"[\t\n\r\f\v ]+")
 _BRACKET_SOURCE = re.compile(r"[\t\n\r\f\v ]*\[[^\[\]]{1,80}\][\t\n\r\f\v ]*$")
@@ -444,7 +507,28 @@ def admit_provider_work_identity(
         )
     ):
         return WorkIdentityAdmission(False)
-    return WorkIdentityAdmission(_closed_equal(local_title, provider_title))
+    if _closed_equal(local_title, provider_title):
+        return WorkIdentityAdmission(True)
+    remainder = _filename_author_title_prefix_remainder(local_title, local_authors)
+    if remainder is None or "_" not in remainder:
+        # Prefix-only and underscores-only inputs stay query shaping: neither
+        # constituent family admits outside the reviewed compound production.
+        return WorkIdentityAdmission(False)
+    normalized = _clean(remainder.replace("_", " "))
+    if not _comparison_text(normalized) or not _closed_equal(
+        normalized, provider_title
+    ):
+        return WorkIdentityAdmission(False)
+    return WorkIdentityAdmission(
+        True,
+        WorkTitleTransformationLineage(
+            (
+                WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
+                WorkTitleTransformationFamily.FILENAME_UNDERSCORES,
+            ),
+            WorkTitleTransformationSide.LOCAL,
+        ),
+    )
 
 
 def replay_provider_work_identity_admission(
@@ -502,12 +586,18 @@ def work_dispatch_lineage_from_data(value: object) -> WorkDispatchLineage:
 def work_title_transformation_lineage_from_data(
     value: object,
 ) -> WorkTitleTransformationLineage:
-    if type(value) is not dict or set(value) != {"family", "side"}:
+    if type(value) is not dict or set(value) != {"families", "production", "side"}:
         raise ValueError("work title transformation lineage is invalid")
-    return WorkTitleTransformationLineage(
-        WorkTitleTransformationFamily(value["family"]),
+    families = value["families"]
+    if type(families) is not list:
+        raise ValueError("work title transformation lineage is invalid")
+    lineage = WorkTitleTransformationLineage(
+        tuple(WorkTitleTransformationFamily(item) for item in families),
         WorkTitleTransformationSide(value["side"]),
     )
+    if lineage.production != value["production"]:
+        raise ValueError("work title transformation lineage is invalid")
+    return lineage
 
 
 def apply_work_title_transformation(
@@ -692,6 +782,24 @@ def _filename_author_title_prefix_query(
     return title if prefix_tokens == author_tokens and _comparison_text(title) else None
 
 
+def _filename_author_title_prefix_remainder(
+    value: str, authors: tuple[str, ...]
+) -> str | None:
+    """Return the raw remainder after a complete first-author filename prefix."""
+    if not authors:
+        return None
+    normalized = unicodedata.normalize("NFC", value)
+    match = re.fullmatch(
+        r"(?P<prefix>.+?)(?:[ _]+-[ _]+|[ _]*[–—][ _]*|[ _]*:[ _]*)(?P<title>.+)",
+        normalized,
+    )
+    if match is None:
+        return None
+    if _identity_tokens(match.group("prefix")) != _identity_tokens(authors[0]):
+        return None
+    return match.group("title")
+
+
 def _comparison_text(value: str) -> str:
     normalized = unicodedata.normalize("NFC", value).casefold()
     return " ".join(normalized.split())
@@ -802,11 +910,13 @@ def _year(value: str) -> bool:
 
 
 __all__ = [
+    "WORK_TITLE_COMPOUND_PRODUCTIONS",
     "WORK_TITLE_TRANSFORMATION_RULES",
     "WorkDispatchLineage",
     "WorkDispatchRung",
     "WorkIdentityAdmission",
     "WorkQuery",
+    "WorkTitleCompoundProduction",
     "WorkTitleTransformationFamily",
     "WorkTitleElectionMatch",
     "WorkTitleTransformationLineage",
