@@ -3298,6 +3298,50 @@ def _accepted_provider_manifestation_anchor(
     )
 
 
+def _accepted_provider_opening_matter_isbn_anchor(
+    report: MetadataReport,
+    provider: ProviderObservation,
+    candidate: ProviderCandidate,
+    claim: ProviderClaim,
+) -> bool:
+    """Require the provider ISBN's linked accepted local opening evidence."""
+    family = isbn_family(claim.value)
+    if (
+        claim.kind is not ClaimKind.ISBN
+        or claim.scope is not ClaimScope.EDITION
+        or claim.state is not FieldState.VALID
+        or claim.value is None
+        or claim.applicability != "ebook"
+        or family is None
+    ):
+        return False
+    accepted_local_references = {
+        evidence.reference
+        for evidence in report.identifier_evidence
+        if evidence.relation is IdentifierRelation.ACCEPTED
+        and evidence.provider is None
+    }
+    local_claims = {claim.reference: claim for claim in report.local_claims}
+    return any(
+        evidence.relation is IdentifierRelation.ACCEPTED
+        and evidence.provider == provider.provider
+        and evidence.candidate_identity == candidate.identity
+        and evidence.work_identity == candidate.work_identity
+        and evidence.reference == claim.reference
+        and any(
+            reference in accepted_local_references
+            and (local := local_claims.get(reference)) is not None
+            and local.kind is ClaimKind.ISBN
+            and local.state is FieldState.VALID
+            and local.canonical is not None
+            and local.basis == "opening_matter"
+            and isbn_family(local.canonical) == family
+            for reference in evidence.related_references
+        )
+        for evidence in report.identifier_evidence
+    )
+
+
 def _verified_manifestation_isbn_election(
     report: MetadataReport,
     result: ProposalResult,
@@ -3314,16 +3358,6 @@ def _verified_manifestation_isbn_election(
         for candidate in provider.candidates
         for claim in candidate.claims
     }
-    accepted = {
-        (
-            evidence.provider,
-            evidence.candidate_identity,
-            evidence.work_identity,
-            evidence.reference,
-        )
-        for evidence in report.identifier_evidence
-        if evidence.relation is IdentifierRelation.ACCEPTED
-    }
     qualified: dict[str, ProposalAlternative] = {}
     for alternative in result.alternatives:
         family = isbn_family(
@@ -3335,19 +3369,10 @@ def _verified_manifestation_isbn_election(
         if family is None:
             continue
         if any(
-            claim.kind is ClaimKind.ISBN
-            and claim.scope is ClaimScope.EDITION
-            and claim.state is FieldState.VALID
-            and claim.value is not None
-            and claim.applicability == "ebook"
-            and isbn_family(claim.value) == family
-            and (
-                provider.provider,
-                candidate.identity,
-                candidate.work_identity,
-                reference,
+            isbn_family(claim.value) == family
+            and _accepted_provider_opening_matter_isbn_anchor(
+                report, provider, candidate, claim
             )
-            in accepted
             for reference in alternative.evidence_references
             if (bound := claims.get(reference)) is not None
             for provider, candidate, claim in (bound,)

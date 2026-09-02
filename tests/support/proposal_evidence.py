@@ -162,16 +162,19 @@ def _publication_local_isbn() -> LocalClaim:
     )
 
 
-def _explicit_local_ebook_isbn() -> LocalClaim:
+def _explicit_local_ebook_isbn(
+    value: str = "9780306406157", *, basis: str = "opening_matter"
+) -> LocalClaim:
     return LocalClaim.create(
         kind=ClaimKind.ISBN,
-        observed="9780306406157",
-        canonical="9780306406157",
-        excerpt="9780306406157",
+        observed=value,
+        canonical=value,
+        excerpt=value,
         applicability="ebook",
-        checksum="valid_isbn_13",
+        checksum=f"valid_isbn_{len(value)}",
         applicability_basis="ebook",
         scope=ClaimScope.EDITION,
+        basis=basis,
     )
 
 
