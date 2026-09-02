@@ -146,7 +146,11 @@ as safe plain-text competition. The nineteenth and twentieth executions replayed
 both splits after filtering that text before the single-versus-multiple-candidate
 decision; results again remained unchanged. The v9 manifest binds the latest
 correction receipts, whose chain retains the earlier correction and original
-one-shot receipts.
+one-shot receipts. Review then found that an otherwise-qualified description
+from an authority outside the frozen order could disappear from a competition.
+The twenty-first and twenty-second executions replayed both splits after making
+that competition abstain; results again remained unchanged, and v9 binds those
+latest correction receipts.
 
 F20 v9 preserves the separately qualified two ISBN-form options under the
 current deterministic identity rule. Their final development result and archived replay

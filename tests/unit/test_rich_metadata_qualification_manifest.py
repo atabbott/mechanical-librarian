@@ -82,7 +82,7 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     assert passing == set(manifest["passing_automatic_options"])
     assert ["explicit:unsupported"] == manifest["human_only_options"]
     assert ["narrators", "cover"] == manifest["excluded_destinations"]
-    assert 20 == manifest["candidate_execution_count"]
+    assert 22 == manifest["candidate_execution_count"]
     assert {
         "prior_manifest_sha256": "1315e324edd78e698587e14497aa0ab11e33fd65612f00cd8a78a462fd6445fd",
         "description_applicability_confirmation_sha256": "03e19f6b3524afc1c3409e55b652a252f39c14653fa636d340f13c6150e9ddb7",
@@ -90,6 +90,8 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
         "description_holdout_continuity_sha256": "16b87e09e1b51cf9162d583852bf54b8c964e8d12913fbf36486ce3d58faa024",
         "description_confirmation_transform_filter_correction_sha256": "d7f27b3b68d7b87c1db75eeb310e2c9e5cb4882823eaf2f486c16773a548b1f7",
         "description_holdout_transform_filter_continuity_sha256": "b1960e81d472d048a762aa6d9a440dcf9bd3401328a860850db9e671d4e64b2c",
+        "description_confirmation_unranked_authority_correction_sha256": "2bf2bcfac6e6b632bf0c8660a7bd5fa2541b2c1373a0d146bd32f55f38eaff29",
+        "description_holdout_unranked_authority_continuity_sha256": "10a88f1701b9c249e4d6fb6d5657bacf597cfa548a1d9f9dc8e74e4fa741216c",
         "issue_971_capture_receipt_sha256": "c1d672126449442b44b056c4cd7dc3c73346f90ab1fa4eb090e8203441cc0a33",
         "issue_971_capture_receipt_head": "3d153a371b63abd5751f09254f218504da8e9f75",
         "issue_971_baseline_result_sha256": "093411b65e1f48f40011f40799388dc09784dc5bcc4a133c77b3478d964af0df",
@@ -152,7 +154,7 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
                 "automatic_precision": 1.0,
                 "automatic_predictions": 13,
                 "case_count": 23,
-                "correction_replays": 2,
+                "correction_replays": 3,
                 "errors": 0,
             },
             "contract": {
@@ -167,9 +169,9 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
                 "automatic_predictions": 14,
                 "case_count": 25,
                 "errors": 0,
-                "executions": 3,
+                "executions": 4,
                 "initial_unseen_executions": 1,
-                "spent_correction_replays": 2,
+                "spent_correction_replays": 3,
             },
         },
         "evaluated_reports": 49,
@@ -406,13 +408,15 @@ def test_candidate_exposes_only_closed_aggregate_contract_data() -> None:
         ]
     )
     assert {
-        "candidate_head": "5ad0ac3b9af660da64033443a0821383d38bcacf",
+        "candidate_head": "e1e13200a784229bcb5694e716c1c7b0e0a8128e",
         "confirmation_correction_receipt_sha256": "bcf746e16bdfd9ed8ee3174006546f4d3de7a375c3b52f62641d86470bbe136c",
         "confirmation_transform_filter_correction_receipt_sha256": "d7f27b3b68d7b87c1db75eeb310e2c9e5cb4882823eaf2f486c16773a548b1f7",
+        "confirmation_unranked_authority_correction_receipt_sha256": "2bf2bcfac6e6b632bf0c8660a7bd5fa2541b2c1373a0d146bd32f55f38eaff29",
         "holdout_continuity_receipt_sha256": "16b87e09e1b51cf9162d583852bf54b8c964e8d12913fbf36486ce3d58faa024",
         "holdout_transform_filter_continuity_receipt_sha256": "b1960e81d472d048a762aa6d9a440dcf9bd3401328a860850db9e671d4e64b2c",
+        "holdout_unranked_authority_continuity_receipt_sha256": "10a88f1701b9c249e4d6fb6d5657bacf597cfa548a1d9f9dc8e74e4fa741216c",
         "initial_holdout_receipt_sha256": "4637df813899ec39d2896fc626076d09924165433674cef35cfcc4fc0c6c48dd",
-        "preview_sha256": "13816163130aea37880a47021173c49cd2141b6c2f9b2d19aba2f15b0dfc20ab",
+        "preview_sha256": "0ef317fd359db8c03e9f2cde31bc6dae124eb3417b24dd75944d3139cab14f4c",
     } == manifest["frozen_contract"]["description_tiebreaker"]
     for source, name in {
         "src/mechanical_librarian/domain/automatic_decision.py": "automatic_decision_sha256",
