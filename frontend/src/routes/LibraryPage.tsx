@@ -858,6 +858,7 @@ function ProviderConsensusAutomaticStatement({ field }: { field: ReviewField }) 
 
 function VerifiedManifestationIsbnAutomaticStatement({ field }: { field: ReviewField }) {
   if (
+    field.humanDecision !== null ||
     field.destination !== 'isbn' ||
     field.automaticDecision?.outcome !== 'candidate' ||
     !field.notices.includes('verified_manifestation_isbn')

@@ -1905,6 +1905,56 @@ describe('Library route', () => {
     expect(recorded).toHaveTextContent('Chosen value')
   })
 
+  it('does not present automatic ISBN authority beside an owner-final override', async () => {
+    const base = detail.fields[0]
+    if (!base) throw new Error('workspace fixture requires a field')
+    const automaticValue = { kind: 'text' as const, value: '9780306406157' }
+    const ownerValue = { kind: 'text' as const, value: '9780000000002' }
+    const isbn = {
+      ...base,
+      automaticDecision: {
+        candidate_id: 'alternative-isbn-1',
+        decision_id: 'automatic-isbn',
+        destination: 'isbn' as const,
+        occurred_at: 1,
+        outcome: 'candidate' as const,
+        proposal_id: base.proposalId,
+        review_case_id: 'case-1',
+        selected_value: automaticValue,
+        target_fingerprint: base.targetFingerprint,
+      },
+      destination: 'isbn' as const,
+      decisionActions: [],
+      editable: false,
+      humanDecision: {
+        actor: 'owner',
+        decision_id: 'decision-isbn',
+        destination: 'isbn' as const,
+        occurred_at: 2,
+        outcome: 'accept' as const,
+        proposal_id: base.proposalId,
+        review_case_id: 'case-1',
+        selected_value: ownerValue,
+        target_fingerprint: base.targetFingerprint,
+      },
+      needsAttention: false,
+      navigationRole: 'resolved' as const,
+      notices: ['verified_manifestation_isbn'],
+      proposedValues: [automaticValue, ownerValue],
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=isbn', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [isbn] })),
+    })
+
+    const recorded = await screen.findByRole('region', { name: 'Isbn recorded outcome' })
+    expect(recorded).toHaveTextContent('Chosen value')
+    expect(recorded).toHaveTextContent('9780000000002')
+    expect(recorded).not.toHaveTextContent(
+      "Deterministic identity evidence bound this ISBN to this file's work.",
+    )
+  })
+
   it('keeps the owner outcome final when automatic authority remains in history', async () => {
     const base = detail.fields[0]
     if (!base) throw new Error('owner-final fixture requires a field')
