@@ -11,7 +11,13 @@ from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
     AutomaticDecisionError,
     AutomaticSafetyState,
+    automatic_safety_category,
     qualification_manifest_is_current,
+)
+from mechanical_librarian.domain.contributor_display_qualification import (
+    F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY,
+    F38_CONTRIBUTOR_DISPLAY_POLICY_OPTION,
+    F38_QUALIFICATION_MANIFEST_SHA256,
 )
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_QUALIFICATION_CANDIDATE_SHA256,
@@ -118,6 +124,57 @@ def test_qualified_isbn_decision_binds_the_f20_candidate() -> None:
         )
 
 
+def test_f38_contributor_consensus_binds_its_own_manifest() -> None:
+    value = AutomaticDecision.create(
+        review_case_id="review_case_" + "a" * 64,
+        report_id="report_" + "b" * 64,
+        proposal_set_id="proposal_set_" + "c" * 64,
+        proposal_id="review_proposal_" + "d" * 64,
+        target_fingerprint="e" * 64,
+        destination="authors",
+        outcome="candidate",
+        candidate_id="alternative_" + "f" * 64,
+        resolved_policy_id="resolved_policy_" + "0" * 64,
+        policy_generation=1,
+        rule_id="shadow_rule_" + "1" * 64,
+        policy_category=F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY,
+        policy_option=F38_CONTRIBUTOR_DISPLAY_POLICY_OPTION,
+        qualification_manifest_sha256=F38_QUALIFICATION_MANIFEST_SHA256,
+        source_outcome_id="shadow_outcome_" + "3" * 64,
+        occurred_at=1,
+        bundle_id=None,
+    )
+    assert F38_QUALIFICATION_MANIFEST_SHA256 == value.qualification_manifest_sha256
+    assert qualification_manifest_is_current(
+        value.policy_category,
+        value.policy_option,
+        value.qualification_manifest_sha256,
+    )
+    historical = AutomaticDecision.create(
+        **{
+            key: value
+            for key, value in value._core().items()
+            if key not in {"policy_option", "qualification_manifest_sha256"}
+        },
+        policy_option="canonical",
+        qualification_manifest_sha256=F19A_QUALIFICATION_MANIFEST_SHA256,
+        occurred_at=2,
+    )
+    assert (
+        F19A_QUALIFICATION_MANIFEST_SHA256 == historical.qualification_manifest_sha256
+    )
+    with pytest.raises(AutomaticDecisionError):
+        AutomaticDecision.create(
+            **{
+                key: value
+                for key, value in value._core().items()
+                if key != "qualification_manifest_sha256"
+            },
+            qualification_manifest_sha256=F19A_QUALIFICATION_MANIFEST_SHA256,
+            occurred_at=1,
+        )
+
+
 def test_prior_f20_decision_remains_readable_without_granting_new_authority() -> None:
     current = AutomaticDecision.create(
         review_case_id="review_case_" + "a" * 64,
@@ -139,6 +196,7 @@ def test_prior_f20_decision_remains_readable_without_granting_new_authority() ->
         bundle_id=None,
     )
     prior_digests = (
+        "f5975691720b81452f2f2b3a41046329c4c600ade45458478aebaf7190392176",
         "6c6648598de1fcc175cbbec0f68908eb6f6ca67b2927e4ef05967551d6a9c542",
         "99ba8426ee53e4d31e52ecf0f65a0fce4eb237d3e5acef42e4ee17217b57dae9",
         "770b56be2ce7ea9d1d809be189724e5f281a0dd8570af80d63429a5ab617ff99",
@@ -322,6 +380,13 @@ def test_unqualified_imprint_cannot_create_authority() -> None:
 
 
 def test_safety_state_fails_closed_per_category_and_globally() -> None:
+    assert (
+        automatic_safety_category(
+            F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY,
+            F38_CONTRIBUTOR_DISPLAY_POLICY_OPTION,
+        )
+        == "contributor_names"
+    )
     assert not AutomaticSafetyState(False, None, (("title_layout", "safety"),)).permits(
         "title_layout"
     )

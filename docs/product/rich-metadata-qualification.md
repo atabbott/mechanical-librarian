@@ -135,4 +135,4 @@ metrics remain authoritative and unchanged rather than being dequalified by a
 different evidence mode.
 
 The machine-readable candidate is
-[`f20-rich-metadata-qualification-candidate-v4.json`](../reference/f20-rich-metadata-qualification-candidate-v4.json).
+[`f20-rich-metadata-qualification-candidate-v5.json`](../reference/f20-rich-metadata-qualification-candidate-v5.json).

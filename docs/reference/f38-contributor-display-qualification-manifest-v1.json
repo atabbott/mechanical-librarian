@@ -1,0 +1,20 @@
+{
+  "automatic_authority": "decision_only",
+  "candidate_evidence": {
+    "aggregate_safe_sha256": "1779fc211be9c50388e4a355db8bd1dbf87a983622f17d44f46e805f841cc950",
+    "candidate_result_sha256": "4e41e7a5e9b3cfc298879a3e040e66d06fc24c60831f8287e9e095f35680ad33",
+    "terminal_receipt_sha256": "850298ef5dbd67233995630fb7c4533049435cb1f7f34c1fa413bd021dbba643"
+  },
+  "candidate_execution_count": 1,
+  "corpus_role": "development_exposed",
+  "holdout_claim": false,
+  "metrics": {
+    "automatic_precision": 1.0,
+    "automatic_predictions": 3,
+    "automatic_recall": 1.0,
+    "positive_opportunities": 3,
+    "zero_tolerance_failures": 0
+  },
+  "policy_identity": "contributor_names:canonical:provider_consensus_display",
+  "schema": "f38-contributor-display-qualification-manifest-v1"
+}

@@ -8,6 +8,10 @@ import re
 from dataclasses import dataclass
 from typing import cast
 
+from mechanical_librarian.domain.contributor_display_qualification import (
+    F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY,
+    F38_CONTRIBUTOR_DISPLAY_POLICY_OPTION,
+)
 from mechanical_librarian.domain.metadata_policy import (
     OPTION_CATALOGUE,
     ResolvedMetadataPolicy,
@@ -18,6 +22,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import (
     MAX_BIBLIOGRAPHIC_COMBINATIONS,
+    PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON,
     PROVIDER_CONSENSUS_TITLE_REASONS,
     ProposalSet,
 )
@@ -62,6 +67,10 @@ _POLICY_OPTIONS_BY_CATEGORY = {
     **OPTION_CATALOGUE,
     _PROVIDER_CONSENSUS_TITLE_POLICY_CATEGORY: (
         _PROVIDER_CONSENSUS_TITLE_POLICY_OPTION,
+    ),
+    F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY: (
+        *OPTION_CATALOGUE[F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY],
+        F38_CONTRIBUTOR_DISPLAY_POLICY_OPTION,
     ),
 }
 _DISPOSITIONS = frozenset(
@@ -376,6 +385,7 @@ class ShadowOutcomeSet:
         options = dict(policy.options)
         fields: list[ShadowFieldOutcome] = []
         title_layout_subtitle: ShadowFieldOutcome | None = None
+        provider_consensus_contributor_display_proposals: set[str] = set()
         provider_consensus_title_proposals: set[str] = set()
         for value in case.proposals:
             result = cast("dict[str, object]", value["result"])
@@ -387,6 +397,14 @@ class ShadowOutcomeSet:
                 and reasons[0] in PROVIDER_CONSENSUS_TITLE_REASONS
             ):
                 provider_consensus_title_proposals.add(
+                    cast("str", value["proposal_id"])
+                )
+            if (
+                value["destination"] in {"authors", "narrators"}
+                and type(reasons) is list
+                and reasons == [PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON]
+            ):
+                provider_consensus_contributor_display_proposals.add(
                     cast("str", value["proposal_id"])
                 )
         for decision in decisions.decisions:
@@ -406,6 +424,16 @@ class ShadowOutcomeSet:
                 category = _PROVIDER_CONSENSUS_TITLE_POLICY_CATEGORY
                 policy_destination = destinations["title_layout"]
                 policy_option = _PROVIDER_CONSENSUS_TITLE_POLICY_OPTION
+            elif (
+                decision.proposal_id in provider_consensus_contributor_display_proposals
+            ):
+                policy_destination = destinations["contributor_names"]
+                policy_option = options["contributor_names"]
+                if policy_option == "canonical":
+                    category = F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY
+                    policy_option = F38_CONTRIBUTOR_DISPLAY_POLICY_OPTION
+                else:
+                    policy_destination = "ask"
             else:
                 policy_destination = (
                     "unsupported" if category is None else destinations[category]

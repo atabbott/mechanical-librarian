@@ -29,6 +29,12 @@ persisted automatic-decision path. Existing proposal, review, decision, and
 downstream field-effect state is not rewritten or adopted; rebuild the
 pre-release application database.
 
+F38 advances the exact proposal policy from `fixed-conservative-v14` to
+`fixed-conservative-v15` because canonical contributor display can replace an
+equivalent local form through provider consensus. Existing pre-release proposal,
+review, decision, and downstream field-effect state is not rewritten or adopted;
+rebuild the application database.
+
 `metadata-report-v31` in particular cannot carry an audiobook's provider
 evidence: it refuses a provider observation on an audio report outright, and
 has no ASIN query lane, marketplace provenance, chapter-structure evidence, or
@@ -47,9 +53,10 @@ Maintainers have one separate qualification-only command:
 exact retained #744 test schema, an existing complete owner-only clone, an
 independent backup path, and an absent output path under the same private
 directory. The command name remains the frozen authority identifier from its
-original plan; its fresh output is always the exact current schema, now
-`metadata-report-v35`. It leaves the source untouched, verifies the backup, rebuilds a
-fresh exact-current report database through current derivation, and
+original plan; its fresh output is always the exact current schema,
+`metadata-report-v35` with `fixed-conservative-v15`. It leaves the source
+untouched, verifies the backup, rebuilds a fresh exact-current report database
+through current derivation, and
 invalidates observations that lack current work-dispatch provenance plus all
 downstream state. Artifact-bearing cover references are also invalidated
 because this command accepts no artifact path. It makes no network, provider,

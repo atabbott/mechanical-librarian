@@ -6,7 +6,7 @@ preparation; source-only contributor inspection uses the typed workbench and is
 not an installed runtime capability. The operation reopens the exact report, revalidates its
 current Audiobookshelf target projection, selected EPUB bytes, ABS cover, and
 both blobs of every referenced private cover artifact, then evaluates the built-in
-`fixed-conservative-v14` policy. It does not construct or contact a metadata or
+`fixed-conservative-v15` policy. It does not construct or contact a metadata or
 cover provider.
 
 An exact ProposalSet can be reopened offline through the application repository
@@ -15,13 +15,13 @@ or typed source-only inspector.
 Success is exactly one canonical `proposal-set-v5` JSON document plus a
 newline. Failure emits no document and one value-free diagnostic.
 
-Only `proposal-set-v5` documents under `fixed-conservative-v14` and the exact current
+Only `proposal-set-v5` documents under `fixed-conservative-v15` and the exact current
 `proposal_sets` table envelope are accepted. A database with the earlier
 `fixed-conservative-v1`, `fixed-conservative-v2`, `fixed-conservative-v3`, or
 `fixed-conservative-v4`, `fixed-conservative-v5`, `fixed-conservative-v6`,
 `fixed-conservative-v7`, `fixed-conservative-v8`, `fixed-conservative-v9`,
-`fixed-conservative-v10`, `fixed-conservative-v11`, `fixed-conservative-v12`, or
-`fixed-conservative-v13` table shape is incompatible
+`fixed-conservative-v10`, `fixed-conservative-v11`, `fixed-conservative-v12`,
+`fixed-conservative-v13`, or `fixed-conservative-v14` table shape is incompatible
 and is rejected before mutation. A clean rebuild is required; there is no
 proposal migration, import, conversion, or compatibility parser.
 
@@ -31,6 +31,14 @@ The F35 (#884) provider-consensus title election is admitted by the current
 #445 F19a successor manifest. Its closed title tranche is qualified separately
 from the current F20 v4 route, which continues to exclude title. Earlier F19a
 digests remain readable for their historical decisions but cannot authorize F35.
+
+## Canonical contributor display
+
+F38 (#887) elects a provider display form only when two independent present
+authorities state the same exact complete contributor list and the current local
+list is the sole equivalent dissent. The selected alternative retains the local
+claim references as provenance; provider disagreement, incomplete equivalence,
+or an owner decision remains non-automatic.
 
 The bracketed-source class currently grants election authority only to the
 exact `[retail]` suffix. The broader bracket transformation remains available

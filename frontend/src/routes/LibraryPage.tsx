@@ -456,6 +456,7 @@ const materialComparisonReasons = new Set([
   'provider_consensus_title_subtitle_segment',
   'provider_consensus_title_colon_unused',
   'provider_consensus_title_series_unpreserved',
+  'provider_consensus_contributor_display',
 ])
 const comparisonNotices = (field: ReviewField) =>
   field.choiceContexts.some((context) =>
@@ -840,6 +841,21 @@ function ContextValue({
   )
 }
 
+function ProviderConsensusAutomaticStatement({ field }: { field: ReviewField }) {
+  const decision = field.automaticDecision
+  if (
+    decision?.outcome !== 'candidate' ||
+    !field.notices.includes('provider_consensus_contributor_display')
+  ) {
+    return null
+  }
+  return (
+    <p>
+      Providers chose {decisionValue(field)}; normalized from {field.currentValue}.
+    </p>
+  )
+}
+
 function RecordedOutcome({
   field,
   expanded,
@@ -890,6 +906,7 @@ function RecordedOutcome({
           </div>
         )}
       </dl>
+      <ProviderConsensusAutomaticStatement field={field} />
       <button
         type="button"
         className="context-evidence-toggle"
@@ -2904,6 +2921,9 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                             : `${fieldLabel(selected.destination)} recorded choices`
                         }
                       >
+                        {selectedRevisitable ? (
+                          <ProviderConsensusAutomaticStatement field={selected} />
+                        ) : null}
                         {/*
                           What a tap will do, said before the tap and in the
                           present tense of this work's actual write state. The

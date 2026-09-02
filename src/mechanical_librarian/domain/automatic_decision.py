@@ -7,6 +7,11 @@ import json
 import re
 from dataclasses import dataclass
 
+from mechanical_librarian.domain.contributor_display_qualification import (
+    F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY,
+    F38_CONTRIBUTOR_DISPLAY_POLICY_OPTION,
+    F38_QUALIFICATION_MANIFEST_SHA256,
+)
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_PASSING_AUTOMATIC_OPTIONS,
     F20_QUALIFICATION_CANDIDATE_SHA256,
@@ -28,8 +33,14 @@ _PRE_F35_F19A_QUALIFIED_POLICY_OPTIONS = frozenset({
 F19A_QUALIFIED_POLICY_OPTIONS = _PRE_F35_F19A_QUALIFIED_POLICY_OPTIONS | frozenset({
     "title:replace_target:provider_consensus_noise",
 })
+F38_QUALIFIED_POLICY_OPTIONS = frozenset({
+    f"{F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY}:"
+    f"{F38_CONTRIBUTOR_DISPLAY_POLICY_OPTION}",
+})
 QUALIFIED_POLICY_OPTIONS = (
-    F19A_QUALIFIED_POLICY_OPTIONS | F20_PASSING_AUTOMATIC_OPTIONS
+    F19A_QUALIFIED_POLICY_OPTIONS
+    | F20_PASSING_AUTOMATIC_OPTIONS
+    | F38_QUALIFIED_POLICY_OPTIONS
 )
 _PRIOR_F19A_QUALIFICATION_MANIFESTS = (
     (
@@ -42,6 +53,10 @@ _PRIOR_F19A_QUALIFICATION_MANIFESTS = (
     ),
 )
 _PRIOR_F20_QUALIFICATION_MANIFESTS = (
+    (
+        "f5975691720b81452f2f2b3a41046329c4c600ade45458478aebaf7190392176",
+        F20_PASSING_AUTOMATIC_OPTIONS,
+    ),
     (
         "6c6648598de1fcc175cbbec0f68908eb6f6ca67b2927e4ef05967551d6a9c542",
         F20_PASSING_AUTOMATIC_OPTIONS,
@@ -110,6 +125,8 @@ def _current_qualification_manifest_sha256(
     identity = f"{policy_category}:{policy_option}"
     if identity in F19A_QUALIFIED_POLICY_OPTIONS:
         return F19A_QUALIFICATION_MANIFEST_SHA256
+    if identity in F38_QUALIFIED_POLICY_OPTIONS:
+        return F38_QUALIFICATION_MANIFEST_SHA256
     if identity in F20_PASSING_AUTOMATIC_OPTIONS:
         return F20_QUALIFICATION_CANDIDATE_SHA256
     raise AutomaticDecisionError("invalid")

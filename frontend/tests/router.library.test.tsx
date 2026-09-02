@@ -1796,6 +1796,78 @@ describe('Library route', () => {
     expect(within(canvas).getByText('New title')).toBeVisible()
   })
 
+  it('states the provider-chosen contributor display and local form it normalized', async () => {
+    const base = detail.fields[0]
+    if (!base) throw new Error('workspace fixture requires a field')
+    const candidate = { kind: 'list' as const, value: ['Ada Example'] }
+    const authors = {
+      ...base,
+      automaticDecision: {
+        candidate_id: 'alternative-authors-1',
+        decision_id: 'automatic-authors',
+        destination: 'authors' as const,
+        occurred_at: 1,
+        outcome: 'candidate' as const,
+        proposal_id: base.proposalId,
+        review_case_id: 'case-1',
+        selected_value: candidate,
+        target_fingerprint: base.targetFingerprint,
+      },
+      currentValue: 'Example, Ada',
+      destination: 'authors' as const,
+      decisionActions: [],
+      editable: false,
+      needsAttention: false,
+      navigationRole: 'resolved' as const,
+      notices: ['provider_consensus_contributor_display'],
+      proposedValues: [candidate],
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=authors', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [authors] })),
+    })
+
+    const recorded = await screen.findByRole('region', { name: 'Authors recorded outcome' })
+    expect(recorded).toHaveTextContent('Providers chose Ada Example; normalized from Example, Ada.')
+    expect(recorded).toHaveTextContent('Chosen value')
+  })
+
+  it('keeps the provider-consensus contributor statement visible while revisiting choices', async () => {
+    const base = detail.fields[0]
+    if (!base) throw new Error('workspace fixture requires a field')
+    const candidate = { kind: 'list' as const, value: ['Ada Example'] }
+    const authors = {
+      ...base,
+      automaticDecision: {
+        candidate_id: 'alternative-authors-1',
+        decision_id: 'automatic-authors',
+        destination: 'authors' as const,
+        occurred_at: 1,
+        outcome: 'candidate' as const,
+        proposal_id: base.proposalId,
+        review_case_id: 'case-1',
+        selected_value: candidate,
+        target_fingerprint: base.targetFingerprint,
+      },
+      currentValue: 'Example, Ada',
+      destination: 'authors' as const,
+      decisionActions: ['keep_current', 'accept'] as const,
+      editable: true,
+      needsAttention: false,
+      navigationRole: 'resolved' as const,
+      notices: ['provider_consensus_contributor_display'],
+      proposedValues: [candidate],
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=authors', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [authors] })),
+    })
+    expect(
+      await screen.findByText('Providers chose Ada Example; normalized from Example, Ada.'),
+    ).toBeVisible()
+    expect(screen.getByRole('button', { name: /Choose current value/u })).toBeVisible()
+  })
+
   it('keeps the owner outcome final when automatic authority remains in history', async () => {
     const base = detail.fields[0]
     if (!base) throw new Error('owner-final fixture requires a field')

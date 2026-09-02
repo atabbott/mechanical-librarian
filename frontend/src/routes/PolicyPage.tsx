@@ -222,8 +222,10 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
     fallback: 'abstains when no decision is qualified',
   },
   'contributor_names:canonical': {
-    admitted: 'the already-produced exact candidate and its policy/audit context',
-    transformation: 'records the option without canonicalizing the candidate',
+    admitted:
+      'the already-produced exact candidate from provider-consensus display evidence and its retained local provenance',
+    transformation:
+      'replaces only an equivalent local contributor display form without reconciling contributor identity',
     effect: 'Automatic writes only that exact selected contributor destination value',
     fallback: 'abstains when no decision is qualified',
   },

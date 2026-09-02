@@ -73,6 +73,11 @@ from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecisionError,
     AutomaticSafetyState,
 )
+from mechanical_librarian.domain.contributor_display_qualification import (
+    F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY,
+    F38_CONTRIBUTOR_DISPLAY_POLICY_OPTION,
+    F38_QUALIFICATION_MANIFEST_SHA256,
+)
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 from mechanical_librarian.domain.field_effect import (
@@ -100,10 +105,14 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimScope,
     LocalClaim,
     MetadataReport,
+    ProviderCandidate,
+    ProviderObservation,
+    ProviderStatus,
     TargetDestination,
     TargetFacts,
     TargetField,
     TargetFieldState,
+    finalize_candidate_comparisons,
 )
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase, ReviewTransition
@@ -120,6 +129,7 @@ from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.proposal_evidence import (
     _claim,
     _fields,
+    _local_creator,
     _local_subtitle,
     _provider,
     _publication_local_isbn,
@@ -4742,6 +4752,223 @@ def test_provider_consensus_title_persists_the_exact_qualified_automatic_tranche
         with pytest.raises(FieldEffectError, match="^authority$"):
             repository.claim_field_effect(plan.plan.plan_id, "planned", "a" * 64, 7)
         assert "planned" == repository.get_field_effect(plan.plan.plan_id).state
+        repository.close()
+
+
+def test_provider_consensus_contributor_display_preserves_local_provenance_and_owner_finality() -> (
+    None
+):
+    local = "Example, Ada"
+    local_claims = (_local_creator(local),)
+    providers = tuple(
+        ProviderObservation(
+            name,
+            ProviderStatus.CANDIDATES,
+            candidates=(
+                finalize_candidate_comparisons(
+                    ProviderCandidate(
+                        f"{name}-edition",
+                        f"{name}-work",
+                        (
+                            _claim(
+                                name,
+                                f"{name}-edition",
+                                ClaimKind.CREATOR,
+                                "Ada Example",
+                                scope=ClaimScope.WORK,
+                                role="author",
+                            ),
+                        ),
+                    ),
+                    local_claims,
+                ),
+            ),
+            authority=name,
+        )
+        for name in ("open_library", "hardcover")
+    )
+    report = _proposal_report(
+        fields=_fields(
+            authors=TargetField(
+                TargetDestination.AUTHORS,
+                TargetFieldState.VALUE,
+                (local,),
+            ),
+        ),
+        local_claims=local_claims,
+        providers=providers,
+    )
+    destinations = {
+        category: "unsupported" if category == "explicit" else "ask"
+        for category in OPTION_CATALOGUE
+    }
+    destinations["contributor_names"] = "automatic"
+    profile = MetadataPolicyProfile.create(
+        "Contributor display automatic intent", dict(DEFAULT_OPTIONS), destinations
+    )
+
+    with tempfile.TemporaryDirectory() as temporary:
+        repository = open_repository(Path(temporary) / "reports.sqlite")
+        repository.enter_shadow_preview(1)
+        repository.create_metadata_policy_draft(profile.canonical_json)
+        resolved = resolve_policy(profile, report.target.library)
+        repository.activate_metadata_policy(
+            profile.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            2,
+        )
+        repository.activate_qualified_automatic(3)
+        proposal = evaluate_report(
+            report, resolved.resolved_id, dict(resolved.destinations)
+        )
+        authors = next(
+            value
+            for value in proposal.results
+            if value.destination is TargetDestination.AUTHORS
+        )
+        assert authors.reasons == ("provider_consensus_contributor_display",)
+        assert local_claims[0].reference in authors.alternatives[0].evidence_references
+        repository.publish(report, lambda: True)
+        repository.publish_proposal(proposal)
+        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+
+        outcome = ShadowOutcomeSet.from_json(
+            repository.persist_shadow_outcome(case_id, 4)
+        )
+        authors_outcome = next(
+            value for value in outcome.outcomes if value.destination == "authors"
+        )
+        automatic = next(
+            AutomaticDecision.from_json(value)
+            for value in repository.get_review_case_decisions(case_id)
+            if AutomaticDecision.from_json(value).destination == "authors"
+        )
+        assert authors_outcome.policy_category == "contributor_names"
+        assert automatic.policy_category == F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY
+        assert automatic.policy_option == F38_CONTRIBUTOR_DISPLAY_POLICY_OPTION
+        assert (
+            automatic.qualification_manifest_sha256 == F38_QUALIFICATION_MANIFEST_SHA256
+        )
+        assert {"kind": "list", "value": ["Ada Example"]} == (
+            _automatic_decision_value(
+                automatic,
+                ReviewCase.create_from_data(
+                    json.loads(repository.get_review_case(case_id))["case"]
+                ),
+                report,
+                proposal,
+                outcome,
+            )
+        )
+
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(case_id))["case"]
+        )
+        author_proposal = next(
+            value for value in case.proposals if value["destination"] == "authors"
+        )
+        owner = HumanDecision.create(
+            case,
+            proposal_id=author_proposal["proposal_id"],
+            target_fingerprint=case.target_fingerprint,
+            destination="authors",
+            actor="owner",
+            outcome="keep_current",
+            selected_value=None,
+            idempotency_key="provider-consensus-contributor-owner-final-0001",
+            occurred_at=5,
+        )
+        repository.record_human_decision(owner)
+        detail = InspectCurrentReviewCase(repository).run(case_id)
+        projected = next(
+            value for value in detail["fields"] if value["destination"] == "authors"
+        )
+        assert projected["human_decision"]["decision_id"] == owner.decision_id
+        assert projected["automatic_decision"]["decision_id"] == automatic.decision_id
+        repository.close()
+
+
+def test_provider_consensus_contributor_display_preserve_option_stays_manual() -> None:
+    local = "Example, Ada"
+    local_claims = (_local_creator(local),)
+    providers = tuple(
+        ProviderObservation(
+            name,
+            ProviderStatus.CANDIDATES,
+            candidates=(
+                finalize_candidate_comparisons(
+                    ProviderCandidate(
+                        f"{name}-edition",
+                        f"{name}-work",
+                        (
+                            _claim(
+                                name,
+                                f"{name}-edition",
+                                ClaimKind.CREATOR,
+                                "Ada Example",
+                                scope=ClaimScope.WORK,
+                                role="author",
+                            ),
+                        ),
+                    ),
+                    local_claims,
+                ),
+            ),
+            authority=name,
+        )
+        for name in ("open_library", "hardcover")
+    )
+    report = _proposal_report(
+        fields=_fields(
+            authors=TargetField(
+                TargetDestination.AUTHORS,
+                TargetFieldState.VALUE,
+                (local,),
+            ),
+        ),
+        local_claims=local_claims,
+        providers=providers,
+    )
+    options = dict(DEFAULT_OPTIONS)
+    options["contributor_names"] = "preserve"
+    destinations = {
+        category: "unsupported" if category == "explicit" else "ask"
+        for category in OPTION_CATALOGUE
+    }
+    destinations["contributor_names"] = "automatic"
+    profile = MetadataPolicyProfile.create(
+        "Contributor preserve automatic intent", options, destinations
+    )
+
+    with tempfile.TemporaryDirectory() as temporary:
+        repository = open_repository(Path(temporary) / "reports.sqlite")
+        repository.enter_shadow_preview(1)
+        repository.create_metadata_policy_draft(profile.canonical_json)
+        resolved = resolve_policy(profile, report.target.library)
+        repository.activate_metadata_policy(
+            profile.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            2,
+        )
+        repository.activate_qualified_automatic(3)
+        proposal = evaluate_report(
+            report, resolved.resolved_id, dict(resolved.destinations)
+        )
+        repository.publish(report, lambda: True)
+        repository.publish_proposal(proposal)
+        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+
+        outcome = ShadowOutcomeSet.from_json(
+            repository.persist_shadow_outcome(case_id, 4)
+        )
+        authors = next(
+            value for value in outcome.outcomes if value.destination == "authors"
+        )
+        assert authors.policy_option == "preserve"
+        assert authors.disposition == "manual"
+        assert not repository.get_review_case_decisions(case_id)
         repository.close()
 
 

@@ -16,11 +16,15 @@ credential, root, item, or exception.
 
 Qualified automatic policy is decision-only. Its clean-schema built-in profile
 may append exact-current immutable dispositions only from the sealed aggregate
-F19a manifest; it cannot construct an apply plan or use a target, media, or
-provider-write client. Owner pause and durable category/global suspension fail
-closed to the authenticated human queue, and recovery is an explicit
-CSRF-protected owner action. Private qualification cases, values, and paths are
-not stored in the repository or public API.
+F19a or F20 manifests, or from the separately sealed F38 manifest for
+`contributor_names:canonical:provider_consensus_display`. That F38 option
+requires the exact provider-consensus display candidate and retains local
+provenance; it cannot reconcile contributor identity. No automatic disposition
+can construct an apply plan or use a target, media, or provider-write client.
+Owner pause and durable category/global suspension fail closed to the
+authenticated human queue; an owner decision remains final, and recovery is an
+explicit CSRF-protected owner action. Private qualification cases, values, and
+paths are not stored in the repository or public API.
 An equal automatic candidate is a separate identifier-only terminal fact. Its
 atomic currentness comparison happens before, and does not read, authority,
 consent, capability, backup, target, or read-back controls.
@@ -311,9 +315,10 @@ complete ordered work-bound source projection, and descriptions must remain
 exact safe work-bound text without rewriting or truncation;
 `not_qualified` and `insufficient_coverage` cannot be fallback authority,
 `tags:off` remains policy-only, and human-only `explicit:unsupported` cannot
-construct an effect. Each automatic decision binds the F19a or F20 digest that
-actually qualified its exact policy option. Effect consent, target concurrency,
-backup, apply, and read-back gates remain unchanged.
+construct an effect. Each automatic decision binds the F19a, F20, or F38 digest
+that actually qualified its exact policy option; F38 binds only
+`contributor_names:canonical:provider_consensus_display`. Effect consent,
+target concurrency, backup, apply, and read-back gates remain unchanged.
 Previously persisted F20 decisions remain readable only when their historical
 digest and option identity match the exact earlier passing set; new decisions
 always bind the current candidate, and a historical digest grants no new option.
