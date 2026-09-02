@@ -51,7 +51,13 @@ from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 from tests.support.automatic_decisions import _automatic_decisions
 from tests.support.automatic_no_change import _automatic_no_change_inputs
-from tests.support.proposal_evidence import _claim, _fields, _provider
+from tests.support.proposal_evidence import (
+    _claim,
+    _fields,
+    _provider,
+    _target_work_candidate,
+    _target_work_report,
+)
 from tests.support.proposal_evidence import _report as _proposal_report
 from tests.unit.test_field_effects import (  # noqa: F401
     CAPABILITY,
@@ -112,28 +118,15 @@ def _automatic_no_change_decisions(
 def _automatic_candidate_decision(
     environment: _EffectEnvironment,
 ) -> AutomaticDecision:
-    description = "An exact source-bound description."
-    report = _proposal_report(
-        fields=_fields(
-            description=TargetField(
-                TargetDestination.DESCRIPTION, TargetFieldState.MISSING
-            )
-        ),
-        providers=(
-            _provider(
+    report = _target_work_report(
+        (
+            (
                 "catalogue",
-                "edition-1",
-                (
-                    _claim(
-                        "catalogue",
-                        "edition-1",
-                        ClaimKind.DESCRIPTION,
-                        description,
-                        scope=ClaimScope.WORK,
-                    ),
-                ),
+                "hardcover",
+                (_target_work_candidate("catalogue", "edition-1", "work-1"),),
+                True,
             ),
-        ),
+        )
     )
     decisions = _automatic_decisions(
         environment,
