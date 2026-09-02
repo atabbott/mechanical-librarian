@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Titles that differ only by one closed decoration no longer compete: the plain
+  form is canonical, an item already holding it is kept without a write, and one
+  holding the decorated form is tidied automatically. A colon segment from
+  another source now corroborates a subtitle, and a filename title carrying the
+  author prefix plus underscores is admitted as one work. Existing installs
+  require a clean `metadata-report-v36` database. (#896)
+
 - Empty ISBNs now fill only when deterministic identity evidence binds the selected
   provider ISBN to the file's work; unverified or competing families remain visible
   for review. Existing pre-release proposal state requires a clean rebuild under

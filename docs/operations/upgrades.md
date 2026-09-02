@@ -3,11 +3,11 @@
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
 The reviewer-access authority, `setup-state-v3`, `owner-settings-v3`,
-`cover-consideration-v3`, `metadata-report-v35`, and the added application
+`cover-consideration-v3`, `metadata-report-v36`, and the added application
 tables change the current SQLite objects in this build. Every earlier
 application database therefore requires a clean rebuild; no adoption,
 migration, conversion, import, repair, or downgrade is supplied by #872, #873,
-#749, #956, or #965.
+#749, #956, #965, or #896.
 
 The exact predecessors for this change are `config-v7`, `metadata-report-v32`,
 `owner-settings-v2`, and `setup-state-v2`. Inventaire changes all four closed
@@ -22,6 +22,17 @@ closed cross-file observations, so a v34 report is not exact-current. Rebuild an
 absent application database; no adoption is supplied. The predecessor #956
 advanced v33 to v34 when the retained local-claim grammar admitted the
 Audiobookshelf-asserted ASIN.
+
+#896 advances the report discriminator from `metadata-report-v35` to
+`metadata-report-v36`: the work-title transformation lineage becomes an ordered
+compound production and carries its first non-null value, so a v35 report is not
+exact-current. Rebuild an absent application database; no adoption is supplied.
+
+#896 advances the exact proposal policy from `fixed-conservative-v18` to
+`fixed-conservative-v19` because decoration-equivalent titles collapse into one
+class and the tidy tranche adds a new persisted automatic-decision path.
+Existing pre-release proposal, review, decision, and downstream field-effect
+state is not rewritten or adopted; rebuild the application database.
 
 F35 advances the exact proposal policy from `fixed-conservative-v13` to
 `fixed-conservative-v14` because provider-consensus title election adds a new
@@ -60,7 +71,7 @@ exact retained #744 test schema, an existing complete owner-only clone, an
 independent backup path, and an absent output path under the same private
 directory. The command name remains the frozen authority identifier from its
 original plan; its fresh output is always the exact current schema,
-`metadata-report-v35` with `fixed-conservative-v18`. It leaves the source
+`metadata-report-v36` with `fixed-conservative-v19`. It leaves the source
 untouched, verifies the backup, rebuilds a fresh exact-current report database
 through current derivation, and
 invalidates observations that lack current work-dispatch provenance plus all

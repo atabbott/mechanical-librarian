@@ -60,9 +60,10 @@ marketing or status text. Both subtitle policies were therefore initially
 The eighth candidate execution requalified `subtitle:fill_empty` by making the
 book's own packaged metadata the required corroborator. When the target
 subtitle is empty and provider catalogues disagree, the proposal engine now
-elects only the one competing value the local subtitle claim attests
-(`local_attested_subtitle`); the automatic projection separately abstains from
-any fill whose value no valid local subtitle claim matches
+elects only the one competing value an independent source attests
+(`local_attested_subtitle`, or `provider_segment_corroborated_subtitle` when the
+corroboration is another source's colon segment); the automatic projection
+separately abstains from any fill whose value no independent claim matches
 (`subtitle_local_corroboration_required`). Every previously invalid
 prediction — series marketing, proof-only, and franchise descriptors — lacked
 a matching local claim and stays an owner decision. Evaluated with the target
@@ -143,6 +144,13 @@ is useful work metadata; manifestation identity is the evidence that binds it.
 A useful published-work ISBN carried by a proof remains eligible only through
 that bound identity evidence; proof status alone neither elects nor disqualifies it.
 
+The fifteenth candidate execution (#896) re-scores `subtitle:fill_empty` on
+segment corroboration. A colon segment stripped from any WORK-scope title claim,
+local or provider, now corroborates the fill on cross-source terms; a segment
+from the candidate's own source never does. Every other option replays
+unchanged, and the option keeps 1.0 precision with zero structural or
+unsupported outputs.
+
 The machine-readable candidate is
-[`f20-rich-metadata-qualification-candidate-v6.json`](../reference/f20-rich-metadata-qualification-candidate-v6.json).
-The v5 manifest remains a readable historical record.
+[`f20-rich-metadata-qualification-candidate-v7.json`](../reference/f20-rich-metadata-qualification-candidate-v7.json).
+The v6 manifest remains a readable historical record.

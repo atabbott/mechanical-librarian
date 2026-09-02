@@ -6,7 +6,7 @@ preparation; source-only contributor inspection uses the typed workbench and is
 not an installed runtime capability. The operation reopens the exact report, revalidates its
 current Audiobookshelf target projection, selected EPUB bytes, ABS cover, and
 both blobs of every referenced private cover artifact, then evaluates the built-in
-`fixed-conservative-v18` policy. It does not construct or contact a metadata or
+`fixed-conservative-v19` policy. It does not construct or contact a metadata or
 cover provider.
 
 An exact ProposalSet can be reopened offline through the application repository
@@ -15,14 +15,15 @@ or typed source-only inspector.
 Success is exactly one canonical `proposal-set-v5` JSON document plus a
 newline. Failure emits no document and one value-free diagnostic.
 
-Only `proposal-set-v5` documents under `fixed-conservative-v18` and the exact current
+Only `proposal-set-v5` documents under `fixed-conservative-v19` and the exact current
 `proposal_sets` table envelope are accepted. A database with the earlier
 `fixed-conservative-v1`, `fixed-conservative-v2`, `fixed-conservative-v3`, or
 `fixed-conservative-v4`, `fixed-conservative-v5`, `fixed-conservative-v6`,
 `fixed-conservative-v7`, `fixed-conservative-v8`, `fixed-conservative-v9`,
 `fixed-conservative-v10`, `fixed-conservative-v11`, `fixed-conservative-v12`,
 `fixed-conservative-v13`, `fixed-conservative-v14`, `fixed-conservative-v15`, or
-`fixed-conservative-v16`, or `fixed-conservative-v17` table shape is incompatible
+`fixed-conservative-v16`, `fixed-conservative-v17`, or `fixed-conservative-v18`
+table shape is incompatible
 and is rejected before mutation. A clean rebuild is required; there is no
 proposal migration, import, conversion, or compatibility parser.
 
@@ -32,6 +33,31 @@ The F35 (#884) provider-consensus title election is admitted by the current
 #445 F19a successor manifest. Its closed title tranche is qualified separately
 from the current F20 v4 route, which continues to exclude title. Earlier F19a
 digests remain readable for their historical decisions but cannot authorize F35.
+
+## Decoration equivalence
+
+The F41 (#896) decoration-equivalence election runs immediately after F35 on a
+title result whose only reason is `competing_evidence`. The two elections are
+disjoint by predicate: F35 requires every provider title claim to state the
+clean form, F41 requires both class members to carry provider evidence. F41
+emits `decoration_equivalent_<family>` on a keep, `decoration_tidy_<family>` on
+the tidy proposal, and one of `decoration_tidy_series_unpreserved`,
+`decoration_equivalence_provider_dissent`, or
+`decoration_equivalence_decorated_consensus` beside `competing_evidence` when a
+guard closes the class.
+
+A collapsed title carries one alternative, so a representation that once mapped
+to two competing title forms no longer withholds a bibliographic combination;
+the `no_safe_bibliographic_combination` release follows from the collapse itself.
+The generic-title preservation branch that emits an all-PRESERVE combination is
+now taken only when the title outcome is a keep, which is the only shape the
+`ProposalSet` invariant admits.
+
+The subtitle result names an uncorroborated colon segment with
+`subtitle_segment_uncorroborated`, on the competing seam and on an ineligible
+result with no supported evidence; a cross-source provider segment that
+corroborates an elected subtitle reports
+`provider_segment_corroborated_subtitle`.
 
 ## Canonical contributor display
 

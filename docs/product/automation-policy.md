@@ -41,9 +41,24 @@ manifest replays and diffs every existing F19a option alongside the title
 tranche; its 1.0 precision and zero safety failures authorize only this closed
 F35 title replacement. The sealed prior F19a digest remains readable historical
 authority for its former options; it cannot authorize F35. F20 continues to
-exclude title. A colon-derived title suffix can remain an owner-visible subtitle
-proposal, but is never F20 `subtitle:fill_empty` corroboration; that automatic
-option still requires an explicit local subtitle claim.
+exclude title. A colon segment stripped from any WORK-scope title claim, local
+or provider, corroborates the subtitle election and the F20 `subtitle:fill_empty`
+projection on cross-source terms only: it never elects alone, and it never
+corroborates a subtitle stated by its own source.
+
+F41 (#896) collapses title alternatives that are equal up to one closed
+decoration into a single equivalence class whose canonical member is the plain
+form. Both members must be provider-backed; the class needs exactly two
+alternatives; the decoration must match in exactly one grammar step, so stacked
+decorations stay competing. Two evidence-only guards close it further: every
+valid provider WORK title claim in the report must key into the class, and at
+least as many distinct provider authorities must attest the plain form as the
+decorated one. When the current value is the plain form the outcome is a keep
+with zero writes; when it is the decorated form the plain alternative is
+proposed through the qualified automatic `title:replace_target:decoration_tidy`
+option, bound to the F19a successor manifest v5 and lane `title_layout`. The F20
+candidate advances to v7 with the subtitle option re-scored on segment
+corroboration.
 
 F38 (#887) separately qualifies only
 `contributor_names:canonical:provider_consensus_display`: two independent

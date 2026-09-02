@@ -69,10 +69,23 @@ title comparison, exact complete ordered authors, and one provider-local work
 identity, and preserves every translation, adaptation, abridgement, and
 variant-marker veto. Dispatch lineage is retained and never creates
 equivalence. The nullable v28 transformation-lineage field remains a replay
-guard: because the admitted subset is empty, every non-null value is invalid.
+guard.
 Initial qualification, overflow witnesses, persisted readback, retry successors,
 and ProposalSet replay invoke the same decision. ADR-0013 rejects v27 and every
 other predecessor during ordinary startup.
+
+The #896 amendment ([ADR-0067](0067-decoration-equivalence-and-compound-admission.md))
+grants admission through a closed compound production rather than a table row.
+Every table row, `filename_author_title_prefix` included, stays query-only; one
+production, `author_prefix_then_underscores`, composes the complete first-author
+filename prefix with filename-underscore normalization and admits only when the
+remainder after the closed separator carries at least one underscore. The
+transformation lineage becomes the ordered families, the derived production
+name, and the local side; a lineage naming a single family, an unenabled
+composition, a mismatched production name, or the provider side is invalid. The
+schema advances to `metadata-report-v36`. The identity floor, the veto
+vocabulary, and the rule that query shaping never creates admission equivalence
+are unchanged.
 
 The admission baseline retains the pre-amendment target-normalization floor:
 NFC, case folding, and collapse of all Unicode whitespace while preserving
