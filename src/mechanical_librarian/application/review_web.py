@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 import secrets
 import unicodedata
 from collections.abc import Callable
@@ -1991,6 +1992,34 @@ _TERMINAL_PREPARATION_GUIDANCE: dict[str, tuple[str, str]] = {
         "No owner action is currently available.",
     ),
 }
+# The terminal statuses one file of a composed audiobook can end a whole item
+# on. Their recorded root is a track ordinal rather than a provider name, so it
+# is read into the owner's reason and never into the provider field.
+_TRACK_ROOT_STATUSES = frozenset(
+    (
+        "unsupported_media",
+        "unreadable_media",
+        "parser_refused",
+        "multi_file_budget_exceeded",
+    )
+)
+_TRACK_ROOT = re.compile(r"track_(\d+)")
+
+
+def _refusing_track_sentence(status: str, root: str | None) -> str:
+    """Name the one file that ended a composed item, when one is recorded.
+
+    An owner holding a three-hundred-file audiobook cannot act on "a file
+    could not be read"; the ordinal is the whole difference between that and
+    a file they can open. A single-file item records no root and reads
+    exactly as it did before.
+    """
+    if status not in _TRACK_ROOT_STATUSES or root is None:
+        return ""
+    matched = _TRACK_ROOT.fullmatch(root)
+    if matched is None:
+        return ""
+    return f" The refusing file is track {matched.group(1)} of this item's audio files."
 
 
 def _library_item(
@@ -2023,6 +2052,7 @@ def _library_item(
                 if guidance is None:
                     raise ValueError
                 reason, recovery = guidance
+                reason += _refusing_track_sentence(status, root)
                 work_id, item, library = (
                     terminal["work_id"],
                     terminal["item"],
@@ -2056,7 +2086,11 @@ def _library_item(
                             terminal["recovery_attempt"],
                             status,
                         ),
-                        "provider": root or "provider",
+                        "provider": (
+                            "provider"
+                            if status in _TRACK_ROOT_STATUSES
+                            else (root or "provider")
+                        ),
                         "reason": reason,
                         "recovery": recovery,
                         "recovery_attempt": terminal["recovery_attempt"],

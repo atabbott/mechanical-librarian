@@ -54,6 +54,11 @@ MAX_SIDECAR_NAME_CHARACTERS = 255
 # widest audiobook is 352 files, and every count, byte, and second below is
 # bounded against this number rather than against whatever a target answers.
 MAX_AUDIO_TRACKS = 512
+# The widest raw audio-file list a target payload may state before this build
+# stops reading it.  The set an item is admitted on is the set the service
+# plays, so the records it excludes are dropped before the track bound above is
+# applied -- and this is the bound that keeps finding that out finite.
+MAX_AUDIO_FILE_RECORDS = 2 * MAX_AUDIO_TRACKS
 # One item's whole inspection: every track's digest, probe, and interpretation
 # together.  The per-file wall stays what F43 set, so this is the bound that
 # stops a wide item from occupying a worker for hours rather than the bound on
@@ -787,6 +792,7 @@ __all__ = [
     "AudioPerformanceType",
     "AudioSidecarDigest",
     "AudioTrackDigest",
+    "MAX_AUDIO_FILE_RECORDS",
     "MAX_AUDIO_TRACKS",
     "MAX_CHAPTERS",
     "MAX_PUBLIC_REPORT_BYTES",

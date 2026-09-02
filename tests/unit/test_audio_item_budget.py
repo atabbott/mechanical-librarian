@@ -168,6 +168,69 @@ def test_the_item_wall_stops_a_wide_set_and_names_the_budget(
     assert raised.value.outcome is AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED
 
 
+class _ItemWallClock:
+    """A clock the test arms, so nothing here depends on a reading count."""
+
+    def __init__(self) -> None:
+        self.expired = False
+
+    def __call__(self) -> float:
+        return MULTI_FILE_WALL_SECONDS + 1.0 if self.expired else 0.0
+
+
+class _CancellingChild(_RecordedChild):
+    """Arm the item wall as one track's child starts, and have it cancel."""
+
+    def __init__(self, clock: _ItemWallClock, ordinal: int) -> None:
+        super().__init__(outcomes={ordinal: AudioInspectionOutcome.CANCELLATION})
+        self._clock = clock
+        self._ordinal = ordinal
+
+    def __call__(
+        self,
+        descriptor: int,
+        expected_source: Fingerprint,
+        limits: object,
+        *,
+        sidecars: tuple[object, ...] = (),
+        path_file: str = "",
+        path_folder: str | None = None,
+        cancelled: Callable[[], bool] = lambda: False,
+    ) -> AudioInspection:
+        if len(self.calls) + 1 == self._ordinal:
+            self._clock.expired = True
+        return super().__call__(
+            descriptor,
+            expected_source,
+            limits,
+            sidecars=sidecars,
+            path_file=path_file,
+            path_folder=path_folder,
+            cancelled=cancelled,
+        )
+
+
+def test_a_wall_that_fires_inside_a_child_is_the_budget_not_the_parser(
+    mount: MediaMountConfiguration, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cancelled child says nothing about the file it was reading.
+
+    The per-file wall and the item wall both reach the parent as the one
+    cancelled outcome, and only the item clock tells them apart. Reported as
+    `parser_refused` the owner would be told to replace a file that is fine.
+    """
+    clock = _ItemWallClock()
+    child = _CancellingChild(clock, 2)
+    monkeypatch.setattr(composition, "run_audio_inspector_child", child)
+
+    with pytest.raises(AudioItemInspectionError) as raised:
+        _IsolatedAudioInspector(clock).inspect(mount, _tracks(mount, 3), _MAXIMUM)
+
+    assert raised.value.outcome is AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED
+    assert raised.value.track == 2
+    assert child.calls[1]["cancelled"] is True
+
+
 def test_a_single_track_item_never_arms_the_item_clock(
     mount: MediaMountConfiguration, monkeypatch: pytest.MonkeyPatch
 ) -> None:

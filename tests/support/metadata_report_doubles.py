@@ -69,8 +69,10 @@ class FakeAudioInspector:
         self.ceilings: list[int] = []
         self.tracks: list[tuple[str, ...]] = []
         # What the mount holds now, which starts as what inspection read and
-        # can be reassigned to stage a sidecar added, removed, or edited since.
+        # can be reassigned to stage a sidecar added, removed, or edited since,
+        # or a track whose bytes were rewritten under an unchanged manifest.
         self.current_sidecars = result.audio.sidecars
+        self.current_digest = result.content_digest
 
     def inspect(self, mount, tracks, maximum_bytes):
         self.inspections += 1
@@ -89,7 +91,7 @@ class FakeAudioInspector:
     ):
         self.verifications += 1
         return (
-            expected_digest == self.result.content_digest
+            expected_digest == self.current_digest
             and tuple(expected_sidecars) == self.current_sidecars
         )
 

@@ -23,9 +23,12 @@ from mechanical_librarian.application.configuration import (
     LibraryConfiguration,
     MediaMountConfiguration,
 )
+from mechanical_librarian.domain.audio_inspection import (
+    MAX_AUDIO_FILE_RECORDS,
+    MAX_AUDIO_TRACKS,
+)
 from mechanical_librarian.domain.metadata_report import (
     AUDIO_FILE_FORMATS,
-    MAX_AUDIO_TRACKS,
     ReportValueError,
     audio_set_identity,
     canonical_json,
@@ -266,13 +269,25 @@ def _entry(
         # the fingerprint falls back to the item timestamp, which Audiobookshelf
         # also advances on playback -- so listening to an audiobook would
         # re-prepare it, re-hashing multiple gigabytes for files nobody wrote.
-        audio_revisions = _audio_set_metadata(media.get("audioFiles"))
+        audio_records = included_audio_records(media.get("audioFiles"))
+        audio_revisions = _audio_set_metadata(audio_records)
         audio_locations = (
             ()
-            if audio_mount is None
-            else _audio_set_locations(media.get("audioFiles"), audio_mount, detail)
+            if audio_mount is None or audio_records is None
+            else _audio_set_locations(audio_records, audio_mount, detail)
         )
-        if not audio_locations or audio_mount is None:
+        if (
+            audio_mount is not None
+            and audio_records is not None
+            and len(audio_records) > MAX_AUDIO_TRACKS
+        ):
+            # A mounted item this build cannot compose is a state the owner
+            # can act on -- by splitting the item on the service -- so it is
+            # attended to rather than made invisible. It stays unprepared:
+            # there is no `file_identity` a report could be bound to.
+            classification = "needs-attention"
+            file_identity = service_path = format_value = mount_name = None
+        elif not audio_locations or audio_mount is None:
             classification = "none"
             file_identity = service_path = format_value = mount_name = None
         else:
@@ -420,20 +435,47 @@ def _entry(
     )
 
 
-def _audio_set_metadata(value: object) -> tuple[object, ...]:
+def included_audio_records(value: object) -> tuple[Any, ...] | None:
+    """Return the audio records the service itself plays, or none at all.
+
+    Audiobookshelf drops an excluded file from the recording it plays, so it
+    is not part of the service's own order and it is not part of the width the
+    composition bound is measured against either: an item of five hundred and
+    twenty files with ten excluded is a five-hundred-and-ten-track set. The
+    records are therefore dropped before anything counts them.
+
+    The scan stops one record past `MAX_AUDIO_TRACKS` -- beyond that a caller
+    only needs to know the set is wider than composition admits -- and a raw
+    list past `MAX_AUDIO_FILE_RECORDS` is that same answer without a scan, so
+    a hostile payload cannot make counting it the cost. `None` means the
+    payload states no audio list at all, which is not an audiobook item.
+    """
+    if type(value) is not list or not value:
+        return None
+    if len(value) > MAX_AUDIO_FILE_RECORDS:
+        return tuple(value[: MAX_AUDIO_TRACKS + 1])
+    records: list[Any] = []
+    for record in value:
+        if type(record) is dict and record.get("exclude") is True:
+            continue
+        records.append(record)
+        if len(records) > MAX_AUDIO_TRACKS:
+            break
+    return tuple(records)
+
+
+def _audio_set_metadata(records: tuple[Any, ...] | None) -> tuple[object, ...]:
     """Return every track's revision record, in the service's own order.
 
     One record per track, because a set is only as current as its least
     current member: a list holding one empty record still falls back to the
     item timestamp, exactly as a single missing revision always did.
     """
-    if type(value) is not list or not value:
+    if not records:
         return (None,)
     return tuple(
-        record.get("metadata") if type(record) is dict else None
-        for record in value
-        if not (type(record) is dict and record.get("exclude") is True)
-    ) or (None,)
+        record.get("metadata") if type(record) is dict else None for record in records
+    )
 
 
 def _file_revision(record: object) -> dict[str, object]:
@@ -450,7 +492,7 @@ def _file_revision(record: object) -> dict[str, object]:
 
 
 def _audio_set_locations(
-    value: object, mount: MediaMountConfiguration, detail: dict[str, Any]
+    records: tuple[Any, ...], mount: MediaMountConfiguration, detail: dict[str, Any]
 ) -> tuple[EbookLocation, ...]:
     """Admit one item's whole ordered audio set, or nothing at all.
 
@@ -459,14 +501,14 @@ def _audio_set_locations(
     rather than restating it, and narrows only which formats it will accept.
     A set with one unusable member is admitted as nothing rather than as a
     shorter set: a report bound to a subset of the recording is bound to a
-    recording the owner does not have.
+    recording the owner does not have.  The records are the ones the service
+    plays; a set wider than composition admits is refused here and attended
+    to by the caller rather than passed on as an admitted item.
     """
-    if type(value) is not list or not 1 <= len(value) <= MAX_AUDIO_TRACKS:
+    if not 1 <= len(records) <= MAX_AUDIO_TRACKS:
         return ()
     locations: list[EbookLocation] = []
-    for record in value:
-        if type(record) is dict and record.get("exclude") is True:
-            continue
+    for record in records:
         try:
             location = normalize_ebook_location(
                 record, service_path=mount.service_path, item=detail

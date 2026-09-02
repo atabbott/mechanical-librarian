@@ -91,6 +91,7 @@ from mechanical_librarian.domain.metadata_report import (
     ReportValueError,
     TargetFacts,
     audio_set_content_digest,
+    audio_set_identity,
     canonical_json,
     claim_scope,
     comparison_links,
@@ -1813,6 +1814,25 @@ def _audio_track(
         60_000,
         claims,
     )
+
+
+def test_one_track_keeps_its_own_identity_and_a_set_composes_a_new_one() -> None:
+    """The identity is what the pipeline binds a report's work to.
+
+    A one-track set has to stay its own track's identity or every existing
+    single-file report becomes a report of a different item. Beyond one track
+    the identity is the ordered list, so adding, removing, reordering, or
+    replacing any track moves it exactly once.
+    """
+    first, second = f"{1:064x}", f"{2:064x}"
+
+    assert audio_set_identity((first,)) == first
+    composed = audio_set_identity((first, second))
+    assert composed not in {first, second}
+    assert composed != audio_set_identity((second, first))
+    for invalid in ((), "not-a-tuple", (first, "short")):
+        with pytest.raises(ReportValueError):
+            audio_set_identity(cast(tuple[str, ...], invalid))
 
 
 def test_a_single_file_audio_section_still_names_the_one_file_it_composed() -> None:

@@ -60,9 +60,11 @@ provider call.
   whose 1 to 512 audio files are all `m4b`, `m4a`, or `mp3`.
 
 Every other target — an unmounted audiobook library, an audiobook item over 512
-files or carrying a file outside those containers, a non-EPUB ebook file — fails
-before inspection, provider construction, provider credential access, egress, or
-report publication.
+audio files or carrying a file outside those containers, a non-EPUB ebook file —
+fails before inspection, provider construction, provider credential access,
+egress, or report publication. A mounted item over 512 audio files is listed for
+attention rather than dropped from the library, so an owner can see the item
+they would have to split; it is still never prepared.
 
 Linux production retains the no-follow root-to-parent chain and opens the
 database through a private verified hard-link alias while holding the
@@ -217,8 +219,12 @@ both values and record the disagreement rather than electing one, and a
 cross-track ASIN disagreement opens a discovery lane for each. The item is
 bounded by file count, by summed bytes, and by a 600-second reading wall;
 exceeding any of them is the terminal `multi_file_budget_exceeded`. One
-unreadable or hostile track denies the whole item that track's own outcome, with
-its ordinal recorded — an item is one closed evidence set or none. Audiobook
+unreadable or hostile track denies the whole item that track's own outcome — an
+item is one closed evidence set or none. The refusing track's ordinal is
+recorded on the terminal preparation record as `track_<ordinal>` and stated in
+the owner's reason, so a three-hundred-file item names the one file to look at.
+The 512-file bound is measured on the files the service plays, after its own
+excluded records are dropped. Audiobook
 libraries without a named read-only mount stay excluded, exactly as before. See
 [ADR-0063](../architecture/decisions/0063-isolated-audiobook-inspector.md) and
 [ADR-0066](../architecture/decisions/0066-multi-file-audiobook-composition.md).

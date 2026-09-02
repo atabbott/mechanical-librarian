@@ -1142,6 +1142,35 @@ def test_the_widest_admitted_set_still_reads_as_one_item() -> None:
     assert len(snapshot.files) == MAX_AUDIO_TRACKS
 
 
+def test_excluded_files_are_dropped_before_the_set_is_measured() -> None:
+    """The width that matters is the recording's, not the payload's.
+
+    Counting the listed records refused an item of five hundred and ten
+    tracks because ten files beside them were excluded from the recording the
+    service plays -- a set this build composes without difficulty.
+    """
+    admitted = MAX_AUDIO_TRACKS - 2
+    snapshot = _audiobook_snapshot(
+        {
+            "audioFiles": [
+                *(
+                    _audio_file(f"part-{index}.m4b", inode=f"inode-{index}")
+                    for index in range(admitted)
+                ),
+                *(
+                    {
+                        **_audio_file(f"extra-{index}.m4b", inode=f"extra-{index}"),
+                        "exclude": True,
+                    }
+                    for index in range(10)
+                ),
+            ]
+        }
+    )
+
+    assert len(snapshot.files) == admitted
+
+
 def test_the_declared_index_is_read_and_an_excluded_file_is_not_in_the_order() -> None:
     """The order is the service's own list order; `index` is evidence about it.
 

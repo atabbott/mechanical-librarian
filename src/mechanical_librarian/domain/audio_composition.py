@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from mechanical_librarian.domain.audio_inspection import (
     MAX_CHAPTER_TITLE_CHARACTERS,
     MAX_CHAPTERS,
+    MAX_DURATION_MILLISECONDS,
     AudioChapter,
     AudioChapterComposition,
     AudioEmbeddedCover,
@@ -271,6 +272,12 @@ def _compose_chapters(
     read as a chapter structure the recording does not have.  Where the atoms
     are partial, every track becomes one chapter and the observation records
     that atoms were dropped.
+
+    Every offset in the vector is a sum of the track durations before it, so a
+    set missing any duration has no offsets to place its chapters at.  Nothing
+    is published for such a set rather than a vector built on a track counted
+    as zero seconds long, which would overlap its neighbour or state a chapter
+    of no length; the observations still say the atoms existed.
     """
     if len(tracks) == 1:
         inspection = tracks[0].inspection
@@ -282,6 +289,8 @@ def _compose_chapters(
         )
     with_atoms = tuple(bool(track.inspection.chapters) for track in tracks)
     truncated = any(track.inspection.chapters_truncated for track in tracks)
+    if any(duration is None for duration in durations):
+        return ((), False, AudioChapterComposition.PER_TRACK, any(with_atoms))
     offsets = _offsets(durations)
     spans: list[tuple[int, int, str | None]]
     if all(with_atoms):
@@ -303,6 +312,11 @@ def _compose_chapters(
         ]
         composition = AudioChapterComposition.PER_TRACK
         partial = any(with_atoms)
+    if any(end > MAX_DURATION_MILLISECONDS for _start, end, _title in spans):
+        # A chapter ending past the domain's own seven-day ceiling names a
+        # position in no recording, exactly as a summed running time past it
+        # does.  The item publishes no vector rather than a refused one.
+        return ((), False, AudioChapterComposition.PER_TRACK, any(with_atoms))
     return (
         tuple(
             AudioChapter(ordinal, start, end, title)
@@ -474,7 +488,14 @@ def _disagreement_observations(
             continue
         for ordinal in ordinals:
             asins.setdefault(ordinal, set()).add(fact.canonical_value)
-    if len({value for values_ in asins.values() for value in values_}) > 1:
+    # Across tracks, not within one: a file whose embedded tag and whose own
+    # file name state different ASINs disagrees with itself on surfaces the
+    # provider path already keeps apart, and every track carrying that same
+    # pair has said the same thing.  Only two tracks stating different sets
+    # are a cross-track disagreement, which is why the sets are compared
+    # rather than their union counted -- and a one-track item has no second
+    # track to differ from.
+    if len({frozenset(value) for value in asins.values()}) > 1:
         values.append(
             AudioObservation(
                 AudioObservationKind.ASIN_DISAGREES_ACROSS_TRACKS,

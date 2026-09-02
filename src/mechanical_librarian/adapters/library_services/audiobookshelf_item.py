@@ -14,6 +14,7 @@ from urllib.parse import quote
 import httpx
 
 from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import (
+    included_audio_records,
     target_connection_code,
 )
 from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_location import (
@@ -267,14 +268,18 @@ def _snapshot(
         media_kind = "ebook"
     elif type(audio_source) is list:
         media_kind = "audiobook"
-        if len(audio_source) > MAX_AUDIO_TRACKS:
+        # The bound is measured on the set the service plays, so the records it
+        # excludes are dropped before the count: an item of five hundred and
+        # twenty files with ten excluded is a set this build composes.
+        audio_records = included_audio_records(audio_source) or ()
+        if len(audio_records) > MAX_AUDIO_TRACKS:
             # A set this build cannot compose is a bound this build states,
             # not a target that answered badly: it is reported as the item's
             # own typed terminal rather than as an invalid response.
             raise AudioItemInspectionError(
                 AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED
             )
-        files = _audio_files(audio_source, service_path, root)
+        files = _audio_files(audio_records, service_path, root)
     else:
         media_kind = "unsupported"
     identities = tuple(value.identity for value in files)
@@ -532,7 +537,7 @@ def _file(
 
 
 def _audio_files(
-    source: list[Any], service_path: str, item: object
+    source: tuple[Any, ...], service_path: str, item: object
 ) -> tuple[TargetFile, ...]:
     """Surface the item's audio tracks, or none of them.
 
@@ -542,14 +547,12 @@ def _audio_files(
     would renumber the survivors and bind a report to a different track. This
     is deliberately not an error -- an unusable audiobook item still reads,
     and simply has no file a report can be prepared from.
+
+    The records are the ones the service plays; the excluded ones were dropped
+    by `included_audio_records` before the set was counted.
     """
     values: list[TargetFile] = []
     for value in source:
-        if type(value) is dict and value.get("exclude") is True:
-            # Audiobookshelf drops an excluded file from the recording it
-            # plays, so it is not part of the service's own order and this
-            # build does not read it either.
-            continue
         try:
             location = normalize_ebook_location(
                 value, service_path=service_path, item=item

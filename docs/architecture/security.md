@@ -250,10 +250,11 @@ a library-wide provider barrier.
   Embedded cover art is recorded as presence and never acquired, decoded, or
   elected.
   A multi-file item multiplies that per-file exposure, so the item carries its
-  own bounds on top of the per-file ones: at most 512 files, summed bytes under
-  the audio ceiling times the file count checked before anything is digested,
-  and a 600-second reading wall enforced through the same cancellation the
-  per-file children honour. Each file still gets its own child, holding no
+  own bounds on top of the per-file ones: at most 512 files — counted after the
+  service's own excluded records are dropped — each file's opened length under
+  the audio ceiling before anything is digested, which bounds the whole item at
+  that ceiling times its file count, and a 600-second reading wall enforced
+  through the same cancellation the per-file children honour. Each file still gets its own child, holding no
   descriptor for any other file. Exceeding an item bound, or composing more
   claims than the report document admits, is one named terminal outcome; a
   single unreadable or hostile file denies the whole item rather than yielding

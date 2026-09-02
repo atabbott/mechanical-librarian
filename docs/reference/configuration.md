@@ -201,11 +201,13 @@ activation establishes any new resolution.
 
 An ebook library requires a named read-only mount. An audiobook library may
 give a named read-only mount too: with one, each of its items holding 1 to 512
-audio files is prepared as one local-evidence report, composed across those
-files, and enters provider discovery from there. An audiobook library that keeps
-`mount: null`, and any audiobook item over 512 files or carrying a file outside
-the supported containers, is rejected before parser/provider/publication
-activity exactly as before. Reading that local evidence requires the `ffprobe`
+audio files — counted after the files the service itself excludes are dropped —
+is prepared as one local-evidence report, composed across those files, and
+enters provider discovery from there. An audiobook library that keeps
+`mount: null`, and any audiobook item carrying a file outside the supported
+containers, is rejected before parser/provider/publication activity exactly as
+before. A mounted item over 512 audio files is listed for attention instead, and
+is never prepared. Reading that local evidence requires the `ffprobe`
 binary the shipped image builds and carries; a deployment without it records no
 audiobook evidence.
 
@@ -273,8 +275,8 @@ ranking policy:
 - `audio_source_bytes` (1,024–17,179,869,184; default 8,589,934,592) — the
   audiobook ceiling, separate because an audiobook is read by header rather
   than whole and is routinely larger than any EPUB. It bounds each audio file
-  of an item; a multi-file item is additionally bounded by that ceiling times
-  its file count, checked before any file is digested
+  of an item, checked on the opened length before any file is digested, which
+  bounds a multi-file item at that ceiling times its file count
 - `timeout_seconds` (1–60; default 30)
 
 Optional `review` configuration is required by `review-serve` and ignored by

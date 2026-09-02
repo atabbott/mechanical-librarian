@@ -17,6 +17,7 @@ from mechanical_librarian.domain.audio_composition import (
 )
 from mechanical_librarian.domain.audio_inspection import (
     MAX_CHAPTERS,
+    MAX_DURATION_MILLISECONDS,
     AudioChapter,
     AudioChapterComposition,
     AudioEmbeddedCover,
@@ -161,6 +162,61 @@ def test_a_track_without_a_duration_leaves_the_item_with_no_running_time() -> No
         for value in composed.observations
         if value.kind is AudioObservationKind.TRACK_DURATION_UNAVAILABLE
     ] == [(AudioObservationKind.TRACK_DURATION_UNAVAILABLE, (2,))]
+
+
+def test_a_missing_duration_leaves_the_item_with_no_chapter_vector_either() -> None:
+    """Every chapter offset is a sum of the durations before it.
+
+    Counting a track of unknown length as zero seconds placed the tracks
+    after it on top of it, so the published vector overlapped itself and, in
+    the per-track shape, stated chapters of no length at all. Nothing is
+    published instead, and the observations still record that atoms existed.
+    """
+    composed = compose_audio_inspections(
+        (
+            _track(1, (), chapters=(AudioChapter(1, 0, 4_000, "One"),)),
+            _track(
+                2,
+                (_duration(2, 10_000),),
+                chapters=(AudioChapter(1, 0, 9_000, "Two"),),
+            ),
+        )
+    )
+
+    assert composed.chapters == ()
+    assert composed.chapters_truncated is False
+    assert composed.composition is AudioChapterComposition.PER_TRACK
+    assert [(value.kind, value.tracks) for value in composed.observations] == [
+        (AudioObservationKind.TRACK_DURATION_UNAVAILABLE, (1,)),
+        (AudioObservationKind.CHAPTER_ATOMS_PARTIAL, (1, 2)),
+    ]
+
+
+def test_a_chapter_ending_past_the_duration_ceiling_publishes_no_vector() -> None:
+    """A position past seven days is a position in no recording.
+
+    The summed running time is already withheld at that ceiling; a chapter
+    vector built on the same sum would have raised out of the domain and
+    reached the owner as an internal failure instead of as absent evidence.
+    """
+    milliseconds = 2 * MAX_DURATION_MILLISECONDS // 3
+    composed = compose_audio_inspections(
+        tuple(
+            _track(
+                ordinal,
+                (_duration(ordinal, milliseconds),),
+                chapters=(AudioChapter(1, 0, milliseconds, f"Part {ordinal}"),),
+            )
+            for ordinal in (1, 2)
+        )
+    )
+
+    assert composed.chapters == ()
+    assert composed.chapters_truncated is False
+    assert composed.composition is AudioChapterComposition.PER_TRACK
+    assert all(
+        fact.field is not AudioInspectionField.DURATION for fact in composed.facts
+    )
 
 
 def test_embedded_atoms_on_every_track_concatenate_with_cumulative_offsets() -> None:
@@ -313,7 +369,54 @@ def test_tracks_that_disagree_each_keep_their_own_claim_and_are_observed() -> No
     ) == ["B0CW1KL2QD", "B0DIFFEREN"]
     kinds = {value.kind for value in composed.observations}
     assert AudioObservationKind.TAG_DISAGREES_ACROSS_TRACKS in kinds
-    assert AudioObservationKind.ASIN_DISAGREES_ACROSS_TRACKS in kinds
+    assert [
+        (value.kind, value.tracks)
+        for value in composed.observations
+        if value.kind is AudioObservationKind.ASIN_DISAGREES_ACROSS_TRACKS
+    ] == [(AudioObservationKind.ASIN_DISAGREES_ACROSS_TRACKS, (1, 2))]
+
+
+def _asin_tracks(
+    ordinals: tuple[int, ...], embedded: str, path: str
+) -> tuple[InspectedTrack, ...]:
+    return tuple(
+        _track(
+            ordinal,
+            (
+                _duration(ordinal, 1_000),
+                _fact(ordinal, AudioInspectionField.ASIN, embedded),
+                _fact(
+                    ordinal,
+                    AudioInspectionField.ASIN,
+                    path,
+                    surface=AudioEvidenceSurface.PATH_FILE,
+                ),
+            ),
+        )
+        for ordinal in ordinals
+    )
+
+
+def test_two_surfaces_of_one_track_are_not_a_cross_track_asin_disagreement() -> None:
+    """This observation is about the files disagreeing with each other.
+
+    An embedded tag and a bracketed file name stating different ASINs is one
+    file disagreeing with itself on two surfaces the provider path already
+    keeps apart, and every track carrying that same pair has said the same
+    thing. Counting the distinct values instead of comparing the tracks fired
+    on agreement, and fired on a single-file item with nothing to compare.
+    """
+    agreeing = compose_audio_inspections(
+        _asin_tracks((1, 2), "B0CW1KL2QD", "B0DIFFEREN")
+    )
+    alone = compose_audio_inspections(_asin_tracks((1,), "B0CW1KL2QD", "B0DIFFEREN"))
+
+    assert AudioObservationKind.ASIN_DISAGREES_ACROSS_TRACKS not in {
+        value.kind for value in agreeing.observations
+    }
+    assert AudioObservationKind.ASIN_DISAGREES_ACROSS_TRACKS not in {
+        value.kind for value in alone.observations
+    }
 
 
 def test_a_silent_track_has_not_disagreed_with_a_speaking_one() -> None:

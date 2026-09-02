@@ -21,6 +21,7 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue imp
 from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.catalogue import (
+    CatalogueEntry,
     CatalogueError,
     RefreshCurrentCatalogue,
     TargetConnectionError,
@@ -43,6 +44,7 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPreparationPipeline,
 )
 from mechanical_librarian.application.review_pipeline_stages import ReviewPipelineStages
+from mechanical_librarian.domain.audio_inspection import MAX_AUDIO_TRACKS
 from mechanical_librarian.domain.metadata_report import ProviderStatus, canonical_json
 
 
@@ -874,6 +876,72 @@ def test_an_excluded_track_is_not_part_of_the_admitted_item() -> None:
     )
 
     assert entry.file_identity == plain.file_identity
+
+
+def _audio_entry(files: list[object]) -> CatalogueEntry:
+    return catalogue_entry(
+        "primary",
+        _library("audio"),
+        MediaMountConfiguration("audiobooks", "/media", "/library", True),
+        {"id": "item-1", "libraryId": "library-1", "updatedAt": 1},
+        _audio_item(files),
+    )
+
+
+@pytest.mark.parametrize(
+    ("count", "classification", "eligible"),
+    (
+        pytest.param(MAX_AUDIO_TRACKS, "singular-supported", True, id="widest-set"),
+        pytest.param(MAX_AUDIO_TRACKS + 1, "needs-attention", False, id="one-too-wide"),
+    ),
+)
+def test_a_set_wider_than_composition_admits_is_attended_to_not_hidden(
+    count: int, classification: str, eligible: bool
+) -> None:
+    """An item this build cannot compose is a state the owner can act on.
+
+    Classified `none` it left the library entirely, so the only way to learn
+    the item existed was a scan racing the item reader's typed terminal. It
+    still carries no `file_identity`: nothing prepares it, and attention is
+    the whole outcome.
+    """
+    entry = _audio_entry(
+        [_audio_record(f"part-{index}.m4b") for index in range(1, count + 1)]
+    )
+
+    assert (entry.classification, entry.eligible) == (classification, eligible)
+    assert (entry.file_identity is None) is not eligible
+
+
+def test_the_excluded_records_are_dropped_before_the_set_is_counted() -> None:
+    """The set this build composes is the set the service plays.
+
+    Counting the payload's records instead refused a five-hundred-and-ten
+    track item because ten files beside it were excluded from the recording.
+    """
+    excluded = [_audio_record(f"extra-{index}.m4b") for index in range(10)]
+    for record in excluded:
+        record["exclude"] = True
+    entry = _audio_entry(
+        [
+            *(
+                _audio_record(f"part-{index}.m4b")
+                for index in range(1, MAX_AUDIO_TRACKS - 1)
+            ),
+            *excluded,
+        ]
+    )
+
+    assert (entry.classification, entry.eligible) == ("singular-supported", True)
+    assert (
+        entry.file_identity
+        == _audio_entry(
+            [
+                _audio_record(f"part-{index}.m4b")
+                for index in range(1, MAX_AUDIO_TRACKS - 1)
+            ]
+        ).file_identity
+    )
 
 
 def test_a_mounted_single_file_audiobook_is_singular_supported() -> None:

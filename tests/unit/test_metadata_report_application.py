@@ -11,6 +11,12 @@ from typing import cast
 
 import pytest
 
+from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import (
+    _entry as catalogue_entry,
+)
+from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_location import (
+    normalize_ebook_location,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_repository,
 )
@@ -42,9 +48,11 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.application.operations import StageTimer, StageTiming
 from mechanical_librarian.domain.audio_inspection import (
     AudioChapter,
+    AudioChapterComposition,
     AudioEmbeddedCover,
     AudioEvidenceSurface,
     AudioSidecarDigest,
+    AudioTrackDigest,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
@@ -77,6 +85,8 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     TargetField,
     TargetFieldState,
+    audio_set_content_digest,
+    audio_set_identity,
     default_target_fields,
     finalize_candidate_comparisons,
 )
@@ -1530,6 +1540,177 @@ def test_audiobook_shapes_outside_the_slice_stay_unsupported(
 
     assert repository.values == {}
     assert audio_inspector is None or audio_inspector.inspections == 0
+
+
+_COMPOSED_MOUNT = MediaMountConfiguration("audiobooks", "/media", "/library", True)
+
+
+def _audio_detail(count: int) -> dict[str, object]:
+    """One Audiobookshelf item detail carrying `count` ordered audio files."""
+    return {
+        "id": "item-1",
+        "libraryId": "library-id",
+        "updatedAt": 1,
+        "media": {
+            "metadata": {"title": "Recorded title", "authors": [{"name": "Ada"}]},
+            "audioFiles": [
+                {
+                    "ino": f"inode-{ordinal}",
+                    "metadata": {
+                        "relPath": f"part-{ordinal}.m4b",
+                        "path": f"/library/part-{ordinal}.m4b",
+                        "size": 7,
+                        "ext": ".m4b",
+                    },
+                }
+                for ordinal in range(1, count + 1)
+            ],
+        },
+    }
+
+
+def _audio_target_files(detail: dict[str, object]) -> tuple[TargetFile, ...]:
+    """Read the same detail the catalogue reads, through the same grammar."""
+    media = cast(dict[str, object], detail["media"])
+    return tuple(
+        TargetFile(
+            normalize_ebook_location(
+                record, service_path=_COMPOSED_MOUNT.service_path, item=detail
+            ).identity,
+            f"part-{ordinal}.m4b",
+            "m4b",
+        )
+        for ordinal, record in enumerate(cast(list[object], media["audioFiles"]), 1)
+    )
+
+
+def _composed_inspector(files: tuple[TargetFile, ...]) -> FakeAudioInspector:
+    digests = tuple(f"{ordinal + 200:064x}" for ordinal in range(len(files)))
+    return FakeAudioInspector(
+        audio_result(
+            ((ClaimKind.DURATION, "43200.000", "embedded_tag", None),),
+            content_digest=audio_set_content_digest(digests),
+            composition=(
+                AudioChapterComposition.SINGLE_FILE
+                if len(files) == 1
+                else AudioChapterComposition.PER_TRACK
+            ),
+            tracks=tuple(
+                AudioTrackDigest(
+                    ordinal,
+                    value.identity,
+                    digest,
+                    "m4b",
+                    value.relative_path,
+                )
+                for ordinal, (value, digest) in enumerate(
+                    zip(files, digests, strict=True), 1
+                )
+            ),
+        )
+    )
+
+
+def _composed_audiobook() -> tuple[
+    FakeTarget, FakeAudioInspector, tuple[TargetFile, ...], MetadataReport
+]:
+    detail = _audio_detail(3)
+    files = _audio_target_files(detail)
+    snapshot = TargetSnapshot("audiobook", "Recorded title", files)
+    target = FakeTarget([snapshot, snapshot])
+    audio_inspector = _composed_inspector(files)
+    published = MetadataReport.from_json(
+        _audiobook_service(target, FakeReportRepository(), audio_inspector).run(
+            "item-1", 0
+        )
+    )
+    return target, audio_inspector, files, published
+
+
+def test_a_three_track_item_is_inspected_and_published_as_one_composed_unit() -> None:
+    """One item, one inspection, one identity -- and the catalogue's identity.
+
+    The pipeline binds work to the identity the catalogue stated, so a report
+    naming any other identity is a report no work can publish. Both sides
+    derive it from the same ordered track set through the same function, and
+    this is the assertion that they still agree.
+    """
+    target, audio_inspector, files, published = _composed_audiobook()
+    entry = catalogue_entry(
+        "primary",
+        LibraryConfiguration(
+            "audio", "primary", "library-id", "audiobook", "audiobooks", ("catalogue",)
+        ),
+        _COMPOSED_MOUNT,
+        {"id": "item-1", "libraryId": "library-id", "updatedAt": 1},
+        _audio_detail(3),
+    )
+
+    assert audio_inspector.inspections == 1
+    assert audio_inspector.tracks == [
+        ("part-1.m4b", "part-2.m4b", "part-3.m4b"),
+    ]
+    assert published.file.identity == audio_set_identity(
+        tuple(value.identity for value in files)
+    )
+    assert published.file.identity == entry.file_identity
+    assert published.audio is not None
+    assert [value.ordinal for value in published.audio.tracks] == [1, 2, 3]
+    assert target.calls == 2
+
+
+def _require_composed_current(
+    files: tuple[TargetFile, ...],
+    audio_inspector: FakeAudioInspector,
+    published: MetadataReport,
+) -> bool:
+    return require_report_current(
+        FakeTarget([TargetSnapshot("audiobook", "Recorded title", files)]),
+        FakeInspector(InspectionResult("c" * 64, ())),
+        _COMPOSED_MOUNT,
+        ReportLimits(),
+        published,
+        audio_inspector=audio_inspector,
+    )
+
+
+def test_an_unchanged_three_track_item_is_still_current() -> None:
+    _target, audio_inspector, files, published = _composed_audiobook()
+
+    assert _require_composed_current(files, audio_inspector, published)
+
+
+@pytest.mark.parametrize(
+    "change",
+    ("added", "removed", "reordered", "edited"),
+    ids=(
+        "a-track-was-added",
+        "a-track-was-removed",
+        "the-tracks-were-reordered",
+        "one-track-s-bytes-changed",
+    ),
+)
+def test_any_move_in_the_track_set_re_prepares_the_item_exactly_once(
+    change: str,
+) -> None:
+    """A composed report is bound to the whole ordered set, not to one file.
+
+    Adding, removing, or reordering a track moves the composed identity; an
+    edit invisible to the service moves only the digests, which is why the
+    manifest is re-read as well.
+    """
+    _target, audio_inspector, files, published = _composed_audiobook()
+    if change == "added":
+        files = (*files, *_audio_target_files(_audio_detail(4))[3:])
+    elif change == "removed":
+        files = files[:2]
+    elif change == "reordered":
+        files = (files[1], files[0], files[2])
+    else:
+        audio_inspector.current_digest = "e" * 64
+
+    with pytest.raises(CurrentnessError):
+        _require_composed_current(files, audio_inspector, published)
 
 
 _SIDECARS = (

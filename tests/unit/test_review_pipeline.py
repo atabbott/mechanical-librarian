@@ -5932,6 +5932,112 @@ def test_the_failure_code_allow_list_and_its_normalisation_stay_one_vocabulary()
     assert "persistence" in _FAILURE_CODES
 
 
+def _terminal_extraction(
+    application_path: Path, code: str, failure_root: str | None
+) -> tuple[tuple[object, ...], tuple[tuple[str | None, str], ...]]:
+    """Fail one claimed extraction and read back what the owner is left with."""
+    repository = open_repository(application_path)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry("item-1", "1" * 64),), 12
+    )
+    extraction = repository.claim_review_pipeline_action(13)
+    assert extraction is not None
+    repository.fail_review_pipeline_action(extraction, code, False, 14, failure_root)
+    row = repository._connection.execute(
+        "SELECT state,failure_code,failure_root FROM review_preparation_work"
+    ).fetchone()
+    browsed = tuple(repository.list_current_review_case_documents(None, 10, 0, None))
+    repository.close()
+    return row, browsed
+
+
+def test_the_track_that_refused_a_composed_item_is_persisted_and_browsed(
+    application_path: Path,
+) -> None:
+    """The ordinal has to survive the transaction that ends the work.
+
+    The stage raises it, but an owner only ever sees the terminal row: an
+    ordinal dropped on the way into `review_preparation_work` is an ordinal
+    that never existed, and "a file could not be read" is what a
+    three-hundred-file audiobook's owner is left holding.
+    """
+    row, browsed = _terminal_extraction(application_path, "parser_refused", "track_3")
+
+    assert row == ("failed", "parser_refused", "track_3")
+    assert len(browsed) == 1
+    case_document, terminal_document = browsed[0]
+    assert case_document is None
+    assert json.loads(terminal_document)["failure_root"] == "track_3"
+
+
+@pytest.mark.parametrize(
+    ("code", "failure_root"),
+    (
+        pytest.param("provider", "track_1", id="track-under-a-provider-failure"),
+        pytest.param("parser_refused", "track_0", id="ordinal-below-the-first-track"),
+        pytest.param("parser_refused", "track_513", id="ordinal-past-the-bound"),
+        pytest.param("parser_refused", "track_03", id="ordinal-with-a-leading-zero"),
+        pytest.param("parser_refused", "disc_1", id="not-a-track-at-all"),
+    ),
+)
+def test_a_root_outside_the_track_grammar_is_dropped_without_restating_the_code(
+    application_path: Path, code: str, failure_root: str
+) -> None:
+    """The root is detail on a failure; the code is which side failed.
+
+    Persisting a root the CHECK refuses would lose the whole row, and
+    rewriting the code to hide it would tell the owner something else failed.
+    """
+    row, _browsed = _terminal_extraction(application_path, code, failure_root)
+
+    assert row == ("failed", code, None)
+
+
+@pytest.mark.parametrize(
+    ("code", "failure_root", "admitted"),
+    (
+        pytest.param("parser_refused", "track_512", True, id="widest-track"),
+        pytest.param("parser_refused", "audible", False, id="a-provider-name"),
+        pytest.param("provider", "track_1", False, id="a-track-under-a-provider"),
+    ),
+)
+def test_the_check_admits_a_track_root_only_under_a_media_terminal(
+    application_path: Path, code: str, failure_root: str, admitted: bool
+) -> None:
+    """The CHECK is the last word, and it is written twice by necessity.
+
+    `sqlite_master` stores the DDL verbatim, so the grammar the repository
+    normalises against cannot be generated from it. Writing past the
+    repository is what proves the stored schema agrees.
+    """
+    repository = open_repository(application_path)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry("item-1", "1" * 64),), 12
+    )
+    update = (
+        "UPDATE review_preparation_work SET failure_code=?,failure_root=?",
+        (code, failure_root),
+    )
+
+    try:
+        if admitted:
+            repository._connection.execute(*update)
+            assert repository._connection.execute(
+                "SELECT failure_root FROM review_preparation_work"
+            ).fetchone() == (failure_root,)
+        else:
+            with pytest.raises(sqlite3.IntegrityError):
+                repository._connection.execute(*update)
+    finally:
+        repository.close()
+
+
 def test_thousand_work_three_library_backlog_is_bounded_and_fair(
     application_path: Path,
 ) -> None:

@@ -49,7 +49,9 @@ any change that only widened the file-count gate.
    is the identity function on a one-element set so no single-file report
    changes. Order is the target service's own audio-file order, with `index`
    read into `TargetFile.sequence` and files flagged `exclude: true` treated as
-   not part of the order, matching what Audiobookshelf itself plays.
+   not part of the order, matching what Audiobookshelf itself plays. They are
+   dropped before the set is counted, so an item is admitted or refused on the
+   width of the recording rather than on the length of its payload's list.
 2. **Composition is a pure domain step.** `domain/audio_composition.py` takes
    the per-track `AudioInspection` documents and returns one `ComposedAudio`.
    It performs no I/O, so the rule set that turns several files into one item is
@@ -85,9 +87,10 @@ any change that only widened the file-count gate.
    deliberately kept off the child protocol: widening the untrusted boundary is
    the cost this record is least willing to pay for a convenience.
 7. **The item carries its own budget, and exceeding it is named.** File count
-   ≤ 512, per-file bytes ≤ `audio_source_bytes`, summed bytes ≤ that ceiling
-   times the file count — both checked on the opened length before anything is
-   digested — and an item wall clock of `MULTI_FILE_WALL_SECONDS` = 600,
+   ≤ 512, per-file bytes ≤ `audio_source_bytes` checked on the opened length
+   before anything is digested — which bounds the whole item at that ceiling
+   times its file count, implied by the per-file check rather than enforced as
+   a second sum — and an item wall clock of `MULTI_FILE_WALL_SECONDS` = 600,
    enforced through the `cancelled` hook the per-file children already honour.
    A composed claim set over `MAX_FACTS` or over the report document ceiling is
    the same failure. Every one of them is the new typed terminal
@@ -95,13 +98,17 @@ any change that only widened the file-count gate.
    rather than a reuse of `parser_refused`: the owner's remedy is to reduce the
    item, which is not the remedy any parser failure asks for. The budget arms
    only above one track, so a single-file item is bounded exactly as ADR-0063
-   left it.
+   left it. A mounted item wider than the file count is catalogued
+   `needs-attention` rather than dropped from the library: an item the owner
+   can split on the service is a state they can act on, and an item they cannot
+   see is not.
 8. **No partial evidence, ever.** One unreadable or hostile track denies the
    whole item. The item takes that track's own existing typed outcome —
    `unreadable_media`, `parser_refused`, `unsupported_media` — with the failing
-   track's ordinal recorded in recovery evidence as `track_<ordinal>`, so the
-   owner is told which file to look at without a new vocabulary being invented
-   to say it. Half an item's tags is not a weaker evidence set; it is a
+   track's ordinal recorded on the terminal preparation record as
+   `track_<ordinal>` and read into the owner's stated reason, so the owner is
+   told which file to look at without a new vocabulary being invented to say
+   it. Half an item's tags is not a weaker evidence set; it is a
    confident and wrong one.
 9. **Currentness follows every track.** The catalogue reads the ordered
    per-track revision list (the single-track shape unchanged), falling back to
@@ -137,8 +144,9 @@ under the ADR-0013 clean-rebuild rule: `AudioFacts` gains `composition`,
 - The child protocol moved. `audio-inspection-v2` is one field wider, and any
   future field pays the same review cost against the same untrusted boundary.
 - Preparation of a 352-track item is a serial sequence of 352 probes plus 352
-  digests. It fits the 600-second item wall on the reference deployment, but it
-  is not fast, and the wall is a fixed constant rather than a tuned one.
+  digests. It is not fast, and the item wall is a fixed constant rather than a
+  tuned one; the reference 352-file item is measured against it after
+  activation.
 - A new terminal code widens the failure vocabulary that six sites hold equal by
   test, and every one of them had to move together.
 
@@ -200,7 +208,10 @@ measured, and moved by a record like this one when measurement says so.
   probe documents, with no probe binary present.
 - The probe tier executes the real probe over a generated multi-track item and
   proves the composed running time, the per-track chapter titles, a cross-track
-  disagreement, the failing-track ordinal, and single-file replay equality.
+  disagreement, and single-file replay equality. That the failing track's
+  ordinal survives to the owner is proved by the unit and persistence tests:
+  the stage that raises it, the row that stores it, and the reason that states
+  it are three separate seams, and only the last one is what an owner reads.
 - Reopen triggers: a measured need to derive chapter titles from something
   better than a track tag, an item whose reading cannot fit the 600-second wall
   on supported hardware, or an audiobook capability that requires decoding
