@@ -669,15 +669,30 @@ class ProposalResult:
             raise ProposalValueError("proposal reasons are incompatible with outcome")
         selected = {value.alternative_id for value in self.alternatives}
         if self.outcome is ProposalOutcome.PROPOSE_CHANGE:
+            selected_alternative = next(
+                (
+                    value
+                    for value in self.alternatives
+                    if value.alternative_id == self.selected_alternative_id
+                ),
+                None,
+            )
             if (
-                len(self.alternatives) != 1
+                (
+                    len(self.alternatives) != 1
+                    and not (
+                        self.destination is TargetDestination.ISBN
+                        and self.reasons == (VERIFIED_MANIFESTATION_ISBN_REASON,)
+                    )
+                )
                 or self.selected_alternative_id is None
                 or self.selected_alternative_id not in selected
-                or self.alternatives[0].assessment
+                or selected_alternative is None
+                or selected_alternative.assessment
                 is ProposalAssessment.PRESERVES_TARGET
                 or (
                     self.destination is TargetDestination.LANGUAGE
-                    and self.alternatives[0].assessment
+                    and selected_alternative.assessment
                     is ProposalAssessment.REPLACES_TARGET
                 )
             ):
@@ -3343,7 +3358,7 @@ def _verified_manifestation_isbn_election(
         return ProposalResult(
             TargetDestination.ISBN,
             ProposalOutcome.PROPOSE_CHANGE,
-            (alternative,),
+            result.alternatives,
             alternative.alternative_id,
             (VERIFIED_MANIFESTATION_ISBN_REASON,),
             result.dependencies,

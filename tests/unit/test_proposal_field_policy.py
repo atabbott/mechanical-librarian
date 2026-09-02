@@ -1324,8 +1324,13 @@ def test_empty_isbn_elects_only_the_family_with_its_own_accepted_anchor(
 
     assert ProposalOutcome.PROPOSE_CHANGE == result.outcome
     assert ("verified_manifestation_isbn",) == result.reasons
-    assert 1 == len(result.alternatives)
-    assert "9780306406157" == result.alternatives[0].value.value
+    assert 2 == len(result.alternatives)
+    selected = next(
+        alternative
+        for alternative in result.alternatives
+        if alternative.alternative_id == result.selected_alternative_id
+    )
+    assert "9780306406157" == selected.value.value
 
 
 def test_multiple_accepted_isbn_families_remain_an_owner_choice() -> None:

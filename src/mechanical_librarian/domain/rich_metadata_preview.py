@@ -682,12 +682,13 @@ def select_isbn_representation(
         return None
     values: list[tuple[str, bool]] = []
     for reference in candidate.evidence_references:
+        if reference not in accepted:
+            continue
         retained = retained_claims.get(reference)
         claim = None if retained is None else retained.claim
         value = getattr(claim, "value", getattr(claim, "canonical", None))
         if (
-            reference not in accepted
-            or claim is None
+            claim is None
             or claim.kind is not ClaimKind.ISBN
             or type(value) is not str
             or getattr(claim, "applicability", None) not in {"ebook", "unknown"}
