@@ -97,7 +97,6 @@ from mechanical_librarian.application.review_web import BrowseReviewLibrary
 from mechanical_librarian.domain.audio_inspection import AudioInspectionOutcome
 from mechanical_librarian.domain.epub_inspection import EpubInspectionOutcome
 from mechanical_librarian.domain.metadata_report import (
-    AudioFacts,
     FileFacts,
     MetadataReport,
     ProviderObservation,
@@ -114,6 +113,7 @@ from mechanical_librarian.domain.preparation_presentation import (
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.provider_recovery import MAX_TIMESTAMP
 from mechanical_librarian.domain.review_browse import browse_report
+from tests.support.metadata_report_doubles import single_track_audio_facts
 from tests.support.review_cases import _report
 
 _PRODUCER = "f" * 64
@@ -10244,7 +10244,7 @@ def test_the_provider_stage_admits_an_audiobook_report_that_carries_providers() 
                 authority="audible_catalog",
             ),
         ),
-        audio=AudioFacts(),
+        audio=single_track_audio_facts(),
     )
 
     class _Repository:
@@ -10350,7 +10350,7 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
         local_claims=(),
         local_reasons=("no_local_audio_claims",),
         providers=(),
-        audio=AudioFacts(),
+        audio=single_track_audio_facts(),
     )
 
     repository = open_repository(application_path)
@@ -10513,7 +10513,7 @@ def test_a_prepared_audiobook_leaves_a_mixed_library_scan_clean(
         local_claims=(),
         local_reasons=("no_local_audio_claims",),
         providers=(),
-        audio=AudioFacts(),
+        audio=single_track_audio_facts("1" * 64),
     )
     survivors = (
         replace(_audio_entry("audio-1", audiobook.file.identity), library="ebooks"),
@@ -10670,7 +10670,7 @@ def _audio_report(item_id: str, identity: str) -> MetadataReport:
         local_claims=(),
         local_reasons=("no_local_audio_claims",),
         providers=(),
-        audio=AudioFacts(),
+        audio=single_track_audio_facts(),
     )
 
 
@@ -10778,7 +10778,7 @@ def test_audiobook_publication_refreshes_before_interleaved_claim_next(
         local_claims=(),
         local_reasons=("no_local_audio_claims",),
         providers=(),
-        audio=AudioFacts(),
+        audio=single_track_audio_facts(),
     )
     repository = open_repository(application_path)
     repository.request_review_scan(
@@ -10866,7 +10866,7 @@ def test_an_audiobook_records_its_recovery_evidence_at_extraction() -> None:
                 authority="audible_catalog",
             ),
         ),
-        audio=AudioFacts(),
+        audio=single_track_audio_facts(),
     )
     observations: list[object] = []
     stages = ReviewPipelineStages(

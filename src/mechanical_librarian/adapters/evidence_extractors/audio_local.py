@@ -565,6 +565,11 @@ def _container_title(container: dict[str, object]) -> str | None:
     A track title is text the file chose, so it is bounded and projected here
     exactly as an observed value is; what fails projection is simply absent and
     the composition falls back to the exported file name.
+
+    The whole normalized text is projected, never a prefix of it: a title cut
+    to the bound would name the chapter something the file does not say, and
+    an invented title is worse evidence than the exported file name the
+    composition falls back to.
     """
     tags = container.get("tags")
     if type(tags) is not dict:
@@ -574,9 +579,7 @@ def _container_title(container: dict[str, object]) -> str | None:
         return None
     try:
         return validate_projection_text(
-            text[:MAX_OBSERVED_CHARACTERS].strip(),
-            "audio track title",
-            MAX_OBSERVED_CHARACTERS,
+            text, "audio track title", MAX_OBSERVED_CHARACTERS
         )
     except EvidenceValueError:
         return None

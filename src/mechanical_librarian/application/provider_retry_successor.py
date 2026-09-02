@@ -22,6 +22,7 @@ from mechanical_librarian.application.failure_diagnostics import (
 )
 from mechanical_librarian.application.metadata_report import (
     AudioInspector,
+    AudioItemInspectionError,
     CurrentnessError,
     EpubInspector,
     MetadataDiscoveryLane,
@@ -329,6 +330,13 @@ class GenerateProviderRetrySuccessor:
             raise
         except ProviderRetrySuccessorError:
             raise
+        except AudioItemInspectionError as error:
+            # Revalidating a composed audiobook re-digests every track under
+            # the item budget, and a successor that outran it has not shown
+            # its source current.  That is the same answer a changed source
+            # gets: no successor is published, and the item is prepared again
+            # where the budget states itself as its own terminal.
+            raise CurrentnessError("target or media changed") from error
         except (ReportValueError, MetadataReportError) as error:
             raise ProviderRetrySuccessorError(
                 "provider retry source is invalid"

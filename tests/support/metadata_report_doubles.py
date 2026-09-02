@@ -99,6 +99,27 @@ class FakeAudioInspector:
 _NO_EMBEDDED_COVER = AudioEmbeddedCover(False)
 
 
+def single_track_audio_facts(
+    content_digest: str = "b" * 64,
+    *,
+    chapters: tuple[AudioChapter, ...] = (),
+    embedded_cover: AudioEmbeddedCover = _NO_EMBEDDED_COVER,
+    file_format: str = "m4b",
+    name: str = "book.m4b",
+) -> AudioFacts:
+    """Build the one-track audio section a single-file report publishes.
+
+    Every audio section names the file it was composed from, and the report
+    checks that the manifest composes its own content digest, so a report
+    double states the digest it was built with here too.
+    """
+    return AudioFacts(
+        chapters=chapters,
+        embedded_cover=embedded_cover,
+        tracks=(AudioTrackDigest(1, "a" * 64, content_digest, file_format, name),),
+    )
+
+
 def audio_result(
     facts: tuple[tuple[ClaimKind, str, str, str | None], ...] = (),
     *,

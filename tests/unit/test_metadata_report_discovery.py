@@ -55,7 +55,6 @@ from mechanical_librarian.domain.failure_diagnostics import (
 )
 from mechanical_librarian.domain.metadata_report import (
     MAX_CANDIDATES,
-    AudioFacts,
     ClaimKind,
     ClaimScope,
     Comparison,
@@ -110,6 +109,7 @@ from tests.support.metadata_report_doubles import (
     FakeInspector,
     FakeReportRepository,
     FakeTarget,
+    single_track_audio_facts,
 )
 
 
@@ -2534,7 +2534,7 @@ def test_an_admitted_asin_reaches_no_audiobook_field_effect() -> None:
         local_claims=local_claims,
         local_reasons=("embedded_tag_duration",),
         providers=(qualified,),
-        audio=AudioFacts(),
+        audio=single_track_audio_facts(),
     )
     proposals = evaluate_report(report)
 

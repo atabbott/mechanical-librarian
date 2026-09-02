@@ -27,6 +27,7 @@ from mechanical_librarian.application.configuration import (
     TargetConnectionConfiguration,
 )
 from mechanical_librarian.application.metadata_report import (
+    AudioItemInspectionError,
     CredentialError,
     CurrentnessError,
     GenerateMetadataReport,
@@ -51,6 +52,7 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioChapterComposition,
     AudioEmbeddedCover,
     AudioEvidenceSurface,
+    AudioInspectionOutcome,
     AudioSidecarDigest,
     AudioTrackDigest,
 )
@@ -68,7 +70,6 @@ from mechanical_librarian.domain.failure_diagnostics import (
     FailureStage,
 )
 from mechanical_librarian.domain.metadata_report import (
-    AudioFacts,
     ClaimKind,
     ClaimScope,
     FieldSource,
@@ -100,6 +101,7 @@ from tests.support.metadata_report_doubles import (
     FakeReportRepository,
     FakeTarget,
     audio_result,
+    single_track_audio_facts,
 )
 
 
@@ -1570,7 +1572,11 @@ def _audio_detail(count: int) -> dict[str, object]:
 
 
 def _audio_target_files(detail: dict[str, object]) -> tuple[TargetFile, ...]:
-    """Read the same detail the catalogue reads, through the same grammar."""
+    """Read the same detail the catalogue reads, through the same grammar.
+
+    Each file carries the position the service declares for it, because that
+    is what the published manifest records and what currentness compares.
+    """
     media = cast(dict[str, object], detail["media"])
     return tuple(
         TargetFile(
@@ -1579,6 +1585,7 @@ def _audio_target_files(detail: dict[str, object]) -> tuple[TargetFile, ...]:
             ).identity,
             f"part-{ordinal}.m4b",
             "m4b",
+            ordinal,
         )
         for ordinal, record in enumerate(cast(list[object], media["audioFiles"]), 1)
     )
@@ -1602,6 +1609,7 @@ def _composed_inspector(files: tuple[TargetFile, ...]) -> FakeAudioInspector:
                     digest,
                     "m4b",
                     value.relative_path,
+                    value.sequence,
                 )
                 for ordinal, (value, digest) in enumerate(
                     zip(files, digests, strict=True), 1
@@ -1682,12 +1690,13 @@ def test_an_unchanged_three_track_item_is_still_current() -> None:
 
 @pytest.mark.parametrize(
     "change",
-    ("added", "removed", "reordered", "edited"),
+    ("added", "removed", "reordered", "edited", "renumbered"),
     ids=(
         "a-track-was-added",
         "a-track-was-removed",
         "the-tracks-were-reordered",
         "one-track-s-bytes-changed",
+        "one-track-s-declared-index-changed",
     ),
 )
 def test_any_move_in_the_track_set_re_prepares_the_item_exactly_once(
@@ -1697,7 +1706,11 @@ def test_any_move_in_the_track_set_re_prepares_the_item_exactly_once(
 
     Adding, removing, or reordering a track moves the composed identity; an
     edit invisible to the service moves only the digests, which is why the
-    manifest is re-read as well.
+    manifest is re-read as well.  A renumbered track moves neither: its bytes,
+    its path, and the set's order are all what they were, and only the
+    position the service declares for it changed -- which is the `sequence`
+    the manifest published and the gap and disorder observations composed
+    from it.
     """
     _target, audio_inspector, files, published = _composed_audiobook()
     if change == "added":
@@ -1706,11 +1719,53 @@ def test_any_move_in_the_track_set_re_prepares_the_item_exactly_once(
         files = files[:2]
     elif change == "reordered":
         files = (files[1], files[0], files[2])
+    elif change == "renumbered":
+        second = files[1]
+        files = (
+            files[0],
+            TargetFile(second.identity, second.relative_path, second.format, 9),
+            files[2],
+        )
     else:
         audio_inspector.current_digest = "e" * 64
 
     with pytest.raises(CurrentnessError):
         _require_composed_current(files, audio_inspector, published)
+
+
+class _WalledAudioInspector(FakeAudioInspector):
+    """Re-digest the set until the item wall stops it, as the real one does."""
+
+    def unchanged(self, *_arguments: object, **_keywords: object) -> bool:
+        self.verifications += 1
+        raise AudioItemInspectionError(
+            AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED, 2
+        )
+
+
+def test_a_revalidation_that_outran_the_item_budget_keeps_its_typed_terminal() -> None:
+    """Publication runs the currentness guard, and must not blur its outcome.
+
+    The extraction stage maps this outcome onto the owner's
+    `multi_file_budget_exceeded` and onto the ordinal that stopped it. Reported
+    as a publication that did not complete, the one bound this build states
+    about itself would reach the owner as an internal failure.
+    """
+    detail = _audio_detail(3)
+    files = _audio_target_files(detail)
+    snapshot = TargetSnapshot("audiobook", "Recorded title", files)
+    audio_inspector = _WalledAudioInspector(_composed_inspector(files).result)
+
+    with pytest.raises(AudioItemInspectionError) as raised:
+        _audiobook_service(
+            FakeTarget([snapshot, snapshot]),
+            FakeReportRepository(),
+            audio_inspector,
+        ).run("item-1", 0)
+
+    assert raised.value.outcome is AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED
+    assert raised.value.track == 2
+    assert audio_inspector.verifications == 1
 
 
 _SIDECARS = (
@@ -1858,7 +1913,7 @@ def test_an_audiobook_report_cannot_prove_currentness_without_its_inspector() ->
         local_claims=(),
         local_reasons=("no_local_audio_claims",),
         providers=(),
-        audio=AudioFacts(),
+        audio=single_track_audio_facts("d" * 64),
     )
     target = FakeTarget([TargetSnapshot("audiobook", "Recorded title", ())])
 

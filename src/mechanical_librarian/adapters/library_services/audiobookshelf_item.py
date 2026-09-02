@@ -14,6 +14,7 @@ from urllib.parse import quote
 import httpx
 
 from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import (
+    declared_track_index,
     included_audio_records,
     target_connection_code,
 )
@@ -566,25 +567,10 @@ def _audio_files(
                 location.identity,
                 location.relative_path,
                 location.format,
-                _track_sequence(value),
+                declared_track_index(value),
             )
         )
     return tuple(values)
-
-
-def _track_sequence(value: object) -> int | None:
-    """Read the position the service declares for one track, or none at all.
-
-    The order is the service's own list order and this never changes it. The
-    declared index is separate evidence about that order, which is what makes
-    a missing or repeated part observable rather than invisible.
-    """
-    if type(value) is not dict:
-        return None
-    index = value.get("index")
-    if type(index) is not int or type(index) is bool or not 0 <= index <= 100_000:
-        return None
-    return index
 
 
 def _bounded_body(

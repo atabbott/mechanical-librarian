@@ -254,8 +254,13 @@ a library-wide provider barrier.
   service's own excluded records are dropped — each file's opened length under
   the audio ceiling before anything is digested, which bounds the whole item at
   that ceiling times its file count, and a 600-second reading wall enforced
-  through the same cancellation the per-file children honour. Each file still gets its own child, holding no
-  descriptor for any other file. Exceeding an item bound, or composing more
+  through the same cancellation the per-file children honour. That wall also
+  bounds revalidation, which re-digests every track. Each file still gets its own child, holding no
+  descriptor for any other file, and the folder surface — the sidecars beside
+  the files and the folder name — is read once for the item and only when
+  every track shares one directory, so a file placed in a sibling directory
+  cannot lend its neighbours' documents to the item. Exceeding an item bound,
+  or composing more
   claims than the report document admits, is one named terminal outcome; a
   single unreadable or hostile file denies the whole item rather than yielding
   the partial evidence set an attacker would be choosing.

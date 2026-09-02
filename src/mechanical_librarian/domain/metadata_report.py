@@ -1017,7 +1017,9 @@ class AudioFacts:
     documents beside the file that evidence was read from, so an added,
     removed, or edited sidecar makes this report stale.  ``tracks`` is the same
     kind of witness for the audio files themselves, and additionally carries
-    the per-file provenance of every composed claim.
+    the per-file provenance of every composed claim.  It always names at least
+    one file: an audio section states evidence read from the item's audio, and
+    a section naming no source is a section nothing can be checked against.
 
     ``observations`` names what composing the set noticed about the set.  None
     of them is evidence about the work, and the vocabulary is closed.
@@ -1055,7 +1057,7 @@ class AudioFacts:
         if (
             type(self.composition) is not AudioChapterComposition
             or type(self.tracks) is not tuple
-            or len(self.tracks) > MAX_AUDIO_TRACKS
+            or not 1 <= len(self.tracks) <= MAX_AUDIO_TRACKS
             or any(type(value) is not AudioTrackDigest for value in self.tracks)
             or tuple(value.ordinal for value in self.tracks)
             != tuple(range(1, len(self.tracks) + 1))
@@ -1063,10 +1065,13 @@ class AudioFacts:
         ):
             raise ReportValueError("audio track manifest is invalid")
         if (self.composition is AudioChapterComposition.SINGLE_FILE) != (
-            len(self.tracks) <= 1
+            len(self.tracks) == 1
         ):
             # One file composes to `single_file` and nothing else does, so the
-            # kind and the manifest can never state different set sizes.
+            # kind and the manifest can never state different set sizes.  An
+            # empty manifest was refused above: an audio section is evidence
+            # read from files, and one naming none of them names no source for
+            # the digest and provenance checks below to hold against.
             raise ReportValueError("audio composition does not match its tracks")
         if (
             type(self.observations) is not tuple
@@ -2849,11 +2854,13 @@ class MetadataReport:
         references = tuple(value.reference for value in self.local_claims)
         if len(set(references)) != len(references):
             raise ReportValueError("local claim references are duplicated")
-        if self.audio is not None and self.audio.tracks:
+        if self.audio is not None:
             # Per-file provenance is only provenance if it resolves.  A track
             # naming a claim this report does not carry, or a content digest
             # that is not the composition of the tracks listed, would describe
-            # an evidence set nobody could reconstruct from the document.
+            # an evidence set nobody could reconstruct from the document.  An
+            # audio section always names at least one track, so this holds over
+            # every audiobook report rather than over the ones that listed any.
             if any(
                 reference not in set(references)
                 for track in self.audio.tracks

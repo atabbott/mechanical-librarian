@@ -254,6 +254,7 @@ def _entry(
     ebook = media.get("ebookFile")
     plural = media.get("ebookFiles")
     audio_revisions: tuple[object, ...] = (None,)
+    audio_indexes: tuple[object, ...] = (None,)
     has_audio = type(media.get("audioFiles")) is list
     if ebook is None and (plural is None or plural == []):
         has_ebook = False
@@ -271,6 +272,7 @@ def _entry(
         # re-prepare it, re-hashing multiple gigabytes for files nobody wrote.
         audio_records = included_audio_records(media.get("audioFiles"))
         audio_revisions = _audio_set_metadata(audio_records)
+        audio_indexes = _audio_set_indexes(audio_records)
         audio_locations = (
             ()
             if audio_mount is None or audio_records is None
@@ -381,8 +383,19 @@ def _entry(
     # A one-file item keeps the exact revision shape it had before multi-file
     # items were admitted, so every existing single-file fingerprint is
     # unchanged; beyond one file the ordered list is what moves when any track
-    # does.
-    media_revision: object = revisions[0] if len(revisions) == 1 else list(revisions)
+    # does.  One file has no order to declare, which is why its shape carries
+    # no index; beyond one, each entry carries the position the service
+    # declares for that track as well as its revision, so an index edited on
+    # its own -- which moves the manifest and the sequence observations
+    # composed from it -- moves the fingerprint too.
+    media_revision: object = (
+        revisions[0]
+        if len(revisions) == 1
+        else [
+            {"index": index, "metadata": revision}
+            for revision, index in zip(revisions, audio_indexes, strict=True)
+        ]
+    )
     # Audiobookshelf's item timestamp is also advanced by playback activity, so
     # prefer the file revision when it is available.  Without one, retain the
     # item timestamp as the conservative material-change signal.  A cover path
@@ -476,6 +489,38 @@ def _audio_set_metadata(records: tuple[Any, ...] | None) -> tuple[object, ...]:
     return tuple(
         record.get("metadata") if type(record) is dict else None for record in records
     )
+
+
+def _audio_set_indexes(records: tuple[Any, ...] | None) -> tuple[object, ...]:
+    """Return the position each track declares, in the service's own order.
+
+    The declared index is not a revision, but it is evidence: it decides each
+    track's `sequence`, and with it the manifest the report publishes and the
+    gap and disorder observations composed from it. A set whose indexes moved
+    is therefore a set whose report is stale, so the indexes travel beside the
+    revisions into the fingerprint.
+    """
+    if not records:
+        return (None,)
+    return tuple(declared_track_index(record) for record in records)
+
+
+def declared_track_index(value: object) -> int | None:
+    """Read the position the service declares for one track, or none at all.
+
+    The order is the service's own list order and this never changes it. The
+    declared index is separate evidence about that order, which is what makes
+    a missing or repeated part observable rather than invisible.
+
+    The item reader projects it onto `TargetFile.sequence` and the catalogue
+    fingerprints it, so both read the same value through this one function.
+    """
+    if type(value) is not dict:
+        return None
+    index = value.get("index")
+    if type(index) is not int or type(index) is bool or not 0 <= index <= 100_000:
+        return None
+    return index
 
 
 def _file_revision(record: object) -> dict[str, object]:

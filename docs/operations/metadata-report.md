@@ -218,13 +218,24 @@ carrying the ordinals of every track that stated it. Tracks that disagree keep
 both values and record the disagreement rather than electing one, and a
 cross-track ASIN disagreement opens a discovery lane for each. The item is
 bounded by file count, by summed bytes, and by a 600-second reading wall;
-exceeding any of them is the terminal `multi_file_budget_exceeded`. One
-unreadable or hostile track denies the whole item that track's own outcome — an
-item is one closed evidence set or none. The refusing track's ordinal is
-recorded on the terminal preparation record as `track_<ordinal>` and stated in
-the owner's reason, so a three-hundred-file item names the one file to look at.
+exceeding any of them is the terminal `multi_file_budget_exceeded`. The same
+wall bounds revalidation, which re-digests every track: a currentness check
+that outruns it is that terminal during preparation, and elsewhere — a proposal
+set, an admission, a provider retry — the report is simply not shown current
+and the item is prepared again. One unreadable or hostile track denies the
+whole item that track's own outcome — an item is one closed evidence set or
+none. The refusing track's ordinal is recorded on the terminal preparation
+record as `track_<ordinal>` and stated in the owner's reason, so a
+three-hundred-file item names the one file to look at.
 The 512-file bound is measured on the files the service plays, after its own
-excluded records are dropped. Audiobook
+excluded records are dropped. Every audio section names at least one file: the
+manifest is what the item's content digest and per-file claim provenance are
+checked against. Sidecars and the folder name are item-level evidence, so an
+item whose tracks are split across directories is given none of them rather
+than the first track's. A report is stale when a track is added, removed,
+reordered, edited, or renumbered: the position the service declares for each
+track is published as its `sequence`, so the catalogue fingerprint and the
+currentness check both follow it. Audiobook
 libraries without a named read-only mount stay excluded, exactly as before. See
 [ADR-0063](../architecture/decisions/0063-isolated-audiobook-inspector.md) and
 [ADR-0066](../architecture/decisions/0066-multi-file-audiobook-composition.md).

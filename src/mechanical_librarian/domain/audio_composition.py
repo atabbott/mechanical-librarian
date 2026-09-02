@@ -278,6 +278,10 @@ def _compose_chapters(
     is published for such a set rather than a vector built on a track counted
     as zero seconds long, which would overlap its neighbour or state a chapter
     of no length; the observations still say the atoms existed.
+
+    For the same reason a track whose atoms reach past its own running time
+    composes as carrying none: offsetting such an atom would place it inside
+    the next track's span, so the item would publish chapters that overlap.
     """
     if len(tracks) == 1:
         inspection = tracks[0].inspection
@@ -287,7 +291,10 @@ def _compose_chapters(
             AudioChapterComposition.SINGLE_FILE,
             False,
         )
-    with_atoms = tuple(bool(track.inspection.chapters) for track in tracks)
+    with_atoms = tuple(
+        bool(track.inspection.chapters) and _atoms_within_track(track, duration)
+        for track, duration in zip(tracks, durations, strict=True)
+    )
     truncated = any(track.inspection.chapters_truncated for track in tracks)
     if any(duration is None for duration in durations):
         return ((), False, AudioChapterComposition.PER_TRACK, any(with_atoms))
@@ -325,6 +332,23 @@ def _compose_chapters(
         truncated or len(spans) > MAX_CHAPTERS,
         composition,
         partial,
+    )
+
+
+def _atoms_within_track(track: InspectedTrack, duration: int | None) -> bool:
+    """Say whether one track's atoms stay inside the file they were read from.
+
+    A container can state a chapter that ends after the recording does.  Within
+    one file that is the file's own claim about itself; offset into an item it
+    becomes a chapter reaching into the next track, so the set is composed as
+    though the track carried no atoms at all.  A track with no running time is
+    not judged here -- a set missing one publishes no vector anyway.
+    """
+    if duration is None:
+        return True
+    return all(
+        chapter.start_milliseconds <= duration and chapter.end_milliseconds <= duration
+        for chapter in track.inspection.chapters
     )
 
 
@@ -379,9 +403,13 @@ def _observations(
         for track, duration in zip(tracks, durations, strict=True)
         if duration is None
     )
-    if missing or not any(
-        fact.field is AudioInspectionField.DURATION for fact in facts
-    ):
+    if missing:
+        # The observation names the tracks whose running time was unavailable,
+        # so it is recorded only when there are such tracks.  A set where every
+        # track stated one and the sum still published no claim -- a total past
+        # the domain's seven-day ceiling -- has no track to name, and the
+        # vocabulary is closed: the absent DURATION claim and the absent
+        # chapter vector already state it.
         values.append(
             AudioObservation(AudioObservationKind.TRACK_DURATION_UNAVAILABLE, missing)
         )

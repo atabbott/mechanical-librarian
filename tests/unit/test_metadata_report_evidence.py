@@ -1705,14 +1705,31 @@ def _audio_claim(
     )
 
 
-_EMPTY_AUDIO_FACTS = AudioFacts()
+def _audio_track(
+    ordinal: int, digest: str, *, claims: tuple[str, ...] = ()
+) -> AudioTrackDigest:
+    return AudioTrackDigest(
+        ordinal,
+        f"{ordinal:064x}",
+        digest,
+        "m4b",
+        f"part-{ordinal}.m4b",
+        ordinal,
+        60_000,
+        claims,
+    )
+
+
+# Every audio section names the files it was composed from, so the default is
+# the one-track manifest a single-file report publishes.
+_ONE_TRACK_AUDIO_FACTS = AudioFacts(tracks=(_audio_track(1, "b" * 64),))
 
 
 def _audio_report(
     claims: tuple[LocalClaim, ...] = (),
     *,
     providers: tuple[ProviderObservation, ...] = (),
-    audio: AudioFacts | None = _EMPTY_AUDIO_FACTS,
+    audio: AudioFacts | None = _ONE_TRACK_AUDIO_FACTS,
     file_format: str = "m4b",
 ) -> MetadataReport:
     return MetadataReport.create(
@@ -1742,7 +1759,7 @@ def test_an_audio_report_refuses_any_provider_observation() -> None:
     ("file_format", "audio"),
     (
         ("m4b", None),
-        ("epub", AudioFacts()),
+        ("epub", _ONE_TRACK_AUDIO_FACTS),
     ),
     ids=("audio-file-without-section", "ebook-with-audio-section"),
 )
@@ -1760,6 +1777,7 @@ def test_an_audio_report_round_trips_its_structured_section() -> None:
             (AudioChapter(1, 0, 10_000, "One"), AudioChapter(2, 10_000, 20_000)),
             True,
             AudioEmbeddedCover(True, AudioEvidenceSurface.CONTAINER_STREAM),
+            tracks=(_audio_track(1, "b" * 64),),
         ),
     )
 
@@ -1784,7 +1802,7 @@ def test_audio_chapter_ordinals_must_be_contiguous(
     chapters: tuple[AudioChapter, ...],
 ) -> None:
     with pytest.raises(ReportValueError):
-        AudioFacts(chapters)
+        AudioFacts(chapters, tracks=(_audio_track(1, "b" * 64),))
 
 
 def test_an_embedded_cover_is_never_a_cover_source() -> None:
@@ -1792,28 +1810,14 @@ def test_an_embedded_cover_is_never_a_cover_source() -> None:
         audio=AudioFacts(
             embedded_cover=AudioEmbeddedCover(
                 True, AudioEvidenceSurface.CONTAINER_STREAM
-            )
+            ),
+            tracks=(_audio_track(1, "b" * 64),),
         )
     )
 
     assert report.cover_sources == ()
     assert report.audio is not None
     assert report.audio.embedded_cover.present is True
-
-
-def _audio_track(
-    ordinal: int, digest: str, *, claims: tuple[str, ...] = ()
-) -> AudioTrackDigest:
-    return AudioTrackDigest(
-        ordinal,
-        f"{ordinal:064x}",
-        digest,
-        "m4b",
-        f"part-{ordinal}.m4b",
-        ordinal,
-        60_000,
-        claims,
-    )
 
 
 def test_one_track_keeps_its_own_identity_and_a_set_composes_a_new_one() -> None:
@@ -1944,12 +1948,14 @@ def test_a_track_may_not_name_a_claim_the_report_does_not_carry() -> None:
                 AudioObservation(AudioObservationKind.TRACK_SEQUENCE_GAP, (2,)),
             ),
         ),
+        AudioFacts,
     ),
     ids=(
         "kind-disagrees-with-one-track",
         "ordinals-not-contiguous",
         "single-file-kind-with-two-tracks",
         "observation-names-an-absent-track",
+        "no-track-at-all",
     ),
 )
 def test_the_audio_manifest_refuses_a_set_it_cannot_describe(
@@ -2060,7 +2066,7 @@ def test_a_malformed_asin_is_never_an_alternative_a_proposal_can_offer() -> None
         ),
         local_reasons=("embedded_tag_asin",),
         providers=(),
-        audio=AudioFacts(),
+        audio=_ONE_TRACK_AUDIO_FACTS,
     )
 
     asin = next(

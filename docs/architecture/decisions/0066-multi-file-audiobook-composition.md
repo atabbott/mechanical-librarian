@@ -65,24 +65,38 @@ any change that only widened the file-count gate.
    canonical ASIN under the existing lane bound. Folder-level surfaces —
    sidecars and `path_folder` — are interpreted once, by track 1's child, and
    carry no track provenance, because they are facts about the item rather than
-   about a file.
+   about a file. An item whose tracks do not all share one directory has no
+   such surface: it is handed no sidecars and no folder name at all, and
+   revalidation agrees by expecting an empty manifest. Track 1's directory is
+   not the item's when a recording is split over discs, and withheld folder
+   evidence is absent rather than wrong.
 4. **One duration, composed.** Exactly one `DURATION` claim per item, the
    canonical seconds of the millisecond sum, on surface `container_format`.
    Per-track durations are retained only as `audio.tracks[].duration_milliseconds`.
    A track without a usable duration yields no composed claim at all plus the
    observation `track_duration_unavailable`: a running time short by one part is
-   worse evidence than none, because it compares as if it were complete.
+   worse evidence than none, because it compares as if it were complete. The
+   observation names those tracks, so a set where every track stated a running
+   time and only the sum was refused — past the domain's seven-day ceiling —
+   records none: the vocabulary is closed, and the absent claim already states
+   it.
 5. **Chapters state which composition produced them.** `AudioChapterComposition`
    is closed: `single_file`, `embedded_concatenated` (every track carries
    chapter atoms; they are concatenated at cumulative track offsets and the
    ordinals renumbered), and `per_track` (no track carries atoms, so each track
    is one chapter). A mixed item is `per_track` plus the observation
-   `chapter_atoms_partial`, never a silent blend of two grammars. The
-   `MAX_CHAPTERS` = 1,024 ceiling and the explicit `chapters_truncated` flag are
-   unchanged.
+   `chapter_atoms_partial`, never a silent blend of two grammars. An atom
+   reaching past its own track's running time would be offset into the next
+   track, so its track composes as carrying no atoms and the item takes the
+   mixed shape; within one file the same atom is still that file's own claim
+   about itself. The `MAX_CHAPTERS` = 1,024 ceiling and the explicit
+   `chapters_truncated` flag are unchanged.
 6. **The child protocol gains exactly one field.** `audio-inspection-v2` is
    `v1` plus a nullable `title`, so a `per_track` chapter can be named by the
-   track's own title tag, falling back to the file-name stem. Embedded-cover
+   track's own title tag, falling back to the file-name stem. The title is
+   projected whole or not at all: a title cut to the projection bound would
+   name the chapter something the file never said, and the exported file name
+   is at least a real one. Embedded-cover
    track ordinals are recorded on the report but are computed by the parent and
    deliberately kept off the child protocol: widening the untrusted boundary is
    the cost this record is least willing to pay for a convenience.
@@ -101,7 +115,13 @@ any change that only widened the file-count gate.
    left it. A mounted item wider than the file count is catalogued
    `needs-attention` rather than dropped from the library: an item the owner
    can split on the service is a state they can act on, and an item they cannot
-   see is not.
+   see is not. Revalidation re-digests every track and so carries the same
+   wall: a currentness check that outruns it raises the same terminal, naming
+   the ordinal it stopped at. Preparation reports that terminal under its own
+   code; the other three currentness callers cannot carry it and answer within
+   their own vocabularies instead — the proposal stage and the admission stage
+   as `stale`, and a provider retry as a changed source — each of which
+   prepares the item again, which is where the budget states itself.
 8. **No partial evidence, ever.** One unreadable or hostile track denies the
    whole item. The item takes that track's own existing typed outcome —
    `unreadable_media`, `parser_refused`, `unsupported_media` — with the failing
@@ -111,11 +131,16 @@ any change that only widened the file-count gate.
    it. Half an item's tags is not a weaker evidence set; it is a
    confident and wrong one.
 9. **Currentness follows every track.** The catalogue reads the ordered
-   per-track revision list (the single-track shape unchanged), falling back to
-   the item revision only when a track lacks one, and the publication guard
-   re-digests every track in manifest order, comparing per-ordinal digests
-   before the composed digest. Any add, removal, reorder, or edit re-prepares
-   the item exactly once.
+   per-track revision list (the single-track shape unchanged), each entry
+   carrying the position the service declares for that track beside its
+   revision, and falls back to the item revision only when a track lacks one.
+   The publication guard compares the per-track identities and declared
+   positions in order and then re-digests every track in manifest order,
+   comparing per-ordinal digests before the composed digest. Any add, removal,
+   reorder, edit, or renumbering re-prepares the item exactly once — a
+   renumbering because the declared index is published as `sequence` and as the
+   gap and disorder observations composed from it, and nothing else moves when
+   only it does.
 10. **The sidecar sibling listing bound rises from 256 to 1,024 entries**
     (hard cap 4,096), because the previous bound was a silent evidence loss for
     exactly the folders this record admits.
@@ -123,6 +148,8 @@ any change that only widened the file-count gate.
 The report discriminator advances `metadata-report-v34` to `metadata-report-v35`
 under the ADR-0013 clean-rebuild rule: `AudioFacts` gains `composition`,
 `tracks`, and `observations`, and no earlier document can be read forward.
+`tracks` always names at least one file, so every audio section states the
+source its digest and claim provenance are checked against.
 
 ## Consequences
 

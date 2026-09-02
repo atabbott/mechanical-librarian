@@ -948,13 +948,22 @@ class _IsolatedAudioInspector:
             # The folder is one surface for the whole item, so its documents
             # are derived once and interpreted once -- by the first track's
             # child.  Deriving them per track would multiply one sidecar's
-            # evidence by the number of files beside it.
-            sidecars = _open_audio_sidecars(
-                mount,
-                tracks[0].relative_path,
-                tuple(value.relative_path.rsplit("/", 1)[-1] for value in tracks),
+            # evidence by the number of files beside it.  An item whose tracks
+            # do not share one directory has no such surface, and is handed
+            # none of it.
+            folder = _audio_item_folder(tuple(value.relative_path for value in tracks))
+            sidecars = (
+                []
+                if folder is None
+                else _open_audio_sidecars(
+                    mount,
+                    tracks[0].relative_path,
+                    tuple(value.relative_path.rsplit("/", 1)[-1] for value in tracks),
+                )
             )
-            inspected = self._inspect_tracks(mount, tracks, maximum_bytes, sidecars)
+            inspected = self._inspect_tracks(
+                mount, tracks, maximum_bytes, sidecars, folder
+            )
             composed = compose_audio_inspections(inspected)
             if len(composed.facts) > MAX_AUDIO_FACTS:
                 raise AudioItemInspectionError(
@@ -1024,6 +1033,7 @@ class _IsolatedAudioInspector:
         tracks: tuple[TargetFile, ...],
         maximum_bytes: int,
         sidecars: list[_OpenedSidecar],
+        folder: str | None,
     ) -> tuple[InspectedTrack, ...]:
         """Run one bounded child pair per track under the item's own budget."""
         ceiling = _audio_source_bytes(maximum_bytes)
@@ -1041,7 +1051,14 @@ class _IsolatedAudioInspector:
         total = 0
         for ordinal, track in enumerate(tracks, 1):
             components = track.relative_path.split("/")
-            opened = open_local_media(mount.container_path, track.relative_path)
+            named = ordinal if multi else None
+            try:
+                opened = open_local_media(mount.container_path, track.relative_path)
+            except (LocalMediaError, OSError) as error:
+                # A file that could not be opened is one file of many, so the
+                # refusal is raised here rather than at the item boundary,
+                # which has no ordinal left to name.
+                raise _track_boundary_failure(error, named) from error
             try:
                 if expired():
                     raise AudioItemInspectionError(
@@ -1058,9 +1075,12 @@ class _IsolatedAudioInspector:
                         AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED
                     )
                 total += opened.length
-                digest = sha256_descriptor(
-                    opened.descriptor, opened.length, maximum=ceiling
-                )
+                try:
+                    digest = sha256_descriptor(
+                        opened.descriptor, opened.length, maximum=ceiling
+                    )
+                except (LocalMediaError, OSError, ValueError) as error:
+                    raise _track_boundary_failure(error, named) from error
                 inspection = run_audio_inspector_child(
                     opened.descriptor,
                     Fingerprint("sha256", SchemaVersion("local-file-v1"), digest),
@@ -1075,7 +1095,7 @@ class _IsolatedAudioInspector:
                     ),
                     path_file=components[-1],
                     path_folder=(
-                        components[-2] if ordinal == 1 and len(components) > 1 else None
+                        folder.rsplit("/", 1)[-1] if ordinal == 1 and folder else None
                     ),
                     cancelled=expired,
                 )
@@ -1121,6 +1141,11 @@ class _IsolatedAudioInspector:
         or edited since publication is a change here rather than a silently
         stale report.  Every track is re-digested in manifest order under the
         same summed ceiling, so an edit to any one of them is a change too.
+
+        Re-digesting hundreds of files is the same unbounded work inspecting
+        them was, so it runs under the same item wall: a revalidation that
+        outlasts it is the item budget, raised as the typed terminal rather
+        than reported as a media change nobody made.
         """
         sidecars: list[_OpenedSidecar] = []
         try:
@@ -1129,9 +1154,18 @@ class _IsolatedAudioInspector:
             ):
                 return False
             ceiling = _audio_source_bytes(maximum_bytes)
+            multi = len(relative_paths) > 1
+            deadline = self._clock() + MULTI_FILE_WALL_SECONDS
             digests: list[str] = []
             total = 0
-            for path in relative_paths:
+            for ordinal, path in enumerate(relative_paths, 1):
+                if multi and self._clock() >= deadline:
+                    # One file was bounded by F43's own per-file wall before
+                    # this unit existed, so the item clock is armed only for
+                    # the sets it was added for.
+                    raise AudioItemInspectionError(
+                        AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED, ordinal
+                    )
                 opened = open_local_media(mount.container_path, path)
                 try:
                     total += opened.length
@@ -1150,6 +1184,13 @@ class _IsolatedAudioInspector:
                 return False
             if audio_set_content_digest(tuple(digests)) != expected_digest:
                 return False
+            if _audio_item_folder(relative_paths) is None:
+                # The tracks span directories, so inspection interpreted no
+                # folder surface and published an empty manifest.  Deriving a
+                # candidate set from one of those directories here would make
+                # the report current only while it disagreed with how it was
+                # read.
+                return not expected_sidecars
             sidecars = _open_audio_sidecars(
                 mount,
                 relative_paths[0],
@@ -1187,6 +1228,41 @@ def _close_sidecars(sidecars: list[_OpenedSidecar]) -> None:
             os.close(value.descriptor)
         except OSError:
             pass
+
+
+def _track_boundary_failure(
+    error: BaseException, ordinal: int | None
+) -> AudioItemInspectionError:
+    """Name the outcome, and the track, of one file the parent could not read.
+
+    ``inspect`` maps these same three faults at the item boundary, where the
+    ordinal has already been lost.  Mapping them here as well is what lets an
+    owner be told which of three hundred files is missing rather than that the
+    item is unreadable.
+    """
+    if isinstance(error, LocalMediaLimitError):
+        outcome = AudioInspectionOutcome.RESOURCE_LIMIT
+    elif isinstance(error, OSError):
+        outcome = AudioInspectionOutcome.UNAVAILABLE_SOURCE
+    else:
+        outcome = AudioInspectionOutcome.INTERNAL_FAILURE
+    return AudioItemInspectionError(outcome, ordinal)
+
+
+def _audio_item_folder(relative_paths: tuple[str, ...]) -> str | None:
+    """Name the one directory an item's audio lives in, or none at all.
+
+    Folder evidence is item-level: the sidecars beside the files and the
+    folder name itself are interpreted once, from the first track's parent.
+    A set spread over `CD1/` and `CD2/` has no such parent, so the whole item
+    is handed no folder surface rather than the first disc's -- withheld
+    evidence is absent, and absent is never wrong.  ``""`` is the mount root,
+    which is one shared directory and carries no folder name.
+    """
+    directories = {
+        value.rsplit("/", 1)[0] if "/" in value else "" for value in relative_paths
+    }
+    return directories.pop() if len(directories) == 1 else None
 
 
 def _audio_source_bytes(maximum_bytes: int) -> int:
@@ -1964,7 +2040,15 @@ def create_proposal_set_loaded(
             return _require_report_current_loaded(
                 configuration, artifacts, report, credentials
             )
-        except (CurrentnessError, TargetNotFoundError) as error:
+        except (
+            CurrentnessError,
+            TargetNotFoundError,
+            AudioItemInspectionError,
+        ) as error:
+            # A revalidation that outran the item budget did not show the
+            # report current, so it is answered here as staleness rather than
+            # as a fault: the item is prepared again, and preparation is where
+            # the budget states itself as its own typed terminal.
             raise ProposalCurrentnessError("proposal report is stale") from error
 
     try:
@@ -2013,7 +2097,10 @@ def admit_review_case_loaded(
                     configuration, repository, report.target.library
                 ).resolved_id
             )
-        except (CurrentnessError, TargetNotFoundError):
+        except (CurrentnessError, TargetNotFoundError, AudioItemInspectionError):
+            # As in the proposal path above: a budget the revalidation exceeded
+            # leaves the case unadmitted and the item prepared again, which is
+            # where that budget is reported under its own code.
             return False
 
     try:

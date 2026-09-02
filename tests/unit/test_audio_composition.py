@@ -217,6 +217,47 @@ def test_a_chapter_ending_past_the_duration_ceiling_publishes_no_vector() -> Non
     assert all(
         fact.field is not AudioInspectionField.DURATION for fact in composed.facts
     )
+    # Every track stated a running time, so there is no track the closed
+    # `track_duration_unavailable` vocabulary could name.  The absent claim and
+    # the absent vector are what state the overflow.
+    assert [(value.kind, value.tracks) for value in composed.observations] == [
+        (AudioObservationKind.CHAPTER_ATOMS_PARTIAL, (1, 2)),
+    ]
+
+
+def test_an_atom_past_its_own_track_composes_as_though_it_had_none() -> None:
+    """An atom offset past its own file would land inside the next track.
+
+    What a container says about itself is bounded by itself: within one file
+    an over-long atom is that file's own claim, but concatenated into an item
+    it becomes a chapter overlapping its neighbour.  So the track composes as
+    carrying no atoms and the item takes the per-track shape the mixed rule
+    already dictates, while the observation still names every track that had
+    atoms to drop.
+    """
+    composed = compose_audio_inspections(
+        (
+            _track(
+                1,
+                (_duration(1, 10_000),),
+                chapters=(AudioChapter(1, 0, 12_000, "Over"),),
+            ),
+            _track(
+                2,
+                (_duration(2, 10_000),),
+                chapters=(AudioChapter(1, 0, 9_000, "Two"),),
+            ),
+        )
+    )
+
+    assert composed.composition is AudioChapterComposition.PER_TRACK
+    assert [
+        (value.start_milliseconds, value.end_milliseconds)
+        for value in composed.chapters
+    ] == [(0, 10_000), (10_000, 20_000)]
+    assert [(value.kind, value.tracks) for value in composed.observations] == [
+        (AudioObservationKind.CHAPTER_ATOMS_PARTIAL, (1, 2)),
+    ]
 
 
 def test_embedded_atoms_on_every_track_concatenate_with_cumulative_offsets() -> None:
@@ -291,7 +332,7 @@ def test_a_chapter_vector_past_the_ceiling_is_cut_and_says_so() -> None:
         tuple(
             _track(
                 ordinal,
-                (_duration(ordinal, 4_000),),
+                (_duration(ordinal, 5_000),),
                 chapters=tuple(
                     AudioChapter(position, position * 1_000, position * 1_000 + 500)
                     for position in range(1, 5)

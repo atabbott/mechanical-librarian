@@ -857,6 +857,46 @@ def test_a_track_edit_alone_moves_a_multi_file_audiobook_fingerprint() -> None:
     assert fingerprint(item(1)) != fingerprint(item(2))
 
 
+def test_a_declared_index_alone_moves_a_multi_file_audiobook_fingerprint() -> None:
+    """A renumbered set is a set whose report no longer states its order.
+
+    The declared index becomes each track's `sequence`, and with it the track
+    manifest and the gap and disorder observations composed from it.  Nothing
+    else moves when only the index does, so a fingerprint reading revisions
+    alone would leave the published order stale.  One file declares no order
+    at all, so its shape is the v34 one and cannot carry an index.
+    """
+
+    def fingerprint(detail: dict[str, object]) -> str | None:
+        return catalogue_entry(
+            "primary",
+            _library("audio"),
+            MediaMountConfiguration("audiobooks", "/media", "/library", True),
+            {"id": "item-1", "libraryId": "library-1", "updatedAt": 1},
+            detail,
+        ).source_fingerprint
+
+    def indexed(name: str, index: int) -> dict[str, object]:
+        record = _audio_record(name)
+        record["index"] = index
+        return record
+
+    def three(second_index: int) -> dict[str, object]:
+        return _audio_item(
+            [
+                indexed("part-1.m4b", 1),
+                indexed("part-2.m4b", second_index),
+                indexed("part-3.m4b", 3),
+            ]
+        )
+
+    def one(index: int) -> dict[str, object]:
+        return _audio_item([indexed("book.m4b", index)])
+
+    assert fingerprint(three(2)) != fingerprint(three(9))
+    assert fingerprint(one(1)) == fingerprint(one(9))
+
+
 def test_an_excluded_track_is_not_part_of_the_admitted_item() -> None:
     excluded = _audio_record("part-x.m4b")
     excluded["exclude"] = True

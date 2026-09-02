@@ -107,7 +107,9 @@ def mount(tmp_path: Path) -> Iterator[MediaMountConfiguration]:
 
 
 def _write(mount: MediaMountConfiguration, name: str, payload: bytes) -> TargetFile:
-    (Path(mount.container_path) / name).write_bytes(payload)
+    path = Path(mount.container_path) / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(payload)
     return TargetFile(hashlib.sha256(name.encode()).hexdigest(), name, "mp3", len(name))
 
 
@@ -432,3 +434,148 @@ def test_currentness_refuses_a_set_that_lost_a_track(
         (),
         result.audio.tracks,
     )
+
+
+def test_an_item_split_across_directories_is_handed_no_folder_evidence(
+    mount: MediaMountConfiguration, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Folder evidence is item-level, so a set with two folders has none.
+
+    Track one's directory is not the item's directory when the recording is
+    split over discs: reading `CD1/`'s documents and stating them as the
+    item's would make evidence about half the files evidence about all of
+    them. Withheld is absent, and absent is never wrong -- and revalidation
+    has to agree, or the report would be current only while it disagreed with
+    how it was read.
+    """
+    child = _RecordedChild()
+    monkeypatch.setattr(composition, "run_audio_inspector_child", child)
+    tracks = tuple(
+        _write(mount, name, name.encode())
+        for name in ("CD1/01.mp3", "CD1/02.mp3", "CD2/01.mp3")
+    )
+    (Path(mount.container_path) / "CD1" / "metadata.json").write_text(
+        "{}", encoding="utf-8"
+    )
+    inspector = _IsolatedAudioInspector()
+
+    result = inspector.inspect(mount, tracks, _MAXIMUM)
+
+    assert [call["sidecars"] for call in child.calls] == [(), (), ()]
+    assert [call["path_folder"] for call in child.calls] == [None, None, None]
+    assert result.audio.sidecars == ()
+    assert inspector.unchanged(
+        mount,
+        tuple(value.relative_path for value in tracks),
+        result.content_digest,
+        _MAXIMUM,
+        (),
+        result.audio.tracks,
+    )
+
+
+def test_one_shared_directory_is_still_the_item_s_own_folder(
+    mount: MediaMountConfiguration, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A set that does share a directory keeps every folder surface it had."""
+    child = _RecordedChild()
+    monkeypatch.setattr(composition, "run_audio_inspector_child", child)
+    tracks = tuple(
+        _write(mount, f"Recording/{ordinal:02d}.mp3", f"track-{ordinal}".encode())
+        for ordinal in (1, 2, 3)
+    )
+    (Path(mount.container_path) / "Recording" / "metadata.json").write_text(
+        "{}", encoding="utf-8"
+    )
+    inspector = _IsolatedAudioInspector()
+
+    result = inspector.inspect(mount, tracks, _MAXIMUM)
+
+    assert [bool(call["sidecars"]) for call in child.calls] == [True, False, False]
+    assert [call["path_folder"] for call in child.calls] == ["Recording", None, None]
+    assert [value.name for value in result.audio.sidecars] == ["metadata.json"]
+    assert inspector.unchanged(
+        mount,
+        tuple(value.relative_path for value in tracks),
+        result.content_digest,
+        _MAXIMUM,
+        result.audio.sidecars,
+        result.audio.tracks,
+    )
+
+
+def test_the_item_wall_bounds_revalidation_as_well_as_inspection(
+    mount: MediaMountConfiguration, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-digesting three hundred files is the work inspecting them was.
+
+    Currentness runs on every publication, proposal, and provider retry, so an
+    unbounded re-digest would reopen the cost the item budget exists to close.
+    The refusal is the typed terminal that names the budget, not a media
+    change nobody made.
+    """
+    monkeypatch.setattr(composition, "run_audio_inspector_child", _RecordedChild())
+    tracks = _tracks(mount, 3)
+    result = _IsolatedAudioInspector().inspect(mount, tracks, _MAXIMUM)
+    readings = iter((0.0, 0.0, MULTI_FILE_WALL_SECONDS + 1.0))
+
+    with pytest.raises(AudioItemInspectionError) as raised:
+        _IsolatedAudioInspector(lambda: next(readings)).unchanged(
+            mount,
+            tuple(value.relative_path for value in tracks),
+            result.content_digest,
+            _MAXIMUM,
+            (),
+            result.audio.tracks,
+        )
+
+    assert raised.value.outcome is AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED
+    assert raised.value.track == 2
+
+
+def test_revalidating_a_single_track_item_never_arms_the_item_clock(
+    mount: MediaMountConfiguration, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One file was already bounded by the per-file wall F43 installed."""
+    monkeypatch.setattr(composition, "run_audio_inspector_child", _RecordedChild())
+    tracks = _tracks(mount, 1)
+    result = _IsolatedAudioInspector().inspect(mount, tracks, _MAXIMUM)
+    readings = iter((0.0, 10_000.0, 10_000.0))
+
+    assert _IsolatedAudioInspector(lambda: next(readings)).unchanged(
+        mount,
+        (tracks[0].relative_path,),
+        result.content_digest,
+        _MAXIMUM,
+        (),
+        result.audio.tracks,
+    )
+
+
+@pytest.mark.parametrize(
+    ("count", "removed", "ordinal"),
+    ((3, "02.mp3", 2), (1, "01.mp3", None)),
+    ids=("one-track-of-three", "the-only-track"),
+)
+def test_a_track_that_cannot_be_opened_names_the_ordinal_that_refused(
+    mount: MediaMountConfiguration,
+    monkeypatch: pytest.MonkeyPatch,
+    count: int,
+    removed: str,
+    ordinal: int | None,
+) -> None:
+    """ "The item is unreadable" is not actionable across three hundred files.
+
+    The open and the digest are per-track work, so the ordinal is named where
+    it is still known rather than at the item boundary, which has lost it.
+    A one-file item has no ordinal to name.
+    """
+    monkeypatch.setattr(composition, "run_audio_inspector_child", _RecordedChild())
+    tracks = _tracks(mount, count)
+    (Path(mount.container_path) / removed).unlink()
+
+    with pytest.raises(AudioItemInspectionError) as raised:
+        _IsolatedAudioInspector().inspect(mount, tracks, _MAXIMUM)
+
+    assert raised.value.outcome is AudioInspectionOutcome.UNAVAILABLE_SOURCE
+    assert raised.value.track == ordinal

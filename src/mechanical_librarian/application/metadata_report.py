@@ -2280,9 +2280,13 @@ def require_report_current(
         raise MetadataReportError("target response is invalid")
     if audiobook:
         # An audiobook is bound to its whole ordered track set, so currentness
-        # compares the set: its composed identity, its per-track identities in
-        # order, and then every track's bytes. A track added, removed,
-        # reordered, or replaced moves one of those three.
+        # compares the set: its composed identity, its per-track identities and
+        # declared positions in order, and then every track's bytes. A track
+        # added, removed, reordered, replaced, or renumbered moves one of
+        # those. The declared position is compared because the report
+        # published it -- as the manifest's `sequence`, and as the gap and
+        # disorder observations composed from it -- so a set renumbered on the
+        # service is a set this report no longer states.
         retained = report.audio
         identities = tuple(value.identity for value in final.files)
         if (
@@ -2293,6 +2297,8 @@ def require_report_current(
             or not retained.tracks
             or len(final.files) != len(retained.tracks)
             or identities != tuple(value.identity for value in retained.tracks)
+            or tuple(value.sequence for value in final.files)
+            != tuple(value.sequence for value in retained.tracks)
             or _audio_set_identity_or_stale(identities) != report.file.identity
             or final.files[0].format != report.file.format
         ):

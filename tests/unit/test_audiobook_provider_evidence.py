@@ -15,7 +15,6 @@ from mechanical_librarian.domain.metadata_report import (
     AUDIOBOOK_MARKETPLACES,
     DURATION_AGREEMENT_BAND_SECONDS,
     MAX_PROVIDER_CHAPTER_DURATIONS,
-    AudioFacts,
     ClaimKind,
     ClaimScope,
     Comparison,
@@ -38,6 +37,7 @@ from mechanical_librarian.domain.metadata_report import (
     comparison_links,
     default_target_fields,
 )
+from tests.support.metadata_report_doubles import single_track_audio_facts
 
 
 def _structure_evidence(
@@ -339,5 +339,5 @@ def _audio_report(evidence: tuple[ProviderEvidence, ...]) -> MetadataReport:
                 authority="audible_catalog",
             ),
         ),
-        audio=AudioFacts(),
+        audio=single_track_audio_facts(),
     )
