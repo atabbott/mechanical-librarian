@@ -125,6 +125,20 @@ def test_provider_consensus_excludes_null_authority_from_its_quorum() -> None:
     assert result.reasons == ("competing_evidence",)
 
 
+def test_provider_consensus_keeps_null_authority_titles_as_dissent() -> None:
+    result = _title_result(
+        local="Plain Work [retail]",
+        providers=(
+            _provider_title("open_library", "Plain Work"),
+            _provider_title("hardcover", "Plain Work"),
+            replace(_provider_title("google_books", "Different Work"), authority=None),
+        ),
+    )
+
+    assert ProposalOutcome.UNRESOLVED_CHOICE is result.outcome
+    assert result.reasons == ("competing_evidence",)
+
+
 def test_provider_consensus_rejects_non_source_bracket_qualifiers() -> None:
     result = _title_result(
         local="Plain Work [Illustrated Edition]",
