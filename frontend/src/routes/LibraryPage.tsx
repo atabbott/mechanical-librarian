@@ -841,6 +841,21 @@ function ContextValue({
   )
 }
 
+function ProviderConsensusAutomaticStatement({ field }: { field: ReviewField }) {
+  const decision = field.automaticDecision
+  if (
+    decision?.outcome !== 'candidate' ||
+    !field.notices.includes('provider_consensus_contributor_display')
+  ) {
+    return null
+  }
+  return (
+    <p>
+      Providers chose {decisionValue(field)}; normalized from {field.currentValue}.
+    </p>
+  )
+}
+
 function RecordedOutcome({
   field,
   expanded,
@@ -866,8 +881,6 @@ function RecordedOutcome({
     : choiceContext(field, null)
   const evidenceId = `recorded-evidence-${field.destination}`
   const accepted = decision.outcome === 'accept' || decision.outcome === 'candidate'
-  const canonicalContributorDisplay =
-    accepted && field.notices.includes('provider_consensus_contributor_display')
   return (
     <section
       className="recorded-outcome"
@@ -893,11 +906,7 @@ function RecordedOutcome({
           </div>
         )}
       </dl>
-      {canonicalContributorDisplay ? (
-        <p>
-          Providers chose {decisionValue(field)}; normalized from {field.currentValue}.
-        </p>
-      ) : null}
+      <ProviderConsensusAutomaticStatement field={field} />
       <button
         type="button"
         className="context-evidence-toggle"
@@ -2912,6 +2921,9 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                             : `${fieldLabel(selected.destination)} recorded choices`
                         }
                       >
+                        {selectedRevisitable ? (
+                          <ProviderConsensusAutomaticStatement field={selected} />
+                        ) : null}
                         {/*
                           What a tap will do, said before the tap and in the
                           present tense of this work's actual write state. The
