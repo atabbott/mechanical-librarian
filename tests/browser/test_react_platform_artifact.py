@@ -1290,6 +1290,21 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 comparison.get_by_text("Local presence", exact=True).wait_for()
                 comparison.get_by_text("Preview unavailable", exact=True).wait_for()
 
+        stage[0] = "library:automatic-isbn-identity-evidence"
+        page.goto(
+            "https://react-platform.invalid/library?lens=all&preview=case-5&field=isbn"
+        )
+        recorded_isbn = page.get_by_role("region", name="Isbn recorded choices")
+        recorded_isbn.get_by_text(
+            "Deterministic identity evidence bound this ISBN to this file's work.",
+            exact=True,
+        ).wait_for()
+        evidence = recorded_isbn.get_by_role(
+            "button", name="Evidence for Alternative 1: 9780306406157"
+        )
+        evidence.click()
+        recorded_isbn.get_by_text("Open Library", exact=True).wait_for()
+
         stage[0] = "cover-library:cached-work-reset"
         page.set_viewport_size({"width": 1440, "height": 900})
         page.goto(

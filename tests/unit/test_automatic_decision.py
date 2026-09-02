@@ -196,6 +196,7 @@ def test_prior_f20_decision_remains_readable_without_granting_new_authority() ->
         bundle_id=None,
     )
     prior_digests = (
+        "42a057407a736bfd86f115ae03879f4909fe1217f34ec552c170db1c74af7a8a",
         "9c1410dcc6d221478a2b96afdc51da19fd8a54f82d7023034a3063afdedefc37",
         "f5975691720b81452f2f2b3a41046329c4c600ade45458478aebaf7190392176",
         "6c6648598de1fcc175cbbec0f68908eb6f6ca67b2927e4ef05967551d6a9c542",

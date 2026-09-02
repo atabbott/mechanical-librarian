@@ -1297,6 +1297,45 @@ def test_not_for_sale_prepublication_proof_keeps_exact_work_isbn_electable() -> 
     assert 3 == len(result.alternatives[0].evidence_references)
 
 
+def test_empty_isbn_rejects_an_unresolved_provider_work_identity() -> None:
+    local = _local_isbn("0306406152", "valid_isbn_10")
+    provider = _provider(
+        "catalogue",
+        "edition-1",
+        (
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.ISBN,
+                "9780306406157",
+                scope=ClaimScope.EDITION,
+                applicability="ebook",
+            ),
+        ),
+    )
+    unbound_provider = replace(
+        provider,
+        candidates=(replace(provider.candidates[0], work_identity="unresolved"),),
+    )
+    result = _result(
+        evaluate_report(
+            _report(
+                fields=_fields(
+                    isbn=TargetField(TargetDestination.ISBN, TargetFieldState.MISSING)
+                ),
+                local_claims=(local,),
+                providers=(unbound_provider,),
+                covers=(_exact_edition_cover(work_identity="unresolved"),),
+            )
+        ),
+        TargetDestination.ISBN,
+    )
+
+    assert ProposalOutcome.UNRESOLVED_CHOICE == result.outcome
+    assert ("manifestation_verification_required",) == result.reasons
+    assert 1 == len(result.alternatives)
+
+
 def test_empty_isbn_requires_an_exact_retrieved_provider_cover() -> None:
     accepted = _explicit_local_ebook_isbn()
     provider = _provider(

@@ -62,7 +62,7 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
 
     assert "f20-rich-metadata-qualification-candidate-v6" == manifest["schema"]
-    assert "fixed-conservative-v17" == manifest["proposal_policy_version"]
+    assert "fixed-conservative-v18" == manifest["proposal_policy_version"]
     assert "decision_only" == manifest["automatic_authority"]
     passing = {
         "description_fill:safe_plain_text",
@@ -365,7 +365,7 @@ def test_candidate_exposes_only_closed_aggregate_contract_data() -> None:
         "proposal_policy_version",
     } == set(manifest["frozen_contract"]["isbn_manifestation_election"])
     assert (
-        "fixed-conservative-v17"
+        "fixed-conservative-v18"
         == manifest["frozen_contract"]["isbn_manifestation_election"][
             "proposal_policy_version"
         ]

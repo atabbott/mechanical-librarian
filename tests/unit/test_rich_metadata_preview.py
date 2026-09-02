@@ -1999,6 +1999,58 @@ def test_isbn_family_preview_selects_exact_local_or_isbn13_representation() -> N
         assert 3 == len(field.source_evidence_references)
 
 
+def test_automatic_isbn_abstains_for_an_unresolved_provider_work_identity() -> None:
+    provider = _provider(
+        "catalogue",
+        "edition-1",
+        (
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.ISBN,
+                "9780306406157",
+                scope=ClaimScope.EDITION,
+                applicability="ebook",
+            ),
+        ),
+    )
+    report = _report(
+        fields=_fields(
+            isbn=TargetField(TargetDestination.ISBN, TargetFieldState.MISSING)
+        ),
+        local_claims=(_local_isbn("0306406152", "valid_isbn_10"),),
+        providers=(
+            replace(
+                provider,
+                candidates=(
+                    replace(provider.candidates[0], work_identity="unresolved"),
+                ),
+            ),
+        ),
+        covers=(_exact_edition_cover(work_identity="unresolved"),),
+    )
+    options = dict(MetadataPolicyProfile.builtin().options)
+    options["isbn_form"] = "preserve_exact"
+    destinations = dict(MetadataPolicyProfile.builtin().destinations)
+    destinations["isbn_form"] = "automatic"
+    policy = resolve_policy(
+        MetadataPolicyProfile.create("Automatic ISBN", options, destinations),
+        report.target.library,
+    )
+    proposal = evaluate_report(report, policy.resolved_id, dict(policy.destinations))
+    field = next(
+        value
+        for value in compile_rich_metadata_preview(policy, report, proposal).fields
+        if value.field == "isbn_form"
+    )
+
+    assert ("abstain", "manifestation_verification_required", None) == (
+        field.outcome,
+        field.reason,
+        field.desired_value,
+    )
+
+
 def test_isbn_preview_projects_the_selected_verified_family_among_offers() -> None:
     local = _local_isbn("0306406152", "valid_isbn_10")
     verified = _provider(

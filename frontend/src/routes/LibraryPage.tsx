@@ -856,6 +856,17 @@ function ProviderConsensusAutomaticStatement({ field }: { field: ReviewField }) 
   )
 }
 
+function VerifiedManifestationIsbnAutomaticStatement({ field }: { field: ReviewField }) {
+  if (
+    field.destination !== 'isbn' ||
+    field.automaticDecision?.outcome !== 'candidate' ||
+    !field.notices.includes('verified_manifestation_isbn')
+  ) {
+    return null
+  }
+  return <p>Deterministic identity evidence bound this ISBN to this file&apos;s work.</p>
+}
+
 function RecordedOutcome({
   field,
   expanded,
@@ -907,6 +918,7 @@ function RecordedOutcome({
         )}
       </dl>
       <ProviderConsensusAutomaticStatement field={field} />
+      <VerifiedManifestationIsbnAutomaticStatement field={field} />
       <button
         type="button"
         className="context-evidence-toggle"
@@ -2922,7 +2934,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                         }
                       >
                         {selectedRevisitable ? (
-                          <ProviderConsensusAutomaticStatement field={selected} />
+                          <>
+                            <ProviderConsensusAutomaticStatement field={selected} />
+                            <VerifiedManifestationIsbnAutomaticStatement field={selected} />
+                          </>
                         ) : null}
                         {/*
                           What a tap will do, said before the tap and in the

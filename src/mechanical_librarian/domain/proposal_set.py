@@ -72,7 +72,7 @@ if TYPE_CHECKING:
     from mechanical_librarian.domain.cover_evidence import CoverArtifact
 
 PROPOSAL_SCHEMA = "proposal-set-v5"
-POLICY_VERSION = "fixed-conservative-v17"
+POLICY_VERSION = "fixed-conservative-v18"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -3285,6 +3285,8 @@ def _verified_provider_manifestation_cover(
     candidate: ProviderCandidate,
 ) -> bool:
     """Apply the existing exact provider-cover manifestation verifier."""
+    if candidate.work_identity == "unresolved":
+        return False
     if any(
         evidence.provider == provider.provider
         and evidence.candidate_identity == candidate.identity

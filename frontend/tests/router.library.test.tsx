@@ -1868,6 +1868,43 @@ describe('Library route', () => {
     expect(screen.getByRole('button', { name: /Choose current value/u })).toBeVisible()
   })
 
+  it('explains the deterministic identity evidence for a recorded ISBN outcome', async () => {
+    const base = detail.fields[0]
+    if (!base) throw new Error('workspace fixture requires a field')
+    const candidate = { kind: 'text' as const, value: '9780306406157' }
+    const isbn = {
+      ...base,
+      automaticDecision: {
+        candidate_id: 'alternative-isbn-1',
+        decision_id: 'automatic-isbn',
+        destination: 'isbn' as const,
+        occurred_at: 1,
+        outcome: 'candidate' as const,
+        proposal_id: base.proposalId,
+        review_case_id: 'case-1',
+        selected_value: candidate,
+        target_fingerprint: base.targetFingerprint,
+      },
+      destination: 'isbn' as const,
+      decisionActions: [],
+      editable: false,
+      needsAttention: false,
+      navigationRole: 'resolved' as const,
+      notices: ['verified_manifestation_isbn'],
+      proposedValues: [candidate],
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=isbn', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [isbn] })),
+    })
+
+    const recorded = await screen.findByRole('region', { name: 'Isbn recorded outcome' })
+    expect(recorded).toHaveTextContent(
+      "Deterministic identity evidence bound this ISBN to this file's work.",
+    )
+    expect(recorded).toHaveTextContent('Chosen value')
+  })
+
   it('keeps the owner outcome final when automatic authority remains in history', async () => {
     const base = detail.fields[0]
     if (!base) throw new Error('owner-final fixture requires a field')

@@ -165,7 +165,7 @@
     },
     "automatic_decision": {
       "identity": "src/mechanical_librarian/domain/automatic_decision.py",
-      "sha256": "1d1f4aba0694a0895e6e50a49b1e641f4f3b3410cae879015802e2b59a55bdba"
+      "sha256": "0a60cefa2a8471547e7448f9c02bf61bec34fd5370d5bdb71117c7d6d90d622f"
     },
     "compiler": {
       "identity": "src/mechanical_librarian/domain/rich_metadata_preview.py",
@@ -192,10 +192,10 @@
       "sha256": "1f1fab25c6bdc52dcadfa46fc7fdaf4a7bd1f74e219f74e35624bab51198c075"
     },
     "isbn_manifestation_election": {
-      "automatic_decision_sha256": "1d1f4aba0694a0895e6e50a49b1e641f4f3b3410cae879015802e2b59a55bdba",
+      "automatic_decision_sha256": "0a60cefa2a8471547e7448f9c02bf61bec34fd5370d5bdb71117c7d6d90d622f",
       "preview_sha256": "cc06478cc0464d83598be427595e21424150f964827e9be616c4acd5ebf13482",
-      "proposal_policy_sha256": "e571e3ef8f0dbd77fc2211c82e5b88b5292846749a76d3b1f842cbdccb979376",
-      "proposal_policy_version": "fixed-conservative-v17"
+      "proposal_policy_sha256": "8fe97b573fef0742c03395dc4f7a3a6e4e84c25c8a4bd86feb0d6414bcd29112",
+      "proposal_policy_version": "fixed-conservative-v18"
     }
   },
   "human_only_options": [
@@ -485,5 +485,5 @@
       "wrong_manifestation_identifier"
     ]
   },
-  "proposal_policy_version": "fixed-conservative-v17"
+  "proposal_policy_version": "fixed-conservative-v18"
 }
