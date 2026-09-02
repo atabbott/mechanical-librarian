@@ -319,6 +319,33 @@ def mp3_audiobook(
     return tag + frame * count
 
 
+def multi_track_mp3(
+    count: int,
+    *,
+    seconds: float = 1.0,
+    frames: dict[str, str] | None = None,
+    user_text: dict[str, str] | None = None,
+    per_track_user_text: dict[int, dict[str, str]] | None = None,
+) -> tuple[tuple[str, bytes], ...]:
+    """Build one item's ordered MP3 tracks, named ``01.mp3`` upward.
+
+    ``per_track_user_text`` replaces one ordinal's ``TXXX`` frames outright,
+    which is how a case states that one track disagrees with the rest.
+    """
+    overrides = per_track_user_text or {}
+    return tuple(
+        (
+            f"{ordinal:02d}.mp3",
+            mp3_audiobook(
+                seconds=seconds,
+                frames={**(frames or {}), "TIT2": f"Part {ordinal}"},
+                user_text=overrides.get(ordinal, user_text or {}),
+            ),
+        )
+        for ordinal in range(1, count + 1)
+    )
+
+
 def hostile_container() -> bytes:
     """One structurally plausible container ffprobe must refuse to interpret."""
     return _box("ftyp", b"M4B ", struct.pack(">I", 0), b"M4B ") + _box(
@@ -331,4 +358,5 @@ __all__ = [
     "hostile_container",
     "mp3_audiobook",
     "mp4_audiobook",
+    "multi_track_mp3",
 ]

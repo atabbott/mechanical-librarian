@@ -60,6 +60,7 @@ from mechanical_librarian.adapters.persistence.transactions import (
 from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_pipeline import PipelineAction
+from mechanical_librarian.domain.audio_inspection import MAX_AUDIO_TRACKS
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.review_case import (
     ReviewAdmissionStaleError,
@@ -88,6 +89,7 @@ _FAILURE_CODES = frozenset(
         "unsupported_media",
         "unreadable_media",
         "parser_refused",
+        "multi_file_budget_exceeded",
         "missing_required_input",
         "malformed_retained_data",
         "internal_failure",
@@ -95,6 +97,34 @@ _FAILURE_CODES = frozenset(
         "unknown",
     )
 )
+# The failure codes a track ordinal is evidence for: exactly the media
+# terminals one file of a composed audiobook can end a whole item on. A root
+# under any of them names the refusing file and nothing else, which is what
+# makes "a file could not be read" actionable across a hundred of them.
+_TRACK_ROOT_CODES = frozenset(
+    (
+        "unsupported_media",
+        "unreadable_media",
+        "parser_refused",
+        "multi_file_budget_exceeded",
+    )
+)
+# The value-free track grammar the CHECK in `schema.py` admits beside it: an
+# ordinal, never a name, so nothing about the media itself is persisted here.
+_TRACK_ROOT = re.compile(r"track_([1-9]\d{0,2})")
+
+
+def _admits_track_root(code: str, value: object) -> bool:
+    """Say whether one refusing track's ordinal belongs on this failure.
+
+    The ordinal is admitted only for a track the composition bound could have
+    produced, so a value past `MAX_AUDIO_TRACKS` is a defect in the caller
+    rather than evidence and is dropped instead of persisted.
+    """
+    if code not in _TRACK_ROOT_CODES or type(value) is not str:
+        return False
+    matched = _TRACK_ROOT.fullmatch(value)
+    return matched is not None and int(matched.group(1)) <= MAX_AUDIO_TRACKS
 
 
 class SQLiteReviewPreparationRepository(ConnectionScoped):
@@ -1279,15 +1309,20 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             raise interruption from None
         if code not in _FAILURE_CODES:
             code = "failed"
-        if failure_root is not None and (
-            code != "authentication"
-            or type(failure_root) is not str
-            or re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", failure_root) is None
-        ):
-            code = "failed"
-            failure_root = None
-        if code != "authentication":
-            failure_root = None
+        if failure_root is not None:
+            if code == "authentication":
+                if (
+                    type(failure_root) is not str
+                    or re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", failure_root) is None
+                ):
+                    code = "failed"
+                    failure_root = None
+            elif not _admits_track_root(code, failure_root):
+                # Under every other code the root is detail rather than the
+                # failure itself, so a root this vocabulary does not admit is
+                # dropped and the code the pipeline chose still reaches the
+                # owner. Keeping it would mean the CHECK refusing the write.
+                failure_root = None
         state = (
             "queued"
             if retryable and action.attempt < 3

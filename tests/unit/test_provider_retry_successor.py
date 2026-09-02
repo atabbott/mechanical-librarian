@@ -44,6 +44,7 @@ from mechanical_librarian.application.provider_retry_successor import (
 from mechanical_librarian.bootstrap.composition import (
     _classify_provider_recovery_failure,
 )
+from mechanical_librarian.domain.audio_inspection import AudioTrackDigest
 from mechanical_librarian.domain.failure_diagnostics import (
     FailureCategory,
     FailureComponent,
@@ -91,6 +92,13 @@ class _Inspector:
 
     def unchanged(self, *_args):
         return self.current
+
+
+# One retained manifest for the source report every successor case reopens:
+# currentness re-proves the ordered track set, so the document has to name it.
+_RETAINED_AUDIO = AudioFacts(
+    tracks=(AudioTrackDigest(1, "b" * 64, "c" * 64, "m4b", "book.m4b"),)
+)
 
 
 class _Repository:
@@ -1516,7 +1524,7 @@ def test_an_audio_source_rebuilds_its_asin_plan_and_redispatches() -> None:
         local_claims=(asin,),
         local_reasons=("embedded_tag_asin",),
         providers=(original,),
-        audio=AudioFacts(),
+        audio=_RETAINED_AUDIO,
     )
     repository = _Repository(report)
     replacement = provider_observation(
@@ -1654,7 +1662,7 @@ def test_an_audio_source_rebuilds_its_asin_feed_plan_for_a_per_asin_provider() -
         local_claims=claims,
         local_reasons=("embedded_tag_duration",),
         providers=(original,),
-        audio=AudioFacts(),
+        audio=_RETAINED_AUDIO,
     )
     provider = _Provider(
         provider_observation(
@@ -1713,7 +1721,7 @@ def test_an_unrebuildable_asin_feed_fails_closed_before_any_dispatch() -> None:
         local_claims=claims,
         local_reasons=("embedded_tag_duration",),
         providers=(original,),
-        audio=AudioFacts(),
+        audio=_RETAINED_AUDIO,
     )
     provider = _Provider(original)
 

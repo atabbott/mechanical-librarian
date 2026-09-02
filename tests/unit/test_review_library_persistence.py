@@ -660,6 +660,54 @@ def test_terminal_preparation_guidance_is_total_and_closed(
     assert "reported condition" not in recovery
 
 
+def _terminal_document(status: str, failure_root: str | None) -> str:
+    return json.dumps(
+        {
+            "attempt": 1,
+            "failure_root": failure_root,
+            "item": "synthetic-item",
+            "lane": "extraction",
+            "library": "Synthetic library",
+            "recovery_attempt": 0,
+            "schema_version": "review-terminal-work-v1",
+            "status": status,
+            "work_id": "review_work_" + "a" * 64,
+        }
+    )
+
+
+def test_a_composed_item_names_the_track_that_refused_it() -> None:
+    """The ordinal is the whole difference for a multi-file audiobook.
+
+    "The local media file could not be read" is not something an owner
+    holding three hundred files can act on; the track number is the file they
+    can open. It reaches the reason and never the provider field, which names
+    a provider and nothing else.
+    """
+    item = _library_item(None, _terminal_document("unreadable_media", "track_3"), ())
+
+    preparation = item["preparation"]
+    summary = item["summary"]
+    assert isinstance(preparation, dict)
+    assert isinstance(summary, dict)
+    assert preparation["reason"] == (
+        "The local media file could not be read. "
+        "The refusing file is track 3 of this item's audio files."
+    )
+    assert preparation["provider"] == "provider"
+    assert summary["reason"] == preparation["reason"]
+
+
+def test_a_terminal_without_a_recorded_track_reads_exactly_as_before() -> None:
+    """A single-file item records no root, and its owner copy is unchanged."""
+    item = _library_item(None, _terminal_document("unreadable_media", None), ())
+
+    preparation = item["preparation"]
+    assert isinstance(preparation, dict)
+    assert preparation["reason"] == "The local media file could not be read."
+    assert preparation["provider"] == "provider"
+
+
 def test_cover_state_is_inside_the_current_case_read_snapshot() -> None:
     with tempfile.TemporaryDirectory() as directory:
         database = Path(directory) / "application.sqlite3"

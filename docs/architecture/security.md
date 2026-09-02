@@ -244,11 +244,26 @@ a library-wide provider barrier.
   sidecar that is over-long, unreadable, or not valid UTF-8 is dropped whole
   rather than truncated or repaired into a fragment; an identifier whose shape
   is wrong is retained and reported as malformed rather than silently believed;
-  and a sibling listing refuses at its entry bound instead of materializing an
-  unbounded directory. Path evidence reads bare name components only, never a
-  joined path.
+  and a sibling listing refuses at its entry bound — 1,024 entries — instead of
+  materializing an unbounded directory. Path evidence reads bare name
+  components only, never a joined path.
   Embedded cover art is recorded as presence and never acquired, decoded, or
   elected.
+  A multi-file item multiplies that per-file exposure, so the item carries its
+  own bounds on top of the per-file ones: at most 512 files — counted after the
+  service's own excluded records are dropped — each file's opened length under
+  the audio ceiling before anything is digested, which bounds the whole item at
+  that ceiling times its file count, and a 600-second reading wall enforced
+  through the same cancellation the per-file children honour. That wall also
+  bounds revalidation, which re-digests every track. Each file still gets its own child, holding no
+  descriptor for any other file, and the folder surface — the sidecars beside
+  the files and the folder name — is read once for the item and only when
+  every track shares one directory, so a file placed in a sibling directory
+  cannot lend its neighbours' documents to the item. Exceeding an item bound,
+  or composing more
+  claims than the report document admits, is one named terminal outcome; a
+  single unreadable or hostile file denies the whole item rather than yielding
+  the partial evidence set an attacker would be choosing.
 - A local actor may replace or corrupt configuration, secret, media, manifest,
   or SQLite
   files. No-follow descriptor binding, side-effect-free validation of existing
@@ -670,7 +685,7 @@ deadline, byte, and request-count authority. Attempt records are bounded and
 process-local. Provider adapters also count optional parser/schema rejections
 at their actual rejection points. The application canonically merges those
 counts once with the attempt categories and incomplete-outcome mapping for
-`metadata-report-v34`; provider, attempt ordinal, delay, elapsed time,
+`metadata-report-v35`; provider, attempt ordinal, delay, elapsed time,
 headers, bodies, and exception text are dropped. Application-created
 query-limit outcomes follow the same closed mapping and persist
 provider/lookup_construction/lookup without constructing or invoking a

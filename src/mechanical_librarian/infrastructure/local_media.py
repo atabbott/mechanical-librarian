@@ -117,7 +117,7 @@ def _bounded_entry_names(descriptor: int, maximum_entries: int) -> list[str]:
 
 
 def list_local_media_siblings(
-    container_path: str, reference: str, *, maximum_entries: int = 256
+    container_path: str, reference: str, *, maximum_entries: int = 1_024
 ) -> tuple[str, ...]:
     """Name the regular files beside one media reference, in sorted order.
 
@@ -126,6 +126,13 @@ def list_local_media_siblings(
     still goes back through `open_local_media`, so a sibling is reached by
     exactly the validated path this walk proved, and never by a name a listing
     handed straight to `open`.
+
+    The default admits a folder holding a multi-file audiobook. At 256 a 352
+    track item refused its own listing, and the audiobook sidecar derivation
+    reads a refusal as an absent candidate set -- so every sidecar beside the
+    widest recordings was silently lost. The hard cap stays where it was: this
+    is a bound on how many names one refusal costs, not a licence to walk a
+    directory of any size.
     """
     parts = validate_relative_reference(reference)
     if type(container_path) is not str or not container_path.startswith("/"):

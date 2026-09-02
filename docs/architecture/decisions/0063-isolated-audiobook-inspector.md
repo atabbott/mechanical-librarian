@@ -4,7 +4,7 @@
 - Date: 2026-08-29
 - Owners: project maintainers
 - Supersedes: none
-- Superseded by: none
+- Superseded by: ADR-0066 for the multi-file exclusion
 
 ## Context
 
@@ -182,8 +182,10 @@ provider means to the review pipeline.
   time, so the `(dev, ino, size, mtime_ns)` identity tuple is a near-free
   currentness signal that is not tautological the way reusing the digest
   would be.
-- Multi-file audiobooks and unmounted audiobook libraries stay excluded exactly
-  as before this slice, and remain a later decision.
+- Unmounted audiobook libraries stay excluded exactly as before this slice, and
+  remain a later decision. Multi-file audiobooks were excluded here on the same
+  terms and are admitted by ADR-0066, which composes several per-file documents
+  into one item evidence set without changing the extraction this record fixes.
 - Provider discovery, enrichment, and any write authority for audiobooks stay
   governed by ADR-0061 and scope; this record grants none of them.
 - Transcription and audio decoding are out of scope: nothing here decodes a
@@ -245,6 +247,6 @@ authority the milestone deliberately withholds.
 - The slow tier executes the real probe over generated MP4 and MP3 containers
   and one hostile container, covering the whole composed path from mount to
   closed evidence set.
-- Reopen triggers: a measured need for multi-file audiobook evidence, an image
-  size budget the probe closure cannot meet, or an audiobook capability that
-  requires decoding rather than probing.
+- Reopen triggers: an image size budget the probe closure cannot meet, or an
+  audiobook capability that requires decoding rather than probing. The
+  multi-file trigger fired and is answered by ADR-0066.

@@ -25,7 +25,6 @@ from mechanical_librarian.domain.audiobook_corroboration import (
     runtime_agreement,
 )
 from mechanical_librarian.domain.metadata_report import (
-    AudioFacts,
     ClaimKind,
     ClaimScope,
     FieldState,
@@ -36,6 +35,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     default_target_fields,
 )
+from tests.support.metadata_report_doubles import single_track_audio_facts
 
 
 def _structure(
@@ -266,8 +266,8 @@ def test_a_hash_outside_its_shape_is_unavailable_rather_than_a_contradiction(
 
 
 def test_local_facts_project_onto_whole_seconds() -> None:
-    audio = AudioFacts(
-        (
+    audio = single_track_audio_facts(
+        chapters=(
             AudioChapter(1, 0, 600_499),
             AudioChapter(2, 600_499, 1_201_000),
         )
@@ -337,5 +337,5 @@ def _audio_report(durations: tuple[str, ...]) -> MetadataReport:
         local_claims=claims,
         local_reasons=("no_local_audio_claims",),
         providers=(),
-        audio=AudioFacts(),
+        audio=single_track_audio_facts(),
     )

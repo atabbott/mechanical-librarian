@@ -49,6 +49,7 @@ from mechanical_librarian.application.review_web import (
 from mechanical_librarian.domain.audio_inspection import (
     AudioEvidenceSurface,
     AudioInspectionLimits,
+    AudioTrackDigest,
 )
 from mechanical_librarian.domain.automatic_decision import (
     F19A_QUALIFICATION_MANIFEST_SHA256,
@@ -2083,6 +2084,7 @@ def _recorded_audiobook() -> MetadataReport:
             interpretation.chapters,
             interpretation.chapters_truncated,
             interpretation.embedded_cover,
+            tracks=(AudioTrackDigest(1, "c" * 64, "b" * 64, "m4b", "book.m4b"),),
         ),
     )
 

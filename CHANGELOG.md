@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Audiobook items made of several audio files are now prepared as one item:
+  every file is read under its own bounded child, and composed into one running
+  time, one chapter list, and one claim per observation carrying the files that
+  stated it. Files that disagree keep both values, a refusing file names its
+  track, and an item too wide to compose is listed for attention. Existing
+  installs require a clean `metadata-report-v35` database. (#965)
+
 - Audiobook preparation now feeds the Audiobookshelf-asserted ASIN and any
   ASIN the runtime-corroboration gate promotes into the per-ASIN providers in
   the same pass, after embedded ASINs and within the same four-lane bound;

@@ -829,3 +829,15 @@ def test_an_attribute_run_stops_being_read_where_it_stops_making_sense() -> None
     }
     assert audio_local._xml_attributes(' role="nrt" role="edt"') == {"role": "nrt"}
     assert audio_local._is_narrator_role(' data-role="nrt"') is False
+
+
+def test_a_track_title_is_projected_whole_or_not_at_all() -> None:
+    """A cut title names the chapter something the file does not say.
+
+    The composition falls back to the exported file name when a track states
+    no usable title, and that name is at least a real one; a prefix of an
+    oversize title is text no surface ever carried.
+    """
+    assert _read(_probe(tags={"title": "Part One"})).title == "Part One"
+    assert _read(_probe(tags={"title": " Part   One "})).title == "Part One"
+    assert _read(_probe(tags={"title": "x" * 300})).title is None

@@ -14,6 +14,8 @@ from urllib.parse import quote
 import httpx
 
 from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import (
+    declared_track_index,
+    included_audio_records,
     target_connection_code,
 )
 from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_location import (
@@ -21,6 +23,7 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_locatio
 )
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.metadata_report import (
+    AudioItemInspectionError,
     CoverReadError,
     CoverSourceChangedError,
     CoverTimeoutError,
@@ -29,6 +32,10 @@ from mechanical_librarian.application.metadata_report import (
     TargetFile,
     TargetNotFoundError,
     TargetSnapshot,
+)
+from mechanical_librarian.domain.audio_inspection import (
+    MAX_AUDIO_TRACKS,
+    AudioInspectionOutcome,
 )
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
@@ -262,9 +269,18 @@ def _snapshot(
         media_kind = "ebook"
     elif type(audio_source) is list:
         media_kind = "audiobook"
-        if len(audio_source) > 128:
-            raise MetadataReportError("target response is invalid")
-        files = _audio_files(audio_source, service_path, root)
+        # The bound is measured on the set the service plays, so the records it
+        # excludes are dropped before the count: an item of five hundred and
+        # twenty files with ten excluded is a set this build composes.
+        audio_records = included_audio_records(audio_source) or ()
+        if len(audio_records) > MAX_AUDIO_TRACKS:
+            # A set this build cannot compose is a bound this build states,
+            # not a target that answered badly: it is reported as the item's
+            # own typed terminal rather than as an invalid response.
+            raise AudioItemInspectionError(
+                AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED
+            )
+        files = _audio_files(audio_records, service_path, root)
     else:
         media_kind = "unsupported"
     identities = tuple(value.identity for value in files)
@@ -522,7 +538,7 @@ def _file(
 
 
 def _audio_files(
-    source: list[Any], service_path: str, item: object
+    source: tuple[Any, ...], service_path: str, item: object
 ) -> tuple[TargetFile, ...]:
     """Surface the item's audio tracks, or none of them.
 
@@ -532,6 +548,9 @@ def _audio_files(
     would renumber the survivors and bind a report to a different track. This
     is deliberately not an error -- an unusable audiobook item still reads,
     and simply has no file a report can be prepared from.
+
+    The records are the ones the service plays; the excluded ones were dropped
+    by `included_audio_records` before the set was counted.
     """
     values: list[TargetFile] = []
     for value in source:
@@ -544,7 +563,12 @@ def _audio_files(
         if location.format not in AUDIO_FILE_FORMATS:
             return ()
         values.append(
-            TargetFile(location.identity, location.relative_path, location.format)
+            TargetFile(
+                location.identity,
+                location.relative_path,
+                location.format,
+                declared_track_index(value),
+            )
         )
     return tuple(values)
 

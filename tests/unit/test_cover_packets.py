@@ -17,7 +17,6 @@ from unittest import mock
 import pytest
 from PIL import Image, ImageCms
 
-from mechanical_librarian.domain.audio_inspection import AudioEmbeddedCover
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
     CoverDesignation,
@@ -28,7 +27,6 @@ from mechanical_librarian.domain.cover_evidence import (
     cover_source_id,
 )
 from mechanical_librarian.domain.metadata_report import (
-    AudioFacts,
     ClaimKind,
     ClaimScope,
     Comparison,
@@ -112,6 +110,9 @@ from mechanical_librarian.application.cover_policy import (  # noqa: E402
 )
 from mechanical_librarian.bootstrap import (  # noqa: E402
     contained_reviewer as reviewer_binding,
+)
+from tests.support.metadata_report_doubles import (  # noqa: E402
+    single_track_audio_facts,
 )
 
 
@@ -3514,7 +3515,7 @@ def _audiobook_report(sources: tuple[CoverSource, ...]) -> MetadataReport:
         local_reasons=("no_local_audio_claims",),
         providers=(),
         cover_sources=tuple(sorted(sources, key=lambda value: value.source_id)),
-        audio=AudioFacts(embedded_cover=AudioEmbeddedCover(False)),
+        audio=single_track_audio_facts(),
     )
 
 

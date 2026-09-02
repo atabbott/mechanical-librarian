@@ -15,8 +15,11 @@ from mechanical_librarian.application.metadata_report import (
 )
 from mechanical_librarian.domain.audio_inspection import (
     AudioChapter,
+    AudioChapterComposition,
     AudioEmbeddedCover,
+    AudioObservation,
     AudioSidecarDigest,
+    AudioTrackDigest,
 )
 from mechanical_librarian.domain.metadata_report import (
     AudioFacts,
@@ -64,31 +67,57 @@ class FakeAudioInspector:
         self.inspections = 0
         self.verifications = 0
         self.ceilings: list[int] = []
+        self.tracks: list[tuple[str, ...]] = []
         # What the mount holds now, which starts as what inspection read and
-        # can be reassigned to stage a sidecar added, removed, or edited since.
+        # can be reassigned to stage a sidecar added, removed, or edited since,
+        # or a track whose bytes were rewritten under an unchanged manifest.
         self.current_sidecars = result.audio.sidecars
+        self.current_digest = result.content_digest
 
-    def inspect(self, mount, relative_path, maximum_bytes):
+    def inspect(self, mount, tracks, maximum_bytes):
         self.inspections += 1
         self.ceilings.append(maximum_bytes)
+        self.tracks.append(tuple(value.relative_path for value in tracks))
         return self.result
 
     def unchanged(
         self,
         mount,
-        relative_path,
+        relative_paths,
         expected_digest,
         maximum_bytes,
         expected_sidecars=(),
+        expected_tracks=(),
     ):
         self.verifications += 1
         return (
-            expected_digest == self.result.content_digest
+            expected_digest == self.current_digest
             and tuple(expected_sidecars) == self.current_sidecars
         )
 
 
 _NO_EMBEDDED_COVER = AudioEmbeddedCover(False)
+
+
+def single_track_audio_facts(
+    content_digest: str = "b" * 64,
+    *,
+    chapters: tuple[AudioChapter, ...] = (),
+    embedded_cover: AudioEmbeddedCover = _NO_EMBEDDED_COVER,
+    file_format: str = "m4b",
+    name: str = "book.m4b",
+) -> AudioFacts:
+    """Build the one-track audio section a single-file report publishes.
+
+    Every audio section names the file it was composed from, and the report
+    checks that the manifest composes its own content digest, so a report
+    double states the digest it was built with here too.
+    """
+    return AudioFacts(
+        chapters=chapters,
+        embedded_cover=embedded_cover,
+        tracks=(AudioTrackDigest(1, "a" * 64, content_digest, file_format, name),),
+    )
 
 
 def audio_result(
@@ -99,8 +128,16 @@ def audio_result(
     chapters_truncated: bool = False,
     embedded_cover: AudioEmbeddedCover = _NO_EMBEDDED_COVER,
     sidecars: tuple[AudioSidecarDigest, ...] = (),
+    tracks: tuple[AudioTrackDigest, ...] | None = None,
+    composition: AudioChapterComposition = AudioChapterComposition.SINGLE_FILE,
+    observations: tuple[AudioObservation, ...] = (),
 ) -> AudioInspectionResult:
-    """Build one audiobook evidence set from ``(kind, value, basis, role)`` facts."""
+    """Build one audiobook evidence set from ``(kind, value, basis, role)`` facts.
+
+    The default manifest is the one-track item the single-file cases use, so a
+    double still produces a document the report invariants accept: a published
+    audio section always names the files it was composed from.
+    """
     return AudioInspectionResult(
         content_digest,
         tuple(
@@ -118,7 +155,19 @@ def audio_result(
             )
             for occurrence, (kind, value, basis, role) in enumerate(facts, 1)
         ),
-        AudioFacts(chapters, chapters_truncated, embedded_cover, sidecars),
+        AudioFacts(
+            chapters,
+            chapters_truncated,
+            embedded_cover,
+            sidecars,
+            composition,
+            (
+                (AudioTrackDigest(1, "a" * 64, content_digest, "m4b", "book.m4b"),)
+                if tracks is None
+                else tracks
+            ),
+            observations,
+        ),
     )
 
 
