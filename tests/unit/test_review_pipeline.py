@@ -97,7 +97,6 @@ from mechanical_librarian.application.review_web import BrowseReviewLibrary
 from mechanical_librarian.domain.audio_inspection import AudioInspectionOutcome
 from mechanical_librarian.domain.epub_inspection import EpubInspectionOutcome
 from mechanical_librarian.domain.metadata_report import (
-    AudioFacts,
     FileFacts,
     MetadataReport,
     ProviderObservation,
@@ -114,6 +113,7 @@ from mechanical_librarian.domain.preparation_presentation import (
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.provider_recovery import MAX_TIMESTAMP
 from mechanical_librarian.domain.review_browse import browse_report
+from tests.support.metadata_report_doubles import single_track_audio_facts
 from tests.support.review_cases import _report
 
 _PRODUCER = "f" * 64
@@ -5932,6 +5932,112 @@ def test_the_failure_code_allow_list_and_its_normalisation_stay_one_vocabulary()
     assert "persistence" in _FAILURE_CODES
 
 
+def _terminal_extraction(
+    application_path: Path, code: str, failure_root: str | None
+) -> tuple[tuple[object, ...], tuple[tuple[str | None, str], ...]]:
+    """Fail one claimed extraction and read back what the owner is left with."""
+    repository = open_repository(application_path)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry("item-1", "1" * 64),), 12
+    )
+    extraction = repository.claim_review_pipeline_action(13)
+    assert extraction is not None
+    repository.fail_review_pipeline_action(extraction, code, False, 14, failure_root)
+    row = repository._connection.execute(
+        "SELECT state,failure_code,failure_root FROM review_preparation_work"
+    ).fetchone()
+    browsed = tuple(repository.list_current_review_case_documents(None, 10, 0, None))
+    repository.close()
+    return row, browsed
+
+
+def test_the_track_that_refused_a_composed_item_is_persisted_and_browsed(
+    application_path: Path,
+) -> None:
+    """The ordinal has to survive the transaction that ends the work.
+
+    The stage raises it, but an owner only ever sees the terminal row: an
+    ordinal dropped on the way into `review_preparation_work` is an ordinal
+    that never existed, and "a file could not be read" is what a
+    three-hundred-file audiobook's owner is left holding.
+    """
+    row, browsed = _terminal_extraction(application_path, "parser_refused", "track_3")
+
+    assert row == ("failed", "parser_refused", "track_3")
+    assert len(browsed) == 1
+    case_document, terminal_document = browsed[0]
+    assert case_document is None
+    assert json.loads(terminal_document)["failure_root"] == "track_3"
+
+
+@pytest.mark.parametrize(
+    ("code", "failure_root"),
+    (
+        pytest.param("provider", "track_1", id="track-under-a-provider-failure"),
+        pytest.param("parser_refused", "track_0", id="ordinal-below-the-first-track"),
+        pytest.param("parser_refused", "track_513", id="ordinal-past-the-bound"),
+        pytest.param("parser_refused", "track_03", id="ordinal-with-a-leading-zero"),
+        pytest.param("parser_refused", "disc_1", id="not-a-track-at-all"),
+    ),
+)
+def test_a_root_outside_the_track_grammar_is_dropped_without_restating_the_code(
+    application_path: Path, code: str, failure_root: str
+) -> None:
+    """The root is detail on a failure; the code is which side failed.
+
+    Persisting a root the CHECK refuses would lose the whole row, and
+    rewriting the code to hide it would tell the owner something else failed.
+    """
+    row, _browsed = _terminal_extraction(application_path, code, failure_root)
+
+    assert row == ("failed", code, None)
+
+
+@pytest.mark.parametrize(
+    ("code", "failure_root", "admitted"),
+    (
+        pytest.param("parser_refused", "track_512", True, id="widest-track"),
+        pytest.param("parser_refused", "audible", False, id="a-provider-name"),
+        pytest.param("provider", "track_1", False, id="a-track-under-a-provider"),
+    ),
+)
+def test_the_check_admits_a_track_root_only_under_a_media_terminal(
+    application_path: Path, code: str, failure_root: str, admitted: bool
+) -> None:
+    """The CHECK is the last word, and it is written twice by necessity.
+
+    `sqlite_master` stores the DDL verbatim, so the grammar the repository
+    normalises against cannot be generated from it. Writing past the
+    repository is what proves the stored schema agrees.
+    """
+    repository = open_repository(application_path)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry("item-1", "1" * 64),), 12
+    )
+    update = (
+        "UPDATE review_preparation_work SET failure_code=?,failure_root=?",
+        (code, failure_root),
+    )
+
+    try:
+        if admitted:
+            repository._connection.execute(*update)
+            assert repository._connection.execute(
+                "SELECT failure_root FROM review_preparation_work"
+            ).fetchone() == (failure_root,)
+        else:
+            with pytest.raises(sqlite3.IntegrityError):
+                repository._connection.execute(*update)
+    finally:
+        repository.close()
+
+
 def test_thousand_work_three_library_backlog_is_bounded_and_fair(
     application_path: Path,
 ) -> None:
@@ -9913,6 +10019,10 @@ def test_shutdown_deadline_retains_active_worker_and_durable_claim() -> None:
         (AudioInspectionOutcome.NO_APPLICABLE_EVIDENCE, "success"),
         (AudioInspectionOutcome.UNSUPPORTED_FORMAT, "unsupported_media"),
         (AudioInspectionOutcome.UNAVAILABLE_SOURCE, "unreadable_media"),
+        (
+            AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED,
+            "multi_file_budget_exceeded",
+        ),
         (AudioInspectionOutcome.MALFORMED, "parser_refused"),
         (AudioInspectionOutcome.PROBE_FAILURE, "parser_refused"),
         (AudioInspectionOutcome.RESOURCE_LIMIT, "parser_refused"),
@@ -9942,6 +10052,7 @@ def test_the_audio_outcome_vocabulary_is_exactly_what_the_mapping_answers() -> N
         "unsupported_media",
         "unreadable_media",
         "parser_refused",
+        "multi_file_budget_exceeded",
         "internal_failure",
     }
 
@@ -9984,6 +10095,92 @@ def test_an_audiobook_inspection_failure_is_named_at_the_extraction_stage() -> N
         )
 
     assert raised.value.code == "internal_failure"
+
+
+def test_the_failing_track_of_a_multi_file_item_is_named_in_recovery_evidence() -> None:
+    """Which file refused is the only thing an owner can act on.
+
+    A multi-file item names one failure for the whole set, so without the
+    ordinal the owner is told a folder of several hundred recordings is
+    unreadable and given nothing to look at.
+    """
+
+    def unreachable(*_arguments: object, **_keywords: object) -> None:
+        raise AssertionError
+
+    def refuse(*_arguments: object, **_keywords: object) -> str:
+        raise AudioItemInspectionError(AudioInspectionOutcome.MALFORMED, 3)
+
+    stages = ReviewPipelineStages(
+        configuration=ApplicationConfiguration((), (), (), ()),
+        catalogue=unreachable,
+        catalogue_reader=cast("CatalogueReader", unreachable),
+        probe_connection=unreachable,
+        connections=frozenset(),
+        repository_factory=unreachable,
+        recover_artifacts=lambda: None,
+        generate_report=refuse,
+        create_proposal_set=unreachable,
+        admit_review_case=unreachable,
+        cover_considerations=unreachable,
+        recovery_observer=cast("ProviderFailureObserver", unreachable),
+        drain_outbox=unreachable,
+        discovery_lock=threading.Lock(),
+        clock=lambda: 7,
+    )
+
+    with (
+        patch.object(stages, "_require_eligible_entry", lambda _action: None),
+        pytest.raises(ReviewPipelineError) as raised,
+    ):
+        stages.extract(
+            cast("ReviewPipelineRepository", object()),
+            cast("PipelineAction", object()),
+            False,
+        )
+
+    assert raised.value.code == "parser_refused"
+    assert raised.value.root == "track_3"
+
+
+def test_a_single_file_item_still_names_no_track_at_the_extraction_stage() -> None:
+    """One file is the item, so an ordinal would be noise rather than evidence."""
+
+    def unreachable(*_arguments: object, **_keywords: object) -> None:
+        raise AssertionError
+
+    def refuse(*_arguments: object, **_keywords: object) -> str:
+        raise AudioItemInspectionError(AudioInspectionOutcome.MALFORMED)
+
+    stages = ReviewPipelineStages(
+        configuration=ApplicationConfiguration((), (), (), ()),
+        catalogue=unreachable,
+        catalogue_reader=cast("CatalogueReader", unreachable),
+        probe_connection=unreachable,
+        connections=frozenset(),
+        repository_factory=unreachable,
+        recover_artifacts=lambda: None,
+        generate_report=refuse,
+        create_proposal_set=unreachable,
+        admit_review_case=unreachable,
+        cover_considerations=unreachable,
+        recovery_observer=cast("ProviderFailureObserver", unreachable),
+        drain_outbox=unreachable,
+        discovery_lock=threading.Lock(),
+        clock=lambda: 7,
+    )
+
+    with (
+        patch.object(stages, "_require_eligible_entry", lambda _action: None),
+        pytest.raises(ReviewPipelineError) as raised,
+    ):
+        stages.extract(
+            cast("ReviewPipelineRepository", object()),
+            cast("PipelineAction", object()),
+            False,
+        )
+
+    assert raised.value.root is None
 
 
 def test_a_terminal_stop_that_registers_no_package_refuses_to_pass_silently(
@@ -10047,7 +10244,7 @@ def test_the_provider_stage_admits_an_audiobook_report_that_carries_providers() 
                 authority="audible_catalog",
             ),
         ),
-        audio=AudioFacts(),
+        audio=single_track_audio_facts(),
     )
 
     class _Repository:
@@ -10153,7 +10350,7 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
         local_claims=(),
         local_reasons=("no_local_audio_claims",),
         providers=(),
-        audio=AudioFacts(),
+        audio=single_track_audio_facts(),
     )
 
     repository = open_repository(application_path)
@@ -10203,7 +10400,7 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
     assert presentation.passage.failed == 0
     assert presentation.recent_completions[0].outcome == "ready"
     assert presentation.throughput_per_minute > 0
-    assert retained.schema_version == "metadata-report-v34"
+    assert retained.schema_version == "metadata-report-v35"
     assert retained.audio is not None
     assert retained.providers == ()
     # The evidence is what the owner browses: a report, not a terminal card.
@@ -10214,7 +10411,7 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
     # And addressable by the identity of the package row that lists it, which
     # is the only route to an audiobook's evidence: it has no review case.
     assert addressed is not None
-    assert MetadataReport.from_json(addressed).schema_version == "metadata-report-v34"
+    assert MetadataReport.from_json(addressed).schema_version == "metadata-report-v35"
     assert browse_report(addressed)["audio"] is not None
     # No such work is a `None`, not a refusal: a store that cannot answer
     # raises, and the two must not read alike to the caller above.
@@ -10316,7 +10513,7 @@ def test_a_prepared_audiobook_leaves_a_mixed_library_scan_clean(
         local_claims=(),
         local_reasons=("no_local_audio_claims",),
         providers=(),
-        audio=AudioFacts(),
+        audio=single_track_audio_facts("1" * 64),
     )
     survivors = (
         replace(_audio_entry("audio-1", audiobook.file.identity), library="ebooks"),
@@ -10473,7 +10670,7 @@ def _audio_report(item_id: str, identity: str) -> MetadataReport:
         local_claims=(),
         local_reasons=("no_local_audio_claims",),
         providers=(),
-        audio=AudioFacts(),
+        audio=single_track_audio_facts(),
     )
 
 
@@ -10581,7 +10778,7 @@ def test_audiobook_publication_refreshes_before_interleaved_claim_next(
         local_claims=(),
         local_reasons=("no_local_audio_claims",),
         providers=(),
-        audio=AudioFacts(),
+        audio=single_track_audio_facts(),
     )
     repository = open_repository(application_path)
     repository.request_review_scan(
@@ -10669,7 +10866,7 @@ def test_an_audiobook_records_its_recovery_evidence_at_extraction() -> None:
                 authority="audible_catalog",
             ),
         ),
-        audio=AudioFacts(),
+        audio=single_track_audio_facts(),
     )
     observations: list[object] = []
     stages = ReviewPipelineStages(

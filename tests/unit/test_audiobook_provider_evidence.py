@@ -1,4 +1,4 @@
-"""The `metadata-report-v34` audiobook provider grammar.
+"""The `metadata-report-v35` audiobook provider grammar.
 
 Marketplace provenance, the bounded chapter-structure value, the duration
 agreement band, and the lifted refusal that let an audio report carry a
@@ -15,7 +15,6 @@ from mechanical_librarian.domain.metadata_report import (
     AUDIOBOOK_MARKETPLACES,
     DURATION_AGREEMENT_BAND_SECONDS,
     MAX_PROVIDER_CHAPTER_DURATIONS,
-    AudioFacts,
     ClaimKind,
     ClaimScope,
     Comparison,
@@ -38,6 +37,7 @@ from mechanical_librarian.domain.metadata_report import (
     comparison_links,
     default_target_fields,
 )
+from tests.support.metadata_report_doubles import single_track_audio_facts
 
 
 def _structure_evidence(
@@ -298,7 +298,7 @@ def test_a_v33_audio_report_may_carry_a_provider_observation() -> None:
     dispatches none until the activation packet, which is a different fact.
     """
     report = _audio_report(())
-    assert "metadata-report-v34" == report.schema_version
+    assert "metadata-report-v35" == report.schema_version
     assert ProviderQueryKind.ASIN == report.providers[0].query_kind
     assert "audible_catalog" == report.providers[0].authority
     assert report == MetadataReport.from_json(report.to_json())
@@ -339,5 +339,5 @@ def _audio_report(evidence: tuple[ProviderEvidence, ...]) -> MetadataReport:
                 authority="audible_catalog",
             ),
         ),
-        audio=AudioFacts(),
+        audio=single_track_audio_facts(),
     )

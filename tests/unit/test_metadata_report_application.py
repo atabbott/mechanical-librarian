@@ -11,6 +11,12 @@ from typing import cast
 
 import pytest
 
+from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import (
+    _entry as catalogue_entry,
+)
+from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_location import (
+    normalize_ebook_location,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_repository,
 )
@@ -21,6 +27,7 @@ from mechanical_librarian.application.configuration import (
     TargetConnectionConfiguration,
 )
 from mechanical_librarian.application.metadata_report import (
+    AudioItemInspectionError,
     CredentialError,
     CurrentnessError,
     GenerateMetadataReport,
@@ -42,9 +49,12 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.application.operations import StageTimer, StageTiming
 from mechanical_librarian.domain.audio_inspection import (
     AudioChapter,
+    AudioChapterComposition,
     AudioEmbeddedCover,
     AudioEvidenceSurface,
+    AudioInspectionOutcome,
     AudioSidecarDigest,
+    AudioTrackDigest,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
@@ -60,7 +70,6 @@ from mechanical_librarian.domain.failure_diagnostics import (
     FailureStage,
 )
 from mechanical_librarian.domain.metadata_report import (
-    AudioFacts,
     ClaimKind,
     ClaimScope,
     FieldSource,
@@ -77,6 +86,8 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     TargetField,
     TargetFieldState,
+    audio_set_content_digest,
+    audio_set_identity,
     default_target_fields,
     finalize_candidate_comparisons,
 )
@@ -90,6 +101,7 @@ from tests.support.metadata_report_doubles import (
     FakeReportRepository,
     FakeTarget,
     audio_result,
+    single_track_audio_facts,
 )
 
 
@@ -1497,14 +1509,26 @@ def test_an_audiobook_without_local_evidence_still_publishes_a_named_reason() ->
         (
             (
                 TargetFile("a" * 64, "part-1.m4b", "m4b"),
-                TargetFile("b" * 64, "part-2.m4b", "m4b"),
+                TargetFile("b" * 64, "book.wav", "wav"),
             ),
             True,
         ),
         ((TargetFile("a" * 64, "book.wav", "wav"),), True),
         ((TargetFile("a" * 64, "book.m4b", "m4b"),), False),
+        (
+            tuple(
+                TargetFile(f"{index:064x}", f"part-{index}.m4b", "m4b")
+                for index in range(513)
+            ),
+            True,
+        ),
     ),
-    ids=("multi-file", "unsupported-format", "no-composed-inspector"),
+    ids=(
+        "one-unsupported-track",
+        "unsupported-format",
+        "no-composed-inspector",
+        "past-the-track-bound",
+    ),
 )
 def test_audiobook_shapes_outside_the_slice_stay_unsupported(
     files: tuple[TargetFile, ...], inspector_present: bool
@@ -1518,6 +1542,230 @@ def test_audiobook_shapes_outside_the_slice_stay_unsupported(
 
     assert repository.values == {}
     assert audio_inspector is None or audio_inspector.inspections == 0
+
+
+_COMPOSED_MOUNT = MediaMountConfiguration("audiobooks", "/media", "/library", True)
+
+
+def _audio_detail(count: int) -> dict[str, object]:
+    """One Audiobookshelf item detail carrying `count` ordered audio files."""
+    return {
+        "id": "item-1",
+        "libraryId": "library-id",
+        "updatedAt": 1,
+        "media": {
+            "metadata": {"title": "Recorded title", "authors": [{"name": "Ada"}]},
+            "audioFiles": [
+                {
+                    "ino": f"inode-{ordinal}",
+                    "metadata": {
+                        "relPath": f"part-{ordinal}.m4b",
+                        "path": f"/library/part-{ordinal}.m4b",
+                        "size": 7,
+                        "ext": ".m4b",
+                    },
+                }
+                for ordinal in range(1, count + 1)
+            ],
+        },
+    }
+
+
+def _audio_target_files(detail: dict[str, object]) -> tuple[TargetFile, ...]:
+    """Read the same detail the catalogue reads, through the same grammar.
+
+    Each file carries the position the service declares for it, because that
+    is what the published manifest records and what currentness compares.
+    """
+    media = cast(dict[str, object], detail["media"])
+    return tuple(
+        TargetFile(
+            normalize_ebook_location(
+                record, service_path=_COMPOSED_MOUNT.service_path, item=detail
+            ).identity,
+            f"part-{ordinal}.m4b",
+            "m4b",
+            ordinal,
+        )
+        for ordinal, record in enumerate(cast(list[object], media["audioFiles"]), 1)
+    )
+
+
+def _composed_inspector(files: tuple[TargetFile, ...]) -> FakeAudioInspector:
+    digests = tuple(f"{ordinal + 200:064x}" for ordinal in range(len(files)))
+    return FakeAudioInspector(
+        audio_result(
+            ((ClaimKind.DURATION, "43200.000", "embedded_tag", None),),
+            content_digest=audio_set_content_digest(digests),
+            composition=(
+                AudioChapterComposition.SINGLE_FILE
+                if len(files) == 1
+                else AudioChapterComposition.PER_TRACK
+            ),
+            tracks=tuple(
+                AudioTrackDigest(
+                    ordinal,
+                    value.identity,
+                    digest,
+                    "m4b",
+                    value.relative_path,
+                    value.sequence,
+                )
+                for ordinal, (value, digest) in enumerate(
+                    zip(files, digests, strict=True), 1
+                )
+            ),
+        )
+    )
+
+
+def _composed_audiobook() -> tuple[
+    FakeTarget, FakeAudioInspector, tuple[TargetFile, ...], MetadataReport
+]:
+    detail = _audio_detail(3)
+    files = _audio_target_files(detail)
+    snapshot = TargetSnapshot("audiobook", "Recorded title", files)
+    target = FakeTarget([snapshot, snapshot])
+    audio_inspector = _composed_inspector(files)
+    published = MetadataReport.from_json(
+        _audiobook_service(target, FakeReportRepository(), audio_inspector).run(
+            "item-1", 0
+        )
+    )
+    return target, audio_inspector, files, published
+
+
+def test_a_three_track_item_is_inspected_and_published_as_one_composed_unit() -> None:
+    """One item, one inspection, one identity -- and the catalogue's identity.
+
+    The pipeline binds work to the identity the catalogue stated, so a report
+    naming any other identity is a report no work can publish. Both sides
+    derive it from the same ordered track set through the same function, and
+    this is the assertion that they still agree.
+    """
+    target, audio_inspector, files, published = _composed_audiobook()
+    entry = catalogue_entry(
+        "primary",
+        LibraryConfiguration(
+            "audio", "primary", "library-id", "audiobook", "audiobooks", ("catalogue",)
+        ),
+        _COMPOSED_MOUNT,
+        {"id": "item-1", "libraryId": "library-id", "updatedAt": 1},
+        _audio_detail(3),
+    )
+
+    assert audio_inspector.inspections == 1
+    assert audio_inspector.tracks == [
+        ("part-1.m4b", "part-2.m4b", "part-3.m4b"),
+    ]
+    assert published.file.identity == audio_set_identity(
+        tuple(value.identity for value in files)
+    )
+    assert published.file.identity == entry.file_identity
+    assert published.audio is not None
+    assert [value.ordinal for value in published.audio.tracks] == [1, 2, 3]
+    assert target.calls == 2
+
+
+def _require_composed_current(
+    files: tuple[TargetFile, ...],
+    audio_inspector: FakeAudioInspector,
+    published: MetadataReport,
+) -> bool:
+    return require_report_current(
+        FakeTarget([TargetSnapshot("audiobook", "Recorded title", files)]),
+        FakeInspector(InspectionResult("c" * 64, ())),
+        _COMPOSED_MOUNT,
+        ReportLimits(),
+        published,
+        audio_inspector=audio_inspector,
+    )
+
+
+def test_an_unchanged_three_track_item_is_still_current() -> None:
+    _target, audio_inspector, files, published = _composed_audiobook()
+
+    assert _require_composed_current(files, audio_inspector, published)
+
+
+@pytest.mark.parametrize(
+    "change",
+    ("added", "removed", "reordered", "edited", "renumbered"),
+    ids=(
+        "a-track-was-added",
+        "a-track-was-removed",
+        "the-tracks-were-reordered",
+        "one-track-s-bytes-changed",
+        "one-track-s-declared-index-changed",
+    ),
+)
+def test_any_move_in_the_track_set_re_prepares_the_item_exactly_once(
+    change: str,
+) -> None:
+    """A composed report is bound to the whole ordered set, not to one file.
+
+    Adding, removing, or reordering a track moves the composed identity; an
+    edit invisible to the service moves only the digests, which is why the
+    manifest is re-read as well.  A renumbered track moves neither: its bytes,
+    its path, and the set's order are all what they were, and only the
+    position the service declares for it changed -- which is the `sequence`
+    the manifest published and the gap and disorder observations composed
+    from it.
+    """
+    _target, audio_inspector, files, published = _composed_audiobook()
+    if change == "added":
+        files = (*files, *_audio_target_files(_audio_detail(4))[3:])
+    elif change == "removed":
+        files = files[:2]
+    elif change == "reordered":
+        files = (files[1], files[0], files[2])
+    elif change == "renumbered":
+        second = files[1]
+        files = (
+            files[0],
+            TargetFile(second.identity, second.relative_path, second.format, 9),
+            files[2],
+        )
+    else:
+        audio_inspector.current_digest = "e" * 64
+
+    with pytest.raises(CurrentnessError):
+        _require_composed_current(files, audio_inspector, published)
+
+
+class _WalledAudioInspector(FakeAudioInspector):
+    """Re-digest the set until the item wall stops it, as the real one does."""
+
+    def unchanged(self, *_arguments: object, **_keywords: object) -> bool:
+        self.verifications += 1
+        raise AudioItemInspectionError(
+            AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED, 2
+        )
+
+
+def test_a_revalidation_that_outran_the_item_budget_keeps_its_typed_terminal() -> None:
+    """Publication runs the currentness guard, and must not blur its outcome.
+
+    The extraction stage maps this outcome onto the owner's
+    `multi_file_budget_exceeded` and onto the ordinal that stopped it. Reported
+    as a publication that did not complete, the one bound this build states
+    about itself would reach the owner as an internal failure.
+    """
+    detail = _audio_detail(3)
+    files = _audio_target_files(detail)
+    snapshot = TargetSnapshot("audiobook", "Recorded title", files)
+    audio_inspector = _WalledAudioInspector(_composed_inspector(files).result)
+
+    with pytest.raises(AudioItemInspectionError) as raised:
+        _audiobook_service(
+            FakeTarget([snapshot, snapshot]),
+            FakeReportRepository(),
+            audio_inspector,
+        ).run("item-1", 0)
+
+    assert raised.value.outcome is AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED
+    assert raised.value.track == 2
+    assert audio_inspector.verifications == 1
 
 
 _SIDECARS = (
@@ -1646,7 +1894,9 @@ def test_audiobook_currentness_reruns_the_audio_inspector_not_the_epub_one() -> 
             local_claims=(),
             local_reasons=("no_local_audio_claims",),
             providers=(),
-            audio=AudioFacts(),
+            # The retained manifest is what currentness re-digests, so the
+            # report has to carry the one it was published with.
+            audio=audio_result().audio,
         ),
         audio_inspector=audio_inspector,
     )
@@ -1663,7 +1913,7 @@ def test_an_audiobook_report_cannot_prove_currentness_without_its_inspector() ->
         local_claims=(),
         local_reasons=("no_local_audio_claims",),
         providers=(),
-        audio=AudioFacts(),
+        audio=single_track_audio_facts("d" * 64),
     )
     target = FakeTarget([TargetSnapshot("audiobook", "Recorded title", ())])
 

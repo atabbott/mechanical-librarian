@@ -21,6 +21,7 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue imp
 from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.catalogue import (
+    CatalogueEntry,
     CatalogueError,
     RefreshCurrentCatalogue,
     TargetConnectionError,
@@ -43,6 +44,7 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPreparationPipeline,
 )
 from mechanical_librarian.application.review_pipeline_stages import ReviewPipelineStages
+from mechanical_librarian.domain.audio_inspection import MAX_AUDIO_TRACKS
 from mechanical_librarian.domain.metadata_report import ProviderStatus, canonical_json
 
 
@@ -789,6 +791,199 @@ def _audio_record(name: str = "book.m4b", extension: str = ".m4b") -> dict[str, 
     }
 
 
+def test_a_mounted_multi_file_audiobook_is_one_preparable_item() -> None:
+    """An item is the preparable unit however many files it holds.
+
+    The identity is the ordered set's, so adding, removing, or reordering a
+    track moves it exactly once, and the service path is the first track's.
+    """
+    entry = catalogue_entry(
+        "primary",
+        _library("audio"),
+        MediaMountConfiguration("audiobooks", "/media", "/library", True),
+        {"id": "item-1", "libraryId": "library-1", "updatedAt": 1},
+        _audio_item(
+            [
+                _audio_record("part-1.m4b"),
+                _audio_record("part-2.m4b"),
+                _audio_record("part-3.m4b"),
+            ]
+        ),
+    )
+
+    assert (entry.classification, entry.eligible) == ("singular-supported", True)
+    assert (entry.format, entry.service_path) == ("m4b", "part-1.m4b")
+    reordered = catalogue_entry(
+        "primary",
+        _library("audio"),
+        MediaMountConfiguration("audiobooks", "/media", "/library", True),
+        {"id": "item-1", "libraryId": "library-1", "updatedAt": 1},
+        _audio_item(
+            [
+                _audio_record("part-2.m4b"),
+                _audio_record("part-1.m4b"),
+                _audio_record("part-3.m4b"),
+            ]
+        ),
+    )
+    assert reordered.file_identity != entry.file_identity
+    assert reordered.source_fingerprint != entry.source_fingerprint
+
+
+def test_a_track_edit_alone_moves_a_multi_file_audiobook_fingerprint() -> None:
+    """Every track's revision is fingerprinted, not just the first one's.
+
+    A set whose second file was rewritten and whose first was not is a
+    different recording, and a fingerprint reading one member would not have
+    noticed.
+    """
+
+    def item(second_revision: int) -> dict[str, object]:
+        first = _audio_record("part-1.m4b")
+        second = _audio_record("part-2.m4b")
+        cast(dict[str, object], first["metadata"])["mtimeMs"] = 1
+        cast(dict[str, object], second["metadata"])["mtimeMs"] = second_revision
+        return _audio_item([first, second])
+
+    def fingerprint(detail: dict[str, object]) -> str | None:
+        return catalogue_entry(
+            "primary",
+            _library("audio"),
+            MediaMountConfiguration("audiobooks", "/media", "/library", True),
+            {"id": "item-1", "libraryId": "library-1", "updatedAt": 1},
+            detail,
+        ).source_fingerprint
+
+    assert fingerprint(item(1)) != fingerprint(item(2))
+
+
+def test_a_declared_index_alone_moves_a_multi_file_audiobook_fingerprint() -> None:
+    """A renumbered set is a set whose report no longer states its order.
+
+    The declared index becomes each track's `sequence`, and with it the track
+    manifest and the gap and disorder observations composed from it.  Nothing
+    else moves when only the index does, so a fingerprint reading revisions
+    alone would leave the published order stale.  One file declares no order
+    at all, so its shape is the v34 one and cannot carry an index.
+    """
+
+    def fingerprint(detail: dict[str, object]) -> str | None:
+        return catalogue_entry(
+            "primary",
+            _library("audio"),
+            MediaMountConfiguration("audiobooks", "/media", "/library", True),
+            {"id": "item-1", "libraryId": "library-1", "updatedAt": 1},
+            detail,
+        ).source_fingerprint
+
+    def indexed(name: str, index: int) -> dict[str, object]:
+        record = _audio_record(name)
+        record["index"] = index
+        return record
+
+    def three(second_index: int) -> dict[str, object]:
+        return _audio_item(
+            [
+                indexed("part-1.m4b", 1),
+                indexed("part-2.m4b", second_index),
+                indexed("part-3.m4b", 3),
+            ]
+        )
+
+    def one(index: int) -> dict[str, object]:
+        return _audio_item([indexed("book.m4b", index)])
+
+    assert fingerprint(three(2)) != fingerprint(three(9))
+    assert fingerprint(one(1)) == fingerprint(one(9))
+
+
+def test_an_excluded_track_is_not_part_of_the_admitted_item() -> None:
+    excluded = _audio_record("part-x.m4b")
+    excluded["exclude"] = True
+    entry = catalogue_entry(
+        "primary",
+        _library("audio"),
+        MediaMountConfiguration("audiobooks", "/media", "/library", True),
+        {"id": "item-1", "libraryId": "library-1", "updatedAt": 1},
+        _audio_item([_audio_record("part-1.m4b"), excluded]),
+    )
+    plain = catalogue_entry(
+        "primary",
+        _library("audio"),
+        MediaMountConfiguration("audiobooks", "/media", "/library", True),
+        {"id": "item-1", "libraryId": "library-1", "updatedAt": 1},
+        _audio_item([_audio_record("part-1.m4b")]),
+    )
+
+    assert entry.file_identity == plain.file_identity
+
+
+def _audio_entry(files: list[object]) -> CatalogueEntry:
+    return catalogue_entry(
+        "primary",
+        _library("audio"),
+        MediaMountConfiguration("audiobooks", "/media", "/library", True),
+        {"id": "item-1", "libraryId": "library-1", "updatedAt": 1},
+        _audio_item(files),
+    )
+
+
+@pytest.mark.parametrize(
+    ("count", "classification", "eligible"),
+    (
+        pytest.param(MAX_AUDIO_TRACKS, "singular-supported", True, id="widest-set"),
+        pytest.param(MAX_AUDIO_TRACKS + 1, "needs-attention", False, id="one-too-wide"),
+    ),
+)
+def test_a_set_wider_than_composition_admits_is_attended_to_not_hidden(
+    count: int, classification: str, eligible: bool
+) -> None:
+    """An item this build cannot compose is a state the owner can act on.
+
+    Classified `none` it left the library entirely, so the only way to learn
+    the item existed was a scan racing the item reader's typed terminal. It
+    still carries no `file_identity`: nothing prepares it, and attention is
+    the whole outcome.
+    """
+    entry = _audio_entry(
+        [_audio_record(f"part-{index}.m4b") for index in range(1, count + 1)]
+    )
+
+    assert (entry.classification, entry.eligible) == (classification, eligible)
+    assert (entry.file_identity is None) is not eligible
+
+
+def test_the_excluded_records_are_dropped_before_the_set_is_counted() -> None:
+    """The set this build composes is the set the service plays.
+
+    Counting the payload's records instead refused a five-hundred-and-ten
+    track item because ten files beside it were excluded from the recording.
+    """
+    excluded = [_audio_record(f"extra-{index}.m4b") for index in range(10)]
+    for record in excluded:
+        record["exclude"] = True
+    entry = _audio_entry(
+        [
+            *(
+                _audio_record(f"part-{index}.m4b")
+                for index in range(1, MAX_AUDIO_TRACKS - 1)
+            ),
+            *excluded,
+        ]
+    )
+
+    assert (entry.classification, entry.eligible) == ("singular-supported", True)
+    assert (
+        entry.file_identity
+        == _audio_entry(
+            [
+                _audio_record(f"part-{index}.m4b")
+                for index in range(1, MAX_AUDIO_TRACKS - 1)
+            ]
+        ).file_identity
+    )
+
+
 def test_a_mounted_single_file_audiobook_is_singular_supported() -> None:
     entry = catalogue_entry(
         "primary",
@@ -816,8 +1011,8 @@ def test_a_mounted_single_file_audiobook_is_singular_supported() -> None:
         pytest.param(None, [_audio_record()], id="unmounted"),
         pytest.param(
             MediaMountConfiguration("audiobooks", "/media", "/library", True),
-            [_audio_record("part-1.m4b"), _audio_record("part-2.m4b")],
-            id="multi-file",
+            [_audio_record("part-1.m4b"), _audio_record("book.wav", ".wav")],
+            id="one-unsupported-track",
         ),
         pytest.param(
             MediaMountConfiguration("audiobooks", "/media", "/library", True),

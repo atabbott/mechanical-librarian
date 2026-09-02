@@ -240,8 +240,13 @@ class ReviewPipelineStages:
                     inspection_failure_code(error.outcome)
                 ) from error
             if type(error.outcome) is AudioInspectionOutcome:
+                # A composed item that stopped on one track says which one:
+                # "a file could not be read" is not actionable across a
+                # hundred of them, and the ordinal is the whole difference.
+                track = getattr(error, "track", None)
                 raise ReviewPipelineError(
-                    audio_inspection_failure_code(error.outcome)
+                    audio_inspection_failure_code(error.outcome),
+                    root=None if track is None else f"track_{track}",
                 ) from error
             raise ReviewPipelineError("unknown") from error
         value = MetadataReport.from_json(serialized)

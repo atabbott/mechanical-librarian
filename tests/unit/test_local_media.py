@@ -33,10 +33,15 @@ def _fill(folder: Path, count: int) -> None:
         (folder / f"entry-{index:05d}.txt").write_text("x", encoding="utf-8")
 
 
-@pytest.mark.parametrize("count", (255, 256))
+@pytest.mark.parametrize("count", (1_023, 1_024))
 def test_a_directory_at_or_under_the_bound_lists_every_entry(
     mount: Path, count: int
 ) -> None:
+    """The bound admits a folder holding a multi-file audiobook.
+
+    At 256 the sidecar derivation lost every document beside a 352-track
+    recording, because it reads a refused listing as an absent candidate set.
+    """
     _fill(mount, count)
 
     names = list_local_media_siblings(str(mount), "entry-00000.txt")
@@ -46,7 +51,7 @@ def test_a_directory_at_or_under_the_bound_lists_every_entry(
 
 
 def test_the_entry_past_the_bound_is_where_the_listing_refuses(mount: Path) -> None:
-    _fill(mount, 257)
+    _fill(mount, 1_025)
 
     with pytest.raises(LocalMediaLimitError):
         list_local_media_siblings(str(mount), "entry-00000.txt")

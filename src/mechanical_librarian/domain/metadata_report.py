@@ -14,15 +14,21 @@ from types import MappingProxyType
 from typing import Any, Callable, Mapping, Self, TypedDict, cast
 
 from mechanical_librarian.domain.audio_inspection import (
-    MAX_CHAPTERS as MAX_AUDIO_CHAPTERS,
-)
-from mechanical_librarian.domain.audio_inspection import (
+    MAX_AUDIO_TRACKS,
     AudioChapter,
+    AudioChapterComposition,
     AudioEmbeddedCover,
     AudioEvidenceSurface,
+    AudioInspectionField,
     AudioInspectionLimits,
+    AudioObservation,
+    AudioObservationKind,
     AudioSidecarDigest,
+    AudioTrackDigest,
     normalize_duration_seconds,
+)
+from mechanical_librarian.domain.audio_inspection import (
+    MAX_CHAPTERS as MAX_AUDIO_CHAPTERS,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
@@ -67,7 +73,7 @@ from mechanical_librarian.domain.work_identity import (
     work_title_transformation_lineage_from_data,
 )
 
-REPORT_SCHEMA = "metadata-report-v34"
+REPORT_SCHEMA = "metadata-report-v35"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v5"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -960,6 +966,42 @@ def default_target_fields(title: str | None) -> tuple[TargetField, ...]:
 
 AUDIO_FILE_FORMATS = frozenset({"m4b", "m4a", "mp3"})
 SUPPORTED_FILE_FORMATS = frozenset({"epub"}) | AUDIO_FILE_FORMATS
+AUDIO_SET_SCHEMA = "audiobookshelf-audio-set-v1"
+
+
+def audio_set_identity(identities: tuple[str, ...]) -> str:
+    """Name the ordered set of audio files one report was prepared from.
+
+    A one-track set is its own track's identity, unchanged: a single-file
+    audiobook is the same preparable unit it was before multi-file items were
+    admitted, and giving it a new identity would restate every existing report
+    as a different one.  Beyond one track the identity is the ordered list, so
+    adding, removing, reordering, or replacing any track moves it exactly once.
+    """
+    if type(identities) is not tuple or not identities:
+        raise ReportValueError("audio set identity is invalid")
+    for value in identities:
+        if _DIGEST.fullmatch(value) is None:
+            raise ReportValueError("audio set identity is invalid")
+    if len(identities) == 1:
+        return identities[0]
+    return hashlib.sha256(
+        canonical_json({"schema": AUDIO_SET_SCHEMA, "tracks": list(identities)}).encode(
+            "utf-8"
+        )
+    ).hexdigest()
+
+
+def audio_set_content_digest(digests: tuple[str, ...]) -> str:
+    """Digest the ordered content of every track as one item content digest."""
+    if type(digests) is not tuple or not digests:
+        raise ReportValueError("audio set content digest is invalid")
+    for value in digests:
+        if _DIGEST.fullmatch(value) is None:
+            raise ReportValueError("audio set content digest is invalid")
+    if len(digests) == 1:
+        return digests[0]
+    return hashlib.sha256(canonical_json(list(digests)).encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -973,13 +1015,23 @@ class AudioFacts:
 
     ``sidecars`` is not evidence either: it is the currentness witness for the
     documents beside the file that evidence was read from, so an added,
-    removed, or edited sidecar makes this report stale.
+    removed, or edited sidecar makes this report stale.  ``tracks`` is the same
+    kind of witness for the audio files themselves, and additionally carries
+    the per-file provenance of every composed claim.  It always names at least
+    one file: an audio section states evidence read from the item's audio, and
+    a section naming no source is a section nothing can be checked against.
+
+    ``observations`` names what composing the set noticed about the set.  None
+    of them is evidence about the work, and the vocabulary is closed.
     """
 
     chapters: tuple[AudioChapter, ...] = ()
     chapters_truncated: bool = False
     embedded_cover: AudioEmbeddedCover = AudioEmbeddedCover(False)
     sidecars: tuple[AudioSidecarDigest, ...] = ()
+    composition: AudioChapterComposition = AudioChapterComposition.SINGLE_FILE
+    tracks: tuple[AudioTrackDigest, ...] = ()
+    observations: tuple[AudioObservation, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -1002,13 +1054,47 @@ class AudioFacts:
             or names != tuple(sorted(set(names)))
         ):
             raise ReportValueError("audio sidecar manifest is invalid")
+        if (
+            type(self.composition) is not AudioChapterComposition
+            or type(self.tracks) is not tuple
+            or not 1 <= len(self.tracks) <= MAX_AUDIO_TRACKS
+            or any(type(value) is not AudioTrackDigest for value in self.tracks)
+            or tuple(value.ordinal for value in self.tracks)
+            != tuple(range(1, len(self.tracks) + 1))
+            or any(value.format not in AUDIO_FILE_FORMATS for value in self.tracks)
+        ):
+            raise ReportValueError("audio track manifest is invalid")
+        if (self.composition is AudioChapterComposition.SINGLE_FILE) != (
+            len(self.tracks) == 1
+        ):
+            # One file composes to `single_file` and nothing else does, so the
+            # kind and the manifest can never state different set sizes.  An
+            # empty manifest was refused above: an audio section is evidence
+            # read from files, and one naming none of them names no source for
+            # the digest and provenance checks below to hold against.
+            raise ReportValueError("audio composition does not match its tracks")
+        if (
+            type(self.observations) is not tuple
+            or len(self.observations) > len(AudioObservationKind) * MAX_AUDIO_TRACKS
+            or any(type(value) is not AudioObservation for value in self.observations)
+            or any(
+                ordinal > len(self.tracks)
+                for value in self.observations
+                for ordinal in value.tracks
+            )
+            or any(ordinal > len(self.tracks) for ordinal in self.embedded_cover.tracks)
+        ):
+            raise ReportValueError("audio observations are invalid")
 
     def to_data(self) -> dict[str, object]:
         return {
             "chapters": [value.to_data() for value in self.chapters],
             "chapters_truncated": self.chapters_truncated,
+            "composition": self.composition.value,
             "embedded_cover": self.embedded_cover.to_data(),
+            "observations": [value.to_data() for value in self.observations],
             "sidecars": [value.to_data() for value in self.sidecars],
+            "tracks": [value.to_data() for value in self.tracks],
         }
 
 
@@ -2768,6 +2854,23 @@ class MetadataReport:
         references = tuple(value.reference for value in self.local_claims)
         if len(set(references)) != len(references):
             raise ReportValueError("local claim references are duplicated")
+        if self.audio is not None:
+            # Per-file provenance is only provenance if it resolves.  A track
+            # naming a claim this report does not carry, or a content digest
+            # that is not the composition of the tracks listed, would describe
+            # an evidence set nobody could reconstruct from the document.  An
+            # audio section always names at least one track, so this holds over
+            # every audiobook report rather than over the ones that listed any.
+            if any(
+                reference not in set(references)
+                for track in self.audio.tracks
+                for reference in track.claims
+            ):
+                raise ReportValueError("audio track claim provenance is unresolved")
+            if self.file.content_digest != audio_set_content_digest(
+                tuple(track.digest for track in self.audio.tracks)
+            ):
+                raise ReportValueError("audio content digest does not compose")
         has_opening_candidate = any(
             value.basis == "opening_matter" for value in self.local_claims
         )
@@ -4501,9 +4604,18 @@ def _audio_facts_from_data(value: object) -> AudioFacts | None:
     if value is None:
         return None
     item = _object(
-        value, {"chapters", "chapters_truncated", "embedded_cover", "sidecars"}
+        value,
+        {
+            "chapters",
+            "chapters_truncated",
+            "composition",
+            "embedded_cover",
+            "observations",
+            "sidecars",
+            "tracks",
+        },
     )
-    cover = _object(item["embedded_cover"], {"present", "surface"})
+    cover = _object(item["embedded_cover"], {"present", "surface", "tracks"})
     try:
         return AudioFacts(
             tuple(
@@ -4515,13 +4627,68 @@ def _audio_facts_from_data(value: object) -> AudioFacts | None:
                 None
                 if cover["surface"] is None
                 else AudioEvidenceSurface(cover["surface"]),
+                tuple(_integers(cover["tracks"])),
             ),
             tuple(
                 _audio_sidecar_from_data(sidecar) for sidecar in _list(item["sidecars"])
             ),
+            AudioChapterComposition(item["composition"]),
+            tuple(_audio_track_from_data(track) for track in _list(item["tracks"])),
+            tuple(
+                _audio_observation_from_data(observation)
+                for observation in _list(item["observations"])
+            ),
         )
     except ValueError as error:
         raise ReportValueError("audio facts are invalid") from error
+
+
+def _integers(value: object) -> tuple[int, ...]:
+    values = _list(value)
+    if any(type(item) is not int for item in values):
+        raise ReportValueError("audio track ordinals are invalid")
+    return tuple(cast("list[int]", values))
+
+
+def _audio_track_from_data(value: object) -> AudioTrackDigest:
+    item = _object(
+        value,
+        {
+            "claims",
+            "digest",
+            "duration_milliseconds",
+            "format",
+            "identity",
+            "name",
+            "ordinal",
+            "sequence",
+        },
+    )
+    try:
+        return AudioTrackDigest(
+            item["ordinal"],
+            item["identity"],
+            item["digest"],
+            item["format"],
+            item["name"],
+            item["sequence"],
+            item["duration_milliseconds"],
+            tuple(_strings(item["claims"])),
+        )
+    except ValueError as error:
+        raise ReportValueError("audio track manifest is invalid") from error
+
+
+def _audio_observation_from_data(value: object) -> AudioObservation:
+    item = _object(value, {"field", "kind", "tracks"})
+    try:
+        return AudioObservation(
+            AudioObservationKind(item["kind"]),
+            _integers(item["tracks"]),
+            None if item["field"] is None else AudioInspectionField(item["field"]),
+        )
+    except ValueError as error:
+        raise ReportValueError("audio observations are invalid") from error
 
 
 def _audio_sidecar_from_data(value: object) -> AudioSidecarDigest:
@@ -5178,9 +5345,13 @@ def _valid_isbn(value: str, checksum: str) -> bool:
 
 
 __all__ = [
+    "AUDIO_SET_SCHEMA",
     "AUDIOBOOK_MARKETPLACES",
     "DURATION_AGREEMENT_BAND_SECONDS",
     "MAX_AUDIO_SIDECARS",
+    "MAX_AUDIO_TRACKS",
+    "audio_set_content_digest",
+    "audio_set_identity",
     "MAX_PROVIDER_CHAPTER_DURATIONS",
     "ProviderChapterStructure",
     "canonical_asin",

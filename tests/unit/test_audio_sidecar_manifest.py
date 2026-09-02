@@ -68,7 +68,7 @@ def test_the_derivation_names_and_digests_exactly_the_recognized_sidecars(
     edit in the same folder stale the report.
     """
     root, _, expected = library
-    opened = _open_audio_sidecars(_mount(root), "book.m4b", "book.m4b")
+    opened = _open_audio_sidecars(_mount(root), "book.m4b", ("book.m4b",))
     try:
         assert expected == _sidecar_manifest(opened)
         assert ["sidecar_opf", "sidecar_audiobookshelf"] == [
@@ -84,7 +84,7 @@ def test_an_unchanged_library_is_current(
 ) -> None:
     root, digest, manifest = library
     assert _IsolatedAudioInspector().unchanged(
-        _mount(root), "book.m4b", digest, _MAXIMUM, manifest
+        _mount(root), ("book.m4b",), digest, _MAXIMUM, manifest
     )
 
 
@@ -100,15 +100,21 @@ def test_an_added_removed_or_edited_sidecar_is_not_current(
     inspector = _IsolatedAudioInspector()
 
     (root / "extra.nfo").write_bytes(b"added")
-    assert not inspector.unchanged(_mount(root), "book.m4b", digest, _MAXIMUM, manifest)
+    assert not inspector.unchanged(
+        _mount(root), ("book.m4b",), digest, _MAXIMUM, manifest
+    )
     (root / "extra.nfo").unlink()
 
     (root / "book.opf").write_bytes(b"<package edited='yes'/>")
-    assert not inspector.unchanged(_mount(root), "book.m4b", digest, _MAXIMUM, manifest)
+    assert not inspector.unchanged(
+        _mount(root), ("book.m4b",), digest, _MAXIMUM, manifest
+    )
     (root / "book.opf").write_bytes(b"<package/>")
 
     (root / "metadata.json").unlink()
-    assert not inspector.unchanged(_mount(root), "book.m4b", digest, _MAXIMUM, manifest)
+    assert not inspector.unchanged(
+        _mount(root), ("book.m4b",), digest, _MAXIMUM, manifest
+    )
 
 
 def test_a_changed_audio_file_is_still_refused_before_any_sidecar_is_read(
@@ -117,7 +123,7 @@ def test_a_changed_audio_file_is_still_refused_before_any_sidecar_is_read(
     root, digest, manifest = library
     (root / "book.m4b").write_bytes(b"different-audio-bytes")
     assert not _IsolatedAudioInspector().unchanged(
-        _mount(root), "book.m4b", digest, _MAXIMUM, manifest
+        _mount(root), ("book.m4b",), digest, _MAXIMUM, manifest
     )
 
 
@@ -137,8 +143,8 @@ def test_a_sidecar_past_its_own_ceiling_is_absent_on_both_paths(
             "book.opf": b"x" * (limits.sidecar_bytes + 1),
         },
     )
-    opened = _open_audio_sidecars(_mount(tmp_path), "book.m4b", "book.m4b")
+    opened = _open_audio_sidecars(_mount(tmp_path), "book.m4b", ("book.m4b",))
     assert () == _sidecar_manifest(opened)
     assert _IsolatedAudioInspector().unchanged(
-        _mount(tmp_path), "book.m4b", digest, _MAXIMUM, ()
+        _mount(tmp_path), ("book.m4b",), digest, _MAXIMUM, ()
     )

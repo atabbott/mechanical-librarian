@@ -202,6 +202,11 @@ class AudioInterpretation:
     chapters: tuple[AudioChapter, ...] = ()
     embedded_cover: AudioEmbeddedCover = AudioEmbeddedCover(False)
     chapters_truncated: bool = False
+    # What the container calls this recording.  Deliberately not a fact: a
+    # title claim from every track of a multi-file item would flood the title
+    # lane with the same value, and the report already reads its title from the
+    # target.  It exists so a per-track chapter can be named by the recording.
+    title: str | None = None
 
 
 def sidecar_surface(name: str, media_name: str) -> AudioEvidenceSurface | None:
@@ -269,7 +274,9 @@ def interpret(
         if facts or chapters or cover.present
         else AudioInspectionOutcome.NO_APPLICABLE_EVIDENCE
     )
-    return AudioInterpretation(outcome, facts, chapters, cover, truncated)
+    return AudioInterpretation(
+        outcome, facts, chapters, cover, truncated, _container_title(container)
+    )
 
 
 class _Builder:
@@ -550,6 +557,32 @@ def _chapters(
         except ValueError:
             continue
     return tuple(chapters), len(value) > cap
+
+
+def _container_title(container: dict[str, object]) -> str | None:
+    """Read what the container calls this file, projected or not at all.
+
+    A track title is text the file chose, so it is bounded and projected here
+    exactly as an observed value is; what fails projection is simply absent and
+    the composition falls back to the exported file name.
+
+    The whole normalized text is projected, never a prefix of it: a title cut
+    to the bound would name the chapter something the file does not say, and
+    an invented title is worse evidence than the exported file name the
+    composition falls back to.
+    """
+    tags = container.get("tags")
+    if type(tags) is not dict:
+        return None
+    text = _clean(tags.get("title"))
+    if text is None:
+        return None
+    try:
+        return validate_projection_text(
+            text, "audio track title", MAX_OBSERVED_CHARACTERS
+        )
+    except EvidenceValueError:
+        return None
 
 
 def _title(value: str | None) -> str | None:
