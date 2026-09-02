@@ -1237,8 +1237,8 @@ def test_local_only_isbn_remains_owner_visible_without_election() -> None:
     assert "0306406152" == result.alternatives[0].value.value
 
 
-def test_empty_isbn_accepts_a_package_backed_manifestation_anchor() -> None:
-    local = LocalClaim.create(
+def test_not_for_sale_prepublication_proof_keeps_exact_work_isbn_electable() -> None:
+    proof_package_isbn = LocalClaim.create(
         kind=ClaimKind.ISBN,
         observed="9780306406157",
         canonical="9780306406157",
@@ -1281,7 +1281,7 @@ def test_empty_isbn_accepts_a_package_backed_manifestation_anchor() -> None:
                         TargetFieldState.MISSING,
                     ),
                 ),
-                local_claims=(local,),
+                local_claims=(proof_package_isbn,),
                 providers=(provider,),
                 covers=(_exact_edition_cover(),),
             )
@@ -1290,6 +1290,7 @@ def test_empty_isbn_accepts_a_package_backed_manifestation_anchor() -> None:
     )
     assert ProposalOutcome.PROPOSE_CHANGE == result.outcome
     assert ("verified_manifestation_isbn",) == result.reasons
+    assert "package_metadata" == proof_package_isbn.basis
     assert 1 == len(result.alternatives)
     assert "9780306406157" == result.alternatives[0].value.value
     assert ProposalAssessment.FILLS_EMPTY == result.alternatives[0].assessment
