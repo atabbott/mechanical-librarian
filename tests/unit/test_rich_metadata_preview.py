@@ -292,7 +292,9 @@ def test_automatic_description_filters_applicability_before_provider_order() -> 
     assert description.source_evidence_references == (applicable.claims[3].reference,)
 
 
-def test_automatic_description_excludes_unproved_source_for_one_collapsed_value() -> None:
+def test_automatic_description_excludes_unproved_source_for_one_collapsed_value() -> (
+    None
+):
     shared_description = _QUALIFIED_DESCRIPTION + " Shared source text."
     unproved = _description_candidate(
         "preferred", "edition-1", "work-1", shared_description
