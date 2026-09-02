@@ -37,17 +37,29 @@ def _local_narrator(value: str) -> LocalClaim:
 
 def _provider_contributors(
     name: str,
-    value: str,
+    values: str | tuple[str, ...],
     *,
     local_claims: tuple[LocalClaim, ...],
     destination: TargetDestination,
+    role: str | None = None,
 ) -> ProviderObservation:
-    kind, scope, role = (
+    kind, scope, default_role = (
         (ClaimKind.CREATOR, ClaimScope.WORK, "author")
         if destination is TargetDestination.AUTHORS
         else (ClaimKind.CONTRIBUTOR, ClaimScope.EDITION, "narrator")
     )
-    claims = (_claim(name, f"{name}-edition", kind, value, scope=scope, role=role),)
+    claims = tuple(
+        _claim(
+            name,
+            f"{name}-edition",
+            kind,
+            value,
+            scope=scope,
+            order=index,
+            role=default_role if role is None else role,
+        )
+        for index, value in enumerate((values,) if type(values) is str else values)
+    )
     return ProviderObservation(
         name,
         ProviderStatus.CANDIDATES,
@@ -64,20 +76,25 @@ def _provider_contributors(
 def _result(
     *,
     destination: TargetDestination,
-    local: str,
-    provider_values: tuple[str, ...],
+    local: str | tuple[str, ...],
+    provider_values: tuple[str | tuple[str, ...], ...],
+    provider_roles: tuple[str | None, ...] | None = None,
 ):
-    local_claims = (
-        _local_creator(local)
-        if destination is TargetDestination.AUTHORS
-        else _local_narrator(local),
+    local_values = (local,) if type(local) is str else local
+    local_claims = tuple(
+        (
+            _local_creator(value, occurrence=index)
+            if destination is TargetDestination.AUTHORS
+            else _local_narrator(value)
+        )
+        for index, value in enumerate(local_values)
     )
     fields = _fields(
         authors=TargetField(TargetDestination.AUTHORS, TargetFieldState.MISSING),
         narrators=TargetField(TargetDestination.NARRATORS, TargetFieldState.MISSING),
     )
     values = {field.destination: field for field in fields}
-    values[destination] = TargetField(destination, TargetFieldState.VALUE, (local,))
+    values[destination] = TargetField(destination, TargetFieldState.VALUE, local_values)
     proposal = evaluate_report(
         _report(
             fields=tuple(values[value] for value in TargetDestination),
@@ -88,6 +105,7 @@ def _result(
                     value,
                     local_claims=local_claims,
                     destination=destination,
+                    role=(provider_roles or (None,) * len(provider_values))[index],
                 )
                 for index, value in enumerate(provider_values)
             ),
@@ -118,6 +136,43 @@ def test_provider_consensus_does_not_replace_an_exact_current_author_display() -
         destination=TargetDestination.AUTHORS,
         local="Ada Example",
         provider_values=("Ada Example", "Ada Example"),
+    )
+
+    assert result.outcome is ProposalOutcome.KEEP
+    assert result.reasons == ("positive_preservation_evidence",)
+
+
+def test_provider_consensus_does_not_replace_a_non_equivalent_author() -> None:
+    result = _result(
+        destination=TargetDestination.AUTHORS,
+        local="Ada Example",
+        provider_values=("Bea Example", "Bea Example"),
+    )
+
+    assert result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+    assert result.reasons == ("competing_evidence",)
+
+
+def test_provider_consensus_does_not_replace_an_author_sequence_mismatch() -> None:
+    result = _result(
+        destination=TargetDestination.AUTHORS,
+        local=("Example, Ada", "Bert Example"),
+        provider_values=(
+            ("Bert Example", "Ada Example"),
+            ("Bert Example", "Ada Example"),
+        ),
+    )
+
+    assert result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+    assert result.reasons == ("competing_evidence",)
+
+
+def test_provider_consensus_does_not_replace_an_author_from_narrator_claims() -> None:
+    result = _result(
+        destination=TargetDestination.AUTHORS,
+        local="Example, Ada",
+        provider_values=("Ada Example", "Ada Example"),
+        provider_roles=("narrator", "narrator"),
     )
 
     assert result.outcome is ProposalOutcome.KEEP
