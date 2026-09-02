@@ -1572,6 +1572,8 @@ def _provider_consensus_contributor_display_election(
     ):
         return result
     provider_value = authority_displays[0][2]
+    if provider_value == local_value:
+        return result
     if not all(
         _provider_contributor_claims_agree(provider_claims, local_claims)
         for _, provider_claims, _ in authority_displays

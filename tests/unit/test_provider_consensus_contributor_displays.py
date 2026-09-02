@@ -113,6 +113,17 @@ def test_provider_consensus_elects_exact_author_display_with_local_provenance() 
     assert len(result.alternatives[0].correlations) == 3
 
 
+def test_provider_consensus_does_not_replace_an_exact_current_author_display() -> None:
+    result = _result(
+        destination=TargetDestination.AUTHORS,
+        local="Ada Example",
+        provider_values=("Ada Example", "Ada Example"),
+    )
+
+    assert result.outcome is ProposalOutcome.KEEP
+    assert result.reasons == ("positive_preservation_evidence",)
+
+
 def test_provider_display_disagreement_keeps_author_current() -> None:
     result = _result(
         destination=TargetDestination.AUTHORS,
