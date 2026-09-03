@@ -5523,7 +5523,11 @@ describe('Library route', () => {
           ? {
               ...detail,
               fields: [
-                { ...emptyTitle, currentRaw: 'Current title' },
+                {
+                  ...emptyTitle,
+                  currentRaw: 'Current title',
+                  currentValue: 'Current title',
+                },
                 {
                   ...emptySubtitle,
                   proposedValues: [{ kind: 'text' as const, value: 'A subtitle' }],
@@ -5541,9 +5545,7 @@ describe('Library route', () => {
     await act(async () => {
       await queryClient.refetchQueries({ queryKey: ['review-case', 'case-1'], exact: true })
     })
-    await waitFor(() =>
-      expect(within(rail).getByRole('button', { name: /^Title/u })).toBeVisible(),
-    )
+    await waitFor(() => expect(within(rail).getByRole('button', { name: /^Title/u })).toBeVisible())
     expect(within(rail).getByRole('button', { name: /^Subtitle/u })).toBeVisible()
     expect(within(rail).queryByRole('button', { name: /Show .* empty field/u })).toBeNull()
   })

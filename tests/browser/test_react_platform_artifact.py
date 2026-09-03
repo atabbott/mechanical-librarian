@@ -130,11 +130,12 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
     consent_payloads: list[object] = []
     return_automatic_requests = 0
     connection_state = "paused"
+    genres_reappeared = False
     failed_requests: list[tuple[str, str, str | None]] = []
 
     def fulfill(route: Route) -> None:
         nonlocal activity_failures, ambiguous_decisions, documents, transition_failures
-        nonlocal connection_state, return_automatic_requests
+        nonlocal connection_state, genres_reappeared, return_automatic_requests
         parsed = urlsplit(route.request.url)
         path = parsed.path
         if path.startswith("/api/v1/"):
@@ -225,6 +226,13 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 )
                 return
             payload = rich_payload(route.request.url)
+            if genres_reappeared and path == "/api/v1/review-cases/case-1":
+                detail = cast("dict[str, object]", payload)
+                fields = cast("list[dict[str, object]]", detail["fields"])
+                genres = next(
+                    field for field in fields if field["destination"] == "genres"
+                )
+                genres["current"] = {"kind": "synthetic", "value": ["Updated genre"]}
             if path == "/api/v1/review-preparation" and connection_state != "paused":
                 preparation = cast("dict[str, object]", payload)
                 conditions = cast("list[dict[str, object]]", preparation["connections"])
@@ -1406,6 +1414,15 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             button.bounding_box()["height"] >= 44
             for button in page.locator(".field-filmstrip button").all()
         )
+        genres_reappeared = True
+        page.reload()
+        page.locator(".field-filmstrip").wait_for()
+        expect(page.get_by_role("button", name="Show 1 empty field")).to_have_count(0)
+        assert [
+            label.splitlines()[0]
+            for label in page.locator(".field-filmstrip button").all_inner_texts()
+        ] == ["Title", "Authors", "Genres", "Series", "Publication date", "Cover"]
+        genres_reappeared = False
         page.locator(".field-filmstrip button", has_text="Publication date").click()
         # A current-only automatic outcome stays inspect-only: it remains
         # readable in the primary field strip without fabricating owner work.
@@ -1822,7 +1839,19 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         compact_context = page.locator(".automatic-resolution-details").inner_text()
         assert "Subtitle" in compact_context
         assert "Series" not in compact_context
-        expect(page.get_by_role("button", name="Show 1 empty field")).to_be_visible()
+        compact_genres = page.get_by_role("button", name="Show 1 empty field")
+        expect(compact_genres).to_be_visible()
+        compact_genres.click()
+        revealed_genres = page.get_by_role("button", name=re.compile(r"^Genres"))
+        expect(revealed_genres).to_be_focused()
+        page.wait_for_timeout(500)
+        rail_box = page.locator(".field-filmstrip").bounding_box()
+        genres_box = revealed_genres.bounding_box()
+        assert rail_box is not None and genres_box is not None
+        assert genres_box["x"] >= rail_box["x"]
+        assert (
+            genres_box["x"] + genres_box["width"] <= rail_box["x"] + rail_box["width"]
+        )
         compact_evidence = page.get_by_role(
             "button", name="Evidence for Current value: Current <script> title"
         )

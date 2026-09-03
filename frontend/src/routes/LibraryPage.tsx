@@ -1601,6 +1601,25 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     advancePresentation.current = null
     presentation.resolve()
   }, [])
+  const centreFieldRail = useCallback((rail: HTMLElement, button: HTMLButtonElement) => {
+    const reducedMotion =
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    // This is a horizontal rail adjustment, not a request to reposition the
+    // document. `scrollIntoView` can pull the selected work back to the top
+    // when the owner records a middle field.
+    const railBounds = rail.getBoundingClientRect()
+    const buttonBounds = button.getBoundingClientRect()
+    const left = Math.max(
+      0,
+      rail.scrollLeft +
+        buttonBounds.left -
+        railBounds.left -
+        (rail.clientWidth - buttonBounds.width) / 2,
+    )
+    if (typeof rail.scrollTo === 'function')
+      rail.scrollTo({ left, behavior: reducedMotion ? 'auto' : 'smooth' })
+  }, [])
   const automaticTrigger = useRef<HTMLButtonElement>(null)
   const keepManualHandling = useRef<HTMLButtonElement>(null)
   const restoreAutomaticTrigger = useRef(false)
@@ -2141,23 +2160,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     const rail = fieldRail.current
     const active = activeFieldButton.current
     if (!rail || !active) return
-    const reducedMotion =
-      typeof window.matchMedia === 'function' &&
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    // This is a horizontal rail adjustment, not a request to reposition the
-    // document. `scrollIntoView` can pull the selected work back to the top
-    // when the owner records a middle field.
-    const railBounds = rail.getBoundingClientRect()
-    const activeBounds = active.getBoundingClientRect()
-    const left = Math.max(
-      0,
-      rail.scrollLeft +
-        activeBounds.left -
-        railBounds.left -
-        (rail.clientWidth - activeBounds.width) / 2,
-    )
-    if (typeof rail.scrollTo === 'function')
-      rail.scrollTo({ left, behavior: reducedMotion ? 'auto' : 'smooth' })
+    centreFieldRail(rail, active)
     if (!advanceFocus.current) return
     advanceFocus.current = false
     const action = document.querySelector<HTMLButtonElement>(
@@ -2173,7 +2176,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         ? bounds.top - visibleTop
         : Math.max(0, bounds.bottom - window.innerHeight)
     if (reveal) window.scrollBy({ top: reveal })
-  }, [selected?.destination])
+  }, [centreFieldRail, selected?.destination])
   useLayoutEffect(() => {
     if (advanceScroll.current === null) return
     const top = advanceScroll.current
@@ -2825,7 +2828,9 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                           ? (button) => {
                               if (button) {
                                 setRevealFocusDestination(null)
-                                button.focus({ preventScroll: true })
+                                button.focus()
+                                const rail = fieldRail.current
+                                if (rail) centreFieldRail(rail, button)
                               }
                             }
                           : selected?.destination === field.destination
