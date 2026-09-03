@@ -59,6 +59,24 @@ result with no supported evidence; a cross-source provider segment that
 corroborates an elected subtitle reports
 `provider_segment_corroborated_subtitle`.
 
+Segment corroboration itself is decided once, by `segment_corroboration`, for
+both the subtitle election and the F20 automatic projection, so the two surfaces
+cannot drift. A generic segment is rejected before corroboration runs. A segment
+otherwise corroborates only when no provider states a different subtitle
+(`subtitle_segment_provider_dissent`) and at least as many provider authorities
+state the plain title the segment was stripped from as carry the decorated form,
+counting the local claim on the decorated side
+(`subtitle_segment_decorated_consensus`). A withheld corroboration reports its
+guard where the uncorroborated diagnostic reports: on the subtitle proposal when
+the election is withheld, and as the preview abstention reason when the
+projection is.
+
+F35's colon and series abstentions now run after its provider-agreement gate
+rather than before it. This is a behaviour change: a title F35 would never have
+elected no longer abstains under `provider_consensus_title_colon_unused` or
+`provider_consensus_title_series_unpreserved`, and reaches the F41 election
+instead.
+
 ## Canonical contributor display
 
 F38 (#887) elects a provider display form only when two independent present

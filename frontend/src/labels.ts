@@ -48,6 +48,10 @@ const ownerFieldLabels: Record<string, string> = {
     'More providers state the decorated title than the plain one; choose the title yourself',
   subtitle_segment_uncorroborated:
     'A colon segment in a title matches no independent subtitle evidence',
+  subtitle_segment_provider_dissent:
+    'Another provider states a different subtitle; choose the subtitle yourself',
+  subtitle_segment_decorated_consensus:
+    'The colon segment reads as title text: no more providers state the plain title than carry the segment',
   provider_segment_corroborated_subtitle:
     'An independent provider title carries this subtitle after its colon',
   provider_consensus_contributor_display:

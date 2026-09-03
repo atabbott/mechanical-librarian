@@ -1870,6 +1870,32 @@ describe('Library route', () => {
     )
   })
 
+  it('states the segment guard that withheld an automatic subtitle fill', async () => {
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const subtitle = {
+      ...titleField,
+      destination: 'subtitle',
+      proposalId: 'proposal-subtitle',
+      targetFingerprint: 'fingerprint-subtitle',
+      notices: ['subtitle_segment_provider_dissent', 'subtitle_segment_decorated_consensus'],
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=subtitle', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [subtitle] })),
+    })
+
+    const notice = await screen.findByRole('complementary', {
+      name: 'Comparison condition',
+    })
+    expect(notice).toHaveTextContent(
+      'Another provider states a different subtitle; choose the subtitle yourself',
+    )
+    expect(notice).toHaveTextContent(
+      'The colon segment reads as title text: no more providers state the plain title than carry the segment',
+    )
+  })
+
   it('states the provider-chosen contributor display and local form it normalized', async () => {
     const base = detail.fields[0]
     if (!base) throw new Error('workspace fixture requires a field')

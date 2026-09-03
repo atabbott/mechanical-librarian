@@ -70,7 +70,11 @@ further and apply to keep and tidy alike:
 - *Attestation width*: at least as many distinct provider authorities must
   attest the plain form as the decorated form, otherwise the decoration is
   plausibly integral and the result carries
-  `decoration_equivalence_decorated_consensus`.
+  `decoration_equivalence_decorated_consensus`. Width is counted over the same
+  raw provider WORK-scope title claims the dissent guard reads, not over the
+  admitted alternatives: a form stated by a candidate that admission rejected
+  still attests it, and counting an alternative's correlations would miss it.
+  Local claims are excluded from both sides.
 
 When the current value is the plain form the outcome is a keep with zero writes
 (`decoration_equivalent_<family>`); when it is the decorated form the plain
@@ -92,6 +96,36 @@ the earlier rule that a colon-derived suffix is never F20 corroboration. An
 existing segment that corroborates nothing is stated as
 `subtitle_segment_uncorroborated`.
 
+Corroboration is decided once, by a single helper both surfaces call, under
+three guards:
+
+- *Generic vocabulary*: a segment whose value is a generic provider subtitle is
+  rejected as `generic_provider_subtitle` before corroboration runs. The closed
+  generic lexicon is `a novel` and `stories`.
+- *Provider subtitle dissent*: no valid provider subtitle claim anywhere in the
+  report, on any candidate and in any scope, may key to a different value.
+  Otherwise the corroboration is withheld as
+  `subtitle_segment_provider_dissent`.
+- *Attestation width*: at least one provider authority must carry the segment,
+  and the distinct provider authorities carrying it, plus one where the local
+  claim also carries it, must not exceed the distinct provider authorities
+  stating a plain title those segments were stripped from. Otherwise the
+  segment reads as integral title text and the corroboration is withheld as
+  `subtitle_segment_decorated_consensus`.
+
+A withheld corroboration reports its guard on the seams the uncorroborated
+diagnostic uses: the subtitle proposal reason when the election is withheld, and
+the preview abstention reason when the projection is. The plain absence of any
+corroboration keeps `subtitle_local_corroboration_required`.
+
+**Ordering.** F35's colon and series abstentions now run after its
+provider-agreement gate rather than before it. This is a behaviour change in
+F35: a title F35 would never have elected no longer abstains under
+`provider_consensus_title_colon_unused` or
+`provider_consensus_title_series_unpreserved`, and reaches the F41 election
+instead. Without it the two elections are not disjoint — F35's abstentions
+pre-empted the subtitle-segment and series families of F41 entirely.
+
 ## Consequences
 
 ### Positive
@@ -104,8 +138,8 @@ existing segment that corroborates nothing is stated as
   and 0 false rejections; every other family kept its query-only disposition.
 - A collapsed title carries one alternative, so reports that withheld a
   bibliographic combination on a decoration difference can form one.
-- Subtitles with a single independent segment attestation become electable
-  instead of stalling as competing evidence.
+- Subtitles a cross-source segment corroborates become automatically fillable
+  instead of stalling as uncorroborated.
 
 ### Negative
 
@@ -118,6 +152,9 @@ existing segment that corroborates nothing is stated as
 
 - Stacked decorations, fuzzy similarity, and three-or-more-member classes stay
   competing evidence and remain owner decisions.
+- The subtitle-dissent guard subsumes the competing-alternative shape the
+  segment election was written for, so a corroborated fill now reaches the owner
+  through the automatic projection rather than through that election.
 - No effect or write authority is granted: the tidy tranche is decision-only.
 
 ## Alternatives considered
@@ -144,10 +181,11 @@ requirement would only suppress accepted collapses.
 ## Validation
 
 Unit coverage for each family in both directions, both guards, stacked and
-multi-alternative fail-closed, series preservation, disjointness from the
-provider-consensus election, the compound admission matrix and its negatives
+multi-alternative fail-closed, series preservation, the reordered
+provider-consensus abstentions, the compound admission matrix and its negatives
 (prefix-only, underscores-only, wrong author, author subset, remainder
-collision, separator outside the closed set, provider side), persisted lineage
+collision, separator outside the closed set, provider side), each segment
+corroboration guard on the election and the projection seam, persisted lineage
 round trip and replay rejection, schema v36 readback and immediate-prior
 rejection, the shadow decision rule table and the tidy tranche's persisted
 automatic decision, and the frontend labels and comparison notices. The private

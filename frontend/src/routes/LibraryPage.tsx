@@ -472,6 +472,8 @@ const materialComparisonReasons = new Set([
   'decoration_equivalence_provider_dissent',
   'decoration_equivalence_decorated_consensus',
   'subtitle_segment_uncorroborated',
+  'subtitle_segment_provider_dissent',
+  'subtitle_segment_decorated_consensus',
   'provider_segment_corroborated_subtitle',
   'provider_consensus_contributor_display',
 ])
