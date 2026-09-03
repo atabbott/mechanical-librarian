@@ -25,6 +25,10 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderQueryKind,
     ProviderStatus,
 )
+from mechanical_librarian.domain.work_identity import (
+    WorkDispatchRung,
+    WorkTitleTransformationFamily,
+)
 from tests.support.audiobook_providers import asin_plan, payload, work_plan
 
 
@@ -94,6 +98,42 @@ def test_a_work_search_states_a_title_and_an_author() -> None:
     )
     assert ("Andy Weir",) == tuple(
         claim.value for claim in _claims(candidate, ClaimKind.CREATOR)
+    )
+
+
+def test_latin_fold_reaches_itunes_only_on_the_final_bounded_search() -> None:
+    seen: list[httpx.URL] = []
+    page = copy.deepcopy(payload("itunes_search"))
+    result = page["results"][1]
+    result["collectionName"] = "Cafe: Notes"
+    result["artistName"] = "Jose"
+    page = {"resultCount": 1, "results": [result]}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url)
+        return _store({"resultCount": 0, "results": []} if len(seen) < 3 else page)
+
+    observation = _provider(handle).observe(
+        work_plan(
+            title="Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes",
+            authors=("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",),
+        )
+    )
+
+    assert [
+        "Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes Jos\N{LATIN SMALL LETTER E WITH ACUTE}",
+        "Caf\N{LATIN SMALL LETTER E WITH ACUTE} Jos\N{LATIN SMALL LETTER E WITH ACUTE}",
+        "Cafe Jose",
+    ] == [url.params["term"] for url in seen]
+    lineage = observation.lanes[0].dispatch_lineage
+    assert lineage is not None
+    assert lineage.rung is WorkDispatchRung.PUNCTUATION_FOLDED
+    assert lineage.transformations[-1] is (
+        WorkTitleTransformationFamily.LATIN_COMBINING_MARKS
+    )
+    assert (1, 2) == (
+        observation.request_accounting.initial_dispatches,
+        observation.request_accounting.retry_dispatches,
     )
 
 

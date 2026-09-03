@@ -29,6 +29,10 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderQueryKind,
     ProviderStatus,
 )
+from mechanical_librarian.domain.work_identity import (
+    WorkDispatchRung,
+    WorkTitleTransformationFamily,
+)
 from tests.support.audiobook_providers import (
     asin_plan,
     local_claims,
@@ -244,6 +248,49 @@ def test_a_search_lane_contacts_only_the_first_configured_marketplace() -> None:
     assert () == _claims(candidate, ClaimKind.ASIN)
     assert () == _claims(candidate, ClaimKind.DURATION)
     assert () == _evidence(candidate, ProviderEvidenceKind.ASIN_MARKETPLACE)
+
+
+def test_latin_fold_reaches_audible_only_on_the_final_bounded_search() -> None:
+    seen: list[httpx.URL] = []
+    page = copy.deepcopy(payload("audible_search"))
+    product = page["products"][0]
+    product["title"] = "Cafe: Notes"
+    product["authors"] = [{"name": "Jose"}]
+    page["products"] = [product]
+    page["total_results"] = 1
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url)
+        return _json({"total_results": 0, "products": []} if len(seen) < 3 else page)
+
+    observation = _provider(handle).observe(
+        work_plan(
+            title="Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes",
+            authors=("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",),
+        )
+    )
+
+    assert [
+        (
+            "Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes",
+            "Jos\N{LATIN SMALL LETTER E WITH ACUTE}",
+        ),
+        (
+            "Caf\N{LATIN SMALL LETTER E WITH ACUTE}",
+            "Jos\N{LATIN SMALL LETTER E WITH ACUTE}",
+        ),
+        ("Cafe", "Jose"),
+    ] == [(url.params["title"], url.params["author"]) for url in seen]
+    lineage = observation.lanes[0].dispatch_lineage
+    assert lineage is not None
+    assert lineage.rung is WorkDispatchRung.PUNCTUATION_FOLDED
+    assert lineage.transformations[-1] is (
+        WorkTitleTransformationFamily.LATIN_COMBINING_MARKS
+    )
+    assert (1, 2) == (
+        observation.request_accounting.initial_dispatches,
+        observation.request_accounting.retry_dispatches,
+    )
 
 
 def test_a_search_page_above_the_candidate_bound_is_refused_whole() -> None:

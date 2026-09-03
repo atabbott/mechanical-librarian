@@ -145,14 +145,18 @@ def target_title_claim(title: str = "Project Hail Mary") -> LocalClaim:
     )
 
 
-def work_plan(*extra_claims: LocalClaim) -> MetadataDiscoveryPlan:
+def work_plan(
+    *extra_claims: LocalClaim,
+    title: str = "Project Hail Mary",
+    authors: tuple[str, ...] = ("Andy Weir",),
+) -> MetadataDiscoveryPlan:
     """One plan whose only lane is the title-and-author fallback.
 
     Extra local claims may be supplied so long as none of them is an ASIN: an
     ASIN claim would build a product lane and stop being this plan.
     """
     return audiobook_discovery_plan(
-        audio_target(), (target_title_claim(), *extra_claims)
+        audio_target(title, authors), (target_title_claim(title), *extra_claims)
     )
 
 

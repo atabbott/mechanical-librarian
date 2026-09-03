@@ -275,6 +275,25 @@ def test_latin_combining_marks_fold_is_bounded_and_records_exact_applications() 
         WorkTitleTransformationFamily.LATIN_COMBINING_MARKS
         in dispatches[-1].transformations
     )
+    bounded = work_query_ladder(
+        "Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes",
+        ("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",),
+    )
+    assert [(query.title, query.authors) for query in bounded] == [
+        (
+            "Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes",
+            ("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",),
+        ),
+        (
+            "Caf\N{LATIN SMALL LETTER E WITH ACUTE}",
+            ("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",),
+        ),
+        ("Cafe", ("Jose",)),
+    ]
+    assert [
+        WorkTitleTransformationFamily.LATIN_COMBINING_MARKS in query.transformations
+        for query in bounded
+    ] == [False, False, True]
 
 
 @pytest.mark.parametrize("value", ("\u0301Cafe", "Жозе", "ø", "ł", "æ", "ß"))

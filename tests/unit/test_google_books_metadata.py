@@ -1025,6 +1025,53 @@ def test_work_query_ladder_stops_on_first_candidates_and_accounts_retry() -> Non
     )
 
 
+def test_latin_fold_reaches_google_books_only_on_the_final_bounded_dispatch() -> None:
+    requests: list[httpx.Request] = []
+    volume = _volume()
+    volume["volumeInfo"]["title"] = "Cafe: Notes"
+    volume["volumeInfo"]["authors"] = ["Jose"]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json=(
+                {"totalItems": 0, "items": []}
+                if len(requests) < 3
+                else {"totalItems": 1, "items": [volume]}
+            ),
+        )
+
+    observation = GoogleBooksMetadataProvider(
+        "google_books",
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        65_536,
+    ).observe(
+        MetadataLookup(
+            ProviderQueryKind.WORK,
+            (),
+            "Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes",
+            ("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",),
+        )
+    )
+
+    assert [
+        'intitle:"Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes" inauthor:"Jos\N{LATIN SMALL LETTER E WITH ACUTE}"',
+        'intitle:"Caf\N{LATIN SMALL LETTER E WITH ACUTE}" inauthor:"Jos\N{LATIN SMALL LETTER E WITH ACUTE}"',
+        'intitle:"Cafe" inauthor:"Jose"',
+    ] == [request.url.params["q"] for request in requests]
+    assert observation.dispatch_lineage is not None
+    assert observation.dispatch_lineage.rung is WorkDispatchRung.PUNCTUATION_FOLDED
+    assert observation.dispatch_lineage.transformations[-1] is (
+        WorkTitleTransformationFamily.LATIN_COMBINING_MARKS
+    )
+    assert (1, 2) == (
+        observation.request_accounting.initial_dispatches,
+        observation.request_accounting.retry_dispatches,
+    )
+
+
 def test_widened_search_cannot_bypass_work_identity_qualification() -> None:
     volume = _volume()
     volume["volumeInfo"]["title"] = "Different Work"

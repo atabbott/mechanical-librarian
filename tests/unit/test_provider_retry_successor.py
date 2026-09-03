@@ -68,14 +68,17 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     TargetField,
     TargetFieldState,
+    _provider_from_data,
     default_target_fields,
 )
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     WorkDispatchRung,
+    admit_provider_work_identity,
     work_query_ladder,
 )
 from tests.support.audiobook_providers import target_asin_claim, target_title_claim
+from tests.support.metadata_report_schemas import synthetic_latin_work_report
 
 
 class _Target:
@@ -1085,6 +1088,137 @@ def test_retry_successor_preserves_exact_work_dispatch_without_transformation(
     recovered = next(lane for lane in merged.lanes if lane.identity == work.identity)
     assert recovered.dispatch_lineage == dispatch
     assert recovered.transformation_lineage is None
+
+
+def test_retry_successor_merges_and_replays_the_exact_latin_lineage(
+    retry: _Retry,
+) -> None:
+    plan, work, isbn, _overflow = _overflow_source(retry)
+    title = "Caf\N{LATIN SMALL LETTER E WITH ACUTE}"
+    authors = ("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",)
+    latin_work = replace(work, title=title, authors=authors)
+    latin_plan = replace(
+        plan,
+        lanes=tuple(
+            latin_work if lane.identity == work.identity else lane
+            for lane in plan.lanes
+        ),
+    )
+    original = provider_observation(
+        "catalogue",
+        (
+            ProviderLaneResult(latin_work, ProviderStatus.UNAVAILABLE),
+            ProviderLaneResult(isbn, ProviderStatus.NO_MATCH),
+        ),
+        authority="open_library",
+    )
+    claims = (
+        ProviderClaim.create(
+            provider="catalogue",
+            candidate="edition",
+            kind=ClaimKind.TITLE,
+            value="Cafe",
+            state=FieldState.VALID,
+            scope=ClaimScope.WORK,
+            applicability="not_applicable",
+        ),
+        ProviderClaim.create(
+            provider="catalogue",
+            candidate="edition",
+            kind=ClaimKind.CREATOR,
+            value="Jose",
+            state=FieldState.VALID,
+            scope=ClaimScope.WORK,
+            applicability="not_applicable",
+            role="author",
+            raw_order=1,
+        ),
+    )
+    admission = admit_provider_work_identity(
+        local_title=title,
+        local_authors=authors,
+        provider_title="Cafe",
+        provider_authors=("Jose",),
+        provider_work_identity="work",
+    )
+    assert admission.transformation is not None
+    dispatch = WorkDispatchLineage.from_query(work_query_ladder(title, authors)[-1])
+    replacement = provider_observation(
+        "catalogue",
+        (
+            ProviderLaneResult(
+                latin_work,
+                ProviderStatus.CANDIDATES,
+                (ProviderCandidate("edition", "work", claims),),
+                dispatch_lineage=dispatch,
+                transformation_lineage=admission.transformation,
+            ),
+        ),
+        authority="open_library",
+    )
+
+    merged = retry.service(None)._merged(
+        latin_plan, original, (latin_work,), replacement
+    )
+    replayed = _provider_from_data(merged.to_data())
+    recovered = next(lane for lane in replayed.lanes if lane.identity == work.identity)
+
+    assert replayed == merged
+    assert recovered.dispatch_lineage == dispatch
+    assert recovered.transformation_lineage == admission.transformation
+
+    template = synthetic_latin_work_report()
+    target = replace(retry.report.target, fields=template.target.fields)
+    source_title = LocalClaim.create(
+        kind=ClaimKind.TITLE,
+        observed="Current title",
+        canonical="Current title",
+        excerpt="Current title",
+        applicability="not_applicable",
+        basis="target_metadata",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.WORK,
+    )
+    local_claims = (source_title, *retry.report.local_claims)
+    qualified = MetadataReport.create(
+        target=target,
+        file=retry.report.file,
+        local_claims=local_claims,
+        local_reasons=retry.report.local_reasons,
+        providers=(replayed,),
+        audio=retry.report.audio,
+    )
+    qualified_provider = qualified.providers[0]
+    qualified_lane = next(
+        lane for lane in qualified_provider.lanes if lane.identity == work.identity
+    )
+    assert qualified_lane.dispatch_lineage == dispatch
+    assert qualified_lane.transformation_lineage == admission.transformation
+
+    assert recovered.transformation_lineage is not None
+    incomplete = replace(
+        recovered.transformation_lineage,
+        applications=recovered.transformation_lineage.applications[:1],
+    )
+    forged = replace(
+        qualified_provider,
+        lanes=tuple(
+            replace(lane, transformation_lineage=incomplete)
+            if lane.identity == work.identity
+            else lane
+            for lane in qualified_provider.lanes
+        ),
+    )
+    with pytest.raises(ValueError, match="work identity lineage is inconsistent"):
+        MetadataReport.create(
+            target=target,
+            file=retry.report.file,
+            local_claims=local_claims,
+            local_reasons=retry.report.local_reasons,
+            providers=(forged,),
+            audio=retry.report.audio,
+        )
 
 
 @pytest.mark.parametrize(
