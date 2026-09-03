@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Review now keeps unavailable, unproposed primary fields out of the default
+  rail while offering a one-way reveal for inspection. (#890)
+
 - WORK replay now admits one exact closed-equal complete author multiset when
   provider ordering alone differs; missing, extra, duplicate-replacement, and
   transformed author matches still reject. (#889)

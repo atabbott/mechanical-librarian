@@ -1601,6 +1601,25 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     advancePresentation.current = null
     presentation.resolve()
   }, [])
+  const centreFieldRail = useCallback((rail: HTMLElement, button: HTMLButtonElement) => {
+    const reducedMotion =
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    // This is a horizontal rail adjustment, not a request to reposition the
+    // document. `scrollIntoView` can pull the selected work back to the top
+    // when the owner records a middle field.
+    const railBounds = rail.getBoundingClientRect()
+    const buttonBounds = button.getBoundingClientRect()
+    const left = Math.max(
+      0,
+      rail.scrollLeft +
+        buttonBounds.left -
+        railBounds.left -
+        (rail.clientWidth - buttonBounds.width) / 2,
+    )
+    if (typeof rail.scrollTo === 'function')
+      rail.scrollTo({ left, behavior: reducedMotion ? 'auto' : 'smooth' })
+  }, [])
   const automaticTrigger = useRef<HTMLButtonElement>(null)
   const keepManualHandling = useRef<HTMLButtonElement>(null)
   const restoreAutomaticTrigger = useRef(false)
@@ -1637,6 +1656,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const [frozenFieldOrders, setFrozenFieldOrders] = useState<
     Readonly<Record<string, readonly string[]>>
   >({})
+  const [shownEmptyFields, setShownEmptyFields] = useState<Readonly<Record<string, true>>>({})
+  const [revealFocusDestination, setRevealFocusDestination] = useState<string | null>(null)
   const [complete, setComplete] = useState<{
     id: string
     fields: readonly ReviewField[]
@@ -1952,16 +1973,26 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const displayedIdentity = selectedIdentity ?? completionIdentity
   const primaryField = (field: ReviewField) => (field.inventoryRole ?? 'primary') === 'primary'
   const visibleFields = detail.data?.fields.filter(primaryField) ?? []
-  const selected =
-    visibleFields.find((field) => field.destination === search.field) ??
-    visibleFields.find(actionable) ??
-    visibleFields[0]
   const currentActionableDestinations = visibleFields.map((field) => field.destination)
   const frozenDestinations =
     frozenFieldOrders[selectedReviewCaseId] ?? currentActionableDestinations
   const railFields = frozenDestinations
     .map((destination) => visibleFields.find((field) => field.destination === destination))
     .filter((field): field is ReviewField => field !== undefined)
+  const emptyUnproposed = (field: ReviewField) =>
+    (field.currentRaw === null ||
+      field.currentRaw === '' ||
+      (Array.isArray(field.currentRaw) && field.currentRaw.length === 0)) &&
+    field.proposedValues.length === 0
+  const urlSelected = visibleFields.find((field) => field.destination === search.field)
+  const revealEmptyFields =
+    shownEmptyFields[selectedReviewCaseId] === true ||
+    (urlSelected !== undefined && emptyUnproposed(urlSelected))
+  const omittedFields = revealEmptyFields ? [] : railFields.filter(emptyUnproposed)
+  const renderedRailFields = revealEmptyFields
+    ? railFields
+    : railFields.filter((field) => !emptyUnproposed(field))
+  const selected = urlSelected ?? renderedRailFields.find(actionable) ?? renderedRailFields[0]
   const attentionFields = railFields.filter(actionable)
   const contextualFields =
     detail.data?.fields.filter((field) => field.inventoryRole === 'contextual') ?? []
@@ -2129,23 +2160,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     const rail = fieldRail.current
     const active = activeFieldButton.current
     if (!rail || !active) return
-    const reducedMotion =
-      typeof window.matchMedia === 'function' &&
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    // This is a horizontal rail adjustment, not a request to reposition the
-    // document. `scrollIntoView` can pull the selected work back to the top
-    // when the owner records a middle field.
-    const railBounds = rail.getBoundingClientRect()
-    const activeBounds = active.getBoundingClientRect()
-    const left = Math.max(
-      0,
-      rail.scrollLeft +
-        activeBounds.left -
-        railBounds.left -
-        (rail.clientWidth - activeBounds.width) / 2,
-    )
-    if (typeof rail.scrollTo === 'function')
-      rail.scrollTo({ left, behavior: reducedMotion ? 'auto' : 'smooth' })
+    centreFieldRail(rail, active)
     if (!advanceFocus.current) return
     advanceFocus.current = false
     const action = document.querySelector<HTMLButtonElement>(
@@ -2161,7 +2176,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         ? bounds.top - visibleTop
         : Math.max(0, bounds.bottom - window.innerHeight)
     if (reveal) window.scrollBy({ top: reveal })
-  }, [selected?.destination])
+  }, [centreFieldRail, selected?.destination])
   useLayoutEffect(() => {
     if (advanceScroll.current === null) return
     const top = advanceScroll.current
@@ -2420,9 +2435,11 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const railPosition =
     complete?.id === selectedReviewCaseId && completionInspection === null
       ? `${String(railFields.length)} recorded · work complete`
-      : `${String(remainingFields)} remaining · field ${String(
-          Math.max(1, frozenDestinations.indexOf(selected?.destination ?? '') + 1),
-        )} of ${String(railFields.length)}`
+      : selected
+        ? `${String(remainingFields)} remaining · field ${String(
+            renderedRailFields.indexOf(selected) + 1,
+          )} of ${String(renderedRailFields.length)}`
+        : `${String(remainingFields)} remaining · no field selected`
   // The one-tap teaching line is for someone who has not yet seen what a tap
   // does. It says so on the first field only, and gives way to what is actually
   // happening once they have chosen.
@@ -2803,11 +2820,22 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                   <strong>{railPosition}</strong>
                 </header>
                 <nav ref={fieldRail} className="field-filmstrip" aria-label="Review fields">
-                  {railFields.map((field) => (
+                  {renderedRailFields.map((field) => (
                     <button
                       key={field.destination}
                       ref={
-                        selected?.destination === field.destination ? activeFieldButton : undefined
+                        revealFocusDestination === field.destination
+                          ? (button) => {
+                              if (button) {
+                                setRevealFocusDestination(null)
+                                button.focus()
+                                const rail = fieldRail.current
+                                if (rail) centreFieldRail(rail, button)
+                              }
+                            }
+                          : selected?.destination === field.destination
+                            ? activeFieldButton
+                            : undefined
                       }
                       aria-current={selected?.destination === field.destination}
                       className={!actionable(field) ? 'is-recorded' : undefined}
@@ -2833,6 +2861,20 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                       </span>
                     </button>
                   ))}
+                  {omittedFields.length ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRevealFocusDestination(omittedFields[0]?.destination ?? null)
+                        setShownEmptyFields((current) => ({
+                          ...current,
+                          [selectedReviewCaseId]: true,
+                        }))
+                      }}
+                    >
+                      {`Show ${String(omittedFields.length)} empty field${omittedFields.length === 1 ? '' : 's'}`}
+                    </button>
+                  ) : null}
                 </nav>
               </section>
               {complete?.id === selectedReviewCaseId && completionInspection === null ? (
