@@ -1,8 +1,8 @@
 {
   "authority_rotation": {
-    "archived_replay_result_sha256": "add07ef4b031f848813d44e21ada5f3f56efc6dc4b700ddafeb90b03649e7631",
-    "development_result_sha256": "fda92f7e4ea9c06648ce1abb7a62065cc6dadcd177b532b86b730f83488fdbe8",
-    "prior_aggregate_receipt_sha256": "f4e31add7f3aa09514e2dbc9a4aa6765a4d8720b3e96cc19c17628d74ff26fc9",
+    "archived_replay_result_sha256": "ecdc389466b3ae2ddcfae975ea27093ec06705adfbc089b56e5e91b8d8eb86ac",
+    "development_result_sha256": "192e15965354c7538abc5c854e3ffa76deb1341c1f230ae3d9c80136ef4899de",
+    "prior_aggregate_receipt_sha256": "1ae1d7c404ae1805f29fbe287eaa23c82e49d21b1806731d31c534e8ecc90a27",
     "prior_manifest_sha256": "8b14e134a146e8f03f9d36ad78506a7f234b0768ef61620ef1d1234a8df7c4a5"
   },
   "automatic_authority": "decision_only",
@@ -158,13 +158,13 @@
     "series_truth_model": "valid_membership_with_preferred_value",
     "subjective_field_truth_model": "exact_work_bound_source_projection",
     "subtitle_fill_empty_correct_predictions_by_state": {
-      "empty": 0,
-      "missing": 0,
+      "empty": 21,
+      "missing": 21,
       "null": 21
     },
     "subtitle_fill_empty_predictions_by_state": {
-      "empty": 0,
-      "missing": 0,
+      "empty": 21,
+      "missing": 21,
       "null": 21
     },
     "subtitle_fill_empty_target_states": [
@@ -178,15 +178,21 @@
         "fill": 76,
         "unknown": 0
       },
-      "automatic_predictions": 21,
+      "automatic_predictions": 63,
       "case_count": 113,
-      "correct_predictions": 21,
+      "correct_predictions": 63,
+      "distinct_cases": 113,
       "holdout_claim": false,
       "network_access": false,
-      "positive_opportunities": 76,
+      "positive_opportunities": 228,
       "retained_49_report_route_predictions_at_base": 0,
       "review_agreement_count": 110,
       "route": "archived_744_development_challenge_set",
+      "target_states_measured": [
+        "empty",
+        "missing",
+        "null"
+      ],
       "zero_tolerance_failures": 0
     },
     "subtitle_truth_model": "ebook_manifestation_bibliographic_subtitle",
@@ -203,11 +209,11 @@
     },
     "automatic_decision": {
       "identity": "src/mechanical_librarian/domain/automatic_decision.py",
-      "sha256": "ROOT-FILLS"
+      "sha256": "052f956c475f125bd3bcbddb1b126a9b8fc3a839398589060ab8570c8927309e"
     },
     "compiler": {
       "identity": "src/mechanical_librarian/domain/rich_metadata_preview.py",
-      "sha256": "ROOT-FILLS"
+      "sha256": "f5fdad27f901735ef0e3075bfb1a98cb4aa5eb0461cdc7e63f0deb638b05e52b"
     },
     "description_tiebreaker": {
       "candidate_head": "e1e13200a784229bcb5694e716c1c7b0e0a8128e",
@@ -222,25 +228,25 @@
     },
     "evaluator": {
       "identity": "f41-subtitle-segment-evaluator-v1",
-      "sha256": "c305cb9d01e4c24c04ce736e44063e37c1d04b4f9a61077fc285496fcea2fdea"
+      "sha256": "2c07de61815b9518915f3a45c8c5582ed90787979bcba0b05a4ea261cd4baeb4"
     },
     "evidence_execution": {
       "identity": "f41-subtitle-segment-development-v1",
-      "sha256": "fda92f7e4ea9c06648ce1abb7a62065cc6dadcd177b532b86b730f83488fdbe8"
+      "sha256": "192e15965354c7538abc5c854e3ffa76deb1341c1f230ae3d9c80136ef4899de"
     },
     "isbn_manifestation_election": {
-      "automatic_decision_sha256": "ROOT-FILLS",
-      "preview_sha256": "ROOT-FILLS",
-      "proposal_policy_sha256": "ROOT-FILLS",
+      "automatic_decision_sha256": "052f956c475f125bd3bcbddb1b126a9b8fc3a839398589060ab8570c8927309e",
+      "preview_sha256": "f5fdad27f901735ef0e3075bfb1a98cb4aa5eb0461cdc7e63f0deb638b05e52b",
+      "proposal_policy_sha256": "484e463b87f25fab72a7610d417e2ea82029a85015aa36d3467b7d4c541277a6",
       "proposal_policy_version": "fixed-conservative-v19"
     },
     "policy": {
       "identity": "src/mechanical_librarian/domain/metadata_policy.py",
-      "sha256": "ROOT-FILLS"
+      "sha256": "b5a1b61fc8dde0c6e08936a28661f4b57ea41fdd1d80bc3e1f249dc307f4a1b0"
     },
     "target_shape": {
       "identity": "src/mechanical_librarian/adapters/library_services/audiobookshelf_field_effect.py",
-      "sha256": "ROOT-FILLS"
+      "sha256": "85f289ca2c97c97be2cc0476f963e2b366ba40fcc549160a2183541151b92953"
     },
     "thresholds": {
       "identity": "f20-field-local-qualification-contract-v3",
@@ -254,11 +260,11 @@
     {
       "cohort_sufficiency": "sufficient",
       "disposition": "passing_automatic",
-      "eligible_opportunities": 113,
+      "eligible_opportunities": 339,
       "identity": "subtitle:fill_empty",
       "metrics": {
         "automatic_precision": 1.0,
-        "automatic_predictions": 21,
+        "automatic_predictions": 63,
         "automatic_recall": 0.27631578947368424,
         "structural_or_sensitive_violations": 0,
         "unsupported_output": 0

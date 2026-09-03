@@ -227,9 +227,11 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
         "case_count": 113,
         "holdout_claim": False,
         "network_access": False,
+        "distinct_cases": 113,
         "retained_49_report_route_predictions_at_base": 0,
         "review_agreement_count": 110,
         "route": "archived_744_development_challenge_set",
+        "target_states_measured": ["empty", "missing", "null"],
     } == {
         name: value
         for name, value in segment.items()
@@ -237,14 +239,15 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     }
     assert set(MEASURED_SEGMENT_AGGREGATES) <= set(segment)
     if segment["automatic_predictions"] != ROOT_PLACEHOLDER:
-        assert 21 == segment["automatic_predictions"]
-        assert 21 == segment["correct_predictions"]
-        assert 76 == segment["positive_opportunities"]
+        # 113 cases measured under each fill_empty target state.
+        assert 63 == segment["automatic_predictions"]
+        assert 63 == segment["correct_predictions"]
+        assert 228 == segment["positive_opportunities"]
         assert 0 == segment["zero_tolerance_failures"]
-        assert {"empty": 0, "missing": 0, "null": 21} == by_state[
+        assert {"empty": 21, "missing": 21, "null": 21} == by_state[
             "subtitle_fill_empty_predictions_by_state"
         ]
-        assert {"empty": 0, "missing": 0, "null": 21} == by_state[
+        assert {"empty": 21, "missing": 21, "null": 21} == by_state[
             "subtitle_fill_empty_correct_predictions_by_state"
         ]
     else:
@@ -388,7 +391,7 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     assert 0 == subtitle_fill["metrics"]["structural_or_sensitive_violations"]
     assert 0 == subtitle_fill["metrics"]["unsupported_output"]
     if subtitle_fill["metrics"]["automatic_precision"] != ROOT_PLACEHOLDER:
-        assert 113 == subtitle_fill["eligible_opportunities"]
+        assert 339 == subtitle_fill["eligible_opportunities"]  # 113 cases x 3 states
         assert 1.0 == subtitle_fill["metrics"]["automatic_precision"]
         assert 3 <= subtitle_fill["metrics"]["automatic_predictions"]
 

@@ -10,9 +10,7 @@ from types import MappingProxyType
 from typing import Final, Mapping
 
 F20_QUALIFICATION_CANDIDATE_SHA256: Final = (
-    # TODO-ROOT re-pin: the v10 candidate digest is measured on the installed
-    # wheel of the final candidate.
-    "1" * 64
+    "d29fd9b40d617b0a4c94075721b372b6234f13b1251fe92dcf36f22ba06fea85"
 )
 F20_RICH_FIELDS: Final = (
     "subtitle",
