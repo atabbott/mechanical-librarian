@@ -51,7 +51,7 @@ const ownerFieldLabels: Record<string, string> = {
   subtitle_segment_provider_dissent:
     'Another provider states a different subtitle; choose the subtitle yourself',
   subtitle_segment_decorated_consensus:
-    'The colon segment reads as title text: no more providers state the plain title than carry the segment',
+    'The colon segment reads as title text: no provider carries it, or no more providers state the plain title than carry the decorated form',
   provider_consensus_contributor_display:
     'Independent providers agree on the contributor display form',
 }

@@ -148,6 +148,22 @@ def test_stacked_decorations_stay_competing() -> None:
     assert ("competing_evidence",) == result.reasons
 
 
+def test_a_plain_form_differing_only_by_case_stays_competing() -> None:
+    """The grammar step is exact, so a collapse never rewrites casing."""
+    decorated = "Plain Work [retail]"
+
+    result = _title_result(
+        current=decorated,
+        providers=(
+            _provider_title("open_library", "PLAIN WORK"),
+            _provider_title("hardcover", decorated),
+        ),
+    )
+
+    assert ProposalOutcome.UNRESOLVED_CHOICE is result.outcome
+    assert ("competing_evidence",) == result.reasons
+
+
 def test_substantively_different_titles_stay_competing() -> None:
     result = _title_result(
         current=_PLAIN,

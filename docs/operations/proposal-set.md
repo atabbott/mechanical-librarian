@@ -46,6 +46,10 @@ the tidy proposal, and one of `decoration_tidy_series_unpreserved`,
 `decoration_equivalence_decorated_consensus` beside `competing_evidence` when a
 guard closes the class.
 
+The grammar step is exact: removing the decoration must yield the plain
+alternative byte for byte, so a collapse never rewrites casing or spacing. The
+dissent and width guards compare under the closed title comparison.
+
 A collapsed title carries one alternative, so a representation that once mapped
 to two competing title forms no longer withholds a bibliographic combination;
 the `no_safe_bibliographic_combination` release follows from the collapse itself.
@@ -55,22 +59,22 @@ now taken only when the title outcome is a keep, which is the only shape the
 
 The subtitle result names an uncorroborated colon segment with
 `subtitle_segment_uncorroborated`, on the competing seam and on an ineligible
-result with no supported evidence. Segment corroboration elects nothing among
-competing provider subtitles: the only election it supports is the book's own
-`local_attested_subtitle`, and a provider segment only fills an empty subtitle
-through the automatic projection.
+result with no supported evidence. A segment elects no subtitle at all: the only
+election on the competing seam is the book's own explicit subtitle claim
+(`local_attested_subtitle`), a segment there only reports the corroboration
+guard that closed the choice, and a segment fills a subtitle only through the
+automatic projection.
 
 Segment corroboration itself is decided once, by `segment_corroboration`, for
-both the subtitle election and the F20 automatic projection, so the two surfaces
-cannot drift. A generic segment is rejected before corroboration runs. A segment
-otherwise corroborates only when no provider states a different subtitle
-(`subtitle_segment_provider_dissent`) and at least as many provider authorities
-state the plain title the segment was stripped from as carry the decorated form,
-counting the local claim on the decorated side
-(`subtitle_segment_decorated_consensus`). A withheld corroboration reports its
-guard where the uncorroborated diagnostic reports: on the subtitle proposal when
-the election is withheld, and as the preview abstention reason when the
-projection is.
+both seams, so they cannot drift. A generic segment is rejected before
+corroboration runs. A segment otherwise corroborates only when no provider
+states a different subtitle (`subtitle_segment_provider_dissent`) and the width
+holds: corroboration is withheld as `subtitle_segment_decorated_consensus` when
+no provider authority carries the segment, or when the authorities carrying the
+decorated form—the local title counted—exceed the provider authorities stating
+the plain form the segment was stripped from. A withheld corroboration reports its guard where the
+uncorroborated diagnostic reports: on the subtitle proposal on the competing
+seam, and as the preview abstention reason when the projection is withheld.
 
 F35's colon and series abstentions now run after its provider-agreement gate
 rather than before it. This is a behaviour change: a title F35 would never have

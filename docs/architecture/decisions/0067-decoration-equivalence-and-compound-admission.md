@@ -60,8 +60,11 @@ new ADR.
 `competing_evidence`, exactly two provider-backed WORK alternatives that are
 equal after one closed election-grammar decoration match form one equivalence
 class whose canonical member is the plain form. Matching is one step only, so
-stacked decorations stay competing. Two evidence-only guards close the class
-further and apply to keep and tidy alike:
+stacked decorations stay competing. The grammar step is exact: removing the
+decoration must yield the plain alternative byte for byte, so a collapse never
+rewrites casing or spacing the review never adjudicated, while the two guards
+below compare under the closed title comparison. Two evidence-only guards close
+the class further and apply to keep and tidy alike:
 
 - *Provider dissent*: every valid WORK-scope provider title claim in the report,
   including claims on candidates that admission or observation rejected, must

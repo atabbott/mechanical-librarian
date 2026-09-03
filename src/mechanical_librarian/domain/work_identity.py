@@ -778,19 +778,16 @@ def _election_isbn_component(title: str) -> tuple[str, str] | None:
 def _filename_author_title_prefix_query(
     value: str, authors: tuple[str, ...]
 ) -> str | None:
-    if not authors:
+    """Return the query form of a complete first-author filename prefix.
+
+    The closed separator set lives in the remainder helper alone, so the query
+    shaping and the compound admission can never read different grammars.
+    """
+    remainder = _filename_author_title_prefix_remainder(value, authors)
+    if remainder is None:
         return None
-    normalized = unicodedata.normalize("NFC", value)
-    match = re.fullmatch(
-        r"(?P<prefix>.+?)(?:[ _]+-[ _]+|[ _]*[–—][ _]*|[ _]*:[ _]*)(?P<title>.+)",
-        normalized,
-    )
-    if match is None:
-        return None
-    prefix_tokens = _identity_tokens(match.group("prefix"))
-    author_tokens = _identity_tokens(authors[0])
-    title = _clean(match.group("title").replace("_", " "))
-    return title if prefix_tokens == author_tokens and _comparison_text(title) else None
+    title = _clean(remainder.replace("_", " "))
+    return title if _comparison_text(title) else None
 
 
 def _filename_author_title_prefix_remainder(

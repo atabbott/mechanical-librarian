@@ -1545,10 +1545,9 @@ def _segment_corroborated_subtitle(
 
     Provider catalogues disagree on how a combined title splits; the packaged
     subtitle claim records the printed form, so among competing candidates the
-    one it matches exactly is the safe election. A colon segment stripped from
-    the book's own WORK-scope title corroborates on the same terms, under the
-    shared corroboration guards. Zero or multiple attested values keep the
-    choice with the owner.
+    one it matches exactly is the safe election. Zero or multiple attested
+    values keep the choice with the owner, as does a colon segment: on this seam
+    it only names the corroboration guard that closed the choice.
     """
     attested = {
         normalize_title(observed).casefold()
@@ -1591,35 +1590,13 @@ def _segment_corroborated_subtitle(
         value = cast(str, alternative.value.value)
         if _explicit_subtitle_references(report, value):
             return alternative, "local_attested_subtitle"
+        # A segment never elects a competing subtitle: every distinct competing
+        # value is a provider subtitle claim, which the dissent guard closes.
+        # Corroboration runs only to report the guard that closed it; the fill
+        # itself belongs to the automatic projection.
         corroboration = segment_corroboration(report, value, alternative.correlations)
         if corroboration.withheld_reason is not None:
             return None, corroboration.withheld_reason
-        local = _correlation("local:selected_epub")
-        cross = tuple(
-            segment
-            for segment in corroboration.segments
-            if segment.correlation == local
-        )
-        if not cross:
-            # A provider segment corroborates the automatic projection into an
-            # empty subtitle; it never elects one among competing provider
-            # subtitles, which the frozen adjudication rejected outright.
-            continue
-        return (
-            ProposalAlternative.create(
-                alternative.value,
-                alternative.assessment,
-                (
-                    *alternative.evidence_references,
-                    *(segment.reference for segment in cross),
-                ),
-                alternative.correlations,
-                ProposalScope.WORK,
-                alternative.date_event,
-                alternative.date_precision,
-            ),
-            "local_attested_subtitle",
-        )
     return None, None
 
 
@@ -1634,29 +1611,6 @@ def _explicit_subtitle_references(report: MetadataReport, value: str) -> frozens
         and type(observed := claim.canonical or claim.observed) is str
         and observed
         and normalize_title(observed).casefold() == sought
-    )
-
-
-def _title_derived_subtitle_references(
-    report: MetadataReport, value: str | None = None
-) -> frozenset[str]:
-    """Return WORK-scoped local-title evidence for one colon suffix."""
-    sought = None if value is None else normalize_title(value).casefold()
-    return frozenset(
-        claim.reference
-        for claim in report.local_claims
-        if claim.kind is ClaimKind.TITLE
-        and claim.scope is ClaimScope.WORK
-        and claim.state is FieldState.VALID
-        and type(observed := claim.canonical or claim.observed) is str
-        and observed
-        for match in work_title_election_matches(observed, ())
-        if match.family is WorkTitleTransformationFamily.SUBTITLE_SEGMENT
-        and match.preserved_component is not None
-        and (
-            sought is None
-            or normalize_title(match.preserved_component).casefold() == sought
-        )
     )
 
 
@@ -1878,9 +1832,12 @@ def _decoration_equivalence_pair(
             # Stacked decorations never collapse: the grammar must reach the
             # plain form in exactly one closed step.
             continue
-        if _comparison(TargetDestination.TITLE, matches[0].clean_title) == _comparison(
-            TargetDestination.TITLE, cast(str, plain.value.value)
-        ):
+        # The grammar step is exact: removing the decoration must yield the
+        # plain alternative byte for byte. Folding case or whitespace here
+        # would tidy a form the review grammar never adjudicated, and the
+        # write would carry a recasing no reviewer approved. The dissent and
+        # width guards below still count under the closed comparison.
+        if matches[0].clean_title == cast(str, plain.value.value):
             pairs.append((plain, decorated, matches[0]))
     return pairs[0] if len(pairs) == 1 else None
 
