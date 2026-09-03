@@ -1380,8 +1380,8 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert "Cover" in page.locator(".field-filmstrip").inner_text()
         assert "Series" in page.locator(".field-filmstrip").inner_text()
         assert "Publication date" in page.locator(".field-filmstrip").inner_text()
-        subtitle = page.get_by_role("button", name="Show 1 empty field")
-        expect(subtitle).to_be_visible()
+        genres = page.get_by_role("button", name="Show 1 empty field")
+        expect(genres).to_be_visible()
         assert not (
             page.locator(".automatic-resolution-details").evaluate("node => node.open")
         )
@@ -1389,14 +1389,16 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             page.locator(".direct-choice").bounding_box()["y"]
             < page.locator(".automatic-resolution-details").bounding_box()["y"]
         )
-        subtitle.click()
-        expect(
-            page.get_by_role("button", name=re.compile(r"^Subtitle"))
-        ).to_be_focused()
+        page.locator(".automatic-resolution-details summary").click()
+        automatic_context = page.locator(".automatic-resolution-details").inner_text()
+        assert "Subtitle" in automatic_context
+        assert "Series" not in automatic_context
+        genres.click()
+        expect(page.get_by_role("button", name=re.compile(r"^Genres"))).to_be_focused()
         assert [
             label.splitlines()[0]
             for label in page.locator(".field-filmstrip button").all_inner_texts()
-        ] == ["Title", "Authors", "Subtitle", "Series", "Publication date", "Cover"]
+        ] == ["Title", "Authors", "Genres", "Series", "Publication date", "Cover"]
         assert page.evaluate(
             "() => document.documentElement.scrollWidth <= window.innerWidth"
         )
@@ -1816,6 +1818,10 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             page.locator(".direct-choice").bounding_box()["y"]
             < page.locator(".automatic-resolution-details").bounding_box()["y"]
         )
+        page.locator(".automatic-resolution-details summary").click()
+        compact_context = page.locator(".automatic-resolution-details").inner_text()
+        assert "Subtitle" in compact_context
+        assert "Series" not in compact_context
         expect(page.get_by_role("button", name="Show 1 empty field")).to_be_visible()
         compact_evidence = page.get_by_role(
             "button", name="Evidence for Current value: Current <script> title"

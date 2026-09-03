@@ -5366,16 +5366,38 @@ describe('Library route', () => {
     if (!titleField) throw new Error('workspace fixture requires a title field')
     const emptySubtitle = {
       ...titleField,
+      classification: 'unsupported',
+      classificationReason: 'This field is unavailable for the current service capability.',
+      currentValue: 'Unavailable',
       destination: 'subtitle',
+      decisionActions: [],
+      editable: false,
       currentRaw: null,
+      needsAttention: false,
+      navigationRole: 'inspect',
       proposedValues: [],
     }
-    const emptySeries = { ...titleField, destination: 'series', currentRaw: '', proposedValues: [] }
-    const emptyGenres = { ...titleField, destination: 'genres', currentRaw: [], proposedValues: [] }
+    const emptySeries = {
+      ...emptySubtitle,
+      destination: 'series',
+      currentRaw: '',
+    }
+    const emptyGenres = {
+      ...emptySubtitle,
+      destination: 'genres',
+      currentRaw: [],
+    }
     const currentOnly = {
       ...titleField,
+      classification: 'unsupported',
+      classificationReason: 'This field is unavailable for the current service capability.',
+      currentValue: 'An Author',
       destination: 'authors',
+      decisionActions: [],
+      editable: false,
       currentRaw: ['An Author'],
+      needsAttention: false,
+      navigationRole: 'inspect',
       proposedValues: [],
     }
     const proposalOnly = {
@@ -5410,12 +5432,22 @@ describe('Library route', () => {
   it('has no phantom all-empty selection and reveals canonical named fields on request', async () => {
     const titleField = detail.fields[0]
     if (!titleField) throw new Error('workspace fixture requires a title field')
-    const emptyTitle = { ...titleField, currentRaw: null, proposedValues: [] }
-    const emptySubtitle = {
+    const emptyTitle = {
       ...titleField,
+      classification: 'unsupported',
+      classificationReason: 'This field is unavailable for the current service capability.',
+      currentValue: 'Unavailable',
+      decisionActions: [],
+      editable: false,
+      currentRaw: null,
+      needsAttention: false,
+      navigationRole: 'inspect',
+      proposedValues: [],
+    }
+    const emptySubtitle = {
+      ...emptyTitle,
       destination: 'subtitle',
       currentRaw: '',
-      proposedValues: [],
     }
     const http: ReviewHttp = {
       ...createHttp(),
@@ -5424,7 +5456,7 @@ describe('Library route', () => {
     renderRoute('/library?lens=all&preview=case-1', http)
 
     const rail = await screen.findByRole('navigation', { name: 'Review fields' })
-    expect(screen.getByText('2 remaining · no field selected')).toBeVisible()
+    expect(screen.getByText('0 remaining · no field selected')).toBeVisible()
     expect(within(rail).getByRole('button', { name: 'Show 2 empty fields' })).toBeVisible()
     expect(within(rail).queryByRole('button', { name: /^Title/u })).toBeNull()
 
@@ -5437,8 +5469,15 @@ describe('Library route', () => {
     if (!titleField) throw new Error('workspace fixture requires a title field')
     const emptySubtitle = {
       ...titleField,
+      classification: 'unsupported',
+      classificationReason: 'This field is unavailable for the current service capability.',
+      currentValue: 'Unavailable',
       destination: 'subtitle',
+      decisionActions: [],
+      editable: false,
       currentRaw: '',
+      needsAttention: false,
+      navigationRole: 'inspect',
       proposedValues: [],
     }
     const http: ReviewHttp = {
@@ -5452,17 +5491,29 @@ describe('Library route', () => {
       'aria-current',
       'true',
     )
+    expect(screen.getByRole('heading', { name: 'Subtitle' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: /Choose current value/u })).toBeNull()
   })
 
   it('immediately restores collapsed fields when authoritative detail gains a current value or proposal', async () => {
     const titleField = detail.fields[0]
     if (!titleField) throw new Error('workspace fixture requires a title field')
-    const emptyTitle = { ...titleField, currentRaw: null, proposedValues: [] }
-    const emptySubtitle = {
+    const emptyTitle = {
       ...titleField,
+      classification: 'unsupported',
+      classificationReason: 'This field is unavailable for the current service capability.',
+      currentValue: 'Unavailable',
+      decisionActions: [],
+      editable: false,
+      currentRaw: null,
+      needsAttention: false,
+      navigationRole: 'inspect',
+      proposedValues: [],
+    }
+    const emptySubtitle = {
+      ...emptyTitle,
       destination: 'subtitle',
       currentRaw: '',
-      proposedValues: [],
     }
     let authoritative = false
     const http: ReviewHttp = {

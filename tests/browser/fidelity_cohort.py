@@ -636,6 +636,20 @@ def _case(case_id: str) -> dict[str, object]:
             ),
             editable=False,
             navigation_role="inspect",
+        ),
+        _field(
+            "genres",
+            [],
+            [],
+            disposition="ineligible",
+            needs_attention=False,
+            notices=[
+                "No eligible proposed value is supported by the retained evidence."
+            ],
+            classification="unsupported",
+            classification_reason="This field is unavailable for the current service capability.",
+            editable=False,
+            navigation_role="inspect",
             inventory_role="primary",
         ),
         _field(
