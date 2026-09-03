@@ -294,6 +294,10 @@ class WorkTitleTransformationLineage:
         if (
             type(self.applications) is not tuple
             or not self.applications
+            or any(
+                type(value) is not WorkTitleTransformationApplication
+                for value in self.applications
+            )
             or len(set(self.applications)) != len(self.applications)
             or tuple(sorted(self.applications, key=_application_ordinal))
             != self.applications
@@ -815,6 +819,9 @@ def apply_work_title_transformation(
         return title
     if family is WorkTitleTransformationFamily.PUNCTUATION_AMPERSAND_FOLD:
         return _punctuation_fold(title)
+    if family is WorkTitleTransformationFamily.LATIN_COMBINING_MARKS:
+        folded = _latin_combining_marks_fold(title)
+        return title if folded is None else folded
     raise RuntimeError("work title transformation table is incomplete")
 
 
@@ -1038,7 +1045,16 @@ def _identity_tokens(value: str) -> tuple[str, ...]:
 def _punctuation_fold(value: str) -> str:
     folded = re.sub(r"\b(?:and|&)\b", " and ", value, flags=re.IGNORECASE)
     folded = folded.replace("&", " and ")
-    return _clean(_PUNCTUATION.sub(" ", folded))
+    return _clean(
+        _PUNCTUATION.sub(
+            lambda match: (
+                match.group(0)
+                if unicodedata.category(match.group(0)).startswith("M")
+                else " "
+            ),
+            folded,
+        )
+    )
 
 
 def _latin_combining_marks_fold(value: str) -> str | None:

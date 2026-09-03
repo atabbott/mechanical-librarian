@@ -200,6 +200,18 @@ def test_closed_rule_table_has_one_independent_row_per_family() -> None:
             WorkTitleTransformationFamily.PUNCTUATION_AMPERSAND_FOLD,
             "Plain and Work",
         ),
+        (
+            "Caf\N{LATIN SMALL LETTER E WITH ACUTE}",
+            ("Ada Example",),
+            WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
+            "Cafe",
+        ),
+        (
+            "A\N{COMBINING VERTICAL LINE ABOVE}",
+            ("Ada Example",),
+            WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
+            "A",
+        ),
     ),
 )
 def test_each_rule_shapes_one_bounded_query_rung(
@@ -337,6 +349,47 @@ def test_ampersand_then_latin_dispatch_is_canonical_and_replays() -> None:
                 WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
             ),
         )
+
+
+def test_decomposed_mark_without_precomposition_has_exact_latin_dispatch() -> None:
+    title = "A\N{COMBINING VERTICAL LINE ABOVE} Tale"
+    authors = ("Jose",)
+    query = work_query_ladder(title, authors)[-1]
+
+    assert (query.title, query.authors, query.transformations) == (
+        "A Tale",
+        authors,
+        (WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,),
+    )
+    replayed = replay_provider_work_identity_admission(
+        local_title=title,
+        local_authors=authors,
+        provider_title="A Tale",
+        provider_authors=authors,
+        provider_work_identity="work-1",
+        dispatch_lineage=WorkDispatchLineage.from_query(query),
+    )
+    assert replayed.admitted
+    assert replayed.transformation is not None
+    assert replayed.transformation.applications == (
+        WorkTitleTransformationApplication(
+            WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
+            WorkTitleTransformationSide.LOCAL,
+            WorkTitleTransformationField.TITLE,
+            None,
+        ),
+    )
+
+
+def test_exported_latin_transformation_leaves_inapplicable_text_unchanged() -> None:
+    assert (
+        apply_work_title_transformation(
+            WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
+            "Жозе",
+            (),
+        )
+        == "Жозе"
+    )
 
 
 @pytest.mark.parametrize("value", ("\u0301Cafe", "Жозе", "ø", "ł", "æ", "ß"))
@@ -789,6 +842,16 @@ def test_lineage_readback_rejects_unknown_malformed_and_query_only_admission() -
                 ),
             )
         )
+
+
+@pytest.mark.parametrize("applications", (("malformed",), ({},)))
+def test_lineage_members_are_exact_typed_before_hashing_or_sorting(
+    applications: tuple[object, ...],
+) -> None:
+    with pytest.raises(
+        ValueError, match="work title transformation lineage is invalid"
+    ):
+        WorkTitleTransformationLineage(applications)  # type: ignore[arg-type]  # reason: exercise runtime rejection of malformed retained values
 
 
 @pytest.mark.parametrize(
