@@ -237,7 +237,6 @@ DECORATION_EQUIVALENCE_DECORATED_CONSENSUS_REASON = (
 SUBTITLE_SEGMENT_UNCORROBORATED_REASON = "subtitle_segment_uncorroborated"
 SUBTITLE_SEGMENT_PROVIDER_DISSENT_REASON = "subtitle_segment_provider_dissent"
 SUBTITLE_SEGMENT_DECORATED_CONSENSUS_REASON = "subtitle_segment_decorated_consensus"
-PROVIDER_SEGMENT_CORROBORATED_SUBTITLE_REASON = "provider_segment_corroborated_subtitle"
 PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON = "provider_consensus_contributor_display"
 VERIFIED_MANIFESTATION_ISBN_REASON = "verified_manifestation_isbn"
 MANIFESTATION_ISBN_VERIFICATION_REQUIRED_REASON = "manifestation_verification_required"
@@ -252,7 +251,6 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
             (VERIFIED_MANIFESTATION_ISBN_REASON,),
             *((reason,) for reason in PROVIDER_CONSENSUS_TITLE_REASONS),
             *((reason,) for reason in DECORATION_TIDY_TITLE_REASONS),
-            (PROVIDER_SEGMENT_CORROBORATED_SUBTITLE_REASON,),
             (PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON,),
         }
     ),
@@ -1543,14 +1541,14 @@ def segment_corroboration(
 def _segment_corroborated_subtitle(
     report: MetadataReport, alternatives: tuple[ProposalAlternative, ...]
 ) -> tuple[ProposalAlternative | None, str | None]:
-    """Elect the one competing subtitle an independent source also attests.
+    """Elect the one competing subtitle the book's own metadata attests.
 
     Provider catalogues disagree on how a combined title splits; the packaged
     subtitle claim records the printed form, so among competing candidates the
     one it matches exactly is the safe election. A colon segment stripped from
-    any WORK-scope title claim corroborates on the same terms, but only from a
-    source other than the one stating the subtitle. Zero or multiple attested
-    values keep the choice with the owner.
+    the book's own WORK-scope title corroborates on the same terms, under the
+    shared corroboration guards. Zero or multiple attested values keep the
+    choice with the owner.
     """
     attested = {
         normalize_title(observed).casefold()
@@ -1596,10 +1594,17 @@ def _segment_corroborated_subtitle(
         corroboration = segment_corroboration(report, value, alternative.correlations)
         if corroboration.withheld_reason is not None:
             return None, corroboration.withheld_reason
-        cross = corroboration.segments
-        if not cross:
-            continue
         local = _correlation("local:selected_epub")
+        cross = tuple(
+            segment
+            for segment in corroboration.segments
+            if segment.correlation == local
+        )
+        if not cross:
+            # A provider segment corroborates the automatic projection into an
+            # empty subtitle; it never elects one among competing provider
+            # subtitles, which the frozen adjudication rejected outright.
+            continue
         return (
             ProposalAlternative.create(
                 alternative.value,
@@ -1613,11 +1618,7 @@ def _segment_corroborated_subtitle(
                 alternative.date_event,
                 alternative.date_precision,
             ),
-            (
-                "local_attested_subtitle"
-                if any(segment.correlation == local for segment in cross)
-                else PROVIDER_SEGMENT_CORROBORATED_SUBTITLE_REASON
-            ),
+            "local_attested_subtitle",
         )
     return None, None
 
@@ -4491,7 +4492,6 @@ __all__ = [
     "MAX_PROPOSAL_BYTES",
     "POLICY_VERSION",
     "PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON",
-    "PROVIDER_SEGMENT_CORROBORATED_SUBTITLE_REASON",
     "PROPOSAL_SCHEMA",
     "SUBTITLE_SEGMENT_DECORATED_CONSENSUS_REASON",
     "SUBTITLE_SEGMENT_PROVIDER_DISSENT_REASON",

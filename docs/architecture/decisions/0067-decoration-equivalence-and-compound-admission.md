@@ -89,11 +89,11 @@ F19a successor manifest v5. The proposal policy advances
 **Segment corroboration.** A colon segment stripped by the subtitle-segment
 match from any WORK-scope title claim, local or provider, inherits that claim's
 source correlation and work scope. It never elects a subtitle alone and never
-corroborates a subtitle stated by its own source; it corroborates a
-provider-backed subtitle alternative from a different source, and the automatic
-`subtitle:fill_empty` projection accepts it on the same terms. This supersedes
-the earlier rule that a colon-derived suffix is never F20 corroboration. An
-existing segment that corroborates nothing is stated as
+corroborates a subtitle stated by its own source. Segment corroboration elects
+nothing among competing provider subtitles; it only fills an empty subtitle
+through the automatic `subtitle:fill_empty` projection, under the three guards
+below. This supersedes the earlier rule that a colon-derived suffix is never F20
+corroboration. An existing segment that corroborates nothing is stated as
 `subtitle_segment_uncorroborated`.
 
 Corroboration is decided once, by a single helper both surfaces call, under
@@ -152,9 +152,6 @@ pre-empted the subtitle-segment and series families of F41 entirely.
 
 - Stacked decorations, fuzzy similarity, and three-or-more-member classes stay
   competing evidence and remain owner decisions.
-- The subtitle-dissent guard subsumes the competing-alternative shape the
-  segment election was written for, so a corroborated fill now reaches the owner
-  through the automatic projection rather than through that election.
 - No effect or write authority is granted: the tidy tranche is decision-only.
 
 ## Alternatives considered

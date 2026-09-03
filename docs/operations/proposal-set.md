@@ -55,9 +55,10 @@ now taken only when the title outcome is a keep, which is the only shape the
 
 The subtitle result names an uncorroborated colon segment with
 `subtitle_segment_uncorroborated`, on the competing seam and on an ineligible
-result with no supported evidence; a cross-source provider segment that
-corroborates an elected subtitle reports
-`provider_segment_corroborated_subtitle`.
+result with no supported evidence. Segment corroboration elects nothing among
+competing provider subtitles: the only election it supports is the book's own
+`local_attested_subtitle`, and a provider segment only fills an empty subtitle
+through the automatic projection.
 
 Segment corroboration itself is decided once, by `segment_corroboration`, for
 both the subtitle election and the F20 automatic projection, so the two surfaces

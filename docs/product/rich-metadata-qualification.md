@@ -60,10 +60,9 @@ marketing or status text. Both subtitle policies were therefore initially
 The eighth candidate execution requalified `subtitle:fill_empty` by making the
 book's own packaged metadata the required corroborator. When the target
 subtitle is empty and provider catalogues disagree, the proposal engine now
-elects only the one competing value an independent source attests
-(`local_attested_subtitle`, or `provider_segment_corroborated_subtitle` when the
-corroboration is another source's colon segment); the automatic projection
-separately abstains from any fill whose value no independent claim matches
+elects only the one competing value the book's own metadata attests
+(`local_attested_subtitle`); the automatic projection separately abstains from
+any fill whose value no independent claim matches
 (`subtitle_local_corroboration_required`). Every previously invalid
 prediction — series marketing, proof-only, and franchise descriptors — lacked
 a matching local claim and stays an owner decision. Evaluated with the target

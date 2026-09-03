@@ -474,7 +474,6 @@ const materialComparisonReasons = new Set([
   'subtitle_segment_uncorroborated',
   'subtitle_segment_provider_dissent',
   'subtitle_segment_decorated_consensus',
-  'provider_segment_corroborated_subtitle',
   'provider_consensus_contributor_display',
 ])
 const comparisonNotices = (field: ReviewField) =>
