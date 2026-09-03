@@ -6,6 +6,7 @@ source-lexical timestamp voting matrix.
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Callable
 from dataclasses import replace
 from typing import cast
@@ -96,7 +97,10 @@ from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     WorkDispatchRung,
+    WorkTitleTransformationApplication,
     WorkTitleTransformationFamily,
+    WorkTitleTransformationField,
+    WorkTitleTransformationSide,
     narrowing_work_query,
     work_query_ladder,
 )
@@ -111,6 +115,7 @@ from tests.support.metadata_report_doubles import (
     FakeTarget,
     single_track_audio_facts,
 )
+from tests.support.metadata_report_schemas import synthetic_latin_work_report
 
 
 def _work_dispatch(
@@ -914,7 +919,7 @@ def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
             "stage": "lookup",
         }
     ]
-    assert "metadata-report-v36" == report.schema_version
+    assert "metadata-report-v37" == report.schema_version
     previous = report.to_data()
     previous["schema_version"] = "metadata-report-v22"
     with pytest.raises(ReportValueError):
@@ -1595,6 +1600,216 @@ def test_work_lookup_rejects_missing_or_ambiguous_decoration_lineage() -> None:
         )
 
 
+def test_latin_candidate_set_keeps_evidence_exact_and_rejects_two_work_ids() -> None:
+    def candidate(
+        identity: str,
+        work_identity: str,
+        title: str,
+        author: str,
+    ) -> ProviderCandidate:
+        return ProviderCandidate(
+            identity,
+            work_identity,
+            (
+                ProviderClaim.create(
+                    provider="catalogue",
+                    candidate=identity,
+                    kind=ClaimKind.TITLE,
+                    value=title,
+                    state=FieldState.VALID,
+                    scope=ClaimScope.WORK,
+                    applicability="not_applicable",
+                ),
+                ProviderClaim.create(
+                    provider="catalogue",
+                    candidate=identity,
+                    kind=ClaimKind.CREATOR,
+                    value=author,
+                    state=FieldState.VALID,
+                    scope=ClaimScope.WORK,
+                    applicability="not_applicable",
+                    role="author",
+                    raw_order=1,
+                ),
+            ),
+        )
+
+    local_title = "Caf\N{LATIN SMALL LETTER E WITH ACUTE}"
+    local_authors = ("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",)
+    lookup = MetadataLookup(ProviderQueryKind.WORK, (), local_title, local_authors)
+    dispatch = WorkDispatchLineage.from_query(
+        work_query_ladder(local_title, local_authors)[-1]
+    )
+    recorded = candidate("edition-1", "work-1", "Cafe", "Jose")
+    qualified = qualify_provider_observation(
+        ProviderObservation(
+            "catalogue",
+            ProviderStatus.CANDIDATES,
+            (),
+            (recorded,),
+            ProviderQueryKind.WORK,
+            dispatch_lineage=dispatch,
+        ),
+        lookup,
+    )
+
+    assert ProviderStatus.CANDIDATES is qualified.status
+    assert (recorded,) == qualified.candidates
+    assert (local_title, local_authors) == (lookup.title, lookup.authors)
+    assert qualified.dispatch_lineage == dispatch
+    assert dispatch.transformations[-1] is (
+        WorkTitleTransformationFamily.LATIN_COMBINING_MARKS
+    )
+    assert qualified.transformation_lineage is not None
+    assert qualified.transformation_lineage.applications == (
+        WorkTitleTransformationApplication(
+            WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
+            WorkTitleTransformationSide.LOCAL,
+            WorkTitleTransformationField.TITLE,
+            None,
+        ),
+        WorkTitleTransformationApplication(
+            WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
+            WorkTitleTransformationSide.LOCAL,
+            WorkTitleTransformationField.AUTHORS,
+            0,
+        ),
+    )
+
+    provider_only = qualify_provider_observation(
+        ProviderObservation(
+            "catalogue",
+            ProviderStatus.CANDIDATES,
+            (),
+            (
+                candidate(
+                    "edition-1",
+                    "work-1",
+                    "Caf\N{LATIN SMALL LETTER E WITH ACUTE}",
+                    "Jos\N{LATIN SMALL LETTER E WITH ACUTE}",
+                ),
+            ),
+            ProviderQueryKind.WORK,
+            dispatch_lineage=WorkDispatchLineage.from_query(
+                work_query_ladder("Cafe", ("Jose",))[0]
+            ),
+        ),
+        MetadataLookup(ProviderQueryKind.WORK, (), "Cafe", ("Jose",)),
+    )
+    assert provider_only.transformation_lineage is not None
+    assert {
+        application.side
+        for application in provider_only.transformation_lineage.applications
+    } == {WorkTitleTransformationSide.PROVIDER}
+    assert provider_only.dispatch_lineage is not None
+    assert WorkTitleTransformationFamily.LATIN_COMBINING_MARKS not in (
+        provider_only.dispatch_lineage.transformations
+    )
+
+    ambiguous = qualify_provider_observation(
+        ProviderObservation(
+            "catalogue",
+            ProviderStatus.CANDIDATES,
+            (),
+            (
+                recorded,
+                candidate("edition-2", "work-2", "Cafe", "Jose"),
+            ),
+            ProviderQueryKind.WORK,
+            dispatch_lineage=dispatch,
+        ),
+        lookup,
+    )
+    assert ProviderStatus.NO_MATCH is ambiguous.status
+    assert ambiguous.dispatch_lineage is None
+    assert ambiguous.transformation_lineage is None
+
+
+@pytest.mark.parametrize(
+    "variant",
+    (
+        "missing",
+        "extra",
+        "duplicate",
+        "misordered",
+        "wrong_side",
+        "wrong_field",
+        "wrong_author_ordinal",
+        "noop_application",
+    ),
+)
+def test_report_replay_rejects_each_forged_latin_application(variant: str) -> None:
+    data = synthetic_latin_work_report().to_data()
+    provider = cast(dict[str, object], cast(list[object], data["providers"])[0])
+    lineage = cast(dict[str, object], provider["transformation_lineage"])
+    applications = cast(list[dict[str, object]], lineage["applications"])
+    title, author = applications
+
+    if variant == "missing":
+        applications[:] = [title]
+    elif variant == "extra":
+        applications.append({**author, "ordinal": 1})
+    elif variant == "duplicate":
+        applications.append(dict(author))
+    elif variant == "misordered":
+        applications.reverse()
+    elif variant == "wrong_side":
+        applications[:] = [author, {**title, "side": "provider"}]
+    elif variant == "wrong_field":
+        applications[0] = {**title, "field": "authors", "ordinal": 0}
+    elif variant == "wrong_author_ordinal":
+        applications[1] = {**author, "ordinal": 1}
+    else:
+        applications.append({**title, "family": "punctuation_ampersand_fold"})
+
+    identity_data = dict(data)
+    identity_data.pop("report_id")
+    data["report_id"] = (
+        "report_" + hashlib.sha256(canonical_json(identity_data).encode()).hexdigest()
+    )
+    with pytest.raises(ValueError):
+        MetadataReport.from_json(canonical_json(data))
+
+
+def test_report_json_separates_latin_dispatch_from_admission_evidence() -> None:
+    document = json.loads(synthetic_latin_work_report().to_json())
+    provider = document["providers"][0]
+
+    assert [
+        (field["destination"], field["value"])
+        for field in document["target"]["fields"]
+        if field["destination"] in {"title", "authors"}
+    ] == [
+        ("title", "Caf\N{LATIN SMALL LETTER E WITH ACUTE}"),
+        ("authors", ["Jos\N{LATIN SMALL LETTER E WITH ACUTE}"]),
+    ]
+    assert provider["dispatch_lineage"] == {
+        "candidate_limit_narrowing_retry": False,
+        "rung": "punctuation_folded",
+        "transformations": ["latin_combining_marks"],
+    }
+    assert provider["transformation_lineage"] == {
+        "applications": [
+            {
+                "family": "latin_combining_marks",
+                "field": "title",
+                "ordinal": None,
+                "side": "local",
+            },
+            {
+                "family": "latin_combining_marks",
+                "field": "authors",
+                "ordinal": 0,
+                "side": "local",
+            },
+        ],
+        "production": "latin_combining_marks",
+    }
+    assert ["Cafe", "Jose"] == [
+        claim["value"] for claim in provider["candidates"][0]["claims"]
+    ]
+
+
 def test_edition_overflow_rejects_query_only_decoration_and_admits_exact() -> None:
     author = ProviderClaim.create(
         provider="catalogue",
@@ -1691,6 +1906,75 @@ def test_edition_overflow_rejects_query_only_decoration_and_admits_exact() -> No
         ),
     )
     assert rejected_variant.edition_enrichment_overflow is None
+
+
+def test_latin_edition_overflow_replays_only_its_exact_application_lineage() -> None:
+    author = ProviderClaim.create(
+        provider="catalogue",
+        candidate="work-1",
+        kind=ClaimKind.CREATOR,
+        value="Jose",
+        state=FieldState.VALID,
+        scope=ClaimScope.WORK,
+        applicability="not_applicable",
+        role="author",
+    )
+    witness = EditionEnrichmentOverflow(
+        "work-1",
+        "Cafe",
+        (author,),
+        (
+            ProviderIdentityBinding(
+                author.reference,
+                "author-1",
+                ClaimScope.WORK,
+                "author",
+            ),
+        ),
+    )
+    title = "Caf\N{LATIN SMALL LETTER E WITH ACUTE}"
+    authors = ("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",)
+    dispatch = WorkDispatchLineage.from_query(work_query_ladder(title, authors)[-1])
+    qualified = qualify_provider_observation(
+        ProviderObservation(
+            "catalogue",
+            ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+            (),
+            (),
+            ProviderQueryKind.WORK,
+            edition_enrichment_overflow=witness,
+            dispatch_lineage=dispatch,
+        ),
+        MetadataLookup(ProviderQueryKind.WORK, (), title, authors),
+    )
+
+    assert qualified.edition_enrichment_overflow == witness
+    assert qualified.dispatch_lineage == dispatch
+    assert qualified.transformation_lineage is not None
+    assert qualified.transformation_lineage.applications == (
+        WorkTitleTransformationApplication(
+            WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
+            WorkTitleTransformationSide.LOCAL,
+            WorkTitleTransformationField.TITLE,
+            None,
+        ),
+        WorkTitleTransformationApplication(
+            WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
+            WorkTitleTransformationSide.LOCAL,
+            WorkTitleTransformationField.AUTHORS,
+            0,
+        ),
+    )
+
+    mismatched = qualify_provider_observation(
+        replace(
+            qualified,
+            edition_enrichment_overflow=replace(witness, title="Cafes"),
+        ),
+        MetadataLookup(ProviderQueryKind.WORK, (), title, authors),
+    )
+    assert mismatched.edition_enrichment_overflow is None
+    assert mismatched.transformation_lineage is None
 
 
 def test_generate_report_preserves_only_work_lane_date_explanations() -> None:

@@ -29,11 +29,47 @@ class WorkTitleTransformationFamily(StrEnum):
     ORDER_INVERTED_SERIES_PREFIX = "order_inverted_series_prefix"
     SUBTITLE_SEGMENT = "subtitle_segment"
     PUNCTUATION_AMPERSAND_FOLD = "punctuation_ampersand_fold"
+    LATIN_COMBINING_MARKS = "latin_combining_marks"
 
 
 class WorkTitleTransformationSide(StrEnum):
     LOCAL = "local"
     PROVIDER = "provider"
+
+
+class WorkTitleTransformationField(StrEnum):
+    TITLE = "title"
+    AUTHORS = "authors"
+
+
+@dataclass(frozen=True, slots=True)
+class WorkTitleTransformationApplication:
+    """One exact field value changed by a closed transformation family."""
+
+    family: WorkTitleTransformationFamily
+    side: WorkTitleTransformationSide
+    field: WorkTitleTransformationField
+    ordinal: int | None
+
+    def __post_init__(self) -> None:
+        if (
+            not exact_type(WorkTitleTransformationFamily)(self.family)
+            or not exact_type(WorkTitleTransformationSide)(self.side)
+            or not exact_type(WorkTitleTransformationField)(self.field)
+            or self.field is WorkTitleTransformationField.TITLE
+            and self.ordinal is not None
+            or self.field is WorkTitleTransformationField.AUTHORS
+            and (type(self.ordinal) is not int or self.ordinal < 0)
+        ):
+            raise ValueError("work title transformation application is invalid")
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "family": self.family.value,
+            "field": self.field.value,
+            "ordinal": self.ordinal,
+            "side": self.side.value,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,7 +125,7 @@ class WorkTitleCompoundProduction:
         if (
             not nonempty_text(self.name)
             or type(self.families) is not tuple
-            or len(self.families) < 2
+            or not self.families
             or len(set(self.families)) != len(self.families)
             or any(
                 type(value) is not WorkTitleTransformationFamily
@@ -174,6 +210,12 @@ WORK_TITLE_TRANSFORMATION_RULES = (
         False,
         WorkDispatchRung.PUNCTUATION_FOLDED,
     ),
+    WorkTitleTransformationRule(
+        WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
+        True,
+        False,
+        WorkDispatchRung.PUNCTUATION_FOLDED,
+    ),
 )
 
 
@@ -244,29 +286,35 @@ class WorkDispatchLineage:
 
 @dataclass(frozen=True, slots=True)
 class WorkTitleTransformationLineage:
-    """The ordered family lineage of one admission-enabled compound production."""
+    """Canonical exact transformation applications which admitted one work."""
 
-    families: tuple[WorkTitleTransformationFamily, ...]
-    side: WorkTitleTransformationSide
+    applications: tuple[WorkTitleTransformationApplication, ...]
 
     def __post_init__(self) -> None:
         if (
-            type(self.families) is not tuple
-            or self.families not in _ADMITTED_PRODUCTIONS_BY_FAMILIES
-            or type(self.side) is not WorkTitleTransformationSide
-            or self.side is not WorkTitleTransformationSide.LOCAL
+            type(self.applications) is not tuple
+            or not self.applications
+            or any(
+                type(value) is not WorkTitleTransformationApplication
+                for value in self.applications
+            )
+            or len(set(self.applications)) != len(self.applications)
+            or tuple(sorted(self.applications, key=_application_ordinal))
+            != self.applications
+            or _lineage_production(self.applications) is None
         ):
             raise ValueError("work title transformation lineage is invalid")
 
     @property
     def production(self) -> str:
-        return _ADMITTED_PRODUCTIONS_BY_FAMILIES[self.families].name
+        production = _lineage_production(self.applications)
+        assert production is not None
+        return production
 
     def to_data(self) -> dict[str, object]:
         return {
-            "families": [value.value for value in self.families],
+            "applications": [value.to_data() for value in self.applications],
             "production": self.production,
-            "side": self.side.value,
         }
 
 
@@ -304,12 +352,60 @@ WORK_TITLE_COMPOUND_PRODUCTIONS = (
         ),
         True,
     ),
+    WorkTitleCompoundProduction(
+        "latin_combining_marks",
+        (WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,),
+        True,
+    ),
 )
 _ADMITTED_PRODUCTIONS_BY_FAMILIES = {
     production.families: production
     for production in WORK_TITLE_COMPOUND_PRODUCTIONS
     if production.admission_enabled
 }
+
+
+def _application_ordinal(
+    value: WorkTitleTransformationApplication,
+) -> tuple[int, int, int, int]:
+    return (
+        0 if value.side is WorkTitleTransformationSide.LOCAL else 1,
+        0 if value.field is WorkTitleTransformationField.TITLE else 1,
+        -1 if value.ordinal is None else value.ordinal,
+        {
+            WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX: 0,
+            WorkTitleTransformationFamily.FILENAME_UNDERSCORES: 1,
+        }.get(value.family, _RULE_ORDINAL[value.family] + 2),
+    )
+
+
+def _lineage_production(
+    applications: tuple[WorkTitleTransformationApplication, ...],
+) -> str | None:
+    compound = (
+        WorkTitleTransformationApplication(
+            WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
+            WorkTitleTransformationSide.LOCAL,
+            WorkTitleTransformationField.TITLE,
+            None,
+        ),
+        WorkTitleTransformationApplication(
+            WorkTitleTransformationFamily.FILENAME_UNDERSCORES,
+            WorkTitleTransformationSide.LOCAL,
+            WorkTitleTransformationField.TITLE,
+            None,
+        ),
+    )
+    if applications == compound:
+        return "author_prefix_then_underscores"
+    if all(
+        value.family is WorkTitleTransformationFamily.LATIN_COMBINING_MARKS
+        for value in applications
+    ):
+        return "latin_combining_marks"
+    return None
+
+
 if len({production.name for production in WORK_TITLE_COMPOUND_PRODUCTIONS}) != len(
     WORK_TITLE_COMPOUND_PRODUCTIONS
 ):
@@ -367,6 +463,11 @@ def work_query_ladder(title: str, authors: tuple[str, ...]) -> tuple[WorkQuery, 
         raise ValueError("work query input is invalid")
     shaped_title = _normalized_query_text(title)
     shaped_authors = tuple(_normalized_query_text(value) for value in authors)
+    latin_inputs_applicable = _latin_combining_marks_fold(
+        shaped_title
+    ) is not None and all(
+        _latin_combining_marks_fold(value) is not None for value in shaped_authors
+    )
     applied: list[WorkTitleTransformationFamily] = []
     for rule in WORK_TITLE_TRANSFORMATION_RULES:
         if rule.rung is not WorkDispatchRung.NORMALIZED or not rule.query_enabled:
@@ -413,6 +514,21 @@ def work_query_ladder(title: str, authors: tuple[str, ...]) -> tuple[WorkQuery, 
     folded_applied = subtitle_applied
     if folded_title != subtitle or folded_authors != shaped_authors:
         folded_applied += (WorkTitleTransformationFamily.PUNCTUATION_AMPERSAND_FOLD,)
+    latin_title = _latin_combining_marks_fold(folded_title)
+    latin_authors = tuple(
+        _latin_combining_marks_fold(value) for value in folded_authors
+    )
+    if (
+        latin_inputs_applicable
+        and latin_title is not None
+        and all(value is not None for value in latin_authors)
+    ):
+        if latin_title != folded_title or latin_authors != folded_authors:
+            folded_title = latin_title
+            folded_authors = tuple(
+                value for value in latin_authors if value is not None
+            )
+            folded_applied += (WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,)
     if folded_title and all(folded_authors):
         candidates.append(
             WorkQuery(
@@ -453,13 +569,26 @@ def _dispatch_transformations_are_canonical(
             )
         )
     return bool(transformations) and (
-        transformations[-1] is WorkTitleTransformationFamily.PUNCTUATION_AMPERSAND_FOLD
+        transformations[-1]
+        in {
+            WorkTitleTransformationFamily.PUNCTUATION_AMPERSAND_FOLD,
+            WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
+        }
         and all(
             _RULES_BY_FAMILY[family].rung is WorkDispatchRung.NORMALIZED
+            or (
+                family is WorkTitleTransformationFamily.PUNCTUATION_AMPERSAND_FOLD
+                and transformations[-1]
+                is WorkTitleTransformationFamily.LATIN_COMBINING_MARKS
+            )
             for family in transformations[:-1]
             if family is not WorkTitleTransformationFamily.SUBTITLE_SEGMENT
         )
         and transformations[:-1].count(WorkTitleTransformationFamily.SUBTITLE_SEGMENT)
+        <= 1
+        and transformations.count(
+            WorkTitleTransformationFamily.PUNCTUATION_AMPERSAND_FOLD
+        )
         <= 1
     )
 
@@ -501,16 +630,38 @@ def admit_provider_work_identity(
         or variant_excluded
         or work_title_has_variant_marker(local_title)
         or work_title_has_variant_marker(provider_title)
+    ):
+        return WorkIdentityAdmission(False)
+    local_latin_title = _latin_combining_marks_fold(local_title)
+    provider_latin_title = _latin_combining_marks_fold(provider_title)
+    if (
+        local_latin_title is not None
+        and provider_latin_title is not None
+        and (
+            work_title_has_variant_marker(local_latin_title)
+            or work_title_has_variant_marker(provider_latin_title)
+        )
+    ):
+        return WorkIdentityAdmission(False)
+    if _closed_equal(local_title, provider_title) and all(
+        _closed_equal(local, provider)
+        for local, provider in zip(local_authors, provider_authors, strict=True)
+    ):
+        return WorkIdentityAdmission(True)
+    latin = _latin_admission_lineage(
+        local_title, local_authors, provider_title, provider_authors
+    )
+    if latin is not None:
+        return WorkIdentityAdmission(True, latin)
+    remainder = _filename_author_title_prefix_remainder(local_title, local_authors)
+    if (
+        remainder is None
+        or "_" not in remainder
         or any(
             not _closed_equal(local, provider)
             for local, provider in zip(local_authors, provider_authors, strict=True)
         )
     ):
-        return WorkIdentityAdmission(False)
-    if _closed_equal(local_title, provider_title):
-        return WorkIdentityAdmission(True)
-    remainder = _filename_author_title_prefix_remainder(local_title, local_authors)
-    if remainder is None or "_" not in remainder:
         # Prefix-only and underscores-only inputs stay query shaping: neither
         # constituent family admits outside the reviewed compound production.
         return WorkIdentityAdmission(False)
@@ -523,10 +674,19 @@ def admit_provider_work_identity(
         True,
         WorkTitleTransformationLineage(
             (
-                WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
-                WorkTitleTransformationFamily.FILENAME_UNDERSCORES,
+                WorkTitleTransformationApplication(
+                    WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
+                    WorkTitleTransformationSide.LOCAL,
+                    WorkTitleTransformationField.TITLE,
+                    None,
+                ),
+                WorkTitleTransformationApplication(
+                    WorkTitleTransformationFamily.FILENAME_UNDERSCORES,
+                    WorkTitleTransformationSide.LOCAL,
+                    WorkTitleTransformationField.TITLE,
+                    None,
+                ),
             ),
-            WorkTitleTransformationSide.LOCAL,
         ),
     )
 
@@ -586,18 +746,33 @@ def work_dispatch_lineage_from_data(value: object) -> WorkDispatchLineage:
 def work_title_transformation_lineage_from_data(
     value: object,
 ) -> WorkTitleTransformationLineage:
-    if type(value) is not dict or set(value) != {"families", "production", "side"}:
+    if type(value) is not dict or set(value) != {"applications", "production"}:
         raise ValueError("work title transformation lineage is invalid")
-    families = value["families"]
-    if type(families) is not list:
+    applications = value["applications"]
+    if type(applications) is not list:
         raise ValueError("work title transformation lineage is invalid")
     lineage = WorkTitleTransformationLineage(
-        tuple(WorkTitleTransformationFamily(item) for item in families),
-        WorkTitleTransformationSide(value["side"]),
+        tuple(
+            _work_title_transformation_application_from_data(item)
+            for item in applications
+        ),
     )
     if lineage.production != value["production"]:
         raise ValueError("work title transformation lineage is invalid")
     return lineage
+
+
+def _work_title_transformation_application_from_data(
+    value: object,
+) -> WorkTitleTransformationApplication:
+    if type(value) is not dict or set(value) != {"family", "field", "ordinal", "side"}:
+        raise ValueError("work title transformation application is invalid")
+    return WorkTitleTransformationApplication(
+        WorkTitleTransformationFamily(value["family"]),
+        WorkTitleTransformationSide(value["side"]),
+        WorkTitleTransformationField(value["field"]),
+        value["ordinal"],
+    )
 
 
 def apply_work_title_transformation(
@@ -655,6 +830,9 @@ def apply_work_title_transformation(
         return title
     if family is WorkTitleTransformationFamily.PUNCTUATION_AMPERSAND_FOLD:
         return _punctuation_fold(title)
+    if family is WorkTitleTransformationFamily.LATIN_COMBINING_MARKS:
+        folded = _latin_combining_marks_fold(title)
+        return title if folded is None else folded
     raise RuntimeError("work title transformation table is incomplete")
 
 
@@ -878,7 +1056,101 @@ def _identity_tokens(value: str) -> tuple[str, ...]:
 def _punctuation_fold(value: str) -> str:
     folded = re.sub(r"\b(?:and|&)\b", " and ", value, flags=re.IGNORECASE)
     folded = folded.replace("&", " and ")
-    return _clean(_PUNCTUATION.sub(" ", folded))
+    return _clean(
+        _PUNCTUATION.sub(
+            lambda match: (
+                match.group(0)
+                if unicodedata.category(match.group(0)).startswith("M")
+                else " "
+            ),
+            folded,
+        )
+    )
+
+
+def _latin_combining_marks_fold(value: str) -> str | None:
+    """Return the one closed Latin-mark fold, or no application.
+
+    NFD exposes only canonical marks. A mark is removable only in the cluster
+    following a Latin-named base letter; orphan marks and non-Latin letters make
+    that field inapplicable. Compatibility decomposition and substitutions are
+    deliberately absent.
+    """
+    decomposed = unicodedata.normalize("NFD", value)
+    result: list[str] = []
+    latin_cluster = False
+    for character in decomposed:
+        if unicodedata.category(character).startswith("L"):
+            if not unicodedata.name(character, "").startswith("LATIN "):
+                return None
+            latin_cluster = True
+            result.append(character)
+        elif unicodedata.category(character).startswith("M"):
+            if not latin_cluster:
+                return None
+        else:
+            latin_cluster = False
+            result.append(character)
+    folded = unicodedata.normalize("NFC", "".join(result))
+    return folded
+
+
+def _latin_admission_lineage(
+    local_title: str,
+    local_authors: tuple[str, ...],
+    provider_title: str,
+    provider_authors: tuple[str, ...],
+) -> WorkTitleTransformationLineage | None:
+    applications: list[WorkTitleTransformationApplication] = []
+
+    def fold(
+        local: str,
+        provider: str,
+        field: WorkTitleTransformationField,
+        ordinal: int | None,
+    ) -> bool:
+        local_folded = _latin_combining_marks_fold(local)
+        provider_folded = _latin_combining_marks_fold(provider)
+        if local_folded is None or provider_folded is None:
+            return False
+        if not _closed_equal(local_folded, provider_folded):
+            return False
+        if local_folded != local:
+            applications.append(
+                WorkTitleTransformationApplication(
+                    WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
+                    WorkTitleTransformationSide.LOCAL,
+                    field,
+                    ordinal,
+                )
+            )
+        if provider_folded != provider:
+            applications.append(
+                WorkTitleTransformationApplication(
+                    WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
+                    WorkTitleTransformationSide.PROVIDER,
+                    field,
+                    ordinal,
+                )
+            )
+        return True
+
+    if not fold(local_title, provider_title, WorkTitleTransformationField.TITLE, None):
+        return None
+    if not all(
+        fold(local, provider, WorkTitleTransformationField.AUTHORS, ordinal)
+        for ordinal, (local, provider) in enumerate(
+            zip(local_authors, provider_authors, strict=True)
+        )
+    ):
+        return None
+    return (
+        WorkTitleTransformationLineage(
+            tuple(sorted(applications, key=_application_ordinal))
+        )
+        if applications
+        else None
+    )
 
 
 def _remove_valid_identifier(match: re.Match[str]) -> str:
@@ -926,6 +1198,8 @@ __all__ = [
     "WorkQuery",
     "WorkTitleCompoundProduction",
     "WorkTitleTransformationFamily",
+    "WorkTitleTransformationApplication",
+    "WorkTitleTransformationField",
     "WorkTitleElectionMatch",
     "WorkTitleTransformationLineage",
     "WorkTitleTransformationRule",

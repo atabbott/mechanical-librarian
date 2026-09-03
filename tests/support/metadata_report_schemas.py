@@ -7,25 +7,40 @@ database must be preserved beside.
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 import subprocess
 import sys
 from pathlib import Path
+from typing import cast
 
 import mechanical_librarian.adapters.persistence.schema as persistence_schema
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
+    FieldState,
     FileFacts,
     LocalClaim,
     MetadataReport,
+    ProviderCandidate,
+    ProviderClaim,
     ProviderObservation,
+    ProviderQueryKind,
     ProviderStatus,
+    TargetDestination,
     TargetFacts,
+    TargetField,
+    TargetFieldState,
+    canonical_json,
     default_target_fields,
 )
 from mechanical_librarian.domain.proposal_set import (
     POLICY_VERSION,
+)
+from mechanical_librarian.domain.work_identity import (
+    WorkDispatchLineage,
+    admit_provider_work_identity,
+    work_query_ladder,
 )
 
 
@@ -50,10 +65,97 @@ def synthetic_report(title: str = "Current title") -> MetadataReport:
     )
 
 
+def synthetic_latin_work_report() -> MetadataReport:
+    """One qualified report whose dispatch and admission lineages differ."""
+    local_title = "Caf\N{LATIN SMALL LETTER E WITH ACUTE}"
+    local_author = "Jos\N{LATIN SMALL LETTER E WITH ACUTE}"
+    provider_title = "Cafe"
+    provider_author = "Jose"
+    candidate = ProviderCandidate(
+        "edition-1",
+        "work-1",
+        (
+            ProviderClaim.create(
+                provider="catalogue",
+                candidate="edition-1",
+                kind=ClaimKind.TITLE,
+                value=provider_title,
+                state=FieldState.VALID,
+                scope=ClaimScope.WORK,
+                applicability="not_applicable",
+            ),
+            ProviderClaim.create(
+                provider="catalogue",
+                candidate="edition-1",
+                kind=ClaimKind.CREATOR,
+                value=provider_author,
+                state=FieldState.VALID,
+                scope=ClaimScope.WORK,
+                applicability="not_applicable",
+                role="author",
+                raw_order=1,
+            ),
+        ),
+    )
+    admission = admit_provider_work_identity(
+        local_title=local_title,
+        local_authors=(local_author,),
+        provider_title=provider_title,
+        provider_authors=(provider_author,),
+        provider_work_identity="work-1",
+    )
+    assert admission.transformation is not None
+    fields = tuple(
+        TargetField(
+            TargetDestination.AUTHORS,
+            TargetFieldState.VALUE,
+            (local_author,),
+        )
+        if field.destination is TargetDestination.AUTHORS
+        else field
+        for field in default_target_fields(local_title)
+    )
+    return MetadataReport.create(
+        target=TargetFacts("primary", "ebooks", "item-1", fields),
+        file=FileFacts(0, "a" * 64, "b" * 64),
+        local_claims=(),
+        local_reasons=("target_metadata",),
+        providers=(
+            ProviderObservation(
+                "catalogue",
+                ProviderStatus.CANDIDATES,
+                (),
+                (candidate,),
+                ProviderQueryKind.WORK,
+                dispatch_lineage=WorkDispatchLineage.from_query(
+                    work_query_ladder(local_title, (local_author,))[-1]
+                ),
+                transformation_lineage=admission.transformation,
+            ),
+        ),
+    )
+
+
+def forged_latin_work_report_json() -> tuple[str, str]:
+    """A self-consistent report envelope missing required Latin evidence."""
+    data = synthetic_latin_work_report().to_data()
+    provider = cast(dict[str, object], cast(list[object], data["providers"])[0])
+    lineage = cast(dict[str, object], provider["transformation_lineage"])
+    applications = cast(list[object], lineage["applications"])
+    applications.pop()
+    identity_data = dict(data)
+    identity_data.pop("report_id")
+    report_id = (
+        "report_" + hashlib.sha256(canonical_json(identity_data).encode()).hexdigest()
+    )
+    data["report_id"] = report_id
+    return report_id, canonical_json(data)
+
+
 def create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v36'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v37'", "= 'metadata-report-v1'"
         )
     )
     connection.execute(persistence_schema._CURRENT_SQL)
@@ -68,7 +170,7 @@ def create_prior_schema(
 ) -> None:
     statements = (
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v36'", f"= '{version}'"
+            "= 'metadata-report-v37'", f"= '{version}'"
         ),
         persistence_schema._CURRENT_SQL,
         persistence_schema._CURRENT_LINEAGE_SQL,

@@ -56,6 +56,7 @@ from mechanical_librarian.domain.metadata_report import (
     isbn_family,
 )
 from mechanical_librarian.domain.work_identity import (
+    WorkDispatchRung,
     WorkTitleTransformationFamily,
 )
 from mechanical_librarian.infrastructure.security.credentials import (
@@ -248,6 +249,88 @@ def test_work_query_ladder_is_bounded_and_accounted_as_retries() -> None:
     assert "Ada and Bea" == requests[2].url.params["author"]
     assert 1 == observation.request_accounting.initial_dispatches
     assert 2 == observation.request_accounting.retry_dispatches
+
+
+def test_latin_fold_reaches_open_library_only_on_final_bounded_search() -> None:
+    requests: list[httpx.Request] = []
+    search_count = 0
+    work = _work()
+    work["title"] = "Cafe: Notes"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal search_count
+        requests.append(request)
+        if request.url.path == "/search.json":
+            search_count += 1
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json=(
+                    {"docs": []}
+                    if search_count < 3
+                    else {
+                        "docs": [
+                            {
+                                "key": "/works/OL5W",
+                                "title": "Cafe: Notes",
+                                "author_name": ["Jose"],
+                                "author_key": ["OL7A"],
+                                "edition_key": ["OL1M"],
+                                "editions": {"docs": [{"key": "/books/OL1M"}]},
+                            }
+                        ]
+                    }
+                ),
+            )
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json=(
+                _edition("/books/OL1M")
+                if request.url.path == "/books/OL1M.json"
+                else work
+            ),
+        )
+
+    observation = OpenLibraryMetadataProvider(
+        "open_library",
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        65_536,
+        pacer=OpenLibraryPacer(sleep=lambda _: None),
+    ).observe(
+        MetadataLookup(
+            ProviderQueryKind.WORK,
+            (),
+            "Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes",
+            ("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",),
+        )
+    )
+
+    searches = [request for request in requests if request.url.path == "/search.json"]
+    assert [
+        (
+            "Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes",
+            "Jos\N{LATIN SMALL LETTER E WITH ACUTE}",
+        ),
+        (
+            "Caf\N{LATIN SMALL LETTER E WITH ACUTE}",
+            "Jos\N{LATIN SMALL LETTER E WITH ACUTE}",
+        ),
+        ("Cafe", "Jose"),
+    ] == [
+        (request.url.params["title"], request.url.params["author"])
+        for request in searches
+    ]
+    assert observation.dispatch_lineage is not None
+    assert observation.dispatch_lineage.rung is WorkDispatchRung.PUNCTUATION_FOLDED
+    assert observation.dispatch_lineage.transformations[-1] is (
+        WorkTitleTransformationFamily.LATIN_COMBINING_MARKS
+    )
+    assert 3 == observation.request_accounting.logical_requests
+    assert (3, 2) == (
+        observation.request_accounting.initial_dispatches,
+        observation.request_accounting.retry_dispatches,
+    )
 
 
 @pytest.mark.parametrize(

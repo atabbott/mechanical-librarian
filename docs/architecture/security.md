@@ -690,7 +690,7 @@ deadline, byte, and request-count authority. Attempt records are bounded and
 process-local. Provider adapters also count optional parser/schema rejections
 at their actual rejection points. The application canonically merges those
 counts once with the attempt categories and incomplete-outcome mapping for
-`metadata-report-v36`; provider, attempt ordinal, delay, elapsed time,
+`metadata-report-v37`; provider, attempt ordinal, delay, elapsed time,
 headers, bodies, and exception text are dropped. Application-created
 query-limit outcomes follow the same closed mapping and persist
 provider/lookup_construction/lookup without constructing or invoking a
@@ -708,7 +708,11 @@ a separator from the closed set, and a remainder carrying at least one filename
 underscore that normalizes to the provider title under the unchanged closed
 comparison — grants WORK admission, and the report persists its ordered lineage
 of families, production name, and local side. Replay rejects every lineage that
-is not exactly that enabled production. The identity floor and every
+is not exactly that enabled production. ADR-0068 additionally permits the
+closed Latin combining-mark family. Its admission lineage records exact changed
+local/provider title and author ordinals, while dispatch lineage records only
+the actual request; no retained claim is rewritten and compatibility or
+transliteration matching remains unavailable. The identity floor and every
 translation, adaptation, abridgement, and variant-marker veto are unchanged.
 All widening and narrowing requests remain inside the existing deadline,
 pacing, byte, dispatch-count, and retry-accounting boundaries; ISBN/ASIN

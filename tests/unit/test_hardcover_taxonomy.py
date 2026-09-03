@@ -96,6 +96,66 @@ def test_work_query_ladder_and_narrowing_use_closed_graphql_grammars() -> None:
     assert 1 == observation.request_accounting.retry_dispatches
 
 
+def test_latin_fold_reaches_hardcover_only_on_the_final_bounded_dispatch() -> None:
+    requests: list[dict[str, object]] = []
+    matching = hardcover_envelope(
+        [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}],
+        [
+            {
+                "id": 1,
+                "title": "Cafe: Notes",
+                "contributions": [
+                    {
+                        "id": 1,
+                        "contribution": "Author",
+                        "author": {"id": 7, "name": "Jose"},
+                    }
+                ],
+            }
+        ],
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json=hardcover_envelope([], []) if len(requests) < 3 else matching,
+        )
+
+    observation = HardcoverMetadataProvider(
+        "catalogue",
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        65_536,
+    ).observe(
+        work_lookup(
+            "Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes",
+            ("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",),
+        )
+    )
+
+    assert [
+        {
+            "authors": ["Jos\N{LATIN SMALL LETTER E WITH ACUTE}"],
+            "title": "Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes",
+        },
+        {
+            "authors": ["Jos\N{LATIN SMALL LETTER E WITH ACUTE}"],
+            "title": "Caf\N{LATIN SMALL LETTER E WITH ACUTE}",
+        },
+        {"authors": ["Jose"], "title": "Cafe"},
+    ] == [request["variables"] for request in requests]
+    assert observation.dispatch_lineage is not None
+    assert observation.dispatch_lineage.rung is WorkDispatchRung.PUNCTUATION_FOLDED
+    assert observation.dispatch_lineage.transformations[-1] is (
+        WorkTitleTransformationFamily.LATIN_COMBINING_MARKS
+    )
+    assert (1, 2) == (
+        observation.request_accounting.initial_dispatches,
+        observation.request_accounting.retry_dispatches,
+    )
+
+
 @pytest.mark.parametrize(
     "title",
     ("[retail]", "(1)", "(2010)", "ISBN 9780306406157", "2nd Edition", "Book 2"),

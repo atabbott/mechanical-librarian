@@ -2,7 +2,7 @@
 
 **Canonical report**
 The exact compact, key-sorted UTF-8 JSON document validated by the closed
-`metadata-report-v36` model. It carries the closed ordered local-field results,
+`metadata-report-v37` model. It carries the closed ordered local-field results,
 source capabilities, bounded claim occurrence, and (when present) rear-spine
 provenance as well as the report's scope and evidence.
 
@@ -12,11 +12,13 @@ request, plus whether its single candidate-limit narrowing retry occurred. It
 records no query text and grants no evidence or write authority.
 
 **Work transformation lineage**
-The nullable replay field naming the ordered compound production that admitted a
-provider work identity: its ordered transformation families, the production
-name they derive, and the local side. Only an admission-enabled production is
-valid; every individual transformation family remains query-only, so no
-single-family lineage exists.
+The nullable replay field naming the ordered production that admitted a provider
+work identity and every exact field application: family, local or provider
+side, title or authors field, and author ordinal. Only an admission-enabled
+production is valid. The current productions are
+`author_prefix_then_underscores` and the single-family
+`latin_combining_marks`; every other individual transformation remains
+query-only.
 
 **Current pointer**
 The separate mutable reference from one connection/library/item/file identity

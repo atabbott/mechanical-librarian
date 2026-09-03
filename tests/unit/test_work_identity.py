@@ -15,7 +15,9 @@ from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     WorkDispatchRung,
     WorkTitleCompoundProduction,
+    WorkTitleTransformationApplication,
     WorkTitleTransformationFamily,
+    WorkTitleTransformationField,
     WorkTitleTransformationLineage,
     WorkTitleTransformationSide,
     admit_provider_work_identity,
@@ -198,6 +200,18 @@ def test_closed_rule_table_has_one_independent_row_per_family() -> None:
             WorkTitleTransformationFamily.PUNCTUATION_AMPERSAND_FOLD,
             "Plain and Work",
         ),
+        (
+            "Caf\N{LATIN SMALL LETTER E WITH ACUTE}",
+            ("Ada Example",),
+            WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
+            "Cafe",
+        ),
+        (
+            "A\N{COMBINING VERTICAL LINE ABOVE}",
+            ("Ada Example",),
+            WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
+            "A",
+        ),
     ),
 )
 def test_each_rule_shapes_one_bounded_query_rung(
@@ -241,6 +255,181 @@ def test_ladder_deduplicates_and_narrowing_preserves_base_lineage() -> None:
     assert WorkDispatchLineage.from_query(narrowed).candidate_limit_narrowing_retry
 
 
+def test_latin_combining_marks_fold_is_bounded_and_records_exact_applications() -> None:
+    decision = admit_provider_work_identity(
+        local_title="Cafe\u0301",
+        local_authors=("Jose\u0301", "Ana"),
+        provider_title="Cafe",
+        provider_authors=("Jose", "Ana"),
+        provider_work_identity="work-1",
+    )
+
+    assert decision.admitted
+    assert decision.transformation is not None
+    assert decision.transformation.production == "latin_combining_marks"
+    assert decision.transformation.applications == (
+        WorkTitleTransformationApplication(
+            WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
+            WorkTitleTransformationSide.LOCAL,
+            WorkTitleTransformationField.TITLE,
+            None,
+        ),
+        WorkTitleTransformationApplication(
+            WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
+            WorkTitleTransformationSide.LOCAL,
+            WorkTitleTransformationField.AUTHORS,
+            0,
+        ),
+    )
+    dispatches = work_query_ladder("Cafe\u0301", ("Jose\u0301", "Ana"))
+    assert len(dispatches) <= 3
+    assert (
+        WorkTitleTransformationFamily.LATIN_COMBINING_MARKS
+        in dispatches[-1].transformations
+    )
+    bounded = work_query_ladder(
+        "Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes",
+        ("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",),
+    )
+    assert [(query.title, query.authors) for query in bounded] == [
+        (
+            "Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes",
+            ("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",),
+        ),
+        (
+            "Caf\N{LATIN SMALL LETTER E WITH ACUTE}",
+            ("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",),
+        ),
+        ("Cafe", ("Jose",)),
+    ]
+    assert [
+        WorkTitleTransformationFamily.LATIN_COMBINING_MARKS in query.transformations
+        for query in bounded
+    ] == [False, False, True]
+
+
+def test_ampersand_then_latin_dispatch_is_canonical_and_replays() -> None:
+    title = "Caf\N{LATIN SMALL LETTER E WITH ACUTE} & Tea"
+    authors = ("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",)
+    query = work_query_ladder(title, authors)[-1]
+
+    assert (query.title, query.authors, query.transformations) == (
+        "Cafe and Tea",
+        ("Jose",),
+        (
+            WorkTitleTransformationFamily.PUNCTUATION_AMPERSAND_FOLD,
+            WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
+        ),
+    )
+    dispatch = WorkDispatchLineage.from_query(query)
+    assert work_dispatch_lineage_from_data(dispatch.to_data()) == dispatch
+    replayed = replay_provider_work_identity_admission(
+        local_title=title,
+        local_authors=authors,
+        provider_title="Cafe & Tea",
+        provider_authors=("Jose",),
+        provider_work_identity="work-1",
+        dispatch_lineage=dispatch,
+    )
+    assert replayed.admitted
+    assert replayed.transformation is not None
+    assert replayed.transformation.production == "latin_combining_marks"
+
+    with pytest.raises(ValueError):
+        WorkDispatchLineage(
+            WorkDispatchRung.PUNCTUATION_FOLDED,
+            tuple(reversed(query.transformations)),
+        )
+    with pytest.raises(ValueError):
+        WorkDispatchLineage(
+            WorkDispatchRung.PUNCTUATION_FOLDED,
+            (
+                WorkTitleTransformationFamily.PUNCTUATION_AMPERSAND_FOLD,
+                WorkTitleTransformationFamily.PUNCTUATION_AMPERSAND_FOLD,
+                WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
+            ),
+        )
+
+
+def test_decomposed_mark_without_precomposition_has_exact_latin_dispatch() -> None:
+    title = "A\N{COMBINING VERTICAL LINE ABOVE} Tale"
+    authors = ("Jose",)
+    query = work_query_ladder(title, authors)[-1]
+
+    assert (query.title, query.authors, query.transformations) == (
+        "A Tale",
+        authors,
+        (WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,),
+    )
+    replayed = replay_provider_work_identity_admission(
+        local_title=title,
+        local_authors=authors,
+        provider_title="A Tale",
+        provider_authors=authors,
+        provider_work_identity="work-1",
+        dispatch_lineage=WorkDispatchLineage.from_query(query),
+    )
+    assert replayed.admitted
+    assert replayed.transformation is not None
+    assert replayed.transformation.applications == (
+        WorkTitleTransformationApplication(
+            WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
+            WorkTitleTransformationSide.LOCAL,
+            WorkTitleTransformationField.TITLE,
+            None,
+        ),
+    )
+
+
+def test_exported_latin_transformation_leaves_inapplicable_text_unchanged() -> None:
+    assert (
+        apply_work_title_transformation(
+            WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
+            "Жозе",
+            (),
+        )
+        == "Жозе"
+    )
+
+
+@pytest.mark.parametrize("value", ("\u0301Cafe", "Жозе", "ø", "ł", "æ", "ß"))
+def test_latin_combining_marks_boundary_inputs_stay_unadmitted(value: str) -> None:
+    assert not admit_provider_work_identity(
+        local_title=value,
+        local_authors=("Ada",),
+        provider_title="Cafe",
+        provider_authors=("Ada",),
+        provider_work_identity="work-1",
+    ).admitted
+
+
+@pytest.mark.parametrize("unchanged", ("Ж", "\u0301Ada"))
+def test_latin_family_requires_every_title_and_author_field_to_be_applicable(
+    unchanged: str,
+) -> None:
+    assert not admit_provider_work_identity(
+        local_title="Café",
+        local_authors=(unchanged, "Ada"),
+        provider_title="Cafe",
+        provider_authors=(unchanged, "Ada"),
+        provider_work_identity="work-1",
+    ).admitted
+    assert WorkTitleTransformationFamily.LATIN_COMBINING_MARKS not in {
+        family
+        for query in work_query_ladder("Café", (unchanged, "Ada"))
+        for family in query.transformations
+    }
+
+
+@pytest.mark.parametrize("value", ("ø", "ł", "æ", "ß"))
+def test_excluded_substitutions_are_applicable_unchanged_noops(value: str) -> None:
+    assert WorkTitleTransformationFamily.LATIN_COMBINING_MARKS not in {
+        family
+        for query in work_query_ladder(value, ("Ada",))
+        for family in query.transformations
+    }
+
+
 @pytest.mark.parametrize("separator", (" - ", "–", "—", " – ", " — ", ":"))
 def test_author_prefix_without_a_remainder_underscore_stays_query_only(
     separator: str,
@@ -280,10 +469,19 @@ def test_author_prefix_then_underscores_admits_as_one_closed_production(
     assert decision.admitted
     assert decision.transformation == WorkTitleTransformationLineage(
         (
-            WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
-            WorkTitleTransformationFamily.FILENAME_UNDERSCORES,
-        ),
-        WorkTitleTransformationSide.LOCAL,
+            WorkTitleTransformationApplication(
+                WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
+                WorkTitleTransformationSide.LOCAL,
+                WorkTitleTransformationField.TITLE,
+                None,
+            ),
+            WorkTitleTransformationApplication(
+                WorkTitleTransformationFamily.FILENAME_UNDERSCORES,
+                WorkTitleTransformationSide.LOCAL,
+                WorkTitleTransformationField.TITLE,
+                None,
+            ),
+        )
     )
     assert decision.transformation.production == "author_prefix_then_underscores"
 
@@ -349,18 +547,22 @@ def test_constituent_families_stay_query_only_in_the_rule_table() -> None:
     assert admitting == {
         WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
         WorkTitleTransformationFamily.FILENAME_UNDERSCORES,
+        WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
     }
     assert all(not rule.admission_enabled for rule in WORK_TITLE_TRANSFORMATION_RULES)
-    with pytest.raises(ValueError):
-        WorkTitleCompoundProduction(
-            "single_family",
-            (WorkTitleTransformationFamily.FILENAME_UNDERSCORES,),
-            True,
-        )
+    assert WorkTitleCompoundProduction(
+        "single_family", (WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,), True
+    ).families == (WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,)
     with pytest.raises(ValueError):
         WorkTitleTransformationLineage(
-            (WorkTitleTransformationFamily.FILENAME_UNDERSCORES,),
-            WorkTitleTransformationSide.LOCAL,
+            (
+                WorkTitleTransformationApplication(
+                    WorkTitleTransformationFamily.FILENAME_UNDERSCORES,
+                    WorkTitleTransformationSide.LOCAL,
+                    WorkTitleTransformationField.TITLE,
+                    None,
+                ),
+            )
         )
 
 
@@ -453,6 +655,79 @@ def test_complete_ordered_authors_and_variant_veto_remain_identity_floor() -> No
         provider_title="Plain Work (Variant)",
         provider_authors=("Ada Example",),
         provider_work_identity="work-1",
+    ).admitted
+
+
+@pytest.mark.parametrize(
+    ("local_title", "provider_title"),
+    (
+        ("Plain Wórk Translatiòn", "Plain Work Translatión"),
+        ("Plain Wórk Adaptatiòn", "Plain Work Adaptatión"),
+        ("Plain Wórk Abridgemènt", "Plain Work Abridgément"),
+        ("Plain Wórk Variànt", "Plain Work Varíant"),
+    ),
+    ids=("translation", "adaptation", "abridgement", "variant"),
+)
+def test_latin_fold_cannot_reveal_and_admit_a_variant_marker(
+    local_title: str,
+    provider_title: str,
+) -> None:
+    assert not work_title_has_variant_marker(local_title)
+    assert not work_title_has_variant_marker(provider_title)
+    query = work_query_ladder(local_title, ("Ada Example",))[-1]
+    assert query.transformations[-1] is (
+        WorkTitleTransformationFamily.LATIN_COMBINING_MARKS
+    )
+
+    assert not admit_provider_work_identity(
+        local_title=local_title,
+        local_authors=("Ada Example",),
+        provider_title=provider_title,
+        provider_authors=("Ada Example",),
+        provider_work_identity="work-1",
+    ).admitted
+    assert not replay_provider_work_identity_admission(
+        local_title=local_title,
+        local_authors=("Ada Example",),
+        provider_title=provider_title,
+        provider_authors=("Ada Example",),
+        provider_work_identity="work-1",
+        dispatch_lineage=WorkDispatchLineage.from_query(query),
+    ).admitted
+
+
+@pytest.mark.parametrize(
+    "title",
+    (
+        "Plain Wórk Translatiòn",
+        "Plain Wórk Adaptatiòn",
+        "Plain Wórk Abridgemènt",
+        "Plain Wórk Variànt",
+    ),
+    ids=("translation", "adaptation", "abridgement", "variant"),
+)
+def test_equal_concealed_variant_marker_cannot_take_exact_admission_path(
+    title: str,
+) -> None:
+    assert not work_title_has_variant_marker(title)
+    query = work_query_ladder(title, ("Ada Example",))[0]
+    assert query.rung is WorkDispatchRung.NORMALIZED
+    assert query.transformations == ()
+
+    assert not admit_provider_work_identity(
+        local_title=title,
+        local_authors=("Ada Example",),
+        provider_title=title,
+        provider_authors=("Ada Example",),
+        provider_work_identity="work-1",
+    ).admitted
+    assert not replay_provider_work_identity_admission(
+        local_title=title,
+        local_authors=("Ada Example",),
+        provider_title=title,
+        provider_authors=("Ada Example",),
+        provider_work_identity="work-1",
+        dispatch_lineage=WorkDispatchLineage.from_query(query),
     ).admitted
 
 
@@ -589,10 +864,19 @@ def test_lineage_readback_rejects_unknown_malformed_and_query_only_admission() -
         work_dispatch_lineage_from_data({"rung": "normalized"})
     lineage = WorkTitleTransformationLineage(
         (
-            WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
-            WorkTitleTransformationFamily.FILENAME_UNDERSCORES,
-        ),
-        WorkTitleTransformationSide.LOCAL,
+            WorkTitleTransformationApplication(
+                WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
+                WorkTitleTransformationSide.LOCAL,
+                WorkTitleTransformationField.TITLE,
+                None,
+            ),
+            WorkTitleTransformationApplication(
+                WorkTitleTransformationFamily.FILENAME_UNDERSCORES,
+                WorkTitleTransformationSide.LOCAL,
+                WorkTitleTransformationField.TITLE,
+                None,
+            ),
+        )
     )
     assert work_title_transformation_lineage_from_data(lineage.to_data()) == lineage
     with pytest.raises(ValueError):
@@ -617,11 +901,62 @@ def test_lineage_readback_rejects_unknown_malformed_and_query_only_admission() -
     with pytest.raises(ValueError):
         WorkTitleTransformationLineage(
             (
-                WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
-                WorkTitleTransformationFamily.FILENAME_UNDERSCORES,
-            ),
-            WorkTitleTransformationSide.PROVIDER,
+                WorkTitleTransformationApplication(
+                    WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
+                    WorkTitleTransformationSide.PROVIDER,
+                    WorkTitleTransformationField.TITLE,
+                    None,
+                ),
+                WorkTitleTransformationApplication(
+                    WorkTitleTransformationFamily.FILENAME_UNDERSCORES,
+                    WorkTitleTransformationSide.PROVIDER,
+                    WorkTitleTransformationField.TITLE,
+                    None,
+                ),
+            )
         )
+
+
+@pytest.mark.parametrize("applications", (("malformed",), ({},)))
+def test_lineage_members_are_exact_typed_before_hashing_or_sorting(
+    applications: tuple[object, ...],
+) -> None:
+    with pytest.raises(
+        ValueError, match="work title transformation lineage is invalid"
+    ):
+        WorkTitleTransformationLineage(applications)  # type: ignore[arg-type]  # reason: exercise runtime rejection of malformed retained values
+
+
+@pytest.mark.parametrize(
+    ("family", "side", "field"),
+    (
+        (
+            WorkTitleTransformationSide.LOCAL,
+            WorkTitleTransformationSide.LOCAL,
+            WorkTitleTransformationField.TITLE,
+        ),
+        (
+            WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
+            WorkTitleTransformationField.TITLE,
+            WorkTitleTransformationField.TITLE,
+        ),
+        (
+            WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
+            WorkTitleTransformationSide.LOCAL,
+            WorkTitleTransformationSide.LOCAL,
+        ),
+    ),
+    ids=("family", "side", "field"),
+)
+def test_transformation_application_requires_each_exact_enum_type(
+    family: object,
+    side: object,
+    field: object,
+) -> None:
+    with pytest.raises(
+        ValueError, match="work title transformation application is invalid"
+    ):
+        WorkTitleTransformationApplication(family, side, field, None)  # type: ignore[arg-type]  # reason: exercise runtime exact-type rejection
 
 
 @pytest.mark.parametrize(
@@ -692,10 +1027,19 @@ def test_persisted_dispatch_lineage_round_trips_and_non_null_transform_rejects()
         ),
         transformation_lineage=WorkTitleTransformationLineage(
             (
-                WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
-                WorkTitleTransformationFamily.FILENAME_UNDERSCORES,
-            ),
-            WorkTitleTransformationSide.LOCAL,
+                WorkTitleTransformationApplication(
+                    WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
+                    WorkTitleTransformationSide.LOCAL,
+                    WorkTitleTransformationField.TITLE,
+                    None,
+                ),
+                WorkTitleTransformationApplication(
+                    WorkTitleTransformationFamily.FILENAME_UNDERSCORES,
+                    WorkTitleTransformationSide.LOCAL,
+                    WorkTitleTransformationField.TITLE,
+                    None,
+                ),
+            )
         ),
     )
 

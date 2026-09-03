@@ -42,7 +42,9 @@ from mechanical_librarian.domain.metadata_report import (
 from tests.support.metadata_report_schemas import (
     create_legacy_schema,
     create_prior_schema,
+    forged_latin_work_report_json,
     leave_hot_journal,
+    synthetic_latin_work_report,
     synthetic_report,
 )
 
@@ -193,7 +195,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "current report schema with stale proposal policy",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v36",
+                "metadata-report-v37",
                 "fixed-conservative-v6",
             ),
         ),
@@ -327,7 +329,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "previous proposal policy v3",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v36",
+                "metadata-report-v37",
                 "fixed-conservative-v3",
             ),
         ),
@@ -335,7 +337,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "previous proposal policy v4",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v36",
+                "metadata-report-v37",
                 "fixed-conservative-v4",
             ),
         ),
@@ -343,7 +345,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "previous proposal policy v5",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v36",
+                "metadata-report-v37",
                 "fixed-conservative-v5",
             ),
         ),
@@ -351,7 +353,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "immediate previous proposal policy v7",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v36",
+                "metadata-report-v37",
                 "fixed-conservative-v7",
             ),
         ),
@@ -496,7 +498,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("shadow_outcome_field_facts",),
         ]
         assert len(rows) == 2
-        assert schema_version == ("metadata-report-v36",)
+        assert schema_version == ("metadata-report-v37",)
         assert current == (second.report_id,)
 
         reopened = open_repository(path)
@@ -506,6 +508,54 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             == second.to_json()
         )
         reopened.close()
+
+
+def test_latin_work_lineages_survive_sqlite_publication_and_reopen() -> None:
+    report = synthetic_latin_work_report()
+    with tempfile.TemporaryDirectory() as directory:
+        repository = open_repository(Path(directory) / "reports.sqlite")
+        try:
+            assert report.to_json() == repository.publish(report, lambda: True)
+            replayed = MetadataReport.from_json(repository.get(report.report_id))
+        finally:
+            repository.close()
+
+    assert replayed == report
+    assert replayed.providers[0].dispatch_lineage == (
+        report.providers[0].dispatch_lineage
+    )
+    assert replayed.providers[0].transformation_lineage == (
+        report.providers[0].transformation_lineage
+    )
+
+
+def test_sqlite_replay_rejects_latin_work_lineage_mismatch() -> None:
+    report = synthetic_latin_work_report()
+    forged_id, forged_json = forged_latin_work_report_json()
+    with tempfile.TemporaryDirectory() as directory:
+        repository = open_repository(Path(directory) / "reports.sqlite")
+        try:
+            repository._connection.execute(
+                "INSERT INTO metadata_reports(report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document) VALUES(?,?,?,?,?,?,?,?,?)",
+                (
+                    forged_id,
+                    report.target.connection,
+                    report.target.library,
+                    report.target.item,
+                    report.file.identity,
+                    report.file.content_digest,
+                    report.schema_version,
+                    hashlib.sha256(forged_json.encode()).hexdigest(),
+                    forged_json,
+                ),
+            )
+
+            with pytest.raises(
+                MetadataReportError, match="persisted report is invalid"
+            ):
+                repository.get(forged_id)
+        finally:
+            repository.close()
 
 
 def test_provider_recovery_outbox_rejects_digest_corruption_on_restart() -> None:

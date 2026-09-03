@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Latin titles and complete ordered author names differing only by closed
+  canonical combining marks can identify one provider work; original claims stay
+  visible and non-Latin or compatibility substitutions reject. Existing installs
+  require a clean `metadata-report-v37` database. (#888)
+
 - Titles that differ only by one closed decoration no longer compete: the plain
   form is canonical, an item already holding it is kept without a write, and one
   holding the decorated form is tidied automatically. A colon segment from

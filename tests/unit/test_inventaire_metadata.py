@@ -29,6 +29,10 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderQueryKind,
     ProviderStatus,
 )
+from mechanical_librarian.domain.work_identity import (
+    WorkDispatchRung,
+    WorkTitleTransformationFamily,
+)
 from mechanical_librarian.infrastructure.security.credentials import inventaire_client
 from tests.support.metadata_report_schemas import synthetic_report
 
@@ -177,7 +181,7 @@ def test_isbn_hydrates_linked_work_labels_and_repeated_query_parameters() -> Non
         local_reasons=("opening_claims",),
         providers=(observation,),
     )
-    assert report.schema_version == "metadata-report-v36"
+    assert report.schema_version == "metadata-report-v37"
     assert report == MetadataReport.from_json(report.to_json())
 
 
@@ -259,6 +263,83 @@ def test_work_search_hydrates_discovery_identity_before_mapping() -> None:
     assert descriptor.provenance.work_identity == "inventaire-work-wd-Q100"
     assert requests[0].url.path == "/api/search"
     assert requests[1].url.path == "/api/entities/by-uris"
+
+
+def test_latin_fold_reaches_inventaire_only_on_final_bounded_search() -> None:
+    requests: list[httpx.Request] = []
+    search_count = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal search_count
+        requests.append(request)
+        if request.url.path == "/api/search":
+            search_count += 1
+            return httpx.Response(
+                200,
+                json=(
+                    {"results": []}
+                    if search_count < 3
+                    else {
+                        "results": [{"id": "Q100", "type": "works", "uri": "wd:Q100"}]
+                    }
+                ),
+            )
+        if request.url.params.get_list("uris") == ["wd:Q100"]:
+            return httpx.Response(
+                200,
+                json={
+                    "entities": {
+                        "wd:Q100": {
+                            "uri": "wd:Q100",
+                            "labels": {"en": "Cafe: Notes"},
+                            "claims": {
+                                "wdt:P1476": ["Cafe: Notes"],
+                                "wdt:P50": ["wd:Q42"],
+                            },
+                        }
+                    },
+                    "redirects": {},
+                },
+            )
+        assert request.url.params.get_list("uris") == ["wd:Q42"]
+        return httpx.Response(
+            200,
+            json={
+                "entities": {
+                    "wd:Q42": {
+                        "uri": "wd:Q42",
+                        "labels": {"en": "Jose"},
+                        "claims": {},
+                    }
+                },
+                "redirects": {},
+            },
+        )
+
+    observation = _provider(httpx.MockTransport(respond)).observe(
+        MetadataLookup(
+            ProviderQueryKind.WORK,
+            (),
+            title="Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes",
+            authors=("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",),
+        )
+    )
+
+    searches = [request for request in requests if request.url.path == "/api/search"]
+    assert [
+        "Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes Jos\N{LATIN SMALL LETTER E WITH ACUTE}",
+        "Caf\N{LATIN SMALL LETTER E WITH ACUTE} Jos\N{LATIN SMALL LETTER E WITH ACUTE}",
+        "Cafe Jose",
+    ] == [request.url.params["search"] for request in searches]
+    assert observation.dispatch_lineage is not None
+    assert observation.dispatch_lineage.rung is WorkDispatchRung.PUNCTUATION_FOLDED
+    assert observation.dispatch_lineage.transformations[-1] is (
+        WorkTitleTransformationFamily.LATIN_COMBINING_MARKS
+    )
+    assert (3, 2) == (
+        observation.request_accounting.initial_dispatches,
+        observation.request_accounting.retry_dispatches,
+    )
 
 
 def test_malformed_optional_search_rows_are_diagnosed_and_ignored() -> None:
