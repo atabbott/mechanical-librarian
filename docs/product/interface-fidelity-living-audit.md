@@ -57,9 +57,10 @@ the outcome.
 
 Issue #598 extends the protected field strip: automatic, unsupported, and
 recorded fields stay directly inspectable in their stable primary positions.
-Only server-classified owner attention advances normally. Automatic abstention
-is an evidence-backed manual fallback; unavailable empty values expose an
-explanation rather than a false choice.
+Unavailable-and-unproposed primary fields remain inspectable through the
+explicit empty-fields affordance; other automatic, recorded, and unsupported
+context stays directly inspectable. Only server-classified owner attention
+advances normally. Automatic abstention is an evidence-backed manual fallback.
 
 The first #554 merge established the correct route and workspace architecture,
 but a direct semantic comparison found that the selected-work surface still

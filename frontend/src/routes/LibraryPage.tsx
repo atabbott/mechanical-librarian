@@ -1637,6 +1637,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const [frozenFieldOrders, setFrozenFieldOrders] = useState<
     Readonly<Record<string, readonly string[]>>
   >({})
+  const [shownEmptyFields, setShownEmptyFields] = useState<Readonly<Record<string, true>>>({})
+  const [revealFocusDestination, setRevealFocusDestination] = useState<string | null>(null)
   const [complete, setComplete] = useState<{
     id: string
     fields: readonly ReviewField[]
@@ -1952,16 +1954,26 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const displayedIdentity = selectedIdentity ?? completionIdentity
   const primaryField = (field: ReviewField) => (field.inventoryRole ?? 'primary') === 'primary'
   const visibleFields = detail.data?.fields.filter(primaryField) ?? []
-  const selected =
-    visibleFields.find((field) => field.destination === search.field) ??
-    visibleFields.find(actionable) ??
-    visibleFields[0]
   const currentActionableDestinations = visibleFields.map((field) => field.destination)
   const frozenDestinations =
     frozenFieldOrders[selectedReviewCaseId] ?? currentActionableDestinations
   const railFields = frozenDestinations
     .map((destination) => visibleFields.find((field) => field.destination === destination))
     .filter((field): field is ReviewField => field !== undefined)
+  const emptyUnproposed = (field: ReviewField) =>
+    (field.currentRaw === null ||
+      field.currentRaw === '' ||
+      (Array.isArray(field.currentRaw) && field.currentRaw.length === 0)) &&
+    field.proposedValues.length === 0
+  const urlSelected = visibleFields.find((field) => field.destination === search.field)
+  const revealEmptyFields =
+    shownEmptyFields[selectedReviewCaseId] === true ||
+    (urlSelected !== undefined && emptyUnproposed(urlSelected))
+  const omittedFields = revealEmptyFields ? [] : railFields.filter(emptyUnproposed)
+  const renderedRailFields = revealEmptyFields
+    ? railFields
+    : railFields.filter((field) => !emptyUnproposed(field))
+  const selected = urlSelected ?? renderedRailFields.find(actionable) ?? renderedRailFields[0]
   const attentionFields = railFields.filter(actionable)
   const contextualFields =
     detail.data?.fields.filter((field) => field.inventoryRole === 'contextual') ?? []
@@ -2420,9 +2432,11 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const railPosition =
     complete?.id === selectedReviewCaseId && completionInspection === null
       ? `${String(railFields.length)} recorded · work complete`
-      : `${String(remainingFields)} remaining · field ${String(
-          Math.max(1, frozenDestinations.indexOf(selected?.destination ?? '') + 1),
-        )} of ${String(railFields.length)}`
+      : selected
+        ? `${String(remainingFields)} remaining · field ${String(
+            renderedRailFields.indexOf(selected) + 1,
+          )} of ${String(renderedRailFields.length)}`
+        : `${String(remainingFields)} remaining · no field selected`
   // The one-tap teaching line is for someone who has not yet seen what a tap
   // does. It says so on the first field only, and gives way to what is actually
   // happening once they have chosen.
@@ -2803,11 +2817,20 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                   <strong>{railPosition}</strong>
                 </header>
                 <nav ref={fieldRail} className="field-filmstrip" aria-label="Review fields">
-                  {railFields.map((field) => (
+                  {renderedRailFields.map((field) => (
                     <button
                       key={field.destination}
                       ref={
-                        selected?.destination === field.destination ? activeFieldButton : undefined
+                        revealFocusDestination === field.destination
+                          ? (button) => {
+                              if (button) {
+                                setRevealFocusDestination(null)
+                                button.focus({ preventScroll: true })
+                              }
+                            }
+                          : selected?.destination === field.destination
+                            ? activeFieldButton
+                            : undefined
                       }
                       aria-current={selected?.destination === field.destination}
                       className={!actionable(field) ? 'is-recorded' : undefined}
@@ -2833,6 +2856,20 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                       </span>
                     </button>
                   ))}
+                  {omittedFields.length ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRevealFocusDestination(omittedFields[0]?.destination ?? null)
+                        setShownEmptyFields((current) => ({
+                          ...current,
+                          [selectedReviewCaseId]: true,
+                        }))
+                      }}
+                    >
+                      {`Show ${String(omittedFields.length)} empty field${omittedFields.length === 1 ? '' : 's'}`}
+                    </button>
+                  ) : null}
                 </nav>
               </section>
               {complete?.id === selectedReviewCaseId && completionInspection === null ? (

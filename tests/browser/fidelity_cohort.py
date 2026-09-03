@@ -636,6 +636,7 @@ def _case(case_id: str) -> dict[str, object]:
             ),
             editable=False,
             navigation_role="inspect",
+            inventory_role="primary",
         ),
         _field(
             "series",

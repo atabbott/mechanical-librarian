@@ -1372,14 +1372,16 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         )
         expect(page.locator(".library-works")).to_be_visible()
         expect(page.locator(".workspace-detail")).to_be_visible()
-        # #598 keeps recorded automatic fields primary, while applicable empty
-        # fields remain closed contextual evidence rather than false choices.
-        expect(page.locator(".field-filmstrip button")).to_have_count(5)
+        # #598 keeps recorded automatic fields primary. #890 keeps an
+        # unavailable, unproposed primary field inspectable without making it
+        # a default rail distraction or a false choice.
+        expect(page.locator(".field-filmstrip button")).to_have_count(6)
         assert "Title" in page.locator(".field-filmstrip").inner_text()
         assert "Cover" in page.locator(".field-filmstrip").inner_text()
         assert "Series" in page.locator(".field-filmstrip").inner_text()
         assert "Publication date" in page.locator(".field-filmstrip").inner_text()
-        assert "Subtitle" not in page.locator(".field-filmstrip").inner_text()
+        subtitle = page.get_by_role("button", name="Show 1 empty field")
+        expect(subtitle).to_be_visible()
         assert not (
             page.locator(".automatic-resolution-details").evaluate("node => node.open")
         )
@@ -1387,10 +1389,21 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             page.locator(".direct-choice").bounding_box()["y"]
             < page.locator(".automatic-resolution-details").bounding_box()["y"]
         )
-        page.locator(".automatic-resolution-details summary").click()
-        automatic_context = page.locator(".automatic-resolution-details").inner_text()
-        assert "Subtitle" in automatic_context
-        assert "Series" not in automatic_context
+        subtitle.click()
+        expect(
+            page.get_by_role("button", name=re.compile(r"^Subtitle"))
+        ).to_be_focused()
+        assert [
+            label.splitlines()[0]
+            for label in page.locator(".field-filmstrip button").all_inner_texts()
+        ] == ["Title", "Authors", "Subtitle", "Series", "Publication date", "Cover"]
+        assert page.evaluate(
+            "() => document.documentElement.scrollWidth <= window.innerWidth"
+        )
+        assert all(
+            button.bounding_box()["height"] >= 44
+            for button in page.locator(".field-filmstrip button").all()
+        )
         page.locator(".field-filmstrip button", has_text="Publication date").click()
         # A current-only automatic outcome stays inspect-only: it remains
         # readable in the primary field strip without fabricating owner work.
@@ -1793,7 +1806,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.locator(".attention-queue-item").first.click()
         expect(page.locator(".workspace-detail")).to_be_visible()
         expect(page.locator(".library-works")).to_be_hidden()
-        expect(page.locator(".field-filmstrip button")).to_have_count(5)
+        expect(page.locator(".field-filmstrip button")).to_have_count(6)
         assert "Title" in page.locator(".field-filmstrip").inner_text()
         assert "Cover" in page.locator(".field-filmstrip").inner_text()
         assert not (
@@ -1803,10 +1816,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             page.locator(".direct-choice").bounding_box()["y"]
             < page.locator(".automatic-resolution-details").bounding_box()["y"]
         )
-        page.locator(".automatic-resolution-details summary").click()
-        compact_context = page.locator(".automatic-resolution-details").inner_text()
-        assert "Subtitle" in compact_context
-        assert "Series" not in compact_context
+        expect(page.get_by_role("button", name="Show 1 empty field")).to_be_visible()
         compact_evidence = page.get_by_role(
             "button", name="Evidence for Current value: Current <script> title"
         )

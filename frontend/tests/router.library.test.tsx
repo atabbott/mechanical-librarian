@@ -5361,6 +5361,142 @@ describe('Library route', () => {
     expect(screen.queryByText('One tap records and opens the next field')).toBeNull()
   })
 
+  it('hides unavailable unproposed primary fields until the owner reveals their named order', async () => {
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const emptySubtitle = {
+      ...titleField,
+      destination: 'subtitle',
+      currentRaw: null,
+      proposedValues: [],
+    }
+    const emptySeries = { ...titleField, destination: 'series', currentRaw: '', proposedValues: [] }
+    const emptyGenres = { ...titleField, destination: 'genres', currentRaw: [], proposedValues: [] }
+    const currentOnly = {
+      ...titleField,
+      destination: 'authors',
+      currentRaw: ['An Author'],
+      proposedValues: [],
+    }
+    const proposalOnly = {
+      ...titleField,
+      destination: 'description',
+      currentRaw: null,
+      proposedValues: [{ kind: 'text' as const, value: 'A description' }],
+    }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({
+        ...detail,
+        fields: [emptySubtitle, currentOnly, emptySeries, proposalOnly, emptyGenres],
+      })),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=authors', http)
+
+    const rail = await screen.findByRole('navigation', { name: 'Review fields' })
+    expect(within(rail).getByRole('button', { name: /^Authors/u })).toBeVisible()
+    expect(within(rail).getByRole('button', { name: /^Description/u })).toBeVisible()
+    expect(within(rail).queryByRole('button', { name: /^Subtitle/u })).toBeNull()
+    expect(within(rail).getByRole('button', { name: 'Show 3 empty fields' })).toBeVisible()
+
+    await userEvent.setup().click(within(rail).getByRole('button', { name: 'Show 3 empty fields' }))
+    const names = within(rail)
+      .getAllByRole('button')
+      .map((button) => button.querySelector('strong')?.textContent)
+    expect(names).toEqual(['Subtitle', 'Authors', 'Series', 'Description', 'Genres'])
+    expect(within(rail).getByRole('button', { name: /^Subtitle/u })).toHaveFocus()
+  })
+
+  it('has no phantom all-empty selection and reveals canonical named fields on request', async () => {
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const emptyTitle = { ...titleField, currentRaw: null, proposedValues: [] }
+    const emptySubtitle = {
+      ...titleField,
+      destination: 'subtitle',
+      currentRaw: '',
+      proposedValues: [],
+    }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [emptyTitle, emptySubtitle] })),
+    }
+    renderRoute('/library?lens=all&preview=case-1', http)
+
+    const rail = await screen.findByRole('navigation', { name: 'Review fields' })
+    expect(screen.getByText('2 remaining · no field selected')).toBeVisible()
+    expect(within(rail).getByRole('button', { name: 'Show 2 empty fields' })).toBeVisible()
+    expect(within(rail).queryByRole('button', { name: /^Title/u })).toBeNull()
+
+    await userEvent.setup().click(within(rail).getByRole('button', { name: 'Show 2 empty fields' }))
+    expect(within(rail).getByRole('button', { name: /^Title/u })).toHaveFocus()
+  })
+
+  it('synchronously reveals and selects an empty field named in the URL', async () => {
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const emptySubtitle = {
+      ...titleField,
+      destination: 'subtitle',
+      currentRaw: '',
+      proposedValues: [],
+    }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [titleField, emptySubtitle] })),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=subtitle', http)
+
+    const rail = await screen.findByRole('navigation', { name: 'Review fields' })
+    expect(within(rail).getByRole('button', { name: /^Subtitle/u })).toHaveAttribute(
+      'aria-current',
+      'true',
+    )
+  })
+
+  it('immediately restores collapsed fields when authoritative detail gains a current value or proposal', async () => {
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const emptyTitle = { ...titleField, currentRaw: null, proposedValues: [] }
+    const emptySubtitle = {
+      ...titleField,
+      destination: 'subtitle',
+      currentRaw: '',
+      proposedValues: [],
+    }
+    let authoritative = false
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () =>
+        authoritative
+          ? {
+              ...detail,
+              fields: [
+                { ...emptyTitle, currentRaw: 'Current title' },
+                {
+                  ...emptySubtitle,
+                  proposedValues: [{ kind: 'text' as const, value: 'A subtitle' }],
+                },
+              ],
+            }
+          : { ...detail, fields: [emptyTitle, emptySubtitle] },
+      ),
+    }
+    const { queryClient } = renderRoute('/library?lens=all&preview=case-1', http)
+
+    const rail = await screen.findByRole('navigation', { name: 'Review fields' })
+    expect(within(rail).getByRole('button', { name: 'Show 2 empty fields' })).toBeVisible()
+    authoritative = true
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: ['review-case', 'case-1'], exact: true })
+    })
+    await waitFor(() =>
+      expect(within(rail).getByRole('button', { name: /^Title/u })).toBeVisible(),
+    )
+    expect(within(rail).getByRole('button', { name: /^Subtitle/u })).toBeVisible()
+    expect(within(rail).queryByRole('button', { name: /Show .* empty field/u })).toBeNull()
+  })
+
   it('keeps applicable unavailable fields inspectable without making them actionable', async () => {
     const titleField = detail.fields[0]
     if (!titleField) throw new Error('workspace fixture requires a title field')
