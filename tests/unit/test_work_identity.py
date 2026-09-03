@@ -288,6 +288,33 @@ def test_latin_combining_marks_boundary_inputs_stay_unadmitted(value: str) -> No
     ).admitted
 
 
+@pytest.mark.parametrize("unchanged", ("Ж", "\u0301Ada"))
+def test_latin_family_requires_every_title_and_author_field_to_be_applicable(
+    unchanged: str,
+) -> None:
+    assert not admit_provider_work_identity(
+        local_title="Café",
+        local_authors=(unchanged, "Ada"),
+        provider_title="Cafe",
+        provider_authors=(unchanged, "Ada"),
+        provider_work_identity="work-1",
+    ).admitted
+    assert WorkTitleTransformationFamily.LATIN_COMBINING_MARKS not in {
+        family
+        for query in work_query_ladder("Café", (unchanged, "Ada"))
+        for family in query.transformations
+    }
+
+
+@pytest.mark.parametrize("value", ("ø", "ł", "æ", "ß"))
+def test_excluded_substitutions_are_applicable_unchanged_noops(value: str) -> None:
+    assert WorkTitleTransformationFamily.LATIN_COMBINING_MARKS not in {
+        family
+        for query in work_query_ladder(value, ("Ada",))
+        for family in query.transformations
+    }
+
+
 @pytest.mark.parametrize("separator", (" - ", "–", "—", " – ", " — ", ":"))
 def test_author_prefix_without_a_remainder_underscore_stays_query_only(
     separator: str,

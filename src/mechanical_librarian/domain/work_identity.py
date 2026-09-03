@@ -459,6 +459,11 @@ def work_query_ladder(title: str, authors: tuple[str, ...]) -> tuple[WorkQuery, 
         raise ValueError("work query input is invalid")
     shaped_title = _normalized_query_text(title)
     shaped_authors = tuple(_normalized_query_text(value) for value in authors)
+    latin_inputs_applicable = _latin_combining_marks_fold(
+        shaped_title
+    ) is not None and all(
+        _latin_combining_marks_fold(value) is not None for value in shaped_authors
+    )
     applied: list[WorkTitleTransformationFamily] = []
     for rule in WORK_TITLE_TRANSFORMATION_RULES:
         if rule.rung is not WorkDispatchRung.NORMALIZED or not rule.query_enabled:
@@ -509,13 +514,17 @@ def work_query_ladder(title: str, authors: tuple[str, ...]) -> tuple[WorkQuery, 
     latin_authors = tuple(
         _latin_combining_marks_fold(value) for value in folded_authors
     )
-    if latin_title is not None or any(value is not None for value in latin_authors):
-        folded_title = latin_title or folded_title
-        folded_authors = tuple(
-            folded if latin is None else latin
-            for folded, latin in zip(folded_authors, latin_authors, strict=True)
-        )
-        folded_applied += (WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,)
+    if (
+        latin_inputs_applicable
+        and latin_title is not None
+        and all(value is not None for value in latin_authors)
+    ):
+        if latin_title != folded_title or latin_authors != folded_authors:
+            folded_title = latin_title
+            folded_authors = tuple(
+                value for value in latin_authors if value is not None
+            )
+            folded_applied += (WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,)
     if folded_title and all(folded_authors):
         candidates.append(
             WorkQuery(
@@ -1038,7 +1047,6 @@ def _latin_combining_marks_fold(value: str) -> str | None:
     decomposed = unicodedata.normalize("NFD", value)
     result: list[str] = []
     latin_cluster = False
-    removed = False
     for character in decomposed:
         if unicodedata.category(character).startswith("L"):
             if not unicodedata.name(character, "").startswith("LATIN "):
@@ -1048,11 +1056,11 @@ def _latin_combining_marks_fold(value: str) -> str | None:
         elif unicodedata.category(character).startswith("M"):
             if not latin_cluster:
                 return None
-            removed = True
         else:
             latin_cluster = False
             result.append(character)
-    return unicodedata.normalize("NFC", "".join(result)) if removed else None
+    folded = unicodedata.normalize("NFC", "".join(result))
+    return folded
 
 
 def _latin_admission_lineage(
@@ -1071,9 +1079,11 @@ def _latin_admission_lineage(
     ) -> bool:
         local_folded = _latin_combining_marks_fold(local)
         provider_folded = _latin_combining_marks_fold(provider)
-        if not _closed_equal(local_folded or local, provider_folded or provider):
+        if local_folded is None or provider_folded is None:
             return False
-        if local_folded is not None:
+        if not _closed_equal(local_folded, provider_folded):
+            return False
+        if local_folded != local:
             applications.append(
                 WorkTitleTransformationApplication(
                     WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
@@ -1082,7 +1092,7 @@ def _latin_admission_lineage(
                     ordinal,
                 )
             )
-        if provider_folded is not None:
+        if provider_folded != provider:
             applications.append(
                 WorkTitleTransformationApplication(
                     WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
