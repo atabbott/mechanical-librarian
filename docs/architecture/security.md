@@ -690,7 +690,7 @@ deadline, byte, and request-count authority. Attempt records are bounded and
 process-local. Provider adapters also count optional parser/schema rejections
 at their actual rejection points. The application canonically merges those
 counts once with the attempt categories and incomplete-outcome mapping for
-`metadata-report-v35`; provider, attempt ordinal, delay, elapsed time,
+`metadata-report-v36`; provider, attempt ordinal, delay, elapsed time,
 headers, bodies, and exception text are dropped. Application-created
 query-limit outcomes follow the same closed mapping and persist
 provider/lookup_construction/lookup without constructing or invoking a
@@ -701,10 +701,15 @@ one supported provider combination.
 
 Work-query shaping never rewrites retained evidence. The canonical report keeps
 only a closed dispatch lineage; rendered queries, shaped values, credentials,
-and responses are not retained. The 0.18.0 decoration-admission subset is empty,
-so every transformation is query-only and cannot grant candidate or write
-authority. The nullable transformation-lineage replay field rejects every
-non-null value.
+and responses are not retained. Every single transformation family stays
+query-only and cannot grant candidate or write authority. One closed compound
+production, `author_prefix_then_underscores` — the complete first-author prefix,
+a separator from the closed set, and a remainder carrying at least one filename
+underscore that normalizes to the provider title under the unchanged closed
+comparison — grants WORK admission, and the report persists its ordered lineage
+of families, production name, and local side. Replay rejects every lineage that
+is not exactly that enabled production. The identity floor and every
+translation, adaptation, abridgement, and variant-marker veto are unchanged.
 All widening and narrowing requests remain inside the existing deadline,
 pacing, byte, dispatch-count, and retry-accounting boundaries; ISBN/ASIN
 dispatch is unchanged.

@@ -1770,6 +1770,11 @@ def _decoration_equivalence_election(
     )
     if len(preserving) != 1:
         return result
+    if target.value != preserving[0].value.value:
+        # Preservation folds case and whitespace; the class does not. A current
+        # value that is not literally a class member is neither kept as
+        # equivalent nor tidied, since the write would recase the owner's title.
+        return result
     pair = _decoration_equivalence_pair(result.alternatives)
     if pair is None:
         return result

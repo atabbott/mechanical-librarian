@@ -164,11 +164,12 @@ that bound identity evidence; proof status alone neither elects nor disqualifies
 The twenty-third candidate execution (#896) re-scores `subtitle:fill_empty` on
 segment corroboration. A colon segment stripped from any WORK-scope title claim,
 local or provider, now corroborates the fill on cross-source terms; a segment
-from the candidate's own source never does, no provider may state a different
-subtitle, and the segment must be carried by at least as many provider
-authorities as state the plain title it was stripped from. Every other option
-replays unchanged, and the option keeps 1.0 precision with zero structural or
-unsupported outputs.
+from the candidate's own source never does, and no provider may state a
+different subtitle. At least one provider must carry the segment, and the
+provider authorities stating the plain title it was stripped from must be at
+least as many as the authorities carrying the decorated form, counting the local
+title on the decorated side. Every other option replays unchanged, and the
+option keeps 1.0 precision with zero structural or unsupported outputs.
 
 The machine-readable candidate is
 [`f20-rich-metadata-qualification-candidate-v10.json`](../reference/f20-rich-metadata-qualification-candidate-v10.json).

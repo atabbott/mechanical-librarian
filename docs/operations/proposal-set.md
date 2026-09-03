@@ -47,12 +47,16 @@ the tidy proposal, and one of `decoration_tidy_series_unpreserved`,
 guard closes the class.
 
 The grammar step is exact: removing the decoration must yield the plain
-alternative byte for byte, so a collapse never rewrites casing or spacing. The
-dissent and width guards compare under the closed title comparison.
+alternative byte for byte, and the current value must equal one class member
+byte for byte, so a collapse never rewrites casing or spacing. The dissent and
+width guards compare under the closed title comparison.
 
-A collapsed title carries one alternative, so a representation that once mapped
-to two competing title forms no longer withholds a bibliographic combination;
-the `no_safe_bibliographic_combination` release follows from the collapse itself.
+A collapsed title carries one alternative. Where the decorated representation
+also carries the component being preserved, the combination engine still fails
+closed with `no_safe_bibliographic_combination` rather than pairing the
+component with the plain selection; that shape is recorded as a deferred finding
+on #896.
+
 The generic-title preservation branch that emits an all-PRESERVE combination is
 now taken only when the title outcome is a keep, which is the only shape the
 `ProposalSet` invariant admits.

@@ -203,11 +203,11 @@
     },
     "automatic_decision": {
       "identity": "src/mechanical_librarian/domain/automatic_decision.py",
-      "sha256": "052f956c475f125bd3bcbddb1b126a9b8fc3a839398589060ab8570c8927309e"
+      "sha256": "ROOT-FILLS"
     },
     "compiler": {
       "identity": "src/mechanical_librarian/domain/rich_metadata_preview.py",
-      "sha256": "f5fdad27f901735ef0e3075bfb1a98cb4aa5eb0461cdc7e63f0deb638b05e52b"
+      "sha256": "ROOT-FILLS"
     },
     "description_tiebreaker": {
       "candidate_head": "e1e13200a784229bcb5694e716c1c7b0e0a8128e",
@@ -229,18 +229,18 @@
       "sha256": "fda92f7e4ea9c06648ce1abb7a62065cc6dadcd177b532b86b730f83488fdbe8"
     },
     "isbn_manifestation_election": {
-      "automatic_decision_sha256": "052f956c475f125bd3bcbddb1b126a9b8fc3a839398589060ab8570c8927309e",
-      "preview_sha256": "f5fdad27f901735ef0e3075bfb1a98cb4aa5eb0461cdc7e63f0deb638b05e52b",
-      "proposal_policy_sha256": "239e1ee1ed03af0606d94c3c803e72a9e47ad49f6c70bcd3ef12f6c48690e4d8",
+      "automatic_decision_sha256": "ROOT-FILLS",
+      "preview_sha256": "ROOT-FILLS",
+      "proposal_policy_sha256": "ROOT-FILLS",
       "proposal_policy_version": "fixed-conservative-v19"
     },
     "policy": {
       "identity": "src/mechanical_librarian/domain/metadata_policy.py",
-      "sha256": "b5a1b61fc8dde0c6e08936a28661f4b57ea41fdd1d80bc3e1f249dc307f4a1b0"
+      "sha256": "ROOT-FILLS"
     },
     "target_shape": {
       "identity": "src/mechanical_librarian/adapters/library_services/audiobookshelf_field_effect.py",
-      "sha256": "85f289ca2c97c97be2cc0476f963e2b366ba40fcc549160a2183541151b92953"
+      "sha256": "ROOT-FILLS"
     },
     "thresholds": {
       "identity": "f20-field-local-qualification-contract-v3",

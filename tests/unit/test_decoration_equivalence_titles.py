@@ -164,6 +164,27 @@ def test_a_plain_form_differing_only_by_case_stays_competing() -> None:
     assert ("competing_evidence",) == result.reasons
 
 
+def test_a_current_value_differing_only_by_case_is_never_tidied() -> None:
+    """Preservation folds case; the class does not, so the write is withheld."""
+    result = _title_result(
+        current="plain work [retail]",
+        providers=_pair("Plain Work [retail]"),
+    )
+
+    assert ProposalOutcome.UNRESOLVED_CHOICE is result.outcome
+    assert ("competing_evidence",) == result.reasons
+
+
+def test_a_current_value_differing_only_by_case_is_never_kept_as_equivalent() -> None:
+    result = _title_result(
+        current="plain work",
+        providers=_pair("Plain Work [retail]"),
+    )
+
+    assert ProposalOutcome.UNRESOLVED_CHOICE is result.outcome
+    assert ("competing_evidence",) == result.reasons
+
+
 def test_substantively_different_titles_stay_competing() -> None:
     result = _title_result(
         current=_PLAIN,

@@ -61,10 +61,11 @@ new ADR.
 equal after one closed election-grammar decoration match form one equivalence
 class whose canonical member is the plain form. Matching is one step only, so
 stacked decorations stay competing. The grammar step is exact: removing the
-decoration must yield the plain alternative byte for byte, so a collapse never
-rewrites casing or spacing the review never adjudicated, while the two guards
-below compare under the closed title comparison. Two evidence-only guards close
-the class further and apply to keep and tidy alike:
+decoration must yield the plain alternative byte for byte, and the current value
+must equal one class member byte for byte, so a collapse never rewrites casing
+or spacing the review never adjudicated. The two guards below compare under the
+closed title comparison. Two evidence-only guards close the class further and
+apply to keep and tidy alike:
 
 - *Provider dissent*: every valid WORK-scope provider title claim in the report,
   including claims on candidates that admission or observation rejected, must
@@ -139,8 +140,11 @@ pre-empted the subtitle-segment and series families of F41 entirely.
   5 of 5 adjudicated same-work compound cases, rejected
   2 of 2 different-work collisions, with 0 false admissions
   and 0 false rejections; every other family kept its query-only disposition.
-- A collapsed title carries one alternative, so reports that withheld a
-  bibliographic combination on a decoration difference can form one.
+- A collapsed title carries one alternative. Where the decorated representation
+  also carries the component being preserved, the combination engine still fails
+  closed with `no_safe_bibliographic_combination` rather than pairing the
+  component with the plain selection; that shape is recorded as a deferred
+  finding on #896.
 - Subtitles a cross-source segment corroborates become automatically fillable
   instead of stalling as uncorroborated.
 
