@@ -33,11 +33,11 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
 
 MANIFEST = (
     Path(__file__).parents[2]
-    / "docs/reference/f20-rich-metadata-qualification-candidate-v7.json"
+    / "docs/reference/f20-rich-metadata-qualification-candidate-v10.json"
 )
 HISTORICAL_MANIFEST = (
     Path(__file__).parents[2]
-    / "docs/reference/f20-rich-metadata-qualification-candidate-v6.json"
+    / "docs/reference/f20-rich-metadata-qualification-candidate-v9.json"
 )
 F19A_MANIFEST = (
     Path(__file__).parents[2] / "docs/reference/f19a-qualification-manifest-v5.json"
@@ -51,6 +51,18 @@ F38_MANIFEST = (
 # either literal still stands in.
 ROOT_PLACEHOLDER = "ROOT-FILLS"
 PLACEHOLDER_DIGESTS = frozenset({"0" * 64, "1" * 64})
+# The segment-corroboration route reports these four counts and the two
+# by-state maps only once the root has measured the final candidate.
+MEASURED_SEGMENT_AGGREGATES = (
+    "automatic_predictions",
+    "correct_predictions",
+    "positive_opportunities",
+    "zero_tolerance_failures",
+)
+MEASURED_BY_STATE = (
+    "subtitle_fill_empty_correct_predictions_by_state",
+    "subtitle_fill_empty_predictions_by_state",
+)
 
 RICH_FIELDS = (
     "subtitle",
@@ -67,7 +79,7 @@ RICH_FIELDS = (
 def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
 
-    assert "f20-rich-metadata-qualification-candidate-v7" == manifest["schema"]
+    assert "f20-rich-metadata-qualification-candidate-v10" == manifest["schema"]
     assert "fixed-conservative-v19" == manifest["proposal_policy_version"]
     assert "decision_only" == manifest["automatic_authority"]
     passing = {
@@ -88,7 +100,7 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     assert passing == set(manifest["passing_automatic_options"])
     assert ["explicit:unsupported"] == manifest["human_only_options"]
     assert ["narrators", "cover"] == manifest["excluded_destinations"]
-    assert 15 == manifest["candidate_execution_count"]
+    assert 23 == manifest["candidate_execution_count"]
     assert {
         "archived_replay_result_sha256",
         "development_result_sha256",
@@ -96,9 +108,16 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
         "prior_manifest_sha256",
     } == set(manifest["authority_rotation"])
     assert (
-        "15cfb36db142e3783fa47a73157c72ecfd08bb282a967abc83fba152d1199205"
+        "8b14e134a146e8f03f9d36ad78506a7f234b0768ef61620ef1d1234a8df7c4a5"
         == manifest["authority_rotation"]["prior_manifest_sha256"]
     )
+    evidence = {
+        name: value
+        for name, value in manifest["evidence_method"].items()
+        if name != "isbn_manifestation_election"
+    }
+    segment = evidence.pop("subtitle_segment_corroboration")
+    by_state = {name: evidence.pop(name) for name in MEASURED_BY_STATE}
     assert {
         "applicability_confirmation": {
             "automatic_precision": 1.0,
@@ -107,7 +126,7 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
             "retained_candidates": 58,
             "wrong_work_admitted": 0,
         },
-        "applicability_fields": ["tags"],
+        "applicability_fields": ["description_fill", "tags"],
         "current_provider_comparison": {
             "case_count": 49,
             "gained_incorrect_projections": 0,
@@ -118,13 +137,6 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
             "tags_correct_predictions_per_option": 7,
         },
         "deferred_applicability_fields": {
-            "description_fill": {
-                "baseline_correct_predictions": 9,
-                "candidate_correct_predictions": 8,
-                "gained_correct_projections": 3,
-                "lost_correct_projections": 4,
-                "reason": "live_correct_projection_churn",
-            },
             "genres": {
                 "baseline_correct_predictions": {
                     "add": 9,
@@ -147,6 +159,31 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
                     "source_order": 20,
                 },
                 "reason": "positive_preservation_unproved",
+            },
+        },
+        "description_tiebreaker": {
+            "confirmation": {
+                "automatic_precision": 1.0,
+                "automatic_predictions": 13,
+                "case_count": 23,
+                "correction_replays": 3,
+                "errors": 0,
+            },
+            "contract": {
+                "authority_order": ["hardcover", "google_books", "open_library"],
+                "minimum_characters": 80,
+                "minimum_words": 16,
+                "reject_visible_cutoff": True,
+                "selection_mode": "target_work_applicability_then_quality_floor_then_provider_authority",
+            },
+            "holdout": {
+                "automatic_precision": 1.0,
+                "automatic_predictions": 14,
+                "case_count": 25,
+                "errors": 0,
+                "executions": 4,
+                "initial_unseen_executions": 1,
+                "spent_correction_replays": 3,
             },
         },
         "evaluated_reports": 49,
@@ -179,39 +216,39 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
             "network_access": False,
             "replayed_provider_requests": 421,
         },
-        "subtitle_segment_corroboration": {
-            "adjudicated_counts": {"abstain": 37, "fill": 76, "unknown": 0},
-            "automatic_predictions": 21,
-            "case_count": 113,
-            "correct_predictions": 21,
-            "holdout_claim": False,
-            "network_access": False,
-            "positive_opportunities": 76,
-            "retained_49_report_route_predictions_at_base": 0,
-            "review_agreement_count": 110,
-            "route": "archived_744_development_challenge_set",
-            "zero_tolerance_failures": 0,
-        },
         "subjective_field_truth_model": "exact_work_bound_source_projection",
         "series_truth_model": "valid_membership_with_preferred_value",
-        "subtitle_fill_empty_correct_predictions_by_state": {
-            "empty": 0,
-            "missing": 0,
-            "null": 21,
-        },
-        "subtitle_fill_empty_predictions_by_state": {
-            "empty": 0,
-            "missing": 0,
-            "null": 21,
-        },
         "subtitle_fill_empty_target_states": ["missing", "null", "empty"],
         "subtitle_truth_model": "ebook_manifestation_bibliographic_subtitle",
         "unseen_holdout_required": False,
+    } == evidence
+    assert {
+        "adjudicated_counts": {"abstain": 37, "fill": 76, "unknown": 0},
+        "case_count": 113,
+        "holdout_claim": False,
+        "network_access": False,
+        "retained_49_report_route_predictions_at_base": 0,
+        "review_agreement_count": 110,
+        "route": "archived_744_development_challenge_set",
     } == {
         name: value
-        for name, value in manifest["evidence_method"].items()
-        if name != "isbn_manifestation_election"
+        for name, value in segment.items()
+        if name not in MEASURED_SEGMENT_AGGREGATES
     }
+    assert set(MEASURED_SEGMENT_AGGREGATES) <= set(segment)
+    if segment["automatic_predictions"] != ROOT_PLACEHOLDER:
+        assert 21 == segment["automatic_predictions"]
+        assert 21 == segment["correct_predictions"]
+        assert 76 == segment["positive_opportunities"]
+        assert 0 == segment["zero_tolerance_failures"]
+        assert {"empty": 0, "missing": 0, "null": 21} == by_state[
+            "subtitle_fill_empty_predictions_by_state"
+        ]
+        assert {"empty": 0, "missing": 0, "null": 21} == by_state[
+            "subtitle_fill_empty_correct_predictions_by_state"
+        ]
+    else:
+        assert all(value == ROOT_PLACEHOLDER for value in by_state.values())
     assert {
         "development": {
             "automatic_precision": 1.0,
@@ -339,15 +376,19 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     genre_fill = subjective["genres:fill_empty"]
     assert 147 == genre_fill["eligible_opportunities"]
     assert 15 == genre_fill["metrics"]["automatic_predictions"]
+    description_fill = subjective["description_fill:safe_plain_text"]
+    assert 48 == description_fill["eligible_opportunities"]
+    assert 27 == description_fill["metrics"]["automatic_predictions"]
+    assert 0.5625 == description_fill["metrics"]["automatic_recall"]
     subtitle_fill = {
         entry["identity"]: entry
         for entry in manifest["options"]
         if entry["identity"] == "subtitle:fill_empty"
     }["subtitle:fill_empty"]
-    assert 113 == subtitle_fill["eligible_opportunities"]
     assert 0 == subtitle_fill["metrics"]["structural_or_sensitive_violations"]
     assert 0 == subtitle_fill["metrics"]["unsupported_output"]
     if subtitle_fill["metrics"]["automatic_precision"] != ROOT_PLACEHOLDER:
+        assert 113 == subtitle_fill["eligible_opportunities"]
         assert 1.0 == subtitle_fill["metrics"]["automatic_precision"]
         assert 3 <= subtitle_fill["metrics"]["automatic_predictions"]
 
@@ -395,6 +436,17 @@ def test_candidate_exposes_only_closed_aggregate_contract_data() -> None:
             "proposal_policy_version"
         ]
     )
+    assert {
+        "candidate_head": "e1e13200a784229bcb5694e716c1c7b0e0a8128e",
+        "confirmation_correction_receipt_sha256": "bcf746e16bdfd9ed8ee3174006546f4d3de7a375c3b52f62641d86470bbe136c",
+        "confirmation_transform_filter_correction_receipt_sha256": "d7f27b3b68d7b87c1db75eeb310e2c9e5cb4882823eaf2f486c16773a548b1f7",
+        "confirmation_unranked_authority_correction_receipt_sha256": "2bf2bcfac6e6b632bf0c8660a7bd5fa2541b2c1373a0d146bd32f55f38eaff29",
+        "holdout_continuity_receipt_sha256": "16b87e09e1b51cf9162d583852bf54b8c964e8d12913fbf36486ce3d58faa024",
+        "holdout_transform_filter_continuity_receipt_sha256": "b1960e81d472d048a762aa6d9a440dcf9bd3401328a860850db9e671d4e64b2c",
+        "holdout_unranked_authority_continuity_receipt_sha256": "10a88f1701b9c249e4d6fb6d5657bacf597cfa548a1d9f9dc8e74e4fa741216c",
+        "initial_holdout_receipt_sha256": "4637df813899ec39d2896fc626076d09924165433674cef35cfcc4fc0c6c48dd",
+        "preview_sha256": "f5fdad27f901735ef0e3075bfb1a98cb4aa5eb0461cdc7e63f0deb638b05e52b",
+    } == manifest["frozen_contract"]["description_tiebreaker"]
     for source, name in {
         "src/mechanical_librarian/domain/automatic_decision.py": "automatic_decision_sha256",
         "src/mechanical_librarian/domain/rich_metadata_preview.py": "preview_sha256",
@@ -408,12 +460,12 @@ def test_candidate_exposes_only_closed_aggregate_contract_data() -> None:
             )
 
 
-def test_v6_manifest_remains_historical_readable_after_v7_rotation() -> None:
+def test_v9_manifest_remains_historical_readable_after_v10_rotation() -> None:
     historical = json.loads(HISTORICAL_MANIFEST.read_text(encoding="utf-8"))
     current = json.loads(MANIFEST.read_text(encoding="utf-8"))
     manifest = current
 
-    assert "f20-rich-metadata-qualification-candidate-v6" == historical["schema"]
+    assert "f20-rich-metadata-qualification-candidate-v9" == historical["schema"]
     assert (
         hashlib.sha256(HISTORICAL_MANIFEST.read_bytes()).hexdigest()
         == current["authority_rotation"]["prior_manifest_sha256"]

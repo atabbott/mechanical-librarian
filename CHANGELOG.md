@@ -9,6 +9,10 @@
   author prefix plus underscores is admitted as one work. Existing installs
   require a clean `metadata-report-v36` database. (#896)
 
+- Empty descriptions with competing provider candidates now select one exact
+  target-work-applicable, quality-qualified value by a fixed provider order;
+  unsafe or unresolved candidates remain visible for review. (#886)
+
 - Empty ISBNs now fill only when deterministic identity evidence binds the selected
   provider ISBN to the file's work; unverified or competing families remain visible
   for review. Existing pre-release proposal state requires a clean rebuild under

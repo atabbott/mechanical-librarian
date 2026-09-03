@@ -43,6 +43,7 @@ from mechanical_librarian.domain.review_field_classification import (
     ReviewFieldCause,
     classify_review_field,
 )
+from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 
 
 class ReviewWebError(RuntimeError):
@@ -93,6 +94,7 @@ class CurrentReviewCaseSnapshot:
     report_document: str
     decision_documents: tuple[str, ...]
     history: tuple[dict[str, object], ...]
+    automatic_source_outcome_documents: tuple[str, ...] = ()
     automatic_attention_destinations: tuple[str, ...] = ()
     automatic_safety_suspended_destinations: tuple[str, ...] = ()
     shadow_abstention_destinations: tuple[str, ...] = ()
@@ -335,6 +337,18 @@ class InspectCurrentReviewCase:
                 raise ReviewWebError("unavailable")
             decisions: dict[str, HumanDecision] = {}
             automatic: dict[str, dict[str, object]] = {}
+            automatic_source_outcome_ids: dict[str, str] = {}
+            automatic_sources: dict[str, tuple[str, ...]] = {}
+            for document in snapshot.automatic_source_outcome_documents:
+                outcome_set = ShadowOutcomeSet.from_json(document)
+                if outcome_set.review_case_id != review_case_id:
+                    raise ReviewWebError("unavailable")
+                for outcome in outcome_set.outcomes:
+                    previous = automatic_sources.setdefault(
+                        outcome.outcome_id, outcome.citation_ids
+                    )
+                    if previous != outcome.citation_ids:
+                        raise ReviewWebError("unavailable")
             # Declared once: the parse loop below binds a decision, while the
             # per-field projection later looks one up and may find none.
             decision: HumanDecision | None
@@ -344,7 +358,11 @@ class InspectCurrentReviewCase:
                     decision = HumanDecision.from_json(document)
                     decisions[decision.destination] = decision
                 else:
-                    automatic[str(projected["destination"])] = projected
+                    destination = str(projected["destination"])
+                    automatic[destination] = projected
+                    automatic_source_outcome_ids[destination] = (
+                        parse_automatic_authority(document).source_outcome_id
+                    )
         except ReviewWebError:
             raise
         except Exception as error:
@@ -406,7 +424,16 @@ class InspectCurrentReviewCase:
             assert type(reasons) is list
             decision = decisions.get(destination)
             automatic_decision = automatic.get(destination)
+            automatic_selection_sources: list[str] = []
             if automatic_decision is not None:
+                automatic_selection_sources = _provider_source_labels(
+                    report,
+                    list(
+                        automatic_sources.get(
+                            automatic_source_outcome_ids[destination], ()
+                        )
+                    ),
+                )
                 candidate_id = automatic_decision.get("candidate_id")
                 selected = next(
                     (
@@ -490,6 +517,7 @@ class InspectCurrentReviewCase:
                     None if decision is None else _decision_projection(decision)
                 ),
                 "automatic_decision": automatic_decision,
+                "automatic_selection_sources": automatic_selection_sources,
                 "manual_hold": decision is not None and automatic_decision is not None,
                 "classification": classification.state,
                 "classification_reason": classification.reason,
@@ -1337,23 +1365,24 @@ def _corroboration_source_labels(
     """Project only closed provider authorities for #416 creator corroboration."""
     if reasons != ["explicit_author_corroborates_untyped_creator"]:
         return []
-    labels = {
-        "hardcover": "Hardcover",
-        "inventaire": "Inventaire",
-        "open_library": "Open Library",
-        "google_books": "Google Books",
-    }
+    return _provider_source_labels(report, references)
+
+
+def _provider_source_labels(
+    report: MetadataReport,
+    references: list[str],
+) -> list[str]:
+    """Project provider labels for exact evidence references."""
     by_reference = {
-        claim.reference: provider.authority
+        claim.reference: _provider_label(provider.authority)
         for provider in report.providers
-        if provider.authority in labels
         for candidate in provider.candidates
         for claim in candidate.claims
     }
-    authorities = {
+    labels = {
         by_reference[reference] for reference in references if reference in by_reference
     }
-    return [labels[authority] for authority in sorted(authorities)]
+    return sorted(labels)
 
 
 def _choice_contexts(

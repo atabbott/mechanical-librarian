@@ -874,6 +874,23 @@ function ProviderConsensusAutomaticStatement({ field }: { field: ReviewField }) 
   )
 }
 
+function DescriptionAutomaticStatement({ field }: { field: ReviewField }) {
+  const decision = field.automaticDecision
+  if (
+    field.humanDecision !== null ||
+    field.destination !== 'description' ||
+    decision?.outcome !== 'candidate' ||
+    field.proposedValues.length < 2
+  ) {
+    return null
+  }
+  const providers = field.automaticSelectionSources ?? []
+  if (!providers.length) return null
+  return (
+    <p>Selected automatically from {providers.join(' and ')} after matching the target work.</p>
+  )
+}
+
 function VerifiedManifestationIsbnAutomaticStatement({ field }: { field: ReviewField }) {
   if (
     field.humanDecision !== null ||
@@ -937,6 +954,7 @@ function RecordedOutcome({
         )}
       </dl>
       <ProviderConsensusAutomaticStatement field={field} />
+      <DescriptionAutomaticStatement field={field} />
       <VerifiedManifestationIsbnAutomaticStatement field={field} />
       <button
         type="button"
@@ -2955,6 +2973,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                         {selectedRevisitable ? (
                           <>
                             <ProviderConsensusAutomaticStatement field={selected} />
+                            <DescriptionAutomaticStatement field={selected} />
                             <VerifiedManifestationIsbnAutomaticStatement field={selected} />
                           </>
                         ) : null}

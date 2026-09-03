@@ -158,7 +158,8 @@ const fields: readonly FieldDefinition[] = [
   {
     key: 'description_fill',
     label: 'Description',
-    meaning: 'Use only admitted bounded plain text or visible source text.',
+    meaning:
+      'Use one applicable plain-text description without combining provider text; compare competing values by quality.',
     options: ['safe_plain_text', 'google_visible_text'],
     optionLabels: {
       safe_plain_text: 'Safe plain text',
@@ -355,10 +356,13 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
     fallback: 'abstains when no list is eligible',
   },
   'description_fill:safe_plain_text': {
-    admitted: 'one exact bounded plain-text description',
-    transformation: 'does not transform HTML',
+    admitted:
+      'one applicable bounded plain-text description; competing descriptions must also pass the fixed quality floor',
+    transformation:
+      'does not transform HTML and uses the fixed Hardcover, Google Books, then Open Library authority order',
     effect: 'fills an empty Description only',
-    fallback: 'abstains when text is transformed, ambiguous, missing, or unsupported',
+    fallback:
+      'abstains when target-work applicability is unproved, the quality floor has no survivor, or the result remains ambiguous, missing, transformed, or unsupported',
   },
   'description_fill:google_visible_text': {
     admitted: 'eligible Google Books visible text only',
