@@ -45,6 +45,7 @@ from tests.support.metadata_report_schemas import (
     forged_latin_work_report_json,
     leave_hot_journal,
     synthetic_latin_work_report,
+    synthetic_reordered_work_report,
     synthetic_report,
 )
 
@@ -527,6 +528,20 @@ def test_latin_work_lineages_survive_sqlite_publication_and_reopen() -> None:
     assert replayed.providers[0].transformation_lineage == (
         report.providers[0].transformation_lineage
     )
+
+
+def test_reordered_work_authors_survive_sqlite_publication_and_reopen() -> None:
+    report = synthetic_reordered_work_report()
+    with tempfile.TemporaryDirectory() as directory:
+        repository = open_repository(Path(directory) / "reports.sqlite")
+        try:
+            assert report.to_json() == repository.publish(report, lambda: True)
+            replayed = MetadataReport.from_json(repository.get(report.report_id))
+        finally:
+            repository.close()
+
+    assert replayed == report
+    assert replayed.providers[0].transformation_lineage is None
 
 
 def test_sqlite_replay_rejects_latin_work_lineage_mismatch() -> None:

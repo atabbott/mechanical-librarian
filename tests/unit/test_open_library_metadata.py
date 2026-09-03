@@ -1891,7 +1891,7 @@ def test_work_plan_persists_ordered_qualified_creators_through_replay() -> None:
         (
             "reordered",
             ["Ada Author", "Zed Author"],
-            ProviderStatus.NO_MATCH,
+            ProviderStatus.CANDIDATES,
         ),
         (
             "duplicate",
@@ -1906,7 +1906,7 @@ def test_work_plan_persists_ordered_qualified_creators_through_replay() -> None:
         ),
     ),
 )
-def test_work_plan_rejects_reordered_duplicate_invalid_and_overflow_authors(
+def test_work_plan_accepts_reordered_and_preserves_duplicate_invalid_and_overflow_authors(
     label, authors, expected
 ) -> None:
     title = _title()

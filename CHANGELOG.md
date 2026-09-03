@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- WORK replay now admits one exact closed-equal complete author multiset when
+  provider ordering alone differs; missing, extra, duplicate-replacement, and
+  transformed author matches still reject. (#889)
+
 - Latin titles and complete ordered author names differing only by closed
   canonical combining marks can identify one provider work; original claims stay
   visible and non-Latin or compatibility substitutions reject. Existing installs
