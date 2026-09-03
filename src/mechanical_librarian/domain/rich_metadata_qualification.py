@@ -9,10 +9,9 @@ from __future__ import annotations
 from types import MappingProxyType
 from typing import Final, Mapping
 
-# TODO-ROOT re-pin: the private F20 retained-document re-score produces
-# docs/reference/f20-rich-metadata-qualification-candidate-v7.json; bind its
-# sha256 here once the final head is measured.
-F20_QUALIFICATION_CANDIDATE_SHA256: Final = "1" * 64
+F20_QUALIFICATION_CANDIDATE_SHA256: Final = (
+    "c1d0000200e7830810774a1ca1944615ff2f4f656bf59d93813743180dc2fefe"
+)
 F20_RICH_FIELDS: Final = (
     "subtitle",
     "series",

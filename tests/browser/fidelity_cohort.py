@@ -39,7 +39,7 @@ LONG_DESCRIPTION = (
     "so a wrap that is allowed to happen has somewhere to happen."
 )
 # Bound to the runtime constant so the cohort follows the F20 rotation
-# without a second literal to re-pin (TODO-ROOT: still a placeholder here).
+# without a second literal to re-pin.
 _F20_CANDIDATE_SHA256 = F20_QUALIFICATION_CANDIDATE_SHA256
 _COVER_CANDIDATE_SHA256 = (
     "b91ae72a8c4e55c9bfe1d514c28210e22427b57a03082d2b5d1ae0b40df7c457"

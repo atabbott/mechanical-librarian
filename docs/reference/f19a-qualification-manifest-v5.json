@@ -1,6 +1,6 @@
 {
-  "candidate_evaluator_sha256": "ROOT-FILLS",
-  "candidate_execution_count": "ROOT-FILLS",
+  "candidate_evaluator_sha256": "13a8e7cb55cbf07885d07ce591318754aa25c77db2b8ace2f70a0c3a2132e924",
+  "candidate_execution_count": 7,
   "changed_prior_option_count": 0,
   "corpus_contract": {
     "acceptance_receipt_sha256": "7ba038f3ce0bb4fca7994f401bad93bc1a52e68f7e41b687fc7165f86bfb526f",
@@ -105,12 +105,12 @@
       "unsupported_rate": 0
     },
     "title:replace_target:decoration_tidy": {
-      "automatic_precision": "ROOT-FILLS",
-      "automatic_predictions": "ROOT-FILLS",
-      "automatic_recall": "ROOT-FILLS",
-      "correct_predictions": "ROOT-FILLS",
-      "eligible_opportunities": "ROOT-FILLS",
-      "positive_opportunities": "ROOT-FILLS",
+      "automatic_precision": 1.0,
+      "automatic_predictions": 17,
+      "automatic_recall": 1.0,
+      "correct_predictions": 17,
+      "eligible_opportunities": 75,
+      "positive_opportunities": 17,
       "qualified": true,
       "unsupported_rate": 0.0
     },
@@ -165,7 +165,7 @@
     }
   },
   "title_tranche": {
-    "candidate_execution_count": "ROOT-FILLS",
+    "candidate_execution_count": 3,
     "changed_prior_option_count": 0,
     "corpus_role": "development_challenge_set",
     "decoration_equivalence": {
@@ -176,9 +176,9 @@
         "unknown": 0
       },
       "case_count": 75,
-      "collapse_precision": "ROOT-FILLS",
-      "correct_keep_predictions": "ROOT-FILLS",
-      "keep_predictions": "ROOT-FILLS",
+      "collapse_precision": 1.0,
+      "correct_keep_predictions": 19,
+      "keep_predictions": 19,
       "review_agreement_count": 70,
       "stratum_sizes": {
         "keep_equivalent": 58,

@@ -22,9 +22,7 @@ class AutomaticDecisionError(ValueError):
     """Automatic authority is incomplete, stale, or outside its envelope."""
 
 
-# TODO-ROOT re-pin: the private F41 tidy qualification produces
-# docs/reference/f19a-qualification-manifest-v5.json; bind its sha256 here.
-F19A_QUALIFICATION_MANIFEST_SHA256 = "0" * 64
+F19A_QUALIFICATION_MANIFEST_SHA256 = "f7a4493d94f0188e6974aad1b68f9238d9e7733aa1a2e064e5663e385af0fe6e"
 _PRE_F35_F19A_QUALIFIED_POLICY_OPTIONS = frozenset({
     "title_layout:preserve", "title_layout:title_and_subtitle",
     "date_precision:year", "date_precision:full_date",

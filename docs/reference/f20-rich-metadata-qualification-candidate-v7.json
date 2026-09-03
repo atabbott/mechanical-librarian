@@ -1,8 +1,8 @@
 {
   "authority_rotation": {
-    "archived_replay_result_sha256": "ROOT-FILLS",
-    "development_result_sha256": "ROOT-FILLS",
-    "prior_aggregate_receipt_sha256": "ROOT-FILLS",
+    "archived_replay_result_sha256": "52809bcec54481ae6c101885543f90f47b59680b23c800a4677362ffaa7eb006",
+    "development_result_sha256": "aebebc927d5366ecde5038de4721d662c1a58c057209718dd0bab08ac2a15458",
+    "prior_aggregate_receipt_sha256": "41d495d5ddff570e9e346b88cf6fe6f73f4b36cef9596d7d3364b5c086702af8",
     "prior_manifest_sha256": "15cfb36db142e3783fa47a73157c72ecfd08bb282a967abc83fba152d1199205"
   },
   "automatic_authority": "decision_only",
@@ -135,14 +135,14 @@
     "series_truth_model": "valid_membership_with_preferred_value",
     "subjective_field_truth_model": "exact_work_bound_source_projection",
     "subtitle_fill_empty_correct_predictions_by_state": {
-      "empty": 4,
-      "missing": 4,
-      "null": 4
+      "empty": 0,
+      "missing": 0,
+      "null": 21
     },
     "subtitle_fill_empty_predictions_by_state": {
-      "empty": 4,
-      "missing": 4,
-      "null": 4
+      "empty": 0,
+      "missing": 0,
+      "null": 21
     },
     "subtitle_fill_empty_target_states": [
       "missing",
@@ -155,12 +155,16 @@
         "fill": 76,
         "unknown": 0
       },
+      "automatic_predictions": 21,
       "case_count": 113,
+      "correct_predictions": 21,
       "holdout_claim": false,
       "network_access": false,
+      "positive_opportunities": 76,
       "retained_49_report_route_predictions_at_base": 0,
       "review_agreement_count": 110,
-      "route": "archived_744_development_challenge_set"
+      "route": "archived_744_development_challenge_set",
+      "zero_tolerance_failures": 0
     },
     "subtitle_truth_model": "ebook_manifestation_bibliographic_subtitle",
     "unseen_holdout_required": false
@@ -171,38 +175,38 @@
   ],
   "frozen_contract": {
     "adjudication": {
-      "identity": "f20-field-local-adjudication-v2",
-      "sha256": "b3058192c37e946fb116f9062a8d024a5c24e08088cbb914c18c82a002609b8c"
+      "identity": "f41-subtitle-adjudication-v1",
+      "sha256": "dfa0e122c255429ec1aaef032972d871a76d79a1888ef4036188b3e1d9569f6a"
     },
     "automatic_decision": {
       "identity": "src/mechanical_librarian/domain/automatic_decision.py",
-      "sha256": "ROOT-FILLS"
+      "sha256": "6239905d340cbdf0212afc048541e5f466b88d61261a90ef70adc0f3c6511ecc"
     },
     "compiler": {
       "identity": "src/mechanical_librarian/domain/rich_metadata_preview.py",
-      "sha256": "ROOT-FILLS"
+      "sha256": "73b7ce282f65519c64048e9814bdef7df485f19adca100a388c7e7bc08c20034"
     },
     "evaluator": {
-      "identity": "f20-current-provider-report-evaluator-v16",
-      "sha256": "65bb86695248dd948a9e9159109b9611efb62d0d3a523b10731ebb063aa6249e"
+      "identity": "f41-subtitle-segment-evaluator-v1",
+      "sha256": "c305cb9d01e4c24c04ce736e44063e37c1d04b4f9a61077fc285496fcea2fdea"
     },
     "evidence_execution": {
-      "identity": "current-provider-tag-applicability-comparison-v10-connector-remediation",
-      "sha256": "9c5d769f763080164a7125cbc6ebf1c052a9acfd66b85cc48d559a23d1aedef4"
+      "identity": "f41-subtitle-segment-development-v1",
+      "sha256": "aebebc927d5366ecde5038de4721d662c1a58c057209718dd0bab08ac2a15458"
     },
     "isbn_manifestation_election": {
-      "automatic_decision_sha256": "ROOT-FILLS",
-      "preview_sha256": "ROOT-FILLS",
-      "proposal_policy_sha256": "ROOT-FILLS",
+      "automatic_decision_sha256": "6239905d340cbdf0212afc048541e5f466b88d61261a90ef70adc0f3c6511ecc",
+      "preview_sha256": "73b7ce282f65519c64048e9814bdef7df485f19adca100a388c7e7bc08c20034",
+      "proposal_policy_sha256": "239e1ee1ed03af0606d94c3c803e72a9e47ad49f6c70bcd3ef12f6c48690e4d8",
       "proposal_policy_version": "fixed-conservative-v19"
     },
     "policy": {
       "identity": "src/mechanical_librarian/domain/metadata_policy.py",
-      "sha256": "ROOT-FILLS"
+      "sha256": "b5a1b61fc8dde0c6e08936a28661f4b57ea41fdd1d80bc3e1f249dc307f4a1b0"
     },
     "target_shape": {
       "identity": "src/mechanical_librarian/adapters/library_services/audiobookshelf_field_effect.py",
-      "sha256": "ROOT-FILLS"
+      "sha256": "85f289ca2c97c97be2cc0476f963e2b366ba40fcc549160a2183541151b92953"
     },
     "thresholds": {
       "identity": "f20-field-local-qualification-contract-v3",
@@ -219,9 +223,9 @@
       "eligible_opportunities": 113,
       "identity": "subtitle:fill_empty",
       "metrics": {
-        "automatic_precision": "ROOT-FILLS",
-        "automatic_predictions": "ROOT-FILLS",
-        "automatic_recall": "ROOT-FILLS",
+        "automatic_precision": 1.0,
+        "automatic_predictions": 21,
+        "automatic_recall": 0.27631578947368424,
         "structural_or_sensitive_violations": 0,
         "unsupported_output": 0
       }

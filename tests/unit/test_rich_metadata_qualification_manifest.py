@@ -46,9 +46,9 @@ F38_MANIFEST = (
     Path(__file__).parents[2]
     / "docs/reference/f38-contributor-display-qualification-manifest-v1.json"
 )
-# The root binds the private qualification results into both manifests after
-# this head is measured; until then these literals stand in and
-# `test_qualification_digests_are_pinned` is the one red sentinel.
+# The private qualification results are bound into both manifests after the
+# final head is measured; `test_qualification_digests_are_pinned` fails while
+# either literal still stands in.
 ROOT_PLACEHOLDER = "ROOT-FILLS"
 PLACEHOLDER_DIGESTS = frozenset({"0" * 64, "1" * 64})
 
@@ -181,24 +181,28 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
         },
         "subtitle_segment_corroboration": {
             "adjudicated_counts": {"abstain": 37, "fill": 76, "unknown": 0},
+            "automatic_predictions": 21,
             "case_count": 113,
+            "correct_predictions": 21,
             "holdout_claim": False,
             "network_access": False,
+            "positive_opportunities": 76,
             "retained_49_report_route_predictions_at_base": 0,
             "review_agreement_count": 110,
             "route": "archived_744_development_challenge_set",
+            "zero_tolerance_failures": 0,
         },
         "subjective_field_truth_model": "exact_work_bound_source_projection",
         "series_truth_model": "valid_membership_with_preferred_value",
         "subtitle_fill_empty_correct_predictions_by_state": {
-            "empty": 4,
-            "missing": 4,
-            "null": 4,
+            "empty": 0,
+            "missing": 0,
+            "null": 21,
         },
         "subtitle_fill_empty_predictions_by_state": {
-            "empty": 4,
-            "missing": 4,
-            "null": 4,
+            "empty": 0,
+            "missing": 0,
+            "null": 21,
         },
         "subtitle_fill_empty_target_states": ["missing", "null", "empty"],
         "subtitle_truth_model": "ebook_manifestation_bibliographic_subtitle",

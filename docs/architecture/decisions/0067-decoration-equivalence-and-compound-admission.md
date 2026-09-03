@@ -136,8 +136,8 @@ pre-empted the subtitle-segment and series families of F41 entirely.
 - Titles that differ only by one closed decoration stop consuming owner
   attention, and works already holding the plain form resolve with no write.
 - Re-executing the sealed #870 corpus (89 cases) against the candidate admitted
-  ROOT-FILLS of ROOT-FILLS adjudicated same-work compound cases, rejected
-  ROOT-FILLS of ROOT-FILLS different-work collisions, with 0 false admissions
+  5 of 5 adjudicated same-work compound cases, rejected
+  2 of 2 different-work collisions, with 0 false admissions
   and 0 false rejections; every other family kept its query-only disposition.
 - A collapsed title carries one alternative, so reports that withheld a
   bibliographic combination on a decoration difference can form one.
