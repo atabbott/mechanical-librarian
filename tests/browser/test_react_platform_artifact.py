@@ -1893,7 +1893,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert load_more.bounding_box()["height"] >= 44
         load_more.click()
         expect(load_more).to_have_count(0)
-        assert page.locator(".diagnostic-entry").count() == 6
+        assert page.locator(".diagnostic-entry").count() == 7
         nav = page.get_by_role("navigation", name="Case diagnostics")
 
         def assert_diagnostic_layout(active_page: str) -> None:
