@@ -136,6 +136,66 @@ def synthetic_latin_work_report() -> MetadataReport:
     )
 
 
+def synthetic_reordered_work_report() -> MetadataReport:
+    """One WORK replay whose complete closed author multiset is reordered."""
+    local_title = "Plain Work"
+    local_authors = ("Ada Example", "Bea Example")
+    provider_authors = tuple(reversed(local_authors))
+    candidate = ProviderCandidate(
+        "edition-1",
+        "work-1",
+        (
+            ProviderClaim.create(
+                provider="catalogue",
+                candidate="edition-1",
+                kind=ClaimKind.TITLE,
+                value=local_title,
+                state=FieldState.VALID,
+                scope=ClaimScope.WORK,
+                applicability="not_applicable",
+            ),
+            *(
+                ProviderClaim.create(
+                    provider="catalogue",
+                    candidate="edition-1",
+                    kind=ClaimKind.CREATOR,
+                    value=author,
+                    state=FieldState.VALID,
+                    scope=ClaimScope.WORK,
+                    applicability="not_applicable",
+                    role="author",
+                    raw_order=index,
+                )
+                for index, author in enumerate(provider_authors, start=1)
+            ),
+        ),
+    )
+    fields = tuple(
+        TargetField(TargetDestination.AUTHORS, TargetFieldState.VALUE, local_authors)
+        if field.destination is TargetDestination.AUTHORS
+        else field
+        for field in default_target_fields(local_title)
+    )
+    return MetadataReport.create(
+        target=TargetFacts("primary", "ebooks", "item-1", fields),
+        file=FileFacts(0, "a" * 64, "b" * 64),
+        local_claims=(),
+        local_reasons=("target_metadata",),
+        providers=(
+            ProviderObservation(
+                "catalogue",
+                ProviderStatus.CANDIDATES,
+                (),
+                (candidate,),
+                ProviderQueryKind.WORK,
+                dispatch_lineage=WorkDispatchLineage.from_query(
+                    work_query_ladder(local_title, local_authors)[0]
+                ),
+            ),
+        ),
+    )
+
+
 def forged_latin_work_report_json() -> tuple[str, str]:
     """A self-consistent report envelope missing required Latin evidence."""
     data = synthetic_latin_work_report().to_data()

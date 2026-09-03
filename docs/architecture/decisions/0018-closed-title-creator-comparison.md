@@ -98,6 +98,13 @@ letters, orphan marks, compatibility decomposition, transliteration, and
 substitutions remain excluded. The schema advances to `metadata-report-v37`;
 ordinary startup rejects v36 under ADR-0013.
 
+The #889 amendment permits reordered complete author multisets only while
+replaying a retained WORK-lane candidate through an exact permitted dispatch.
+Each author still matches through the existing closed lexical relation exactly
+once, preserving cardinality and duplicate values. Direct identity admission,
+identity bindings, Latin and filename compound productions remain ordered; this
+adds no transformation lineage or schema change.
+
 ## Consequences
 
 ### Positive
@@ -116,6 +123,6 @@ ordinary startup rejects v36 under ADR-0013.
 
 ### Neutral or deferred
 
-- No fuzzy matching, edit distance, token subsets, accent stripping, author
-  reordering, subtitle admission, manifestation selection,
+- No fuzzy matching, edit distance, token subsets, accent stripping, subtitle
+  admission, manifestation selection,
   reviewer decision, or production write is added.

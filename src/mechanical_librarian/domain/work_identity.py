@@ -614,6 +614,7 @@ def admit_provider_work_identity(
     provider_authors: tuple[str, ...],
     provider_work_identity: str,
     variant_excluded: bool = False,
+    allow_reordered_authors: bool = False,
 ) -> WorkIdentityAdmission:
     """Apply the one closed work-title/author identity decision."""
     if (
@@ -627,6 +628,7 @@ def admit_provider_work_identity(
         or type(provider_work_identity) is not str
         or not provider_work_identity
         or type(variant_excluded) is not bool
+        or type(allow_reordered_authors) is not bool
         or variant_excluded
         or work_title_has_variant_marker(local_title)
         or work_title_has_variant_marker(provider_title)
@@ -646,6 +648,12 @@ def admit_provider_work_identity(
     if _closed_equal(local_title, provider_title) and all(
         _closed_equal(local, provider)
         for local, provider in zip(local_authors, provider_authors, strict=True)
+    ):
+        return WorkIdentityAdmission(True)
+    if (
+        allow_reordered_authors
+        and _closed_equal(local_title, provider_title)
+        and _closed_author_multiset_equal(local_authors, provider_authors)
     ):
         return WorkIdentityAdmission(True)
     latin = _latin_admission_lineage(
@@ -709,6 +717,7 @@ def replay_provider_work_identity_admission(
         provider_authors=provider_authors,
         provider_work_identity=provider_work_identity,
         variant_excluded=variant_excluded,
+        allow_reordered_authors=True,
     )
     if not admission.admitted or dispatch_lineage is None:
         return WorkIdentityAdmission(False)
@@ -1013,6 +1022,21 @@ def _closed_equal(left: str, right: str) -> bool:
         and right_typographic is not None
         and left_typographic == right_typographic
     )
+
+
+def _closed_author_multiset_equal(
+    local_authors: tuple[str, ...], provider_authors: tuple[str, ...]
+) -> bool:
+    """Match each author once through the closed lexical equality relation."""
+    unmatched = list(provider_authors)
+    for local in local_authors:
+        for index, provider in enumerate(unmatched):
+            if _closed_equal(local, provider):
+                unmatched.pop(index)
+                break
+        else:
+            return False
+    return not unmatched
 
 
 def _balanced_typographic(value: str) -> str | None:

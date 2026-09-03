@@ -32,6 +32,7 @@ from mechanical_librarian.domain.proposal_set import (
 from tests.support.metadata_report_schemas import (
     forged_latin_work_report_json,
     synthetic_latin_work_report,
+    synthetic_reordered_work_report,
 )
 
 
@@ -114,6 +115,17 @@ def test_proposal_set_replay_accepts_the_exact_latin_work_lineage() -> None:
     repository.get_proposal_input = lambda report_id: forged_json  # type: ignore[method-assign]  # reason: the proposal boundary receives a forged retained report
     with pytest.raises(ProposalRetainedDataError):
         CreateProposalSet(repository, lambda _: True).run(forged_id)
+
+
+def test_proposal_set_replay_accepts_reordered_complete_work_authors() -> None:
+    report = synthetic_reordered_work_report()
+    repository = _Repository(report)
+
+    serialized = CreateProposalSet(repository, lambda value: value == report).run(
+        report.report_id
+    )
+
+    assert serialized == evaluate_report(report).to_json()
 
 
 def test_stale_report_publishes_nothing() -> None:

@@ -1090,6 +1090,82 @@ def test_retry_successor_preserves_exact_work_dispatch_without_transformation(
     assert recovered.transformation_lineage is None
 
 
+def test_retry_successor_replays_reordered_complete_work_authors(
+    retry: _Retry,
+) -> None:
+    plan, work, isbn, _overflow = _overflow_source(retry)
+    authors = ("Ada Example", "Bea Example")
+    reordered_work = replace(work, title="Plain Work", authors=authors)
+    reordered_plan = replace(
+        plan,
+        lanes=tuple(
+            reordered_work if lane.identity == work.identity else lane
+            for lane in plan.lanes
+        ),
+    )
+    original = provider_observation(
+        "catalogue",
+        (
+            ProviderLaneResult(reordered_work, ProviderStatus.UNAVAILABLE),
+            ProviderLaneResult(isbn, ProviderStatus.NO_MATCH),
+        ),
+        authority="open_library",
+    )
+    claims = (
+        ProviderClaim.create(
+            provider="catalogue",
+            candidate="edition",
+            kind=ClaimKind.TITLE,
+            value="Plain Work",
+            state=FieldState.VALID,
+            scope=ClaimScope.WORK,
+            applicability="not_applicable",
+        ),
+        *(
+            ProviderClaim.create(
+                provider="catalogue",
+                candidate="edition",
+                kind=ClaimKind.CREATOR,
+                value=author,
+                state=FieldState.VALID,
+                scope=ClaimScope.WORK,
+                applicability="not_applicable",
+                role="author",
+                raw_order=index,
+            )
+            for index, author in enumerate(reversed(authors), start=1)
+        ),
+    )
+    dispatch = WorkDispatchLineage.from_query(
+        work_query_ladder("Plain Work", authors)[0]
+    )
+    replacement = provider_observation(
+        "catalogue",
+        (
+            ProviderLaneResult(
+                reordered_work,
+                ProviderStatus.CANDIDATES,
+                (ProviderCandidate("edition", "work", claims),),
+                dispatch_lineage=dispatch,
+            ),
+        ),
+        authority="open_library",
+    )
+
+    merged = retry.service(None)._merged(
+        reordered_plan, original, (reordered_work,), replacement
+    )
+
+    recovered = next(lane for lane in merged.lanes if lane.identity == work.identity)
+    assert recovered.status is ProviderStatus.CANDIDATES
+    assert [
+        (candidate.edition_identity, candidate.work_identity)
+        for candidate in recovered.candidates
+    ] == [("edition", "work")]
+    assert recovered.dispatch_lineage == dispatch
+    assert recovered.transformation_lineage is None
+
+
 def test_retry_successor_merges_and_replays_the_exact_latin_lineage(
     retry: _Retry,
 ) -> None:

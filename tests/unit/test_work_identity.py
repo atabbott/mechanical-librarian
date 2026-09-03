@@ -642,12 +642,30 @@ def test_decoration_only_work_titles_have_no_dispatches(
 
 def test_complete_ordered_authors_and_variant_veto_remain_identity_floor() -> None:
     assert not admit_provider_work_identity(
+        local_title="Plain Work",
+        local_authors=("Ada Example", "Bea Example"),
+        provider_title="Plain Work",
+        provider_authors=("Bea Example", "Ada Example"),
+        provider_work_identity="work-1",
+    ).admitted
+    assert not admit_provider_work_identity(
         local_title="Ada_Example_-_Plain_Work",
         local_authors=("Ada Example", "Bea Example"),
         provider_title="Plain Work",
         provider_authors=("Bea Example", "Ada Example"),
         provider_work_identity="work-1",
     ).admitted
+    reordered = replay_provider_work_identity_admission(
+        local_title="Plain Work",
+        local_authors=("Ada Example", "Bea Example"),
+        provider_title="Plain Work",
+        provider_authors=("Bea Example", "Ada Example"),
+        provider_work_identity="work-1",
+        dispatch_lineage=WorkDispatchLineage.from_query(
+            work_query_ladder("Plain Work", ("Ada Example", "Bea Example"))[0]
+        ),
+    )
+    assert reordered.admitted
     assert work_title_has_variant_marker("Plain Work (Variant)")
     assert not admit_provider_work_identity(
         local_title="Plain Work",
@@ -848,6 +866,43 @@ def test_replay_requires_one_exact_ladder_dispatch_or_its_narrowing_successor() 
         provider_authors=("Ada Example", "Bea Example"),
         provider_work_identity="work-1",
         variant_excluded=True,
+    ).admitted
+
+
+def test_replay_reordered_authors_preserves_multiplicity_and_ordered_transformations() -> (
+    None
+):
+    authors = ("Ada Example", "Ada Example", "Bea Example")
+    query = work_query_ladder("Plain Work", authors)[0]
+    dispatch = WorkDispatchLineage.from_query(query)
+
+    assert replay_provider_work_identity_admission(
+        local_title="Plain Work",
+        local_authors=authors,
+        provider_title="Plain Work",
+        provider_authors=("Bea Example", "Ada Example", "Ada Example"),
+        provider_work_identity="work-1",
+        dispatch_lineage=dispatch,
+    ).admitted
+    assert not replay_provider_work_identity_admission(
+        local_title="Plain Work",
+        local_authors=authors,
+        provider_title="Plain Work",
+        provider_authors=("Bea Example", "Bea Example", "Ada Example"),
+        provider_work_identity="work-1",
+        dispatch_lineage=dispatch,
+    ).admitted
+    assert not replay_provider_work_identity_admission(
+        local_title="Ada_Example_-_Plain_Work",
+        local_authors=("Ada Example", "Bea Example"),
+        provider_title="Plain Work",
+        provider_authors=("Bea Example", "Ada Example"),
+        provider_work_identity="work-1",
+        dispatch_lineage=WorkDispatchLineage.from_query(
+            work_query_ladder(
+                "Ada_Example_-_Plain_Work", ("Ada Example", "Bea Example")
+            )[0]
+        ),
     ).admitted
 
 

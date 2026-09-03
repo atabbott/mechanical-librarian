@@ -1908,6 +1908,58 @@ def test_edition_overflow_rejects_query_only_decoration_and_admits_exact() -> No
     assert rejected_variant.edition_enrichment_overflow is None
 
 
+def test_edition_overflow_replays_reordered_complete_work_authors() -> None:
+    authors = ("Ada Author", "Bea Author")
+    provider_authors = tuple(reversed(authors))
+    claims = tuple(
+        ProviderClaim.create(
+            provider="catalogue",
+            candidate="work-1",
+            kind=ClaimKind.CREATOR,
+            value=author,
+            state=FieldState.VALID,
+            scope=ClaimScope.WORK,
+            applicability="not_applicable",
+            role="author",
+            raw_order=index,
+        )
+        for index, author in enumerate(provider_authors)
+    )
+    witness = EditionEnrichmentOverflow(
+        "work-1",
+        "The Example",
+        claims,
+        tuple(
+            ProviderIdentityBinding(
+                claim.reference,
+                f"author-{index}",
+                ClaimScope.WORK,
+                "author",
+                index,
+            )
+            for index, claim in enumerate(claims)
+        ),
+    )
+    dispatch = _work_dispatch("The Example", authors, narrowed=True)
+
+    qualified = qualify_provider_observation(
+        ProviderObservation(
+            "catalogue",
+            ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+            (),
+            (),
+            ProviderQueryKind.WORK,
+            edition_enrichment_overflow=witness,
+            dispatch_lineage=dispatch,
+        ),
+        MetadataLookup(ProviderQueryKind.WORK, (), "The Example", authors),
+    )
+
+    assert qualified.edition_enrichment_overflow == witness
+    assert qualified.dispatch_lineage == dispatch
+    assert qualified.transformation_lineage is None
+
+
 def test_latin_edition_overflow_replays_only_its_exact_application_lineage() -> None:
     author = ProviderClaim.create(
         provider="catalogue",
@@ -2484,8 +2536,8 @@ def test_work_lookup_fails_closed_for_competing_work_or_variant_markers() -> Non
         ),
         pytest.param(
             ("Ada Author", "Zed Author"),
-            ProviderStatus.NO_MATCH,
-            id="same_set_wrong_order",
+            ProviderStatus.CANDIDATES,
+            id="same_set_reordered",
         ),
         pytest.param(("Zed Author",), ProviderStatus.NO_MATCH, id="missing_author"),
         pytest.param(
@@ -2500,7 +2552,7 @@ def test_work_lookup_fails_closed_for_competing_work_or_variant_markers() -> Non
         ),
     ),
 )
-def test_work_lookup_requires_the_complete_canonical_author_order(
+def test_work_lookup_requires_the_complete_canonical_author_multiset(
     provider_authors, expected
 ) -> None:
     lookup = MetadataLookup(
