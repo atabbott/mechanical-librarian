@@ -254,6 +254,36 @@ def test_a_wider_decorated_attestation_blocks_the_collapse() -> None:
     ) == result.reasons
 
 
+def test_attestation_width_counts_claims_a_rejected_candidate_still_states() -> None:
+    result = _title_result(
+        current="Plain Work [retail]",
+        providers=(
+            _provider_title("open_library", _PLAIN),
+            _provider_title("hardcover", "Plain Work [retail]"),
+            # A candidate WORK admission rejects still attests its title: the
+            # differing manifestation title keeps it out of the alternatives.
+            _provider_title(
+                "inventaire",
+                "Plain Work [retail]",
+                edition_title="Different Edition Title",
+            ),
+        ),
+    )
+
+    assert ProposalOutcome.UNRESOLVED_CHOICE is result.outcome
+    assert (
+        "competing_evidence",
+        "decoration_equivalence_decorated_consensus",
+    ) == result.reasons
+    assert 1 == len(
+        [
+            alternative
+            for alternative in result.alternatives
+            if alternative.value.value == "Plain Work [retail]"
+        ]
+    )
+
+
 def test_case_only_provider_variants_count_as_one_attestation() -> None:
     result = _title_result(
         current="Plain Work [retail]",

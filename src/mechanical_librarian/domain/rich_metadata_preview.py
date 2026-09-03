@@ -27,7 +27,7 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalOutcome, ProposalResult, ProposalSet,
     ProposalValueKind, VERIFIED_MANIFESTATION_ISBN_REASON,
     provider_candidate_represents_target_work,
-    subtitle_segment_evidence,
+    segment_corroboration,
 )
 
 
@@ -387,19 +387,27 @@ def _automatic_subtitle_abstention(
         for reference in candidate.evidence_references
     ):
         return "subtitle_local_corroboration_required"
-    if _corroborating_subtitle_references(report, candidate):
+    references, withheld = _subtitle_corroboration(report, candidate)
+    if withheld is not None:
+        return withheld
+    if references:
         return None
     return "subtitle_local_corroboration_required"
 
 
-def _corroborating_subtitle_references(
+def _subtitle_corroboration(
     report: MetadataReport,
     candidate: ProposalAlternative,
-) -> tuple[str, ...]:
-    """The independent claims that attest the candidate's exact value."""
+) -> tuple[tuple[str, ...], str | None]:
+    """The independent claims attesting the candidate, or the guard withholding.
+
+    The segment half is decided by the domain's shared `segment_corroboration`,
+    the same call the subtitle election makes, so the projection and the
+    election cannot drift apart.
+    """
     value = candidate.value.value
     if type(value) is not str:
-        return ()
+        return (), None
     desired = normalize_title(value).casefold()
     explicit = tuple(
         claim.reference
@@ -410,12 +418,23 @@ def _corroborating_subtitle_references(
         and observed
         and normalize_title(observed).casefold() == desired
     )
-    segments = tuple(
-        segment.reference
-        for segment in subtitle_segment_evidence(report, value)
-        if segment.correlation not in candidate.correlations
+    if explicit:
+        return tuple(sorted(explicit)), None
+    corroboration = segment_corroboration(report, value, candidate.correlations)
+    if corroboration.withheld_reason is not None:
+        return (), corroboration.withheld_reason
+    return (
+        tuple(sorted({segment.reference for segment in corroboration.segments})),
+        None,
     )
-    return tuple(sorted({*explicit, *segments}))
+
+
+def _corroborating_subtitle_references(
+    report: MetadataReport,
+    candidate: ProposalAlternative,
+) -> tuple[str, ...]:
+    """The independent claims that attest the candidate's exact value."""
+    return _subtitle_corroboration(report, candidate)[0]
 
 
 def _automatic_series_abstention(

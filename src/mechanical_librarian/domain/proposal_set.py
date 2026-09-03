@@ -90,7 +90,7 @@ _EVIDENCE_REFERENCE = re.compile(
 _CORRELATION = re.compile(r"^correlation_[0-9a-f]{64}$")
 _REASON = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _ASIN = re.compile(r"^B[0-9A-Z]{9}$")
-_GENERIC_PROVIDER_SUBTITLES = frozenset({"a novel"})
+_GENERIC_PROVIDER_SUBTITLES = frozenset({"a novel", "stories"})
 
 
 class ProposalValueError(ValueError):
@@ -235,6 +235,8 @@ DECORATION_EQUIVALENCE_DECORATED_CONSENSUS_REASON = (
     "decoration_equivalence_decorated_consensus"
 )
 SUBTITLE_SEGMENT_UNCORROBORATED_REASON = "subtitle_segment_uncorroborated"
+SUBTITLE_SEGMENT_PROVIDER_DISSENT_REASON = "subtitle_segment_provider_dissent"
+SUBTITLE_SEGMENT_DECORATED_CONSENSUS_REASON = "subtitle_segment_decorated_consensus"
 PROVIDER_SEGMENT_CORROBORATED_SUBTITLE_REASON = "provider_segment_corroborated_subtitle"
 PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON = "provider_consensus_contributor_display"
 VERIFIED_MANIFESTATION_ISBN_REASON = "verified_manifestation_isbn"
@@ -268,6 +270,8 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
             ("competing_evidence", DECORATION_EQUIVALENCE_PROVIDER_DISSENT_REASON),
             ("competing_evidence", DECORATION_EQUIVALENCE_DECORATED_CONSENSUS_REASON),
             ("competing_evidence", SUBTITLE_SEGMENT_UNCORROBORATED_REASON),
+            ("competing_evidence", SUBTITLE_SEGMENT_PROVIDER_DISSENT_REASON),
+            ("competing_evidence", SUBTITLE_SEGMENT_DECORATED_CONSENSUS_REASON),
             ("date_refinement_requires_corroboration", "unique_typed_candidate"),
             ("date_year_conflict", "unique_typed_candidate"),
             ("insufficient_independent_corroboration",),
@@ -1148,16 +1152,22 @@ def evaluate_report(
                 TargetFieldState.EMPTY,
             }
             and (elected := _segment_corroborated_subtitle(report, result.alternatives))
-            is not None
+            != (None, None)
         ):
             attested, elected_reason = elected
-            result = ProposalResult(
-                destination,
-                ProposalOutcome.PROPOSE_CHANGE,
-                (attested,),
-                attested.alternative_id,
-                (elected_reason,),
-                _dependencies(destination),
+            result = (
+                ProposalResult(
+                    destination,
+                    ProposalOutcome.PROPOSE_CHANGE,
+                    (attested,),
+                    attested.alternative_id,
+                    (cast(str, elected_reason),),
+                    _dependencies(destination),
+                )
+                if attested is not None
+                # A withheld corroboration states its own guard on the same
+                # seam the uncorroborated diagnostic uses.
+                else _unresolved(result, cast(str, elected_reason))
             )
         elif (
             destination is TargetDestination.SUBTITLE
@@ -1404,6 +1414,7 @@ class SubtitleSegmentEvidence:
     reference: str
     correlation: str
     value: str
+    clean_title: str
     scope: ProposalScope = ProposalScope.WORK
 
 
@@ -1445,13 +1456,93 @@ def subtitle_segment_evidence(
             component = match.preserved_component
             if sought is not None and normalize_title(component).casefold() != sought:
                 continue
-            segments.append(SubtitleSegmentEvidence(reference, correlation, component))
+            segments.append(
+                SubtitleSegmentEvidence(
+                    reference, correlation, component, match.clean_title
+                )
+            )
     return tuple(segments)
+
+
+@dataclass(frozen=True, slots=True)
+class SegmentCorroboration:
+    """The cross-source segments that attest a subtitle, or why they cannot."""
+
+    segments: tuple[SubtitleSegmentEvidence, ...] = ()
+    withheld_reason: str | None = None
+
+
+def segment_corroboration(
+    report: MetadataReport,
+    value: str,
+    candidate_correlations: tuple[str, ...],
+) -> SegmentCorroboration:
+    """Decide whether stripped title segments corroborate one subtitle value.
+
+    Both the election and the automatic projection call this, so the two
+    surfaces cannot drift. Corroboration needs a segment from a source other
+    than the one stating the subtitle, no provider stating a different
+    subtitle, and at least as many provider authorities on the plain forms the
+    segments were stripped from as on the decorated forms carrying the segment.
+    """
+    segments = subtitle_segment_evidence(report, value)
+    if not segments:
+        return SegmentCorroboration()
+    cross = tuple(
+        segment
+        for segment in segments
+        if segment.correlation not in candidate_correlations
+    )
+    if not cross:
+        # A segment from the candidate's own source is not corroboration.
+        return SegmentCorroboration()
+    sought = _comparison(TargetDestination.SUBTITLE, value)
+    if any(
+        _comparison(TargetDestination.SUBTITLE, claim.value) != sought
+        for provider in report.providers
+        for candidate in provider.candidates
+        for claim in candidate.claims
+        if claim.kind is ClaimKind.SUBTITLE
+        and claim.state is FieldState.VALID
+        and claim.value is not None
+    ):
+        return SegmentCorroboration(
+            withheld_reason=SUBTITLE_SEGMENT_PROVIDER_DISSENT_REASON
+        )
+    local_correlation = _correlation("local:selected_epub")
+    decorated = frozenset(
+        segment.correlation
+        for segment in segments
+        if segment.correlation != local_correlation
+    )
+    plain_forms = frozenset(
+        _comparison(TargetDestination.TITLE, segment.clean_title)
+        for segment in segments
+        if segment.correlation != local_correlation
+    )
+    authorities = _provider_work_title_authorities(report)
+    plain = frozenset(
+        authority
+        for form in plain_forms
+        for authority in authorities.get(form, frozenset())
+    )
+    local = (
+        1
+        if any(segment.correlation == local_correlation for segment in segments)
+        else 0
+    )
+    if not decorated or len(decorated) + local > len(plain):
+        # The segment reads as integral title text: no provider carries it, or
+        # the form carrying it is stated at least as widely as the form without.
+        return SegmentCorroboration(
+            withheld_reason=SUBTITLE_SEGMENT_DECORATED_CONSENSUS_REASON
+        )
+    return SegmentCorroboration(segments=cross)
 
 
 def _segment_corroborated_subtitle(
     report: MetadataReport, alternatives: tuple[ProposalAlternative, ...]
-) -> tuple[ProposalAlternative, str] | None:
+) -> tuple[ProposalAlternative | None, str | None]:
     """Elect the one competing subtitle an independent source also attests.
 
     Provider catalogues disagree on how a combined title splits; the packaged
@@ -1474,7 +1565,7 @@ def _segment_corroborated_subtitle(
         for segment in subtitle_segment_evidence(report)
     )
     if not attested:
-        return None
+        return None, None
     matching = tuple(
         alternative
         for alternative in alternatives
@@ -1487,7 +1578,7 @@ def _segment_corroborated_subtitle(
         for alternative in matching
     }
     if len(distinct) != 1:
-        return None
+        return None, None
     # Elect only a provider-backed candidate: subtitle observations built from
     # the book's own packaged claims carry work scope, and the local claim is
     # the corroboration, never the elected provider value itself.
@@ -1502,13 +1593,11 @@ def _segment_corroborated_subtitle(
         value = cast(str, alternative.value.value)
         if _explicit_subtitle_references(report, value):
             return alternative, "local_attested_subtitle"
-        cross = tuple(
-            segment
-            for segment in subtitle_segment_evidence(report, value)
-            if segment.correlation not in alternative.correlations
-        )
+        corroboration = segment_corroboration(report, value, alternative.correlations)
+        if corroboration.withheld_reason is not None:
+            return None, corroboration.withheld_reason
+        cross = corroboration.segments
         if not cross:
-            # A segment from the candidate's own source is not corroboration.
             continue
         local = _correlation("local:selected_epub")
         return (
@@ -1530,7 +1619,7 @@ def _segment_corroborated_subtitle(
                 else PROVIDER_SEGMENT_CORROBORATED_SUBTITLE_REASON
             ),
         )
-    return None
+    return None, None
 
 
 def _explicit_subtitle_references(report: MetadataReport, value: str) -> frozenset[str]:
@@ -1738,13 +1827,20 @@ def _decoration_equivalence_election(
         )
     ):
         return _unresolved(result, DECORATION_TIDY_SERIES_UNPRESERVED_REASON)
-    class_keys = {
-        _comparison(TargetDestination.TITLE, cast(str, plain.value.value)),
-        _comparison(TargetDestination.TITLE, cast(str, decorated.value.value)),
-    }
-    if _provider_work_title_keys(report) - class_keys:
+    plain_key = _comparison(TargetDestination.TITLE, cast(str, plain.value.value))
+    decorated_key = _comparison(
+        TargetDestination.TITLE, cast(str, decorated.value.value)
+    )
+    # Width and dissent both read the raw provider claims, not the admitted
+    # alternatives: a decorated form stated by a candidate WORK admission
+    # rejected still attests that form, and counting an alternative's
+    # correlations would miss it.
+    authorities = _provider_work_title_authorities(report)
+    if set(authorities) - {plain_key, decorated_key}:
         return _unresolved(result, DECORATION_EQUIVALENCE_PROVIDER_DISSENT_REASON)
-    if _attestation_width(plain) < _attestation_width(decorated):
+    if len(authorities.get(plain_key, frozenset())) < len(
+        authorities.get(decorated_key, frozenset())
+    ):
         return _unresolved(result, DECORATION_EQUIVALENCE_DECORATED_CONSENSUS_REASON)
     if plain.assessment is ProposalAssessment.PRESERVES_TARGET:
         return ProposalResult(
@@ -1788,24 +1884,28 @@ def _decoration_equivalence_pair(
     return pairs[0] if len(pairs) == 1 else None
 
 
-def _provider_work_title_keys(report: MetadataReport) -> frozenset[str]:
-    """Return every valid provider WORK title claim under closed comparison."""
-    return frozenset(
-        _comparison(TargetDestination.TITLE, claim.value)
-        for provider in report.providers
-        for candidate in provider.candidates
-        for claim in candidate.claims
-        if claim.kind is ClaimKind.TITLE
-        and claim.scope is ClaimScope.WORK
-        and claim.state is FieldState.VALID
-        and claim.value is not None
-    )
+def _provider_work_title_authorities(
+    report: MetadataReport,
+) -> dict[str, frozenset[str]]:
+    """Map every valid provider WORK title claim to the authorities stating it.
 
-
-def _attestation_width(alternative: ProposalAlternative) -> int:
-    """Count the distinct provider authorities attesting one form."""
-    local = _correlation("local:selected_epub")
-    return len([value for value in alternative.correlations if value != local])
+    Every candidate counts, admitted or not: a title claim is an attestation of
+    that form regardless of whether WORK admission kept its candidate.
+    """
+    values: dict[str, set[str]] = {}
+    for provider in report.providers:
+        for candidate in provider.candidates:
+            for claim in candidate.claims:
+                if (
+                    claim.kind is ClaimKind.TITLE
+                    and claim.scope is ClaimScope.WORK
+                    and claim.state is FieldState.VALID
+                    and claim.value is not None
+                ):
+                    values.setdefault(
+                        _comparison(TargetDestination.TITLE, claim.value), set()
+                    ).add(_provider_correlation(provider))
+    return {key: frozenset(value) for key, value in values.items()}
 
 
 def _provider_consensus_contributor_display_election(
@@ -4393,7 +4493,10 @@ __all__ = [
     "PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON",
     "PROVIDER_SEGMENT_CORROBORATED_SUBTITLE_REASON",
     "PROPOSAL_SCHEMA",
+    "SUBTITLE_SEGMENT_DECORATED_CONSENSUS_REASON",
+    "SUBTITLE_SEGMENT_PROVIDER_DISSENT_REASON",
     "SUBTITLE_SEGMENT_UNCORROBORATED_REASON",
+    "SegmentCorroboration",
     "SubtitleSegmentEvidence",
     "ProposalAlternative",
     "ProposalAssessment",
@@ -4406,5 +4509,6 @@ __all__ = [
     "ProposalValueKind",
     "evaluate_report",
     "provider_candidate_represents_target_work",
+    "segment_corroboration",
     "subtitle_segment_evidence",
 ]
