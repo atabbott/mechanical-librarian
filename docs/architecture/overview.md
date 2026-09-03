@@ -158,7 +158,7 @@ application performs one complete semantic parse of each visible row before
 returning its DTO. New canonical writes retain their complete validation and
 commit their derived facts atomically.
 
-The `metadata-report-v36` document retains all 16 ordered Audiobookshelf target
+The `metadata-report-v37` document retains all 16 ordered Audiobookshelf target
 destinations and their missing, null, empty, unloaded, malformed, oversized, or
 value state in target currentness. It also retains the closed ordered local-field states,
 source capability
@@ -176,9 +176,10 @@ The domain owns one closed work-title transformation table, bounded query ladder
 and work-identity admission decision. Provider adapters render its values into
 their documented grammars but cannot define title equivalence. Exact dispatch
 lineage survives report replay, retry successors, overflow witnesses, and
-ProposalSet evaluation. Admission is granted by one reviewed compound
-production, `author_prefix_then_underscores`; every individual table row stays
-query-only.
+ProposalSet evaluation. Admission is granted only by the reviewed
+`author_prefix_then_underscores` and `latin_combining_marks` productions. Latin
+recovery records every changed local or provider title/author field and author
+ordinal; every other individual table row stays query-only.
 Candidate-aware domain finalization deterministically reclassifies publication
 facts between claims and evidence, promotes safely linked manifestation dates,
 demotes incompatible publication claims, and assigns canonical comparison

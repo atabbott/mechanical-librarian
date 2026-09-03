@@ -572,6 +572,11 @@ def _dispatch_transformations_are_canonical(
         }
         and all(
             _RULES_BY_FAMILY[family].rung is WorkDispatchRung.NORMALIZED
+            or (
+                family is WorkTitleTransformationFamily.PUNCTUATION_AMPERSAND_FOLD
+                and transformations[-1]
+                is WorkTitleTransformationFamily.LATIN_COMBINING_MARKS
+            )
             for family in transformations[:-1]
             if family is not WorkTitleTransformationFamily.SUBTITLE_SEGMENT
         )

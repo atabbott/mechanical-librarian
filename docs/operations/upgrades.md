@@ -7,7 +7,7 @@ The reviewer-access authority, `setup-state-v3`, `owner-settings-v3`,
 tables change the current SQLite objects in this build. Every earlier
 application database therefore requires a clean rebuild; no adoption,
 migration, conversion, import, repair, or downgrade is supplied by #872, #873,
-#749, #956, #965, or #896.
+#749, #956, #965, #896, or #888.
 
 The exact predecessors for this change are `config-v7`, `metadata-report-v32`,
 `owner-settings-v2`, and `setup-state-v2`. Inventaire changes all four closed
@@ -27,6 +27,11 @@ Audiobookshelf-asserted ASIN.
 `metadata-report-v36`: the work-title transformation lineage becomes an ordered
 compound production and carries its first non-null value, so a v35 report is not
 exact-current. Rebuild an absent application database; no adoption is supplied.
+
+#888 advances the report discriminator from `metadata-report-v36` to
+`metadata-report-v37`: the closed Latin combining-mark recovery records exact
+dispatch and field-application lineage, so a v36 report is not exact-current.
+Rebuild an absent application database; no adoption is supplied.
 
 #896 advances the exact proposal policy from `fixed-conservative-v18` to
 `fixed-conservative-v19` because decoration-equivalent titles collapse into one
@@ -71,7 +76,7 @@ exact retained #744 test schema, an existing complete owner-only clone, an
 independent backup path, and an absent output path under the same private
 directory. The command name remains the frozen authority identifier from its
 original plan; its fresh output is always the exact current schema,
-`metadata-report-v36` with `fixed-conservative-v19`. It leaves the source
+`metadata-report-v37` with `fixed-conservative-v19`. It leaves the source
 untouched, verifies the backup, rebuilds a fresh exact-current report database
 through current derivation, and
 invalidates observations that lack current work-dispatch provenance plus all

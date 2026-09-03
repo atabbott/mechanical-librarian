@@ -296,6 +296,49 @@ def test_latin_combining_marks_fold_is_bounded_and_records_exact_applications() 
     ] == [False, False, True]
 
 
+def test_ampersand_then_latin_dispatch_is_canonical_and_replays() -> None:
+    title = "Caf\N{LATIN SMALL LETTER E WITH ACUTE} & Tea"
+    authors = ("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",)
+    query = work_query_ladder(title, authors)[-1]
+
+    assert (query.title, query.authors, query.transformations) == (
+        "Cafe and Tea",
+        ("Jose",),
+        (
+            WorkTitleTransformationFamily.PUNCTUATION_AMPERSAND_FOLD,
+            WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
+        ),
+    )
+    dispatch = WorkDispatchLineage.from_query(query)
+    assert work_dispatch_lineage_from_data(dispatch.to_data()) == dispatch
+    replayed = replay_provider_work_identity_admission(
+        local_title=title,
+        local_authors=authors,
+        provider_title="Cafe & Tea",
+        provider_authors=("Jose",),
+        provider_work_identity="work-1",
+        dispatch_lineage=dispatch,
+    )
+    assert replayed.admitted
+    assert replayed.transformation is not None
+    assert replayed.transformation.production == "latin_combining_marks"
+
+    with pytest.raises(ValueError):
+        WorkDispatchLineage(
+            WorkDispatchRung.PUNCTUATION_FOLDED,
+            tuple(reversed(query.transformations)),
+        )
+    with pytest.raises(ValueError):
+        WorkDispatchLineage(
+            WorkDispatchRung.PUNCTUATION_FOLDED,
+            (
+                WorkTitleTransformationFamily.PUNCTUATION_AMPERSAND_FOLD,
+                WorkTitleTransformationFamily.PUNCTUATION_AMPERSAND_FOLD,
+                WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
+            ),
+        )
+
+
 @pytest.mark.parametrize("value", ("\u0301Cafe", "Жозе", "ø", "ł", "æ", "ß"))
 def test_latin_combining_marks_boundary_inputs_stay_unadmitted(value: str) -> None:
     assert not admit_provider_work_identity(
