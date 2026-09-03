@@ -57,12 +57,14 @@ from mechanical_librarian.domain.automatic_decision import (
 )
 from mechanical_librarian.domain.field_effect import (
     SUPPORTED_DESTINATIONS,
+    WRITE_WITHHELD_DESTINATIONS,
     EffectAuthority,
     EffectConsent,
     FieldEffectError,
     FieldEffectNoChange,
     FieldEffectOperation,
     FieldEffectPlan,
+    decision_value_kind,
     project_decision_value,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision
@@ -142,20 +144,12 @@ def decision(destination: str, selected: object, suffix: str = "a") -> HumanDeci
         "e" * 64,
         "f" * 64,
         1,
+        "apply",
     )
 
 
 def envelope(destination: str, value: object) -> dict[str, object]:
-    kind = (
-        "list"
-        if destination in {"authors", "genres", "tags"}
-        else "series"
-        if destination == "series"
-        else "cover"
-        if destination == "cover"
-        else "text"
-    )
-    return {"kind": kind, "value": value}
+    return {"kind": decision_value_kind(destination), "value": value}
 
 
 def metadata_report(
@@ -2479,6 +2473,10 @@ def test_every_supported_shape_plans_and_no_ops_do_not_mutate(
         "cover": "cover_" + "a" * 64,
     }
     assert SUPPORTED_DESTINATIONS == set(values)
+    # A narrator cast has a shape here and no write: F47 owns the field, so it
+    # is deliberately absent from every plannable destination (#966).
+    assert "narrators" == "".join(WRITE_WITHHELD_DESTINATIONS)
+    assert "narrators" not in SUPPORTED_DESTINATIONS
     for index, (destination, desired) in enumerate(values.items()):
         suffix = format(index + 1, "x")[-1]
         selected = envelope(destination, desired)

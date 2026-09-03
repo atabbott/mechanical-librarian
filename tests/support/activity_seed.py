@@ -183,6 +183,7 @@ def _decision(
         "e" * 64,
         "f" * 64,
         1,
+        "apply",
     )
 
 

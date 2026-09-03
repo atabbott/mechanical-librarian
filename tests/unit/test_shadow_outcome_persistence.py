@@ -125,6 +125,7 @@ from mechanical_librarian.interfaces.web.app import (
     _HistoryResponse,
     _ReviewField,
 )
+from tests.support.audiobook_reports import admitted_audiobook_report
 from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.proposal_evidence import (
     _claim,
@@ -237,6 +238,111 @@ def _case(repository):
     repository.publish_proposal(proposal)
     admitted = json.loads(repository.admit_review_case(proposal))
     return admitted["review_case_id"]
+
+
+def test_a_recording_is_never_offered_to_the_automatic_lane() -> None:
+    """A6: the projection abstains for an audiobook, whatever its fields say.
+
+    F47 owns audiobook writes, so nothing automatic may act on a recording.
+    The work still completes -- abstaining is an answer -- and no shadow
+    outcome exists for a later automatic decision to be minted from (#966).
+    """
+    with tempfile.TemporaryDirectory() as temporary:
+        repository = open_repository(Path(temporary) / "reports.sqlite")
+        report = admitted_audiobook_report()
+        repository.publish(report, lambda: True)
+        proposal = evaluate_report(report)
+        repository.publish_proposal(proposal)
+        admitted = json.loads(repository.admit_review_case(proposal))
+        repository.enter_shadow_preview(1)
+
+        assert "audiobook" == proposal.media_kind
+        assert "inactive" == repository.persist_shadow_outcome(
+            admitted["review_case_id"], 2
+        )
+        for table in ("shadow_decision_outcomes", "automatic_decisions"):
+            assert (0,) == repository._connection.execute(
+                f"SELECT COUNT(*) FROM {table}"
+            ).fetchone()
+        repository.close()
+
+
+def test_a_recorded_decision_is_not_pending_write_work() -> None:
+    """P2-1: what F47 will write is not work the owner is asked to permit.
+
+    An accepted audiobook decision is durable and complete in itself. Left in
+    the pending queries it would be counted as prepared and offered for consent
+    forever, so both the document query and the count exclude it at the SQL
+    seam; the same row with `apply` is pending, which is what makes this the
+    filter rather than a missing lineage (#966).
+    """
+    with tempfile.TemporaryDirectory() as temporary:
+        repository = open_repository(Path(temporary) / "reports.sqlite")
+        report = admitted_audiobook_report()
+        repository.publish(report, lambda: True)
+        proposal = evaluate_report(report)
+        repository.publish_proposal(proposal)
+        admitted = json.loads(repository.admit_review_case(proposal))
+        case = ReviewCase.create(proposal, report)
+        assert admitted["review_case_id"] == case.review_case_id
+        field = next(
+            value
+            for value in case.proposals
+            if value["destination"] == TargetDestination.ASIN.value
+        )
+        result = field["result"]
+        assert type(result) is dict
+        alternatives = result["alternatives"]
+        assert type(alternatives) is list
+        decision = HumanDecision.create(
+            case,
+            proposal_id=str(field["proposal_id"]),
+            target_fingerprint=case.target_fingerprint,
+            destination=str(field["destination"]),
+            actor="owner",
+            outcome="accept",
+            selected_value=alternatives[0]["value"],
+            idempotency_key="audiobook-pending-0001",
+            occurred_at=10,
+        )
+        repository.record_human_decision(decision)
+        ebook_report = _report()
+        repository.publish(ebook_report, lambda: True)
+        ebook_proposal = evaluate_report(ebook_report)
+        repository.publish_proposal(ebook_proposal)
+        repository.admit_review_case(ebook_proposal)
+        ebook_case = ReviewCase.create(ebook_proposal, ebook_report)
+        actionable = {value["destination"] for value in ebook_case.actionable}
+        ebook_field = next(
+            value
+            for value in ebook_case.proposals
+            if value["destination"] in actionable
+        )
+        ebook_decision = HumanDecision.create(
+            ebook_case,
+            proposal_id=str(ebook_field["proposal_id"]),
+            target_fingerprint=ebook_case.target_fingerprint,
+            destination=str(ebook_field["destination"]),
+            actor="owner",
+            outcome="accept",
+            selected_value=ebook_field["result"]["alternatives"][0]["value"],
+            idempotency_key="ebook-pending-0001",
+            occurred_at=11,
+        )
+        repository.record_human_decision(ebook_decision)
+
+        assert "recorded_only" == decision.application
+        assert "apply" == ebook_decision.application
+        # The ebook decision is the control: the queries reach both lineages,
+        # and only the recorded one is withheld.
+        pending = repository.pending_field_effect_decision_documents(10)
+        assert 1 == len(pending)
+        assert ebook_decision.decision_id in pending[0]
+        assert decision.decision_id not in pending[0]
+        counts = repository.pending_field_effect_decision_counts()
+        assert 1 == len(counts)
+        assert ebook_decision.destination == counts[0]["destination"]
+        repository.close()
 
 
 def _running_projection(repository, case_id: str) -> str:

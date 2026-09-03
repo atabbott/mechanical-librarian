@@ -592,6 +592,7 @@ def test_review_preparation_is_authenticated_csrf_bound_and_bounded(
         "library": "fiction",
         "library_id": "lib-1",
         "ready": 1,
+        "recorded": 0,
         "rescan_requested": False,
         "scan_id": "review_scan_" + "a" * 64,
         # Every bucket #641 names, in owner reading order, carried whole rather
@@ -604,6 +605,7 @@ def test_review_preparation_is_authenticated_csrf_bound_and_bounded(
             {"stage": "admission", "count": 0},
             {"stage": "projection", "count": 0},
             {"stage": "ready", "count": 1},
+            {"stage": "recorded", "count": 0},
             {"stage": "failed", "count": 1},
         ],
         "state": "processing",

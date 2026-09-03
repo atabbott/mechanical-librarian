@@ -82,6 +82,7 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectError,
     FieldEffectNoChange,
     FieldEffectOperation,
+    decision_value_kind,
     field_value_version,
 )
 from mechanical_librarian.domain.field_effect import (
@@ -129,6 +130,14 @@ _ACTIVITY_PAGE_BUSY_RETRY_SECONDS = 0.75
 _ACTIVITY_PAGE_CACHE_MAX_BYTES = MAX_REPORT_BYTES
 _ActivityRead = TypeVar("_ActivityRead")
 _ActivityDatabaseIdentity = tuple[int, int, int, int]
+
+# F47 owns audiobook writes, so a decision that says it is recorded rather than
+# applied is not pending work: it must not be offered for consent, counted as
+# prepared, or handed to the scheduler at all.  The scheduler skips one too,
+# but a decision the owner is told about is decided here (#966).
+_RECORDED_ONLY_EXCLUDED_SQL = (
+    "json_extract(human.document,'$.application') IS NOT 'recorded_only' AND "
+)
 
 _CORRECTIVE_KEEP_CURRENT_SQL = (
     "human.outcome='keep_current' AND EXISTS (SELECT 1 FROM review_cases review, "
@@ -567,16 +576,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
     ) -> dict[str, object]:
         if value is None:
             raise FieldEffectError("authority_binding")
-        kind = (
-            "list"
-            if destination in {"authors", "genres", "tags"}
-            else "series"
-            if destination == "series"
-            else "cover"
-            if destination == "cover"
-            else "text"
-        )
-        return {"kind": kind, "value": value}
+        return {"kind": decision_value_kind(destination), "value": value}
 
     def field_effect_authority_is_current(self, authority: EffectAuthority) -> bool:
         try:
@@ -735,7 +735,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "FROM human_decisions human WHERE (human.outcome='accept' OR ("
                 + _CORRECTIVE_KEEP_CURRENT_SQL
                 + ")) AND "
-                "(EXISTS (SELECT 1 FROM current_review_case_lineages lineage "
+                + _RECORDED_ONLY_EXCLUDED_SQL
+                + "(EXISTS (SELECT 1 FROM current_review_case_lineages lineage "
                 "WHERE lineage.review_case_id=human.review_case_id) OR ("
                 "human.destination='cover' AND EXISTS (SELECT 1 FROM "
                 "cover_consideration_events selected JOIN current_cover_considerations current "
@@ -812,7 +813,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "FROM human_decisions human WHERE (human.outcome='accept' OR ("
                 + _CORRECTIVE_KEEP_CURRENT_SQL
                 + ")) AND "
-                "EXISTS (SELECT 1 FROM current_review_case_lineages lineage "
+                + _RECORDED_ONLY_EXCLUDED_SQL
+                + "EXISTS (SELECT 1 FROM current_review_case_lineages lineage "
                 "WHERE lineage.review_case_id=human.review_case_id) AND "
                 "human.ordinal=(SELECT MAX(current.ordinal) FROM human_decisions current "
                 "WHERE current.review_case_id=human.review_case_id AND "
@@ -2809,16 +2811,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         connection=provider_root,
                     )
                 )
-            # An audiobook ends failed because its preparation has nowhere
-            # further to go, not because anything went wrong: its report is
-            # published and projected.  Left in, every audiobook in the
-            # library would be a distinct incident asking the owner to act,
-            # and together they would fill the window this query bounds.
             terminal_failures = self._connection.execute(
                 "SELECT work_id,stage,attempt,recovery_attempt,failure_code "
                 "FROM review_preparation_work WHERE state='failed' "
                 "AND failure_code IS NOT NULL "
-                "AND failure_code != 'evidence_only' "
                 "ORDER BY updated_at DESC,work_id LIMIT 256"
             ).fetchall()
             for work_id, stage, attempt, recovery_attempt, code in terminal_failures:

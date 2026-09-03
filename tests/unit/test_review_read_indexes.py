@@ -219,6 +219,9 @@ def _representative_database(path: Path, works: int = _WORKS) -> sqlite3.Connect
                 "provider" if failed else "complete",
                 "failed" if failed else "complete",
                 "provider" if failed else None,
+                None if failed else proposal_id,
+                None if failed else case_id,
+                None if failed else "case",
                 index,
             )
         )
@@ -262,7 +265,7 @@ def _representative_database(path: Path, works: int = _WORKS) -> sqlite3.Connect
         packages,
     )
     connection.executemany(
-        "INSERT INTO review_preparation_work(work_id,scan_id,ordinal,connection_name,library_name,library_id,item_id,file_identity,source_revision,source_fingerprint,producer_fingerprint,catalogue_generation,catalogue_fingerprint,stage,state,failure_code,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO review_preparation_work(work_id,scan_id,ordinal,connection_name,library_name,library_id,item_id,file_identity,source_revision,source_fingerprint,producer_fingerprint,catalogue_generation,catalogue_fingerprint,stage,state,failure_code,proposal_set_id,review_case_id,outcome,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         work,
     )
     connection.commit()

@@ -11,12 +11,28 @@ from typing import Literal, Mapping, Self
 from mechanical_librarian.domain.review_case import (
     ReviewCase,
     ReviewCaseValueError,
+    proposal_media_kind,
     review_proposals,
 )
 
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._:-]{16,128}$")
 _OUTCOMES = {"accept", "keep_current", "reject"}
+# What a recorded decision may go on to do. F47 owns audiobook writes, so a
+# decision made on a recording says so about itself rather than leaving every
+# later consumer to work it out from the case it came from (#966).
+APPLICATIONS = ("apply", "recorded_only")
+RECORDED_ONLY_REASON = "recorded, not applied — audiobook writes arrive with F47"
 HumanDecisionAction = Literal["accept", "keep_current"]
+
+
+def application_for(media_kind: str) -> str:
+    """Say what a decision on this kind of case may go on to do.
+
+    One derivation, used when the decision is formed and again whenever a
+    retained one is validated, so a document claiming `apply` against a
+    recording is stale rather than accepted (#966).
+    """
+    return "recorded_only" if media_kind == "audiobook" else "apply"
 
 
 class HumanDecisionError(ValueError):
@@ -128,6 +144,7 @@ class HumanDecision:
     idempotency_digest: str
     request_digest: str
     occurred_at: int
+    application: str
 
     @staticmethod
     def idempotency_digest_for(idempotency_key: str) -> str:
@@ -197,8 +214,10 @@ class HumanDecision:
             raise HumanDecisionError("stale")
         validate_decision_action(proposal, outcome, selected_value)
         idempotency_digest = cls.idempotency_digest_for(idempotency_key)
+        application = application_for(case.media_kind)
         request = {
             "actor": actor,
+            "application": application,
             "destination": destination,
             "idempotency_digest": idempotency_digest,
             "outcome": outcome,
@@ -223,6 +242,7 @@ class HumanDecision:
             idempotency_digest,
             request_digest,
             occurred_at,
+            application,
         )
         value.validate_for(case)
         return value
@@ -230,7 +250,10 @@ class HumanDecision:
     def validate_for(self, case: ReviewCase) -> None:
         """Validate a retained immutable fact against its canonical case."""
         self._validate_for(
-            case.review_case_id, case.target_fingerprint, list(case.proposals)
+            case.review_case_id,
+            case.target_fingerprint,
+            list(case.proposals),
+            application=application_for(case.media_kind),
         )
 
     def validate_new_for(self, case: ReviewCase) -> None:
@@ -240,6 +263,7 @@ class HumanDecision:
             case.target_fingerprint,
             list(case.proposals),
             new_command=True,
+            application=application_for(case.media_kind),
         )
 
     def validate_for_browse_case(
@@ -261,9 +285,15 @@ class HumanDecision:
             raise HumanDecisionError("stale")
         try:
             proposals = review_proposals(proposal_set_id, proposal_document, results)
+            media_kind = proposal_media_kind(proposal_document)
         except ReviewCaseValueError as error:
             raise HumanDecisionError("stale") from error
-        self._validate_for(review_case_id, target_fingerprint, proposals)
+        self._validate_for(
+            review_case_id,
+            target_fingerprint,
+            proposals,
+            application=application_for(media_kind),
+        )
 
     def _validate_for(
         self,
@@ -272,6 +302,7 @@ class HumanDecision:
         proposals: list[object] | tuple[dict[str, object], ...],
         *,
         new_command: bool = False,
+        application: str | None = None,
     ) -> None:
         proposal = next(
             (
@@ -287,6 +318,7 @@ class HumanDecision:
             self.review_case_id != review_case_id
             or self.target_fingerprint != target_fingerprint
             or proposal is None
+            or (application is not None and self.application != application)
         ):
             raise HumanDecisionError("stale")
         validator = (
@@ -297,6 +329,7 @@ class HumanDecision:
         validator(proposal, self.outcome, self.selected_value)
         request = {
             "actor": self.actor,
+            "application": self.application,
             "destination": self.destination,
             "idempotency_digest": self.idempotency_digest,
             "outcome": self.outcome,
@@ -317,6 +350,7 @@ class HumanDecision:
     def to_data(self) -> dict[str, object]:
         return {
             "actor": self.actor,
+            "application": self.application,
             "decision_id": self.decision_id,
             "destination": self.destination,
             "idempotency_digest": self.idempotency_digest,
@@ -325,7 +359,7 @@ class HumanDecision:
             "proposal_id": self.proposal_id,
             "request_digest": self.request_digest,
             "review_case_id": self.review_case_id,
-            "schema_version": "human-decision-v1",
+            "schema_version": "human-decision-v2",
             "selected_value": self.selected_value,
             "target_fingerprint": self.target_fingerprint,
         }
@@ -342,6 +376,7 @@ class HumanDecision:
                 or set(raw)
                 != {
                     "actor",
+                    "application",
                     "decision_id",
                     "destination",
                     "idempotency_digest",
@@ -354,7 +389,7 @@ class HumanDecision:
                     "selected_value",
                     "target_fingerprint",
                 }
-                or raw["schema_version"] != "human-decision-v1"
+                or raw["schema_version"] != "human-decision-v2"
             ):
                 raise ValueError
             value = cls(
@@ -369,9 +404,11 @@ class HumanDecision:
                 raw["idempotency_digest"],
                 raw["request_digest"],
                 raw["occurred_at"],
+                raw["application"],
             )
             request = {
                 "actor": value.actor,
+                "application": value.application,
                 "destination": value.destination,
                 "idempotency_digest": value.idempotency_digest,
                 "outcome": value.outcome,
@@ -401,6 +438,7 @@ class HumanDecision:
                 or not 1 <= len(value.destination) <= 64
                 or value.actor != "owner"
                 or value.outcome not in _OUTCOMES
+                or value.application not in APPLICATIONS
                 or type(value.occurred_at) is not int
                 or value.occurred_at < 0
                 or any(

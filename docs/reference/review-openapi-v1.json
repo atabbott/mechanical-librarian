@@ -3406,6 +3406,26 @@
             "title": "Actor",
             "type": "string"
           },
+          "application": {
+            "enum": [
+              "apply",
+              "recorded_only"
+            ],
+            "title": "Application",
+            "type": "string"
+          },
+          "application_reason": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Application Reason"
+          },
           "decision_id": {
             "title": "Decision Id",
             "type": "string"
@@ -3459,6 +3479,7 @@
         },
         "required": [
           "actor",
+          "application",
           "decision_id",
           "destination",
           "occurred_at",
@@ -3479,6 +3500,26 @@
           "actor": {
             "title": "Actor",
             "type": "string"
+          },
+          "application": {
+            "enum": [
+              "apply",
+              "recorded_only"
+            ],
+            "title": "Application",
+            "type": "string"
+          },
+          "application_reason": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Application Reason"
           },
           "decision_id": {
             "title": "Decision Id",
@@ -3521,6 +3562,7 @@
         },
         "required": [
           "actor",
+          "application",
           "decision_id",
           "destination",
           "occurred_at",
@@ -4057,6 +4099,33 @@
             "title": "Actor",
             "type": "string"
           },
+          "application": {
+            "anyOf": [
+              {
+                "enum": [
+                  "apply",
+                  "recorded_only"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Application"
+          },
+          "application_reason": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Application Reason"
+          },
           "decision_id": {
             "title": "Decision Id",
             "type": "string"
@@ -4119,6 +4188,7 @@
         },
         "required": [
           "actor",
+          "application",
           "decision_id",
           "destination",
           "event_id",
@@ -4650,7 +4720,6 @@
                   "missing_required_input",
                   "malformed_retained_data",
                   "internal_failure",
-                  "evidence_only",
                   "unknown"
                 ],
                 "type": "string"
@@ -5567,6 +5636,10 @@
             "title": "Ready",
             "type": "integer"
           },
+          "recorded": {
+            "title": "Recorded",
+            "type": "integer"
+          },
           "rescan_requested": {
             "title": "Rescan Requested",
             "type": "boolean"
@@ -5586,7 +5659,7 @@
             "items": {
               "$ref": "#/components/schemas/_PreparationStage"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Stages",
             "type": "array"
           },
@@ -5609,6 +5682,7 @@
           "total",
           "ready",
           "blocked",
+          "recorded",
           "rescan_requested"
         ],
         "title": "_PreparationProgress",
@@ -5708,6 +5782,7 @@
               "admission",
               "projection",
               "ready",
+              "recorded",
               "failed"
             ],
             "title": "Stage",

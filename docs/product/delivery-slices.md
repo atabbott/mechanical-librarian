@@ -196,7 +196,7 @@ shaped from the 0.20.0 production measurement recorded on #749.
 | Slice | Tracker | Demonstrable outcome | Planning state |
 | --- | --- | --- | --- |
 | F44 Multi-file audiobook evidence | #965 | Every multi-file item of a mounted audiobook library produces the F43 closed evidence set with per-file provenance, composed duration and chapters, and cross-file consistency evidence, then enters the same provider path. | Delivered. |
-| F45 Audiobook review cases | #966 | An audiobook with an admitted work identity produces proposals and, where policy leaves a choice, a review case; every prepared audiobook ends in a first-class completed state; decisions are recorded but not applied. | Ready. |
+| F45 Audiobook review cases | #966 | An audiobook with an admitted work identity produces proposals and, where policy leaves a choice, a review case; every prepared audiobook ends in a first-class completed state; decisions are recorded but not applied. | Delivered. |
 | F46 Qualified automatic audiobook decisions | #967 | The dominant audiobook decision classes earn automatic authority through the #445 route against an audiobook golden corpus and sealed holdout. | Blocked by #966, #895, and #964. |
 | F47 Guarded audiobook application | #968 | Exact-current human and qualified automatic audiobook decisions apply through the existing guarded Audiobookshelf path, canary first. | Blocked by #966. |
 | F08 Audiobook media-health observations | #144 | The audiobook report states typed, cited media-health observations distinct from metadata evidence. | Ready. |

@@ -67,7 +67,6 @@ from mechanical_librarian.domain.metadata_report import (
     LocalClaim,
     MetadataReport,
     ProviderCandidate,
-    ProviderChapterStructure,
     ProviderClaim,
     ProviderEvidence,
     ProviderEvidenceKind,
@@ -108,6 +107,18 @@ from tests.support.audiobook_providers import (
     asserted_target,
     target_asin_claim,
     target_title_claim,
+)
+from tests.support.audiobook_reports import (
+    audio_local_claims as _audio_local_claims,
+)
+from tests.support.audiobook_reports import (
+    audio_target_fields as _audio_target_fields,
+)
+from tests.support.audiobook_reports import (
+    audiobook_candidate as _audiobook_candidate,
+)
+from tests.support.audiobook_reports import (
+    qualified_audiobook as _qualified_audiobook,
 )
 from tests.support.metadata_report_doubles import (
     FakeInspector,
@@ -2604,139 +2615,6 @@ def test_work_lookup_requires_the_complete_canonical_author_multiset(
     assert (expected is ProviderStatus.CANDIDATES) == bool(result.candidates)
 
 
-def _audio_target_fields() -> tuple[TargetField, ...]:
-    """Target facts naming both the title and the author the replay reads."""
-    populated = TargetField(
-        TargetDestination.AUTHORS, TargetFieldState.VALUE, ("Andy Weir",)
-    )
-    return tuple(
-        populated if field.destination is TargetDestination.AUTHORS else field
-        for field in default_target_fields("Project Hail Mary")
-    )
-
-
-def _audio_local_claims(duration: str | None = "58244.201") -> tuple[LocalClaim, ...]:
-    """One audiobook's local evidence, optionally without any running time."""
-    values: list[LocalClaim] = [
-        LocalClaim.create(
-            kind=ClaimKind.TITLE,
-            observed="Project Hail Mary",
-            canonical="Project Hail Mary",
-            excerpt="Project Hail Mary",
-            applicability="not_applicable",
-            basis="embedded_tag",
-            checksum="not_applicable",
-            applicability_basis="not_applicable",
-            occurrence=1,
-        )
-    ]
-    if duration is not None:
-        values.append(
-            LocalClaim.create(
-                kind=ClaimKind.DURATION,
-                observed=duration,
-                canonical=duration,
-                excerpt=duration,
-                applicability="not_applicable",
-                basis="embedded_tag",
-                checksum="not_applicable",
-                applicability_basis="not_applicable",
-                occurrence=2,
-            )
-        )
-    return tuple(values)
-
-
-def _audiobook_candidate(
-    local_claims: tuple[LocalClaim, ...],
-    *,
-    identity: str = "audible-product-B08G9PRS1K",
-    asin: str = "B08G9PRS1K",
-    duration: str = "58200.000",
-    provider: str = "catalogue",
-) -> ProviderCandidate:
-    """One candidate shaped exactly as the audiobook adapters build it."""
-    specifications: tuple[tuple[ClaimKind, str, ClaimScope, str | None], ...] = (
-        (ClaimKind.TITLE, "Project Hail Mary", ClaimScope.WORK, None),
-        (ClaimKind.CREATOR, "Andy Weir", ClaimScope.WORK, "author"),
-        (ClaimKind.ASIN, asin, ClaimScope.EDITION, None),
-        (ClaimKind.DURATION, duration, ClaimScope.EDITION, None),
-        (ClaimKind.CONTRIBUTOR, "Ray Porter", ClaimScope.WORK, "narrator"),
-    )
-    claims = tuple(
-        ProviderClaim.create(
-            provider=provider,
-            candidate=identity,
-            kind=kind,
-            value=value,
-            state=FieldState.VALID,
-            scope=scope,
-            applicability="not_applicable",
-            role=role,
-            raw_order=order,
-        )
-        for order, (kind, value, scope, role) in enumerate(specifications)
-    )
-    chapters = ProviderChapterStructure(2, 58_200, (29_100, 29_100), False)
-    evidence = tuple(
-        sorted(
-            (
-                ProviderEvidence(
-                    ProviderEvidenceKind.EDITION_WORK_RELATION,
-                    "unresolved",
-                    ClaimScope.EDITION,
-                ),
-                ProviderEvidence(
-                    ProviderEvidenceKind.ASIN_MARKETPLACE, "us", ClaimScope.EDITION
-                ),
-                ProviderEvidence(
-                    ProviderEvidenceKind.CHAPTER_STRUCTURE,
-                    str(chapters.runtime_seconds),
-                    ClaimScope.EDITION,
-                    chapters=chapters,
-                ),
-            ),
-            key=lambda value: (value.scope.value, value.kind.value, value.value),
-        )
-    )
-    return finalize_candidate_comparisons(
-        ProviderCandidate(identity, "unresolved", claims, evidence),
-        local_claims,
-        provider,
-    )
-
-
-def _qualified_audiobook(
-    local_claims: tuple[LocalClaim, ...],
-    *,
-    authority: str | None = "audible_catalog",
-    duration: str = "58200.000",
-    candidates: tuple[ProviderCandidate, ...] | None = None,
-) -> ProviderObservation:
-    admitted = (
-        (_audiobook_candidate(local_claims, duration=duration),)
-        if candidates is None
-        else candidates
-    )
-    return qualify_provider_observation(
-        ProviderObservation(
-            "catalogue",
-            ProviderStatus.CANDIDATES,
-            (),
-            admitted,
-            ProviderQueryKind.WORK,
-            authority,
-            dispatch_lineage=_work_dispatch("Project Hail Mary", ("Andy Weir",)),
-        ),
-        MetadataLookup(
-            ProviderQueryKind.WORK,
-            local_claims,
-            "Project Hail Mary",
-            ("Andy Weir",),
-        ),
-    )
-
-
 def test_a_runtime_corroborated_audiobook_candidate_keeps_its_edition_identity() -> (
     None
 ):
@@ -2856,11 +2734,13 @@ def test_several_corroborated_candidates_break_the_tie_on_identity() -> None:
     assert ("runtime_within_tight_band",) == chosen[1]
 
 
-def test_an_admitted_asin_reaches_no_audiobook_field_effect() -> None:
-    """Evaluation runs on every report, and must stay silent about audiobooks.
+def test_an_admitted_audiobook_reaches_the_same_destinations_an_ebook_does() -> None:
+    """F45: an admitted recording is proposed on, exactly as an ebook is.
 
-    The admitted ASIN is retained evidence, not a write destination: a proposal
-    set built over a report carrying one proposes nothing at all.
+    Evaluation was silent about audiobooks before #966, so the admitted ASIN
+    and the narrator cast beside it reached no destination at all. Both are
+    now decisions the owner can be asked to make; the running time that proved
+    the admission is still not one, and the cover stays withheld.
     """
     local_claims = _audio_local_claims()
     qualified = _qualified_audiobook(local_claims)
@@ -2875,12 +2755,11 @@ def test_an_admitted_asin_reaches_no_audiobook_field_effect() -> None:
     proposals = evaluate_report(report)
 
     assert ClaimKind.ASIN in {claim.kind for claim in qualified.candidates[0].claims}
-    # Every field result is a non-proposal: the admitted ASIN reaches no write
-    # destination, and neither does the narrator or the running time beside it.
-    assert proposals.results
-    assert set() == {
-        result.destination
-        for result in proposals.results
+    assert "audiobook" == proposals.media_kind
+    outcomes = {result.destination: result for result in proposals.results}
+    assert {TargetDestination.ASIN, TargetDestination.NARRATORS} == {
+        destination
+        for destination, result in outcomes.items()
         if result.outcome
         in {
             ProposalOutcome.PROPOSE_CHANGE,
@@ -2888,3 +2767,10 @@ def test_an_admitted_asin_reaches_no_audiobook_field_effect() -> None:
             ProposalOutcome.UNRESOLVED_CHOICE,
         }
     }
+    assert ProposalOutcome.PROPOSE_CHANGE is outcomes[TargetDestination.ASIN].outcome
+    # One provider naming a cast the recording never mentions is a single
+    # source, so the narrator alternative is offered rather than settled.
+    assert ("insufficient_independent_corroboration",) == outcomes[
+        TargetDestination.NARRATORS
+    ].reasons
+    assert ("audiobook_cover_withheld",) == outcomes[TargetDestination.COVER].reasons

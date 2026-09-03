@@ -237,7 +237,7 @@
     "isbn_manifestation_election": {
       "automatic_decision_sha256": "052f956c475f125bd3bcbddb1b126a9b8fc3a839398589060ab8570c8927309e",
       "preview_sha256": "f5fdad27f901735ef0e3075bfb1a98cb4aa5eb0461cdc7e63f0deb638b05e52b",
-      "proposal_policy_sha256": "484e463b87f25fab72a7610d417e2ea82029a85015aa36d3467b7d4c541277a6",
+      "proposal_policy_sha256": "3cdc2ddf8ee553801969e1772034330914c66acbb7ee0c3db35d177816381726",
       "proposal_policy_version": "fixed-conservative-v19"
     },
     "policy": {

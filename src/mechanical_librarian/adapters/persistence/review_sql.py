@@ -43,9 +43,19 @@ _AUTOMATIC_SAFETY_ATTENTION_SQL = (
     "outcome.policy_category='title' "
     "THEN 'title_layout' ELSE outcome.policy_category END)))"
 )
+# No automatic authority reaches a recording: F45 forms the case and F47 owns
+# the writes, so on an audiobook there is nothing for a settled proposal to
+# wait for and every field that still admits a choice is the owner's. The
+# `has_owner_decision_actions` gate above is what decides whether one does
+# (#966).
+_AUDIOBOOK_OWNER_ONLY_ATTENTION_SQL = (
+    "json_extract(mr.document,'$.file.format') <> 'epub'"
+)
 _REVIEW_FIELD_ATTENTION_SQL = (
     "result.has_owner_decision_actions=1 AND (result.unresolved_choice=1 "
     "OR "
+    + _AUDIOBOOK_OWNER_ONLY_ATTENTION_SQL
+    + " OR "
     + _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL
     + " OR "
     + _AUTOMATIC_SAFETY_ATTENTION_SQL
@@ -113,6 +123,7 @@ __all__ = [
     "_CURRENT_LIBRARY_FROM_SQL",
     "_CURRENT_REVIEW_CASE_COUNT_SQL",
     "_CURRENT_REVIEW_FROM_SQL",
+    "_AUDIOBOOK_OWNER_ONLY_ATTENTION_SQL",
     "_EPUB_INAPPLICABLE_ATTENTION_SQL",
     "_LATEST_PREPARATION_WORK_SQL",
     "_REVIEW_ATTENTION_SQL",

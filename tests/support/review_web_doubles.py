@@ -41,6 +41,7 @@ from mechanical_librarian.application.review_web import (
     ReviewAttentionSnapshot,
     ReviewLibrarySnapshot,
 )
+from mechanical_librarian.domain.field_effect import LIST_DESTINATIONS
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
 )
@@ -378,7 +379,7 @@ class FakeReviewRepository:
         current = target.get("value") if target.get("state") == "value" else None
         kind = (
             "list"
-            if decision.destination in {"authors", "genres", "tags"}
+            if decision.destination in LIST_DESTINATIONS
             else "series"
             if decision.destination == "series"
             else "text"
@@ -682,6 +683,7 @@ class FakePreparation:
             5,
             1,
             0,
+            0,
             False,
             0,
             (
@@ -692,6 +694,7 @@ class FakePreparation:
                 ("admission", 0),
                 ("projection", 0),
                 ("ready", 1),
+                ("recorded", 0),
                 ("failed", 1),
             ),
         )

@@ -114,7 +114,7 @@ from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_repor
 from mechanical_librarian.domain.provider_recovery import MAX_TIMESTAMP
 from mechanical_librarian.domain.review_browse import browse_report
 from tests.support.metadata_report_doubles import single_track_audio_facts
-from tests.support.review_cases import _report
+from tests.support.review_cases import _report, record_terminal_work
 
 _PRODUCER = "f" * 64
 
@@ -378,6 +378,45 @@ def test_sqlite_proposal_stage_keeps_input_failure_types_distinct(
         "SELECT COUNT(*) FROM proposal_sets"
     ).fetchone() == (proposal_count,)
     repository.close()
+
+
+def _publish_proposal_set(connection: sqlite3.Connection, seed: str) -> str:
+    """Persist one real evaluator output a work can be admitted against.
+
+    A work that completes without a case still names the proposal set it found
+    nothing to ask about, so a fixture that advances the proposal stage has to
+    hand it one (#966).
+    """
+    report = _report(title=f"Proposed {seed}", file_identity=seed)
+    document = report.to_json()
+    connection.execute(
+        "INSERT OR IGNORE INTO metadata_reports(report_id,connection_name,library_name,"
+        "item_id,file_identity,content_digest,schema_version,document_digest,document) "
+        "VALUES(?,?,?,?,?,?,?,?,?)",
+        (
+            report.report_id,
+            report.target.connection,
+            report.target.library,
+            report.target.item,
+            report.file.identity,
+            report.file.content_digest,
+            report.schema_version,
+            hashlib.sha256(document.encode()).hexdigest(),
+            document,
+        ),
+    )
+    proposal = evaluate_report(report)
+    connection.execute(
+        "INSERT OR IGNORE INTO proposal_sets(proposal_set_id,report_id,policy_version,document) "
+        "VALUES(?,?,?,?)",
+        (
+            proposal.proposal_set_id,
+            report.report_id,
+            proposal.policy_version,
+            proposal.to_json(),
+        ),
+    )
+    return proposal.proposal_set_id
 
 
 @pytest.fixture
@@ -725,11 +764,7 @@ def test_accepted_successor_cycle_settles_once_and_reopens_exact_current(
     if terminal_failure:
         repository.fail_review_pipeline_action(work, "failed", False, 106)
     else:
-        repository._connection.execute(
-            "UPDATE review_preparation_work SET stage='complete',state='complete',updated_at=106 "
-            "WHERE work_id=?",
-            (work.action_id,),
-        )
+        record_terminal_work(repository._connection, work.action_id, 106)
         refresh_preparation_work(repository._connection, work.action_id, 106)
     assert repository.claim_review_pipeline_action(107) is None
     cycles = repository._connection.execute(
@@ -805,11 +840,7 @@ def test_terminal_enrollment_is_excluded_from_triggerless_full_reconciliation(
         "SELECT work_id FROM review_preparation_work WHERE scan_id=?",
         (scan_a.scan_id,),
     ).fetchone()[0]
-    repository._connection.execute(
-        "UPDATE review_preparation_work SET stage='complete',state='complete',updated_at=106 "
-        "WHERE work_id=?",
-        (work_a,),
-    )
+    record_terminal_work(repository._connection, work_a, 106)
     refresh_preparation_work(repository._connection, work_a, 106)
     repository._connection.execute(
         "UPDATE review_preparation_scans SET state='completed',updated_at=107 WHERE scan_id=?",
@@ -826,8 +857,8 @@ def test_terminal_enrollment_is_excluded_from_triggerless_full_reconciliation(
 
     repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 108)
     repository._connection.execute(
-        "UPDATE review_preparation_work SET stage='extraction',state='running',updated_at=109 "
-        "WHERE work_id=?",
+        "UPDATE review_preparation_work SET stage='extraction',state='running',"
+        "outcome=NULL,updated_at=109 WHERE work_id=?",
         (work_a,),
     )
     refresh_preparation_presentation(repository._connection, 109)
@@ -879,11 +910,7 @@ def test_successor_discovery_retains_terminal_presentation_work(
         "SELECT work_id FROM review_preparation_work"
     ).fetchone()[0]
     if outcome == "ready":
-        repository._connection.execute(
-            "UPDATE review_preparation_work SET stage='complete',state='complete',updated_at=104 "
-            "WHERE work_id=?",
-            (work_id,),
-        )
+        record_terminal_work(repository._connection, work_id, 104)
         refresh_preparation_work(repository._connection, work_id, 104)
     else:
         failed_work = repository.claim_review_pipeline_action(104)
@@ -992,11 +1019,7 @@ def test_reopen_refuses_persisted_dismissed_presentation_without_repair(
     work_id = repository._connection.execute(
         "SELECT work_id FROM review_preparation_work"
     ).fetchone()[0]
-    repository._connection.execute(
-        "UPDATE review_preparation_work SET stage='complete',state='complete',updated_at=103 "
-        "WHERE work_id=?",
-        (work_id,),
-    )
+    record_terminal_work(repository._connection, work_id, 103)
     refresh_preparation_work(repository._connection, work_id, 103)
     repository._connection.execute(
         "UPDATE review_preparation_scans SET state='completed',updated_at=104"
@@ -1042,11 +1065,7 @@ def test_successor_rediscovery_does_not_rename_terminal_completion(
     work_id = repository._connection.execute(
         "SELECT work_id FROM review_preparation_work"
     ).fetchone()[0]
-    repository._connection.execute(
-        "UPDATE review_preparation_work SET stage='complete',state='complete',updated_at=103 "
-        "WHERE work_id=?",
-        (work_id,),
-    )
+    record_terminal_work(repository._connection, work_id, 103)
     refresh_preparation_work(repository._connection, work_id, 103)
     before = repository._connection.execute(
         "SELECT display_name,work_outcome,completion_sequence,updated_at "
@@ -1117,11 +1136,7 @@ def test_maximum_observed_title_survives_active_completion_and_reopen(
     assert work is not None and work.stage == "extraction"
     active = repository.preparation_presentation(103)
     assert active is not None and active.active_books[0].name == title
-    repository._connection.execute(
-        "UPDATE review_preparation_work SET stage='complete',state='complete',updated_at=104 "
-        "WHERE work_id=?",
-        (work.action_id,),
-    )
+    record_terminal_work(repository._connection, work.action_id, 104)
     refresh_preparation_work(repository._connection, work.action_id, 104)
     repository._connection.commit()
     expected = repository.preparation_presentation(104)
@@ -1181,10 +1196,14 @@ def test_preparation_projection_bounds_private_names_and_preserves_outcomes(
         "SELECT work_id FROM review_preparation_work ORDER BY ordinal"
     ).fetchall()
     for index, (work_id,) in enumerate(work):
-        repository._connection.execute(
-            "UPDATE review_preparation_work SET stage='complete',state=?,updated_at=? WHERE work_id=?",
-            ("complete" if index % 2 == 0 else "failed", 103, work_id),
-        )
+        if index % 2 == 0:
+            record_terminal_work(repository._connection, work_id, 103)
+        else:
+            repository._connection.execute(
+                "UPDATE review_preparation_work SET stage='complete',state='failed',"
+                "failure_code='failed',updated_at=? WHERE work_id=?",
+                (103, work_id),
+            )
     repository._connection.execute(
         "UPDATE review_preparation_scans SET state='completed_with_failures',updated_at=113"
     )
@@ -1459,11 +1478,7 @@ def test_completed_enrollment_restarts_exact_cycle_without_reaging_outcome(
     ).fetchone()[0]
     work = repository.claim_review_pipeline_work(work_id, 104)
     assert work is not None and work.stage == "extraction"
-    repository._connection.execute(
-        "UPDATE review_preparation_work SET stage='complete',state='complete',updated_at=105 "
-        "WHERE work_id=?",
-        (work.action_id,),
-    )
+    record_terminal_work(repository._connection, work.action_id, 105)
     refresh_preparation_work(repository._connection, work.action_id, 105)
     repository._connection.execute(
         "UPDATE review_preparation_scans SET state='completed',updated_at=106 WHERE scan_id=?",
@@ -1851,14 +1866,14 @@ def _seed_partly_completed_presentation(
             "SELECT work_id FROM review_preparation_work ORDER BY ordinal"
         )
     )
-    repository._connection.execute(  # noqa: SLF001 - corruption fixture
-        "UPDATE review_preparation_work SET stage=?,state=?,updated_at=103 WHERE work_id=?",
-        (
-            "extraction" if failed else "complete",
-            "failed" if failed else "complete",
-            work_ids[0],
-        ),
-    )
+    if failed:
+        repository._connection.execute(  # noqa: SLF001 - corruption fixture
+            "UPDATE review_preparation_work SET stage='extraction',state='failed',"
+            "updated_at=103 WHERE work_id=?",
+            (work_ids[0],),
+        )
+    else:
+        record_terminal_work(repository._connection, work_ids[0], 103)  # noqa: SLF001
     refresh_preparation_work(repository._connection, work_ids[0], 103)  # noqa: SLF001
     repository._connection.commit()  # noqa: SLF001 - corruption fixture
     return repository, work_ids[1]
@@ -2014,10 +2029,7 @@ def test_completion_allocator_refuses_noncanonical_population_before_mutation(
         )
     )
     for offset, work_id in enumerate(work_ids[:2], 103):
-        repository._connection.execute(
-            "UPDATE review_preparation_work SET state='complete',updated_at=? WHERE work_id=?",
-            (offset, work_id),
-        )
+        record_terminal_work(repository._connection, work_id, offset)
         refresh_preparation_work(repository._connection, work_id, offset)
     action = repository.claim_review_pipeline_work(work_ids[2], 105)
     assert action is not None
@@ -6248,12 +6260,16 @@ def test_claims_keep_discovery_order_across_normal_successor_stages(
     )
     action = repository.claim_review_pipeline_action(13)
     assert action is not None
+    proposal_set_id = _publish_proposal_set(repository._connection, "4")
     observed = []
     for timestamp in range(14, 18):
         assert action is not None
         observed.append((action.stage, action.item_id))
         action = repository.advance_review_pipeline_action(
-            action, None, timestamp, True
+            action,
+            proposal_set_id if action.stage == "proposal" else None,
+            timestamp,
+            True,
         )
     repository.close()
     assert observed == [
@@ -6283,13 +6299,17 @@ def test_final_claim_next_refreshes_presentation_before_terminalizing(
     )
     action = repository.claim_review_pipeline_action(13)
     assert action is not None and action.stage == "extraction"
+    proposal_set_id = _publish_proposal_set(repository._connection, "5")
     for completed_at, expected_stage in (
         (14, "provider"),
         (15, "proposal"),
         (16, "admission"),
     ):
         action = repository.advance_review_pipeline_action(
-            action, None, completed_at, claim_next=True
+            action,
+            proposal_set_id if action.stage == "proposal" else None,
+            completed_at,
+            claim_next=True,
         )
         assert action is not None and action.stage == expected_stage
 
@@ -6960,7 +6980,6 @@ def test_recovery_witness_retains_a_failed_outcome_across_reopen(
         ("ready", "failed", "provider", "completed_with_failures"),
         ("ready", "stale", "stale", "completed_with_failures"),
         ("failed", "complete", None, "completed"),
-        ("failed", "failed", "evidence_only", "completed"),
     ),
 )
 def test_terminal_recovery_reconciles_current_outcome_without_reaging_completion(
@@ -6990,18 +7009,20 @@ def test_terminal_recovery_reconciles_current_outcome_without_reaging_completion
         "WHERE row_kind='run'",
         (old_outcome == "ready", old_outcome == "failed"),
     )
-    repository._connection.execute(
-        "UPDATE review_preparation_work SET presentation_recovery_stage='projection',"
-        "presentation_recovery_outcome=?,stage=?,"
-        "state=?,failure_code=?,updated_at=110 WHERE work_id=?",
-        (
-            old_outcome,
-            "complete" if state == "complete" else "provider",
-            state,
-            failure_code,
-            work_id,
-        ),
-    )
+    if state == "complete":
+        record_terminal_work(repository._connection, work_id, 110)
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET presentation_recovery_stage='projection',"
+            "presentation_recovery_outcome=? WHERE work_id=?",
+            (old_outcome, work_id),
+        )
+    else:
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET presentation_recovery_stage='projection',"
+            "presentation_recovery_outcome=?,stage='provider',"
+            "state=?,failure_code=?,updated_at=110 WHERE work_id=?",
+            (old_outcome, state, failure_code, work_id),
+        )
     repository._connection.execute(
         "UPDATE review_preparation_scans SET state=?,updated_at=110 WHERE scan_id=?",
         (scan_state, scan_id),
@@ -7217,8 +7238,8 @@ def _seed_recovery_witness(path: Path) -> None:
         "UPDATE review_preparation_work SET presentation_recovery_outcome='ready'",
         "UPDATE review_preparation_presentation SET recovery_high_water_stage='proposal' "
         "WHERE row_kind='work'",
-        "UPDATE review_preparation_work SET stage='provider',state='queued'",
-        "UPDATE review_preparation_work SET stage='proposal',state='queued'",
+        "UPDATE review_preparation_work SET stage='provider',state='queued',outcome=NULL",
+        "UPDATE review_preparation_work SET stage='proposal',state='queued',outcome=NULL",
         "UPDATE review_preparation_work SET presentation_recovery_stage=1.5",
         "UPDATE review_preparation_work SET presentation_recovery_cycle_id='private-cycle'",
         "UPDATE review_preparation_work SET scan_id='review_scan_'||printf('%064x',9)",
@@ -7328,12 +7349,29 @@ def test_recovery_marking_uses_two_set_based_linear_statements(tmp_path: Path) -
         return len(updates), vm_steps, plan
 
     small_count, small_steps, small_plan = measured(1)
+    sample_count, sample_steps, sample_plan = measured(100)
     large_count, large_steps, large_plan = measured(2_000)
     assert small_count == large_count == 2
     assert small_plan == large_plan
     assert all("TEMP B-TREE" not in row for row in large_plan)
-    assert large_steps <= small_steps + 202 * 2_000, (
+    assert sample_count == 2
+    assert sample_plan == large_plan
+    # The budget is measured on this build rather than declared, because an
+    # absolute per-row constant is not a statement about linearity: a row that
+    # gains a column costs one more VDBE step per update, and one SQLite build
+    # spends about a step more per row than another, so a constant sitting on
+    # the observed cost fails for reasons this test is not about. One row's
+    # marginal cost is taken from the 1-row and 100-row runs in this same
+    # process, where both effects cancel, and the 2000-row run may exceed the
+    # line they predict by a tenth. Quadratic marking still fails by more than
+    # an order of magnitude: its own 100-row sample would carry a per-row cost
+    # around a hundred times the real one, and 2000 rows would then cost about
+    # twenty times the bound that sample buys.
+    per_row = (sample_steps - small_steps) / 99
+    overhead = small_steps - per_row
+    assert large_steps <= overhead + per_row * 2_000 * 1.10, (
         small_steps,
+        sample_steps,
         large_steps,
         large_plan,
     )
@@ -7661,9 +7699,14 @@ def test_later_rediscovery_confirms_new_absence_before_tombstone(
         _PRODUCER,
         13,
     )
+    proposal_set_id = _publish_proposal_set(repository._connection, "6")
     work = repository.claim_review_pipeline_action(14)
     while work is not None:
-        repository.advance_review_pipeline_action(work, None, 15)
+        repository.advance_review_pipeline_action(
+            work,
+            proposal_set_id if work.stage == "proposal" else None,
+            15,
+        )
         work = repository.claim_review_pipeline_action(16)
     later = repository.claim_review_pipeline_action(17)
     assert later is not None
@@ -8940,7 +8983,16 @@ class _ScheduledPipeline:
     def request(self, connection, library, *, trigger=None):
         self.requests.append((connection, library))
         return PipelineProgress(
-            "review_scan_" + "a" * 64, connection, library, "queued", 0, 0, 0, 0, False
+            "review_scan_" + "a" * 64,
+            connection,
+            library,
+            "queued",
+            0,
+            0,
+            0,
+            0,
+            0,
+            False,
         )
 
     def request_library_addition(self, connection, library):
@@ -9189,6 +9241,7 @@ def test_lifecycle_foreground_controls_share_one_reentrant_lock_and_workers_keep
         0,
         0,
         0,
+        0,
         False,
         1,
     )
@@ -9280,6 +9333,7 @@ def test_lifecycle_foreground_operations_validate_before_each_repository_call() 
         0,
         0,
         0,
+        0,
         False,
         1,
     )
@@ -9352,6 +9406,7 @@ def test_foreground_control_holds_observation_through_close_then_falls_back() ->
         "primary",
         "fiction",
         "queued",
+        0,
         0,
         0,
         0,
@@ -9568,6 +9623,7 @@ def test_startup_interval_and_pause_admission_are_bounded() -> None:
             1,
             1,
             0,
+            0,
             False,
             100,
         )
@@ -9606,6 +9662,7 @@ def test_terminal_failures_wait_for_owner_action_without_idle_status_reads() -> 
             1,
             0,
             1,
+            0,
             False,
             100,
         )
@@ -9689,6 +9746,7 @@ def test_lane_zero_rechecks_due_deadline_between_bounded_work_batches() -> None:
             1,
             1,
             1,
+            0,
             0,
             False,
             100,
@@ -9774,6 +9832,7 @@ def test_retry_is_limited_to_terminal_actionable_failure() -> None:
         1,
         0,
         1,
+        0,
         False,
         100,
     )
@@ -10334,13 +10393,12 @@ def _audio_entry(item_id: str, file_identity: str) -> CatalogueEntry:
 def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
     application_path: Path,
 ) -> None:
-    """Preparation stops in the transaction that published the report.
+    """Preparation completes in the transaction that published the report.
 
-    The ordinary ladder runs extraction straight to `proposal`; the `provider`
-    stage is only reached by a terminal extraction disposition or a retry
-    successor. An audiobook has neither a provider comparison nor a proposal to
-    evaluate, so its work ends here rather than queueing stages that cannot
-    complete.
+    No work identity is admitted for this item, so there is no comparison to
+    evaluate and no case to open. The work ends where the report was
+    published -- completed, on the `evidence_only` outcome -- rather than
+    queueing stages that cannot complete or failing on a code (#966).
     """
     report = MetadataReport.create(
         target=TargetFacts(
@@ -10378,7 +10436,8 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
         ),
     )
     work = repository._connection.execute(
-        "SELECT stage,state,failure_code,failure_root FROM review_preparation_work"
+        "SELECT stage,state,failure_code,failure_root,outcome "
+        "FROM review_preparation_work"
     ).fetchone()
     retained = MetadataReport.from_json(repository.get(report.report_id))
     browsed = repository.list_current_review_case_documents(None, 10, 0, None)
@@ -10392,7 +10451,7 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
     presentation = repository.preparation_presentation(15)
     repository.close()
 
-    assert work == ("provider", "failed", "evidence_only", None)
+    assert work == ("complete", "complete", None, None, "evidence_only")
     assert remaining is None
     assert presentation is not None
     assert presentation.state is PreparationRunState.COMPLETED_CLEAN
@@ -10448,11 +10507,7 @@ def test_broad_reconciliation_projects_active_report_only_work_as_clean_ready(
     )
     work = repository.claim_review_pipeline_action(13)
     assert work is not None and work.stage == "extraction"
-    repository._connection.execute(
-        "UPDATE review_preparation_work SET stage='provider',state='failed',"
-        "failure_code='evidence_only',updated_at=14 WHERE work_id=?",
-        (work.action_id,),
-    )
+    record_terminal_work(repository._connection, work.action_id, 14)
     repository._connection.execute(
         "UPDATE review_preparation_scans SET state='completed',updated_at=14 WHERE scan_id=?",
         (scan.scan_id,),
@@ -10467,7 +10522,8 @@ def test_broad_reconciliation_projects_active_report_only_work_as_clean_ready(
 
     presentation = repository.preparation_presentation(14)
     authoritative = repository._connection.execute(
-        "SELECT stage,state,failure_code FROM review_preparation_work WHERE work_id=?",
+        "SELECT stage,state,failure_code,outcome FROM review_preparation_work "
+        "WHERE work_id=?",
         (work.action_id,),
     ).fetchone()
     repository.close()
@@ -10475,7 +10531,7 @@ def test_broad_reconciliation_projects_active_report_only_work_as_clean_ready(
     assert active is not None
     assert active[0] not in {"completed", "completed_with_failures"}
     assert active[1] is None
-    assert authoritative == ("provider", "failed", "evidence_only")
+    assert authoritative == ("complete", "complete", None, "evidence_only")
     assert presentation is not None
     assert presentation.state is PreparationRunState.COMPLETED_CLEAN
     assert presentation.passage.ready == 1
@@ -10679,36 +10735,35 @@ def test_a_later_scan_does_not_re_inspect_an_unchanged_published_audiobook(
 ) -> None:
     """The terminal outcome survives a rescan the file did not change.
 
-    Discovery reset any `failed` work sitting at `provider` back to
-    extraction, because that is what an exhausted provider failure needs. An
-    audiobook's work sits there for the opposite reason -- its report is
-    published and nothing follows it -- so every later scan re-read and
-    re-hashed a multi-gigabyte file that had not moved, which is the whole
-    cost the fingerprint work exists to avoid.
+    A recorded work is complete on the `evidence_only` outcome, and the
+    re-enrolment that reads it has to carry that outcome forward. Losing it
+    would send every later scan back to re-read and re-hash a multi-gigabyte
+    file that had not moved, which is the whole cost the fingerprint work
+    exists to avoid.
     """
     report = _audio_report("item", "1" * 64)
     entry = _audio_entry("item", report.file.identity)
     repository = open_repository(application_path)
     _publish_terminal_audiobook(repository, entry, report, 10)
     published = repository._connection.execute(
-        "SELECT stage,state,failure_code,report_id FROM review_preparation_work"
+        "SELECT stage,state,outcome,report_id FROM review_preparation_work"
     ).fetchone()
 
     following = _rescan(repository, entry, 20)
 
     work = repository._connection.execute(
-        "SELECT stage,state,failure_code,report_id FROM review_preparation_work"
+        "SELECT stage,state,outcome,report_id FROM review_preparation_work"
     ).fetchone()
     packages = repository._connection.execute(
         "SELECT item_id,outcome FROM current_review_packages"
     ).fetchall()
     repository.close()
 
-    assert published == ("provider", "failed", "evidence_only", published[3])
+    assert published == ("complete", "complete", "evidence_only", published[3])
     # Nothing to do: the evidence this scan would produce is already recorded.
     assert following is None
     assert work == published
-    assert packages == [("item", "report_only")]
+    assert packages == [("item", "evidence_only")]
 
 
 def test_a_changed_audiobook_is_prepared_again(application_path: Path) -> None:
@@ -10726,7 +10781,7 @@ def test_a_changed_audiobook_is_prepared_again(application_path: Path) -> None:
     following = _rescan(repository, replace(entry, source_fingerprint="9" * 64), 20)
 
     work = repository._connection.execute(
-        "SELECT stage,state,failure_code,report_id FROM review_preparation_work"
+        "SELECT stage,state,outcome,report_id FROM review_preparation_work"
     ).fetchone()
     repository.close()
 
@@ -10740,11 +10795,11 @@ def test_a_scans_stage_counts_still_account_for_every_work_it_carried(
 ) -> None:
     """Every work a scan carried lands in exactly one stage bucket.
 
-    The eight buckets partition the scan: an owner reading them is reading
+    The nine buckets partition the scan: an owner reading them is reading
     where the whole scan got to, so a work in none of them is a work the
-    progress surface silently loses. Excluding the audiobook from `failed` --
-    which it is not -- put it in no bucket at all, and an audiobook-only scan
-    reported a total of one against eight zeroes.
+    progress surface silently loses. A recorded work is neither `ready` --
+    nothing is being asked of the owner -- nor `failed`, and `recorded` is
+    the bucket that says so (#966).
     """
     report = _audio_report("item", "1" * 64)
     repository = open_repository(application_path)
@@ -10759,12 +10814,16 @@ def test_a_scans_stage_counts_still_account_for_every_work_it_carried(
     assert progress.total == 1
     assert sum(count for _name, count in progress.stages) == progress.total
     stages = dict(progress.stages)
-    # `ready` is where a scan's work stops with nothing left owed. That is
-    # exactly what a published report with no package to follow it is, and it
-    # is emphatically not `failed`.
-    assert stages["ready"] == 1
+    # `recorded` is where a scan's work stops with nothing left owed. That is
+    # exactly what a published report with no case to follow it is, and it is
+    # emphatically neither `ready` nor `failed`.
+    assert stages["recorded"] == 1
+    assert stages["ready"] == 0
     assert stages["failed"] == 0
+    assert progress.recorded == 1
+    assert progress.ready == 0
     assert progress.blocked == 0
+    assert progress.checked == progress.ready + progress.recorded + progress.blocked
 
 
 def test_audiobook_publication_refreshes_before_interleaved_claim_next(

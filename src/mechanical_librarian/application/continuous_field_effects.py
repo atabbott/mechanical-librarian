@@ -712,6 +712,15 @@ class ContinuousGuardedApplication:
         planned = 0
         for document in documents:
             decision = self._decision(document)
+            if (
+                type(decision) is HumanDecision
+                and decision.application == "recorded_only"
+            ):
+                # An audiobook decision is recorded, not applied. Advancing
+                # past it keeps the schedule moving and forms no plan the
+                # target could ever receive (#966).
+                self._advance_schedule_cursor(decision, generation)
+                continue
             if type(
                 decision
             ) is AutomaticDecision and not qualification_manifest_is_current(
@@ -1522,7 +1531,7 @@ class ContinuousGuardedApplication:
         raw = json.loads(document)
         if type(raw) is not dict:
             raise FieldEffectError("authority_binding")
-        if raw.get("schema_version") == "human-decision-v1":
+        if raw.get("schema_version") == "human-decision-v2":
             return HumanDecision.from_json(document)
         if raw.get("schema_version") == "automatic-decision-v1":
             return AutomaticDecision.from_json(document)

@@ -45,15 +45,19 @@ from mechanical_librarian.domain.validation import (
     prefixed_hex_identity,
 )
 
-# The eight buckets #641 names, expressed once over the two persisted columns
-# that decide them. Order is the order an owner reads them in: the work has not
-# started, it is moving through the stages, it is ready, or it could not finish.
+# The nine buckets #641 names, expressed once over the persisted columns that
+# decide them. Order is the order an owner reads them in: the work has not
+# started, it is moving through the stages, it is ready or recorded, or it
+# could not finish.
 #
-# A prepared audiobook's work ends `failed` because nothing follows its report,
-# not because anything went wrong with it.  It stays in `checked` -- it was
-# checked -- and appears in no count that asks an owner to unblock something.
-# `IS NOT` rather than `!=` so a row with no failure code still counts.
-_BLOCKED_SQL = "w.state IN ('failed','stale') AND w.failure_code IS NOT 'evidence_only'"
+# Every completed work is `checked`, and only a work that could not finish is
+# blocked, so the terminal states partition on `state` alone (#966).
+_BLOCKED_SQL = "w.state IN ('failed','stale')"
+# What "done, and nothing is being asked of you" is, over one column: a
+# completed work with no case, whether because its proposals found nothing to
+# ask about or because no work identity was admitted for it at all.
+_RECORDED_SQL = "w.state='complete' AND w.outcome IN ('no_case','evidence_only')"
+_READY_SQL = "w.state='complete' AND w.outcome='case'"
 
 
 # A terminal state is tested before a stage, because `stage` on a failed row is
@@ -70,15 +74,11 @@ _STAGE_BUCKETS = (
         "projection",
         "w.state IN ('queued','delayed','running') AND w.stage='projection'",
     ),
-    # A prepared audiobook belongs here rather than nowhere: the eight buckets
-    # partition the scan, so leaving its work out of `failed` without counting
-    # it broke `total == sum(stages)`. Its evidence is recorded and there is
-    # nothing further to do with it, which is what `ready` says.
-    (
-        "ready",
-        "(w.state='complete' "
-        "OR (w.state='failed' AND w.failure_code IS 'evidence_only'))",
-    ),
+    ("ready", _READY_SQL),
+    # A recorded work belongs here rather than nowhere: the buckets partition
+    # the scan, so `total == sum(stages)` needs a name for "done, evidence
+    # recorded" that is neither an open case nor a blockage.
+    ("recorded", _RECORDED_SQL),
     ("failed", _BLOCKED_SQL),
 )
 _STAGE_COUNT_SQL = ",".join(
@@ -375,6 +375,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             0,
             0,
             0,
+            0,
             False,
             requested_at,
             _EMPTY_STAGES,
@@ -395,8 +396,9 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             counts = self._connection.execute(
                 "SELECT "
                 "COALESCE(SUM(CASE WHEN w.state IN ('complete','failed','stale') THEN 1 ELSE 0 END),0),"
-                "COALESCE(SUM(CASE WHEN w.state='complete' AND w.review_case_id IS NOT NULL THEN 1 ELSE 0 END),0),"
+                f"COALESCE(SUM(CASE WHEN {_READY_SQL} THEN 1 ELSE 0 END),0),"
                 f"COALESCE(SUM(CASE WHEN {_BLOCKED_SQL} THEN 1 ELSE 0 END),0),"
+                f"COALESCE(SUM(CASE WHEN {_RECORDED_SQL} THEN 1 ELSE 0 END),0),"
                 f"{_STAGE_COUNT_SQL} "
                 "FROM review_preparation_work w WHERE w.scan_id=?",
                 (row[0],),
@@ -410,9 +412,10 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 row[2],
                 counts[1],
                 counts[2],
+                counts[3],
                 bool(row[3]),
                 row[4],
-                _stages(counts, 3),
+                _stages(counts, 4),
             )
         except sqlite3.Error as error:
             raise MetadataReportError(
@@ -453,8 +456,9 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 "SELECT s.scan_id,s.connection_name,s.library_name,s.state,s.total,"
                 "s.rescan_requested,s.updated_at,"
                 "COALESCE(SUM(CASE WHEN w.state IN ('complete','failed','stale') THEN 1 ELSE 0 END),0),"
-                "COALESCE(SUM(CASE WHEN w.state='complete' AND w.review_case_id IS NOT NULL THEN 1 ELSE 0 END),0),"
+                f"COALESCE(SUM(CASE WHEN {_READY_SQL} THEN 1 ELSE 0 END),0),"
                 f"COALESCE(SUM(CASE WHEN {_BLOCKED_SQL} THEN 1 ELSE 0 END),0),"
+                f"COALESCE(SUM(CASE WHEN {_RECORDED_SQL} THEN 1 ELSE 0 END),0),"
                 f"{_STAGE_COUNT_SQL} "
                 "FROM review_preparation_scans s "
                 "LEFT JOIN review_preparation_work w ON w.scan_id=s.scan_id "
@@ -478,9 +482,10 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                     row[4],
                     row[8],
                     row[9],
+                    row[10],
                     bool(row[5]),
                     row[6],
-                    _stages(row, 10),
+                    _stages(row, 11),
                 )
                 for row in rows
             }
@@ -757,7 +762,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                         "state='queued',attempt=0,recovery_attempt=0,library_id=?,producer_fingerprint=?,"
                         "report_id=NULL,recovery_source_report_id=NULL,"
                         "proposal_set_id=NULL,review_case_id=NULL,failure_code=NULL,"
-                        "failure_root=NULL "
+                        "failure_root=NULL,outcome=NULL "
                         "WHERE scan_id=?",
                         (library_id, producer_fingerprint, row[0]),
                     )

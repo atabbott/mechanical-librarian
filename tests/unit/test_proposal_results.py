@@ -78,6 +78,7 @@ def test_exact_sixteen_results_are_deterministic_and_round_trip() -> None:
         cast(dict[str, object], _report().to_data()["target"])
     )
     assert {
+        "media_kind",
         "policy_version",
         "resolved_policy_id",
         "relationships",

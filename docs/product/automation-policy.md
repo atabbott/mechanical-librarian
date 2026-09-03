@@ -28,6 +28,15 @@ category suspension, and explicit recovery fail closed by retaining would-be
 automatic work in human Attention. Any field, option, or policy revision outside
 that exact envelope remains human-routed until separately qualified.
 
+No automatic authority reaches an audiobook. A recording's review case is
+decided by the owner alone: the shadow projection abstains before it reads
+policy, so no outcome exists for an automatic decision to be minted from, and
+the decision the owner does record is recorded rather than applied until F47
+brings audiobook writes
+([ADR-0069](../architecture/decisions/0069-audiobook-review-cases-and-terminal-outcomes.md)).
+F46 is where the dominant audiobook decision classes may earn automatic
+authority, through the same qualification route every other option uses.
+
 F35 (#884) adds a closed, provider-consensus title election to the v14
 ProposalSet policy: one exact local noisy title, one exact reversible pattern,
 byte-identical clean work or edition title observations from at least two

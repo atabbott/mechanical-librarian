@@ -31,9 +31,17 @@ SCALAR_DESTINATIONS = frozenset(
         "cover",
     }
 )
-LIST_DESTINATIONS = frozenset({"authors", "genres", "tags"})
+LIST_DESTINATIONS = frozenset({"authors", "genres", "narrators", "tags"})
 SERIES_DESTINATION = "series"
-SUPPORTED_DESTINATIONS = SCALAR_DESTINATIONS | LIST_DESTINATIONS | {SERIES_DESTINATION}
+# A narrator cast is carried in the list envelope wherever it is read, but
+# nothing may plan a write for it on either medium: F47 brings audiobook
+# writes, and the ADR-0039 guarded-effect envelope excludes the field until
+# then. Withholding it here keeps consent, planning, and target-value
+# validation out of it in one place rather than at each of their seams (#966).
+WRITE_WITHHELD_DESTINATIONS = frozenset({"narrators"})
+SUPPORTED_DESTINATIONS = (
+    SCALAR_DESTINATIONS | LIST_DESTINATIONS | {SERIES_DESTINATION}
+) - WRITE_WITHHELD_DESTINATIONS
 TERMINAL_STATES = frozenset({"verified", "stale", "superseded", "abandoned"})
 FIELD_EFFECT_FAILURES = frozenset(
     {
@@ -156,11 +164,9 @@ def validate_effect_value(destination: str, value: object) -> object:
     return value
 
 
-def project_decision_value(destination: str, value: object) -> object:
-    """Convert the exact existing ProposalValue envelope to a target value."""
-    if type(value) is not dict or set(value) != {"kind", "value"}:
-        raise FieldEffectError("invalid_decision_value")
-    expected = (
+def decision_value_kind(destination: str) -> str:
+    """Name the envelope shape one destination's decided value is carried in."""
+    return (
         "list"
         if destination in LIST_DESTINATIONS
         else "series"
@@ -169,7 +175,13 @@ def project_decision_value(destination: str, value: object) -> object:
         if destination == "cover"
         else "text"
     )
-    if value["kind"] != expected:
+
+
+def project_decision_value(destination: str, value: object) -> object:
+    """Convert the exact existing ProposalValue envelope to a target value."""
+    if type(value) is not dict or set(value) != {"kind", "value"}:
+        raise FieldEffectError("invalid_decision_value")
+    if value["kind"] != decision_value_kind(destination):
         raise FieldEffectError("invalid_decision_value")
     return validate_effect_value(destination, value["value"])
 

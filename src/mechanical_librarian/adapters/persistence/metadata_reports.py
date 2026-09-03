@@ -1422,6 +1422,15 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             if raw_case is None:
                 raise MetadataReportError("shadow outcome source is unavailable")
             case_for_recovery = ReviewCase.from_json(raw_case[0])
+            if case_for_recovery.media_kind == "audiobook":
+                # Nothing automatic may act on a recording. F47 owns audiobook
+                # writes, so the projection abstains here rather than deciding
+                # and holding the decision back: no shadow outcome is
+                # published and no automatic decision can be minted from one.
+                # The work still completes, because abstaining is an answer
+                # (#966).
+                transaction.commit()
+                return "inactive"
             if staged_action is not None:
                 self._require_staged_shadow_projection_current(
                     review_case_id, staged_action

@@ -897,6 +897,7 @@ describe('Library route', () => {
         libraries: [
           {
             blocked: 1,
+            recorded: 0,
             checked: 1,
             connection: 'primary',
             library: 'books',
@@ -1117,18 +1118,10 @@ describe('Library route', () => {
         reason: 'No review decision is recorded.',
         fields: [],
       },
-      // An audiobook's work ends `failed` because nothing follows its report.
-      // The row must not read as a failure, and must open.
-      preparation: {
-        attempt: 1,
-        diagnosticReference: 'prep-audio-0123456789ab',
-        provider: 'provider',
-        reason: "This audiobook's local evidence was recorded; no review package follows it yet.",
-        recovery: 'No owner action is needed. The recorded evidence is shown on this work.',
-        recoveryAttempt: 0,
-        stage: 'provider',
-        status: 'evidence_only',
-      },
+      // An audiobook whose providers admitted no work identity completes on
+      // the recorded outcome, so it reports no preparation failure at all.
+      // The row must not read as a failure, and must open (#966).
+      preparation: null,
     }
     const getReportDetail = vi.fn(async () => ({
       chapters: [
@@ -2141,6 +2134,7 @@ describe('Library route', () => {
       editable: false,
       humanDecision: {
         actor: 'owner',
+        application: 'apply' as const,
         decision_id: 'decision-isbn',
         destination: 'isbn' as const,
         occurred_at: 2,
@@ -2188,6 +2182,7 @@ describe('Library route', () => {
       editable: false,
       humanDecision: {
         actor: 'owner',
+        application: 'apply' as const,
         decision_id: 'decision-title',
         destination: 'title',
         occurred_at: 2,
@@ -2932,6 +2927,7 @@ describe('Library route', () => {
           needsAttention: false,
           humanDecision: {
             actor: 'owner',
+            application: 'apply' as const,
             decision_id: 'decision-title',
             destination: 'title',
             occurred_at: 1,
@@ -2954,6 +2950,7 @@ describe('Library route', () => {
           invalidation_sequences: [],
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
+          application: 'apply' as const,
           decision_id: 'decision-title',
           destination: 'title',
           occurred_at: 1,
@@ -3009,6 +3006,7 @@ describe('Library route', () => {
       needsAttention: false,
       humanDecision: {
         actor: 'owner' as const,
+        application: 'apply' as const,
         decision_id: 'decision-series',
         destination: 'series',
         occurred_at: 1,
@@ -3029,6 +3027,7 @@ describe('Library route', () => {
           invalidation_sequences: [],
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
+          application: 'apply' as const,
           decision_id: 'decision-series',
           destination: 'series',
           occurred_at: 1,
@@ -3078,6 +3077,7 @@ describe('Library route', () => {
       needsAttention: false,
       humanDecision: {
         actor: 'owner' as const,
+        application: 'apply' as const,
         decision_id: 'decision-series',
         destination: 'series',
         occurred_at: 1,
@@ -3122,6 +3122,7 @@ describe('Library route', () => {
           invalidation_sequences: [],
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
+          application: 'apply' as const,
           decision_id: 'decision-series',
           destination: 'series',
           occurred_at: 1,
@@ -3172,6 +3173,7 @@ describe('Library route', () => {
       needsAttention: false,
       humanDecision: {
         actor: 'owner' as const,
+        application: 'apply' as const,
         decision_id: 'decision-title',
         destination: 'title',
         occurred_at: 1,
@@ -3193,6 +3195,7 @@ describe('Library route', () => {
           invalidation_sequences: [],
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
+          application: 'apply' as const,
           decision_id: 'decision-title',
           destination: 'title',
           occurred_at: 1,
@@ -3234,6 +3237,7 @@ describe('Library route', () => {
       needsAttention: false,
       humanDecision: {
         actor: 'owner' as const,
+        application: 'apply' as const,
         decision_id: 'decision-title',
         destination: 'title',
         occurred_at: 1,
@@ -3254,6 +3258,7 @@ describe('Library route', () => {
           invalidation_sequences: [],
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
+          application: 'apply' as const,
           decision_id: 'decision-title',
           destination: 'title',
           occurred_at: 1,
@@ -3304,6 +3309,7 @@ describe('Library route', () => {
       needsAttention: false,
       humanDecision: {
         actor: 'owner' as const,
+        application: 'apply' as const,
         decision_id: 'decision-title',
         destination: 'title',
         occurred_at: 1,
@@ -3333,6 +3339,7 @@ describe('Library route', () => {
           invalidation_sequences: [],
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
+          application: 'apply' as const,
           decision_id: 'decision-title',
           destination: 'title',
           occurred_at: 1,
@@ -3523,6 +3530,7 @@ describe('Library route', () => {
           needsAttention: false,
           humanDecision: {
             actor: 'owner',
+            application: 'apply' as const,
             decision_id: 'decision-retried',
             destination: 'title',
             occurred_at: 1,
@@ -3545,6 +3553,7 @@ describe('Library route', () => {
         invalidation_sequences: [],
         schema_version: 'review-decision-v1' as const,
         actor: 'owner' as const,
+        application: 'apply' as const,
         decision_id: 'decision-retried',
         destination: 'title',
         occurred_at: 1,
@@ -3671,6 +3680,7 @@ describe('Library route', () => {
       targetFingerprint: 'fingerprint-authors',
       humanDecision: {
         actor: 'owner',
+        application: 'apply' as const,
         decision_id: 'decision-authors',
         destination: 'authors',
         occurred_at: 1,
@@ -3700,6 +3710,7 @@ describe('Library route', () => {
                 needsAttention: false,
                 humanDecision: {
                   actor: 'owner',
+                  application: 'apply' as const,
                   decision_id: `decision-title-${command.outcome}`,
                   destination: 'title',
                   occurred_at: 1,
@@ -3717,6 +3728,7 @@ describe('Library route', () => {
             invalidation_sequences: [],
             schema_version: 'review-decision-v1',
             actor: 'owner',
+            application: 'apply' as const,
             decision_id: `decision-title-${command.outcome}`,
             destination: 'title',
             occurred_at: 1,
@@ -4034,6 +4046,7 @@ describe('Library route', () => {
           needsAttention: false,
           humanDecision: {
             actor: 'owner',
+            application: 'apply' as const,
             decision_id: 'decision-identity',
             destination: 'title',
             occurred_at: 1,
@@ -4086,6 +4099,7 @@ describe('Library route', () => {
           invalidation_sequences: [],
           schema_version: 'review-decision-v1',
           actor: 'owner',
+          application: 'apply' as const,
           decision_id: 'decision-identity',
           destination: 'title',
           occurred_at: 1,
@@ -4134,6 +4148,7 @@ describe('Library route', () => {
           needsAttention: false,
           humanDecision: {
             actor: 'owner',
+            application: 'apply' as const,
             decision_id: 'decision-complete',
             destination: 'title',
             occurred_at: 1,
@@ -4190,6 +4205,7 @@ describe('Library route', () => {
           invalidation_sequences: [90, 91, 92],
           schema_version: 'review-decision-v1',
           actor: 'owner',
+          application: 'apply' as const,
           decision_id: 'decision-complete',
           destination: 'title',
           occurred_at: 1,
@@ -4702,6 +4718,7 @@ describe('Library route', () => {
           needsAttention: false,
           humanDecision: {
             actor: 'owner',
+            application: 'apply' as const,
             decision_id: 'd',
             destination: 'title',
             occurred_at: 1,
@@ -4736,6 +4753,7 @@ describe('Library route', () => {
           invalidation_sequences: [40, 41, 42],
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
+          application: 'apply' as const,
           decision_id: 'decision-echo',
           destination: 'title',
           occurred_at: 1,
@@ -4811,6 +4829,7 @@ describe('Library route', () => {
           needsAttention: false,
           humanDecision: {
             actor: 'owner',
+            application: 'apply' as const,
             decision_id: 'd',
             destination: 'title',
             occurred_at: 1,
@@ -4843,6 +4862,7 @@ describe('Library route', () => {
           invalidation_sequences: [70, 71, 72],
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
+          application: 'apply' as const,
           decision_id: 'decision-settle',
           destination: 'title',
           occurred_at: 1,
@@ -4892,6 +4912,7 @@ describe('Library route', () => {
           needsAttention: false,
           humanDecision: {
             actor: 'owner',
+            application: 'apply' as const,
             decision_id: 'd',
             destination: 'title',
             occurred_at: 1,
@@ -4924,6 +4945,7 @@ describe('Library route', () => {
           invalidation_sequences: [80, 81, 82],
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
+          application: 'apply' as const,
           decision_id: 'decision-outrun',
           destination: 'title',
           occurred_at: 1,
@@ -5018,6 +5040,7 @@ describe('Library route', () => {
           invalidation_sequences: [],
           schema_version: 'review-decision-v1',
           actor: 'owner',
+          application: 'apply' as const,
           decision_id: 'decision-title',
           destination: 'title',
           occurred_at: 1,
@@ -5079,6 +5102,7 @@ describe('Library route', () => {
         invalidation_sequences: [],
         schema_version: 'review-decision-v1' as const,
         actor: 'owner' as const,
+        application: 'apply' as const,
         decision_id: `decision-${command.destination}`,
         destination: command.destination,
         occurred_at: 1,
@@ -5137,6 +5161,7 @@ describe('Library route', () => {
         invalidation_sequences: [],
         schema_version: 'review-decision-v1' as const,
         actor: 'owner' as const,
+        application: 'apply' as const,
         decision_id: 'decision-authors',
         destination: 'authors',
         occurred_at: 1,
@@ -5195,6 +5220,7 @@ describe('Library route', () => {
         invalidation_sequences: [],
         schema_version: 'review-decision-v1' as const,
         actor: 'owner' as const,
+        application: 'apply' as const,
         decision_id: `decision-${command.destination}`,
         destination: command.destination,
         occurred_at: 1,
@@ -5245,6 +5271,7 @@ describe('Library route', () => {
           needsAttention: false,
           humanDecision: {
             actor: 'owner',
+            application: 'apply' as const,
             decision_id: 'decision-title',
             destination: 'title',
             occurred_at: 1,
@@ -5275,6 +5302,7 @@ describe('Library route', () => {
             invalidation_sequences: [],
             schema_version: 'review-decision-v1',
             actor: 'owner',
+            application: 'apply' as const,
             decision_id: 'decision-title',
             destination: 'title',
             occurred_at: 1,
@@ -5700,6 +5728,7 @@ describe('Library route', () => {
           needsAttention: false,
           humanDecision: {
             actor: 'owner',
+            application: 'apply' as const,
             decision_id: 'decision-page',
             destination: 'title',
             occurred_at: 1,
@@ -5759,6 +5788,7 @@ describe('Library route', () => {
           invalidation_sequences: [],
           schema_version: 'review-decision-v1',
           actor: 'owner',
+          application: 'apply' as const,
           decision_id: 'decision-page',
           destination: 'title',
           occurred_at: 1,
@@ -6108,6 +6138,7 @@ describe('Library route', () => {
             total: 12,
             ready: 9,
             blocked: 0,
+            recorded: 0,
             rescan_requested: false,
           },
         ],

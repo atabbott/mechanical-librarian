@@ -2,8 +2,9 @@
 
 ADR-0061 clause 4 admits ISBN-10-shaped ASINs without a prefix filter, so the
 retained report validates a provider ASIN claim against the same canonical form
-the ASIN discovery lane is built from. The proposal and shadow-review guards
-stay strict, which ADR-0064 records as deferred rather than decided.
+the ASIN discovery lane is built from, and the proposal path now asks that same
+question (#957). The shadow-review linkage guard stays strict, which ADR-0064
+records as deferred rather than decided.
 """
 
 from __future__ import annotations
@@ -87,12 +88,18 @@ def test_the_claim_factory_normalises_case_and_the_grammar_stays_shared() -> Non
             assert report_admits
 
 
-def test_the_proposal_path_still_refuses_an_isbn_ten_shaped_identifier() -> None:
-    """ADR-0064's deferred scope: the write destination stays `B0`-shaped."""
-    assert _eligible_identifier(TargetDestination.ASIN, "B08G9PRS1K", "not_applicable")
-    assert not _eligible_identifier(
-        TargetDestination.ASIN, "0743563123", "not_applicable"
-    )
+def test_the_proposal_path_asks_the_one_canonical_asin_question() -> None:
+    """#957: the write destination stopped keeping a second, narrower grammar.
+
+    An ISBN-10-shaped ASIN is a real audiobook identifier -- 17 of the
+    reference library's 103 are shaped that way -- so refusing it here refused
+    a value the report had already admitted.
+    """
+    assert _eligible_identifier(TargetDestination.ASIN, "0743563123", "not_applicable")
+    for value in (*_CANONICAL, *_REFUSED):
+        assert _eligible_identifier(
+            TargetDestination.ASIN, value, "not_applicable"
+        ) == (canonical_asin(value) is not None)
 
 
 def test_the_shadow_review_linkage_guard_stays_strict() -> None:

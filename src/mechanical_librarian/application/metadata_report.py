@@ -425,10 +425,10 @@ def _lane_identity(payload: dict[str, object]) -> str:
 
 
 def _work_discovery_lanes(
-    target: TargetSnapshot, local_claims: tuple[LocalClaim, ...]
+    target_fields: tuple[TargetField, ...], local_claims: tuple[LocalClaim, ...]
 ) -> tuple[MetadataDiscoveryLane, ...]:
     """Derive the single title-and-author lane, shared by both media plans."""
-    fields = {field.destination: field for field in target.fields}
+    fields = {field.destination: field for field in target_fields}
     title = fields[TargetDestination.TITLE]
     authors = fields[TargetDestination.AUTHORS]
     complete_work = (
@@ -517,7 +517,7 @@ def metadata_discovery_plan(
             )
         )
 
-    lanes.extend(_work_discovery_lanes(target, local_claims))
+    lanes.extend(_work_discovery_lanes(target.fields, local_claims))
     ordered_lanes = tuple(sorted(lanes, key=lambda value: value.identity))
     if _metadata_discovery_query_count(ordered_lanes) > MAX_PROVIDER_DISCOVERY_QUERIES:
         return MetadataDiscoveryPlan(local_claims, (), True)
@@ -622,7 +622,7 @@ def audiobook_discovery_plan(
         )
         lanes.append(_asin_discovery_lane(asin, references))
     if not lanes:
-        lanes.extend(_work_discovery_lanes(target, local_claims))
+        lanes.extend(_work_discovery_lanes(target.fields, local_claims))
     ordered_lanes = tuple(sorted(lanes, key=lambda value: value.identity))
     if _metadata_discovery_query_count(ordered_lanes) > MAX_PROVIDER_DISCOVERY_QUERIES:
         return MetadataDiscoveryPlan(local_claims, (), True)
@@ -1472,6 +1472,38 @@ def qualify_provider_observation(
         request_accounting=observation.request_accounting,
         dispatch_lineage=observation.dispatch_lineage,
         transformation_lineage=transformation_lineage,
+    )
+
+
+def admitted_audiobook_identity(report: MetadataReport) -> bool:
+    """Say whether the corroboration band admitted this recording's identity.
+
+    This is the gate F45 forms proposals behind, and for a recording it is
+    ADR-0061's runtime corroboration band and nothing else: some candidate the
+    report retains has to state this recording's own running time
+    (`runtime_corroborated_candidate`, `domain/audiobook_corroboration.py`).
+    Two things are deliberately not admissions. A work-shape retention is one:
+    a title-and-author match names a work, and qualification keeps such a
+    candidate rather than dropping it, so its presence says nothing about which
+    product this is. The item's own ASIN is the other: an embedded, sidecar, or
+    path identifier naming a different cut of the same work is exactly the
+    disagreement the band exists to settle, and the 0.20.0 measurement settled
+    those disagreements through the band rather than around it.
+
+    The answer is recomputed from the retained candidates and the report's own
+    local claims, so it is deterministic, it reads no candidate's shape, and it
+    is the same question the pipeline asked at runtime (#966).
+
+    A report with no admitted identity has nothing to compare a proposal
+    against, so preparation records its evidence and completes.
+    """
+    if type(report) is not MetadataReport:
+        raise MetadataReportError("provider observation is invalid")
+    return any(
+        observation.status is ProviderStatus.CANDIDATES
+        and runtime_corroborated_candidate(observation.candidates, report.local_claims)
+        is not None
+        for observation in report.providers
     )
 
 
@@ -2400,6 +2432,7 @@ __all__ = [
     "TargetReader",
     "TargetSnapshot",
     "UnsupportedMediaError",
+    "admitted_audiobook_identity",
     "audiobook_asin_feed_plan",
     "audiobook_discovery_plan",
     "merge_provider_cover_descriptor",

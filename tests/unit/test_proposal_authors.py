@@ -850,3 +850,58 @@ def test_ambiguous_provider_contributor_does_not_become_partial_narrators() -> N
     )
     assert ProposalOutcome.INELIGIBLE == result.outcome
     assert () == result.alternatives
+
+
+def _narrator(provider: str, candidate: str) -> ProviderClaim:
+    return _claim(
+        provider,
+        candidate,
+        ClaimKind.CONTRIBUTOR,
+        "Nia Narrator",
+        scope=ClaimScope.WORK,
+        role="narrator",
+    )
+
+
+def test_a_narrator_cast_one_source_states_is_held_for_the_owner() -> None:
+    proposal_set = evaluate_report(
+        _report(
+            fields=_fields(),
+            providers=(
+                _provider(
+                    "hardcover",
+                    "edition-1",
+                    (_narrator("hardcover", "edition-1"),),
+                    authority="hardcover",
+                ),
+            ),
+        )
+    )
+    result = _result(proposal_set, TargetDestination.NARRATORS)
+    assert ProposalOutcome.UNRESOLVED_CHOICE == result.outcome
+    assert ("insufficient_independent_corroboration",) == result.reasons
+
+
+def test_two_sources_stating_one_narrator_cast_leave_the_guard_silent() -> None:
+    proposal_set = evaluate_report(
+        _report(
+            fields=_fields(),
+            providers=(
+                _provider(
+                    "hardcover",
+                    "edition-1",
+                    (_narrator("hardcover", "edition-1"),),
+                    authority="hardcover",
+                ),
+                _provider(
+                    "open-library",
+                    "edition-2",
+                    (_narrator("open-library", "edition-2"),),
+                    authority="open_library",
+                ),
+            ),
+        )
+    )
+    result = _result(proposal_set, TargetDestination.NARRATORS)
+    assert ProposalOutcome.PROPOSE_CHANGE == result.outcome
+    assert ("unique_typed_candidate",) == result.reasons

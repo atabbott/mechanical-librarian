@@ -186,6 +186,7 @@ _CAPABILITY_REASONS = frozenset(
         "work_publication_cannot_replace",
         "policy_ignored",
         "target_state_unusable",
+        "audiobook_cover_withheld",
     }
 )
 _ABSENCE_REASONS = frozenset(

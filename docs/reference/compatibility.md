@@ -11,14 +11,14 @@ The current installed contract is intentionally narrow:
 - Python 3.13 or 3.14;
 - `config-v8` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v37` plus `proposal-set-v5` under
+  `metadata-report-v37` plus `proposal-set-v6` under
   `fixed-conservative-v19`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v6`,
   `shadow-decision-set-v1` under
   `deterministic-shadow-decision-policy-v11`,
   and the exact-current deterministic shadow decision/outcome schema;
 - `review-session-v1`, `review-case-detail-v2`, `review-case-evidence-v4`,
-  `review-case-history-v2`, `human-decision-v1`,
+  `review-case-history-v2`, `human-decision-v2`,
   `human-decision-event-v1`, `human-decision-ack-v1`, bounded
   evidence/current-case history projections, and the exact-current
   opaque-session, login-throttle, immutable human-decision and decision-event
@@ -133,6 +133,13 @@ deleted; there is no migration, import, conversion, preservation, or compatibili
 parser. A clean rebuild may be required and old state may be retained offline.
 Exact-ID and current-scope replay apply only within the exact current schema;
 current-schema restart, replay, and crash safety remain mandatory.
+
+The F45 audiobook-decision increment declares a clean rebuild. It admits only
+`proposal-set-v6`, `human-decision-v2`, and a `review_preparation_work` table
+whose completion is recorded in an `outcome` column: a prepared item completes
+on `case`, `no_case`, or `evidence_only`, and `evidence_only` is no longer a
+member of the failure-code vocabulary. Earlier proposal-set, human-decision, or
+preparation-work state is rejected without migration or conversion.
 
 The F31 reviewer-access increment declares a clean rebuild. It admits only
 `setup-state-v3`, `owner-settings-v3`, `reviewer-access-v1`, and the exact

@@ -835,7 +835,8 @@ def test_failed_provider_work_restarts_and_retries_at_safe_proposal_stage(
 ) -> None:
     repository, report, _, _ = _current_case_with_completed_work(state_path)
     repository._connection.execute(
-        "UPDATE review_preparation_work SET stage='provider',state='queued',report_id=?,updated_at=24",
+        "UPDATE review_preparation_work SET stage='provider',state='queued',"
+        "report_id=?,outcome=NULL,updated_at=24",
         (report.report_id,),
     )
     repository._connection.execute(
@@ -877,7 +878,7 @@ def test_failed_extraction_work_restarts_at_extraction_with_fixed_cohort(
     repository._connection.execute(
         "UPDATE review_preparation_work SET stage='extraction',state='queued',"
         "attempt=0,recovery_attempt=0,report_id=NULL,proposal_set_id=NULL,"
-        "review_case_id=NULL,failure_code=NULL,updated_at=24"
+        "review_case_id=NULL,failure_code=NULL,outcome=NULL,updated_at=24"
     )
     repository._connection.execute(
         "UPDATE review_preparation_scans SET state='processing',updated_at=24"
@@ -958,7 +959,7 @@ def test_activation_restarts_preexisting_terminal_early_work(
     repository._connection.execute(
         "UPDATE review_preparation_work SET stage=?,state='failed',"
         "attempt=3,recovery_attempt=2,report_id=?,proposal_set_id=NULL,"
-        "review_case_id=NULL,failure_code='failed',updated_at=24",
+        "review_case_id=NULL,failure_code='failed',outcome=NULL,updated_at=24",
         (stage, None if stage == "extraction" else report.report_id),
     )
     repository._connection.execute(
@@ -997,7 +998,7 @@ def test_atomic_extraction_callback_updates_fixed_transition_failure(
     repository._connection.execute(
         "UPDATE review_preparation_work SET stage='extraction',state='queued',"
         "attempt=0,recovery_attempt=0,report_id=NULL,proposal_set_id=NULL,"
-        "review_case_id=NULL,failure_code=NULL,updated_at=24"
+        "review_case_id=NULL,failure_code=NULL,outcome=NULL,updated_at=24"
     )
     repository._connection.execute(
         "UPDATE review_preparation_scans SET state='processing',updated_at=24"

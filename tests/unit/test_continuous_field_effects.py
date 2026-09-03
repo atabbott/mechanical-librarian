@@ -680,6 +680,7 @@ def test_preplan_cover_authority_drift_retires_the_selected_consideration() -> N
     idempotency_digest = hashlib.sha256(b"preplan-cover-drift").hexdigest()
     request = {
         "actor": "owner",
+        "application": "apply",
         "destination": "cover",
         "idempotency_digest": idempotency_digest,
         "outcome": "accept",
@@ -716,6 +717,7 @@ def test_preplan_cover_authority_drift_retires_the_selected_consideration() -> N
         idempotency_digest,
         request_digest,
         101,
+        "apply",
     )
 
     class Repository(_PagedRepository):
@@ -2045,6 +2047,7 @@ def _decisions(count: int):
         idempotency_digest = hashlib.sha256(f"key-{index}".encode()).hexdigest()
         request = {
             "actor": "owner",
+            "application": "apply",
             "destination": "title",
             "idempotency_digest": idempotency_digest,
             "outcome": "accept",
@@ -2072,6 +2075,7 @@ def _decisions(count: int):
             idempotency_digest,
             request_digest,
             index,
+            "apply",
         )
 
     return [make_decision(index) for index in range(1, count + 1)]
