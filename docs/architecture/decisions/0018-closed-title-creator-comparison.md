@@ -91,6 +91,13 @@ The admission baseline retains the pre-amendment target-normalization floor:
 NFC, case folding, and collapse of all Unicode whitespace while preserving
 punctuation. Query transformations never create admission equivalence.
 
+ADR-0068 adds one closed Latin canonical-combining-mark family to final-rung
+query shaping and admission. Exact changed local/provider title and author
+ordinals are persisted separately from actual dispatch lineage; non-Latin
+letters, orphan marks, compatibility decomposition, transliteration, and
+substitutions remain excluded. The schema advances to `metadata-report-v37`;
+ordinary startup rejects v36 under ADR-0013.
+
 ## Consequences
 
 ### Positive

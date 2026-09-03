@@ -3,7 +3,7 @@
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
 The reviewer-access authority, `setup-state-v3`, `owner-settings-v3`,
-`cover-consideration-v3`, `metadata-report-v36`, and the added application
+`cover-consideration-v3`, `metadata-report-v37`, and the added application
 tables change the current SQLite objects in this build. Every earlier
 application database therefore requires a clean rebuild; no adoption,
 migration, conversion, import, repair, or downgrade is supplied by #872, #873,

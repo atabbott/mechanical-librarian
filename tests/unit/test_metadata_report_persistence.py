@@ -496,7 +496,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("shadow_outcome_field_facts",),
         ]
         assert len(rows) == 2
-        assert schema_version == ("metadata-report-v36",)
+        assert schema_version == ("metadata-report-v37",)
         assert current == (second.report_id,)
 
         reopened = open_repository(path)
