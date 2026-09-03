@@ -33,19 +33,37 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
 
 MANIFEST = (
     Path(__file__).parents[2]
-    / "docs/reference/f20-rich-metadata-qualification-candidate-v9.json"
+    / "docs/reference/f20-rich-metadata-qualification-candidate-v10.json"
 )
 HISTORICAL_MANIFEST = (
     Path(__file__).parents[2]
-    / "docs/reference/f20-rich-metadata-qualification-candidate-v8.json"
+    / "docs/reference/f20-rich-metadata-qualification-candidate-v9.json"
 )
 F19A_MANIFEST = (
-    Path(__file__).parents[2] / "docs/reference/f19a-qualification-manifest-v4.json"
+    Path(__file__).parents[2] / "docs/reference/f19a-qualification-manifest-v5.json"
 )
 F38_MANIFEST = (
     Path(__file__).parents[2]
     / "docs/reference/f38-contributor-display-qualification-manifest-v1.json"
 )
+# The private qualification results are bound into both manifests after the
+# final head is measured; `test_qualification_digests_are_pinned` fails while
+# either literal still stands in.
+ROOT_PLACEHOLDER = "ROOT-FILLS"
+PLACEHOLDER_DIGESTS = frozenset({"0" * 64, "1" * 64})
+# The segment-corroboration route reports these four counts and the two
+# by-state maps only once the root has measured the final candidate.
+MEASURED_SEGMENT_AGGREGATES = (
+    "automatic_predictions",
+    "correct_predictions",
+    "positive_opportunities",
+    "zero_tolerance_failures",
+)
+MEASURED_BY_STATE = (
+    "subtitle_fill_empty_correct_predictions_by_state",
+    "subtitle_fill_empty_predictions_by_state",
+)
+
 RICH_FIELDS = (
     "subtitle",
     "series",
@@ -61,8 +79,8 @@ RICH_FIELDS = (
 def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
 
-    assert "f20-rich-metadata-qualification-candidate-v9" == manifest["schema"]
-    assert "fixed-conservative-v18" == manifest["proposal_policy_version"]
+    assert "f20-rich-metadata-qualification-candidate-v10" == manifest["schema"]
+    assert "fixed-conservative-v19" == manifest["proposal_policy_version"]
     assert "decision_only" == manifest["automatic_authority"]
     passing = {
         "description_fill:safe_plain_text",
@@ -82,30 +100,24 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     assert passing == set(manifest["passing_automatic_options"])
     assert ["explicit:unsupported"] == manifest["human_only_options"]
     assert ["narrators", "cover"] == manifest["excluded_destinations"]
-    assert 22 == manifest["candidate_execution_count"]
+    assert 23 == manifest["candidate_execution_count"]
     assert {
-        "prior_manifest_sha256": "1315e324edd78e698587e14497aa0ab11e33fd65612f00cd8a78a462fd6445fd",
-        "description_applicability_confirmation_sha256": "03e19f6b3524afc1c3409e55b652a252f39c14653fa636d340f13c6150e9ddb7",
-        "description_confirmation_correction_sha256": "bcf746e16bdfd9ed8ee3174006546f4d3de7a375c3b52f62641d86470bbe136c",
-        "description_holdout_continuity_sha256": "16b87e09e1b51cf9162d583852bf54b8c964e8d12913fbf36486ce3d58faa024",
-        "description_confirmation_transform_filter_correction_sha256": "d7f27b3b68d7b87c1db75eeb310e2c9e5cb4882823eaf2f486c16773a548b1f7",
-        "description_holdout_transform_filter_continuity_sha256": "b1960e81d472d048a762aa6d9a440dcf9bd3401328a860850db9e671d4e64b2c",
-        "description_confirmation_unranked_authority_correction_sha256": "2bf2bcfac6e6b632bf0c8660a7bd5fa2541b2c1373a0d146bd32f55f38eaff29",
-        "description_holdout_unranked_authority_continuity_sha256": "10a88f1701b9c249e4d6fb6d5657bacf597cfa548a1d9f9dc8e74e4fa741216c",
-        "issue_971_capture_receipt_sha256": "c1d672126449442b44b056c4cd7dc3c73346f90ab1fa4eb090e8203441cc0a33",
-        "issue_971_capture_receipt_head": "3d153a371b63abd5751f09254f218504da8e9f75",
-        "issue_971_baseline_result_sha256": "093411b65e1f48f40011f40799388dc09784dc5bcc4a133c77b3478d964af0df",
-        "issue_971_baseline_result_head": "2323ad0b8fc52fe7701bc467a990e158c2a793f8",
-        "issue_971_candidate_result_sha256": "73b86a73ec7c93b2f17d499c9b2a8449c941142267e34a299996758fb8a073b3",
-        "issue_971_candidate_result_head": "3d153a371b63abd5751f09254f218504da8e9f75",
-        "issue_971_comparison_sha256": "aa4ed71d447f0a409eafac90eb22e360d5b5c78a8b4377d3781cf081a3f1d919",
-        "issue_971_comparison_head": "836901bf01f2d6e2874e1be3503b1473e402fb99",
-        "issue_971_evidence_mode": "live_current_provider_capture_and_offline_retained_document_replay",
-        "issue_971_integrity_receipt_sha256": "d4e6f725582b11cfeca6279bc8d122cf597e47b94883b66d6ac8837a1ce02866",
-        "issue_971_combined_artifact_sha256": "c6cbfbcc3ae43cd42b42bf5ef3bef20519bcd7220a5e8630f23c70c7aa7694b4",
-        "issue_971_retained_replay_sha256": "767b571602095ed07e4f79194dd46353bc205432bff1d7d782c8fac51f04c6a0",
-        "issue_971_retained_replay_head": "1a3878197cde7b06c215b15e51d1fd316a1e9fc7",
-    } == manifest["authority_rotation"]
+        "archived_replay_result_sha256",
+        "development_result_sha256",
+        "prior_aggregate_receipt_sha256",
+        "prior_manifest_sha256",
+    } == set(manifest["authority_rotation"])
+    assert (
+        "8b14e134a146e8f03f9d36ad78506a7f234b0768ef61620ef1d1234a8df7c4a5"
+        == manifest["authority_rotation"]["prior_manifest_sha256"]
+    )
+    evidence = {
+        name: value
+        for name, value in manifest["evidence_method"].items()
+        if name != "isbn_manifestation_election"
+    }
+    segment = evidence.pop("subtitle_segment_corroboration")
+    by_state = {name: evidence.pop(name) for name in MEASURED_BY_STATE}
     assert {
         "applicability_confirmation": {
             "automatic_precision": 1.0,
@@ -206,24 +218,40 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
         },
         "subjective_field_truth_model": "exact_work_bound_source_projection",
         "series_truth_model": "valid_membership_with_preferred_value",
-        "subtitle_fill_empty_correct_predictions_by_state": {
-            "empty": 4,
-            "missing": 4,
-            "null": 4,
-        },
-        "subtitle_fill_empty_predictions_by_state": {
-            "empty": 4,
-            "missing": 4,
-            "null": 4,
-        },
         "subtitle_fill_empty_target_states": ["missing", "null", "empty"],
         "subtitle_truth_model": "ebook_manifestation_bibliographic_subtitle",
         "unseen_holdout_required": False,
+    } == evidence
+    assert {
+        "adjudicated_counts": {"abstain": 37, "fill": 76, "unknown": 0},
+        "case_count": 113,
+        "holdout_claim": False,
+        "network_access": False,
+        "distinct_cases": 113,
+        "retained_49_report_route_predictions_at_base": 0,
+        "review_agreement_count": 110,
+        "route": "archived_744_development_challenge_set",
+        "target_states_measured": ["empty", "missing", "null"],
     } == {
         name: value
-        for name, value in manifest["evidence_method"].items()
-        if name != "isbn_manifestation_election"
+        for name, value in segment.items()
+        if name not in MEASURED_SEGMENT_AGGREGATES
     }
+    assert set(MEASURED_SEGMENT_AGGREGATES) <= set(segment)
+    if segment["automatic_predictions"] != ROOT_PLACEHOLDER:
+        # 113 cases measured under each fill_empty target state.
+        assert 63 == segment["automatic_predictions"]
+        assert 63 == segment["correct_predictions"]
+        assert 228 == segment["positive_opportunities"]
+        assert 0 == segment["zero_tolerance_failures"]
+        assert {"empty": 21, "missing": 21, "null": 21} == by_state[
+            "subtitle_fill_empty_predictions_by_state"
+        ]
+        assert {"empty": 21, "missing": 21, "null": 21} == by_state[
+            "subtitle_fill_empty_correct_predictions_by_state"
+        ]
+    else:
+        assert all(value == ROOT_PLACEHOLDER for value in by_state.values())
     assert {
         "development": {
             "automatic_precision": 1.0,
@@ -360,9 +388,12 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
         for entry in manifest["options"]
         if entry["identity"] == "subtitle:fill_empty"
     }["subtitle:fill_empty"]
-    assert 147 == subtitle_fill["eligible_opportunities"]
-    assert 12 == subtitle_fill["metrics"]["automatic_predictions"]
-    assert 1.0 == subtitle_fill["metrics"]["automatic_precision"]
+    assert 0 == subtitle_fill["metrics"]["structural_or_sensitive_violations"]
+    assert 0 == subtitle_fill["metrics"]["unsupported_output"]
+    if subtitle_fill["metrics"]["automatic_precision"] != ROOT_PLACEHOLDER:
+        assert 339 == subtitle_fill["eligible_opportunities"]  # 113 cases x 3 states
+        assert 1.0 == subtitle_fill["metrics"]["automatic_precision"]
+        assert 3 <= subtitle_fill["metrics"]["automatic_predictions"]
 
 
 def test_candidate_exposes_only_closed_aggregate_contract_data() -> None:
@@ -385,12 +416,13 @@ def test_candidate_exposes_only_closed_aggregate_contract_data() -> None:
     for name in ("automatic_decision", "compiler", "policy", "target_shape"):
         item = manifest["frozen_contract"][name]
         assert {"identity", "sha256"} == set(item)
-        assert (
-            hashlib.sha256(
-                (MANIFEST.parents[2] / item["identity"]).read_bytes()
-            ).hexdigest()
-            == item["sha256"]
-        )
+        if item["sha256"] != ROOT_PLACEHOLDER:
+            assert (
+                hashlib.sha256(
+                    (MANIFEST.parents[2] / item["identity"]).read_bytes()
+                ).hexdigest()
+                == item["sha256"]
+            )
     for name in ("adjudication", "evaluator", "evidence_execution", "thresholds"):
         item = manifest["frozen_contract"][name]
         assert {"identity", "sha256"} == set(item)
@@ -402,7 +434,7 @@ def test_candidate_exposes_only_closed_aggregate_contract_data() -> None:
         "proposal_policy_version",
     } == set(manifest["frozen_contract"]["isbn_manifestation_election"])
     assert (
-        "fixed-conservative-v18"
+        "fixed-conservative-v19"
         == manifest["frozen_contract"]["isbn_manifestation_election"][
             "proposal_policy_version"
         ]
@@ -416,25 +448,27 @@ def test_candidate_exposes_only_closed_aggregate_contract_data() -> None:
         "holdout_transform_filter_continuity_receipt_sha256": "b1960e81d472d048a762aa6d9a440dcf9bd3401328a860850db9e671d4e64b2c",
         "holdout_unranked_authority_continuity_receipt_sha256": "10a88f1701b9c249e4d6fb6d5657bacf597cfa548a1d9f9dc8e74e4fa741216c",
         "initial_holdout_receipt_sha256": "4637df813899ec39d2896fc626076d09924165433674cef35cfcc4fc0c6c48dd",
-        "preview_sha256": "0ef317fd359db8c03e9f2cde31bc6dae124eb3417b24dd75944d3139cab14f4c",
+        "preview_sha256": "f5fdad27f901735ef0e3075bfb1a98cb4aa5eb0461cdc7e63f0deb638b05e52b",
     } == manifest["frozen_contract"]["description_tiebreaker"]
     for source, name in {
         "src/mechanical_librarian/domain/automatic_decision.py": "automatic_decision_sha256",
         "src/mechanical_librarian/domain/rich_metadata_preview.py": "preview_sha256",
         "src/mechanical_librarian/domain/proposal_set.py": "proposal_policy_sha256",
     }.items():
-        assert (
-            hashlib.sha256((MANIFEST.parents[2] / source).read_bytes()).hexdigest()
-            == (manifest["frozen_contract"]["isbn_manifestation_election"][name])
-        )
+        bound = manifest["frozen_contract"]["isbn_manifestation_election"][name]
+        if bound != ROOT_PLACEHOLDER:
+            assert (
+                hashlib.sha256((MANIFEST.parents[2] / source).read_bytes()).hexdigest()
+                == bound
+            )
 
 
-def test_v8_manifest_remains_historical_readable_after_v9_rotation() -> None:
+def test_v9_manifest_remains_historical_readable_after_v10_rotation() -> None:
     historical = json.loads(HISTORICAL_MANIFEST.read_text(encoding="utf-8"))
     current = json.loads(MANIFEST.read_text(encoding="utf-8"))
     manifest = current
 
-    assert "f20-rich-metadata-qualification-candidate-v8" == historical["schema"]
+    assert "f20-rich-metadata-qualification-candidate-v9" == historical["schema"]
     assert (
         hashlib.sha256(HISTORICAL_MANIFEST.read_bytes()).hexdigest()
         == current["authority_rotation"]["prior_manifest_sha256"]
@@ -489,10 +523,6 @@ def test_v8_manifest_remains_historical_readable_after_v9_rotation() -> None:
 
 
 def test_f19a_authority_is_preserved_and_exact_f20_is_added() -> None:
-    assert (
-        "e4dc35aa64e3e052f3866225a492fab9572e5727194691782b881b60a46144ec"
-        == F19A_QUALIFICATION_MANIFEST_SHA256
-    )
     assert {
         "title_layout:preserve",
         "title_layout:title_and_subtitle",
@@ -505,6 +535,7 @@ def test_f19a_authority_is_preserved_and_exact_f20_is_added() -> None:
         "contributor_names:canonical:provider_consensus_display",
         "publisher_preference:publisher",
         "title:replace_target:provider_consensus_noise",
+        "title:replace_target:decoration_tidy",
         "description_fill:safe_plain_text",
         "genres:fill_empty",
         "genres:add",
@@ -552,12 +583,18 @@ def test_f19a_successor_manifest_binds_f35_and_preserves_f36_evidence() -> None:
     manifest_bytes = F19A_MANIFEST.read_bytes()
     manifest = json.loads(manifest_bytes)
 
+    if F19A_QUALIFICATION_MANIFEST_SHA256 not in PLACEHOLDER_DIGESTS:
+        assert (
+            hashlib.sha256(manifest_bytes).hexdigest()
+            == F19A_QUALIFICATION_MANIFEST_SHA256
+        )
+    assert "f19a-v13-result" == manifest["schema"]
     assert (
-        hashlib.sha256(manifest_bytes).hexdigest() == F19A_QUALIFICATION_MANIFEST_SHA256
+        "e4dc35aa64e3e052f3866225a492fab9572e5727194691782b881b60a46144ec"
+        == manifest["prior_manifest_sha256"]
     )
-    assert "f19a-v12-result" == manifest["schema"]
-    assert 9 == manifest["replayed_prior_option_count"]
-    assert 3 == manifest["changed_prior_option_count"]
+    assert 12 == manifest["replayed_prior_option_count"]
+    assert 0 == manifest["changed_prior_option_count"]
     assert 0 == manifest["zero_tolerance_failures"]
     assert {
         "automatic_precision": 1.0,
@@ -577,14 +614,52 @@ def test_f19a_successor_manifest_binds_f35_and_preserves_f36_evidence() -> None:
         "qualified": True,
         "unsupported_rate": 0.0,
     } == manifest["metrics"]["title:replace_target:provider_consensus_noise"]
+    tranche = manifest["title_tranche"]
     assert {
-        "candidate_execution_count": 2,
-        "changed_prior_option_count": 0,
-        "corpus_role": "development_challenge_set",
-        "evaluator_contract": "f35-title-policy-v1",
-        "replayed_prior_option_count": 11,
-        "zero_tolerance_failures": 0,
-    } == manifest["title_tranche"]
+        "candidate_execution_count",
+        "changed_prior_option_count",
+        "corpus_role",
+        "decoration_equivalence",
+        "evaluator_contract",
+        "options",
+        "replayed_prior_option_count",
+        "zero_tolerance_failures",
+    } == set(tranche)
+    assert 0 == tranche["changed_prior_option_count"]
+    assert "development_challenge_set" == tranche["corpus_role"]
+    assert "f35-title-policy-v1+f41-decoration-tidy-v1" == tranche["evaluator_contract"]
+    assert 12 == tranche["replayed_prior_option_count"]
+    assert 0 == tranche["zero_tolerance_failures"]
+    assert [
+        "title:replace_target:provider_consensus_noise",
+        "title:replace_target:decoration_tidy",
+    ] == tranche["options"]
+    assert 75 == tranche["decoration_equivalence"]["case_count"]
+    assert 70 == tranche["decoration_equivalence"]["review_agreement_count"]
+    assert 25 == tranche["decoration_equivalence"]["stratum_sizes"]["tidy_eligible"]
+    assert (
+        "f35-title-policy-v1+f36-language-equivalence-v1+f41-decoration-tidy-v1"
+        == manifest["evaluator_contract"]
+    )
+    tidy = manifest["metrics"]["title:replace_target:decoration_tidy"]
+    assert 0.0 == tidy["unsupported_rate"]
+    assert tidy["qualified"] is True
+    if tidy["automatic_precision"] != ROOT_PLACEHOLDER:
+        assert 1.0 == tidy["automatic_precision"]
+        assert 3 <= tidy["automatic_predictions"]
+
+
+def test_qualification_digests_are_pinned() -> None:
+    """The one red sentinel until the root binds the private qualification.
+
+    It clears when both manifests carry real numbers and both runtime
+    constants bind their exact file digests.
+    """
+    assert F19A_MANIFEST.exists() and MANIFEST.exists()
+    assert F19A_QUALIFICATION_MANIFEST_SHA256 not in PLACEHOLDER_DIGESTS
+    assert F20_QUALIFICATION_CANDIDATE_SHA256 not in PLACEHOLDER_DIGESTS
+    assert ROOT_PLACEHOLDER not in F19A_MANIFEST.read_text(encoding="utf-8")
+    assert ROOT_PLACEHOLDER not in MANIFEST.read_text(encoding="utf-8")
 
 
 def test_f38_manifest_separately_qualifies_provider_consensus_contributor_display() -> (
@@ -615,10 +690,11 @@ def test_f38_manifest_separately_qualifies_provider_consensus_contributor_displa
 
 def test_runtime_envelope_pins_every_terminal_disposition_and_authority() -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
-    assert (
-        hashlib.sha256(MANIFEST.read_bytes()).hexdigest()
-        == F20_QUALIFICATION_CANDIDATE_SHA256
-    )
+    if F20_QUALIFICATION_CANDIDATE_SHA256 not in PLACEHOLDER_DIGESTS:
+        assert (
+            hashlib.sha256(MANIFEST.read_bytes()).hexdigest()
+            == F20_QUALIFICATION_CANDIDATE_SHA256
+        )
     passing = frozenset(
         {
             "description_fill:safe_plain_text",

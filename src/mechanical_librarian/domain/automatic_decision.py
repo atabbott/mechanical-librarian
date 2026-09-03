@@ -22,7 +22,7 @@ class AutomaticDecisionError(ValueError):
     """Automatic authority is incomplete, stale, or outside its envelope."""
 
 
-F19A_QUALIFICATION_MANIFEST_SHA256 = "e4dc35aa64e3e052f3866225a492fab9572e5727194691782b881b60a46144ec"
+F19A_QUALIFICATION_MANIFEST_SHA256 = "f7a4493d94f0188e6974aad1b68f9238d9e7733aa1a2e064e5663e385af0fe6e"
 _PRE_F35_F19A_QUALIFIED_POLICY_OPTIONS = frozenset({
     "title_layout:preserve", "title_layout:title_and_subtitle",
     "date_precision:year", "date_precision:full_date",
@@ -30,8 +30,12 @@ _PRE_F35_F19A_QUALIFIED_POLICY_OPTIONS = frozenset({
     "contributor_names:preserve", "contributor_names:canonical",
     "publisher_preference:publisher",
 })
-F19A_QUALIFIED_POLICY_OPTIONS = _PRE_F35_F19A_QUALIFIED_POLICY_OPTIONS | frozenset({
-    "title:replace_target:provider_consensus_noise",
+_PRE_F41_F19A_QUALIFIED_POLICY_OPTIONS = (
+    _PRE_F35_F19A_QUALIFIED_POLICY_OPTIONS
+    | frozenset({"title:replace_target:provider_consensus_noise"})
+)
+F19A_QUALIFIED_POLICY_OPTIONS = _PRE_F41_F19A_QUALIFIED_POLICY_OPTIONS | frozenset({
+    "title:replace_target:decoration_tidy",
 })
 F38_QUALIFIED_POLICY_OPTIONS = frozenset({
     f"{F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY}:"
@@ -50,6 +54,10 @@ _PRIOR_F19A_QUALIFICATION_MANIFESTS = (
     (
         "cb48d6a0dff269fd576ac9c8fbe7bbe313f291d0368251b097c9178ade456b37",
         _PRE_F35_F19A_QUALIFIED_POLICY_OPTIONS,
+    ),
+    (
+        "e4dc35aa64e3e052f3866225a492fab9572e5727194691782b881b60a46144ec",
+        _PRE_F41_F19A_QUALIFIED_POLICY_OPTIONS,
     ),
 )
 _PRIOR_F20_QUALIFICATION_MANIFESTS = (
@@ -126,15 +134,17 @@ _PRIOR_F20_QUALIFICATION_MANIFESTS = (
         "1315e324edd78e698587e14497aa0ab11e33fd65612f00cd8a78a462fd6445fd",
         F20_PASSING_AUTOMATIC_OPTIONS,
     ),
+    (
+        "8b14e134a146e8f03f9d36ad78506a7f234b0768ef61620ef1d1234a8df7c4a5",
+        F20_PASSING_AUTOMATIC_OPTIONS,
+    ),
 )
 
 
 def automatic_safety_category(policy_category: str, policy_option: str) -> str:
     """Return the suspension lane for one immutable policy identity."""
-    if (policy_category, policy_option) == (
-        "title",
-        "replace_target:provider_consensus_noise",
-    ):
+    if policy_category == "title":
+        # Both title elections write the same target through the same lane.
         return "title_layout"
     return policy_category
 

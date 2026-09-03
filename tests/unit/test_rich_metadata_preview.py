@@ -1256,32 +1256,27 @@ def test_automatic_subtitle_fill_projects_the_locally_attested_value() -> None:
     assert len(selected.source_evidence_references) > 1
 
 
-def test_title_derived_colon_subtitle_stays_an_owner_proposal_not_automatic() -> None:
-    title = "Secret History: A Mistborn Novella"
-    local_title = LocalClaim.create(
+def _local_work_title(value: str) -> LocalClaim:
+    return LocalClaim.create(
         kind=ClaimKind.TITLE,
-        observed=title,
-        canonical=title,
+        observed=value,
+        canonical=value,
         state=FieldState.VALID,
         scope=ClaimScope.WORK,
         basis="package_metadata",
-        excerpt=title,
+        excerpt=value,
         applicability="not_applicable",
         checksum="not_applicable",
         applicability_basis="not_applicable",
         occurrence=0,
     )
+
+
+def _segment_subtitle_preview(providers: tuple, local_claims: tuple = ()):
     report = _bibliographic_report(
         current_title="Secret History",
-        providers=(
-            _source(
-                "catalogue",
-                "edition-1",
-                titles=("Secret History",),
-                subtitle="A Mistborn Novella",
-            ),
-        ),
-        local_claims=(local_title,),
+        providers=providers,
+        local_claims=local_claims,
     )
     policy = resolve_policy(MetadataPolicyProfile.builtin(), report.target.library)
     proposal = evaluate_report(report, policy.resolved_id, dict(policy.destinations))
@@ -1295,8 +1290,146 @@ def test_title_derived_colon_subtitle_stays_an_owner_proposal_not_automatic() ->
         for value in compile_rich_metadata_preview(policy, report, proposal).fields
         if value.field == "subtitle"
     )
+    return subtitle, selected
+
+
+def _stating_provider(name: str = "open_library"):
+    return _source(
+        name,
+        f"{name}-edition",
+        titles=("Secret History",),
+        subtitle="A Mistborn Novella",
+    )
+
+
+def _decorating_provider(name: str):
+    return _source(
+        name,
+        f"{name}-edition",
+        titles=("Secret History: A Mistborn Novella",),
+    )
+
+
+def test_cross_source_title_segment_corroborates_an_automatic_subtitle_fill() -> None:
+    subtitle, selected = _segment_subtitle_preview(
+        (_stating_provider(), _decorating_provider("hardcover"))
+    )
 
     assert subtitle.alternatives
+    assert ("projected", None, "A Mistborn Novella") == (
+        selected.outcome,
+        selected.reason,
+        selected.desired_value,
+    )
+
+
+def test_a_local_only_title_segment_withholds_the_automatic_fill() -> None:
+    _, selected = _segment_subtitle_preview(
+        (_stating_provider(),),
+        (_local_work_title("Secret History: A Mistborn Novella"),),
+    )
+
+    assert ("abstain", "subtitle_segment_decorated_consensus", None) == (
+        selected.outcome,
+        selected.reason,
+        selected.desired_value,
+    )
+
+
+def test_more_decorating_authorities_than_plain_withhold_the_automatic_fill() -> None:
+    _, selected = _segment_subtitle_preview(
+        (
+            _stating_provider(),
+            _decorating_provider("hardcover"),
+            _decorating_provider("google_books"),
+        )
+    )
+
+    assert ("abstain", "subtitle_segment_decorated_consensus", None) == (
+        selected.outcome,
+        selected.reason,
+        selected.desired_value,
+    )
+
+
+def test_a_dissenting_provider_subtitle_withholds_the_automatic_fill() -> None:
+    dissenting = _provider(
+        "google_books",
+        "google_books-print",
+        (
+            _claim(
+                "google_books",
+                "google_books-print",
+                ClaimKind.TITLE,
+                "Secret History",
+                scope=ClaimScope.WORK,
+            ),
+            _claim(
+                "google_books",
+                "google_books-print",
+                ClaimKind.SUBTITLE,
+                "A Cosmere Novella",
+                scope=ClaimScope.EDITION,
+                order=1,
+                applicability="print",
+            ),
+        ),
+        authority="google_books",
+    )
+    _, selected = _segment_subtitle_preview(
+        (_stating_provider(), _decorating_provider("hardcover"), dissenting)
+    )
+
+    assert ("abstain", "subtitle_segment_provider_dissent", None) == (
+        selected.outcome,
+        selected.reason,
+        selected.desired_value,
+    )
+
+
+def test_a_generic_segment_never_reaches_the_automatic_fill() -> None:
+    subtitle, selected = _segment_subtitle_preview(
+        (
+            _source(
+                "open_library",
+                "open_library-edition",
+                titles=("Secret History",),
+                subtitle="Stories",
+            ),
+            _source(
+                "hardcover",
+                "hardcover-edition",
+                titles=("Secret History: Stories",),
+            ),
+        )
+    )
+
+    assert ProposalOutcome.INELIGIBLE is subtitle.outcome
+    assert ("generic_provider_subtitle",) == subtitle.reasons
+    assert ("abstain", None) == (selected.outcome, selected.desired_value)
+
+
+def test_own_source_title_segment_never_corroborates_its_own_subtitle() -> None:
+    report = _bibliographic_report(
+        current_title="Secret History",
+        providers=(
+            _source(
+                "catalogue",
+                "edition-1",
+                titles=("Secret History: A Mistborn Novella",),
+                subtitle="A Mistborn Novella",
+            ),
+            _source("archive", "edition-2", titles=("Secret History",)),
+        ),
+    )
+    policy = resolve_policy(MetadataPolicyProfile.builtin(), report.target.library)
+    proposal = evaluate_report(report, policy.resolved_id, dict(policy.destinations))
+    selected = next(
+        value
+        for value in compile_rich_metadata_preview(policy, report, proposal).fields
+        if value.field == "subtitle"
+    )
+
     assert ("abstain", "subtitle_local_corroboration_required", None) == (
         selected.outcome,
         selected.reason,

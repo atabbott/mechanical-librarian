@@ -6,7 +6,7 @@ preparation; source-only contributor inspection uses the typed workbench and is
 not an installed runtime capability. The operation reopens the exact report, revalidates its
 current Audiobookshelf target projection, selected EPUB bytes, ABS cover, and
 both blobs of every referenced private cover artifact, then evaluates the built-in
-`fixed-conservative-v18` policy. It does not construct or contact a metadata or
+`fixed-conservative-v19` policy. It does not construct or contact a metadata or
 cover provider.
 
 An exact ProposalSet can be reopened offline through the application repository
@@ -15,14 +15,15 @@ or typed source-only inspector.
 Success is exactly one canonical `proposal-set-v5` JSON document plus a
 newline. Failure emits no document and one value-free diagnostic.
 
-Only `proposal-set-v5` documents under `fixed-conservative-v18` and the exact current
+Only `proposal-set-v5` documents under `fixed-conservative-v19` and the exact current
 `proposal_sets` table envelope are accepted. A database with the earlier
 `fixed-conservative-v1`, `fixed-conservative-v2`, `fixed-conservative-v3`, or
 `fixed-conservative-v4`, `fixed-conservative-v5`, `fixed-conservative-v6`,
 `fixed-conservative-v7`, `fixed-conservative-v8`, `fixed-conservative-v9`,
 `fixed-conservative-v10`, `fixed-conservative-v11`, `fixed-conservative-v12`,
 `fixed-conservative-v13`, `fixed-conservative-v14`, `fixed-conservative-v15`, or
-`fixed-conservative-v16`, or `fixed-conservative-v17` table shape is incompatible
+`fixed-conservative-v16`, `fixed-conservative-v17`, or `fixed-conservative-v18`
+table shape is incompatible
 and is rejected before mutation. A clean rebuild is required; there is no
 proposal migration, import, conversion, or compatibility parser.
 
@@ -32,6 +33,58 @@ The F35 (#884) provider-consensus title election is admitted by the current
 #445 F19a successor manifest. Its closed title tranche is qualified separately
 from the current F20 v4 route, which continues to exclude title. Earlier F19a
 digests remain readable for their historical decisions but cannot authorize F35.
+
+## Decoration equivalence
+
+The F41 (#896) decoration-equivalence election runs immediately after F35 on a
+title result whose only reason is `competing_evidence`. The two elections are
+disjoint by predicate: F35 requires every provider title claim to state the
+clean form, F41 requires both class members to carry provider evidence. F41
+emits `decoration_equivalent_<family>` on a keep, `decoration_tidy_<family>` on
+the tidy proposal, and one of `decoration_tidy_series_unpreserved`,
+`decoration_equivalence_provider_dissent`, or
+`decoration_equivalence_decorated_consensus` beside `competing_evidence` when a
+guard closes the class.
+
+The grammar step is exact: removing the decoration must yield the plain
+alternative byte for byte, and the current value must equal one class member
+byte for byte, so a collapse never rewrites casing or spacing. The dissent and
+width guards compare under the closed title comparison.
+
+A collapsed title carries one alternative. Where the decorated representation
+also carries the component being preserved, the combination engine still fails
+closed with `no_safe_bibliographic_combination` rather than pairing the
+component with the plain selection; that shape is recorded as a deferred finding
+on #896.
+
+The generic-title preservation branch that emits an all-PRESERVE combination is
+now taken only when the title outcome is a keep, which is the only shape the
+`ProposalSet` invariant admits.
+
+The subtitle result names an uncorroborated colon segment with
+`subtitle_segment_uncorroborated`, on the competing seam and on an ineligible
+result with no supported evidence. A segment elects no subtitle at all: the only
+election on the competing seam is the book's own explicit subtitle claim
+(`local_attested_subtitle`), a segment there only reports the corroboration
+guard that closed the choice, and a segment fills a subtitle only through the
+automatic projection.
+
+Segment corroboration itself is decided once, by `segment_corroboration`, for
+both seams, so they cannot drift. A generic segment is rejected before
+corroboration runs. A segment otherwise corroborates only when no provider
+states a different subtitle (`subtitle_segment_provider_dissent`) and the width
+holds: corroboration is withheld as `subtitle_segment_decorated_consensus` when
+no provider authority carries the segment, or when the authorities carrying the
+decorated form—the local title counted—exceed the provider authorities stating
+the plain form the segment was stripped from. A withheld corroboration reports its guard where the
+uncorroborated diagnostic reports: on the subtitle proposal on the competing
+seam, and as the preview abstention reason when the projection is withheld.
+
+F35's colon and series abstentions now run after its provider-agreement gate
+rather than before it. This is a behaviour change: a title F35 would never have
+elected no longer abstains under `provider_consensus_title_colon_unused` or
+`provider_consensus_title_series_unpreserved`, and reaches the F41 election
+instead.
 
 ## Canonical contributor display
 

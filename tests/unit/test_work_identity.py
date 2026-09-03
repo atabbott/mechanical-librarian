@@ -3,15 +3,18 @@ from __future__ import annotations
 import pytest
 
 from mechanical_librarian.domain.metadata_report import (
+    ProviderLaneCandidate,
     ProviderLaneObservation,
     ProviderQueryKind,
     ProviderStatus,
     _provider_lane_from_data,
 )
 from mechanical_librarian.domain.work_identity import (
+    WORK_TITLE_COMPOUND_PRODUCTIONS,
     WORK_TITLE_TRANSFORMATION_RULES,
     WorkDispatchLineage,
     WorkDispatchRung,
+    WorkTitleCompoundProduction,
     WorkTitleTransformationFamily,
     WorkTitleTransformationLineage,
     WorkTitleTransformationSide,
@@ -239,7 +242,7 @@ def test_ladder_deduplicates_and_narrowing_preserves_base_lineage() -> None:
 
 
 @pytest.mark.parametrize("separator", (" - ", "–", "—", " – ", " — ", ":"))
-def test_primary_author_filename_prefix_is_query_only_local_side(
+def test_author_prefix_without_a_remainder_underscore_stays_query_only(
     separator: str,
 ) -> None:
     decision = admit_provider_work_identity(
@@ -251,6 +254,114 @@ def test_primary_author_filename_prefix_is_query_only_local_side(
     )
 
     assert not decision.admitted
+
+
+@pytest.mark.parametrize(
+    "local_title",
+    (
+        "Ada_Example_-_Plain_Work",
+        "Ada Example - Plain_Work",
+        "Ada_Example:Plain_Work",
+        "Ada_Example–Plain_Work",
+    ),
+    ids=("underscored", "spaced_prefix", "colon", "en_dash"),
+)
+def test_author_prefix_then_underscores_admits_as_one_closed_production(
+    local_title: str,
+) -> None:
+    decision = admit_provider_work_identity(
+        local_title=local_title,
+        local_authors=("Ada Example",),
+        provider_title="Plain Work",
+        provider_authors=("Ada Example",),
+        provider_work_identity="work-1",
+    )
+
+    assert decision.admitted
+    assert decision.transformation == WorkTitleTransformationLineage(
+        (
+            WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
+            WorkTitleTransformationFamily.FILENAME_UNDERSCORES,
+        ),
+        WorkTitleTransformationSide.LOCAL,
+    )
+    assert decision.transformation.production == "author_prefix_then_underscores"
+
+
+def test_first_author_prefix_admits_only_with_exact_ordered_authors() -> None:
+    authors = ("Ada Example", "Bea Example")
+
+    assert admit_provider_work_identity(
+        local_title="Ada_Example_-_Plain_Work",
+        local_authors=authors,
+        provider_title="Plain Work",
+        provider_authors=authors,
+        provider_work_identity="work-1",
+    ).admitted
+    assert not admit_provider_work_identity(
+        local_title="Ada_Example_-_Plain_Work",
+        local_authors=authors,
+        provider_title="Plain Work",
+        provider_authors=("Bea Example", "Ada Example"),
+        provider_work_identity="work-1",
+    ).admitted
+
+
+@pytest.mark.parametrize(
+    ("local_title", "provider_title"),
+    (
+        ("Plain_Work", "Plain Work"),
+        ("Ada_Example - Plain Work", "Plain Work"),
+        ("Ada_Example ~ Plain_Work", "Plain Work"),
+        ("Ada_Example_Plain_Work", "Plain Work"),
+        ("Ada_Example_-_Plain_Work", "Plain Work Two"),
+        ("Ada_Example_-_Translated_Work", "Translated Work"),
+    ),
+    ids=(
+        "underscores_only",
+        "prefix_only",
+        "separator_outside_the_closed_set",
+        "no_separator",
+        "remainder_collision",
+        "variant_marker",
+    ),
+)
+def test_compound_admission_negatives_reject(
+    local_title: str, provider_title: str
+) -> None:
+    assert not admit_provider_work_identity(
+        local_title=local_title,
+        local_authors=("Ada Example",),
+        provider_title=provider_title,
+        provider_authors=("Ada Example",),
+        provider_work_identity="work-1",
+    ).admitted
+
+
+def test_constituent_families_stay_query_only_in_the_rule_table() -> None:
+    admitting = {
+        family
+        for production in WORK_TITLE_COMPOUND_PRODUCTIONS
+        if production.admission_enabled
+        for family in production.families
+    }
+
+    assert admitting == {
+        WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
+        WorkTitleTransformationFamily.FILENAME_UNDERSCORES,
+    }
+    assert all(not rule.admission_enabled for rule in WORK_TITLE_TRANSFORMATION_RULES)
+    with pytest.raises(ValueError):
+        WorkTitleCompoundProduction(
+            "single_family",
+            (WorkTitleTransformationFamily.FILENAME_UNDERSCORES,),
+            True,
+        )
+    with pytest.raises(ValueError):
+        WorkTitleTransformationLineage(
+            (WorkTitleTransformationFamily.FILENAME_UNDERSCORES,),
+            WorkTitleTransformationSide.LOCAL,
+        )
 
 
 def test_primary_author_filename_prefix_is_query_only_provider_side() -> None:
@@ -385,7 +496,7 @@ def test_admission_preserves_author_and_filename_remainder_punctuation() -> None
     assert not admit_provider_work_identity(
         local_title="Ada Example - Plain_Work",
         local_authors=("Ada Example",),
-        provider_title="Plain Work",
+        provider_title="Plain_Work",
         provider_authors=("Ada Example",),
         provider_work_identity="work-1",
     ).admitted
@@ -476,14 +587,40 @@ def test_lineage_readback_rejects_unknown_malformed_and_query_only_admission() -
         work_dispatch_lineage_from_data({**dispatch.to_data(), "rung": "unknown"})
     with pytest.raises(ValueError):
         work_dispatch_lineage_from_data({"rung": "normalized"})
+    lineage = WorkTitleTransformationLineage(
+        (
+            WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
+            WorkTitleTransformationFamily.FILENAME_UNDERSCORES,
+        ),
+        WorkTitleTransformationSide.LOCAL,
+    )
+    assert work_title_transformation_lineage_from_data(lineage.to_data()) == lineage
     with pytest.raises(ValueError):
         work_title_transformation_lineage_from_data(
             {"family": "bracket_source_tag", "side": "local"}
         )
     with pytest.raises(ValueError):
+        work_title_transformation_lineage_from_data(
+            {**lineage.to_data(), "production": "other_production"}
+        )
+    with pytest.raises(ValueError):
+        work_title_transformation_lineage_from_data(
+            {**lineage.to_data(), "side": "provider"}
+        )
+    with pytest.raises(ValueError):
+        work_title_transformation_lineage_from_data(
+            {
+                **lineage.to_data(),
+                "families": ["filename_underscores", "filename_author_title_prefix"],
+            }
+        )
+    with pytest.raises(ValueError):
         WorkTitleTransformationLineage(
-            WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
-            WorkTitleTransformationSide.LOCAL,
+            (
+                WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
+                WorkTitleTransformationFamily.FILENAME_UNDERSCORES,
+            ),
+            WorkTitleTransformationSide.PROVIDER,
         )
 
 
@@ -534,6 +671,35 @@ def test_persisted_dispatch_lineage_round_trips_and_non_null_transform_rejects()
     data = lane.to_data()
 
     assert _provider_lane_from_data(data) == lane
+    admitted = ProviderLaneObservation(
+        "lane_" + ("a" * 64),
+        ProviderQueryKind.WORK,
+        ProviderStatus.CANDIDATES,
+        ("local_" + ("b" * 64),),
+        candidates=(
+            ProviderLaneCandidate(
+                "lane_candidate_" + ("c" * 64),
+                "edition-1",
+                "work-1",
+            ),
+        ),
+        dispatch_lineage=WorkDispatchLineage(
+            WorkDispatchRung.NORMALIZED,
+            (
+                WorkTitleTransformationFamily.FILENAME_UNDERSCORES,
+                WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
+            ),
+        ),
+        transformation_lineage=WorkTitleTransformationLineage(
+            (
+                WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
+                WorkTitleTransformationFamily.FILENAME_UNDERSCORES,
+            ),
+            WorkTitleTransformationSide.LOCAL,
+        ),
+    )
+
+    assert _provider_lane_from_data(admitted.to_data()) == admitted
     with pytest.raises(ValueError):
         _provider_lane_from_data(
             {

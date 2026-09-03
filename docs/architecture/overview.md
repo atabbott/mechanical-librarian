@@ -106,7 +106,7 @@ pointer per target/file scope in `current_metadata_reports`, and immutable
 report-bound cover references in `metadata_report_cover_references`.
 `proposal_sets` stores one content-addressed result document bound to an exact
 report and closed policy version and has no current pointer. Its exact-current
-table accepts only `fixed-conservative-v18`; earlier proposal-store shapes are
+table accepts only `fixed-conservative-v19`; earlier proposal-store shapes are
 rejected at bootstrap and require a clean rebuild, without migration. Report insert and pointer advance share one
 transaction. Proposal insertion separately rechecks the exact report and
 current pointer after external currentness. The report database also stores
@@ -158,7 +158,7 @@ application performs one complete semantic parse of each visible row before
 returning its DTO. New canonical writes retain their complete validation and
 commit their derived facts atomically.
 
-The `metadata-report-v35` document retains all 16 ordered Audiobookshelf target
+The `metadata-report-v36` document retains all 16 ordered Audiobookshelf target
 destinations and their missing, null, empty, unloaded, malformed, oversized, or
 value state in target currentness. It also retains the closed ordered local-field states,
 source capability
@@ -176,7 +176,9 @@ The domain owns one closed work-title transformation table, bounded query ladder
 and work-identity admission decision. Provider adapters render its values into
 their documented grammars but cannot define title equivalence. Exact dispatch
 lineage survives report replay, retry successors, overflow witnesses, and
-ProposalSet evaluation; the reviewed decoration-admission subset is empty.
+ProposalSet evaluation. Admission is granted by one reviewed compound
+production, `author_prefix_then_underscores`; every individual table row stays
+query-only.
 Candidate-aware domain finalization deterministically reclassifies publication
 facts between claims and evidence, promotes safely linked manifestation dates,
 demotes incompatible publication claims, and assigns canonical comparison

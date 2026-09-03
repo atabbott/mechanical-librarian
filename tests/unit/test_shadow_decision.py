@@ -17,7 +17,10 @@ from mechanical_librarian.domain.metadata_report import (
     FieldState,
     LocalClaim,
 )
-from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.proposal_set import (
+    DECORATION_TIDY_TITLE_REASONS,
+    evaluate_report,
+)
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.shadow_decision import (
     DECISION_POLICY_SHA256,
@@ -818,8 +821,31 @@ def test_identity_replay_and_document_validation_are_canonical() -> None:
         )
 
 
-def test_v10_policy_identity_rejects_public_base_v5_replay() -> None:
-    assert "deterministic-shadow-decision-policy-v10" == DECISION_POLICY_VERSION
+def test_the_decoration_tidy_rule_states_its_own_closed_thresholds() -> None:
+    rule = shadow_decision_module._RULE_TABLE["decoration_tidy_title"]
+
+    assert {
+        "candidate_local_evidence": "any",
+        "minimum_independent_provider_correlations": 1,
+        "proposal_target_only_preservation": 1,
+        "reasons": sorted(DECORATION_TIDY_TITLE_REASONS),
+    } == rule
+    assert 6 == len(rule["reasons"])
+    assert all(
+        reason.startswith("decoration_tidy_")
+        and reason != "decoration_tidy_series_unpreserved"
+        for reason in rule["reasons"]
+    )
+    assert (
+        2
+        == shadow_decision_module._RULE_TABLE["provider_consensus_title"][
+            "minimum_independent_provider_correlations"
+        ]
+    )
+
+
+def test_v11_policy_identity_rejects_public_base_v5_replay() -> None:
+    assert "deterministic-shadow-decision-policy-v11" == DECISION_POLICY_VERSION
     packet = _packet()
     document = json.loads(decide_shadow_packet(packet).to_json())
     document["policy_version"] = "deterministic-shadow-decision-policy-v5"

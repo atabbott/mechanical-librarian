@@ -50,14 +50,14 @@ depends on it.
 - [Review HTTP API](reference/review-openapi-v1.json) — the generated authority
   for the `/api/v1` surface; its boundary decision is
   [ADR-0030](architecture/decisions/0030-authenticated-review-web-boundary.md)
-- [F19a qualification manifest](reference/f19a-qualification-manifest-v4.json) —
+- [F19a qualification manifest](reference/f19a-qualification-manifest-v5.json) —
   `F19A_QUALIFICATION_MANIFEST_SHA256` in
   `src/mechanical_librarian/domain/automatic_decision.py` pins this file's
   sha256; changing a byte changes what automatic authority admits
 - [F38 contributor-display qualification manifest](reference/f38-contributor-display-qualification-manifest-v1.json) —
   `F38_QUALIFICATION_MANIFEST_SHA256` pins the separately qualified
   provider-consensus contributor-display authority
-- [F20 rich-metadata qualification candidate](reference/f20-rich-metadata-qualification-candidate-v9.json) —
+- [F20 rich-metadata qualification candidate](reference/f20-rich-metadata-qualification-candidate-v10.json) —
   `tests/unit/test_rich_metadata_qualification_manifest.py` and the ruff and
   mypy exemptions in `pyproject.toml` are bound to the sources it freezes
 

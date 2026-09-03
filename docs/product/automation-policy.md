@@ -41,9 +41,30 @@ manifest replays and diffs every existing F19a option alongside the title
 tranche; its 1.0 precision and zero safety failures authorize only this closed
 F35 title replacement. The sealed prior F19a digest remains readable historical
 authority for its former options; it cannot authorize F35. F20 continues to
-exclude title. A colon-derived title suffix can remain an owner-visible subtitle
-proposal, but is never F20 `subtitle:fill_empty` corroboration; that automatic
-option still requires an explicit local subtitle claim.
+exclude title. A colon segment stripped from any WORK-scope title claim, local
+or provider, corroborates the F20 `subtitle:fill_empty` projection on
+cross-source terms only: it never elects a subtitle, never corroborates one
+stated by its own source, and on the election seam only names the guard that
+closed the choice.
+
+F41 (#896) collapses title alternatives that are equal up to one closed
+decoration into a single equivalence class whose canonical member is the plain
+form. Both members must be provider-backed; the class needs exactly two
+alternatives; the decoration must match in exactly one grammar step, so stacked
+decorations stay competing, and the step is exact, so removing the decoration
+must yield the plain alternative byte for byte. Two evidence-only guards close
+it further, both comparing under the closed title comparison: every valid
+provider WORK title claim in the report must key into the class, and at least as
+many distinct provider authorities must attest the plain form as the decorated
+one. When the current value is the plain form the outcome is a keep with zero
+writes; when it is the decorated form the plain alternative is proposed through
+the qualified automatic `title:replace_target:decoration_tidy` option, bound to
+the F19a successor manifest v5 and lane `title_layout`. The F20 candidate
+advances to v10 with the subtitle option re-scored on segment corroboration,
+which is withheld when the segment is generic, when any provider states a
+different subtitle, and when no provider authority carries the segment or the
+authorities carrying the decorated form—the local title counted—exceed the
+provider authorities stating the plain form.
 
 F38 (#887) separately qualifies only
 `contributor_names:canonical:provider_consensus_display`: two independent

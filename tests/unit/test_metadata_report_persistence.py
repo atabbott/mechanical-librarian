@@ -193,7 +193,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "current report schema with stale proposal policy",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v35",
+                "metadata-report-v36",
                 "fixed-conservative-v6",
             ),
         ),
@@ -317,17 +317,17 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             ),
         ),
         (
-            "immediate previous v34",
+            "immediate previous v35",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v34",
+                "metadata-report-v35",
             ),
         ),
         (
             "previous proposal policy v3",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v35",
+                "metadata-report-v36",
                 "fixed-conservative-v3",
             ),
         ),
@@ -335,7 +335,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "previous proposal policy v4",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v35",
+                "metadata-report-v36",
                 "fixed-conservative-v4",
             ),
         ),
@@ -343,7 +343,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "previous proposal policy v5",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v35",
+                "metadata-report-v36",
                 "fixed-conservative-v5",
             ),
         ),
@@ -351,7 +351,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "immediate previous proposal policy v7",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v35",
+                "metadata-report-v36",
                 "fixed-conservative-v7",
             ),
         ),
@@ -496,7 +496,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("shadow_outcome_field_facts",),
         ]
         assert len(rows) == 2
-        assert schema_version == ("metadata-report-v35",)
+        assert schema_version == ("metadata-report-v36",)
         assert current == (second.report_id,)
 
         reopened = open_repository(path)

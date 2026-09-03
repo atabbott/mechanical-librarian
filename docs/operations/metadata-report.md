@@ -156,8 +156,8 @@ source order. Front and rear subtitle/publisher/imprint canonical values share
 NFC and whitespace normalization. Rear position does not increase authority.
 Provider comparisons link only claims with the same role; no publisher/imprint
 hierarchy is inferred. The exact-current persisted report and database
-discriminator is `metadata-report-v35`. Every earlier report discriminator,
-including immediate prior `metadata-report-v34`, remains offline and requires a
+discriminator is `metadata-report-v36`. Every earlier report discriminator,
+including immediate prior `metadata-report-v35`, remains offline and requires a
 clean current database under ADR-0013.
 
 An audiobook item in a mounted audiobook library, with 1 to 512 audio files in
@@ -372,9 +372,36 @@ inheriting query authority:
 | colon or spaced-dash subtitle segment | subtitle-stripped | query-only |
 | broad punctuation and ampersand folding | punctuation-folded | query-only |
 
+Every table row stays query-only. Admission comes only from a closed compound
+production that names an ordered composition of rows and is reviewed as one
+rule; composition is never implicit, and a production admitting never admits any
+of its constituent rows alone:
+
+| Production | Ordered families | Side | Admission |
+| --- | --- | --- | --- |
+| `author_prefix_then_underscores` | complete first-author filename prefix, then filename underscores | local | admission-enabled |
+
+An admitted compound records its ordered lineage in the persisted report beside
+the base dispatch lineage:
+
+```json
+{
+  "families": ["filename_author_title_prefix", "filename_underscores"],
+  "production": "author_prefix_then_underscores",
+  "side": "local"
+}
+```
+
+Replay recomputes the admission and rejects any persisted lineage whose ordered
+families are not an admission-enabled production, whose `production` name does
+not derive from those families, or whose side is not `local`.
+
 The filename-prefix query grammar requires the complete prefix token sequence
 to equal the complete first ordered author. It permits no inversion, initial
-expansion, reordering, partial author, alternate author, or fuzzy match. Query
+expansion, reordering, partial author, alternate author, or fuzzy match. The
+compound production adds one further closed requirement: the remainder after the
+closed separator must contain at least one filename underscore, so a
+prefix-only or an underscores-only title is still rejected. Query
 shaping grants no identity authority: the same exact domain decision applies
 during initial qualification, overflow-witness qualification, persisted
 readback, retry-successor merging, and ProposalSet replay.

@@ -11,6 +11,10 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
+from mechanical_librarian.domain.rich_metadata_qualification import (
+    F20_QUALIFICATION_CANDIDATE_SHA256,
+)
+
 BUILD_IDENTITY = "a" * 64
 HOSTILE_TEXT = "Hostile <img src=x onerror=window.__metadataExecuted=true>"
 TERMINAL_FAILURE_COPY = (
@@ -34,9 +38,9 @@ LONG_DESCRIPTION = (
     "And it continues past that too, in ordinary prose with ordinary spaces, "
     "so a wrap that is allowed to happen has somewhere to happen."
 )
-_F20_CANDIDATE_SHA256 = (
-    "8b14e134a146e8f03f9d36ad78506a7f234b0768ef61620ef1d1234a8df7c4a5"
-)
+# Bound to the runtime constant so the cohort follows the F20 rotation
+# without a second literal to re-pin.
+_F20_CANDIDATE_SHA256 = F20_QUALIFICATION_CANDIDATE_SHA256
 _COVER_CANDIDATE_SHA256 = (
     "b91ae72a8c4e55c9bfe1d514c28210e22427b57a03082d2b5d1ae0b40df7c457"
 )

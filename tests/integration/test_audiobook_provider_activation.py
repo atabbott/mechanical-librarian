@@ -474,7 +474,7 @@ def test_an_audiobook_publishes_provider_evidence_and_ends_terminally(
             == enrichment.lanes[0].candidates[0].edition_identity
         )
         assert published.audio is not None
-        assert "metadata-report-v35" == published.schema_version
+        assert "metadata-report-v36" == published.schema_version
         # Preparation ended in the publishing transaction, under the renamed
         # terminal code. Nothing follows it, and the scan counts the item as
         # ready rather than as something asking the owner to unblock it.

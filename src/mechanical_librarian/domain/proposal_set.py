@@ -64,7 +64,9 @@ from mechanical_librarian.domain.metadata_report import (
     publication_date_is_voting,
 )
 from mechanical_librarian.domain.work_identity import (
+    WorkTitleElectionMatch,
     WorkTitleTransformationFamily,
+    direct_work_title_election_matches,
     work_title_election_matches,
 )
 
@@ -72,7 +74,7 @@ if TYPE_CHECKING:
     from mechanical_librarian.domain.cover_evidence import CoverArtifact
 
 PROPOSAL_SCHEMA = "proposal-set-v5"
-POLICY_VERSION = "fixed-conservative-v18"
+POLICY_VERSION = "fixed-conservative-v19"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -88,7 +90,7 @@ _EVIDENCE_REFERENCE = re.compile(
 _CORRELATION = re.compile(r"^correlation_[0-9a-f]{64}$")
 _REASON = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _ASIN = re.compile(r"^B[0-9A-Z]{9}$")
-_GENERIC_PROVIDER_SUBTITLES = frozenset({"a novel"})
+_GENERIC_PROVIDER_SUBTITLES = frozenset({"a novel", "stories"})
 
 
 class ProposalValueError(ValueError):
@@ -219,6 +221,22 @@ _TITLE_CONSENSUS_FAMILIES = (
 PROVIDER_CONSENSUS_TITLE_REASONS = frozenset(
     f"provider_consensus_title_{family.value}" for family in _TITLE_CONSENSUS_FAMILIES
 )
+DECORATION_EQUIVALENT_TITLE_REASONS = frozenset(
+    f"decoration_equivalent_{family.value}" for family in _TITLE_CONSENSUS_FAMILIES
+)
+DECORATION_TIDY_TITLE_REASONS = frozenset(
+    f"decoration_tidy_{family.value}" for family in _TITLE_CONSENSUS_FAMILIES
+)
+DECORATION_TIDY_SERIES_UNPRESERVED_REASON = "decoration_tidy_series_unpreserved"
+DECORATION_EQUIVALENCE_PROVIDER_DISSENT_REASON = (
+    "decoration_equivalence_provider_dissent"
+)
+DECORATION_EQUIVALENCE_DECORATED_CONSENSUS_REASON = (
+    "decoration_equivalence_decorated_consensus"
+)
+SUBTITLE_SEGMENT_UNCORROBORATED_REASON = "subtitle_segment_uncorroborated"
+SUBTITLE_SEGMENT_PROVIDER_DISSENT_REASON = "subtitle_segment_provider_dissent"
+SUBTITLE_SEGMENT_DECORATED_CONSENSUS_REASON = "subtitle_segment_decorated_consensus"
 PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON = "provider_consensus_contributor_display"
 VERIFIED_MANIFESTATION_ISBN_REASON = "verified_manifestation_isbn"
 MANIFESTATION_ISBN_VERIFICATION_REQUIRED_REASON = "manifestation_verification_required"
@@ -232,6 +250,7 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
             ("local_attested_subtitle",),
             (VERIFIED_MANIFESTATION_ISBN_REASON,),
             *((reason,) for reason in PROVIDER_CONSENSUS_TITLE_REASONS),
+            *((reason,) for reason in DECORATION_TIDY_TITLE_REASONS),
             (PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON,),
         }
     ),
@@ -245,6 +264,12 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
                 "provider_consensus_title_series_unpreserved",
             ),
             ("competing_evidence", "provider_consensus_title_colon_unused"),
+            ("competing_evidence", DECORATION_TIDY_SERIES_UNPRESERVED_REASON),
+            ("competing_evidence", DECORATION_EQUIVALENCE_PROVIDER_DISSENT_REASON),
+            ("competing_evidence", DECORATION_EQUIVALENCE_DECORATED_CONSENSUS_REASON),
+            ("competing_evidence", SUBTITLE_SEGMENT_UNCORROBORATED_REASON),
+            ("competing_evidence", SUBTITLE_SEGMENT_PROVIDER_DISSENT_REASON),
+            ("competing_evidence", SUBTITLE_SEGMENT_DECORATED_CONSENSUS_REASON),
             ("date_refinement_requires_corroboration", "unique_typed_candidate"),
             ("date_year_conflict", "unique_typed_candidate"),
             ("insufficient_independent_corroboration",),
@@ -265,6 +290,7 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
             ("current_cover_verified",),
             ("field_policy_preservation",),
             ("positive_preservation_evidence",),
+            *((reason,) for reason in DECORATION_EQUIVALENT_TITLE_REASONS),
         }
     ),
     ProposalOutcome.REJECT: frozenset({("policy_reject",)}),
@@ -280,6 +306,7 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
         {
             ("generic_provider_subtitle",),
             ("identifier_validity_invalid",),
+            ("no_supported_evidence", SUBTITLE_SEGMENT_UNCORROBORATED_REASON),
             ("no_supported_evidence",),
             ("policy_ignored",),
             ("redundant_publication_context",),
@@ -1122,30 +1149,50 @@ def evaluate_report(
                 TargetFieldState.NULL,
                 TargetFieldState.EMPTY,
             }
-            and (attested := _locally_attested_subtitle(report, result.alternatives))
-            is not None
+            and (elected := _segment_corroborated_subtitle(report, result.alternatives))
+            != (None, None)
         ):
-            result = ProposalResult(
-                destination,
-                ProposalOutcome.PROPOSE_CHANGE,
-                (attested,),
-                attested.alternative_id,
-                ("local_attested_subtitle",),
-                _dependencies(destination),
+            attested, elected_reason = elected
+            result = (
+                ProposalResult(
+                    destination,
+                    ProposalOutcome.PROPOSE_CHANGE,
+                    (attested,),
+                    attested.alternative_id,
+                    (cast(str, elected_reason),),
+                    _dependencies(destination),
+                )
+                if attested is not None
+                # A withheld corroboration states its own guard on the same
+                # seam the uncorroborated diagnostic uses.
+                else _unresolved(result, cast(str, elected_reason))
             )
         elif (
             destination is TargetDestination.SUBTITLE
-            and result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
-            and result.reasons == ("competing_evidence",)
+            and (
+                result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+                and result.reasons == ("competing_evidence",)
+                or result.outcome is ProposalOutcome.INELIGIBLE
+                and result.reasons == ("no_supported_evidence",)
+            )
             and targets[destination].state
             in {
                 TargetFieldState.MISSING,
                 TargetFieldState.NULL,
                 TargetFieldState.EMPTY,
             }
-            and _has_unused_title_derived_subtitle(report, result.alternatives)
+            and _has_uncorroborated_subtitle_segment(report, result.alternatives)
         ):
-            result = _unresolved(result, "provider_consensus_title_colon_unused")
+            result = ProposalResult(
+                destination,
+                result.outcome,
+                result.alternatives,
+                None,
+                tuple(
+                    sorted({*result.reasons, SUBTITLE_SEGMENT_UNCORROBORATED_REASON})
+                ),
+                result.dependencies,
+            )
         if (
             destination is TargetDestination.ISBN
             and targets[destination].state
@@ -1163,6 +1210,12 @@ def evaluate_report(
             and result.reasons == ("competing_evidence",)
         ):
             result = _provider_consensus_title_election(report, targets, result)
+        if (
+            destination is TargetDestination.TITLE
+            and result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+            and result.reasons == ("competing_evidence",)
+        ):
+            result = _decoration_equivalence_election(report, targets, result)
         if destination in {TargetDestination.AUTHORS, TargetDestination.NARRATORS} and (
             (
                 result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
@@ -1347,15 +1400,154 @@ def _generic_provider_subtitle(
     )
 
 
-def _locally_attested_subtitle(
+@dataclass(frozen=True, slots=True)
+class SubtitleSegmentEvidence:
+    """One colon segment stripped from a WORK-scope title claim.
+
+    A segment is never an observation of its own: it inherits the source
+    correlation and the WORK scope of the claim it was stripped from and can
+    only corroborate a subtitle alternative that a different source states.
+    """
+
+    reference: str
+    correlation: str
+    value: str
+    clean_title: str
+    scope: ProposalScope = ProposalScope.WORK
+
+
+def subtitle_segment_evidence(
+    report: MetadataReport, value: str | None = None
+) -> tuple[SubtitleSegmentEvidence, ...]:
+    """Return every colon segment of a WORK title claim, local or provider."""
+    sought = None if value is None else normalize_title(value).casefold()
+    segments: list[SubtitleSegmentEvidence] = []
+    sources: list[tuple[str, str, str | None]] = [
+        (
+            claim.reference,
+            _correlation("local:selected_epub"),
+            claim.canonical or claim.observed,
+        )
+        for claim in report.local_claims
+        if claim.kind is ClaimKind.TITLE
+        and claim.scope is ClaimScope.WORK
+        and claim.state is FieldState.VALID
+    ]
+    sources.extend(
+        (claim.reference, _provider_correlation(provider), claim.value)
+        for provider in report.providers
+        for candidate in provider.candidates
+        for claim in candidate.claims
+        if claim.kind is ClaimKind.TITLE
+        and claim.scope is ClaimScope.WORK
+        and claim.state is FieldState.VALID
+    )
+    for reference, correlation, observed in sources:
+        if type(observed) is not str or not observed:
+            continue
+        for match in work_title_election_matches(observed, ()):
+            if (
+                match.family is not WorkTitleTransformationFamily.SUBTITLE_SEGMENT
+                or match.preserved_component is None
+            ):
+                continue
+            component = match.preserved_component
+            if sought is not None and normalize_title(component).casefold() != sought:
+                continue
+            segments.append(
+                SubtitleSegmentEvidence(
+                    reference, correlation, component, match.clean_title
+                )
+            )
+    return tuple(segments)
+
+
+@dataclass(frozen=True, slots=True)
+class SegmentCorroboration:
+    """The cross-source segments that attest a subtitle, or why they cannot."""
+
+    segments: tuple[SubtitleSegmentEvidence, ...] = ()
+    withheld_reason: str | None = None
+
+
+def segment_corroboration(
+    report: MetadataReport,
+    value: str,
+    candidate_correlations: tuple[str, ...],
+) -> SegmentCorroboration:
+    """Decide whether stripped title segments corroborate one subtitle value.
+
+    Both the election and the automatic projection call this, so the two
+    surfaces cannot drift. Corroboration needs a segment from a source other
+    than the one stating the subtitle, no provider stating a different
+    subtitle, and at least as many provider authorities on the plain forms the
+    segments were stripped from as on the decorated forms carrying the segment.
+    """
+    segments = subtitle_segment_evidence(report, value)
+    if not segments:
+        return SegmentCorroboration()
+    cross = tuple(
+        segment
+        for segment in segments
+        if segment.correlation not in candidate_correlations
+    )
+    if not cross:
+        # A segment from the candidate's own source is not corroboration.
+        return SegmentCorroboration()
+    sought = _comparison(TargetDestination.SUBTITLE, value)
+    if any(
+        _comparison(TargetDestination.SUBTITLE, claim.value) != sought
+        for provider in report.providers
+        for candidate in provider.candidates
+        for claim in candidate.claims
+        if claim.kind is ClaimKind.SUBTITLE
+        and claim.state is FieldState.VALID
+        and claim.value is not None
+    ):
+        return SegmentCorroboration(
+            withheld_reason=SUBTITLE_SEGMENT_PROVIDER_DISSENT_REASON
+        )
+    local_correlation = _correlation("local:selected_epub")
+    decorated = frozenset(
+        segment.correlation
+        for segment in segments
+        if segment.correlation != local_correlation
+    )
+    plain_forms = frozenset(
+        _comparison(TargetDestination.TITLE, segment.clean_title)
+        for segment in segments
+        if segment.correlation != local_correlation
+    )
+    authorities = _provider_work_title_authorities(report)
+    plain = frozenset(
+        authority
+        for form in plain_forms
+        for authority in authorities.get(form, frozenset())
+    )
+    local = (
+        1
+        if any(segment.correlation == local_correlation for segment in segments)
+        else 0
+    )
+    if not decorated or len(decorated) + local > len(plain):
+        # The segment reads as integral title text: no provider carries it, or
+        # the form carrying it is stated at least as widely as the form without.
+        return SegmentCorroboration(
+            withheld_reason=SUBTITLE_SEGMENT_DECORATED_CONSENSUS_REASON
+        )
+    return SegmentCorroboration(segments=cross)
+
+
+def _segment_corroborated_subtitle(
     report: MetadataReport, alternatives: tuple[ProposalAlternative, ...]
-) -> ProposalAlternative | None:
+) -> tuple[ProposalAlternative | None, str | None]:
     """Elect the one competing subtitle the book's own metadata attests.
 
     Provider catalogues disagree on how a combined title splits; the packaged
     subtitle claim records the printed form, so among competing candidates the
     one it matches exactly is the safe election. Zero or multiple attested
-    values keep the choice with the owner.
+    values keep the choice with the owner, as does a colon segment: on this seam
+    it only names the corroboration guard that closed the choice.
     """
     attested = {
         normalize_title(observed).casefold()
@@ -1366,19 +1558,11 @@ def _locally_attested_subtitle(
         and observed
     }
     attested.update(
-        normalize_title(match.preserved_component).casefold()
-        for claim in report.local_claims
-        if claim.kind is ClaimKind.TITLE
-        and claim.scope is ClaimScope.WORK
-        and claim.state is FieldState.VALID
-        and type(observed := claim.canonical or claim.observed) is str
-        and observed
-        for match in work_title_election_matches(observed, ())
-        if match.family is WorkTitleTransformationFamily.SUBTITLE_SEGMENT
-        and match.preserved_component is not None
+        normalize_title(segment.value).casefold()
+        for segment in subtitle_segment_evidence(report)
     )
     if not attested:
-        return None
+        return None, None
     matching = tuple(
         alternative
         for alternative in alternatives
@@ -1391,31 +1575,29 @@ def _locally_attested_subtitle(
         for alternative in matching
     }
     if len(distinct) != 1:
-        return None
+        return None, None
     # Elect only a provider-backed candidate: subtitle observations built from
     # the book's own packaged claims carry work scope, and the local claim is
     # the corroboration, never the elected provider value itself.
     for alternative in matching:
-        if alternative.scope is ProposalScope.EDITION:
-            if _explicit_subtitle_references(
-                report, cast(str, alternative.value.value)
-            ):
-                return alternative
-            title_references = _title_derived_subtitle_references(
-                report, cast(str, alternative.value.value)
-            )
-            if title_references:
-                return ProposalAlternative.create(
-                    alternative.value,
-                    alternative.assessment,
-                    (*alternative.evidence_references, *title_references),
-                    alternative.correlations,
-                    ProposalScope.WORK,
-                    alternative.date_event,
-                    alternative.date_precision,
-                )
-            return alternative
-    return None
+        if alternative.scope is not ProposalScope.EDITION:
+            continue
+        if not any(
+            reference.startswith("provider_")
+            for reference in alternative.evidence_references
+        ):
+            continue
+        value = cast(str, alternative.value.value)
+        if _explicit_subtitle_references(report, value):
+            return alternative, "local_attested_subtitle"
+        # A segment never elects a competing subtitle: every distinct competing
+        # value is a provider subtitle claim, which the dissent guard closes.
+        # Corroboration runs only to report the guard that closed it; the fill
+        # itself belongs to the automatic projection.
+        corroboration = segment_corroboration(report, value, alternative.correlations)
+        if corroboration.withheld_reason is not None:
+            return None, corroboration.withheld_reason
+    return None, None
 
 
 def _explicit_subtitle_references(report: MetadataReport, value: str) -> frozenset[str]:
@@ -1432,33 +1614,13 @@ def _explicit_subtitle_references(report: MetadataReport, value: str) -> frozens
     )
 
 
-def _title_derived_subtitle_references(
-    report: MetadataReport, value: str | None = None
-) -> frozenset[str]:
-    """Return WORK-scoped local-title evidence for one colon suffix."""
-    sought = None if value is None else normalize_title(value).casefold()
-    return frozenset(
-        claim.reference
-        for claim in report.local_claims
-        if claim.kind is ClaimKind.TITLE
-        and claim.scope is ClaimScope.WORK
-        and claim.state is FieldState.VALID
-        and type(observed := claim.canonical or claim.observed) is str
-        and observed
-        for match in work_title_election_matches(observed, ())
-        if match.family is WorkTitleTransformationFamily.SUBTITLE_SEGMENT
-        and match.preserved_component is not None
-        and (
-            sought is None
-            or normalize_title(match.preserved_component).casefold() == sought
-        )
-    )
-
-
-def _has_unused_title_derived_subtitle(
+def _has_uncorroborated_subtitle_segment(
     report: MetadataReport, alternatives: tuple[ProposalAlternative, ...]
 ) -> bool:
-    """Keep a local title suffix visible when no independent subtitle uses it."""
+    """Keep a title suffix visible when no independent subtitle uses it."""
+    segments = subtitle_segment_evidence(report)
+    if not segments:
+        return False
     return not any(
         alternative.value.kind is ProposalValueKind.TEXT
         and type(alternative.value.value) is str
@@ -1467,9 +1629,12 @@ def _has_unused_title_derived_subtitle(
             reference.startswith("provider_")
             for reference in alternative.evidence_references
         )
-        and _title_derived_subtitle_references(report, alternative.value.value)
+        and any(
+            segment.correlation not in alternative.correlations
+            for segment in subtitle_segment_evidence(report, alternative.value.value)
+        )
         for alternative in alternatives
-    ) and bool(_title_derived_subtitle_references(report))
+    )
 
 
 def _provider_consensus_title_election(
@@ -1499,20 +1664,6 @@ def _provider_consensus_title_election(
     if len(matches) != 1:
         return result
     match = matches[0]
-    if (
-        match.family is WorkTitleTransformationFamily.SUBTITLE_SEGMENT
-        and not _subtitle_component_is_preserved(
-            match.preserved_component, report, targets
-        )
-    ):
-        return _unresolved(result, "provider_consensus_title_colon_unused")
-    if (
-        match.family is WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME
-        and not _series_component_is_preserved(
-            match.preserved_component, report, targets
-        )
-    ):
-        return _unresolved(result, "provider_consensus_title_series_unpreserved")
     provider_title_claims = tuple(
         (provider, claim.value)
         for provider in report.providers
@@ -1539,6 +1690,23 @@ def _provider_consensus_title_election(
         or len({_provider_correlation(provider) for provider, _ in provider_titles}) < 2
     ):
         return result
+    # Abstain only where this election would otherwise have fired: a report
+    # whose providers do not agree on the clean form is not this election's,
+    # and its decoration is decided by the equivalence class instead.
+    if (
+        match.family is WorkTitleTransformationFamily.SUBTITLE_SEGMENT
+        and not _subtitle_component_is_preserved(
+            match.preserved_component, report, targets
+        )
+    ):
+        return _unresolved(result, "provider_consensus_title_colon_unused")
+    if (
+        match.family is WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME
+        and not _series_component_is_preserved(
+            match.preserved_component, report, targets
+        )
+    ):
+        return _unresolved(result, "provider_consensus_title_series_unpreserved")
     candidates = tuple(
         alternative
         for alternative in result.alternatives
@@ -1563,6 +1731,144 @@ def _provider_consensus_title_election(
         (f"provider_consensus_title_{match.family.value}",),
         _dependencies(TargetDestination.TITLE),
     )
+
+
+def _decoration_equivalence_election(
+    report: MetadataReport,
+    targets: Mapping[TargetDestination, TargetField],
+    result: ProposalResult,
+) -> ProposalResult:
+    """Collapse two provider-backed titles equal up to one closed decoration.
+
+    Both forms are attested by providers, so neither is local noise; the class
+    has one canonical member, the plain form. The current value decides the
+    direction: holding the plain form is a keep with no writes, holding the
+    decorated form is the tidy tranche. Anything the closed grammar does not
+    match in exactly one step stays the owner's decision.
+    """
+    target = targets[TargetDestination.TITLE]
+    if target.state is not TargetFieldState.VALUE or type(target.value) is not str:
+        return result
+    if len(result.alternatives) != 2:
+        # A class is exactly one plain and one decorated provider-backed form.
+        return result
+    if any(
+        alternative.value.kind is not ProposalValueKind.TEXT
+        or type(alternative.value.value) is not str
+        or alternative.scope is not ProposalScope.WORK
+        or not any(
+            reference.startswith("provider_")
+            for reference in alternative.evidence_references
+        )
+        for alternative in result.alternatives
+    ):
+        return result
+    preserving = tuple(
+        alternative
+        for alternative in result.alternatives
+        if alternative.assessment is ProposalAssessment.PRESERVES_TARGET
+    )
+    if len(preserving) != 1:
+        return result
+    if target.value != preserving[0].value.value:
+        # Preservation folds case and whitespace; the class does not. A current
+        # value that is not literally a class member is neither kept as
+        # equivalent nor tidied, since the write would recase the owner's title.
+        return result
+    pair = _decoration_equivalence_pair(result.alternatives)
+    if pair is None:
+        return result
+    plain, decorated, match = pair
+    if (
+        match.family is WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME
+        and decorated.assessment is ProposalAssessment.PRESERVES_TARGET
+        and not _series_component_is_preserved(
+            match.preserved_component, report, targets
+        )
+    ):
+        return _unresolved(result, DECORATION_TIDY_SERIES_UNPRESERVED_REASON)
+    plain_key = _comparison(TargetDestination.TITLE, cast(str, plain.value.value))
+    decorated_key = _comparison(
+        TargetDestination.TITLE, cast(str, decorated.value.value)
+    )
+    # Width and dissent both read the raw provider claims, not the admitted
+    # alternatives: a decorated form stated by a candidate WORK admission
+    # rejected still attests that form, and counting an alternative's
+    # correlations would miss it.
+    authorities = _provider_work_title_authorities(report)
+    if set(authorities) - {plain_key, decorated_key}:
+        return _unresolved(result, DECORATION_EQUIVALENCE_PROVIDER_DISSENT_REASON)
+    if len(authorities.get(plain_key, frozenset())) < len(
+        authorities.get(decorated_key, frozenset())
+    ):
+        return _unresolved(result, DECORATION_EQUIVALENCE_DECORATED_CONSENSUS_REASON)
+    if plain.assessment is ProposalAssessment.PRESERVES_TARGET:
+        return ProposalResult(
+            TargetDestination.TITLE,
+            ProposalOutcome.KEEP,
+            (plain,),
+            None,
+            (f"decoration_equivalent_{match.family.value}",),
+            _dependencies(TargetDestination.TITLE),
+        )
+    return ProposalResult(
+        TargetDestination.TITLE,
+        ProposalOutcome.PROPOSE_CHANGE,
+        (plain,),
+        plain.alternative_id,
+        (f"decoration_tidy_{match.family.value}",),
+        _dependencies(TargetDestination.TITLE),
+    )
+
+
+def _decoration_equivalence_pair(
+    alternatives: tuple[ProposalAlternative, ...],
+) -> tuple[ProposalAlternative, ProposalAlternative, WorkTitleElectionMatch] | None:
+    """Return (plain, decorated, match) for a one-step decoration pair."""
+    pairs: list[
+        tuple[ProposalAlternative, ProposalAlternative, WorkTitleElectionMatch]
+    ] = []
+    for decorated in alternatives:
+        plain = next(value for value in alternatives if value is not decorated)
+        matches = direct_work_title_election_matches(
+            cast(str, decorated.value.value), ()
+        )
+        if len(matches) != 1:
+            # Stacked decorations never collapse: the grammar must reach the
+            # plain form in exactly one closed step.
+            continue
+        # The grammar step is exact: removing the decoration must yield the
+        # plain alternative byte for byte. Folding case or whitespace here
+        # would tidy a form the review grammar never adjudicated, and the
+        # write would carry a recasing no reviewer approved. The dissent and
+        # width guards below still count under the closed comparison.
+        if matches[0].clean_title == cast(str, plain.value.value):
+            pairs.append((plain, decorated, matches[0]))
+    return pairs[0] if len(pairs) == 1 else None
+
+
+def _provider_work_title_authorities(
+    report: MetadataReport,
+) -> dict[str, frozenset[str]]:
+    """Map every valid provider WORK title claim to the authorities stating it.
+
+    Every candidate counts, admitted or not: a title claim is an attestation of
+    that form regardless of whether WORK admission kept its candidate.
+    """
+    values: dict[str, set[str]] = {}
+    for provider in report.providers:
+        for candidate in provider.candidates:
+            for claim in candidate.claims:
+                if (
+                    claim.kind is ClaimKind.TITLE
+                    and claim.scope is ClaimScope.WORK
+                    and claim.state is FieldState.VALID
+                    and claim.value is not None
+                ):
+                    values.setdefault(
+                        _comparison(TargetDestination.TITLE, claim.value), set()
+                    ).add(_provider_correlation(provider))
+    return {key: frozenset(value) for key, value in values.items()}
 
 
 def _provider_consensus_contributor_display_election(
@@ -3575,11 +3881,15 @@ def _bibliographic_combinations(
         tuple[tuple[str, str, str | None, str | None], ...],
         tuple[tuple[BibliographicSelection, ...], set[str]],
     ] = {}
-    generic_subtitle_rejection = results[
-        TargetDestination.SUBTITLE
-    ].outcome is ProposalOutcome.INELIGIBLE and results[
-        TargetDestination.SUBTITLE
-    ].reasons == ("generic_provider_subtitle",)
+    generic_subtitle_rejection = (
+        results[TargetDestination.SUBTITLE].outcome is ProposalOutcome.INELIGIBLE
+        and results[TargetDestination.SUBTITLE].reasons
+        == ("generic_provider_subtitle",)
+        # The preservation branch below emits an all-PRESERVE combination, which
+        # the ProposalSet invariant tolerates only when the title is kept. An
+        # unresolved title with a preserving alternative otherwise raises.
+        and results[TargetDestination.TITLE].outcome is ProposalOutcome.KEEP
+    )
     for representation, represented in sorted(members.items()):
         component_destinations = represented.keys() & {
             TargetDestination.SUBTITLE,
@@ -4132,6 +4442,11 @@ def _projection(value: object, maximum: int) -> str:
 
 __all__ = [
     "BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA",
+    "DECORATION_EQUIVALENCE_DECORATED_CONSENSUS_REASON",
+    "DECORATION_EQUIVALENCE_PROVIDER_DISSENT_REASON",
+    "DECORATION_EQUIVALENT_TITLE_REASONS",
+    "DECORATION_TIDY_SERIES_UNPRESERVED_REASON",
+    "DECORATION_TIDY_TITLE_REASONS",
     "BibliographicCombination",
     "BibliographicSelection",
     "BibliographicSelectionKind",
@@ -4140,6 +4455,11 @@ __all__ = [
     "POLICY_VERSION",
     "PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON",
     "PROPOSAL_SCHEMA",
+    "SUBTITLE_SEGMENT_DECORATED_CONSENSUS_REASON",
+    "SUBTITLE_SEGMENT_PROVIDER_DISSENT_REASON",
+    "SUBTITLE_SEGMENT_UNCORROBORATED_REASON",
+    "SegmentCorroboration",
+    "SubtitleSegmentEvidence",
     "ProposalAlternative",
     "ProposalAssessment",
     "ProposalOutcome",
@@ -4151,4 +4471,6 @@ __all__ = [
     "ProposalValueKind",
     "evaluate_report",
     "provider_candidate_represents_target_work",
+    "segment_corroboration",
+    "subtitle_segment_evidence",
 ]

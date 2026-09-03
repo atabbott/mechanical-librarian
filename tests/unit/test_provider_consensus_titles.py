@@ -243,10 +243,10 @@ def test_colon_title_elects_when_provider_subtitle_candidate_preserves_suffix() 
     assert result.reasons == ("provider_consensus_title_subtitle_segment",)
 
 
-def test_colon_subtitle_corroboration_keeps_local_title_reference_and_work_scope() -> (
+def test_colon_subtitle_corroboration_withholds_against_provider_subtitle_dissent() -> (
     None
 ):
-    report, _, subtitle = _title_and_subtitle_results(
+    _, _, subtitle = _title_and_subtitle_results(
         local="Plain Work: A subtitle",
         providers=(
             _provider_title("open_library", "Plain Work", subtitle="A subtitle"),
@@ -254,23 +254,45 @@ def test_colon_subtitle_corroboration_keeps_local_title_reference_and_work_scope
         ),
     )
 
-    local_reference = report.local_claims[0].reference
-    provider_reference = next(
-        claim.reference
-        for provider in report.providers
-        for candidate in provider.candidates
-        for claim in candidate.claims
-        if claim.kind is ClaimKind.SUBTITLE and claim.value == "A subtitle"
+    assert ProposalOutcome.UNRESOLVED_CHOICE is subtitle.outcome
+    assert subtitle.reasons == (
+        "competing_evidence",
+        "subtitle_segment_provider_dissent",
     )
+
+
+def test_an_explicit_local_subtitle_claim_still_elects_against_dissent() -> None:
+    report, _, subtitle = _title_and_subtitle_results(
+        local="Plain Work",
+        local_claims=(
+            _local_title("Plain Work"),
+            LocalClaim.create(
+                kind=ClaimKind.SUBTITLE,
+                observed="A subtitle",
+                canonical="A subtitle",
+                state=FieldState.VALID,
+                scope=ClaimScope.EDITION,
+                basis="package_metadata",
+                excerpt="A subtitle",
+                applicability="not_applicable",
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+                occurrence=1,
+            ),
+        ),
+        providers=(
+            _provider_title("open_library", "Plain Work", subtitle="A subtitle"),
+            _provider_title("hardcover", "Plain Work", subtitle="Other subtitle"),
+        ),
+    )
+
     assert ProposalOutcome.PROPOSE_CHANGE is subtitle.outcome
     assert subtitle.reasons == ("local_attested_subtitle",)
-    assert subtitle.alternatives[0].evidence_references == tuple(
-        sorted((local_reference, provider_reference))
-    )
-    assert subtitle.alternatives[0].scope.value == "work"
+    assert "A subtitle" == subtitle.alternatives[0].value.value
+    assert report.local_claims
 
 
-def test_competing_provider_subtitles_keep_unmatched_colon_suffix_diagnostic() -> None:
+def test_competing_provider_subtitles_keep_an_uncorroborated_segment_visible() -> None:
     _, _, subtitle = _title_and_subtitle_results(
         local="Plain Work: A subtitle",
         providers=(
@@ -284,7 +306,7 @@ def test_competing_provider_subtitles_keep_unmatched_colon_suffix_diagnostic() -
     assert ProposalOutcome.UNRESOLVED_CHOICE is subtitle.outcome
     assert subtitle.reasons == (
         "competing_evidence",
-        "provider_consensus_title_colon_unused",
+        "subtitle_segment_uncorroborated",
     )
 
 

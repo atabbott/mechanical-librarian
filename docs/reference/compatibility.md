@@ -11,11 +11,11 @@ The current installed contract is intentionally narrow:
 - Python 3.13 or 3.14;
 - `config-v8` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v35` plus `proposal-set-v5` under
-  `fixed-conservative-v18`, or the separate `catalogue-v2` schema;
+  `metadata-report-v36` plus `proposal-set-v5` under
+  `fixed-conservative-v19`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v6`,
   `shadow-decision-set-v1` under
-  `deterministic-shadow-decision-policy-v10`,
+  `deterministic-shadow-decision-policy-v11`,
   and the exact-current deterministic shadow decision/outcome schema;
 - `review-session-v1`, `review-case-detail-v2`, `review-case-evidence-v4`,
   `review-case-history-v2`, `human-decision-v1`,
@@ -103,7 +103,7 @@ report. Valid ISO aliases and regional variants group into one
 base-and-exact-optional-script alternative; publisher alternatives remain
 distinct. `acceptable_choice` exposes multiple closed-policy-acceptable
 publisher outcomes without choosing one. No earlier proposal policy is
-interpreted: pre-release databases using `fixed-conservative-v17` or earlier
+interpreted: pre-release databases using `fixed-conservative-v18` or earlier
 are rejected before mutation and require a clean rebuild.
 
 Packet v6 decision summaries and typed provider evidence are exact deterministic
