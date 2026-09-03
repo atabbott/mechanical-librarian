@@ -661,6 +661,44 @@ def test_complete_ordered_authors_and_variant_veto_remain_identity_floor() -> No
 @pytest.mark.parametrize(
     ("local_title", "provider_title"),
     (
+        ("Plain Wórk Translatiòn", "Plain Work Translatión"),
+        ("Plain Wórk Adaptatiòn", "Plain Work Adaptatión"),
+        ("Plain Wórk Abridgemènt", "Plain Work Abridgément"),
+        ("Plain Wórk Variànt", "Plain Work Varíant"),
+    ),
+    ids=("translation", "adaptation", "abridgement", "variant"),
+)
+def test_latin_fold_cannot_reveal_and_admit_a_variant_marker(
+    local_title: str,
+    provider_title: str,
+) -> None:
+    assert not work_title_has_variant_marker(local_title)
+    assert not work_title_has_variant_marker(provider_title)
+    query = work_query_ladder(local_title, ("Ada Example",))[-1]
+    assert query.transformations[-1] is (
+        WorkTitleTransformationFamily.LATIN_COMBINING_MARKS
+    )
+
+    assert not admit_provider_work_identity(
+        local_title=local_title,
+        local_authors=("Ada Example",),
+        provider_title=provider_title,
+        provider_authors=("Ada Example",),
+        provider_work_identity="work-1",
+    ).admitted
+    assert not replay_provider_work_identity_admission(
+        local_title=local_title,
+        local_authors=("Ada Example",),
+        provider_title=provider_title,
+        provider_authors=("Ada Example",),
+        provider_work_identity="work-1",
+        dispatch_lineage=WorkDispatchLineage.from_query(query),
+    ).admitted
+
+
+@pytest.mark.parametrize(
+    ("local_title", "provider_title"),
+    (
         ("Work:", "Work"),
         ("Work;", "Work"),
         ("Work-", "Work"),
@@ -852,6 +890,38 @@ def test_lineage_members_are_exact_typed_before_hashing_or_sorting(
         ValueError, match="work title transformation lineage is invalid"
     ):
         WorkTitleTransformationLineage(applications)  # type: ignore[arg-type]  # reason: exercise runtime rejection of malformed retained values
+
+
+@pytest.mark.parametrize(
+    ("family", "side", "field"),
+    (
+        (
+            WorkTitleTransformationSide.LOCAL,
+            WorkTitleTransformationSide.LOCAL,
+            WorkTitleTransformationField.TITLE,
+        ),
+        (
+            WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
+            WorkTitleTransformationField.TITLE,
+            WorkTitleTransformationField.TITLE,
+        ),
+        (
+            WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
+            WorkTitleTransformationSide.LOCAL,
+            WorkTitleTransformationSide.LOCAL,
+        ),
+    ),
+    ids=("family", "side", "field"),
+)
+def test_transformation_application_requires_each_exact_enum_type(
+    family: object,
+    side: object,
+    field: object,
+) -> None:
+    with pytest.raises(
+        ValueError, match="work title transformation application is invalid"
+    ):
+        WorkTitleTransformationApplication(family, side, field, None)  # type: ignore[arg-type]  # reason: exercise runtime exact-type rejection
 
 
 @pytest.mark.parametrize(

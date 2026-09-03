@@ -53,9 +53,9 @@ class WorkTitleTransformationApplication:
 
     def __post_init__(self) -> None:
         if (
-            type(self.family) is not WorkTitleTransformationFamily
-            or type(self.side) is not WorkTitleTransformationSide
-            or type(self.field) is not WorkTitleTransformationField
+            not exact_type(WorkTitleTransformationFamily)(self.family)
+            or not exact_type(WorkTitleTransformationSide)(self.side)
+            or not exact_type(WorkTitleTransformationField)(self.field)
             or self.field is WorkTitleTransformationField.TITLE
             and self.ordinal is not None
             or self.field is WorkTitleTransformationField.AUTHORS
@@ -1101,6 +1101,11 @@ def _latin_admission_lineage(
         local_folded = _latin_combining_marks_fold(local)
         provider_folded = _latin_combining_marks_fold(provider)
         if local_folded is None or provider_folded is None:
+            return False
+        if field is WorkTitleTransformationField.TITLE and (
+            work_title_has_variant_marker(local_folded)
+            or work_title_has_variant_marker(provider_folded)
+        ):
             return False
         if not _closed_equal(local_folded, provider_folded):
             return False
