@@ -697,6 +697,41 @@ def test_latin_fold_cannot_reveal_and_admit_a_variant_marker(
 
 
 @pytest.mark.parametrize(
+    "title",
+    (
+        "Plain Wórk Translatiòn",
+        "Plain Wórk Adaptatiòn",
+        "Plain Wórk Abridgemènt",
+        "Plain Wórk Variànt",
+    ),
+    ids=("translation", "adaptation", "abridgement", "variant"),
+)
+def test_equal_concealed_variant_marker_cannot_take_exact_admission_path(
+    title: str,
+) -> None:
+    assert not work_title_has_variant_marker(title)
+    query = work_query_ladder(title, ("Ada Example",))[0]
+    assert query.rung is WorkDispatchRung.NORMALIZED
+    assert query.transformations == ()
+
+    assert not admit_provider_work_identity(
+        local_title=title,
+        local_authors=("Ada Example",),
+        provider_title=title,
+        provider_authors=("Ada Example",),
+        provider_work_identity="work-1",
+    ).admitted
+    assert not replay_provider_work_identity_admission(
+        local_title=title,
+        local_authors=("Ada Example",),
+        provider_title=title,
+        provider_authors=("Ada Example",),
+        provider_work_identity="work-1",
+        dispatch_lineage=WorkDispatchLineage.from_query(query),
+    ).admitted
+
+
+@pytest.mark.parametrize(
     ("local_title", "provider_title"),
     (
         ("Work:", "Work"),

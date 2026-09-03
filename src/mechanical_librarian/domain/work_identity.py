@@ -632,6 +632,17 @@ def admit_provider_work_identity(
         or work_title_has_variant_marker(provider_title)
     ):
         return WorkIdentityAdmission(False)
+    local_latin_title = _latin_combining_marks_fold(local_title)
+    provider_latin_title = _latin_combining_marks_fold(provider_title)
+    if (
+        local_latin_title is not None
+        and provider_latin_title is not None
+        and (
+            work_title_has_variant_marker(local_latin_title)
+            or work_title_has_variant_marker(provider_latin_title)
+        )
+    ):
+        return WorkIdentityAdmission(False)
     if _closed_equal(local_title, provider_title) and all(
         _closed_equal(local, provider)
         for local, provider in zip(local_authors, provider_authors, strict=True)
@@ -1101,11 +1112,6 @@ def _latin_admission_lineage(
         local_folded = _latin_combining_marks_fold(local)
         provider_folded = _latin_combining_marks_fold(provider)
         if local_folded is None or provider_folded is None:
-            return False
-        if field is WorkTitleTransformationField.TITLE and (
-            work_title_has_variant_marker(local_folded)
-            or work_title_has_variant_marker(provider_folded)
-        ):
             return False
         if not _closed_equal(local_folded, provider_folded):
             return False
