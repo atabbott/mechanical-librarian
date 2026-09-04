@@ -2126,6 +2126,45 @@ def test_automatic_series_treats_provider_wide_unsupported_output_as_no_evidence
     assert "projected" == field.outcome
 
 
+def test_automatic_series_abstains_for_named_unsupported_duplicate_membership() -> None:
+    unsupported_sequence = ProviderClaim.create(
+        provider="open_library",
+        candidate="edition-2",
+        kind=ClaimKind.SERIES_SEQUENCE,
+        value=None,
+        state=FieldState.UNSUPPORTED,
+        scope=ClaimScope.WORK,
+        applicability="not_applicable",
+        raw_order=1,
+    )
+    report = _automatic_series_report(
+        _series_provider("catalogue", "edition-1", "hardcover"),
+        _series_provider(
+            "open_library",
+            "edition-2",
+            "open_library",
+            (
+                _claim(
+                    "open_library",
+                    "edition-2",
+                    ClaimKind.SERIES,
+                    "Reading Order",
+                    scope=ClaimScope.WORK,
+                ),
+                unsupported_sequence,
+            ),
+        ),
+    )
+
+    field = _automatic_series_preview(report)
+
+    assert ("abstain", "series_membership_incomplete", None) == (
+        field.outcome,
+        field.reason,
+        field.desired_value,
+    )
+
+
 def test_automatic_series_abstains_when_membership_is_materially_incomplete() -> None:
     incomplete = ProviderClaim.create(
         provider="catalogue",

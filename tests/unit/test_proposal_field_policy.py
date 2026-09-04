@@ -854,6 +854,69 @@ def test_series_election_does_not_fuzzily_collapse_substantive_names() -> None:
     assert 2 == len(result.alternatives)
 
 
+def test_series_election_keeps_distinct_sequences_for_closed_name_variants() -> None:
+    providers = (
+        _provider(
+            "catalogue",
+            "edition-1",
+            (
+                _claim(
+                    "catalogue",
+                    "edition-1",
+                    ClaimKind.SERIES,
+                    "The Reading Order Trilogy",
+                    scope=ClaimScope.WORK,
+                ),
+                _claim(
+                    "catalogue",
+                    "edition-1",
+                    ClaimKind.SERIES_SEQUENCE,
+                    "2",
+                    scope=ClaimScope.WORK,
+                    order=1,
+                ),
+            ),
+        ),
+        _provider(
+            "search",
+            "edition-2",
+            (
+                _claim(
+                    "search",
+                    "edition-2",
+                    ClaimKind.SERIES,
+                    "reading order",
+                    scope=ClaimScope.WORK,
+                ),
+                _claim(
+                    "search",
+                    "edition-2",
+                    ClaimKind.SERIES_SEQUENCE,
+                    "3",
+                    scope=ClaimScope.WORK,
+                    order=1,
+                ),
+            ),
+        ),
+    )
+    result = _result(
+        evaluate_report(
+            _report(
+                fields=_fields(
+                    series=TargetField(
+                        TargetDestination.SERIES, TargetFieldState.MISSING
+                    )
+                ),
+                providers=providers,
+            )
+        ),
+        TargetDestination.SERIES,
+    )
+
+    assert ProposalOutcome.UNRESOLVED_CHOICE == result.outcome
+    assert 2 == len(result.alternatives)
+
+
 def test_series_preservation_accepts_local_sequence_before_name() -> None:
     claims = (
         LocalClaim.create(

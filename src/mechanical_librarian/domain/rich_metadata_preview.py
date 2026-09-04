@@ -484,15 +484,7 @@ def _automatic_series_abstention(
         )
     )
     membership_incomplete = any(
-        state is not FieldState.VALID
-        and not (
-            state is FieldState.UNSUPPORTED
-            and any(
-                other_name == name and other_state is FieldState.VALID
-                for other_name, other_state in memberships
-            )
-        )
-        for name, state in memberships
+        state is not FieldState.VALID for _, state in memberships
     )
     unresolved_conflict = (
         candidate is None
