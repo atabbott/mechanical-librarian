@@ -1939,6 +1939,37 @@ def test_automatic_series_abstains_with_a_stable_conflict_reason() -> None:
     )
 
 
+def test_automatic_series_abstains_for_generic_decoration_name_conflict() -> None:
+    report = _automatic_series_report(
+        _series_provider(
+            "catalogue",
+            "edition-1",
+            "hardcover",
+            _series_claims("catalogue", "edition-1", name="Series", sequence="1"),
+        ),
+        _series_provider(
+            "search",
+            "edition-2",
+            "open_library",
+            _series_claims("search", "edition-2", name="Trilogy", sequence="1"),
+        ),
+    )
+
+    manual = next(
+        value
+        for value in evaluate_report(report).results
+        if value.destination is TargetDestination.SERIES
+    )
+    field = _automatic_series_preview(report)
+
+    assert ProposalOutcome.UNRESOLVED_CHOICE is manual.outcome
+    assert ("abstain", "series_conflicting_membership", None) == (
+        field.outcome,
+        field.reason,
+        field.desired_value,
+    )
+
+
 def test_automatic_series_ignores_an_unrelated_provider_failure() -> None:
     report = _automatic_series_report(
         _series_provider("catalogue", "edition-1", "hardcover"),

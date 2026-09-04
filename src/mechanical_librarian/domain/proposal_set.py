@@ -3587,9 +3587,9 @@ def _observation_key(destination: TargetDestination, value: ProposalValue) -> st
 def series_name_equivalence_key(value: str) -> str:
     """Collapse only the recorded display decorations for series election."""
     words = _comparison(TargetDestination.SERIES, value).split()
-    if words[:1] == ["the"]:
+    if len(words) > 1 and words[:1] == ["the"]:
         words = words[1:]
-    if words[-1:] in (["trilogy"], ["series"]):
+    if len(words) > 1 and words[-1:] in (["trilogy"], ["series"]):
         words = words[:-1]
     return " ".join(words)
 

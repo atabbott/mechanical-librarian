@@ -917,6 +917,69 @@ def test_series_election_keeps_distinct_sequences_for_closed_name_variants() -> 
     assert 2 == len(result.alternatives)
 
 
+def test_series_election_keeps_generic_decoration_names_distinct() -> None:
+    providers = (
+        _provider(
+            "catalogue",
+            "edition-1",
+            (
+                _claim(
+                    "catalogue",
+                    "edition-1",
+                    ClaimKind.SERIES,
+                    "Series",
+                    scope=ClaimScope.WORK,
+                ),
+                _claim(
+                    "catalogue",
+                    "edition-1",
+                    ClaimKind.SERIES_SEQUENCE,
+                    "1",
+                    scope=ClaimScope.WORK,
+                    order=1,
+                ),
+            ),
+        ),
+        _provider(
+            "search",
+            "edition-2",
+            (
+                _claim(
+                    "search",
+                    "edition-2",
+                    ClaimKind.SERIES,
+                    "Trilogy",
+                    scope=ClaimScope.WORK,
+                ),
+                _claim(
+                    "search",
+                    "edition-2",
+                    ClaimKind.SERIES_SEQUENCE,
+                    "1",
+                    scope=ClaimScope.WORK,
+                    order=1,
+                ),
+            ),
+        ),
+    )
+    result = _result(
+        evaluate_report(
+            _report(
+                fields=_fields(
+                    series=TargetField(
+                        TargetDestination.SERIES, TargetFieldState.MISSING
+                    )
+                ),
+                providers=providers,
+            )
+        ),
+        TargetDestination.SERIES,
+    )
+
+    assert ProposalOutcome.UNRESOLVED_CHOICE == result.outcome
+    assert 2 == len(result.alternatives)
+
+
 def test_series_preservation_accepts_local_sequence_before_name() -> None:
     claims = (
         LocalClaim.create(
