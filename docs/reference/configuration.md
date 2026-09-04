@@ -182,6 +182,13 @@ authority. Genre `fill_empty` is now Automatic in the built-in policy, while
 tags remain `off`/Ask. Every other rich-field option remains
 manual-preview-only.
 
+Automatic series election treats provider-wide unsupported series output with no
+named membership as no evidence. A named incomplete or unpositioned membership,
+an unresolved alternative, or a failure in a query kind that contributed to the
+elected membership remains an inspectable abstention; the failure reason names
+that query kind. Closed leading-article and trailing `Series`/`Trilogy` display
+variants elect together, without fuzzy matching or a title-specific catalogue.
+
 Corroborated subtitle splitting is atomic and accepts only an already admitted
 title/subtitle pair when the current title is their exact concatenation with
 one of `: `, ` — `, ` – `, or ` - `. It never performs a general punctuation

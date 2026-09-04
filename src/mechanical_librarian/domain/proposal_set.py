@@ -3551,7 +3551,21 @@ def _matches(
     target: object,
     candidate: ProposalValue,
 ) -> bool:
+    if destination is TargetDestination.SERIES:
+        return _series_values_match(target, candidate.value)
     return values_match(destination, target, candidate.value)
+
+
+def _series_values_match(target: object, candidate: object) -> bool:
+    if type(target) is not tuple or type(candidate) is not tuple:
+        return False
+    return tuple(
+        (series_name_equivalence_key(value.name), value.sequence)
+        for value in cast("tuple[TargetSeries, ...]", target)
+    ) == tuple(
+        (series_name_equivalence_key(value.name), value.sequence)
+        for value in cast("tuple[TargetSeries, ...]", candidate)
+    )
 
 
 def _comparison(destination: TargetDestination, value: str) -> str:
@@ -3563,7 +3577,7 @@ def _observation_key(destination: TargetDestination, value: ProposalValue) -> st
     # value is TargetSeries for the SERIES destination and str everywhere else.
     if destination is TargetDestination.SERIES:
         normalized: object = tuple(
-            (_comparison(TargetDestination.SERIES, item.name), item.sequence)
+            (series_name_equivalence_key(item.name), item.sequence)
             for item in cast("tuple[TargetSeries, ...]", value.value)
         )
     elif type(value.value) is tuple:
@@ -3582,6 +3596,16 @@ def _observation_key(destination: TargetDestination, value: ProposalValue) -> st
     else:
         normalized = value.value
     return canonical_json({"kind": value.kind.value, "value": normalized})
+
+
+def series_name_equivalence_key(value: str) -> str:
+    """Collapse only the recorded display decorations for series election."""
+    words = _comparison(TargetDestination.SERIES, value).split()
+    if len(words) > 1 and words[:1] == ["the"]:
+        words = words[1:]
+    if len(words) > 1 and words[-1:] in (["trilogy"], ["series"]):
+        words = words[:-1]
+    return " ".join(words)
 
 
 def _eligible_identifier(

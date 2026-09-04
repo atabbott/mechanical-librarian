@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Automatic series decisions now accept one complete provider authority while
+  retaining closed abstention for named incomplete evidence, genuine ambiguity,
+  or a contributing provider-lane failure. Unsupported provider-wide series
+  output is no evidence; only closed display variants collapse. Replays are
+  qualified at 100% precision; fresh mixed confirmation remains required before
+  activation. (#977)
+
 - Audiobooks whose work identity is admitted now produce review cases: narrators,
   ASIN, series, description, language, title and authors are decided through the
   same rules an ebook uses, and those decisions are recorded rather than applied

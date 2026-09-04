@@ -322,6 +322,12 @@ target concurrency, backup, apply, and read-back gates remain unchanged.
 Previously persisted F20 decisions remain readable only when their historical
 digest and option identity match the exact earlier passing set; new decisions
 always bind the current candidate, and a historical digest grants no new option.
+For series, provider-wide unsupported output with no named membership is not
+negative evidence. Named incomplete or unpositioned memberships, unresolved
+alternatives, and failures from query kinds that could have contributed to the
+elected evidence abstain closed; the stable failure reason names that query
+kind. Election collapses only closed leading-article and trailing
+`Series`/`Trilogy` display variants, never fuzzy names or title-specific rules.
 
 Activation is a separate authenticated CSRF-protected owner mutation with the
 same 16 KiB pre-parse request bound as policy drafts. It binds

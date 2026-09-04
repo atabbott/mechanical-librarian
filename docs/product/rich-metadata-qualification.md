@@ -34,12 +34,17 @@ Google visible-text remains a separate transformation and cannot qualify as
 ordinary safe plaintext.
 
 All three series policies passed after series correctness was separated from
-preference: a prediction is correct when it is a valid membership for the
-bound work, while the corpus value remains the preferred membership. Primary
-narrative made 19 correct predictions; source order and all qualified each
-made 20, all at 100% precision. The historical v5 record gave the two ISBN
-policies 22 correct predictions from 41 eligible opportunities, each at 100%
-precision.
+preference: a prediction is correct when it is an allowed membership for the
+bound work, while preference remains a separate descriptive ordering. The
+series-abstention correction reviewed 49 series rows and 118 retained reports,
+including 19 direct EPUB reopenings: its 49-v1, 49-v2, series-20, and retained
+provider-document development cohorts each reached 100% precision on their
+positive scored denominators. The two mixed cohorts each include two allowed
+memberships with explicitly unknown position, which are unscored rather than
+treated as exact proof. This is development-exposed evidence, not a holdout;
+a separately frozen fresh mixed confirmation remains required before #895
+activation. The historical v5 record gave the two ISBN policies 22 correct
+predictions from 41 eligible opportunities, each at 100% precision.
 The admitted proposal and decision retain every qualified membership; the
 existing Audiobookshelf effect planner projects only the preferred first
 membership because that target accepts one series value.
@@ -172,5 +177,5 @@ title on the decorated side. Every other option replays unchanged, and the
 option keeps 1.0 precision with zero structural or unsupported outputs.
 
 The machine-readable candidate is
-[`f20-rich-metadata-qualification-candidate-v10.json`](../reference/f20-rich-metadata-qualification-candidate-v10.json).
-The v9 manifest remains a readable historical record.
+[`f20-rich-metadata-qualification-candidate-v11.json`](../reference/f20-rich-metadata-qualification-candidate-v11.json).
+The v10 manifest remains a readable historical record.
