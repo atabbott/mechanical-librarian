@@ -159,7 +159,10 @@ from mechanical_librarian.interfaces.web.app import (
     _ReviewField,
 )
 from mechanical_librarian.interfaces.web.live_stream import stream_frames
-from tests.support.audiobook_reports import admitted_audiobook_report
+from tests.support.audiobook_reports import (
+    admitted_audiobook_report,
+    retained_recorded_only_decision,
+)
 from tests.support.automatic_decisions import _automatic_decisions
 from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.proposal_evidence import (
@@ -284,9 +287,10 @@ def _case(repository):
 def test_a_recording_is_never_offered_to_the_automatic_lane() -> None:
     """A6: the projection abstains for an audiobook, whatever its fields say.
 
-    F47 owns audiobook writes, so nothing automatic may act on a recording.
-    The work still completes -- abstaining is an answer -- and no shadow
-    outcome exists for a later automatic decision to be minted from (#966).
+    F46 owns automatic audiobook authority, so nothing automatic may act on a
+    recording. The work still completes -- abstaining is an answer -- and no
+    shadow outcome exists for a later automatic decision to be minted from
+    (#966).
     """
     with tempfile.TemporaryDirectory() as temporary:
         repository = open_repository(Path(temporary) / "reports.sqlite")
@@ -308,14 +312,15 @@ def test_a_recording_is_never_offered_to_the_automatic_lane() -> None:
         repository.close()
 
 
-def test_a_recorded_decision_is_not_pending_write_work() -> None:
-    """P2-1: what F47 will write is not work the owner is asked to permit.
+def test_only_a_retained_recorded_decision_is_kept_out_of_pending_work() -> None:
+    """P2-1: an audiobook decision is pending write work like any other.
 
-    An accepted audiobook decision is durable and complete in itself. Left in
-    the pending queries it would be counted as prepared and offered for consent
-    forever, so both the document query and the count exclude it at the SQL
-    seam; the same row with `apply` is pending, which is what makes this the
-    filter rather than a missing lineage (#966).
+    Since F47 a fresh audiobook accept plans and applies exactly as an ebook
+    one does, so it belongs in both pending queries. A document retained from
+    before audiobook writes existed is durable history instead: left in the
+    queries it would be counted as prepared and offered for consent forever,
+    so both the document query and the count exclude it at the SQL seam
+    (ADR-0071, #968).
     """
     with tempfile.TemporaryDirectory() as temporary:
         repository = open_repository(Path(temporary) / "reports.sqlite")
@@ -347,6 +352,32 @@ def test_a_recorded_decision_is_not_pending_write_work() -> None:
             occurred_at=10,
         )
         repository.record_human_decision(decision)
+        retained = retained_recorded_only_decision(case, TargetDestination.NARRATORS)
+        # `record_human_decision` validates a submission as a new command, and
+        # since F47 that refuses `recorded_only` outright, so the retained row
+        # is seeded exactly as F45 wrote it.
+        repository._connection.execute(
+            "INSERT INTO human_decisions("
+            "decision_id,review_case_id,proposal_id,target_fingerprint,"
+            "destination,actor,outcome,selected_value_document,"
+            "idempotency_digest,request_digest,occurred_at,document) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                retained.decision_id,
+                retained.review_case_id,
+                retained.proposal_id,
+                retained.target_fingerprint,
+                retained.destination,
+                retained.actor,
+                retained.outcome,
+                json.dumps(retained.selected_value, sort_keys=True),
+                retained.idempotency_digest,
+                retained.request_digest,
+                retained.occurred_at,
+                retained.to_json(),
+            ),
+        )
+        repository._connection.commit()
         ebook_report = _report()
         repository.publish(ebook_report, lambda: True)
         ebook_proposal = evaluate_report(ebook_report)
@@ -372,17 +403,140 @@ def test_a_recorded_decision_is_not_pending_write_work() -> None:
         )
         repository.record_human_decision(ebook_decision)
 
-        assert "recorded_only" == decision.application
+        assert "apply" == decision.application
+        assert "recorded_only" == retained.application
         assert "apply" == ebook_decision.application
-        # The ebook decision is the control: the queries reach both lineages,
-        # and only the recorded one is withheld.
+        # The ebook decision is the control: the queries reach every lineage,
+        # and only the retained document is withheld.
         pending = repository.pending_field_effect_decision_documents(10)
-        assert 1 == len(pending)
-        assert ebook_decision.decision_id in pending[0]
-        assert decision.decision_id not in pending[0]
+        assert 2 == len(pending)
+        assert {decision.decision_id, ebook_decision.decision_id} == {
+            json.loads(document)["decision_id"] for document in pending
+        }
+        assert all(retained.decision_id not in document for document in pending)
         counts = repository.pending_field_effect_decision_counts()
-        assert 1 == len(counts)
-        assert ebook_decision.destination == counts[0]["destination"]
+        assert {
+            ("audio", decision.destination),
+            ("ebooks", ebook_decision.destination),
+        } == {(str(row["library"]), str(row["destination"])) for row in counts}
+        repository.close()
+
+
+def test_a_narrator_keep_current_after_a_verified_write_is_pending_work() -> None:
+    """A corrective `keep_current` reaches the queries on every list field.
+
+    Once a destination has a verified effect, the owner keeping the value
+    currently in the target is itself work: it may have to put back what a
+    later pass moved. The SQL that recognises that reads an array-valued
+    field's shape by name, so the fifteenth destination has to be named there
+    too or a narrator correction is silently never scheduled (#968).
+    """
+    base = admitted_audiobook_report()
+    report = MetadataReport.create(
+        target=TargetFacts(
+            base.target.connection,
+            base.target.library,
+            base.target.item,
+            tuple(
+                TargetField(
+                    TargetDestination.NARRATORS,
+                    TargetFieldState.VALUE,
+                    ("Prior Narrator",),
+                )
+                if field.destination is TargetDestination.NARRATORS
+                else field
+                for field in base.target.fields
+            ),
+        ),
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=base.providers,
+        audio=base.audio,
+    )
+    with tempfile.TemporaryDirectory() as temporary:
+        repository = open_repository(Path(temporary) / "reports.sqlite")
+        repository.publish(report, lambda: True)
+        proposal = evaluate_report(report)
+        repository.publish_proposal(proposal)
+        repository.admit_review_case(proposal)
+        case = ReviewCase.create(proposal, report)
+        field = next(
+            value
+            for value in case.proposals
+            if value["destination"] == TargetDestination.NARRATORS.value
+        )
+        result = field["result"]
+        assert type(result) is dict
+        alternatives = result["alternatives"]
+        assert type(alternatives) is list
+        accepted = HumanDecision.create(
+            case,
+            proposal_id=str(field["proposal_id"]),
+            target_fingerprint=case.target_fingerprint,
+            destination=TargetDestination.NARRATORS.value,
+            actor="owner",
+            outcome="accept",
+            selected_value=alternatives[0]["value"],
+            idempotency_key="narrators-accept-0001",
+            occurred_at=10,
+        )
+        repository.record_human_decision(accepted)
+        repository.grant_field_effect_consents(
+            report.target.connection, (report.target.library,), ("narrators",), 5
+        )
+        target = FakeTargetService()
+        service = GuardedFieldApplication(
+            repository,
+            target,
+            FakeBackupReadiness(),
+            FakeCapabilityObserver("c" * 64),
+            PersistedFieldEffectAuthority(repository),
+            FakeDependencyCurrentness(),
+            PersistedEffectConsent(repository),
+            SimpleNamespace(),
+            FakeForwardReevaluation(),
+            lambda: 6,
+        )
+        current = ["Prior Narrator"]
+        operation = service.plan(
+            accepted,
+            connection=report.target.connection,
+            library=report.target.library,
+            work_id=report.target.item,
+            destination="narrators",
+            pre_value=current,
+            desired_value=alternatives[0]["value"],
+            target_fingerprint=case.target_fingerprint,
+            target_version=field_value_version("narrators", current),
+            dependency_digests=("d" * 64,),
+            capability_digest="c" * 64,
+        )
+        assert operation is not None
+        target.seed(operation.plan)
+        assert "verified" == service.apply(operation.plan.plan_id).state
+
+        kept = HumanDecision.create(
+            case,
+            proposal_id=str(field["proposal_id"]),
+            target_fingerprint=case.target_fingerprint,
+            destination=TargetDestination.NARRATORS.value,
+            actor="owner",
+            outcome="keep_current",
+            selected_value=None,
+            idempotency_key="narrators-keep-0001",
+            occurred_at=11,
+        )
+        repository.record_human_decision(kept)
+
+        pending = repository.pending_field_effect_decision_documents(10)
+        assert [kept.decision_id] == [
+            json.loads(document)["decision_id"] for document in pending
+        ]
+        assert [(report.target.library, "narrators")] == [
+            (str(row["library"]), str(row["destination"]))
+            for row in repository.pending_field_effect_decision_counts()
+        ]
         repository.close()
 
 

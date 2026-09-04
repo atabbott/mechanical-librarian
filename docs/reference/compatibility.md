@@ -144,6 +144,15 @@ on `case`, `no_case`, or `evidence_only`, and `evidence_only` is no longer a
 member of the failure-code vocabulary. Earlier proposal-set, human-decision, or
 preparation-work state is rejected without migration or conversion.
 
+The F47 guarded-audiobook-application increment changes no persisted shape.
+`human-decision-v2` is unchanged, no schema version moves, and a `recorded_only`
+document retained from F45 stays readable on an audiobook case, is never
+migrated, and never applies. The guarded consent envelope identity does move,
+because it digests the whole destination set and narrators joins it: every
+library consent granted before this build lapses and is re-offered in Activity,
+without any schema or data change
+([ADR-0071](../architecture/decisions/0071-book-media-guarded-application.md)).
+
 The F31 reviewer-access increment declares a clean rebuild. It admits only
 `setup-state-v3`, `owner-settings-v3`, `reviewer-access-v1`, and the exact
 current application objects; the former offline exact-predecessor plans and

@@ -1197,7 +1197,11 @@ current-state recovery, and private-cache headers.
 Guarded field effects add the first persisted mutation boundary. The installed
 product composes the API-key Audiobookshelf target only after authenticated,
 library-scoped consent for the exact eligible destination subset disclosed in
-Activity. The submitted destination matrix must still equal a fresh capability
+Activity. That set is the fifteen book-media destinations, identical on ebooks
+and audiobooks (ADR-0071); because the consent envelope identity digests the
+whole set, a build that adds one -- narrators, with F47 -- lapses every
+existing library consent, and Activity re-offers it before anything is
+scheduled. The submitted destination matrix must still equal a fresh capability
 probe before its atomic consent replacement is accepted; a changed subset fails
 closed and must be reviewed again. A partially consented library remains
 available when a newly eligible destination needs incremental consent. Only exact

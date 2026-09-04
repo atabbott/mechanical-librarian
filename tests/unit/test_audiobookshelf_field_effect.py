@@ -193,7 +193,16 @@ def test_metadata_effect_is_destination_minimal_and_readable(case: _Case) -> Non
 
 @pytest.mark.parametrize(
     "destination",
-    ("subtitle", "series", "genres", "tags", "description", "isbn", "asin"),
+    (
+        "subtitle",
+        "series",
+        "genres",
+        "narrators",
+        "tags",
+        "description",
+        "isbn",
+        "asin",
+    ),
 )
 def test_rich_metadata_target_shapes_read_apply_and_read_back(
     case: _Case, destination: str
@@ -204,6 +213,7 @@ def test_rich_metadata_target_shapes_read_apply_and_read_back(
             "subtitle": None,
             "series": [],
             "genres": [],
+            "narrators": [],
             "description": None,
             "isbn": None,
             "asin": None,
@@ -214,6 +224,7 @@ def test_rich_metadata_target_shapes_read_apply_and_read_back(
         "subtitle": "Synthetic subtitle",
         "series": [{"name": "Synthetic series", "sequence": "1"}],
         "genres": ["Synthetic genre"],
+        "narrators": ["Synthetic narrator"],
         "tags": ["Synthetic tag"],
         "description": "Synthetic description.",
         "isbn": "9780306406157",
@@ -235,6 +246,95 @@ def test_series_fill_preserves_null_sequence_through_supported_adapter(
     assert case.target.read(plan).value is None
     assert case.target.apply(plan).outcome == "accepted"
     assert case.target.read(plan).value == desired
+
+
+def test_an_unsupported_narrator_shape_disables_only_that_destination(
+    case: _Case,
+) -> None:
+    """The expansion boundary: a rejected shape costs one field, not the library.
+
+    A narrator cast is a plain string list on both media. When the service
+    answers with anything else the read refuses and the capability reads
+    `field_unavailable`, while every other destination on the same item stays
+    allowed (ADR-0071, #968).
+    """
+    user = {
+        "isActive": True,
+        "permissions": {"update": True, "upload": True, "accessAllLibraries": False},
+        "librariesAccessible": ["library-1"],
+    }
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/me":
+            return httpx.Response(
+                200, headers={"content-type": "application/json"}, json=user
+            )
+        return httpx.Response(
+            200, headers={"content-type": "application/json"}, json=case.detail
+        )
+
+    capabilities = AudiobookshelfFieldEffectCapabilities(
+        client_factory=lambda: httpx.Client(transport=httpx.MockTransport(handle)),
+        endpoint="https://abs.example.invalid",
+        library_id="library-1",
+    )
+    case.detail["media"]["metadata"]["narrators"] = [{"name": "Synthetic narrator"}]
+    plan = _plan("narrators", None, ["Synthetic narrator"])
+
+    with pytest.raises(TargetServiceUnavailable) as raised:
+        case.target.read(plan)
+
+    assert ("destination", "field_unavailable") == (
+        raised.value.scope,
+        raised.value.reason,
+    )
+    assert capabilities.result(plan).category == "field_unavailable"
+    assert capabilities.result(_plan("title", "Before", "After")).category == "allowed"
+
+
+@pytest.mark.parametrize("answer", ("absent", "null"))
+def test_an_item_with_no_narrator_cast_reads_as_no_value(
+    case: _Case, answer: str
+) -> None:
+    """An unnarrated item is an empty field, not an unsupported one.
+
+    Audiobookshelf omits `metadata.narrators` on some responses and answers
+    `null` on others, and capability discovery reads both as allowed. The
+    pre-read has to agree, or the very case the fifteenth destination exists
+    for -- filling an empty cast -- refuses before it plans (#968).
+    """
+    metadata = case.detail["media"]["metadata"]
+    if answer == "absent":
+        metadata.pop("narrators", None)
+    else:
+        metadata["narrators"] = None
+    user = {
+        "isActive": True,
+        "permissions": {"update": True, "upload": True, "accessAllLibraries": False},
+        "librariesAccessible": ["library-1"],
+    }
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/me":
+            return httpx.Response(
+                200, headers={"content-type": "application/json"}, json=user
+            )
+        return httpx.Response(
+            200, headers={"content-type": "application/json"}, json=case.detail
+        )
+
+    capabilities = AudiobookshelfFieldEffectCapabilities(
+        client_factory=lambda: httpx.Client(transport=httpx.MockTransport(handle)),
+        endpoint="https://abs.example.invalid",
+        library_id="library-1",
+    )
+    desired = ["Synthetic narrator"]
+    plan = _plan("narrators", None, desired)
+
+    assert case.target.read(plan).value is None
+    assert capabilities.result(plan).category == "allowed"
+    assert "accepted" == case.target.apply(plan).outcome
+    assert desired == case.target.read(plan).value
 
 
 def test_cover_reads_digest_and_uploads_only_verified_original(case: _Case) -> None:
@@ -273,18 +373,22 @@ def test_tags_are_read_from_current_service_metadata_shape(case: _Case) -> None:
     ]
 
 
-@pytest.mark.parametrize("destination", ("authors", "genres", "series", "tags"))
+@pytest.mark.parametrize(
+    "destination", ("authors", "genres", "narrators", "series", "tags")
+)
 def test_empty_collections_and_service_series_shape_are_normalized(
     case: _Case, destination: str
 ) -> None:
     metadata = case.detail["media"]["metadata"]
     metadata["authors"] = []
     metadata["genres"] = []
+    metadata["narrators"] = []
     metadata["series"] = []
     case.detail["media"]["tags"] = []
     desired = {
         "authors": ["New"],
         "genres": ["New"],
+        "narrators": ["New"],
         "series": [{"name": "New", "sequence": None}],
         "tags": ["New"],
     }

@@ -234,11 +234,12 @@ def authority_from_decision(
     """Project only exact existing authoritative decisions; advice cannot enter."""
     if type(decision) is HumanDecision:
         if decision.application == "recorded_only":
-            # A recording's decision is recorded, not applied: F47 owns
-            # audiobook writes. The scheduler filters these out before it gets
-            # here, so reaching this point is a defect rather than ordinary
-            # traffic, and it refuses by name instead of returning the same
-            # `None` an unaccepted decision returns (#966).
+            # A decision retained from before audiobook writes existed is
+            # history, never work. The scheduler and the pending-write SQL both
+            # filter these out before it gets here, so reaching this point is a
+            # defect rather than ordinary traffic, and it refuses by name
+            # instead of returning the same `None` an unaccepted decision
+            # returns (#968).
             raise GuardedApplicationError("recorded_only")
         if decision.outcome != "accept" and not (
             allow_corrective_keep_current and decision.outcome == "keep_current"

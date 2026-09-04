@@ -36,6 +36,7 @@ from mechanical_librarian.adapters.field_effect_runtime import (
     DurableBackupReadiness,
     PersistedEffectConsent,
 )
+from mechanical_librarian.adapters.persistence import field_effect_activity
 from mechanical_librarian.adapters.persistence.field_effect_activity import (
     _ACTIVITY_PAGE_CACHE_MAX_BYTES,
 )
@@ -57,7 +58,6 @@ from mechanical_librarian.domain.automatic_decision import (
 )
 from mechanical_librarian.domain.field_effect import (
     SUPPORTED_DESTINATIONS,
-    WRITE_WITHHELD_DESTINATIONS,
     EffectAuthority,
     EffectConsent,
     FieldEffectError,
@@ -2470,14 +2470,14 @@ def test_every_supported_shape_plans_and_no_ops_do_not_mutate(
         "isbn": "1",
         "asin": "A",
         "language": "en",
+        "narrators": ["N"],
         "tags": ["T"],
         "cover": "cover_" + "a" * 64,
     }
     assert SUPPORTED_DESTINATIONS == set(values)
-    # A narrator cast has a shape here and no write: F47 owns the field, so it
-    # is deliberately absent from every plannable destination (#966).
-    assert "narrators" == "".join(WRITE_WITHHELD_DESTINATIONS)
-    assert "narrators" not in SUPPORTED_DESTINATIONS
+    # A narrator cast is the fifteenth write-capable destination and plans on
+    # both media exactly as the other fourteen do (ADR-0071, #968).
+    assert "narrators" in SUPPORTED_DESTINATIONS
     for index, (destination, desired) in enumerate(values.items()):
         suffix = format(index + 1, "x")[-1]
         selected = envelope(destination, desired)
@@ -3259,6 +3259,55 @@ def test_cover_cleanup_separates_a_vanished_row_from_a_storage_fault(
     assert getattr(cause, "code", None) == "persistence"
     assert getattr(cause.__context__, "code", None) == "claim_conflict"
     assert effects.recovery.exists(storage.plan.plan_id)
+
+
+def test_a_new_write_destination_lapses_every_existing_library_consent(
+    effects: _EffectEnvironment,
+) -> None:
+    """ADR-0039's rule, as ADR-0071 applies it: narrators re-keys the envelope.
+
+    The consent envelope digests the whole destination set, so the build that
+    adds the fifteenth destination invalidates every consent granted before it.
+    Nothing is planned, nothing claims, and Activity stops calling any
+    destination consented until the owner grants again (#968).
+    """
+    pre_f47 = frozenset(SUPPORTED_DESTINATIONS - {"narrators"})
+    assert "narrators" in SUPPORTED_DESTINATIONS
+    with patch.object(field_effect_activity, "SUPPORTED_DESTINATIONS", pre_f47):
+        granted = effects.repository.grant_field_effect_consents(
+            "primary", ("books",), ("title", "authors"), 1_000
+        )
+
+    assert 2 == len(granted)
+    # Planning: the pre-F47 consent is no longer the library's envelope.
+    for consent in granted:
+        assert not effects.repository.field_effect_consent_is_current(consent)
+    with pytest.raises(FieldEffectError) as raised:
+        effects.repository.current_field_effect_consent("primary", "books", "title")
+    assert "consent" == raised.value.code
+    # Activity: only an envelope-current consent is projected, so the owner is
+    # re-offered the library rather than told it is still enabled.
+    activity = effects.repository.field_effect_activity_data(1, include_events=False)
+    assert [] == activity["consented_destinations"]
+    assert [] == activity["consented_libraries"]
+
+    regranted = effects.repository.grant_field_effect_consents(
+        "primary", ("books",), ("narrators", "title"), 1_001
+    )
+
+    assert all(
+        effects.repository.field_effect_consent_is_current(consent)
+        for consent in regranted
+    )
+    assert {"narrators", "title"} == {
+        str(row["destination"])
+        for row in cast(
+            "list[dict[str, object]]",
+            effects.repository.field_effect_activity_data(1, include_events=False)[
+                "consented_destinations"
+            ],
+        )
+    }
 
 
 def test_semantic_consent_drift_wins_the_atomic_claim_race(

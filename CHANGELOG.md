@@ -8,6 +8,13 @@
 
 ## Unreleased
 
+- Audiobook decisions now apply through the existing guarded Audiobookshelf path,
+  with narrators joining the write-capable destinations on both media. Because
+  the consent envelope covers the whole destination set, every library consent
+  lapses on upgrade and Activity re-offers it before anything is scheduled.
+  Decisions recorded before audiobook writes existed stay readable history and
+  never apply. (#968)
+
 - Inventaire cover evidence now survives preparation. Valid missing ISBNs permit
   bounded title-and-author fallback, and three-row searches retain useful work
   evidence without concealing ambiguity or incomplete author identities.
@@ -71,8 +78,7 @@
 
 - Audiobooks whose work identity is admitted now produce review cases: narrators,
   ASIN, series, description, language, title and authors are decided through the
-  same rules an ebook uses, and those decisions are recorded rather than applied
-  until audiobook writes arrive. Subtitle stays withheld for a recording until
+  same rules an ebook uses. Subtitle stays withheld for a recording until
   audiobook subtitles are typed as bibliographic. Existing installs require a
   clean rebuild under `proposal-set-v6` and `human-decision-v2`. (#966)
 
