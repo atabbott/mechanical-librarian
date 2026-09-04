@@ -483,6 +483,14 @@ def _automatic_series_abstention(
             )
         )
     )
+    if any(
+        claim.kind in {ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE}
+        and claim.state in {FieldState.MALFORMED, FieldState.OVERSIZED}
+        for provider in report.providers
+        for source in provider.candidates
+        for claim in source.claims
+    ):
+        return "series_membership_incomplete"
     membership_incomplete = any(
         state is not FieldState.VALID for _, state in memberships
     )
@@ -513,6 +521,8 @@ def _automatic_series_abstention(
         and type(retained.provider) is ProviderObservation
         and type(retained.candidate) is ProviderCandidate
     )
+    if not relevant:
+        return "series_provider_evidence_required"
     relevant_candidates = {
         (retained.provider.provider, retained.candidate.identity)
         for retained in relevant

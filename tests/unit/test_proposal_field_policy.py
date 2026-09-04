@@ -728,6 +728,43 @@ def test_series_preservation_normalizes_names_but_not_sequences() -> None:
     assert ProposalOutcome.KEEP == result.outcome
 
 
+def test_series_preservation_uses_closed_display_equivalence() -> None:
+    claims = (
+        _claim(
+            "catalogue",
+            "edition-1",
+            ClaimKind.SERIES,
+            "The Reading Order Trilogy",
+            scope=ClaimScope.WORK,
+        ),
+        _claim(
+            "catalogue",
+            "edition-1",
+            ClaimKind.SERIES_SEQUENCE,
+            "2",
+            scope=ClaimScope.WORK,
+            order=1,
+        ),
+    )
+    result = _result(
+        evaluate_report(
+            _report(
+                fields=_fields(
+                    series=TargetField(
+                        TargetDestination.SERIES,
+                        TargetFieldState.VALUE,
+                        (TargetSeries("Reading Order", "2"),),
+                    ),
+                ),
+                providers=(_provider("catalogue", "edition-1", claims),),
+            )
+        ),
+        TargetDestination.SERIES,
+    )
+
+    assert ProposalOutcome.KEEP == result.outcome
+
+
 def test_series_election_collapses_only_closed_display_variants() -> None:
     providers = (
         _provider(

@@ -127,6 +127,32 @@ def _series_claims(provider, candidate, name="Reading Order", sequence="2"):
     )
 
 
+def _local_series_claims(name="Reading Order", sequence="2"):
+    return (
+        LocalClaim.create(
+            kind=ClaimKind.SERIES,
+            observed=name,
+            canonical=name,
+            excerpt=name,
+            applicability="not_applicable",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.WORK,
+        ),
+        LocalClaim.create(
+            kind=ClaimKind.SERIES_SEQUENCE,
+            observed=sequence,
+            canonical=sequence,
+            excerpt=sequence,
+            applicability="not_applicable",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.WORK,
+            occurrence=1,
+        ),
+    )
+
+
 def _automatic_series_report(*providers):
     return _report(
         fields=_fields(
@@ -1919,6 +1945,37 @@ def test_automatic_series_projects_one_provider_lineage() -> None:
     )
 
 
+def test_automatic_series_requires_retained_provider_evidence() -> None:
+    report = _report(
+        fields=_fields(
+            series=TargetField(TargetDestination.SERIES, TargetFieldState.MISSING)
+        ),
+        local_claims=_local_series_claims(),
+    )
+
+    field = _automatic_series_preview(report)
+
+    assert ("abstain", "series_provider_evidence_required", None) == (
+        field.outcome,
+        field.reason,
+        field.desired_value,
+    )
+
+
+def test_automatic_series_allows_local_and_provider_evidence() -> None:
+    report = _report(
+        fields=_fields(
+            series=TargetField(TargetDestination.SERIES, TargetFieldState.MISSING)
+        ),
+        local_claims=_local_series_claims(),
+        providers=(_series_provider("catalogue", "edition-1", "hardcover"),),
+    )
+
+    field = _automatic_series_preview(report)
+
+    assert "projected" == field.outcome
+
+
 def test_automatic_series_abstains_with_a_stable_conflict_reason() -> None:
     report = _automatic_series_report(
         _series_provider("catalogue", "edition-1", "hardcover"),
@@ -2214,6 +2271,43 @@ def test_automatic_series_abstains_when_membership_is_materially_incomplete() ->
             "hardcover",
             (_series_claims("catalogue", "edition-1")[0], incomplete),
         ),
+    )
+
+    field = _automatic_series_preview(report)
+
+    assert ("abstain", "series_membership_incomplete", None) == (
+        field.outcome,
+        field.reason,
+        field.desired_value,
+    )
+
+
+@pytest.mark.parametrize(
+    ("kind", "state"),
+    (
+        (ClaimKind.SERIES, FieldState.MALFORMED),
+        (ClaimKind.SERIES, FieldState.OVERSIZED),
+        (ClaimKind.SERIES_SEQUENCE, FieldState.MALFORMED),
+        (ClaimKind.SERIES_SEQUENCE, FieldState.OVERSIZED),
+    ),
+)
+def test_automatic_series_abstains_for_any_malformed_provider_marker(
+    kind: ClaimKind,
+    state: FieldState,
+) -> None:
+    marker = ProviderClaim.create(
+        provider="open_library",
+        candidate="edition-2",
+        kind=kind,
+        value=None,
+        state=state,
+        scope=ClaimScope.WORK,
+        applicability="not_applicable",
+        raw_order=0,
+    )
+    report = _automatic_series_report(
+        _series_provider("catalogue", "edition-1", "hardcover"),
+        _series_provider("open_library", "edition-2", "open_library", (marker,)),
     )
 
     field = _automatic_series_preview(report)

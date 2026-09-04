@@ -3551,7 +3551,21 @@ def _matches(
     target: object,
     candidate: ProposalValue,
 ) -> bool:
+    if destination is TargetDestination.SERIES:
+        return _series_values_match(target, candidate.value)
     return values_match(destination, target, candidate.value)
+
+
+def _series_values_match(target: object, candidate: object) -> bool:
+    if type(target) is not tuple or type(candidate) is not tuple:
+        return False
+    return tuple(
+        (series_name_equivalence_key(value.name), value.sequence)
+        for value in cast("tuple[TargetSeries, ...]", target)
+    ) == tuple(
+        (series_name_equivalence_key(value.name), value.sequence)
+        for value in cast("tuple[TargetSeries, ...]", candidate)
+    )
 
 
 def _comparison(destination: TargetDestination, value: str) -> str:
