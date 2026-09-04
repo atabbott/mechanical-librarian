@@ -204,45 +204,45 @@
         "49-v1": {
           "eligible_reports": 49,
           "positive_reports": 37,
-          "projected_memberships": 21,
-          "scored_exact_position_predictions": 19,
-          "correct_scored_predictions": 19,
+          "projected_memberships": 19,
+          "scored_exact_position_predictions": 17,
+          "correct_scored_predictions": 17,
           "allowed_membership_unknown_position_unscored": 2,
           "automatic_precision": 1.0,
-          "result_sha256": "15a2a9b814e34723e6b1d23e775933f521e3477fe8c0f0bdbfe1f8576eee62e7"
+          "result_sha256": "2db875a373342d6c27a60fc6589b09b9f635300215b04429a81ca7e088770021"
         },
         "49-v2": {
           "eligible_reports": 49,
           "positive_reports": 37,
-          "projected_memberships": 22,
-          "scored_exact_position_predictions": 20,
-          "correct_scored_predictions": 20,
+          "projected_memberships": 20,
+          "scored_exact_position_predictions": 18,
+          "correct_scored_predictions": 18,
           "allowed_membership_unknown_position_unscored": 2,
           "automatic_precision": 1.0,
-          "result_sha256": "8338c8b563b5ff8f4dd72c70d6bf808e4ef76eea23d52661599dcc28b298aff4"
+          "result_sha256": "2d35e76f77d41e333d35ea1e2fef48a99d3805c571038d9b6dd903d03548bcf8"
         },
         "series-20": {
           "eligible_reports": 20,
           "positive_reports": 20,
+          "projected_memberships": 13,
+          "scored_exact_position_predictions": 13,
+          "correct_scored_predictions": 13,
+          "allowed_membership_unknown_position_unscored": 0,
+          "automatic_precision": 1.0,
+          "result_sha256": "bd83cc28c362e79b27a72da4803db8dd1cdaa7e8da3ddf07ba4a9207f76158f4"
+        },
+        "retained-provider-documents": {
+          "eligible_reports": 49,
+          "positive_reports": 37,
           "projected_memberships": 15,
           "scored_exact_position_predictions": 15,
           "correct_scored_predictions": 15,
           "allowed_membership_unknown_position_unscored": 0,
           "automatic_precision": 1.0,
-          "result_sha256": "1988b2598866408f5386399a6f65010c5c8b3c1c75fc42a5d6e3b7622df36903"
-        },
-        "retained-provider-documents": {
-          "eligible_reports": 49,
-          "positive_reports": 37,
-          "projected_memberships": 19,
-          "scored_exact_position_predictions": 19,
-          "correct_scored_predictions": 19,
-          "allowed_membership_unknown_position_unscored": 0,
-          "automatic_precision": 1.0,
-          "result_sha256": "998b4f97b4718b690b06428f49fe6f179faf2e2d8faacb5b5d75fbcf4a9d68d0"
+          "result_sha256": "5b93f939f31f70868e6fbfe29c4c4ac3d3db883cb20d19cdb311b56ed2ae0389"
         }
       },
-      "compiler_sha256": "c5d637b662b311a565feb766f772ce3481e4452f7ef8e3e88e18ba7cca0558d5",
+      "compiler_sha256": "cbfbdb7930659da30025a3712056053ca5aa370c419cbbb0c3d6f0f8749b4579",
       "corpus_role": "development_exposed",
       "current_report_evaluator_v2_sha256": "07b9d4130cbf43d41664c182db6ea0c436692163df0ef5da00ca978b7bcfcb37",
       "direct_epub_reopenings": 19,
@@ -253,7 +253,7 @@
         "status": "not_completed"
       },
       "independent_review_receipt_sha256": "1fa219248b9c9e267282feb66755d58632c5ffdf35a55bdcbba02f9196d2db91",
-      "proposal_policy_sha256": "44aa46b2a5e02e1a6d9257fe83ada45813045c5ec62a660a267a08020816c119",
+      "proposal_policy_sha256": "9da439d1967eeaccfe70525cacd1b515ccf3d8020bef8ef0db658d1ba33a0c32",
       "qualification_contract_sha256": "1f1fab25c6bdc52dcadfa46fc7fdaf4a7bd1f74e219f74e35624bab51198c075",
       "retained_document_evaluator_v2_sha256": "0363d622529256e3c4a8caafb6a853fa6df6e15e6039e6e0265745af7d4408e1",
       "retained_reports": 118,
@@ -277,7 +277,7 @@
     },
     "compiler": {
       "identity": "src/mechanical_librarian/domain/rich_metadata_preview.py",
-      "sha256": "c5d637b662b311a565feb766f772ce3481e4452f7ef8e3e88e18ba7cca0558d5"
+      "sha256": "cbfbdb7930659da30025a3712056053ca5aa370c419cbbb0c3d6f0f8749b4579"
     },
     "description_tiebreaker": {
       "candidate_head": "e1e13200a784229bcb5694e716c1c7b0e0a8128e",
@@ -300,8 +300,8 @@
     },
     "isbn_manifestation_election": {
       "automatic_decision_sha256": "5f64913cf9c6ad6d846ec2f6a183cf69811e9cb1b76b78cc1459df48b5a3ce9d",
-      "preview_sha256": "c5d637b662b311a565feb766f772ce3481e4452f7ef8e3e88e18ba7cca0558d5",
-      "proposal_policy_sha256": "44aa46b2a5e02e1a6d9257fe83ada45813045c5ec62a660a267a08020816c119",
+      "preview_sha256": "cbfbdb7930659da30025a3712056053ca5aa370c419cbbb0c3d6f0f8749b4579",
+      "proposal_policy_sha256": "9da439d1967eeaccfe70525cacd1b515ccf3d8020bef8ef0db658d1ba33a0c32",
       "proposal_policy_version": "fixed-conservative-v19"
     },
     "policy": {
