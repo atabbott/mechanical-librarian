@@ -202,7 +202,10 @@ On supported Linux deployments, the repository retains a no-follow,
 identity-checked directory chain from the filesystem root, holds an exclusive
 lock on the owner-only database parent, and opens SQLite through an
 unpredictable verified hard-link alias to the already-opened database inode.
-SQLite journal artifacts are therefore private-alias scoped. A competing
+SQLite journal artifacts are therefore private-alias scoped. On every platform
+a same-process dependent open presents the live root's authority and inherits
+its admission; only an open with no live authority treats the live root's
+rollback journal as unsupported recovery state. A competing
 repository process waits on that exclusive binding lock, then performs the
 same identity and currentness checks after the preceding process closes; this
 makes concurrent identical admissions converge without weakening the binding.

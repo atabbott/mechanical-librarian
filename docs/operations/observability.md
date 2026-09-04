@@ -46,9 +46,12 @@ outcome; unreadable advisory evidence produces a bounded authenticated 503.
 Preparation status keeps one validated, lifecycle-owned foreground repository
 open before its two worker lanes start. It serializes independent preparation
 progress and connection-condition snapshots with owner scan and retry controls,
-and closes only after both lanes stop. Worker and recovery actions continue to
-open their own exact-current repositories; recovery-sidecar rejection remains
-fail-closed.
+and closes only after both lanes stop. Worker and recovery actions open dependent
+repositories under that lifecycle owner's authority on every platform: they
+inherit its schema admission and inode identity, and treat the owner's hot
+rollback journal as a live transaction rather than recovery state. A root open
+with no live authority still refuses every `-journal`, `-wal`, or `-shm`
+sidecar.
 
 `GET /api/v1/operations/support/preview` shows the exact allow-listed bundle
 shape and size. Authenticated, CSRF-bound

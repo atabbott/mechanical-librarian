@@ -365,6 +365,51 @@ class _LinuxDatabaseBinding:
             ) from failure
 
 
+class _PortableDatabaseAuthority:
+    """Attest that this process holds an admitted root over one inode.
+
+    Off Linux there is no private alias and no parent lock, so a dependent open
+    has no descriptor to inherit.  It presents this instead: the inode the root
+    was admitted over, plus that root's schema admission.  The authority knows
+    nothing about sidecars -- whoever holds it is a sibling of a live writer,
+    so the rollback journal it may see belongs to that writer's transaction.
+    """
+
+    def __init__(
+        self, configured_path: Path, expected_identity: tuple[int, int]
+    ) -> None:
+        self.configured_path = configured_path.absolute()
+        self.expected_identity = expected_identity
+        self.closed = False
+        self._schema_validated = False
+
+    def require_current(self) -> None:
+        if self.closed:
+            raise MetadataReportError("database authority changed")
+        try:
+            information = self.configured_path.lstat()
+        except OSError as error:
+            raise MetadataReportError("database authority changed") from error
+        if (
+            not stat.S_ISREG(information.st_mode)
+            or (information.st_dev, information.st_ino) != self.expected_identity
+        ):
+            raise MetadataReportError("database authority changed")
+
+    def borrows_schema_validation(self) -> bool:
+        """Return whether this live root authority admitted this exact inode."""
+        self.require_current()
+        return self._schema_validated
+
+    def mark_schema_validated(self) -> None:
+        """Attest schema admission only after the full validator succeeded."""
+        self.require_current()
+        self._schema_validated = True
+
+    def close(self) -> None:
+        self.closed = True
+
+
 def _connect_bound(
     path: Path,
     descriptor: int,

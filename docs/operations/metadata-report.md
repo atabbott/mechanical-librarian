@@ -74,7 +74,9 @@ alias and its clean private journal artifacts are removed on close. The lock
 coordinates repository instances; ancestor permissions and the dedicated Unix
 identity provide exclusion from other unprivileged actors. Non-Linux runs
 retain the database no-follow and inode checks for development qualification,
-but do not claim the Linux production exclusion guarantee.
+but do not claim the Linux production exclusion guarantee. Same-process
+dependent opens borrow the live root's admission there as well, so a sibling's
+rollback journal is not recovery state.
 
 ## Evidence and replay
 
