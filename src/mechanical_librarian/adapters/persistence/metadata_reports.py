@@ -2224,6 +2224,8 @@ def open_repository(
                 if type(authority) is not _PortableDatabaseAuthority:
                     raise MetadataReportError("database authority changed")
                 authority.require_current()
+                if path.absolute() != authority.configured_path:
+                    raise MetadataReportError("database authority changed")
                 if authority.expected_identity != (
                     information.st_dev,
                     information.st_ino,

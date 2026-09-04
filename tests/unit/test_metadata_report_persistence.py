@@ -1491,6 +1491,44 @@ def test_dependent_open_borrows_a_root_that_is_mid_transaction() -> None:
     assert read.call_count + write.call_count == 0
 
 
+def test_portable_dependent_open_requires_the_authoritys_configured_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A portable authority cannot lend one database's journal namespace to an alias."""
+    monkeypatch.setattr(persistence_reports.sys, "platform", "portable-test")
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        configured = root / "configured.sqlite"
+        alias = root / "alias.sqlite"
+        owner = open_repository(configured)
+        authority = owner.authority
+        assert type(authority) is persistence_binding._PortableDatabaseAuthority
+        owner._connection.execute("BEGIN IMMEDIATE")
+        owner._connection.execute(
+            "UPDATE review_preparation_control SET paused=1,updated_at=7 "
+            "WHERE singleton=1"
+        )
+        try:
+            assert Path(f"{configured}-journal").is_file()
+            dependent = open_repository(configured, create=False, authority=authority)
+            dependent.close()
+            os.link(configured, alias)
+            before = alias.read_bytes()
+            with (
+                patch.object(
+                    persistence_schema.sqlite3,
+                    "connect",
+                    side_effect=AssertionError("alias must fail before connecting"),
+                ),
+                pytest.raises(MetadataReportError, match="database authority changed"),
+            ):
+                open_repository(alias, create=False, authority=authority)
+            assert alias.read_bytes() == before
+        finally:
+            owner._connection.execute("ROLLBACK")
+            owner.close()
+
+
 def test_dependent_opens_continue_while_a_writer_thread_churns_journals() -> None:
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "reports.sqlite"
