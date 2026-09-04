@@ -2093,6 +2093,101 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
             repository.close()
 
 
+def test_rich_no_op_keep_current_binds_and_leaves_no_pending_decision() -> None:
+    genre_claims = tuple(
+        _claim(
+            "catalogue",
+            "edition-1",
+            ClaimKind.GENRE,
+            value,
+            scope=ClaimScope.WORK,
+            order=index,
+        )
+        for index, value in enumerate(("Fantasy", "Adventure"))
+    )
+    report = _proposal_report(
+        fields=_fields(
+            genres=TargetField(
+                TargetDestination.GENRES,
+                TargetFieldState.VALUE,
+                ("Existing",),
+            )
+        ),
+        providers=(_provider("catalogue", "edition-1", genre_claims),),
+    )
+    with tempfile.TemporaryDirectory() as temporary:
+        repository = open_repository(Path(temporary) / "reports.sqlite")
+        options = dict(DEFAULT_OPTIONS)
+        options["genres"] = "fill_empty"
+        destinations = {
+            name: "unsupported" if name == "explicit" else "ask"
+            for name in OPTION_CATALOGUE
+        }
+        destinations["genres"] = "automatic"
+        profile = MetadataPolicyProfile.create(
+            "Rich no-op binding", options, destinations
+        )
+        resolved = resolve_policy(profile, report.target.library)
+        repository.enter_shadow_preview(1)
+        repository.create_metadata_policy_draft(profile.canonical_json)
+        repository.activate_metadata_policy(
+            profile.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            2,
+        )
+        repository.activate_qualified_automatic(3)
+        proposal_set = evaluate_report(
+            report,
+            resolved.resolved_id,
+            human_review_destinations(resolved),
+        )
+        repository.publish(report, lambda: True)
+        repository.publish_proposal(proposal_set)
+        case_id = json.loads(repository.admit_review_case(proposal_set))[
+            "review_case_id"
+        ]
+        outcome = ShadowOutcomeSet.from_json(
+            repository.persist_shadow_outcome(case_id, 4)
+        )
+        assert [("genres", "keep_current")] == [
+            (value.destination, value.disposition)
+            for value in outcome.outcomes
+            if value.destination == "genres"
+        ]
+        decisions = tuple(
+            AutomaticDecision.from_json(value)
+            for value in repository.get_review_case_decisions(case_id)
+        )
+        assert 1 == len(decisions)
+        decision = decisions[0]
+        assert ("genres", "keep_current", None) == (
+            decision.destination,
+            decision.outcome,
+            decision.candidate_id,
+        )
+        source = next(
+            value
+            for value in outcome.outcomes
+            if value.outcome_id == decision.source_outcome_id
+        )
+        # `fill_empty` over a filled target preserves it without electing an
+        # alternative, so the outcome cites no evidence and no combination.
+        # That shape is the whole defect: it once failed authority binding and
+        # wedged the continuous scheduler on the first such decision.
+        assert ((), ()) == (source.citation_ids, source.combination_ids)
+        authority = repository.field_effect_authority_source(decision)
+        assert ("genres", case_id, None) == (
+            authority["destination"],
+            authority["review_case_id"],
+            authority["decision_value"],
+        )
+        assert 1 == len(repository.pending_field_effect_decision_documents(100))
+        assert repository.record_current_field_effect_no_change(decision, 5) is True
+        assert () == repository.pending_field_effect_decision_documents(100)
+        repository.close()
+
+
 def test_uncorroborated_subtitle_under_automatic_mints_no_decision() -> None:
     report = _bibliographic_report(
         current_title="Book",

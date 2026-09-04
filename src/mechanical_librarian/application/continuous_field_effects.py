@@ -735,14 +735,14 @@ class ContinuousGuardedApplication:
             no_change = getattr(
                 self._repository, "record_current_field_effect_no_change", None
             )
-            if (
-                type(decision) is AutomaticDecision
-                and no_change is not None
-                and no_change(decision, self._clock())
-            ):
-                self._advance_schedule_cursor(decision, generation)
-                continue
             try:
+                if (
+                    type(decision) is AutomaticDecision
+                    and no_change is not None
+                    and no_change(decision, self._clock())
+                ):
+                    self._advance_schedule_cursor(decision, generation)
+                    continue
                 snapshot = self._authority.resolve(decision)
             except (FieldEffectError, GuardedApplicationError, ValueError) as error:
                 # Retirement answers a binding that no longer holds. A storage
@@ -750,13 +750,29 @@ class ContinuousGuardedApplication:
                 # would write a `stale` cover event and swallow the fault, so
                 # it propagates instead. The resolver only began naming this
                 # code when its storage faults stopped escaping untyped.
+                code = getattr(error, "code", None)
                 if (
-                    getattr(error, "code", None) != "persistence"
+                    code != "persistence"
                     and decision.destination == "cover"
                     and self._repository.retire_stale_cover_decision(
                         decision.decision_id, self._clock()
                     )
                 ):
+                    self._advance_schedule_cursor(decision, generation)
+                    continue
+                # One decision that cannot bind is a fact about that decision,
+                # not about the queue behind it. The pending order is a single
+                # union across every library, so aborting here starves every
+                # later decision -- human accepts included -- until a restart
+                # meets the same row again. Name the failure and move on; a
+                # storage fault still propagates, because it says nothing
+                # about this decision and the next read would fault too.
+                if (
+                    code != "persistence"
+                    and decision.destination != "cover"
+                    and type(error) is FieldEffectError
+                ):
+                    self._last_failure = code or "unavailable"
                     self._advance_schedule_cursor(decision, generation)
                     continue
                 raise
@@ -1448,9 +1464,12 @@ class ContinuousGuardedApplication:
         while not self._stop.is_set():
             self._wake.wait(self._polling_seconds)
             self._wake.clear()
+            # Cleared before the cycle, not after it: a decision the scheduler
+            # named and stepped over reports its own failure without aborting,
+            # and clearing afterwards would erase exactly that record.
+            self._last_failure = None
             try:
                 self._serialize(self._run_until_idle)
-                self._last_failure = None
             except (FieldEffectError, GuardedApplicationError, ValueError) as error:
                 self._last_failure = getattr(error, "code", "unavailable")
 

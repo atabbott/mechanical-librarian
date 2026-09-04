@@ -1417,13 +1417,15 @@ def _installed_continuous_qualification(
                 "tags",
                 "cover",
             }
+            # No date destination is here. `publishedYear` is the fixed
+            # redundant-publication-context result by design, and `publishedDate`
+            # needs two distinct provider authorities, which both synthetic
+            # catalogues cannot supply. Their rules are proven in unit tests.
             automatic_destinations = {
                 "title",
                 "authors",
                 "language",
                 "publisher",
-                "publishedDate",
-                "publishedYear",
             }
             missing_human = set(human_destinations)
             available_human: dict[str, int] = {
@@ -1837,6 +1839,11 @@ def _installed_continuous_qualification(
                         for destination, origin in expected_origins.items()
                     ):
                         break
+                    # A named scheduler failure is a verdict, not slow progress.
+                    # Waiting the remaining deadline out adds nothing but a
+                    # minute and a half to every diagnosis.
+                    if final_activity.get("last_failure") is not None:
+                        break
                 time.sleep(2)
             coverage = {
                 destination: "automatic_policy"
@@ -1854,11 +1861,27 @@ def _installed_continuous_qualification(
                 binding_diagnostics = []
                 for document in repository.pending_field_effect_decision_documents(100):
                     decision = continuous._decision(document)
-                    first = continuous._authority.resolve(decision)
-                    application = continuous._applications[
-                        (first.connection, first.library)
-                    ]
-                    second = application._authority.resolve(decision)
+                    # A decision that refuses to bind is the report, not an
+                    # exception that replaces it. Letting one escape here masks
+                    # the whole `installed_scheduler_failed` payload.
+                    try:
+                        first = continuous._authority.resolve(decision)
+                        application = continuous._applications[
+                            (first.connection, first.library)
+                        ]
+                        second = application._authority.resolve(decision)
+                    except FieldEffectError as error:
+                        binding_diagnostics.append(
+                            {
+                                "destination": decision.destination,
+                                "error": error.code,
+                                "outcome": getattr(decision, "outcome", None),
+                                "policy_category": getattr(
+                                    decision, "policy_category", None
+                                ),
+                            }
+                        )
+                        continue
                     comparable = (
                         "connection",
                         "library",
@@ -1913,9 +1936,9 @@ def _installed_continuous_qualification(
                         continue
                     detail_value = detail.json()
                     target = detail_value.get("target")
-                    if (
-                        type(target) is not dict
-                        or target.get("item") not in operator_item_ids
+                    if type(target) is not dict or (
+                        operator_item_ids
+                        and target.get("item") not in operator_item_ids
                     ):
                         continue
                     for field in detail_value.get("fields", []):

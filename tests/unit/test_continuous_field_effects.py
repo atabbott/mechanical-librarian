@@ -818,6 +818,63 @@ def _prior_f20_decision() -> AutomaticDecision:
     )
 
 
+def _bindable_f20_decision(occurred_at: int) -> AutomaticDecision:
+    return AutomaticDecision.create(
+        review_case_id="review_case_" + f"{occurred_at:064x}",
+        report_id="report_" + f"{occurred_at:064x}",
+        proposal_set_id="proposal_set_" + f"{occurred_at:064x}",
+        proposal_id="review_proposal_" + f"{occurred_at:064x}",
+        target_fingerprint="b" * 64,
+        destination="genres",
+        outcome="keep_current",
+        candidate_id=None,
+        resolved_policy_id="resolved_policy_" + "6" * 64,
+        policy_generation=1,
+        rule_id="shadow_rule_" + "7" * 64,
+        policy_category="genres",
+        policy_option="fill_empty",
+        qualification_manifest_sha256=F20_QUALIFICATION_CANDIDATE_SHA256,
+        source_outcome_id="shadow_outcome_" + f"{occurred_at:064x}",
+        bundle_id=None,
+        occurred_at=occurred_at,
+    )
+
+
+def test_unbindable_decision_is_named_and_stepped_over_not_left_to_starve() -> None:
+    wedged = _bindable_f20_decision(1)
+    following = _bindable_f20_decision(101)
+
+    class Repository(_ActivityPagedRepository):
+        def record_current_field_effect_no_change(self, decision, _changed_at):
+            if decision.decision_id == wedged.decision_id:
+                raise FieldEffectError("authority_binding")
+            return False
+
+        def pending_field_effect_decision_counts(self):
+            return ()
+
+    repository = Repository([wedged, following])
+    planner = _Planner()
+    service = ContinuousGuardedApplication(
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "beta"): planner},
+        ),
+        {("primary", "beta"): _AllowedCapability()},
+        _Authority(),
+        (("primary", "beta"),),
+        lambda: 1,
+        lambda *_: None,
+    )
+
+    # The pending order is one union across every library, so a decision that
+    # cannot bind must not hold the decisions behind it hostage.
+    assert 1 == service.schedule()
+    assert [following.decision_id] == planner.planned
+    assert "authority_binding" == service.activity()["last_failure"]
+
+
 def test_schedule_skips_prior_f20_before_no_change_authority_or_capability() -> None:
     decision = _prior_f20_decision()
     assert AutomaticDecision.from_json(decision.to_json()) == decision

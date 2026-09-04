@@ -8,6 +8,13 @@
   a failed recovery wake leaves preparation lane 0 running. Offline opens still
   refuse leftover journals. (#992)
 
+- A series, genres, tags, description, or subtitle pass that finds the target
+  already holding the value it would keep now records that no-change fact
+  instead of failing authority binding. One such decision no longer stalls
+  continuous application for the whole install: a decision that cannot bind is
+  named in Activity and stepped over, leaving every later automatic and human
+  decision free to apply. (#993)
+
 - Automatic series decisions now accept one complete provider authority while
   retaining closed abstention for named incomplete evidence, genuine ambiguity,
   or a contributing provider-lane failure. Unsupported provider-wide series
