@@ -18,7 +18,7 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
 from mechanical_librarian.domain.metadata_report import (
     MAX_TAGS, ClaimKind, ClaimScope, FieldState, IdentifierRelation,
     MetadataReport, ProviderCandidate, ProviderClaim, ProviderEvidenceKind,
-    ProviderObservation, ProviderStatus,
+    ProviderObservation, ProviderQueryKind, ProviderStatus,
     TargetDestination, TargetField, TargetFieldState, isbn_family,
     normalize_title,
 )
@@ -27,6 +27,7 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalOutcome, ProposalResult, ProposalSet,
     ProposalValueKind, VERIFIED_MANIFESTATION_ISBN_REASON,
     provider_candidate_represents_target_work,
+    series_name_equivalence_key,
     segment_corroboration,
 )
 
@@ -458,7 +459,7 @@ def _automatic_series_abstention(
     candidate: ProposalAlternative | None,
     retained_claims: dict[str, _RetainedClaim],
 ) -> str | None:
-    """Keep automatic series authority within its existing two-lineage proof."""
+    """Reject only unsafe evidence that could have elected this series value."""
     failed_statuses = {
         ProviderStatus.AUTHENTICATION,
         ProviderStatus.AUTHORIZATION,
@@ -470,21 +471,6 @@ def _automatic_series_abstention(
         ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
         ProviderStatus.QUERY_LIMIT_EXCEEDED,
     }
-    if any(provider.status in failed_statuses for provider in report.providers) or any(
-        lane.status in failed_statuses
-        for provider in report.providers
-        for lane in provider.lanes
-    ):
-        return "series_provider_failure"
-    if any(
-        claim.kind is ClaimKind.SERIES_SEQUENCE
-        and claim.state is not FieldState.VALID
-        and not (claim.state is FieldState.ABSENT and claim.value is None)
-        for provider in report.providers
-        for source in provider.candidates
-        for claim in source.claims
-    ):
-        return "series_membership_incomplete"
     memberships = tuple(
         membership
         for provider in report.providers
@@ -497,11 +483,30 @@ def _automatic_series_abstention(
             )
         )
     )
-    if any(
-        not positioned
-        and sum(other_name == name for other_name, _ in memberships) > 1
-        for name, positioned in memberships
-    ):
+    membership_incomplete = any(
+        state is not FieldState.VALID
+        and not (
+            state is FieldState.UNSUPPORTED
+            and any(
+                other_name == name and other_state is FieldState.VALID
+                for other_name, other_state in memberships
+            )
+        )
+        for name, state in memberships
+    )
+    unresolved_conflict = (
+        candidate is None
+        and result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+        and not any(
+            state is not FieldState.VALID
+            and any(
+                other_name == name and other_state is FieldState.VALID
+                for other_name, other_state in memberships
+            )
+            for name, state in memberships
+        )
+    )
+    if membership_incomplete and not unresolved_conflict:
         return "series_membership_incomplete"
     if candidate is None:
         return (
@@ -509,27 +514,70 @@ def _automatic_series_abstention(
             if result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
             else None
         )
+    relevant = tuple(
+        retained
+        for reference in candidate.evidence_references
+        if (retained := retained_claims.get(reference)) is not None
+        and type(retained.provider) is ProviderObservation
+        and type(retained.candidate) is ProviderCandidate
+    )
+    relevant_candidates = {
+        (retained.provider.provider, retained.candidate.identity)
+        for retained in relevant
+    }
+    contributing_kinds = {
+        lane.kind
+        for provider in report.providers
+        for lane in provider.lanes
+        if any(
+            (provider.provider, lane_candidate.edition_identity) in relevant_candidates
+            for lane_candidate in lane.candidates
+        )
+    }
+    if not contributing_kinds:
+        contributing_kinds = {
+            retained.provider.query_kind
+            for retained in relevant
+            if retained.provider.query_kind
+            in {ProviderQueryKind.ISBN, ProviderQueryKind.WORK, ProviderQueryKind.ASIN}
+        }
+    failed_kinds = sorted(
+        {
+            provider.query_kind
+            for provider in report.providers
+            if provider.status in failed_statuses
+            and provider.query_kind in contributing_kinds
+        }
+        | {
+            lane.kind
+            for provider in report.providers
+            for lane in provider.lanes
+            if lane.status in failed_statuses and lane.kind in contributing_kinds
+        },
+        key=lambda kind: kind.value,
+    )
+    if failed_kinds:
+        return f"series_provider_failure_{failed_kinds[0].value}"
+    if any(
+        claim.kind is ClaimKind.SERIES_SEQUENCE
+        and claim.state is not FieldState.VALID
+        and not (claim.state is FieldState.ABSENT and claim.value is None)
+        for retained in relevant
+        if type(claim := retained.claim) is ProviderClaim
+    ):
+        return "series_membership_incomplete"
     if candidate.value.kind is ProposalValueKind.SERIES and any(
         value.sequence is None for value in candidate.value.value
     ):
         return "series_membership_incomplete"
-    lineages = {
-        retained.provider.authority
-        for reference in candidate.evidence_references
-        if (retained := retained_claims.get(reference)) is not None
-        and retained.provider is not None
-        and retained.provider.authority is not None
-    }
-    if len(lineages) < 2:
-        return "series_independent_corroboration_required"
     return None
 
 
 def _series_membership_positions(
     claims: tuple[ProviderClaim, ...],
-) -> tuple[tuple[str, bool], ...]:
+) -> tuple[tuple[str, FieldState | None], ...]:
     """Pair each series name with only its adjacent sequence slot."""
-    values: list[tuple[str, bool]] = []
+    values: list[tuple[str, FieldState | None]] = []
     index = 0
     while index < len(claims):
         prior = claims[index] if claims[index].kind is ClaimKind.SERIES_SEQUENCE else None
@@ -551,10 +599,14 @@ def _series_membership_positions(
         if series.state is FieldState.VALID and series.value is not None:
             values.append(
                 (
-                    normalize_title(series.value).casefold(),
-                    sequence is not None
-                    and sequence.state is FieldState.VALID
-                    and sequence.value is not None,
+                    series_name_equivalence_key(series.value),
+                    (
+                        FieldState.VALID
+                        if sequence is not None
+                        and sequence.state is FieldState.VALID
+                        and sequence.value is not None
+                        else None if sequence is None else sequence.state
+                    ),
                 )
             )
     return tuple(values)

@@ -728,6 +728,132 @@ def test_series_preservation_normalizes_names_but_not_sequences() -> None:
     assert ProposalOutcome.KEEP == result.outcome
 
 
+def test_series_election_collapses_only_closed_display_variants() -> None:
+    providers = (
+        _provider(
+            "catalogue",
+            "edition-1",
+            (
+                _claim(
+                    "catalogue",
+                    "edition-1",
+                    ClaimKind.SERIES,
+                    "The Reading Order Trilogy",
+                    scope=ClaimScope.WORK,
+                ),
+                _claim(
+                    "catalogue",
+                    "edition-1",
+                    ClaimKind.SERIES_SEQUENCE,
+                    "2",
+                    scope=ClaimScope.WORK,
+                    order=1,
+                ),
+            ),
+        ),
+        _provider(
+            "search",
+            "edition-2",
+            (
+                _claim(
+                    "search",
+                    "edition-2",
+                    ClaimKind.SERIES,
+                    "reading order",
+                    scope=ClaimScope.WORK,
+                ),
+                _claim(
+                    "search",
+                    "edition-2",
+                    ClaimKind.SERIES_SEQUENCE,
+                    "2",
+                    scope=ClaimScope.WORK,
+                    order=1,
+                ),
+            ),
+        ),
+    )
+    result = _result(
+        evaluate_report(
+            _report(
+                fields=_fields(
+                    series=TargetField(
+                        TargetDestination.SERIES, TargetFieldState.MISSING
+                    )
+                ),
+                providers=providers,
+            )
+        ),
+        TargetDestination.SERIES,
+    )
+
+    assert ProposalOutcome.PROPOSE_CHANGE == result.outcome
+    assert 1 == len(result.alternatives)
+
+
+def test_series_election_does_not_fuzzily_collapse_substantive_names() -> None:
+    providers = (
+        _provider(
+            "catalogue",
+            "edition-1",
+            (
+                _claim(
+                    "catalogue",
+                    "edition-1",
+                    ClaimKind.SERIES,
+                    "The Reading Order Trilogy",
+                    scope=ClaimScope.WORK,
+                ),
+                _claim(
+                    "catalogue",
+                    "edition-1",
+                    ClaimKind.SERIES_SEQUENCE,
+                    "2",
+                    scope=ClaimScope.WORK,
+                    order=1,
+                ),
+            ),
+        ),
+        _provider(
+            "search",
+            "edition-2",
+            (
+                _claim(
+                    "search",
+                    "edition-2",
+                    ClaimKind.SERIES,
+                    "Reading Order Companion",
+                    scope=ClaimScope.WORK,
+                ),
+                _claim(
+                    "search",
+                    "edition-2",
+                    ClaimKind.SERIES_SEQUENCE,
+                    "2",
+                    scope=ClaimScope.WORK,
+                    order=1,
+                ),
+            ),
+        ),
+    )
+    result = _result(
+        evaluate_report(
+            _report(
+                fields=_fields(
+                    series=TargetField(
+                        TargetDestination.SERIES, TargetFieldState.MISSING
+                    )
+                ),
+                providers=providers,
+            )
+        ),
+        TargetDestination.SERIES,
+    )
+
+    assert ProposalOutcome.UNRESOLVED_CHOICE == result.outcome
+    assert 2 == len(result.alternatives)
+
+
 def test_series_preservation_accepts_local_sequence_before_name() -> None:
     claims = (
         LocalClaim.create(

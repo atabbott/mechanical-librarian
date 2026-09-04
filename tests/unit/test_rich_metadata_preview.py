@@ -1904,7 +1904,7 @@ def test_automatic_series_ignores_interleaved_nonseries_claims_when_pairing() ->
     assert "projected" == field.outcome
 
 
-def test_automatic_series_abstains_when_agreement_has_one_provider_lineage() -> None:
+def test_automatic_series_projects_one_provider_lineage() -> None:
     report = _automatic_series_report(
         _series_provider("catalogue", "edition-1", "hardcover"),
         _series_provider("mirror", "edition-2", "hardcover"),
@@ -1912,7 +1912,7 @@ def test_automatic_series_abstains_when_agreement_has_one_provider_lineage() -> 
 
     field = _automatic_series_preview(report)
 
-    assert ("abstain", "series_independent_corroboration_required", None) == (
+    assert ("projected", None, ({"name": "Reading Order", "sequence": "2"},)) == (
         field.outcome,
         field.reason,
         field.desired_value,
@@ -1939,7 +1939,7 @@ def test_automatic_series_abstains_with_a_stable_conflict_reason() -> None:
     )
 
 
-def test_automatic_series_abstains_when_provider_observation_failed() -> None:
+def test_automatic_series_ignores_an_unrelated_provider_failure() -> None:
     report = _automatic_series_report(
         _series_provider("catalogue", "edition-1", "hardcover"),
         _series_provider("search", "edition-2", "open_library"),
@@ -1948,16 +1948,14 @@ def test_automatic_series_abstains_when_provider_observation_failed() -> None:
 
     field = _automatic_series_preview(report)
 
-    assert ("abstain", "series_provider_failure", None) == (
+    assert ("projected", None, ({"name": "Reading Order", "sequence": "2"},)) == (
         field.outcome,
         field.reason,
         field.desired_value,
     )
 
 
-def test_automatic_series_abstains_when_a_candidate_provider_has_a_failed_lane() -> (
-    None
-):
+def test_automatic_series_ignores_an_unrelated_failed_lane() -> None:
     base = _automatic_series_report(
         _series_provider("catalogue", "edition-1", "hardcover"),
         _series_provider("search", "edition-2", "open_library"),
@@ -2017,11 +2015,115 @@ def test_automatic_series_abstains_when_a_candidate_provider_has_a_failed_lane()
 
     field = _automatic_series_preview(report)
 
-    assert ("abstain", "series_provider_failure", None) == (
+    assert ("projected", None, ({"name": "Reading Order", "sequence": "2"},)) == (
         field.outcome,
         field.reason,
         field.desired_value,
     )
+
+
+def test_automatic_series_abstains_for_a_relevant_failed_lane() -> None:
+    base = _automatic_series_report(
+        _series_provider("catalogue", "edition-1", "hardcover"),
+    )
+    local = LocalClaim.create(
+        kind=ClaimKind.TITLE,
+        observed="Current title",
+        canonical="Current title",
+        excerpt="Current title",
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.WORK,
+    )
+    provider = base.providers[0]
+    candidate = provider.candidates[0]
+    lane = ProviderLaneObservation(
+        "lane_" + "a" * 64,
+        ProviderQueryKind.ISBN,
+        ProviderStatus.CANDIDATES,
+        (local.reference,),
+        "9780306406157",
+        candidates=(
+            ProviderLaneCandidate(
+                provider_lane_candidate_reference(
+                    provider.provider,
+                    "lane_" + "a" * 64,
+                    candidate.identity,
+                    candidate.work_identity,
+                ),
+                candidate.identity,
+                candidate.work_identity,
+            ),
+        ),
+    )
+    failed = ProviderLaneObservation(
+        "lane_" + "b" * 64,
+        ProviderQueryKind.ISBN,
+        ProviderStatus.UNAVAILABLE,
+        (local.reference,),
+        "9780306406157",
+    )
+    report = MetadataReport.create(
+        target=base.target,
+        file=base.file,
+        local_claims=(local,),
+        local_reasons=("no_opening_matter",),
+        providers=(
+            replace(
+                provider,
+                input_references=(local.reference,),
+                query_kind=ProviderQueryKind.DISCOVERY,
+                lanes=(lane, failed),
+            ),
+        ),
+    )
+
+    field = _automatic_series_preview(report)
+
+    assert ("abstain", "series_provider_failure_isbn", None) == (
+        field.outcome,
+        field.reason,
+        field.desired_value,
+    )
+
+
+def test_automatic_series_treats_provider_wide_unsupported_output_as_no_evidence() -> (
+    None
+):
+    unsupported_series = ProviderClaim.create(
+        provider="open_library",
+        candidate="edition-2",
+        kind=ClaimKind.SERIES,
+        value=None,
+        state=FieldState.UNSUPPORTED,
+        scope=ClaimScope.WORK,
+        applicability="not_applicable",
+        raw_order=0,
+    )
+    unsupported_sequence = ProviderClaim.create(
+        provider="open_library",
+        candidate="edition-2",
+        kind=ClaimKind.SERIES_SEQUENCE,
+        value=None,
+        state=FieldState.UNSUPPORTED,
+        scope=ClaimScope.WORK,
+        applicability="not_applicable",
+        raw_order=1,
+    )
+    report = _automatic_series_report(
+        _series_provider("catalogue", "edition-1", "hardcover"),
+        _series_provider(
+            "open_library",
+            "edition-2",
+            "open_library",
+            (unsupported_series, unsupported_sequence),
+        ),
+    )
+
+    field = _automatic_series_preview(report)
+
+    assert "projected" == field.outcome
 
 
 def test_automatic_series_abstains_when_membership_is_materially_incomplete() -> None:

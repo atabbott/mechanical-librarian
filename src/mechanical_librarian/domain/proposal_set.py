@@ -3563,7 +3563,7 @@ def _observation_key(destination: TargetDestination, value: ProposalValue) -> st
     # value is TargetSeries for the SERIES destination and str everywhere else.
     if destination is TargetDestination.SERIES:
         normalized: object = tuple(
-            (_comparison(TargetDestination.SERIES, item.name), item.sequence)
+            (series_name_equivalence_key(item.name), item.sequence)
             for item in cast("tuple[TargetSeries, ...]", value.value)
         )
     elif type(value.value) is tuple:
@@ -3582,6 +3582,16 @@ def _observation_key(destination: TargetDestination, value: ProposalValue) -> st
     else:
         normalized = value.value
     return canonical_json({"kind": value.kind.value, "value": normalized})
+
+
+def series_name_equivalence_key(value: str) -> str:
+    """Collapse only the recorded display decorations for series election."""
+    words = _comparison(TargetDestination.SERIES, value).split()
+    if words[:1] == ["the"]:
+        words = words[1:]
+    if words[-1:] in (["trilogy"], ["series"]):
+        words = words[:-1]
+    return " ".join(words)
 
 
 def _eligible_identifier(
