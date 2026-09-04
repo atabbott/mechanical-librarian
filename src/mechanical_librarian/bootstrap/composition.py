@@ -185,6 +185,7 @@ from mechanical_librarian.application.metadata_report import (
     TargetNotFoundError,
     TargetSnapshot,
     UnsupportedMediaError,
+    admitted_audiobook_identity,
     require_report_current,
 )
 from mechanical_librarian.application.owner_settings import (
@@ -1965,11 +1966,15 @@ def run_metadata_report_loaded(
                 report.report_id,
                 int(time.time()),
                 0,
-                # An audiobook's local evidence is the whole of its preparation:
-                # the work ends terminally here, in the same transaction that
-                # published the report, rather than queueing stages that have
-                # no provider comparison to work from.
-                "evidence_only" if report.file.format in AUDIO_FILE_FORMATS else None,
+                # An audiobook whose work identity no provider observation
+                # admits has nothing to compare a proposal against, so its
+                # evidence is recorded and the work completes in the same
+                # transaction that published the report. An admitted one
+                # queues the proposal stage exactly as an ebook does (#966).
+                None
+                if report.file.format not in AUDIO_FILE_FORMATS
+                or admitted_audiobook_identity(report)
+                else "evidence_only",
                 review_claim_next,
                 None,
             )

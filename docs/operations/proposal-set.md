@@ -12,10 +12,10 @@ cover provider.
 An exact ProposalSet can be reopened offline through the application repository
 or typed source-only inspector.
 
-Success is exactly one canonical `proposal-set-v5` JSON document plus a
+Success is exactly one canonical `proposal-set-v6` JSON document plus a
 newline. Failure emits no document and one value-free diagnostic.
 
-Only `proposal-set-v5` documents under `fixed-conservative-v19` and the exact current
+Only `proposal-set-v6` documents under `fixed-conservative-v19` and the exact current
 `proposal_sets` table envelope are accepted. A database with the earlier
 `fixed-conservative-v1`, `fixed-conservative-v2`, `fixed-conservative-v3`, or
 `fixed-conservative-v4`, `fixed-conservative-v5`, `fixed-conservative-v6`,

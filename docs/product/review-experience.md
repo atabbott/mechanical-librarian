@@ -326,6 +326,15 @@ advance or claim success. A completed work lists each field and recorded
 outcome, retains work identity, and offers deliberate next-work continuation.
 It does not imply external application or verification.
 
+An audiobook is reviewed through the same rail as an ebook, with Narrators and
+ASIN among its ordered fields. Its decisions are recorded and not applied until
+F47 brings audiobook writes, and the history says so in those words beside the
+decision it describes. Narrators is not a written field on either medium until
+then. A prepared audiobook that produced no case at all is not
+a failure: the library counts it as recorded, and its row opens the evidence its
+report retained
+([ADR-0069](../architecture/decisions/0069-audiobook-review-cases-and-terminal-outcomes.md)).
+
 Cover review remains advisory: small eligible sets compare current and
 candidates equally; larger sets retain the incumbent while exposing the full
 eligible gallery. Below 900px the incumbent becomes the first item of the same

@@ -14,6 +14,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
 )
 from mechanical_librarian.domain.proposal_set import (
+    MEDIA_KINDS,
     BibliographicSelectionKind,
     ProposalOutcome,
     ProposalSet,
@@ -41,6 +42,22 @@ class ReviewCaseValueError(ValueError):
     """A review case is outside the closed production-admission contract."""
 
 
+def proposal_media_kind(proposal_document: str) -> str:
+    """Read what one proposal document was formed for.
+
+    Every surface that could act on a decision has to be able to ask what it is
+    acting on, and some of them hold the proposal document rather than the case
+    object. One reader answers for all of them (#966).
+    """
+    try:
+        kind = json.loads(proposal_document)["media_kind"]
+    except (json.JSONDecodeError, KeyError, TypeError) as error:
+        raise ReviewCaseValueError("review case proposal is invalid") from error
+    if kind not in MEDIA_KINDS:
+        raise ReviewCaseValueError("review case proposal is invalid")
+    return cast("str", kind)
+
+
 def review_proposals(
     proposal_set_id: str,
     proposal_document: str,
@@ -60,6 +77,7 @@ def review_proposals(
         target_fingerprint=proposal.target_fingerprint,
         results=proposal.results,
         resolved_policy_id=proposal.resolved_policy_id,
+        media_kind=proposal.media_kind,
     ).proposal_set_id
     bibliographic_destinations = {
         TargetDestination.TITLE.value,
@@ -501,6 +519,17 @@ class ReviewCase:
         return _thaw_json_object(self._relationships)
 
     @property
+    def media_kind(self) -> str:
+        """Name what this case's proposals were formed for.
+
+        F47 owns audiobook writes, so every surface that could act on a case
+        has to be able to ask what it is acting on. The answer is already
+        bound into the proposal document `__post_init__` validated, so it is
+        read from there rather than carried a second time (#966).
+        """
+        return proposal_media_kind(self.proposal_document)
+
+    @property
     def actionable(self) -> tuple[dict[str, object], ...]:
         return tuple(
             _thaw_json_object(value)
@@ -662,4 +691,5 @@ __all__ = [
     "ReviewCase",
     "ReviewCaseValueError",
     "is_actionable",
+    "proposal_media_kind",
 ]

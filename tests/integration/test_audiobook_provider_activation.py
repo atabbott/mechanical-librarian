@@ -1,10 +1,12 @@
 """The activated audiobook flow, composed end to end over real stores.
 
 One audiobook item goes from local extraction through the four configured
-providers to a published report, a terminal `evidence_only` receipt in the same
-transaction, and a scan the item leaves clean. The providers are fakes on the
-real composition seams -- the adapter classes composition constructs -- so what
-is proved is the wiring rather than the adapters, which have their own suites.
+providers to a published report and on to whichever end its own evidence
+earns: the proposal stage when an observation admits the recording's work
+identity, and a completed `evidence_only` receipt in the publishing
+transaction when none does. The providers are fakes on the real composition
+seams -- the adapter classes composition constructs -- so what is proved is
+the wiring rather than the adapters, which have their own suites.
 """
 
 from __future__ import annotations
@@ -159,7 +161,9 @@ class _AudioInspector:
 
 
 def _enrichment_candidate(
-    provider: str, local_claims: tuple[LocalClaim, ...]
+    provider: str,
+    local_claims: tuple[LocalClaim, ...],
+    duration: str = _PROVIDER_DURATION,
 ) -> ProviderCandidate:
     """One resolved product, with the chapter vector the ASIN lane enriches."""
     identity = "audnexus-book-" + _ASIN
@@ -168,7 +172,7 @@ def _enrichment_candidate(
         (ClaimKind.TITLE, "Project Hail Mary", ClaimScope.WORK, None),
         (ClaimKind.CREATOR, "Andy Weir", ClaimScope.WORK, "author"),
         (ClaimKind.CONTRIBUTOR, "Ray Porter", ClaimScope.WORK, "narrator"),
-        (ClaimKind.DURATION, _PROVIDER_DURATION, ClaimScope.EDITION, None),
+        (ClaimKind.DURATION, duration, ClaimScope.EDITION, None),
     )
     claims = tuple(
         ProviderClaim.create(
@@ -223,12 +227,14 @@ class _FakeAudiobookProvider:
         lane_kinds: frozenset[ProviderQueryKind] = frozenset({ProviderQueryKind.ASIN}),
         cover_kind: CoverSourceKind | None = None,
         cover_url: str | None = None,
+        duration: str = _PROVIDER_DURATION,
     ) -> None:
         self.name = name
         self.authority = authority
         self.calls = calls
         self.status = status
         self.lane_kinds = lane_kinds
+        self.duration = duration
         self.cover_descriptors: tuple[ProviderCoverDescriptor, ...] = (
             ()
             if cover_kind is None
@@ -279,7 +285,11 @@ class _FakeAudiobookProvider:
                 ProviderLaneResult(
                     lane,
                     ProviderStatus.CANDIDATES,
-                    (_enrichment_candidate(self.name, plan.local_claims),),
+                    (
+                        _enrichment_candidate(
+                            self.name, plan.local_claims, self.duration
+                        ),
+                    ),
                 )
                 for lane in lanes
             ),
@@ -438,7 +448,8 @@ def test_an_audiobook_publishes_provider_evidence_and_ends_terminally(
         serialized, repository = _run(root, providers)
         published = MetadataReport.from_json(serialized)
         work = repository._connection.execute(
-            "SELECT stage,state,failure_code,failure_root FROM review_preparation_work"
+            "SELECT stage,state,failure_code,failure_root,outcome "
+            "FROM review_preparation_work"
         ).fetchone()
         progress = repository.review_pipeline_progress("primary", "fiction")
         remaining = repository.claim_review_pipeline_action(15)
@@ -475,15 +486,17 @@ def test_an_audiobook_publishes_provider_evidence_and_ends_terminally(
         )
         assert published.audio is not None
         assert "metadata-report-v37" == published.schema_version
-        # Preparation ended in the publishing transaction, under the renamed
-        # terminal code. Nothing follows it, and the scan counts the item as
-        # ready rather than as something asking the owner to unblock it.
-        assert ("provider", "failed", "evidence_only", None) == work
-        assert remaining is None
+        # Three authorities answered the ASIN lane with candidates, so the
+        # recording's work identity is admitted and preparation queued the
+        # proposal stage exactly as an ebook's does (#966).
+        assert ("proposal", "queued", None, None, None) == work
+        assert remaining is not None
+        assert "proposal" == remaining.stage
         assert progress is not None
         assert 0 == progress.blocked
-        assert 1 == dict(progress.stages)["ready"]
-        assert 0 == dict(progress.stages)["failed"]
+        assert 0 == progress.recorded
+        assert 0 == progress.ready
+        assert 1 == dict(progress.stages)["proposals"]
 
 
 def test_a_degraded_primary_still_binds_the_remaining_observations(
@@ -516,7 +529,7 @@ def test_a_degraded_primary_still_binds_the_remaining_observations(
         serialized, repository = _run(root, providers)
         published = MetadataReport.from_json(serialized)
         work = repository._connection.execute(
-            "SELECT stage,state,failure_code FROM review_preparation_work"
+            "SELECT stage,state,outcome FROM review_preparation_work"
         ).fetchone()
         repository.close()
 
@@ -525,9 +538,100 @@ def test_a_degraded_primary_still_binds_the_remaining_observations(
         assert ProviderStatus.CANDIDATES is statuses["enrichment"]
         assert ProviderStatus.CANDIDATES is statuses["silo"]
         assert 4 == len(published.providers)
-        # A degraded primary is still a published report and still a terminal
-        # disposition: nothing about the audiobook path waits on it.
-        assert ("provider", "failed", "evidence_only") == work
+        # A degraded primary is still a published report, and the two
+        # authorities that did answer still admit the recording, so the work
+        # goes on to the proposal stage.
+        assert ("proposal", "queued", None) == work
+
+
+def test_an_unmatched_audiobook_records_its_evidence_and_completes(
+    calls: list[tuple[str, ProviderQueryKind]],
+) -> None:
+    """No admitted identity is a first-class end, not a failure code.
+
+    Nothing here can be compared against a proposal, so the report is the
+    outcome: preparation completes on `evidence_only` in the publishing
+    transaction, the scan counts the item as recorded rather than as something
+    asking the owner to act, and no failure is reported (#940, #966).
+    """
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        providers = {
+            authority: _FakeAudiobookProvider(
+                name, authority, calls, status=ProviderStatus.NO_MATCH
+            )
+            for name, authority in (
+                ("audible", "audible_catalog"),
+                ("enrichment", "audnexus"),
+                ("silo", "audiosilo"),
+                ("store", "itunes_search"),
+            )
+        }
+        serialized, repository = _run(root, providers)
+        published = MetadataReport.from_json(serialized)
+        work = repository._connection.execute(
+            "SELECT stage,state,failure_code,failure_root,outcome "
+            "FROM review_preparation_work"
+        ).fetchone()
+        progress = repository.review_pipeline_progress("primary", "fiction")
+        remaining = repository.claim_review_pipeline_action(15)
+        repository.close()
+
+        assert 4 == len(published.providers)
+        assert not any(observation.candidates for observation in published.providers)
+        assert ("complete", "complete", None, None, "evidence_only") == work
+        assert remaining is None
+        assert progress is not None
+        assert 0 == progress.blocked
+        assert 0 == progress.ready
+        assert 1 == progress.recorded
+        assert 1 == dict(progress.stages)["recorded"]
+        assert 0 == dict(progress.stages)["failed"]
+
+
+def test_candidates_outside_the_corroboration_band_admit_no_recording(
+    calls: list[tuple[str, ProviderQueryKind]],
+) -> None:
+    """Answered is not admitted: the band decides, on every lane.
+
+    Each provider resolves the asserted ASIN and states a running time this
+    recording does not have. A retained candidate is not an identity, so no
+    proposal is formed and preparation completes on the recorded outcome
+    exactly as an unanswered recording does (ADR-0061, #966).
+    """
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        providers = {
+            authority: _FakeAudiobookProvider(
+                name, authority, calls, duration="12000.000"
+            )
+            for name, authority in (
+                ("audible", "audible_catalog"),
+                ("enrichment", "audnexus"),
+                ("silo", "audiosilo"),
+                ("store", "itunes_search"),
+            )
+        }
+        serialized, repository = _run(root, providers)
+        published = MetadataReport.from_json(serialized)
+        work = repository._connection.execute(
+            "SELECT stage,state,failure_code,failure_root,outcome "
+            "FROM review_preparation_work"
+        ).fetchone()
+        progress = repository.review_pipeline_progress("primary", "fiction")
+        remaining = repository.claim_review_pipeline_action(15)
+        repository.close()
+
+        # The evidence is retained and browsable; what it is not is an answer
+        # about which product this recording is.
+        assert any(observation.candidates for observation in published.providers)
+        assert ("complete", "complete", None, None, "evidence_only") == work
+        assert remaining is None
+        assert progress is not None
+        assert 0 == progress.blocked
+        assert 0 == progress.ready
+        assert 1 == progress.recorded
+        assert 0 == dict(progress.stages)["failed"]
 
 
 _AUDIBLE_ART = "https://m.media-amazon.com/images/I/51POf8gOyLL._SL500_.jpg"

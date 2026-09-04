@@ -20,7 +20,49 @@ from mechanical_librarian.bootstrap.composition import (
     _load_batch_credentials,
     run_batch,
 )
-from mechanical_librarian.domain.metadata_report import ProviderStatus
+from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    ClaimScope,
+    FileFacts,
+    LocalClaim,
+    MetadataReport,
+    ProviderObservation,
+    ProviderStatus,
+    TargetFacts,
+    default_target_fields,
+)
+from tests.support.metadata_report_doubles import single_track_audio_facts
+
+
+def _audiobook_report() -> MetadataReport:
+    """One real recording report whose providers admit no work identity.
+
+    The receipt now asks the report itself whether any observation admitted
+    this recording's work identity, so this case has to be a report rather
+    than a stand-in for one (#966).
+    """
+    return MetadataReport.create(
+        target=TargetFacts(
+            "primary", "audio", "item", default_target_fields("Current title")
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        audio=single_track_audio_facts(),
+        local_claims=(
+            LocalClaim.create(
+                kind=ClaimKind.TITLE,
+                observed="Current title",
+                canonical="Current title",
+                excerpt="Current title",
+                applicability="not_applicable",
+                basis="target_metadata",
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+                scope=ClaimScope.WORK,
+            ),
+        ),
+        local_reasons=("no_opening_claims",),
+        providers=(ProviderObservation("catalogue", ProviderStatus.DISABLED),),
+    )
 
 
 def test_review_receipt_keeps_complete_mixed_provider_report_for_proposal():
@@ -96,11 +138,7 @@ def test_review_receipt_ends_an_audiobook_report_at_its_local_evidence():
     service = unittest.mock.Mock()
     service.run.return_value = "report"
     action = SimpleNamespace(action_id="work")
-    report = SimpleNamespace(
-        report_id="report-current",
-        file=SimpleNamespace(format="m4b"),
-        providers=(),
-    )
+    report = _audiobook_report()
     repository = unittest.mock.Mock()
     with (
         patch.object(composition, "CoverArtifactStore"),
@@ -124,7 +162,7 @@ def test_review_receipt_ends_an_audiobook_report_at_its_local_evidence():
     receipt(repository, report)
     repository.complete_review_extraction_publication.assert_called_once_with(
         action,
-        "report-current",
+        report.report_id,
         unittest.mock.ANY,
         0,
         "evidence_only",

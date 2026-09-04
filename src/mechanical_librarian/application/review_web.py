@@ -24,7 +24,9 @@ from mechanical_librarian.domain.cover_automatic_decision import (
     CoverAutomaticDecision,
     parse_automatic_authority,
 )
+from mechanical_librarian.domain.field_effect import decision_value_kind
 from mechanical_librarian.domain.human_decision import (
+    RECORDED_ONLY_REASON,
     HumanDecision,
     HumanDecisionError,
     decision_actions,
@@ -471,6 +473,7 @@ class InspectCurrentReviewCase:
                 attention_candidate=_needs_attention(
                     proposal,
                     snapshot.automatic_attention_destinations,
+                    owner_only=case.media_kind == "audiobook",
                 ),
                 automatic_outcome=(
                     "abstention"
@@ -690,15 +693,7 @@ class InspectCurrentReviewCase:
                 or type(destination) is not str
             ):
                 continue
-            value_kind = (
-                "list"
-                if destination in {"authors", "genres", "tags"}
-                else "series"
-                if destination == "series"
-                else "cover"
-                if destination == "cover"
-                else "text"
-            )
+            value_kind = decision_value_kind(destination)
             previous = (
                 {"kind": value_kind, "value": current["value"]}
                 if current.get("state") == "value"
@@ -715,6 +710,22 @@ class InspectCurrentReviewCase:
         history_items = []
         for raw in snapshot.history:
             item = dict(raw)
+            if item.get("kind") == "human_decision_recorded":
+                decision_id = item.get("decision_id")
+                projected = (
+                    decisions.get(decision_id) if type(decision_id) is str else None
+                )
+                # The owner reads the history, so a decision that will never be
+                # written says so where it is read rather than only where it is
+                # stored (#966).
+                item["application"] = (
+                    projected.get("application") if projected is not None else None
+                )
+                item["application_reason"] = (
+                    projected.get("application_reason")
+                    if projected is not None
+                    else None
+                )
             if item.get("kind") == "automatic_decision_recorded":
                 decision_id = item.get("decision_id")
                 joined = (
@@ -1346,6 +1357,10 @@ def _digest(value: str) -> str:
 def _decision_projection(decision: HumanDecision) -> dict[str, object]:
     return {
         "actor": decision.actor,
+        "application": decision.application,
+        "application_reason": (
+            RECORDED_ONLY_REASON if decision.application == "recorded_only" else None
+        ),
         "decision_id": decision.decision_id,
         "destination": decision.destination,
         "occurred_at": decision.occurred_at,
@@ -1834,14 +1849,25 @@ def _case_and_report(
 
 
 def _needs_attention(
-    proposal: dict[str, object], automatic_attention_destinations: tuple[str, ...] = ()
+    proposal: dict[str, object],
+    automatic_attention_destinations: tuple[str, ...] = (),
+    *,
+    owner_only: bool = False,
 ) -> bool:
+    """Whether one proposal is the owner's to answer rather than settled.
+
+    A settled `propose_change` waits for the automatic lane on an ebook. No
+    automatic authority ever reaches a recording, so on one there is nothing
+    to wait for and every proposal is the owner's. The action list beside this
+    decides whether a choice exists at all (#966).
+    """
     result = proposal["result"]
     assert type(result) is dict
     reasons = result["reasons"]
     assert type(reasons) is list
     return (
-        proposal["destination"] in automatic_attention_destinations
+        owner_only
+        or proposal["destination"] in automatic_attention_destinations
         or (proposal["destination"] == "cover" and "current_cover_verified" in reasons)
         or result["outcome"] == "unresolved_choice"
         or proposal["manual_required"] is True
@@ -2009,12 +2035,6 @@ _TERMINAL_PREPARATION_GUIDANCE: dict[str, tuple[str, str]] = {
     "internal_failure": (
         "Preparation stopped before a usable review package was produced.",
         "No owner action is currently available.",
-    ),
-    "evidence_only": (
-        "This audiobook's evidence was recorded and is read-only; "
-        "no review package follows it.",
-        "No owner action is needed. The recorded evidence -- local and from "
-        "every configured provider -- is shown on this work.",
     ),
     "unknown": (
         "Preparation failed; no safe detail is available.",
@@ -2302,7 +2322,13 @@ def _attention_item(
         return None
     classification = classify_review_field(
         attention_candidate=(
-            _needs_attention(proposal) or cause == "automatic_safety_suspended"
+            # The attention lens answers for the same field the library row
+            # counted, so it asks the question the same way: a recording's
+            # proposal is the owner's whatever the automatic lane would have
+            # made of it, and dropping it here would page short of the count
+            # the row reports (#966).
+            _needs_attention(proposal, owner_only=case.media_kind == "audiobook")
+            or cause == "automatic_safety_suspended"
         ),
         automatic_outcome=("abstention" if automatic_outcome == "abstention" else None),
         has_human_decision=False,

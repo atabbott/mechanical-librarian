@@ -47,7 +47,10 @@ from mechanical_librarian.domain.automatic_decision import (
 from mechanical_librarian.domain.cover_automatic_decision import (
     parse_automatic_authority,
 )
-from mechanical_librarian.domain.field_effect import FieldEffectOperation
+from mechanical_librarian.domain.field_effect import (
+    FieldEffectOperation,
+    decision_value_kind,
+)
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
@@ -883,15 +886,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     previous = FieldEffectOperation.from_json(
                         prior[0]
                     ).plan.desired_value
-                kind = (
-                    "list"
-                    if decision.destination in {"authors", "genres", "tags"}
-                    else "series"
-                    if decision.destination == "series"
-                    else "cover"
-                    if decision.destination == "cover"
-                    else "text"
-                )
+                kind = decision_value_kind(decision.destination)
                 value["previous_value"] = (
                     {"kind": kind, "value": previous} if previous is not None else None
                 )

@@ -225,6 +225,8 @@ class _ProposedValue(_ClosedModel):
 
 class _DecisionProjection(_ClosedModel):
     actor: str
+    application: Literal["apply", "recorded_only"]
+    application_reason: str | None = Field(default=None, max_length=256)
     decision_id: str
     destination: str
     occurred_at: int
@@ -504,6 +506,8 @@ class _HistoryTransitionItem(_ClosedModel):
 
 class _HistoryDecisionItem(_ClosedModel):
     actor: Literal["owner"]
+    application: Literal["apply", "recorded_only"] | None
+    application_reason: str | None = Field(default=None, max_length=256)
     decision_id: str
     destination: str
     event_id: str
@@ -902,6 +906,7 @@ class _PreparationStage(_ClosedModel):
         "admission",
         "projection",
         "ready",
+        "recorded",
         "failed",
     ]
     count: int = Field(ge=0)
@@ -917,8 +922,9 @@ class _PreparationProgress(_ClosedModel):
     total: int
     ready: int
     blocked: int
+    recorded: int
     rescan_requested: bool
-    stages: list[_PreparationStage] = Field(default_factory=list, max_length=8)
+    stages: list[_PreparationStage] = Field(default_factory=list, max_length=9)
 
 
 class _PreparationConnection(_ClosedModel):
@@ -1260,7 +1266,6 @@ class _OperationalIncident(_ClosedModel):
             "missing_required_input",
             "malformed_retained_data",
             "internal_failure",
-            "evidence_only",
             "unknown",
         ]
         | None

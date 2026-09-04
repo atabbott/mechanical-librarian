@@ -620,7 +620,12 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     values.append((None, row[1]))
                     continue
                 if row[0] is None:
-                    if row[6] not in {"report_only", "no_case", "retired"}:
+                    if row[6] not in {
+                        "report_only",
+                        "evidence_only",
+                        "no_case",
+                        "retired",
+                    }:
                         raise MetadataReportError("review browse row disagrees")
                     values.append((None, row[1]))
                     continue
@@ -917,7 +922,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         ):
             raise MetadataReportError("persisted review package is invalid")
         proposal_id, report_id, case_id, checkpoint, outcome = row
-        if outcome == "report_only":
+        if outcome in {"report_only", "evidence_only"}:
             if proposal_id is not None or case_id is not None or checkpoint is not None:
                 raise MetadataReportError("persisted review package is invalid")
             # The five per-column type tests above prove the declared shape.

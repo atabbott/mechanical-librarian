@@ -498,12 +498,20 @@ def test_real_sqlite_progress_reconciles_mixed_terminal_and_active_work() -> Non
             ).fetchone()
             connection.executemany(
                 "UPDATE review_preparation_work "
-                "SET stage=?,state=?,failure_code=?,review_case_id=?,updated_at=? "
-                "WHERE work_id=?",
+                "SET stage=?,state=?,failure_code=?,review_case_id=?,outcome=?,"
+                "updated_at=? WHERE work_id=?",
                 (
-                    ("provider", "stale", "stale", None, 14, work_ids[1]),
-                    ("proposal", "failed", "failed", None, 14, work_ids[2]),
-                    ("complete", "complete", None, review_case_id, 14, work_ids[3]),
+                    ("provider", "stale", "stale", None, None, 14, work_ids[1]),
+                    ("proposal", "failed", "failed", None, None, 14, work_ids[2]),
+                    (
+                        "complete",
+                        "complete",
+                        None,
+                        review_case_id,
+                        "case",
+                        14,
+                        work_ids[3],
+                    ),
                 ),
             )
             stale = connection.execute(
@@ -516,10 +524,17 @@ def test_real_sqlite_progress_reconciles_mixed_terminal_and_active_work() -> Non
 
     assert progress is not None
     assert active_state == ("running",)
-    assert (progress.total, progress.checked, progress.ready, progress.blocked) == (
+    assert (
+        progress.total,
+        progress.checked,
+        progress.ready,
+        progress.recorded,
+        progress.blocked,
+    ) == (
         4,
         3,
         1,
+        0,
         2,
     )
     assert dict(progress.stages) == {
@@ -530,9 +545,10 @@ def test_real_sqlite_progress_reconciles_mixed_terminal_and_active_work() -> Non
         "admission": 0,
         "projection": 0,
         "ready": 1,
+        "recorded": 0,
         "failed": 2,
     }
-    assert progress.checked == progress.ready + progress.blocked
+    assert progress.checked == progress.ready + progress.recorded + progress.blocked
     assert progress.total == sum(count for _stage, count in progress.stages)
     # Stale is terminally blocked: it remains in place, has no retry count,
     # and this read path creates no manual retry or recovery work.
@@ -616,13 +632,6 @@ def test_real_sqlite_progress_reconciles_mixed_terminal_and_active_work() -> Non
             "internal_failure",
             "Preparation stopped before a usable review package was produced.",
             "No owner action is currently available.",
-        ),
-        (
-            "evidence_only",
-            "This audiobook's evidence was recorded and is read-only; "
-            "no review package follows it.",
-            "No owner action is needed. The recorded evidence -- local and from "
-            "every configured provider -- is shown on this work.",
         ),
         (
             "unknown",

@@ -1,4 +1,8 @@
-"""Closed provider-consensus contributor display election cases."""
+"""Closed provider-consensus contributor display election cases.
+
+A narrator is stated as a WORK-scope contributor by every source, local and
+provider alike, because that is the scope `claim_scope` gives the kind (#966).
+"""
 
 from __future__ import annotations
 
@@ -25,7 +29,7 @@ def _local_narrator(value: str) -> LocalClaim:
         observed=value,
         canonical=value,
         state=FieldState.VALID,
-        scope=ClaimScope.EDITION,
+        scope=ClaimScope.WORK,
         basis="package_metadata",
         excerpt=value,
         applicability="not_applicable",
@@ -46,7 +50,7 @@ def _provider_contributors(
     kind, scope, default_role = (
         (ClaimKind.CREATOR, ClaimScope.WORK, "author")
         if destination is TargetDestination.AUTHORS
-        else (ClaimKind.CONTRIBUTOR, ClaimScope.EDITION, "narrator")
+        else (ClaimKind.CONTRIBUTOR, ClaimScope.WORK, "narrator")
     )
     claims = tuple(
         _claim(

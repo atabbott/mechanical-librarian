@@ -24,6 +24,9 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
       <article className="diagnostic-entry">
         <h3>{fieldLabel(item.destination)}</h3>
         <p>{action}</p>
+        {item.category === 'owner' && item.applicationReason ? (
+          <p className="diagnostic-note">{item.applicationReason}</p>
+        ) : null}
         {isRetention(item) ? (
           <p className="diagnostic-value">
             <span>Retained</span> {displayRetainedHistoryValue(item)}

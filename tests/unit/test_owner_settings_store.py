@@ -35,6 +35,7 @@ from mechanical_librarian.domain.reviewer_access import (
     OpenRouterTaskSelection,
     ReviewerAccessDocument,
 )
+from tests.support.review_cases import record_terminal_work
 
 
 def _document(revision: int = 1) -> OwnerSettingsDocument:
@@ -867,11 +868,7 @@ def test_settings_readd_preserves_same_run_terminal_completion_order(
         "SELECT work_id FROM review_preparation_work ORDER BY ordinal,work_id"
     ).fetchall()
     for index, (work_id,) in enumerate(work_rows):
-        repository._connection.execute(
-            "UPDATE review_preparation_work SET stage='complete',state='complete',updated_at=? "
-            "WHERE work_id=?",
-            (90 + index, work_id),
-        )
+        record_terminal_work(repository._connection, work_id, 90 + index)
         refresh_preparation_work(repository._connection, work_id, 90 + index)
     repository._connection.execute(
         "UPDATE review_preparation_scans SET state='completed',updated_at=92 "

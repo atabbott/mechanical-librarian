@@ -56,6 +56,7 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioEmbeddedCover,
     AudioEvidenceSurface,
 )
+from mechanical_librarian.domain.human_decision import RECORDED_ONLY_REASON
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     FileFacts,
@@ -72,6 +73,7 @@ from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.setup_state import SetupStateDocument
 from mechanical_librarian.interfaces.web.react_assets import ReactAssetLoader
 from mechanical_librarian.interfaces.web.setup import create_setup_app
+from tests.support.audiobook_reports import admitted_audiobook_report
 from tests.support.metadata_report_doubles import audio_result
 from tests.support.ports import ReservedPort, bind_loopback
 from tests.support.proposal_evidence import _fields as _bibliographic_fields
@@ -228,6 +230,27 @@ def _publish_audiobook(repository: Any) -> None:
     )
 
 
+def _publish_audiobook_case(repository: Any) -> str:
+    """Prepare one recording whose work identity is admitted, through to a case.
+
+    This is the F45 outcome the owner actually meets: the same admission the
+    runtime corroboration band already made, carried through the same
+    evaluator and the same admission an ebook uses (#966).
+    """
+    report = admitted_audiobook_report(
+        connection="primary",
+        library="ebooks",
+        item="audio-case-item",
+        identity="3" * 64,
+        content_digest="4" * 64,
+    )
+    repository.publish(report, lambda: True)
+    proposal = evaluate_report(report)
+    repository.publish_proposal(proposal)
+    admitted = json.loads(repository.admit_review_case(proposal))
+    return cast("str", admitted["review_case_id"])
+
+
 @contextmanager
 def _server(
     *,
@@ -243,6 +266,7 @@ def _server(
     preparation: bool = False,
     preparation_terminal: bool = False,
     audiobook: bool = False,
+    audiobook_case: bool = False,
     settings_document: OwnerSettingsDocument | None = _DEFAULT_SETTINGS_DOCUMENT,
     on_app: Callable[[Any], None] | None = None,
 ):
@@ -428,6 +452,8 @@ def _server(
         repository.admit_review_case(extra_proposal)
     if audiobook:
         _publish_audiobook(repository)
+    if audiobook_case:
+        _publish_audiobook_case(repository)
     origin = f"https://127.0.0.1:{port.number}"
     session_store = SQLiteReviewSessionRepository.open(
         database.with_name("review-sessions.sqlite")
@@ -2411,6 +2437,82 @@ def test_an_audiobook_row_opens_the_evidence_its_report_recorded() -> None:
                 expect(evidence).to_contain_text("Embedded cover art is present")
                 page.get_by_text(re.compile(r"Chapters \(1\)")).click()
                 expect(evidence).to_contain_text("Chapter One")
+            browser.close()
+        assert errors == []
+
+
+def test_an_admitted_audiobook_is_decided_and_recorded_not_applied() -> None:
+    """The F45 outcome in the shipped browser, end to end.
+
+    An admitted recording is a review case like any other: the owner opens it
+    from the Library, sees Narrators and ASIN among its fields, accepts one,
+    and reads in the history that the decision was recorded rather than
+    applied. F47 owns the writes (#966).
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        errors: list[str] = []
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 1440, "height": 900},
+                reduced_motion="reduce",
+            )
+            page = context.new_page()
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.on(
+                "console",
+                lambda message: (
+                    errors.append(message.text) if message.type == "error" else None
+                ),
+            )
+            with (
+                closing(ReservedPort()) as reserved_port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=reserved_port,
+                    audiobook_case=True,
+                ) as (origin, _case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                page.goto(f"{origin}/library?lens=all&q=Project Hail Mary")
+                row = page.get_by_role(
+                    "button", name=re.compile("^Project Hail Mary")
+                ).first
+                expect(row).to_be_visible()
+                # A recording is an ordinary review row, not a failure card,
+                # and no automatic authority reaches it, so both fields that
+                # still admit a choice are the owner's to answer.
+                expect(row).to_contain_text("2 fields need attention")
+                assert page.locator(".library-work-row.is-terminal").count() == 0
+
+                row.click()
+
+                rail = page.locator(".field-filmstrip button")
+                expect(rail.first).to_be_visible()
+                labels = [label.splitlines()[0] for label in rail.all_inner_texts()]
+                assert "Narrators" in labels
+                assert "Asin" in labels
+
+                page.get_by_role("button", name=re.compile("^Asin")).first.click()
+                accept = page.get_by_role(
+                    "button", name=re.compile("^Choose proposed value: ")
+                ).first
+                expect(accept).to_be_visible()
+                accept.click()
+
+                page.get_by_role("link", name="History").click()
+                expect(page.get_by_text(RECORDED_ONLY_REASON)).to_be_visible()
             browser.close()
         assert errors == []
 

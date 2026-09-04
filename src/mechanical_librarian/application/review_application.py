@@ -1009,6 +1009,7 @@ class ReviewApplication:
                 "total": 0 if progress is None else progress.total,
                 "ready": 0 if progress is None else progress.ready,
                 "blocked": 0 if progress is None else progress.blocked,
+                "recorded": 0 if progress is None else progress.recorded,
                 "rescan_requested": False
                 if progress is None
                 else progress.rescan_requested,
@@ -1132,6 +1133,7 @@ class ReviewApplication:
             "total": progress.total,
             "ready": progress.ready,
             "blocked": progress.blocked,
+            "recorded": progress.recorded,
             "rescan_requested": progress.rescan_requested,
             "stages": [
                 {"stage": stage, "count": count} for stage, count in progress.stages

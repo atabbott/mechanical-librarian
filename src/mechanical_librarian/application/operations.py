@@ -62,11 +62,6 @@ _TERMINAL_PREPARATION_CODES = frozenset(
         "malformed_retained_data",
         "internal_failure",
         "unknown",
-        # The signal query filters this one out, so no incident should carry
-        # it.  It is admitted anyway: a code the vocabulary rejects fails the
-        # whole status projection closed, and an audiobook that reached this
-        # far is the one case where nothing is actually wrong.
-        "evidence_only",
     )
 )
 

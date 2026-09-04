@@ -628,7 +628,7 @@ def _reconcile_terminal_preparation_recovery(
         "presentation.completion_sequence,presentation.recovery_high_water_stage,"
         "presentation.recovery_high_water_outcome,authoritative.work_id,"
         "authoritative.scan_id,authoritative.stage,authoritative.state,"
-        "authoritative.failure_code,authoritative.presentation_recovery_cycle_id,"
+        "authoritative.presentation_recovery_cycle_id,"
         "authoritative.presentation_recovery_stage,"
         "authoritative.presentation_recovery_outcome "
         "FROM review_preparation_presentation AS presentation "
@@ -654,7 +654,6 @@ def _reconcile_terminal_preparation_recovery(
         authoritative_scan_id,
         authoritative_stage,
         authoritative_state,
-        failure_code,
         witness_cycle,
         witness_stage,
         witness_outcome,
@@ -673,7 +672,7 @@ def _reconcile_terminal_preparation_recovery(
         ):
             raise MetadataReportError("review preparation persistence failed") from None
         observed_stage, observed_outcome = _presentation_observation(
-            authoritative_stage, authoritative_state, failure_code
+            authoritative_stage, authoritative_state
         )
         if observed_outcome not in {"ready", "failed"}:
             raise MetadataReportError("review preparation persistence failed") from None
@@ -751,14 +750,18 @@ def _adopt_enrollment_states(connection: sqlite3.Connection, updated_at: int) ->
             )
 
 
-def _presentation_observation(
-    stage: str, state: str, failure_code: str | None
-) -> tuple[str, str | None]:
-    report_only = failure_code == "evidence_only"
+def _presentation_observation(stage: str, state: str) -> tuple[str, str | None]:
+    """Observe one authoritative work as the two facts the run summary counts.
+
+    The observation is binary and reads only the authoritative state: every
+    completed work is `ready` here, whatever outcome it completed on. Which
+    completed works are asking the owner for something is the review library's
+    question, and `PipelineProgress` answers it (#966).
+    """
     return (
-        "projection" if stage == "complete" or report_only else stage,
+        "projection" if stage == "complete" else stage,
         "ready"
-        if state == "complete" or report_only
+        if state == "complete"
         else "failed"
         if state in {"failed", "stale"}
         else None,
@@ -781,7 +784,7 @@ def refresh_preparation_work(
     if presentation is None:
         return
     authoritative = connection.execute(
-        "SELECT stage,state,updated_at,failure_code,scan_id,presentation_recovery_cycle_id,"
+        "SELECT stage,state,updated_at,scan_id,presentation_recovery_cycle_id,"
         "presentation_recovery_stage,presentation_recovery_outcome "
         "FROM review_preparation_work WHERE work_id=?",
         (work_id,),
@@ -794,13 +797,13 @@ def refresh_preparation_work(
         return
     old_stage = cast(str, presentation[1])
     new_stage, observed_outcome = _presentation_observation(
-        authoritative[0], authoritative[1], authoritative[3]
+        authoritative[0], authoritative[1]
     )
     high_stage = max((old_stage, new_stage), key=lambda value: _STAGE_ORDER[value])
     old_outcome = cast(str | None, presentation[2])
     outcome = old_outcome or observed_outcome
     marker_stage, marker_outcome = presentation[6:8]
-    witness_cycle, witness_stage, witness_outcome = authoritative[5:8]
+    witness_cycle, witness_stage, witness_outcome = authoritative[4:7]
     witnessed = witness_cycle is not None
     if (marker_stage is not None) != witnessed or (
         witnessed
@@ -899,7 +902,7 @@ def _refresh_preparation_presentation(
     work_rows = connection.execute(
         "SELECT presentation.row_id,presentation.work_stage,presentation.work_outcome,presentation.updated_at,presentation.completion_sequence,"
         "presentation.recovery_high_water_stage,presentation.recovery_high_water_outcome,presentation.cycle_id,"
-        "work.work_id,work.stage,work.state,work.updated_at,work.failure_code,"
+        "work.work_id,work.stage,work.state,work.updated_at,"
         "work.presentation_recovery_cycle_id,work.presentation_recovery_stage,work.presentation_recovery_outcome "
         "FROM review_preparation_presentation AS presentation "
         "JOIN review_preparation_work AS work ON work.work_id=presentation.work_id "
@@ -914,8 +917,7 @@ def _refresh_preparation_presentation(
     completion_count = _completion_sequence_count(connection, run_id)
     new_completion_count = sum(
         old_outcome is None
-        and _presentation_observation(current_stage, current_state, failure_code)[1]
-        is not None
+        and _presentation_observation(current_stage, current_state)[1] is not None
         for (
             _row_id,
             _old_stage,
@@ -929,7 +931,6 @@ def _refresh_preparation_presentation(
             current_stage,
             current_state,
             _work_updated_at,
-            failure_code,
             _witness_cycle,
             _witness_stage,
             _witness_outcome,
@@ -951,13 +952,12 @@ def _refresh_preparation_presentation(
         current_stage,
         current_state,
         work_updated_at,
-        failure_code,
         witness_cycle,
         witness_stage,
         witness_outcome,
     ) in work_rows:
         current_stage, observed_outcome = _presentation_observation(
-            current_stage, current_state, failure_code
+            current_stage, current_state
         )
         stage = max((old_stage, current_stage), key=lambda value: _STAGE_ORDER[value])
         outcome = old_outcome or observed_outcome
@@ -1019,7 +1019,7 @@ def _refresh_preparation_presentation(
     )
     active_count = sum(
         current_state == "running"
-        for _row_id, _old_stage, outcome, _old_updated_at, _completion_sequence, _marker_stage, _marker_outcome, _cycle_id, _work_id, _current_stage, current_state, _work_updated_at, _failure_code, _witness_cycle, _witness_stage, _witness_outcome in work_rows
+        for _row_id, _old_stage, outcome, _old_updated_at, _completion_sequence, _marker_stage, _marker_outcome, _cycle_id, _work_id, _current_stage, current_state, _work_updated_at, _witness_cycle, _witness_stage, _witness_outcome in work_rows
     )
     connection.execute(
         "UPDATE review_preparation_presentation SET total=?,read=?,searches_finished=?,"
@@ -1697,7 +1697,6 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                 authoritative_stage,
                 authoritative_state,
                 _authoritative_updated_at,
-                authoritative_failure_code,
                 witness_cycle,
                 witness_stage,
                 witness_outcome,
@@ -1709,7 +1708,7 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                 "presentation.updated_at,presentation.recovery_high_water_stage,"
                 "presentation.recovery_high_water_outcome,authoritative.scan_id,"
                 "authoritative.ordinal,authoritative.stage,authoritative.state,"
-                "authoritative.updated_at,authoritative.failure_code,"
+                "authoritative.updated_at,"
                 "authoritative.presentation_recovery_cycle_id,"
                 "authoritative.presentation_recovery_stage,"
                 "authoritative.presentation_recovery_outcome "
@@ -1740,7 +1739,6 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                     observed_stage, observed_outcome = _presentation_observation(
                         authoritative_stage,
                         authoritative_state,
-                        authoritative_failure_code,
                     )
                     sticky_observation = (
                         enrollment[2] or work_updated_at < enrollment[1]

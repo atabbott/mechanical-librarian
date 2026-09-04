@@ -93,7 +93,6 @@ _FAILURE_CODES = frozenset(
         "missing_required_input",
         "malformed_retained_data",
         "internal_failure",
-        "evidence_only",
         "unknown",
     )
 )
@@ -305,16 +304,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 pending_manual_return = self._has_pending_field_effect_manual_return(
                     scan_id
                 )
-                # An audiobook ends `failed` because its preparation is
-                # complete, not because it went wrong.  Counted here it would
-                # decide the whole scan: every absence staged by that scan is
-                # discarded unread, so a disappeared item -- an ebook among
-                # them -- is never reconciled in a library that holds one
-                # audiobook.
                 failures = self._connection.execute(
                     "SELECT COUNT(*) FROM review_preparation_work "
-                    "WHERE scan_id=? AND state='failed' "
-                    "AND failure_code IS NOT 'evidence_only'",
+                    "WHERE scan_id=? AND state='failed'",
                     (scan_id,),
                 ).fetchone()[0]
                 stale = self._connection.execute(
@@ -490,7 +482,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             self._connection.execute(
                 "UPDATE review_preparation_work SET stage='provider',state='queued',attempt=0,"
                 "recovery_attempt=0,retry_not_before=0,report_id=?,proposal_set_id=NULL,"
-                "review_case_id=NULL,recovery_source_report_id=?,failure_code=NULL,failure_root=NULL,updated_at=? "
+                "review_case_id=NULL,recovery_source_report_id=?,failure_code=NULL,failure_root=NULL,"
+                "outcome=NULL,updated_at=? "
                 "WHERE work_id=? AND state IN ('complete','failed','stale')",
                 (report.report_id, source_report_id, staged_at, row[0]),
             ).rowcount
@@ -654,15 +647,14 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 )
                 existing = self._connection.execute(
                     "SELECT file_identity,source_fingerprint,producer_fingerprint,"
-                    "stage,state,report_id,proposal_set_id,review_case_id,"
-                    "failure_code,failure_root "
+                    "stage,state,report_id,proposal_set_id,review_case_id,outcome "
                     "FROM review_preparation_work WHERE work_id=?",
                     (work_id,),
                 ).fetchone()
                 stage = "extraction"
                 state = "queued"
                 report_id = proposal_set_id = review_case_id = None
-                failure_code = failure_root = None
+                failure_code = failure_root = outcome = None
                 if existing is not None and existing[:3] == (
                     entry.file_identity,
                     entry.source_fingerprint,
@@ -670,7 +662,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 ):
                     stage, previous_state = existing[3], existing[4]
                     report_id, proposal_set_id, review_case_id = existing[5:8]
-                    previous_failure_code, previous_failure_root = existing[8:]
+                    previous_outcome = existing[8]
                     report_current = True
                     if report_id is not None:
                         report_current = self._connection.execute(
@@ -688,15 +680,15 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                         stage = "extraction"
                         report_id = proposal_set_id = review_case_id = None
                     elif (
-                        previous_state == "failed"
-                        and previous_failure_code == "evidence_only"
+                        previous_state == "complete"
+                        and previous_outcome == "evidence_only"
                     ):
                         # The file this outcome is terminal about has not moved:
                         # re-inspecting it would re-hash gigabytes to reach the
                         # same recorded evidence.
-                        state = "failed"
-                        failure_code = previous_failure_code
-                        failure_root = previous_failure_root
+                        stage = "complete"
+                        state = "complete"
+                        outcome = previous_outcome
                     elif previous_state == "failed" and stage == "provider":
                         stage = "extraction"
                         report_id = proposal_set_id = review_case_id = None
@@ -720,6 +712,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                         if pointer_matches:
                             stage = "complete"
                             state = "complete"
+                            outcome = (
+                                "case" if review_case_id is not None else "no_case"
+                            )
                         else:
                             stage = "admission"
                             review_case_id = None
@@ -728,8 +723,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     "work_id,scan_id,ordinal,connection_name,library_name,library_id,"
                     "item_id,file_identity,source_revision,source_fingerprint,producer_fingerprint,"
                     "catalogue_generation,catalogue_fingerprint,stage,state,attempt,recovery_attempt,retry_not_before,"
-                    "report_id,proposal_set_id,review_case_id,failure_code,failure_root,updated_at"
-                    ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                    "report_id,proposal_set_id,review_case_id,failure_code,failure_root,outcome,updated_at"
+                    ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                     "ON CONFLICT(work_id) DO UPDATE SET ordinal=excluded.ordinal,"
                     "library_id=excluded.library_id,file_identity=excluded.file_identity,"
                     "source_revision=excluded.source_revision,"
@@ -744,6 +739,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     "ELSE review_preparation_work.recovery_source_report_id END,"
                     "failure_code=excluded.failure_code,"
                     "failure_root=excluded.failure_root,"
+                    "outcome=excluded.outcome,"
                     "updated_at=excluded.updated_at",
                     (
                         work_id,
@@ -769,6 +765,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                         review_case_id,
                         failure_code,
                         failure_root,
+                        outcome,
                         completed_at,
                     ),
                 )
@@ -959,6 +956,12 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             updated = self._connection.execute(
                 "UPDATE review_preparation_work SET stage=?,attempt=0,state="
                 + ("'complete'" if target[0] == "complete" else "'queued'")
+                + ",outcome="
+                + (
+                    ("'case'" if action.stage == "projection" else "'no_case'")
+                    if target[0] == "complete"
+                    else "NULL"
+                )
                 + ",updated_at=?"
                 + assignment
                 + " WHERE work_id=? AND stage=? AND state='running' AND attempt=?",
@@ -1134,9 +1137,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 "authentication",
                 "transient",
                 # Not a provider disposition at all: the report is complete and
-                # published, and F43 grants an audiobook nothing beyond it, so
-                # the work ends here rather than queueing a proposal that has
-                # no comparison to evaluate.
+                # published, and no work identity was admitted for it, so the
+                # work ends here -- completed, with its evidence recorded --
+                # rather than queueing a proposal with nothing to compare.
                 "evidence_only",
             }
             or type(claim_next) is not bool
@@ -1178,21 +1181,31 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 ),
             ).rowcount
         else:
+            recorded = provider_failure_code == "evidence_only"
             terminal_failure = provider_failure_code in {
                 "authentication",
                 "configuration",
-                "evidence_only",
             }
             updated = self._connection.execute(
                 "UPDATE review_preparation_work SET stage=?,state=?,attempt=0,"
-                "retry_not_before=0,report_id=?,failure_code=?,failure_root=?,updated_at=? WHERE work_id=? "
+                "retry_not_before=0,report_id=?,failure_code=?,failure_root=?,outcome=?,"
+                "updated_at=? WHERE work_id=? "
                 "AND stage='extraction' AND state='running' AND attempt=?",
                 (
-                    "provider" if terminal_failure else "proposal",
-                    "failed" if terminal_failure else "queued",
+                    "complete"
+                    if recorded
+                    else "provider"
+                    if terminal_failure
+                    else "proposal",
+                    "complete"
+                    if recorded
+                    else "failed"
+                    if terminal_failure
+                    else "queued",
                     report_id,
-                    provider_failure_code,
+                    None if recorded else provider_failure_code,
                     provider_failure_root,
+                    "evidence_only" if recorded else None,
                     completed_at,
                     action.action_id,
                     action.attempt,
@@ -1208,10 +1221,10 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             # searched by has to be written here or never.
             registered = self._connection.execute(
                 "INSERT INTO current_review_packages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,checkpoint,outcome) "
-                "SELECT connection_name,library_name,item_id,NULL,report_id,NULL,NULL,'report_only' "
+                "SELECT connection_name,library_name,item_id,NULL,report_id,NULL,NULL,'evidence_only' "
                 "FROM metadata_reports WHERE report_id=? "
                 "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET "
-                "proposal_set_id=NULL,report_id=excluded.report_id,review_case_id=NULL,checkpoint=NULL,outcome='report_only'",
+                "proposal_set_id=NULL,report_id=excluded.report_id,review_case_id=NULL,checkpoint=NULL,outcome='evidence_only'",
                 (report_id,),
             ).rowcount
             if registered != 1:
@@ -1480,7 +1493,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         ):
             self._connection.execute(
                 "UPDATE review_preparation_work SET stage='projection',state='queued',"
-                "attempt=0,recovery_attempt=0,failure_code=NULL,failure_root=NULL,updated_at=? WHERE work_id=?",
+                "attempt=0,recovery_attempt=0,failure_code=NULL,failure_root=NULL,"
+                "outcome=NULL,updated_at=? WHERE work_id=?",
                 (updated_at, row[0]),
             )
         else:
@@ -1501,7 +1515,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             "recovery_attempt=0,report_id=?,proposal_set_id=NULL,review_case_id=NULL,"
             "recovery_source_report_id=CASE WHEN ?='extraction' THEN NULL "
             "ELSE recovery_source_report_id END,"
-            "failure_code=NULL,failure_root=NULL,updated_at=? WHERE work_id=?",
+            "failure_code=NULL,failure_root=NULL,outcome=NULL,updated_at=? WHERE work_id=?",
             (
                 restart_stage,
                 None if restart_stage == "extraction" else report_id,

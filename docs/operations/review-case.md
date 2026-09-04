@@ -33,6 +33,14 @@ evaluator output from the bound report; a synthetic or otherwise different
 ProposalSet, including any changed or omitted compatible-combination tuple, is
 `incompatible` and publishes no review state. A report or media
 pointer that loses currentness returns `stale`.
+A case names the media its proposals were formed for. An audiobook case is
+admitted, decided, and read exactly as an ebook's, and the decision it records
+carries `application='recorded_only'`: the guarded application planner refuses
+one by name, the continuous scheduler never plans one, the shadow projection
+abstains before it reads policy, and the history states that the decision was
+recorded rather than applied. The writes arrive with F47
+([ADR-0069](../architecture/decisions/0069-audiobook-review-cases-and-terminal-outcomes.md)).
+
 Lineage checkpoints retain an attributable fixed-system audit transition. A
 newer report makes an earlier case historical without rewriting it. Use a
 clean rebuild and regenerate supported reports/ProposalSets for an older

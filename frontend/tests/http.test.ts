@@ -966,6 +966,7 @@ describe('ReviewApiClient', () => {
       items: [
         {
           actor: 'owner',
+          application: 'apply' as const,
           decision_id: 'decision-secret',
           destination: 'title',
           event_id: 'event-secret',
@@ -1007,6 +1008,7 @@ describe('ReviewApiClient', () => {
       items: [
         {
           category: 'owner',
+          applicationReason: null,
           destination: 'title',
           outcome: 'accept',
           previousValue: { kind: 'text', value: 'Old' },
@@ -1140,6 +1142,7 @@ describe('ReviewApiClient', () => {
     const astral = '📚'
     const decision = (selected_value: unknown) => ({
       actor: 'owner',
+      application: 'apply' as const,
       decision_id: 'decision-secret',
       destination: 'description',
       event_id: 'event-secret',
@@ -1161,6 +1164,7 @@ describe('ReviewApiClient', () => {
     const description = astral.repeat(16_384)
     expect(mapHistory(history({ kind: 'text', value: description })).items[0]).toMatchObject({
       category: 'owner',
+      applicationReason: null,
       selectedValue: { kind: 'text', value: description },
     })
     expect(() => mapHistory(history({ kind: 'text', value: astral.repeat(16_385) }))).toThrow(
@@ -1437,6 +1441,7 @@ describe('ReviewApiClient', () => {
           event_id: 'event-1',
           event_type: 'review',
           category: 'owner',
+          applicationReason: null,
           change: 'Not set → Earthsea Cycle',
           change_detail: 'Set Series from Not set to Earthsea Cycle',
           field_label: 'Series',
@@ -1819,6 +1824,7 @@ describe('ReviewApiClient', () => {
           total: 2,
           ready: 0,
           blocked: 0,
+          recorded: 0,
           rescan_requested: false,
         }),
       )

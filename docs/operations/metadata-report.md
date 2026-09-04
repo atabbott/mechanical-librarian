@@ -194,19 +194,27 @@ not carry. The two authorities that state a cover asset of their own — the
 Audible catalog and iTunes Search — have their covers acquired through the same
 bounded cover pipeline an ebook's use, each behind its own `cover_enabled`
 switch, and the retained cover evidence records where two independent
-authorities picture the same art. What an audiobook does not reach is a
-proposal, because nothing writes to one; its covers are evidence only, so no
-cover consideration is prepared for one and no cover it carries is elected. Review preparation ends terminally with `evidence_only` in the
-same transaction that publishes it, and that transaction records the item's
-review package, so the work is browsed and searched by its evidence rather than
-by a failure. That
-package row is also the address of the report: the library row links to a
-read-only detail view of the recorded evidence, which is the only way to read
-it for a work that has no review case. The code raises no operational incident,
-counts toward nothing an owner is asked to unblock, and does not mark its scan
-as having failed — a prepared audiobook counted as a failure would discard
-every absence its scan staged, including a disappeared ebook's in a
-mixed-format library. Each file's digest is bounded by `audio_source_bytes` rather
+authorities picture the same art. Its covers stay evidence only, so no cover consideration is prepared
+for one and no cover it carries is elected. What follows the report depends on
+what the report says. When the runtime corroboration band admits some
+candidate the report retains -- one stating this recording's own running time
+-- preparation queues the proposal stage exactly as an ebook's does, and the
+recording becomes a review case the owner decides
+([ADR-0069](../architecture/decisions/0069-audiobook-review-cases-and-terminal-outcomes.md)).
+Those decisions are recorded and not applied; the writes arrive with F47. When
+no candidate is admitted -- unanswered, answered about a work rather than this
+product, or stating a running time this recording does not have -- there is
+nothing to compare a proposal against, so
+preparation completes on the `evidence_only` outcome in the same transaction
+that publishes the report, and that transaction records the item's review
+package, so the work is browsed and searched by its evidence rather than by a
+failure. That package row is also the address of the report: the library row
+links to a read-only detail view of the recorded evidence, which is the only
+way to read it for a work that has no review case. A recorded completion is not
+a failure code: it raises no operational incident, counts toward nothing an
+owner is asked to unblock, and does not mark its scan as having failed — a
+prepared audiobook counted as a failure would discard every absence its scan
+staged, including a disappeared ebook's in a mixed-format library. Each file's digest is bounded by `audio_source_bytes` rather
 than the EPUB archive limit, and its catalogue fingerprint follows the audio
 files' own revisions, so playing an audiobook does not re-prepare it.
 

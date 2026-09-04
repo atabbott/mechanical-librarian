@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Audiobooks whose work identity is admitted now produce review cases: narrators,
+  ASIN, series, description, language, title and authors are decided through the
+  same rules an ebook uses, and those decisions are recorded rather than applied
+  until audiobook writes arrive. Subtitle stays withheld for a recording until
+  audiobook subtitles are typed as bibliographic. Existing installs require a
+  clean rebuild under `proposal-set-v6` and `human-decision-v2`. (#966)
+
+- A prepared audiobook that produces no case now completes on a recorded outcome
+  instead of a failure code, and the library counts it as recorded. (#940)
+
 - Review now keeps unavailable, unproposed primary fields out of the default
   rail while offering a one-way reveal for inspection. (#890)
 

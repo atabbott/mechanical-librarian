@@ -434,6 +434,9 @@ export interface HistoryValueView {
 export type HistoryItemView =
   | {
       category: 'owner'
+      // What the recorded decision may go on to do. An audiobook decision is
+      // recorded and never applied until F47, and the owner reads that here.
+      applicationReason: string | null
       destination: string
       outcome: string
       previousValue: HistoryValueView | null
@@ -1621,7 +1624,7 @@ const preparationProgress = (value: unknown): PreparationProgress => {
   if (!record(value)) throw new ApiError(502, 'invalid_preparation_progress')
   for (const field of ['scan_id', 'connection', 'library', 'library_id', 'state'])
     stringValue(value[field], `preparation_${field}`)
-  for (const field of ['checked', 'total', 'ready', 'blocked'])
+  for (const field of ['checked', 'total', 'ready', 'blocked', 'recorded'])
     integerValue(value[field], `preparation_${field}`)
   if (typeof value.rescan_requested !== 'boolean')
     throw new ApiError(502, 'invalid_preparation_rescan_requested')
@@ -2482,8 +2485,7 @@ export const mapHistory = (value: unknown): HistoryView => {
             : ['candidate', 'keep_current', 'ignore']
         if (!allowed.includes(outcome))
           throw new ApiError(502, `invalid_history_item_${String(index)}_outcome`)
-        return {
-          category: kind === 'human_decision_recorded' ? 'owner' : 'automatic',
+        const decision = {
           destination: boundedStringValue(
             item.destination,
             `history_item_${String(index)}_destination`,
@@ -2499,6 +2501,19 @@ export const mapHistory = (value: unknown): HistoryView => {
             `history_item_${String(index)}_selected_value`,
           ),
         }
+        // Only an owner decision states what it may go on to do; automatic
+        // authority never reaches an audiobook at all (#966).
+        return kind === 'human_decision_recorded'
+          ? {
+              category: 'owner' as const,
+              applicationReason:
+                optionalString(
+                  item.application_reason,
+                  `history_item_${String(index)}_application_reason`,
+                ) ?? null,
+              ...decision,
+            }
+          : { category: 'automatic' as const, ...decision }
       }
       if (kind === 'shadow_preview_recorded') {
         integerValue(item.occurred_at, `history_item_${String(index)}_occurred_at`)

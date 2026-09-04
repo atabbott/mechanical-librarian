@@ -122,6 +122,7 @@ def test_retained_preservation_accept_remains_readable_without_reopening_command
             "review_case_id": case.review_case_id,
             "target_fingerprint": case.target_fingerprint,
             "proposals": (preserved,),
+            "media_kind": case.media_kind,
         },
     )()
 
@@ -155,6 +156,7 @@ def test_retained_nonaccept_keeps_the_command_validator_error_identity(
             "review_case_id": case.review_case_id,
             "target_fingerprint": case.target_fingerprint,
             "proposals": (resolved,),
+            "media_kind": case.media_kind,
         },
     )()
 
@@ -212,6 +214,7 @@ def test_owner_can_replace_an_automatic_actionable_selection(
             "review_case_id": case.review_case_id,
             "target_fingerprint": case.target_fingerprint,
             "proposals": (resolved,),
+            "media_kind": case.media_kind,
         },
     )()
     selected = resolved["result"]["alternatives"][0]["value"]

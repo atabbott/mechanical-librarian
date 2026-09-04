@@ -32,6 +32,8 @@ from mechanical_librarian.domain.field_value_comparison import (
 )
 from mechanical_librarian.domain.metadata_policy import OPTION_CATALOGUE
 from mechanical_librarian.domain.metadata_report import (
+    AUDIO_FILE_FORMATS,
+    AUDIOBOOK_PROVIDER_AUTHORITIES,
     ClaimKind,
     ClaimScope,
     Comparison,
@@ -52,6 +54,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetField,
     TargetFieldState,
     TargetSeries,
+    canonical_asin,
     canonical_json,
     complete_creator_identity_bindings,
     creator_comparison_key,
@@ -73,7 +76,12 @@ from mechanical_librarian.domain.work_identity import (
 if TYPE_CHECKING:
     from mechanical_librarian.domain.cover_evidence import CoverArtifact
 
-PROPOSAL_SCHEMA = "proposal-set-v5"
+PROPOSAL_SCHEMA = "proposal-set-v6"
+# What the proposals in one set were formed for. F47 owns the writes, so this
+# is what tells a decision recorded against an audiobook apart from one that
+# may be applied, and it is bound into the set's identity rather than derived
+# beside it (#966).
+MEDIA_KINDS = ("ebook", "audiobook")
 POLICY_VERSION = "fixed-conservative-v19"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
@@ -89,7 +97,6 @@ _EVIDENCE_REFERENCE = re.compile(
 )
 _CORRELATION = re.compile(r"^correlation_[0-9a-f]{64}$")
 _REASON = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
-_ASIN = re.compile(r"^B[0-9A-Z]{9}$")
 _GENERIC_PROVIDER_SUBTITLES = frozenset({"a novel", "stories"})
 
 
@@ -309,6 +316,7 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
             ("no_supported_evidence", SUBTITLE_SEGMENT_UNCORROBORATED_REASON),
             ("no_supported_evidence",),
             ("policy_ignored",),
+            ("audiobook_cover_withheld",),
             ("redundant_publication_context",),
             ("target_state_unusable",),
         }
@@ -832,6 +840,7 @@ class ProposalSet:
     results: tuple[ProposalResult, ...]
     resolved_policy_id: str
     bibliographic_combinations: tuple[BibliographicCombination, ...] = ()
+    media_kind: str = "ebook"
     schema_version: str = PROPOSAL_SCHEMA
     policy_version: str = POLICY_VERSION
 
@@ -840,6 +849,7 @@ class ProposalSet:
             _PROPOSAL_SET_ID.fullmatch(self.proposal_set_id) is None
             or _REPORT_ID.fullmatch(self.report_id) is None
             or _DIGEST.fullmatch(self.target_fingerprint) is None
+            or self.media_kind not in MEDIA_KINDS
             or self.schema_version != PROPOSAL_SCHEMA
             or self.policy_version != POLICY_VERSION
             or type(self.resolved_policy_id) is not str
@@ -918,6 +928,7 @@ class ProposalSet:
         results: tuple[ProposalResult, ...],
         resolved_policy_id: str,
         bibliographic_combinations: tuple[BibliographicCombination, ...] = (),
+        media_kind: str = "ebook",
     ) -> Self:
         combinations = tuple(
             sorted(
@@ -935,6 +946,7 @@ class ProposalSet:
                         results,
                         resolved_policy_id,
                         combinations,
+                        media_kind,
                     )
                 ).encode("utf-8")
             ).hexdigest()
@@ -946,6 +958,7 @@ class ProposalSet:
             results,
             resolved_policy_id,
             combinations,
+            media_kind,
         )
 
     def _identity_data(self) -> dict[str, object]:
@@ -958,6 +971,7 @@ class ProposalSet:
             self.results,
             self.resolved_policy_id,
             self.bibliographic_combinations,
+            self.media_kind,
         )
 
     def to_json(self) -> str:
@@ -1226,6 +1240,11 @@ def evaluate_report(
             result = _provider_consensus_contributor_display_election(
                 report, targets, destination, result
             )
+        if destination is TargetDestination.NARRATORS and result.outcome in {
+            ProposalOutcome.PROPOSE_CHANGE,
+            ProposalOutcome.ACCEPTABLE_CHOICE,
+        }:
+            result = _narrator_corroboration_guard(report, result)
         results[destination] = _apply_policy_destination(result, ignored)
     publication = _publication_results(report, targets)
     results.update(
@@ -1262,6 +1281,9 @@ def evaluate_report(
         results=ordered,
         resolved_policy_id=resolved_policy_id,
         bibliographic_combinations=combinations,
+        media_kind=(
+            "audiobook" if report.file.format in AUDIO_FILE_FORMATS else "ebook"
+        ),
     )
 
 
@@ -1322,7 +1344,7 @@ def _observations(
                 _Observed(
                     _value(destination, claim.canonical),
                     (claim.reference,),
-                    _correlation("local:selected_epub"),
+                    _local_correlation(report),
                     _scope(claim.scope),
                     _local_representation(claim.basis),
                 )
@@ -1342,7 +1364,7 @@ def _observations(
                         report, destination, claim.reference
                     )
                     and _eligible_provider_manifestation(
-                        destination, claim.applicability
+                        destination, claim, provider, candidate
                     )
                     and _eligible_provider_description(
                         destination, claim.value, candidate
@@ -1425,7 +1447,7 @@ def subtitle_segment_evidence(
     sources: list[tuple[str, str, str | None]] = [
         (
             claim.reference,
-            _correlation("local:selected_epub"),
+            _local_correlation(report),
             claim.canonical or claim.observed,
         )
         for claim in report.local_claims
@@ -1507,7 +1529,7 @@ def segment_corroboration(
         return SegmentCorroboration(
             withheld_reason=SUBTITLE_SEGMENT_PROVIDER_DISSENT_REASON
         )
-    local_correlation = _correlation("local:selected_epub")
+    local_correlation = _local_correlation(report)
     decorated = frozenset(
         segment.correlation
         for segment in segments
@@ -1929,7 +1951,7 @@ def _provider_consensus_contributor_display_election(
         ),
         (
             *(_provider_correlation(provider) for provider, _, _ in provider_displays),
-            _correlation("local:selected_epub"),
+            _local_correlation(report),
         ),
         _contributor_scope(destination),
     )
@@ -1940,6 +1962,33 @@ def _provider_consensus_contributor_display_election(
         elected.alternative_id,
         (PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON,),
         _dependencies(destination),
+    )
+
+
+def _narrator_corroboration_guard(
+    report: MetadataReport, result: ProposalResult
+) -> ProposalResult:
+    """Hold a narrator cast that only one source ever stated.
+
+    Who read a recording is the fact an audiobook item is most often wrong
+    about, and one provider naming a cast the file itself never mentions is a
+    single source rather than agreement. The owner still sees the alternative
+    and can accept it; the proposal only stops calling it settled (#966).
+    """
+    if any(
+        claim.kind is ClaimKind.CONTRIBUTOR
+        and claim.role == "narrator"
+        and claim.state is FieldState.VALID
+        for claim in report.local_claims
+    ) or any(len(value.correlations) > 1 for value in result.alternatives):
+        return result
+    return ProposalResult(
+        result.destination,
+        ProposalOutcome.UNRESOLVED_CHOICE,
+        result.alternatives,
+        None,
+        ("insufficient_independent_corroboration",),
+        result.dependencies,
     )
 
 
@@ -1956,7 +2005,11 @@ def _contributor_claim_shape(
 ) -> tuple[ClaimKind, ClaimScope, str]:
     if destination is TargetDestination.AUTHORS:
         return ClaimKind.CREATOR, ClaimScope.WORK, "author"
-    return ClaimKind.CONTRIBUTOR, ClaimScope.EDITION, "narrator"
+    # Every source states a narrator as a WORK-scope contributor, because that
+    # is the scope `claim_scope` gives ClaimKind.CONTRIBUTOR, and the runtime
+    # corroboration band retains exactly those claims as statements about this
+    # recording. Reading EDITION here observed nothing at all (#966).
+    return ClaimKind.CONTRIBUTOR, ClaimScope.WORK, "narrator"
 
 
 def _local_contributor_displays(
@@ -2118,11 +2171,19 @@ def _list_observations(
     if destination is TargetDestination.AUTHORS:
         kind, role, scope = ClaimKind.CREATOR, "author", ClaimScope.WORK
     elif destination is TargetDestination.NARRATORS:
-        kind, role, scope = ClaimKind.CONTRIBUTOR, "narrator", ClaimScope.EDITION
+        kind, role, scope = ClaimKind.CONTRIBUTOR, "narrator", ClaimScope.WORK
     elif destination is TargetDestination.GENRES:
         kind, role, scope = ClaimKind.GENRE, None, ClaimScope.WORK
     else:
         kind, role, scope = ClaimKind.TAG, None, ClaimScope.WORK
+    # A narrator claim is stated at WORK scope and read as EDITION evidence:
+    # who read this recording is a fact about the recording, and the allowed
+    # narrator value shape says so (#966).
+    observed_scope = (
+        ProposalScope.EDITION
+        if destination is TargetDestination.NARRATORS
+        else _scope(scope)
+    )
     values: list[_Observed] = []
     members: tuple[LocalClaim, ...] | tuple[ProviderClaim, ...]
     claims: tuple[LocalClaim, ...] | tuple[ProviderClaim, ...]
@@ -2157,7 +2218,6 @@ def _list_observations(
             continue
         if destination is TargetDestination.NARRATORS and any(
             claim.kind is ClaimKind.CONTRIBUTOR
-            and claim.scope is ClaimScope.EDITION
             and claim.state is FieldState.VALID
             and claim.role is None
             for claim in basis_claims
@@ -2198,8 +2258,8 @@ def _list_observations(
                         tuple(cast("str", claim.canonical) for claim in claims),
                     ),
                     tuple(claim.reference for claim in claims),
-                    _correlation("local:selected_epub"),
-                    _scope(scope),
+                    _local_correlation(report),
+                    observed_scope,
                     _local_representation(basis),
                 )
             )
@@ -2218,7 +2278,6 @@ def _list_observations(
                 continue
             if destination is TargetDestination.NARRATORS and any(
                 claim.kind is ClaimKind.CONTRIBUTOR
-                and claim.scope is ClaimScope.EDITION
                 and claim.state is FieldState.VALID
                 and claim.role is None
                 for claim in candidate.claims
@@ -2259,7 +2318,7 @@ def _list_observations(
                         ),
                         tuple(claim.reference for claim in claims),
                         _provider_correlation(provider),
-                        _scope(scope),
+                        observed_scope,
                         _provider_representation(provider, candidate),
                     )
                 )
@@ -2737,7 +2796,7 @@ def _series_observations(report: MetadataReport) -> tuple[_Observed, ...]:
                 _Observed(
                     ProposalValue(ProposalValueKind.SERIES, observed),
                     tuple(claim.reference for claim in source_claims),
-                    _correlation("local:selected_epub"),
+                    _local_correlation(report),
                     ProposalScope.WORK,
                     _local_representation(basis),
                 )
@@ -2847,7 +2906,7 @@ def _date_observations(report: MetadataReport) -> tuple[_Observed, ...]:
                     _Observed(
                         ProposalValue(ProposalValueKind.TEXT, parsed),
                         (claim.reference,),
-                        _correlation("local:selected_epub"),
+                        _local_correlation(report),
                         ProposalScope.EDITION,
                         _local_representation(claim.basis),
                         claim.date_event,
@@ -2958,6 +3017,7 @@ def _publication_results(
             for provider in report.providers
             if provider.authority is not None
         ),
+        _local_correlation(report),
     )
     date_result = _evaluate(
         TargetDestination.PUBLISHED_DATE,
@@ -2995,6 +3055,7 @@ def _strongest_independently_corroborated_date(
     months: tuple[_Observed, ...],
     years: tuple[_Observed, ...],
     provider_authorities: frozenset[str],
+    local_correlation: str,
 ) -> tuple[_Observed, ...]:
     possible: list[tuple[_Observed, ...]] = []
     for precision, observations, length in (
@@ -3013,7 +3074,7 @@ def _strongest_independently_corroborated_date(
             continue
         correlations = {value.correlation for value in observations}
         if (
-            _correlation("local:selected_epub") in correlations
+            local_correlation in correlations
             and len(correlations.intersection(provider_authorities)) >= 2
         ):
             possible.append(observations)
@@ -3047,6 +3108,17 @@ def _date_compatible_with_projection(
 
 
 def _cover_result(report: MetadataReport, target: TargetField) -> ProposalResult:
+    if report.file.format in AUDIO_FILE_FORMATS:
+        # F45 forms text proposals only. An audiobook's artwork stays where it
+        # is until the cover field is unlocked for recordings, so the owner is
+        # never asked to choose one here (#966).
+        return ProposalResult(
+            TargetDestination.COVER,
+            ProposalOutcome.INELIGIBLE,
+            (),
+            None,
+            ("audiobook_cover_withheld",),
+        )
     retrieved = [
         source
         for source in report.cover_sources
@@ -3518,20 +3590,44 @@ def _eligible_identifier(
     if destination is TargetDestination.ISBN:
         return applicability in {"ebook", "unknown"}
     if destination is TargetDestination.ASIN:
-        return _ASIN.fullmatch(value.upper()) is not None
+        # One ASIN grammar for the whole system: the proposal path asks the
+        # same question the claim path already answers (#957, #966).
+        return canonical_asin(value) is not None
     return True
 
 
 def _eligible_provider_manifestation(
-    destination: TargetDestination, applicability: str
+    destination: TargetDestination,
+    claim: ProviderClaim,
+    provider: ProviderObservation,
+    candidate: ProviderCandidate,
 ) -> bool:
+    """Whether one provider claim is stated about this exact manifestation.
+
+    A subtitle and an ASIN belong to a manifestation, not to a work, so a
+    bibliographic provider only speaks for one when it has typed the claim as
+    an ebook's. An audiobook authority types nothing, because it has a single
+    product to describe and the ASIN it states is that product's identifier.
+    What binds that statement to *this* recording is the runtime corroboration
+    band, and a retained EDITION-scope marketplace evidence is exactly the
+    band's verdict: it survives into the report only for a corroborated
+    candidate, or the lane was built from the item's own ASIN, which is the
+    identifier by construction (ADR-0061).  Reading it here is reusing that
+    admission, not repeating it (ADR-0061, ADR-0064, #966).
+    """
+    if destination not in {TargetDestination.SUBTITLE, TargetDestination.ASIN}:
+        return True
+    if claim.applicability == "ebook":
+        return True
     return (
-        destination
-        not in {
-            TargetDestination.SUBTITLE,
-            TargetDestination.ASIN,
-        }
-        or applicability == "ebook"
+        destination is TargetDestination.ASIN
+        and claim.scope is ClaimScope.EDITION
+        and provider.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+        and any(
+            value.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+            and value.scope is ClaimScope.EDITION
+            for value in candidate.evidence
+        )
     )
 
 
@@ -4189,6 +4285,20 @@ def _correlation(value: str) -> str:
     return "correlation_" + hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _local_correlation(report: MetadataReport) -> str:
+    """Name the local source one report's own claims were read from.
+
+    A correlation is how a proposal says two observations came from the same
+    place, and the owner reads the label. A recording's tags are not an epub's
+    metadata, so an audiobook says so (#966).
+    """
+    return _correlation(
+        "local:selected_audio"
+        if report.file.format in AUDIO_FILE_FORMATS
+        else "local:selected_epub"
+    )
+
+
 def _provider_correlation(provider: ProviderObservation) -> str:
     return _correlation("provider:" + (provider.authority or "unknown"))
 
@@ -4228,8 +4338,10 @@ def _proposal_data(
     results: tuple[ProposalResult, ...],
     resolved_policy_id: str,
     bibliographic_combinations: tuple[BibliographicCombination, ...],
+    media_kind: str,
 ) -> dict[str, object]:
     return {
+        "media_kind": media_kind,
         "policy_version": POLICY_VERSION,
         "resolved_policy_id": resolved_policy_id,
         "relationships": {
@@ -4251,6 +4363,7 @@ def _proposal_from_data(raw: object) -> ProposalSet:
     root = _object(
         raw,
         {
+            "media_kind",
             "policy_version",
             "resolved_policy_id",
             "relationships",
@@ -4280,6 +4393,7 @@ def _proposal_from_data(raw: object) -> ProposalSet:
         results=results,
         resolved_policy_id=root["resolved_policy_id"],
         bibliographic_combinations=combinations,
+        media_kind=root["media_kind"],
     )
     if (
         root["schema_version"] != proposal_set.schema_version
@@ -4454,6 +4568,7 @@ __all__ = [
     "MAX_PROPOSAL_BYTES",
     "POLICY_VERSION",
     "PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON",
+    "MEDIA_KINDS",
     "PROPOSAL_SCHEMA",
     "SUBTITLE_SEGMENT_DECORATED_CONSENSUS_REASON",
     "SUBTITLE_SEGMENT_PROVIDER_DISSENT_REASON",

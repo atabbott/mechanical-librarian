@@ -313,6 +313,8 @@ def test_selected_original_reaches_verified_guarded_fake_service_application() -
         assert selected_value == selected_history["decision"]["selected_value"]
         assert {
             "actor",
+            "application",
+            "application_reason",
             "decision_id",
             "destination",
             "occurred_at",

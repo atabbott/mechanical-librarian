@@ -115,6 +115,7 @@ describe('Library review ownership', () => {
       items: [
         {
           category: 'owner',
+          applicationReason: null,
           destination: 'title',
           outcome: 'accept',
           previousValue: { kind: 'text', value: '<script>previous</script>' },
@@ -122,6 +123,7 @@ describe('Library review ownership', () => {
         },
         {
           category: 'owner',
+          applicationReason: null,
           destination: 'language',
           outcome: 'accept',
           previousValue: null,
@@ -129,6 +131,7 @@ describe('Library review ownership', () => {
         },
         {
           category: 'owner',
+          applicationReason: null,
           destination: 'publisher',
           outcome: 'accept',
           previousValue: { kind: 'text', value: 'Former publisher' },
@@ -136,6 +139,7 @@ describe('Library review ownership', () => {
         },
         {
           category: 'owner',
+          applicationReason: null,
           destination: 'title_reversal',
           outcome: 'keep_current',
           previousValue: { kind: 'text', value: 'Applied candidate' },
@@ -143,6 +147,7 @@ describe('Library review ownership', () => {
         },
         {
           category: 'owner',
+          applicationReason: null,
           destination: 'subtitle',
           outcome: 'keep_current',
           previousValue: { kind: 'text', value: 'Existing subtitle' },
@@ -150,6 +155,7 @@ describe('Library review ownership', () => {
         },
         {
           category: 'owner',
+          applicationReason: null,
           destination: 'edition',
           outcome: 'keep_current',
           previousValue: null,
@@ -164,6 +170,7 @@ describe('Library review ownership', () => {
         },
         {
           category: 'owner',
+          applicationReason: null,
           destination: 'isbn',
           outcome: 'reject',
           previousValue: { kind: 'text', value: '9780000000001' },
@@ -445,6 +452,7 @@ describe('Library review ownership', () => {
           needsAttention: false,
           humanDecision: {
             actor: 'owner',
+            application: 'apply' as const,
             decision_id: 'decision-1',
             destination: field.destination,
             occurred_at: 1,
@@ -463,6 +471,7 @@ describe('Library review ownership', () => {
       return {
         schema_version: 'review-decision-v1' as const,
         actor: 'owner' as const,
+        application: 'apply' as const,
         decision_id: 'decision-1',
         destination: 'title' as const,
         occurred_at: 1,

@@ -70,6 +70,7 @@ describe('Application shell', () => {
         libraries: [
           {
             blocked: 0,
+            recorded: 0,
             checked: 1,
             connection: 'primary',
             library: 'Books',
@@ -138,6 +139,7 @@ describe('Application shell', () => {
         libraries: [
           {
             blocked: 2,
+            recorded: 0,
             checked: 7,
             connection: 'primary',
             library: 'Books',
@@ -176,6 +178,7 @@ describe('Application shell', () => {
           libraries: [
             {
               blocked: 0,
+              recorded: 0,
               checked: checked++,
               connection: 'primary',
               library: 'Books',
@@ -216,6 +219,7 @@ describe('Application shell', () => {
         libraries: [
           {
             blocked: 0,
+            recorded: 0,
             checked: 1,
             connection: 'primary',
             library: 'Books',
@@ -251,6 +255,7 @@ describe('Application shell', () => {
         libraries: [
           {
             blocked: 1,
+            recorded: 0,
             checked: 2,
             connection: 'primary',
             library: 'Books',

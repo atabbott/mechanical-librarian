@@ -494,7 +494,7 @@ export const PreparationNotice = ({ routeIdentity }: { routeIdentity: string }) 
 }
 
 /**
- * The eight buckets a work moves through, in the order an owner reads them.
+ * The nine buckets a work moves through, in the order an owner reads them.
  *
  * The stage names the store uses are engineering words; these are what the
  * owner is actually waiting for. Naming every bucket -- including the empty
@@ -510,6 +510,7 @@ const stageLabels: Readonly<Record<string, string>> = {
   admission: 'Finding safe automatic choices',
   projection: 'Preparing the review',
   ready: 'Ready to browse',
+  recorded: 'Recorded, nothing to decide',
   failed: 'Could not finish',
 }
 

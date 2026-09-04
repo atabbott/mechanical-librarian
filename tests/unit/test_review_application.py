@@ -605,6 +605,7 @@ def test_first_boot_presentation_survives_first_ready_until_terminal_measurement
                 7,
                 1,
                 0,
+                0,
                 False,
             )
 
@@ -648,6 +649,7 @@ def test_first_boot_presentation_survives_first_ready_until_terminal_measurement
         7,
         5,
         2,
+        0,
         False,
     )
     view = application.preparation()
@@ -662,6 +664,7 @@ def test_first_boot_presentation_survives_first_ready_until_terminal_measurement
         7,
         7,
         7,
+        0,
         0,
         False,
     )

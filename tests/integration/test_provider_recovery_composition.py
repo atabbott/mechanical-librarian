@@ -395,7 +395,7 @@ def test_restart_delivers_generation_cutover_once_after_dormant_health(
         assert predecessor is not None
         work_id = "review_work_" + f"{4:064x}"
         repository._connection.execute(
-            "INSERT INTO review_preparation_work(work_id,scan_id,ordinal,connection_name,library_name,library_id,item_id,file_identity,source_revision,source_fingerprint,producer_fingerprint,catalogue_generation,catalogue_fingerprint,stage,state,attempt,recovery_attempt,retry_not_before,report_id,proposal_set_id,review_case_id,failure_code,failure_root,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'complete','complete',0,0,0,?,?,?,NULL,NULL,2)",
+            "INSERT INTO review_preparation_work(work_id,scan_id,ordinal,connection_name,library_name,library_id,item_id,file_identity,source_revision,source_fingerprint,producer_fingerprint,catalogue_generation,catalogue_fingerprint,stage,state,attempt,recovery_attempt,retry_not_before,report_id,proposal_set_id,review_case_id,failure_code,failure_root,outcome,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'complete','complete',0,0,0,?,?,?,NULL,NULL,'case',2)",
             (
                 work_id,
                 scan_id,
@@ -653,9 +653,9 @@ def test_three_work_shared_failure_then_real_f22_cutover() -> None:
                 "source_revision,source_fingerprint,producer_fingerprint,"
                 "catalogue_generation,catalogue_fingerprint,stage,state,attempt,"
                 "recovery_attempt,retry_not_before,report_id,proposal_set_id,"
-                "review_case_id,failure_code,failure_root,updated_at) "
+                "review_case_id,failure_code,failure_root,outcome,updated_at) "
                 "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'complete','complete',0,0,0,"
-                "?,?,?,NULL,NULL,2)",
+                "?,?,?,NULL,NULL,'case',2)",
                 (
                     work_id,
                     scan_id,
