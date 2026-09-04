@@ -12,6 +12,20 @@ cover provider.
 An exact ProposalSet can be reopened offline through the application repository
 or typed source-only inspector.
 
+## Series automatic election
+
+Series alternatives retain every admitted membership. When the active policy
+routes a qualified series option to Automatic, one complete provider membership
+may project without a second provider lineage. Provider-wide unsupported series
+and sequence output with no name is no evidence. A named incomplete or
+unpositioned membership, a genuine unresolved alternative, or a failed ISBN,
+WORK, or ASIN query kind that could have contributed to the elected evidence
+keeps the field inspectable and abstained. The reason records the contributing
+failed kind. Election collapses only closed leading-article and trailing
+`Series`/`Trilogy` name variants, preserving exact sequence distinctions; it
+does not add fuzzy matching, provider ranking, membership synthesis, or
+title-specific runtime knowledge.
+
 Success is exactly one canonical `proposal-set-v6` JSON document plus a
 newline. Failure emits no document and one value-free diagnostic.
 

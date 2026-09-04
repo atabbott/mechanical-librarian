@@ -33,11 +33,11 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
 
 MANIFEST = (
     Path(__file__).parents[2]
-    / "docs/reference/f20-rich-metadata-qualification-candidate-v10.json"
+    / "docs/reference/f20-rich-metadata-qualification-candidate-v11.json"
 )
 HISTORICAL_MANIFEST = (
     Path(__file__).parents[2]
-    / "docs/reference/f20-rich-metadata-qualification-candidate-v9.json"
+    / "docs/reference/f20-rich-metadata-qualification-candidate-v10.json"
 )
 F19A_MANIFEST = (
     Path(__file__).parents[2] / "docs/reference/f19a-qualification-manifest-v5.json"
@@ -79,7 +79,7 @@ RICH_FIELDS = (
 def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
 
-    assert "f20-rich-metadata-qualification-candidate-v10" == manifest["schema"]
+    assert "f20-rich-metadata-qualification-candidate-v11" == manifest["schema"]
     assert "fixed-conservative-v19" == manifest["proposal_policy_version"]
     assert "decision_only" == manifest["automatic_authority"]
     passing = {
@@ -108,13 +108,13 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
         "prior_manifest_sha256",
     } == set(manifest["authority_rotation"])
     assert (
-        "8b14e134a146e8f03f9d36ad78506a7f234b0768ef61620ef1d1234a8df7c4a5"
+        "c8843d96dfda862b04f6269fd1ab3ab202338815ed5d0efbc0c4c480293adea3"
         == manifest["authority_rotation"]["prior_manifest_sha256"]
     )
     evidence = {
         name: value
         for name, value in manifest["evidence_method"].items()
-        if name != "isbn_manifestation_election"
+        if name not in {"isbn_manifestation_election", "series_abstention_correction"}
     }
     segment = evidence.pop("subtitle_segment_corroboration")
     by_state = {name: evidence.pop(name) for name in MEASURED_BY_STATE}
@@ -222,6 +222,76 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
         "subtitle_truth_model": "ebook_manifestation_bibliographic_subtitle",
         "unseen_holdout_required": False,
     } == evidence
+    assert {
+        "adjudication_v3_sha256": "aad68fa4c458e3d863c076b6ce080b0a5f2786effbe38ab4ef51d365df5eb199",
+        "allowed_membership_truth_with_separate_preference": True,
+        "compiler_sha256": "c5d637b662b311a565feb766f772ce3481e4452f7ef8e3e88e18ba7cca0558d5",
+        "corpus_role": "development_exposed",
+        "current_report_evaluator_v2_sha256": "07b9d4130cbf43d41664c182db6ea0c436692163df0ef5da00ca978b7bcfcb37",
+        "direct_epub_reopenings": 19,
+        "fresh_mixed_confirmation": {
+            "activation_issue": 895,
+            "holdout_claim": False,
+            "required": True,
+            "status": "not_completed",
+        },
+        "independent_review_receipt_sha256": "1fa219248b9c9e267282feb66755d58632c5ffdf35a55bdcbba02f9196d2db91",
+        "proposal_policy_sha256": "d893bc8567ce99e99b5f5f601caf4910cab42d2d7d3cadb0063a8ecd9a9d4789",
+        "qualification_contract_sha256": "1f1fab25c6bdc52dcadfa46fc7fdaf4a7bd1f74e219f74e35624bab51198c075",
+        "retained_document_evaluator_v2_sha256": "0363d622529256e3c4a8caafb6a853fa6df6e15e6039e6e0265745af7d4408e1",
+        "retained_reports": 118,
+        "series_rows_reviewed": 49,
+        "truth_corrections": 15,
+        "unchanged_cases": 34,
+    } == {
+        name: value
+        for name, value in manifest["evidence_method"][
+            "series_abstention_correction"
+        ].items()
+        if name != "cohorts"
+    }
+    assert {
+        "49-v1": {
+            "eligible_reports": 49,
+            "positive_reports": 37,
+            "projected_memberships": 21,
+            "scored_exact_position_predictions": 19,
+            "correct_scored_predictions": 19,
+            "allowed_membership_unknown_position_unscored": 2,
+            "automatic_precision": 1.0,
+            "result_sha256": "8b4b0a05eff75fc40ed2552ac4b2c566621ced593319c0cc7000322e53bc6ece",
+        },
+        "49-v2": {
+            "eligible_reports": 49,
+            "positive_reports": 37,
+            "projected_memberships": 22,
+            "scored_exact_position_predictions": 20,
+            "correct_scored_predictions": 20,
+            "allowed_membership_unknown_position_unscored": 2,
+            "automatic_precision": 1.0,
+            "result_sha256": "bc0cf78f68ba9964d39a0be698d4924caea00c73034bdfbca55ebdb078795bf3",
+        },
+        "series-20": {
+            "eligible_reports": 20,
+            "positive_reports": 20,
+            "projected_memberships": 15,
+            "scored_exact_position_predictions": 15,
+            "correct_scored_predictions": 15,
+            "allowed_membership_unknown_position_unscored": 0,
+            "automatic_precision": 1.0,
+            "result_sha256": "203379df096fa6f506d2a8cf4d3916c253c38a1a20e5e4e7e6fdca03e7e66e29",
+        },
+        "retained-provider-documents": {
+            "eligible_reports": 49,
+            "positive_reports": 37,
+            "projected_memberships": 19,
+            "scored_exact_position_predictions": 19,
+            "correct_scored_predictions": 19,
+            "allowed_membership_unknown_position_unscored": 0,
+            "automatic_precision": 1.0,
+            "result_sha256": "4ab318ed289d30d24033dc77d101849da5fcc42a5248ef4602c768ca0959bf1b",
+        },
+    } == manifest["evidence_method"]["series_abstention_correction"]["cohorts"]
     assert {
         "adjudicated_counts": {"abstain": 37, "fill": 76, "unknown": 0},
         "case_count": 113,
@@ -463,12 +533,12 @@ def test_candidate_exposes_only_closed_aggregate_contract_data() -> None:
             )
 
 
-def test_v9_manifest_remains_historical_readable_after_v10_rotation() -> None:
+def test_v10_manifest_remains_historical_readable_after_v11_rotation() -> None:
     historical = json.loads(HISTORICAL_MANIFEST.read_text(encoding="utf-8"))
     current = json.loads(MANIFEST.read_text(encoding="utf-8"))
     manifest = current
 
-    assert "f20-rich-metadata-qualification-candidate-v9" == historical["schema"]
+    assert "f20-rich-metadata-qualification-candidate-v10" == historical["schema"]
     assert (
         hashlib.sha256(HISTORICAL_MANIFEST.read_bytes()).hexdigest()
         == current["authority_rotation"]["prior_manifest_sha256"]

@@ -106,6 +106,17 @@ Google visible-text remain `not_qualified`; ASIN remains
 every non-automatic rich option. This authority records immutable decisions
 only and does not bypass effect consent or any guarded-write control.
 
+Series Automatic accepts one complete provider membership without treating an
+unrelated provider failure or provider-wide unsupported series output as
+negative evidence. It abstains for a named incomplete or unpositioned
+membership, a genuine alternative, or a failed query kind that could have
+contributed to the elected membership. Closed leading-article and trailing
+`Series`/`Trilogy` display variants are equivalent only with the same exact
+sequence; no fuzzy matching, provider ranking, cross-provider membership
+synthesis, or per-work exception list is available. The F20 v11 evidence is
+development-exposed rather than a holdout; a separately frozen fresh mixed
+confirmation remains required before #895 activation.
+
 ## Availability before curation
 
 ### Deterministic cover choice
