@@ -236,7 +236,7 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
             "status": "not_completed",
         },
         "independent_review_receipt_sha256": "1fa219248b9c9e267282feb66755d58632c5ffdf35a55bdcbba02f9196d2db91",
-        "proposal_policy_sha256": "d893bc8567ce99e99b5f5f601caf4910cab42d2d7d3cadb0063a8ecd9a9d4789",
+        "proposal_policy_sha256": "44aa46b2a5e02e1a6d9257fe83ada45813045c5ec62a660a267a08020816c119",
         "qualification_contract_sha256": "1f1fab25c6bdc52dcadfa46fc7fdaf4a7bd1f74e219f74e35624bab51198c075",
         "retained_document_evaluator_v2_sha256": "0363d622529256e3c4a8caafb6a853fa6df6e15e6039e6e0265745af7d4408e1",
         "retained_reports": 118,
@@ -259,7 +259,7 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
             "correct_scored_predictions": 19,
             "allowed_membership_unknown_position_unscored": 2,
             "automatic_precision": 1.0,
-            "result_sha256": "8b4b0a05eff75fc40ed2552ac4b2c566621ced593319c0cc7000322e53bc6ece",
+            "result_sha256": "15a2a9b814e34723e6b1d23e775933f521e3477fe8c0f0bdbfe1f8576eee62e7",
         },
         "49-v2": {
             "eligible_reports": 49,
@@ -269,7 +269,7 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
             "correct_scored_predictions": 20,
             "allowed_membership_unknown_position_unscored": 2,
             "automatic_precision": 1.0,
-            "result_sha256": "bc0cf78f68ba9964d39a0be698d4924caea00c73034bdfbca55ebdb078795bf3",
+            "result_sha256": "8338c8b563b5ff8f4dd72c70d6bf808e4ef76eea23d52661599dcc28b298aff4",
         },
         "series-20": {
             "eligible_reports": 20,
@@ -279,7 +279,7 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
             "correct_scored_predictions": 15,
             "allowed_membership_unknown_position_unscored": 0,
             "automatic_precision": 1.0,
-            "result_sha256": "203379df096fa6f506d2a8cf4d3916c253c38a1a20e5e4e7e6fdca03e7e66e29",
+            "result_sha256": "1988b2598866408f5386399a6f65010c5c8b3c1c75fc42a5d6e3b7622df36903",
         },
         "retained-provider-documents": {
             "eligible_reports": 49,
@@ -289,7 +289,7 @@ def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
             "correct_scored_predictions": 19,
             "allowed_membership_unknown_position_unscored": 0,
             "automatic_precision": 1.0,
-            "result_sha256": "4ab318ed289d30d24033dc77d101849da5fcc42a5248ef4602c768ca0959bf1b",
+            "result_sha256": "998b4f97b4718b690b06428f49fe6f179faf2e2d8faacb5b5d75fbcf4a9d68d0",
         },
     } == manifest["evidence_method"]["series_abstention_correction"]["cohorts"]
     assert {
