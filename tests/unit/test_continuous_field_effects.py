@@ -840,14 +840,23 @@ def _bindable_f20_decision(occurred_at: int) -> AutomaticDecision:
     )
 
 
-def test_unbindable_decision_is_named_and_stepped_over_not_left_to_starve() -> None:
+@pytest.mark.parametrize("error_code", ("authority_binding", "persistence"))
+def test_unbindable_decision_is_named_and_stepped_over_not_left_to_starve(
+    error_code: str,
+) -> None:
     wedged = _bindable_f20_decision(1)
     following = _bindable_f20_decision(101)
 
     class Repository(_ActivityPagedRepository):
+        failing = True
+        attempts = 0
+
         def record_current_field_effect_no_change(self, decision, _changed_at):
             if decision.decision_id == wedged.decision_id:
-                raise FieldEffectError("authority_binding")
+                self.attempts += 1
+                if self.failing:
+                    raise FieldEffectError(error_code)
+                return True
             return False
 
         def pending_field_effect_decision_counts(self):
@@ -870,9 +879,24 @@ def test_unbindable_decision_is_named_and_stepped_over_not_left_to_starve() -> N
 
     # The pending order is one union across every library, so a decision that
     # cannot bind must not hold the decisions behind it hostage.
+    if error_code == "persistence":
+        with pytest.raises(FieldEffectError, match="persistence"):
+            service.schedule()
+        assert planner.planned == []
+        repository.failing = False
+        assert service.schedule() == 1
+        assert repository.attempts == 2
+        assert planner.planned == [following.decision_id]
+        return
     assert 1 == service.schedule()
     assert [following.decision_id] == planner.planned
     assert "authority_binding" == service.activity()["last_failure"]
+    assert service.schedule() == 0
+    assert repository.attempts == 1
+    repository.failing = False
+    service.wake()
+    service.schedule()
+    assert repository.attempts == 2
 
 
 def test_schedule_skips_prior_f20_before_no_change_authority_or_capability() -> None:

@@ -126,6 +126,7 @@ from mechanical_librarian.interfaces.web.app import (
     _ReviewField,
 )
 from tests.support.audiobook_reports import admitted_audiobook_report
+from tests.support.automatic_decisions import _automatic_decisions
 from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.proposal_evidence import (
     _claim,
@@ -1355,6 +1356,17 @@ def test_year_current_reaches_one_durable_publication_keep_and_read_models() -> 
         "exact_authors",
         "canonical_authors",
         "formatted_isbn",
+        "series_source_order",
+        "series_all_qualified",
+        "series_primary_narrative",
+        "genres_fill_empty",
+        "genres_add",
+        "genres_replace",
+        "tags_fill_empty",
+        "tags_add",
+        "tags_replace",
+        "description_preserved",
+        "subtitle_preserved",
     ),
 )
 def test_automatic_keep_current_is_a_single_no_change_fact_without_guards(
@@ -1419,6 +1431,12 @@ def test_automatic_keep_current_is_a_single_no_change_fact_without_guards(
             value for value in decisions if value.destination == destination
         )
         assert "keep_current" == decision.outcome
+        if category in {"series", "genres", "tags", "description_fill", "subtitle"}:
+            assert outcome.citation_ids == outcome.combination_ids == ()
+            assert (
+                repository.field_effect_authority_source(decision)["decision_value"]
+                is None
+            )
         if scenario == "exact_title":
             corrupt_case = SimpleNamespace(
                 proposal_set_id=case.proposal_set_id,
@@ -1517,7 +1535,9 @@ def test_automatic_keep_current_is_a_single_no_change_fact_without_guards(
                     source_with(combination_ids=[]),
                 )
         assert repository.persist_shadow_outcome(case_id, 5) == persisted.to_json()
-        assert repository.count_current_attention_fields(None) == 0
+        expected_attention = repository.count_current_attention_fields(None)
+        if category in {"title_layout", "contributor_names", "isbn_form"}:
+            assert expected_attention == 0
 
         class UnexpectedAuthority:
             def resolve(self, _decision):
@@ -1552,7 +1572,7 @@ def test_automatic_keep_current_is_a_single_no_change_fact_without_guards(
             "SELECT count(*) FROM automatic_decisions"
         ).fetchone() == (len(expected_decisions),)
         assert repository.pending_field_effect_decision_documents(100) == ()
-        assert repository.count_current_attention_fields(None) == 0
+        assert repository.count_current_attention_fields(None) == expected_attention
         with patch.object(
             ReviewCase, "from_json", wraps=ReviewCase.from_json
         ) as parse_case:
@@ -2093,98 +2113,218 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
             repository.close()
 
 
-def test_rich_no_op_keep_current_binds_and_leaves_no_pending_decision() -> None:
-    genre_claims = tuple(
-        _claim(
-            "catalogue",
-            "edition-1",
-            ClaimKind.GENRE,
-            value,
-            scope=ClaimScope.WORK,
-            order=index,
+@pytest.mark.parametrize("field", ("citation_ids", "combination_ids"))
+def test_rich_no_change_rejects_corrupted_explicit_proof(
+    tmp_path: Path, field: str
+) -> None:
+    report, category, option, _ = _automatic_no_change_inputs("series_source_order")
+    repository = open_repository(tmp_path / "reports.sqlite")
+    try:
+        (decision,) = _automatic_decisions(
+            SimpleNamespace(repository=repository),
+            report,
+            category,
+            option,
+            qualified=True,
         )
-        for index, value in enumerate(("Fantasy", "Adventure"))
-    )
-    report = _proposal_report(
-        fields=_fields(
-            genres=TargetField(
-                TargetDestination.GENRES,
-                TargetFieldState.VALUE,
-                ("Existing",),
+        document = json.loads(repository.list_shadow_outcomes(1)[0][0])
+        source = next(
+            value for value in document["outcomes"] if value["destination"] == "series"
+        )
+        source[field] = (
+            ["provider_" + "a" * 64]
+            if field == "citation_ids"
+            else ["combination_" + "b" * 64]
+        )
+        # A hostile stored document with altered proof must not acquire a
+        # no-change fact. No alternate authority chain is fabricated here.
+        repository._connection.execute(
+            "DROP TRIGGER shadow_decision_outcomes_no_update"
+        )
+        repository._connection.execute(
+            "UPDATE shadow_decision_outcomes SET document=?", (json.dumps(document),)
+        )
+        repository._connection.commit()
+        with pytest.raises(FieldEffectError, match="authority_binding"):
+            repository.record_current_field_effect_no_change(decision, 5)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effect_no_changes"
+        ).fetchone() == (0,)
+    finally:
+        repository.close()
+
+
+def test_rich_no_change_rejects_a_superseded_report(tmp_path: Path) -> None:
+    report, category, option, _ = _automatic_no_change_inputs("series_source_order")
+    repository = open_repository(tmp_path / "reports.sqlite")
+    try:
+        (decision,) = _automatic_decisions(
+            SimpleNamespace(repository=repository),
+            report,
+            category,
+            option,
+            qualified=True,
+        )
+        replacement = _proposal_report(
+            fields=_fields("Changed title"), providers=report.providers
+        )
+        repository.publish(replacement, lambda: True, expected_current=report.report_id)
+        with pytest.raises(FieldEffectError, match="authority_binding"):
+            repository.record_current_field_effect_no_change(decision, 5)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effect_no_changes"
+        ).fetchone() == (0,)
+    finally:
+        repository.close()
+
+
+def test_primary_narrative_exact_preservation_remains_an_abstention(
+    tmp_path: Path,
+) -> None:
+    report, category, _, _ = _automatic_no_change_inputs("series_source_order")
+    repository = open_repository(tmp_path / "reports.sqlite")
+    try:
+        assert (
+            _automatic_decisions(
+                SimpleNamespace(repository=repository),
+                report,
+                category,
+                "primary_narrative",
+                qualified=True,
             )
-        ),
-        providers=(_provider("catalogue", "edition-1", genre_claims),),
-    )
-    with tempfile.TemporaryDirectory() as temporary:
-        repository = open_repository(Path(temporary) / "reports.sqlite")
-        options = dict(DEFAULT_OPTIONS)
-        options["genres"] = "fill_empty"
-        destinations = {
-            name: "unsupported" if name == "explicit" else "ask"
-            for name in OPTION_CATALOGUE
-        }
-        destinations["genres"] = "automatic"
-        profile = MetadataPolicyProfile.create(
-            "Rich no-op binding", options, destinations
+            == ()
         )
-        resolved = resolve_policy(profile, report.target.library)
+        source = next(
+            value
+            for value in ShadowOutcomeSet.from_json(
+                repository.list_shadow_outcomes(1)[0][0]
+            ).outcomes
+            if value.destination == "series"
+        )
+        assert source.disposition == "abstention"
+    finally:
+        repository.close()
+
+
+def test_unbindable_isbn_does_not_starve_a_later_human_acceptance(
+    tmp_path: Path,
+) -> None:
+    first, category, option, _ = _automatic_no_change_inputs("unmatched_isbn")
+    second_base = _proposal_report(
+        providers=(
+            _provider(
+                "catalogue",
+                "edition-2",
+                (
+                    _claim(
+                        "catalogue",
+                        "edition-2",
+                        ClaimKind.TITLE,
+                        "Accepted title",
+                        scope=ClaimScope.WORK,
+                    ),
+                ),
+            ),
+        )
+    )
+    second = MetadataReport.create(
+        target=TargetFacts("primary", "later", "item-2", second_base.target.fields),
+        file=second_base.file,
+        local_claims=second_base.local_claims,
+        local_reasons=second_base.local_reasons,
+        providers=second_base.providers,
+    )
+    options = dict(DEFAULT_OPTIONS)
+    options[category] = option
+    destinations = {
+        name: "unsupported" if name == "explicit" else "ask"
+        for name in OPTION_CATALOGUE
+    }
+    destinations[category] = "automatic"
+    profile = MetadataPolicyProfile.create(
+        "Cross-library no-change", options, destinations
+    )
+    resolutions = tuple(
+        resolve_policy(profile, report.target.library) for report in (first, second)
+    )
+    repository = open_repository(tmp_path / "reports.sqlite")
+    try:
         repository.enter_shadow_preview(1)
         repository.create_metadata_policy_draft(profile.canonical_json)
         repository.activate_metadata_policy(
             profile.policy_id,
             MetadataPolicyProfile.builtin().policy_id,
-            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            tuple(
+                (report.target.library, policy.resolved_id, policy.canonical_json)
+                for report, policy in zip((first, second), resolutions, strict=True)
+            ),
             2,
         )
         repository.activate_qualified_automatic(3)
-        proposal_set = evaluate_report(
-            report,
-            resolved.resolved_id,
-            human_review_destinations(resolved),
+        cases = []
+        for report, policy in zip((first, second), resolutions, strict=True):
+            proposal = evaluate_report(
+                report, policy.resolved_id, human_review_destinations(policy)
+            )
+            repository.publish(report, lambda: True)
+            repository.publish_proposal(proposal)
+            cases.append(
+                json.loads(repository.admit_review_case(proposal))["review_case_id"]
+            )
+        repository.persist_shadow_outcome(cases[0], 4)
+        decision = AutomaticDecision.from_json(
+            repository.get_review_case_decisions(cases[0])[0]
         )
-        repository.publish(report, lambda: True)
-        repository.publish_proposal(proposal_set)
-        case_id = json.loads(repository.admit_review_case(proposal_set))[
-            "review_case_id"
-        ]
-        outcome = ShadowOutcomeSet.from_json(
-            repository.persist_shadow_outcome(case_id, 4)
+        assert decision.outcome == "keep_current"
+        # ISBN still has to prove its exact representation: a populated target
+        # alone cannot admit this no-op, unlike the canonical rich categories.
+        with pytest.raises(FieldEffectError, match="authority_binding"):
+            repository.record_current_field_effect_no_change(decision, 5)
+        human = _human_title_decision(repository, cases[1], 6)
+        repository.record_human_decision(human)
+        repository.grant_field_effect_consents("primary", ("later",), ("title",), 7)
+        authority = PersistedFieldEffectAuthority(repository)
+        capabilities = FakeCapabilityObserver("c" * 64)
+        target = FakeTargetService()
+        application = GuardedFieldApplication(
+            repository,
+            target,
+            FakeBackupReadiness(),
+            capabilities,
+            authority,
+            FakeDependencyCurrentness(),
+            PersistedEffectConsent(repository),
+            SimpleNamespace(),
+            FakeForwardReevaluation(),
+            lambda: 10,
         )
-        assert [("genres", "keep_current")] == [
-            (value.destination, value.disposition)
-            for value in outcome.outcomes
-            if value.destination == "genres"
-        ]
-        decisions = tuple(
-            AutomaticDecision.from_json(value)
-            for value in repository.get_review_case_decisions(case_id)
+        scheduler = ContinuousGuardedApplication(
+            repository,
+            {("primary", library): application for library in ("ebooks", "later")},
+            {("primary", library): capabilities for library in ("ebooks", "later")},
+            authority,
+            (("primary", "ebooks"), ("primary", "later")),
+            lambda: 10,
+            lambda *_: None,
         )
-        assert 1 == len(decisions)
-        decision = decisions[0]
-        assert ("genres", "keep_current", None) == (
-            decision.destination,
-            decision.outcome,
-            decision.candidate_id,
+        assert scheduler.schedule() == 1
+        assert scheduler.activity()["last_failure"] == "authority_binding"
+        pending = repository.next_field_effect_plan_id(None)
+        assert pending is not None
+        plan_id, library = pending
+        assert library == "later"
+        operation = repository.get_field_effect(plan_id)
+        assert operation.plan.authority.decision_id == human.decision_id
+        target.seed(operation.plan)
+        assert scheduler.apply(plan_id).state == "verified"
+        assert target.read(operation.plan).value == "Accepted title"
+        assert repository.pending_field_effect_decision_documents(10) == (
+            decision.to_json(),
         )
-        source = next(
-            value
-            for value in outcome.outcomes
-            if value.outcome_id == decision.source_outcome_id
-        )
-        # `fill_empty` over a filled target preserves it without electing an
-        # alternative, so the outcome cites no evidence and no combination.
-        # That shape is the whole defect: it once failed authority binding and
-        # wedged the continuous scheduler on the first such decision.
-        assert ((), ()) == (source.citation_ids, source.combination_ids)
-        authority = repository.field_effect_authority_source(decision)
-        assert ("genres", case_id, None) == (
-            authority["destination"],
-            authority["review_case_id"],
-            authority["decision_value"],
-        )
-        assert 1 == len(repository.pending_field_effect_decision_documents(100))
-        assert repository.record_current_field_effect_no_change(decision, 5) is True
-        assert () == repository.pending_field_effect_decision_documents(100)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effect_no_changes"
+        ).fetchone() == (0,)
+    finally:
         repository.close()
 
 

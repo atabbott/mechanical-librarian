@@ -72,8 +72,10 @@ __all__ = ["_automatic_decision_value", "_validate_field_effect_state"]
 
 # F20 categories whose preview can preserve a filled target without electing an
 # alternative, so the outcome it produces cites no evidence and no combination.
+# `isbn_form` is deliberately absent: it proves preservation by reprojecting the
+# exact identifier representation, and that stricter rule stands on its own.
 _RICH_PRESERVATION_CATEGORIES = frozenset(
-    {"description_fill", "genres", "isbn_form", "series", "subtitle", "tags"}
+    {"description_fill", "genres", "series", "subtitle", "tags"}
 )
 
 
@@ -283,7 +285,13 @@ def _automatic_decision_value(
             or any(
                 (
                     source.reason_code != "unique_supported_preservation",
-                    not typed_preservation_matches and not rich_preservation,
+                    not typed_preservation_matches
+                    and not rich_preservation
+                    and not (
+                        decision.policy_category == "isbn_form"
+                        and not source.citation_ids
+                        and not source.combination_ids
+                    ),
                 )
             )
         ):

@@ -10,8 +10,15 @@ from mechanical_librarian.domain.metadata_report import (
     TargetDestination,
     TargetField,
     TargetFieldState,
+    TargetSeries,
 )
-from tests.support.proposal_evidence import _claim, _fields, _provider
+from tests.support.proposal_evidence import (
+    _claim,
+    _fields,
+    _provider,
+    _target_work_candidate,
+    _target_work_report,
+)
 from tests.support.proposal_evidence import _report as _proposal_report
 
 
@@ -63,6 +70,105 @@ def _automatic_no_change_inputs(
     scenario: str,
 ) -> tuple[MetadataReport, str, str, str]:
     """Build one naturally qualified, equal automatic policy outcome."""
+    if scenario in {
+        "series_source_order",
+        "series_all_qualified",
+        "series_primary_narrative",
+    }:
+        source = _source(
+            "hardcover",
+            "edition-1",
+            titles=("New title",),
+            series="Reading Order",
+            sequence="2",
+        )
+        if scenario == "series_primary_narrative":
+            source = _provider(
+                "hardcover",
+                "edition-1",
+                (
+                    *source.candidates[0].claims,
+                    _claim(
+                        "hardcover",
+                        "edition-1",
+                        ClaimKind.SERIES,
+                        "Publication Order",
+                        scope=ClaimScope.WORK,
+                        order=3,
+                    ),
+                    _claim(
+                        "hardcover",
+                        "edition-1",
+                        ClaimKind.SERIES_SEQUENCE,
+                        "1",
+                        scope=ClaimScope.WORK,
+                        order=4,
+                    ),
+                ),
+                authority="hardcover",
+            )
+        return (
+            _proposal_report(
+                fields=_fields(
+                    series=TargetField(
+                        TargetDestination.SERIES,
+                        TargetFieldState.VALUE,
+                        (TargetSeries("Reading Order", "2"),),
+                    )
+                ),
+                providers=(source,),
+            ),
+            "series",
+            scenario.removeprefix("series_"),
+            "series",
+        )
+    rich: dict[str, tuple[str, str, str, str | tuple[str, ...]]] = {
+        "genres_fill_empty": ("genres", "fill_empty", "genres", ("Existing",)),
+        "genres_add": ("genres", "add", "genres", ("Mystery",)),
+        "genres_replace": ("genres", "replace", "genres", ("Mystery",)),
+        "tags_fill_empty": ("tags", "fill_empty", "tags", ("Existing",)),
+        "tags_add": ("tags", "add", "tags", ("Espionage",)),
+        "tags_replace": ("tags", "replace", "tags", ("Espionage",)),
+        "description_preserved": (
+            "description_fill",
+            "safe_plain_text",
+            "description",
+            "Existing description.",
+        ),
+        "subtitle_preserved": (
+            "subtitle",
+            "fill_empty",
+            "subtitle",
+            "Existing subtitle",
+        ),
+    }
+    if scenario in rich:
+        category, option, destination, current = rich[scenario]
+        base = _target_work_report(
+            (
+                (
+                    "catalogue",
+                    "hardcover",
+                    (_target_work_candidate("catalogue", "edition-1", "work-1"),),
+                    True,
+                ),
+            )
+        )
+        return (
+            _proposal_report(
+                fields=tuple(
+                    TargetField(value.destination, TargetFieldState.VALUE, current)
+                    if value.destination.value == destination
+                    else value
+                    for value in base.target.fields
+                ),
+                local_claims=base.local_claims,
+                providers=base.providers,
+            ),
+            category,
+            option,
+            destination,
+        )
     if scenario in {"exact_title", "canonical_title"}:
         current_title = (
             "Secret History" if scenario == "exact_title" else "secret history"
@@ -170,7 +276,7 @@ def _automatic_no_change_inputs(
             "preserve",
             "authors",
         )
-    if scenario == "formatted_isbn":
+    if scenario in {"formatted_isbn", "unmatched_isbn"}:
         isbn10 = LocalClaim.create(
             kind=ClaimKind.ISBN,
             observed="0-306-40615-2",
@@ -187,7 +293,9 @@ def _automatic_no_change_inputs(
                     isbn=TargetField(
                         TargetDestination.ISBN,
                         TargetFieldState.VALUE,
-                        "0-306-40615-2",
+                        "0-306-40615-2"
+                        if scenario == "formatted_isbn"
+                        else "9780140328721",
                     )
                 ),
                 local_claims=(isbn10,),
