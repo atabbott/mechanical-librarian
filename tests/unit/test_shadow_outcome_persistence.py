@@ -2293,22 +2293,20 @@ def test_rich_no_change_rejects_a_superseded_report(tmp_path: Path) -> None:
         repository.close()
 
 
-def test_primary_narrative_exact_preservation_remains_an_abstention(
+def test_primary_narrative_populated_series_records_one_no_change_fact(
     tmp_path: Path,
 ) -> None:
     report, category, _, _ = _automatic_no_change_inputs("series_source_order")
     repository = open_repository(tmp_path / "reports.sqlite")
     try:
-        assert (
-            _automatic_decisions(
-                SimpleNamespace(repository=repository),
-                report,
-                category,
-                "primary_narrative",
-                qualified=True,
-            )
-            == ()
+        (decision,) = _automatic_decisions(
+            SimpleNamespace(repository=repository),
+            report,
+            category,
+            "primary_narrative",
+            qualified=True,
         )
+        assert decision.outcome == "keep_current"
         source = next(
             value
             for value in ShadowOutcomeSet.from_json(
@@ -2316,7 +2314,17 @@ def test_primary_narrative_exact_preservation_remains_an_abstention(
             ).outcomes
             if value.destination == "series"
         )
-        assert source.disposition == "abstention"
+        assert source.disposition == "keep_current"
+        assert source.citation_ids == ()
+        assert source.combination_ids == ()
+        repository.record_current_field_effect_no_change(decision, 5)
+        repository.record_current_field_effect_no_change(decision, 6)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effect_no_changes"
+        ).fetchone() == (1,)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effects"
+        ).fetchone() == (0,)
     finally:
         repository.close()
 

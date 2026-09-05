@@ -8,6 +8,23 @@ import { normalizePolicySearch } from '../src/router'
 import { createHttp, renderRoute } from './fixtures'
 
 describe('Policy route', () => {
+  it('explains empty-series filling, all three representations and provider numbering limits', async () => {
+    renderRoute('/policy?section=publication')
+    const series = await screen.findByRole('region', { name: 'Series memberships' })
+    expect(
+      within(series).getByText(
+        'Automatic fills an empty Series field only and preserves existing memberships.',
+      ),
+    ).toBeVisible()
+    await userEvent.setup().click(within(series).getByText('What this changes'))
+    expect(within(series).getByText(/One provider can supply enough backing/u)).toBeVisible()
+    expect(within(series).getByText(/not independently verified for each book/u)).toBeVisible()
+    expect(within(series).getByText('Primary narrative:')).toBeVisible()
+    expect(within(series).getByText('First source membership:')).toBeVisible()
+    expect(within(series).getByText('All qualified memberships:')).toBeVisible()
+    expect(within(series).getByText(/with only its first membership/u)).toBeVisible()
+  })
+
   it('normalizes Policy deep links to the four protected semantic chapters', () => {
     expect(normalizePolicySearch({ section: 'publication' })).toEqual({ section: 'publication' })
     expect(normalizePolicySearch({ section: 'curation' })).toEqual({ section: 'curation' })

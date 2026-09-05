@@ -171,6 +171,67 @@ def _series_provider(name, candidate, authority, claims=None):
     )
 
 
+@pytest.mark.parametrize(
+    "option", ("primary_narrative", "source_order", "all_qualified")
+)
+@pytest.mark.parametrize("evidence", ("candidate", "conflict", "absent"))
+def test_automatic_series_preserves_populated_target_before_evidence(
+    option: str, evidence: str
+) -> None:
+    providers = (
+        ()
+        if evidence == "absent"
+        else (_series_provider("source-a", "a", "hardcover"),)
+    )
+    if evidence == "conflict":
+        providers += (
+            _series_provider(
+                "source-b",
+                "b",
+                "open_library",
+                _series_claims("source-b", "b", sequence="3"),
+            ),
+        )
+    report = _report(
+        fields=_fields(
+            series=TargetField(
+                TargetDestination.SERIES,
+                TargetFieldState.VALUE,
+                (TargetSeries("Owner's reading order", "7"),),
+            )
+        ),
+        providers=providers,
+    )
+    field = _automatic_series_preview(report, option)
+    assert field.outcome == "no_op"
+    assert field.reason == "target_preserved"
+    assert field.desired_value == ({"name": "Owner's reading order", "sequence": "7"},)
+    assert field.source_candidate_id is None
+    assert field.source_evidence_references == ()
+    assert _preview_field(report, "series", option).reason != "target_preserved"
+
+
+@pytest.mark.parametrize(
+    "option", ("primary_narrative", "source_order", "all_qualified")
+)
+def test_automatic_series_projection_rejects_populated_current_value(
+    option: str,
+) -> None:
+    candidate = {
+        "kind": "series",
+        "value": [{"name": "Reading Order", "sequence": "2"}],
+    }
+    with pytest.raises(
+        RichMetadataPreviewError, match="rich automatic projection is invalid"
+    ):
+        project_f20_automatic_decision_value(
+            "series",
+            option,
+            candidate,
+            current_value=({"name": "Owner's reading order", "sequence": "7"},),
+        )
+
+
 def _isbn_target_work_candidate(
     *isbns: str, include_work_identity: bool = False
 ) -> ProviderCandidate:

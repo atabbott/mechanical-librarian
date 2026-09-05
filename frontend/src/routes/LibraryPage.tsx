@@ -903,6 +903,26 @@ function VerifiedManifestationIsbnAutomaticStatement({ field }: { field: ReviewF
   return <p>Deterministic identity evidence bound this ISBN to this file&apos;s work.</p>
 }
 
+function SeriesAutomaticStatement({ field }: { field: ReviewField }) {
+  const providers = field.automaticSelectionSources ?? []
+  if (
+    field.humanDecision !== null ||
+    field.destination !== 'series' ||
+    field.automaticDecision?.outcome !== 'candidate' ||
+    !providers.length ||
+    !(field.currentRaw == null || (Array.isArray(field.currentRaw) && !field.currentRaw.length))
+  ) {
+    return null
+  }
+  return (
+    <p>
+      Selected from {providers.join(' and ')} to fill an empty Series field under a qualified
+      automatic policy. Numbering is supplied by the provider and is not independently verified for
+      this book.
+    </p>
+  )
+}
+
 function RecordedOutcome({
   field,
   expanded,
@@ -955,6 +975,7 @@ function RecordedOutcome({
       </dl>
       <ProviderConsensusAutomaticStatement field={field} />
       <DescriptionAutomaticStatement field={field} />
+      <SeriesAutomaticStatement field={field} />
       <VerifiedManifestationIsbnAutomaticStatement field={field} />
       <button
         type="button"

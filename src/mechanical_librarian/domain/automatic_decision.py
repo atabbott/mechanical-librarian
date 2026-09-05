@@ -60,26 +60,34 @@ _PRIOR_F19A_QUALIFICATION_MANIFESTS = (
         _PRE_F41_F19A_QUALIFIED_POLICY_OPTIONS,
     ),
 )
+_PRE_V12_F20_QUALIFIED_POLICY_OPTIONS = frozenset({
+    "subtitle:fill_empty",
+    "series:primary_narrative", "series:source_order", "series:all_qualified",
+    "genres:fill_empty", "genres:add", "genres:replace",
+    "tags:fill_empty", "tags:add", "tags:replace",
+    "description_fill:safe_plain_text",
+    "isbn_form:preserve_exact", "isbn_form:prefer_isbn13",
+})
 _PRIOR_F20_QUALIFICATION_MANIFESTS = (
     (
         "15cfb36db142e3783fa47a73157c72ecfd08bb282a967abc83fba152d1199205",
-        F20_PASSING_AUTOMATIC_OPTIONS,
+        _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS,
     ),
     (
         "42a057407a736bfd86f115ae03879f4909fe1217f34ec552c170db1c74af7a8a",
-        F20_PASSING_AUTOMATIC_OPTIONS,
+        _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS,
     ),
     (
         "9c1410dcc6d221478a2b96afdc51da19fd8a54f82d7023034a3063afdedefc37",
-        F20_PASSING_AUTOMATIC_OPTIONS,
+        _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS,
     ),
     (
         "f5975691720b81452f2f2b3a41046329c4c600ade45458478aebaf7190392176",
-        F20_PASSING_AUTOMATIC_OPTIONS,
+        _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS,
     ),
     (
         "6c6648598de1fcc175cbbec0f68908eb6f6ca67b2927e4ef05967551d6a9c542",
-        F20_PASSING_AUTOMATIC_OPTIONS,
+        _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS,
     ),
     (
         "99ba8426ee53e4d31e52ecf0f65a0fce4eb237d3e5acef42e4ee17217b57dae9",
@@ -94,7 +102,7 @@ _PRIOR_F20_QUALIFICATION_MANIFESTS = (
     ),
     (
         "770b56be2ce7ea9d1d809be189724e5f281a0dd8570af80d63429a5ab617ff99",
-        F20_PASSING_AUTOMATIC_OPTIONS,
+        _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS,
     ),
     (
         "901e25432750d3f02df1cd311f5a7146e56d5686bd4b6bc0ac589e5db3eb221a",
@@ -128,19 +136,23 @@ _PRIOR_F20_QUALIFICATION_MANIFESTS = (
     ),
     (
         "535348d225d6f160a4096c17c3379ee060741cb1d704ad0d741fc4631fc01d9b",
-        F20_PASSING_AUTOMATIC_OPTIONS,
+        _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS,
     ),
     (
         "1315e324edd78e698587e14497aa0ab11e33fd65612f00cd8a78a462fd6445fd",
-        F20_PASSING_AUTOMATIC_OPTIONS,
+        _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS,
     ),
     (
         "8b14e134a146e8f03f9d36ad78506a7f234b0768ef61620ef1d1234a8df7c4a5",
-        F20_PASSING_AUTOMATIC_OPTIONS,
+        _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS,
     ),
     (
         "c8843d96dfda862b04f6269fd1ab3ab202338815ed5d0efbc0c4c480293adea3",
-        F20_PASSING_AUTOMATIC_OPTIONS,
+        _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS,
+    ),
+    (
+        "4ede15a2aa84e8726ea2dff4e4f9f0d04b27a70276ed53c400c2de5f7619d445",
+        _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS,
     ),
 )
 
@@ -189,8 +201,8 @@ def _qualification_manifest_is_valid(
     policy_category: str, policy_option: str, manifest_sha256: str
 ) -> bool:
     identity = f"{policy_category}:{policy_option}"
-    return manifest_sha256 == _current_qualification_manifest_sha256(
-        policy_category, policy_option
+    return qualification_manifest_is_current(
+        policy_category, policy_option, manifest_sha256
     ) or any(
         manifest_sha256 == prior_digest and identity in qualified_options
         for prior_digest, qualified_options in _PRIOR_F20_QUALIFICATION_MANIFESTS
@@ -332,7 +344,6 @@ class AutomaticDecision:
             or any(type(v) is not str or not v for v in (self.destination, self.policy_category, self.policy_option))
             or any(re.fullmatch(r"[0-9a-f]{64}", v) is None for v in (self.target_fingerprint, self.qualification_manifest_sha256, self.idempotency_digest))
             or re.fullmatch(r"resolved_policy_[0-9a-f]{64}", self.resolved_policy_id) is None
-            or f"{self.policy_category}:{self.policy_option}" not in QUALIFIED_POLICY_OPTIONS
             or not _qualification_manifest_is_valid(
                 self.policy_category,
                 self.policy_option,

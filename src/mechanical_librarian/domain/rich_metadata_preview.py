@@ -215,6 +215,7 @@ def _project(
     if target.state is TargetFieldState.VALUE and (
         field in {"subtitle", "description_fill", "isbn_form", "asin"}
         or (field in {"genres", "tags"} and option == "fill_empty")
+        or (field == "series" and destination == "automatic")
     ):
         return _preserved(field, option, target, current)
     automatic_work = (
@@ -1041,7 +1042,7 @@ def project_f20_automatic_decision_value(
         raise RichMetadataPreviewError("rich automatic projection is invalid")
     if field == "series":
         values = candidate_value["value"]
-        if candidate_value["kind"] != "series" or type(values) is not list or not values:
+        if current_value is not None or candidate_value["kind"] != "series" or type(values) is not list or not values:
             raise RichMetadataPreviewError("rich automatic projection is invalid")
         return {"kind": "series", "value": [values[0]]}
     if field == "isbn_form":

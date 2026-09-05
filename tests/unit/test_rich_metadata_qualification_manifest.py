@@ -76,6 +76,35 @@ RICH_FIELDS = (
 )
 
 
+def test_v12_scaffold_binds_source_without_claiming_qualification() -> None:
+    scaffold_path = MANIFEST.with_name(
+        "f20-rich-metadata-qualification-candidate-v12.json"
+    )
+    scaffold = json.loads(scaffold_path.read_bytes())
+    assert scaffold["status"] == "unqualified_scaffold"
+    assert scaffold["automatic_authority"] == "none"
+    assert scaffold["qualification"] is None
+    assert scaffold["passing_automatic_options"] == []
+    assert (
+        scaffold["prior_manifest_sha256"]
+        == hashlib.sha256(MANIFEST.read_bytes()).hexdigest()
+    )
+    assert (
+        hashlib.sha256(scaffold_path.read_bytes()).hexdigest()
+        != F20_QUALIFICATION_CANDIDATE_SHA256
+    )
+    sources = scaffold["frozen_contract"]["behavior_sources"]
+    assert {
+        "src/mechanical_librarian/adapters/persistence/field_effect_validation.py",
+        "src/mechanical_librarian/adapters/persistence/field_effect_activity.py",
+    } <= sources.keys()
+    for source, digest in sources.items():
+        assert (
+            hashlib.sha256((MANIFEST.parents[2] / source).read_bytes()).hexdigest()
+            == digest
+        )
+
+
 def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
 
