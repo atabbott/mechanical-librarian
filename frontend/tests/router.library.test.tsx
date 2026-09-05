@@ -1677,18 +1677,24 @@ describe('Library route', () => {
     ).toBeVisible()
   })
 
-  it.each([
-    { sources: ['Hardcover'], current: null, human: false, explained: true },
-    { sources: ['Hardcover', 'Open Library'], current: [], human: false, explained: true },
-    { sources: [], current: null, human: false, explained: false },
-    { sources: ['Hardcover'], current: ['Owner series'], human: false, explained: false },
-    { sources: ['Hardcover'], current: null, human: true, explained: false },
-  ])(
+  it.each(
+    [
+      { sources: ['Hardcover'], current: null, human: false, explained: true },
+      { sources: ['Hardcover', 'Open Library'], current: [], human: false, explained: true },
+      { sources: [], current: null, human: false, explained: false },
+      { sources: ['Hardcover'], current: ['Owner series'], human: false, explained: false },
+      { sources: ['Hardcover'], current: null, human: true, explained: false },
+    ].flatMap((scenario) =>
+      [false, true].flatMap((editable) =>
+        ['2', null].map((sequence) => ({ ...scenario, editable, sequence })),
+      ),
+    ),
+  )(
     'explains only the recorded automatic empty-series fill: %j',
-    async ({ sources, current, human, explained }) => {
+    async ({ sources, current, human, explained, editable, sequence }) => {
       const titleField = detail.fields[0]
       if (!titleField) throw new Error('workspace fixture requires a title field')
-      const candidate = { kind: 'series' as const, value: [{ name: 'New series', sequence: '2' }] }
+      const candidate = { kind: 'series' as const, value: [{ name: 'New series', sequence }] }
       const series = {
         ...titleField,
         automaticDecision: {
@@ -1747,8 +1753,8 @@ describe('Library route', () => {
           : null,
         currentValue: current?.length ? 'Owner series' : '',
         currentRaw: current,
-        decisionActions: [],
-        editable: false,
+        decisionActions: editable ? ['keep_current' as const, 'accept' as const] : [],
+        editable,
         destination: 'series',
         needsAttention: false,
         navigationRole: 'resolved' as const,
@@ -1761,22 +1767,27 @@ describe('Library route', () => {
         getCaseDetail: vi.fn(async () => ({ ...detail, fields: [series] })),
       })
 
-      expect(await screen.findByText('Chosen value')).toBeVisible()
-      expect(screen.getByText(/New series/u)).toBeVisible()
+      expect(await screen.findByRole('heading', { name: 'Series' })).toBeVisible()
+      if (!editable) expect(screen.getByText('Chosen value')).toBeVisible()
+      expect(screen.getAllByText(/New series/u).length).toBeGreaterThan(0)
       if (explained) {
         expect(
           screen.getByText(
-            `Selected from ${sources.join(' and ')} to fill an empty Series field under a qualified automatic policy. Numbering is supplied by the provider and is not independently verified for this book.`,
+            `Selected from ${sources.join(' and ')} to fill an empty Series field under a qualified automatic policy. ${sequence === null ? 'No series number was supplied.' : 'Numbering is supplied by the provider and is not independently verified for this book.'}`,
           ),
         ).toBeVisible()
       } else {
         expect(screen.queryByText(/under a qualified automatic policy/u)).toBeNull()
       }
-      expect(screen.queryByText('Current value')).toBeNull()
-      await userEvent.setup().click(screen.getByRole('button', { name: 'Evidence' }))
+      if (!editable) expect(screen.queryByText('Current value')).toBeNull()
+      await userEvent.setup().click(
+        screen.getByRole('button', {
+          name: editable ? /Evidence for Alternative 1/u : 'Evidence',
+        }),
+      )
       expect(await screen.findByText('Candidate source')).toBeVisible()
       expect(screen.queryByText('Current source')).toBeNull()
-      expect(screen.queryByRole('button', { name: /Choose /u })).toBeNull()
+      if (!editable) expect(screen.queryByRole('button', { name: /Choose /u })).toBeNull()
     },
   )
 

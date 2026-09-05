@@ -106,16 +106,23 @@ Google visible-text remain `not_qualified`; ASIN remains
 every non-automatic rich option. This authority records immutable decisions
 only and does not bypass effect consent or any guarded-write control.
 
-Series Automatic accepts one complete provider membership without treating an
-unrelated provider failure or provider-wide unsupported series output as
-negative evidence. It abstains for a named incomplete or unpositioned
-membership, a genuine alternative, or a failed query kind that could have
-contributed to the elected membership. Closed leading-article and trailing
-`Series`/`Trilogy` display variants are equivalent only with the same exact
-sequence; no fuzzy matching, provider ranking, cross-provider membership
-synthesis, or per-work exception list is available. The F20 v11 evidence is
-development-exposed rather than a holdout; a separately frozen fresh mixed
-confirmation remains required before #895 activation.
+The #895 series repair candidate fills empty Automatic targets only and
+preserves existing memberships. One provider can supply the required WORK
+backing; independent corroboration is not a quorum. Absent numbers remain
+absent. Malformed selected evidence and failures of contributing dispatches
+abstain; unrelated providers, candidates and query lanes cannot veto a choice.
+A unique existing source bundle may resolve compatible subset alternatives,
+including in Ask. It retains its exact order, values and provenance, never a
+cross-source union. Closed leading-article and trailing `Series`/`Trilogy`
+variants use the existing name grammar; known positions must agree exactly or
+as ordinary unsigned decimals. Ambiguous maxima, disjoint bundles and known
+position conflicts remain reviewable. No fuzzy matching, provider ranking or
+number inference is available.
+
+The F20 v11 evidence is historical development evidence. The first fresh
+confirmation produced no series projections and did not qualify the candidate.
+The [v12 scaffold](../reference/f20-rich-metadata-qualification-candidate-v12.json)
+grants no activation authority; the repaired rules require fresh qualification.
 
 ## Availability before curation
 

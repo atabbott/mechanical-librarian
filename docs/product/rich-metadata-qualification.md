@@ -5,6 +5,30 @@ rich-metadata qualification contract and its exact option-level decisions. It
 grants decision-only Automatic authority to the passing options; it does not
 grant effect consent, construct a target write, or change provider selection.
 
+## Series repair candidate (#895): qualification pending
+
+The [v12 scaffold](../reference/f20-rich-metadata-qualification-candidate-v12.json)
+grants no authority. Its series rules preserve populated Automatic targets and
+permit an absent position without inventing a number. A unique existing source
+bundle may resolve compatible subset alternatives, retaining its exact values,
+order and evidence; no union is constructed. Known positions compare by exact
+text or ordinary unsigned decimal equality, never inferred numbering. This
+shared proposal correction also applies to those compatible Ask alternatives.
+Failure checks follow the selected provider candidates and their contributing
+dispatch provenance, not an unrelated provider with the same query kind.
+
+The first fresh 15-work confirmation produced no automatic series projections;
+it did not qualify membership or sequence. That consumed batch remains
+development evidence, and the final batch remains sealed. The repaired candidate
+requires a newly frozen evaluator and fresh confirmation before final execution
+or genuine v12 authority. Membership and sequence are separate claims: each
+requires precision 1.0 and three distinct scored works; unknown positions are
+unscored, while known wrong positions block the affected option. All claimed
+memberships, including full `all_qualified` values, are evaluated. Historical
+v11 bytes and option identities remain unchanged and readable, not new authority.
+
+## Historical qualification record
+
 Qualification is field-option-local. Prior use of the same work for unrelated
 extraction, provider, cover, or metadata development does not disqualify it.
 A case is excluded only when its expected result was used to implement or tune

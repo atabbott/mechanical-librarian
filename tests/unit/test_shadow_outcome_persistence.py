@@ -5744,7 +5744,12 @@ def test_provider_consensus_title_respects_title_layout_suspension_at_admission(
         repository.close()
 
 
-def test_incomplete_series_memberships_remain_in_attention_after_persistence() -> None:
+@pytest.mark.parametrize(
+    "option", ("primary_narrative", "source_order", "all_qualified")
+)
+def test_absent_series_positions_reach_effect_authority_after_persistence(
+    option,
+) -> None:
     report = _bibliographic_report(
         current_title="Current title",
         providers=(
@@ -5764,8 +5769,8 @@ def test_incomplete_series_memberships_remain_in_attention_after_persistence() -
     )
     base = _preview_automatic_profile()
     profile = MetadataPolicyProfile.create(
-        "Automatic series requires positions",
-        {**dict(base.options), "series": "source_order"},
+        "Automatic series preserves absent positions",
+        {**dict(base.options), "series": option},
         {**dict(base.destinations), "series": "automatic"},
     )
 
@@ -5790,17 +5795,26 @@ def test_incomplete_series_memberships_remain_in_attention_after_persistence() -
         repository.set_automatic_safety_state(AutomaticSafetyState(False, None, ()), 2)
 
         repository.persist_shadow_outcome(case_id, 3)
-        assert 1 == repository.count_current_attention_fields(None)
+        assert 0 == repository.count_current_attention_fields(None)
         detail = InspectCurrentReviewCase(repository).run(case_id)
         series = next(
             value for value in detail["fields"] if value["destination"] == "series"
         )
-        assert series["needs_attention"]
+        assert not series["needs_attention"]
+        assert series["editable"]
+        assert series["human_decision"] is None
+        assert series["automatic_selection_sources"] == ["Hardcover", "Open Library"]
         assert "propose_change" == series["deterministic_disposition"]
-        assert 1 == repository.read_review_attention(None, 50, 0).total
-        assert (0,) == repository._connection.execute(
-            "SELECT COUNT(*) FROM automatic_decisions WHERE destination='series'"
-        ).fetchone()
+        assert 0 == repository.read_review_attention(None, 50, 0).total
+        decision = next(
+            AutomaticDecision.from_json(document)
+            for document in repository.get_review_case_decisions(case_id)
+            if json.loads(document)["destination"] == "series"
+        )
+        assert repository.field_effect_authority_source(decision)["decision_value"] == {
+            "kind": "series",
+            "value": [{"name": "Reading Order", "sequence": None}],
+        }
         repository.close()
 
 

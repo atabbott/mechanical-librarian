@@ -914,11 +914,23 @@ function SeriesAutomaticStatement({ field }: { field: ReviewField }) {
   ) {
     return null
   }
+  const memberships = field.automaticDecision.selected_value?.value
+  const hasNumber =
+    Array.isArray(memberships) &&
+    memberships.some(
+      (membership: unknown) =>
+        typeof membership === 'object' &&
+        membership !== null &&
+        'sequence' in membership &&
+        typeof membership.sequence === 'string',
+    )
   return (
     <p>
       Selected from {providers.join(' and ')} to fill an empty Series field under a qualified
-      automatic policy. Numbering is supplied by the provider and is not independently verified for
-      this book.
+      automatic policy.{' '}
+      {hasNumber
+        ? 'Numbering is supplied by the provider and is not independently verified for this book.'
+        : 'No series number was supplied.'}
     </p>
   )
 }
@@ -3036,6 +3048,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                           <>
                             <ProviderConsensusAutomaticStatement field={selected} />
                             <DescriptionAutomaticStatement field={selected} />
+                            <SeriesAutomaticStatement field={selected} />
                             <VerifiedManifestationIsbnAutomaticStatement field={selected} />
                           </>
                         ) : null}

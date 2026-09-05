@@ -472,44 +472,15 @@ def _automatic_series_abstention(
         ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
         ProviderStatus.QUERY_LIMIT_EXCEEDED,
     }
-    memberships = tuple(
-        membership
-        for provider in report.providers
-        for source in provider.candidates
-        for membership in _series_membership_positions(
-            tuple(
-                claim
-                for claim in source.claims
-                if claim.kind in {ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE}
-            )
-        )
-    )
-    if any(
-        claim.kind in {ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE}
-        and claim.state in {FieldState.MALFORMED, FieldState.OVERSIZED}
-        for provider in report.providers
-        for source in provider.candidates
-        for claim in source.claims
-    ):
-        return "series_membership_incomplete"
-    membership_incomplete = any(
-        state is not FieldState.VALID for _, state in memberships
-    )
-    unresolved_conflict = (
-        candidate is None
-        and result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
-        and not any(
-            state is not FieldState.VALID
-            and any(
-                other_name == name and other_state is FieldState.VALID
-                for other_name, other_state in memberships
-            )
-            for name, state in memberships
-        )
-    )
-    if membership_incomplete and not unresolved_conflict:
-        return "series_membership_incomplete"
     if candidate is None:
+        if result.outcome is not ProposalOutcome.UNRESOLVED_CHOICE and any(
+            claim.kind in {ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE}
+            and claim.state in {FieldState.MALFORMED, FieldState.OVERSIZED}
+            for provider in report.providers
+            for source in provider.candidates
+            for claim in source.claims
+        ):
+            return "series_membership_incomplete"
         return (
             "series_conflicting_membership"
             if result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
@@ -528,8 +499,28 @@ def _automatic_series_abstention(
         (retained.provider.provider, retained.candidate.identity)
         for retained in relevant
     }
-    contributing_kinds = {
-        lane.kind
+    selected_sources = tuple(
+        source
+        for provider in report.providers
+        for source in provider.candidates
+        if (provider.provider, source.identity) in relevant_candidates
+    )
+    if any(
+        claim.kind in {ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE}
+        and claim.state in {FieldState.MALFORMED, FieldState.OVERSIZED}
+        for source in selected_sources
+        for claim in source.claims
+    ) or any(
+        state not in {FieldState.VALID, FieldState.ABSENT, None}
+        for source in selected_sources
+        for _, state in _series_membership_positions(tuple(
+            claim for claim in source.claims
+            if claim.kind in {ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE}
+        ))
+    ):
+        return "series_membership_incomplete"
+    contributing_dispatches = {
+        (provider.provider, lane.kind, lane.input_references, lane.matched_family)
         for provider in report.providers
         for lane in provider.lanes
         if any(
@@ -537,25 +528,20 @@ def _automatic_series_abstention(
             for lane_candidate in lane.candidates
         )
     }
-    if not contributing_kinds:
-        contributing_kinds = {
-            retained.provider.query_kind
-            for retained in relevant
-            if retained.provider.query_kind
-            in {ProviderQueryKind.ISBN, ProviderQueryKind.WORK, ProviderQueryKind.ASIN}
-        }
     failed_kinds = sorted(
         {
-            provider.query_kind
-            for provider in report.providers
-            if provider.status in failed_statuses
-            and provider.query_kind in contributing_kinds
+            retained.provider.query_kind
+            for retained in relevant
+            if not retained.provider.lanes
+            and retained.provider.status in failed_statuses
+            and retained.provider.query_kind in {ProviderQueryKind.ISBN, ProviderQueryKind.WORK, ProviderQueryKind.ASIN}
         }
         | {
             lane.kind
             for provider in report.providers
             for lane in provider.lanes
-            if lane.status in failed_statuses and lane.kind in contributing_kinds
+            if lane.status in failed_statuses
+            and (provider.provider, lane.kind, lane.input_references, lane.matched_family) in contributing_dispatches
         },
         key=lambda kind: kind.value,
     )
@@ -567,10 +553,6 @@ def _automatic_series_abstention(
         and not (claim.state is FieldState.ABSENT and claim.value is None)
         for retained in relevant
         if type(claim := retained.claim) is ProviderClaim
-    ):
-        return "series_membership_incomplete"
-    if candidate.value.kind is ProposalValueKind.SERIES and any(
-        value.sequence is None for value in candidate.value.value
     ):
         return "series_membership_incomplete"
     return None

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The series repair candidate preserves populated Automatic fields, accepts
+  absent numbers without inventing them, and selects one uniquely compatible
+  source bundle instead of combining memberships. Failure checks follow its
+  actual evidence; Library explains editable automatic outcomes and number
+  certainty. Fresh qualification remains pending; the v12 scaffold grants no
+  activation authority. (#895)
+
 - Preparation no longer stalls when a recovery wake opens the database while
   another connection is writing: same-process dependent opens borrow the live
   root's admission on every platform, schema validation reads one snapshot, and

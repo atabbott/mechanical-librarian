@@ -7,6 +7,7 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass
+from decimal import Decimal
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Mapping, Self, cast
 
@@ -1118,6 +1119,8 @@ def evaluate_report(
             observations,
             _dependencies(destination),
         )
+        if destination is TargetDestination.SERIES:
+            result = _resolve_series_subset(result, targets[destination], observations)
         if (
             destination is TargetDestination.ISBN
             and not observations
@@ -2768,6 +2771,73 @@ def _controlled_creator_placeholder(claim: LocalClaim) -> bool:
         and claim.canonical is not None
         and " ".join(unicodedata.normalize("NFKC", claim.canonical).split()).casefold()
         == "unknown"
+    )
+
+
+def _series_bundle_dominates(candidate: ProposalValue, other: ProposalValue) -> bool:
+    """Compare source bundles without rewriting their names or positions."""
+    if (
+        candidate.kind is not ProposalValueKind.SERIES
+        or other.kind is not ProposalValueKind.SERIES
+    ):
+        return False
+    # ProposalValue validates the correlated TargetSeries tuple for this kind.
+    candidate_memberships = cast("tuple[TargetSeries, ...]", candidate.value)
+    other_memberships = cast("tuple[TargetSeries, ...]", other.value)
+    memberships = {
+        series_name_equivalence_key(item.name): item.sequence
+        for item in candidate_memberships
+    }
+    if len(memberships) != len(candidate_memberships):
+        return False
+    for item in other_memberships:
+        name = series_name_equivalence_key(item.name)
+        if name not in memberships:
+            return False
+        position = memberships[name]
+        if item.sequence is None or item.sequence == position:
+            continue
+        if (
+            position is None
+            or not all(
+                re.fullmatch(r"(?:0|[1-9][0-9]*)(?:\.[0-9]+)?", value)
+                for value in (position, item.sequence)
+            )
+            or Decimal(position) != Decimal(item.sequence)
+        ):
+            return False
+    return True
+
+
+def _resolve_series_subset(
+    result: ProposalResult, target: TargetField, observations: tuple[_Observed, ...]
+) -> ProposalResult:
+    """Elect only a unique existing bundle that covers every alternative."""
+    if (
+        result.outcome is not ProposalOutcome.UNRESOLVED_CHOICE
+        or len(result.alternatives) < 2
+    ):
+        return result
+    dominant = tuple(
+        candidate
+        for candidate in result.alternatives
+        if all(
+            _series_bundle_dominates(candidate.value, other.value)
+            for other in result.alternatives
+        )
+    )
+    if len(dominant) != 1:
+        return result
+    references = set(dominant[0].evidence_references)
+    return _evaluate(
+        TargetDestination.SERIES,
+        target,
+        tuple(
+            observed
+            for observed in observations
+            if set(observed.references) <= references
+        ),
+        result.dependencies,
     )
 
 
