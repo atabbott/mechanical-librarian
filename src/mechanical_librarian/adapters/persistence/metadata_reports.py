@@ -18,6 +18,7 @@ from mechanical_librarian.adapters.persistence.binding import (
     _connect_bound,
     _LinuxDatabaseBinding,
     _LinuxDirectoryChain,
+    _PortableDatabaseAuthority,
     _reject_database_sidecars,
     _unlink_created,
     _validate_connection_binding,
@@ -159,12 +160,17 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         connection: sqlite3.Connection,
         binding: _LinuxDatabaseBinding | None = None,
         identity: tuple[int, int] | None = None,
+        authority: _PortableDatabaseAuthority | None = None,
+        *,
+        owns_authority: bool = False,
     ) -> None:
         super().__init__(connection)
         self._setup_serialization_lock = RLock()
         self._browse_failure_lock = RLock()
         self._browse_unavailable_exception_classes: tuple[str, ...] = ()
         self._binding = binding
+        self._authority = authority
+        self._owns_authority = owns_authority
         self.identity = identity
         self._recovery_outbox = SQLiteRecoveryOutboxRepository(connection)
         self._proposal_sets = SQLiteProposalSetRepository(
@@ -939,7 +945,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
 
     @property
     def authority(self) -> object | None:
-        return self._binding
+        # A dependent presents the same authority its root does, so a further
+        # dependent of either borrows one live root admission.
+        return self._binding if self._binding is not None else self._authority
 
     def request_review_scan(
         self,
@@ -1932,6 +1940,10 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         finally:
             if self._binding is not None:
                 self._binding.close()
+            # Only the root retires the authority; a dependent that closes
+            # first must leave its siblings a live one.
+            if self._authority is not None and self._owns_authority:
+                self._authority.close()
 
     def owner_settings_store(self) -> OwnerSettingsStore:
         return self._owner_settings
@@ -2172,6 +2184,8 @@ def open_repository(
     created_identity: tuple[int, int] | None = None
     connection: sqlite3.Connection | None = None
     binding: _LinuxDatabaseBinding | None = None
+    portable_authority: _PortableDatabaseAuthority | None = None
+    owns_authority = False
     schema_validated = False
     try:
         nofollow = getattr(os, "O_NOFOLLOW", 0)
@@ -2197,11 +2211,32 @@ def open_repository(
                     _validate_existing_read_only(binding.alias_path, binding.descriptor)
                     schema_validated = True
                 binding.require_current()
-            else:
+            elif authority is None:
                 _reject_database_sidecars(path)
                 _validate_existing_read_only(path, descriptor)
                 _reject_database_sidecars(path)
                 schema_validated = True
+            else:
+                # A dependent of a live root: it borrows that root's inode
+                # identity and schema admission, and the rollback journal it
+                # may see is that root's open transaction rather than
+                # recovery state. `-wal` and `-shm` stay refused.
+                if type(authority) is not _PortableDatabaseAuthority:
+                    raise MetadataReportError("database authority changed")
+                authority.require_current()
+                if path.absolute() != authority.configured_path:
+                    raise MetadataReportError("database authority changed")
+                if authority.expected_identity != (
+                    information.st_dev,
+                    information.st_ino,
+                ):
+                    raise MetadataReportError("database authority changed")
+                portable_authority = authority
+                _reject_database_sidecars(path, allow_rollback_journal=True)
+                schema_validated = authority.borrows_schema_validation()
+                if not schema_validated:
+                    _validate_existing_read_only(path, descriptor)
+                    schema_validated = True
         elif expected_identity is not None:
             raise MetadataReportError("database authority changed")
         elif create:
@@ -2223,6 +2258,7 @@ def open_repository(
             database_descriptor,
             binding.require_current if binding is not None else None,
             cross_thread=cross_thread,
+            allow_rollback_journal=portable_authority is not None,
         )
         connection.create_function(
             "ml_casefold",
@@ -2242,11 +2278,21 @@ def open_repository(
             _validate_schema(connection)
         if binding is not None:
             binding.mark_schema_validated()
+        if binding is None and portable_authority is None:
+            portable_authority = _PortableDatabaseAuthority(
+                path, (information.st_dev, information.st_ino)
+            )
+            owns_authority = True
+            portable_authority.mark_schema_validated()
         if binding is None:
             os.close(descriptor)
             descriptor = -1
         repository = SQLiteMetadataReportRepository(
-            connection, binding, (information.st_dev, information.st_ino)
+            connection,
+            binding,
+            (information.st_dev, information.st_ino),
+            portable_authority,
+            owns_authority=owns_authority,
         )
         try:
             repository.reviewer_access_store().snapshot()

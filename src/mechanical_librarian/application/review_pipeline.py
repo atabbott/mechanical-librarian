@@ -1442,10 +1442,18 @@ class ReviewPreparationSupervisor:
                     if self._recovery_wake is not None:
                         try:
                             self._recovery_wake(self._clock())
-                        except ReviewPipelineError:
+                        except Exception:
                             # Explicit owner recovery reports its closed
                             # failure. The background lane instead preserves
-                            # preparation capacity until the next normal wake.
+                            # preparation capacity until the next normal wake,
+                            # and contains any failure and not only a closed
+                            # one: the supervisor does not own the injected
+                            # wake's vocabulary, and losing this lane would
+                            # stop `_schedule_due` below for the process's
+                            # remaining life. The runner has already persisted
+                            # every observation it reached, and a failure
+                            # before it retries within the second, so nothing
+                            # here needs a channel of its own.
                             pass
                     self._schedule_due()
                 while not self._stop.is_set():

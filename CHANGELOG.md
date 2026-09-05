@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Preparation no longer stalls when a recovery wake opens the database while
+  another connection is writing: same-process dependent opens borrow the live
+  root's admission on every platform, schema validation reads one snapshot, and
+  a failed recovery wake leaves preparation lane 0 running. Offline opens still
+  refuse leftover journals. (#992)
+
 - Automatic series decisions now accept one complete provider authority while
   retaining closed abstention for named incomplete evidence, genuine ambiguity,
   or a contributing provider-lane failure. Unsupported provider-wide series

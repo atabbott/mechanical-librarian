@@ -27,6 +27,7 @@ from mechanical_librarian.application.configuration import (
     TargetConnectionConfiguration,
 )
 from mechanical_librarian.application.metadata_report import (
+    MetadataReportError,
     ProviderLaneResult,
     TargetFile,
     TargetSnapshot,
@@ -129,6 +130,27 @@ class _GoogleProvider:
         return provider_observation(self.name, lanes, authority="google_books")
 
 
+def _recovery_configuration() -> ApplicationConfiguration:
+    return ApplicationConfiguration(
+        (
+            TargetConnectionConfiguration(
+                "primary", "https://example.invalid", "/run/target-token"
+            ),
+        ),
+        (
+            LibraryConfiguration(
+                "ebooks", "primary", "library-1", "ebook", "books", ("google",)
+            ),
+        ),
+        (MediaMountConfiguration("books", "/container", "/service", True),),
+        (ProviderConnectionConfiguration("google", True, False, None, "google_books"),),
+        provider_recovery_generation=1,
+        review=ReviewWebConfiguration(
+            "https://review.example.invalid", "/run/owner-password"
+        ),
+    )
+
+
 def test_retained_outbox_failure_does_not_skip_an_eligible_recovery_run() -> None:
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
@@ -158,28 +180,7 @@ def test_retained_outbox_failure_does_not_skip_an_eligible_recovery_run() -> Non
             ),
             enqueued_at=0,
         )
-        configuration = ApplicationConfiguration(
-            (
-                TargetConnectionConfiguration(
-                    "primary", "https://example.invalid", "/run/target-token"
-                ),
-            ),
-            (
-                LibraryConfiguration(
-                    "ebooks", "primary", "library-1", "ebook", "books", ("google",)
-                ),
-            ),
-            (MediaMountConfiguration("books", "/container", "/service", True),),
-            (
-                ProviderConnectionConfiguration(
-                    "google", True, False, None, "google_books"
-                ),
-            ),
-            provider_recovery_generation=1,
-            review=ReviewWebConfiguration(
-                "https://review.example.invalid", "/run/owner-password"
-            ),
-        )
+        configuration = _recovery_configuration()
         composition.CoverArtifactStore(root / "artifacts", create=True)
         with (
             patch.object(composition.time, "time", return_value=7_200),
@@ -209,6 +210,35 @@ def test_retained_outbox_failure_does_not_skip_an_eligible_recovery_run() -> Non
             assert {"now": 7_200} == run_one.call_args.kwargs
             assert "waiting" == recovery.snapshot()[0].state
             supervisor.stop()
+
+
+def test_recovery_drain_reports_an_adapter_failure_as_a_closed_pipeline_code() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        database = root / "reports.sqlite"
+        recovery = SQLiteProviderRecoveryStore.open(root / "recovery.sqlite")
+        open_repository(database).close()
+        configuration = _recovery_configuration()
+        composition.CoverArtifactStore(root / "artifacts", create=True)
+        supervisor = composition.create_review_pipeline(
+            configuration,
+            database,
+            root / "catalogue.sqlite",
+            root / "artifacts",
+            _reviewer_access(database, configuration),
+            provider_recovery=recovery,
+        )
+        # Each wake's drain opens its own repository, so the owner's explicit
+        # recovery must report the pipeline's closed code rather than the
+        # adapter exception the lane would otherwise have to know.
+        with patch.object(
+            composition.ProviderRecoveryActivation,
+            "drain_outbox",
+            side_effect=MetadataReportError("database is unavailable or incompatible"),
+        ):
+            with pytest.raises(ReviewPipelineError, match="persistence"):
+                supervisor.recover_provider_once()
+        supervisor.stop()
 
 
 def test_generation_rollback_rejects_before_cutover_delivery() -> None:

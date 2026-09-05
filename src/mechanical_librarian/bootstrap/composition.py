@@ -2464,6 +2464,13 @@ def create_review_pipeline(
             return recovered
         except ProviderRecoveryStoreError as error:
             raise ReviewPipelineError("recovery") from error
+        except ReviewPipelineError:
+            raise
+        except Exception as error:
+            # The drain opens its own repository, so an adapter failure reaches
+            # this seam. Report it in the pipeline's vocabulary, as every other
+            # repository seam does, rather than in the adapter's.
+            raise ReviewPipelineError("persistence") from error
 
     # The pipeline hands every stage callback back exactly the repository
     # ``repository_factory`` above created, so each of these narrows the seam's

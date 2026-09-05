@@ -1456,6 +1456,209 @@ def test_derived_connections_borrow_the_live_authoritys_schema_validation() -> N
     assert read.call_count + write.call_count == 0
 
 
+def test_dependent_open_borrows_a_root_that_is_mid_transaction() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "reports.sqlite"
+        root = open_repository(path)
+        root._connection.execute("BEGIN IMMEDIATE")
+        root._connection.execute(
+            "UPDATE review_preparation_control SET paused=1,updated_at=7 "
+            "WHERE singleton=1"
+        )
+        if not sys.platform.startswith("linux"):
+            # Off Linux the rollback journal sits beside the configured name,
+            # so it is exactly the sidecar a dependent open has to read as the
+            # root's open transaction. The Linux private alias absorbs it.
+            assert Path(f"{path}-journal").is_file()
+        validate = persistence_schema._validate_schema
+        try:
+            with (
+                patch.object(
+                    persistence_schema, "_validate_schema", wraps=validate
+                ) as read,
+                patch.object(
+                    persistence_reports, "_validate_schema", wraps=validate
+                ) as write,
+            ):
+                for _ in range(8):
+                    dependent = open_repository(
+                        path, create=False, authority=root.authority
+                    )
+                    dependent.close()
+        finally:
+            root._connection.execute("ROLLBACK")
+            root.close()
+    assert read.call_count + write.call_count == 0
+
+
+def test_portable_dependent_open_requires_the_authoritys_configured_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A portable authority cannot lend one database's journal namespace to an alias."""
+    monkeypatch.setattr(persistence_reports.sys, "platform", "portable-test")
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        configured = root / "configured.sqlite"
+        alias = root / "alias.sqlite"
+        owner = open_repository(configured)
+        authority = owner.authority
+        assert type(authority) is persistence_binding._PortableDatabaseAuthority
+        owner._connection.execute("BEGIN IMMEDIATE")
+        owner._connection.execute(
+            "UPDATE review_preparation_control SET paused=1,updated_at=7 "
+            "WHERE singleton=1"
+        )
+        try:
+            assert Path(f"{configured}-journal").is_file()
+            dependent = open_repository(configured, create=False, authority=authority)
+            dependent.close()
+            os.link(configured, alias)
+            before = alias.read_bytes()
+            with (
+                patch.object(
+                    persistence_schema.sqlite3,
+                    "connect",
+                    side_effect=AssertionError("alias must fail before connecting"),
+                ),
+                pytest.raises(MetadataReportError, match="database authority changed"),
+            ):
+                open_repository(alias, create=False, authority=authority)
+            assert alias.read_bytes() == before
+        finally:
+            owner._connection.execute("ROLLBACK")
+            owner.close()
+
+
+def test_dependent_opens_continue_while_a_writer_thread_churns_journals() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "reports.sqlite"
+        root = open_repository(path)
+        authority = root.authority
+        assert authority is not None
+        finished = threading.Event()
+        writer_failures: list[BaseException] = []
+        counts: dict[str, int] = {}
+
+        def churn() -> None:
+            writer = None
+            try:
+                writer = open_repository(path, create=False, authority=authority)
+                for updated_at in range(40):
+                    writer._connection.execute("BEGIN IMMEDIATE")
+                    writer._connection.execute(
+                        "UPDATE review_preparation_control "
+                        "SET paused=?,updated_at=? WHERE singleton=1",
+                        (updated_at % 2 == 0, updated_at),
+                    )
+                    writer._connection.execute("COMMIT")
+            except BaseException as error:
+                writer_failures.append(error)
+            finally:
+                finished.set()
+                if writer is not None:
+                    writer.close()
+
+        writer_thread = threading.Thread(target=churn)
+        writer_thread.start()
+        deadline = time.monotonic() + 20
+        try:
+            while True:
+                try:
+                    reader = open_repository(path, create=False, authority=authority)
+                    reader.close()
+                    counts["ok"] = counts.get("ok", 0) + 1
+                except MetadataReportError as error:
+                    counts[str(error)] = counts.get(str(error), 0) + 1
+                if finished.is_set() or time.monotonic() > deadline:
+                    break
+        finally:
+            writer_thread.join(20)
+            root.close()
+    assert [] == writer_failures
+    assert ["ok"] == sorted(counts)
+    assert counts["ok"] >= 1
+
+
+def test_root_open_still_refuses_a_leftover_journal_beside_a_current_database() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "reports.sqlite"
+        open_repository(path).close()
+        journal = leave_hot_journal(path)
+        before = journal.read_bytes()
+        with pytest.raises(
+            MetadataReportError, match="database recovery state is unsupported"
+        ):
+            open_repository(path, create=False)
+        assert journal.read_bytes() == before
+
+
+def test_dependent_open_after_the_root_closes_reports_a_changed_authority() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "reports.sqlite"
+        root = open_repository(path)
+        authority = root.authority
+        dependent = open_repository(path, create=False, authority=authority)
+        dependent.close()
+        root.close()
+        with pytest.raises(MetadataReportError, match="database authority changed"):
+            open_repository(path, create=False, authority=authority)
+
+
+def test_dependent_open_still_refuses_write_ahead_sidecars() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "reports.sqlite"
+        root = open_repository(path)
+        try:
+            for suffix in ("-wal", "-shm"):
+                sidecar = Path(f"{path}{suffix}")
+                sidecar.write_bytes(b"")
+                with pytest.raises(
+                    MetadataReportError,
+                    match="database recovery state is unsupported",
+                ):
+                    open_repository(path, create=False, authority=root.authority)
+                sidecar.unlink()
+        finally:
+            root.close()
+
+
+def test_dependent_open_refuses_a_replaced_database_inode() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "reports.sqlite"
+        root = open_repository(path)
+        replacement = Path(directory) / "replacement.sqlite"
+        replacement.write_bytes(path.read_bytes())
+        replacement.replace(path)
+        try:
+            # Off Linux the authority itself refuses the new inode; on Linux
+            # the named-identity check inside the private binding refuses it
+            # first, under its own message.
+            with pytest.raises(
+                MetadataReportError,
+                match="database authority changed|database pathname changed",
+            ):
+                open_repository(path, create=False, authority=root.authority)
+        finally:
+            root.close()
+
+
+def test_schema_validation_reads_one_transaction_snapshot() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "reports.sqlite"
+        open_repository(path).close()
+        validate = persistence_schema._validate_schema
+        transactions: list[bool] = []
+
+        def record(connection: sqlite3.Connection) -> None:
+            transactions.append(connection.in_transaction)
+            validate(connection)
+
+        with patch.object(persistence_schema, "_validate_schema", record):
+            reopened = open_repository(path, create=False)
+        reopened.close()
+    assert [True] == transactions
+
+
 @pytest.mark.skipif(
     not sys.platform.startswith("linux"), reason="Linux descriptor proof"
 )

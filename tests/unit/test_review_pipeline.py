@@ -9820,6 +9820,41 @@ def test_lane_zero_contains_recovery_store_failure_and_continues() -> None:
     assert pipeline.status_calls >= 1
 
 
+def test_lane_zero_contains_an_adapter_recovery_failure_and_continues() -> None:
+    pipeline = _ScheduledPipeline()
+    wakes: list[int] = []
+    runs = 0
+
+    def recovery(now: int) -> None:
+        wakes.append(now)
+        # The wake opens its own repository, so a failure can reach lane 0 in
+        # the adapter's vocabulary rather than the pipeline's.
+        raise MetadataReportError("database is unavailable or incompatible")
+
+    supervisor = ReviewPreparationSupervisor(
+        pipeline,
+        polling_interval_seconds=60,
+        clock=lambda: 41,
+        recovery_wake=recovery,
+    )
+
+    def run_next(maximum_actions: int = 64) -> bool:
+        nonlocal runs
+        runs += 1
+        if runs == 3:
+            supervisor._stop.set()
+        else:
+            supervisor._wake.set()
+        return False
+
+    pipeline.run_next = run_next
+    supervisor._wake.set()
+    supervisor._run(0)
+    assert [41, 41, 41] == wakes
+    assert 3 == runs
+    assert pipeline.status_calls >= 1
+
+
 def test_retry_is_limited_to_terminal_actionable_failure() -> None:
     pipeline = _ScheduledPipeline()
     supervisor = ReviewPreparationSupervisor(pipeline)

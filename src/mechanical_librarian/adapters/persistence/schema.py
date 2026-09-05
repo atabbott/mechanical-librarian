@@ -810,11 +810,20 @@ def _validate_existing_read_only(path: Path, descriptor: int) -> None:
     try:
         connection = sqlite3.connect(uri, uri=True, isolation_level=None)
         _validate_connection_binding(connection, path, descriptor)
+        # One read transaction for the whole validation. The cross-table checks
+        # below compare rows a live sibling commits together, so reading them
+        # statement by statement would compare a row from before a commit with
+        # one from after it and reject a database that was never inconsistent.
+        connection.execute("BEGIN")
         connection.execute("PRAGMA schema_version").fetchone()
         _validate_schema(connection)
     finally:
         if connection is not None:
-            connection.close()
+            try:
+                if connection.in_transaction:
+                    connection.execute("ROLLBACK")
+            finally:
+                connection.close()
 
 
 def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
