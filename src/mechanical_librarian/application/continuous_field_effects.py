@@ -286,6 +286,7 @@ class ContinuousGuardedApplication:
         self._dormant_start = False
         self._last_library: str | None = None
         self._last_failure: str | None = None
+        self._failed_decision: tuple[str, str] | None = None
         self._schedule_cursor: tuple[int, str] | None = None
         self._schedule_generation = 0
         self._schedule_lock = threading.Lock()
@@ -701,6 +702,19 @@ class ContinuousGuardedApplication:
         finally:
             self._flush_affected_review_case_ids(affected_review_case_ids)
 
+    def _set_last_failure(self, code: str | None) -> None:
+        if code != self._last_failure:
+            self._last_failure = code
+            self._announce("activity", None)
+
+    def _clear_decision_failure(self, decision_id: str) -> None:
+        if (
+            self._failed_decision is not None
+            and self._failed_decision[0] == decision_id
+        ):
+            self._failed_decision = None
+            self._set_last_failure(None)
+
     def _schedule(self, limit: int, affected_review_case_ids: set[str]) -> int:
         self._release_completed_manual_returns()
         with self._schedule_lock:
@@ -735,14 +749,15 @@ class ContinuousGuardedApplication:
             no_change = getattr(
                 self._repository, "record_current_field_effect_no_change", None
             )
-            if (
-                type(decision) is AutomaticDecision
-                and no_change is not None
-                and no_change(decision, self._clock())
-            ):
-                self._advance_schedule_cursor(decision, generation)
-                continue
             try:
+                if (
+                    type(decision) is AutomaticDecision
+                    and no_change is not None
+                    and no_change(decision, self._clock())
+                ):
+                    self._clear_decision_failure(decision.decision_id)
+                    self._advance_schedule_cursor(decision, generation)
+                    continue
                 snapshot = self._authority.resolve(decision)
             except (FieldEffectError, GuardedApplicationError, ValueError) as error:
                 # Retirement answers a binding that no longer holds. A storage
@@ -750,8 +765,9 @@ class ContinuousGuardedApplication:
                 # would write a `stale` cover event and swallow the fault, so
                 # it propagates instead. The resolver only began naming this
                 # code when its storage faults stopped escaping untyped.
+                code = getattr(error, "code", None)
                 if (
-                    getattr(error, "code", None) != "persistence"
+                    code != "persistence"
                     and decision.destination == "cover"
                     and self._repository.retire_stale_cover_decision(
                         decision.decision_id, self._clock()
@@ -759,7 +775,27 @@ class ContinuousGuardedApplication:
                 ):
                     self._advance_schedule_cursor(decision, generation)
                     continue
+                # One decision that cannot bind is a fact about that decision,
+                # not about the queue behind it. The pending order is a single
+                # union across every library, so aborting here starves every
+                # later decision -- human accepts included -- until a restart
+                # meets the same row again. Name the failure and move on; a
+                # storage fault still propagates, because it says nothing
+                # about this decision and the next read would fault too.
+                if (
+                    code != "persistence"
+                    and decision.destination != "cover"
+                    and type(error) is FieldEffectError
+                ):
+                    self._failed_decision = (
+                        decision.decision_id,
+                        code or "unavailable",
+                    )
+                    self._set_last_failure(code or "unavailable")
+                    self._advance_schedule_cursor(decision, generation)
+                    continue
                 raise
+            self._clear_decision_failure(decision.decision_id)
             key = (snapshot.connection, snapshot.library)
             application = self._applications.get(key)
             capability = self._capabilities.get(key)
@@ -847,13 +883,17 @@ class ContinuousGuardedApplication:
         return planned
 
     def run_cycle(self) -> bool:
+        """Report bounded selection progress or an applied plan, not plan count."""
         # A timed recovery poll shares the owner-operation serialization gate.
         # Admit one undecided candidate per cycle so a large permission-waiting
         # library cannot hold that gate for a whole page of report parsing.
+        with self._schedule_lock:
+            before = (self._schedule_generation, self._schedule_cursor)
         self.schedule(1)
         selected = self._repository.next_field_effect_plan_id(self._last_library)
         if selected is None:
-            return False
+            with self._schedule_lock:
+                return before != (self._schedule_generation, self._schedule_cursor)
         plan_id, library = selected
         self.apply(plan_id)
         self._last_library = library
@@ -1444,19 +1484,28 @@ class ContinuousGuardedApplication:
             try:
                 self._recover_startup()
             except Exception as error:
-                self._last_failure = getattr(error, "code", "unavailable")
+                self._set_last_failure(getattr(error, "code", "unavailable"))
         while not self._stop.is_set():
             self._wake.wait(self._polling_seconds)
             self._wake.clear()
             try:
-                self._serialize(self._run_until_idle)
-                self._last_failure = None
+                self._run_until_idle()
             except (FieldEffectError, GuardedApplicationError, ValueError) as error:
-                self._last_failure = getattr(error, "code", "unavailable")
+                self._set_last_failure(getattr(error, "code", "unavailable"))
+            else:
+                # A completed poll recovers a transient worker/storage fault,
+                # not a rejected decision still pending behind the cursor.
+                self._set_last_failure(
+                    self._failed_decision[1] if self._failed_decision else None
+                )
 
     def _run_until_idle(self) -> None:
-        next(iter(self._applications.values())).run_pending_cleanups(limit=100)
-        while not self._stop.is_set() and self.run_cycle():
+        self._serialize(
+            lambda: next(iter(self._applications.values())).run_pending_cleanups(
+                limit=100
+            )
+        )
+        while not self._stop.is_set() and self._serialize(self.run_cycle):
             pass
 
     def _release_completed_manual_returns(self) -> None:

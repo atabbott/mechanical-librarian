@@ -215,6 +215,8 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             transaction.rollback()
             if isinstance(error, FieldEffectError):
                 raise
+            if isinstance(error, sqlite3.Error):
+                raise FieldEffectError("persistence") from error
             raise FieldEffectError("authority_binding") from error
 
     def grant_field_effect_consents(

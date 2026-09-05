@@ -818,6 +818,96 @@ def _prior_f20_decision() -> AutomaticDecision:
     )
 
 
+def _bindable_f20_decision(occurred_at: int) -> AutomaticDecision:
+    return AutomaticDecision.create(
+        review_case_id="review_case_" + f"{occurred_at:064x}",
+        report_id="report_" + f"{occurred_at:064x}",
+        proposal_set_id="proposal_set_" + f"{occurred_at:064x}",
+        proposal_id="review_proposal_" + f"{occurred_at:064x}",
+        target_fingerprint="b" * 64,
+        destination="genres",
+        outcome="keep_current",
+        candidate_id=None,
+        resolved_policy_id="resolved_policy_" + "6" * 64,
+        policy_generation=1,
+        rule_id="shadow_rule_" + "7" * 64,
+        policy_category="genres",
+        policy_option="fill_empty",
+        qualification_manifest_sha256=F20_QUALIFICATION_CANDIDATE_SHA256,
+        source_outcome_id="shadow_outcome_" + f"{occurred_at:064x}",
+        bundle_id=None,
+        occurred_at=occurred_at,
+    )
+
+
+@pytest.mark.parametrize("error_code", ("authority_binding", "persistence"))
+def test_unbindable_decision_is_named_and_stepped_over_not_left_to_starve(
+    error_code: str,
+) -> None:
+    wedged = _bindable_f20_decision(1)
+    following = _bindable_f20_decision(101)
+
+    class Repository(_ActivityPagedRepository):
+        failing = True
+        attempts = 0
+
+        def record_current_field_effect_no_change(self, decision, _changed_at):
+            if decision.decision_id == wedged.decision_id:
+                self.attempts += 1
+                if self.failing:
+                    raise FieldEffectError(error_code)
+                return True
+            return False
+
+        def pending_field_effect_decision_counts(self):
+            return ()
+
+    repository = Repository([wedged, following])
+    planner = _Planner()
+    service = ContinuousGuardedApplication(
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "beta"): planner},
+        ),
+        {("primary", "beta"): _AllowedCapability()},
+        _Authority(),
+        (("primary", "beta"),),
+        lambda: 1,
+        lambda *_: None,
+    )
+
+    # The pending order is one union across every library, so a decision that
+    # cannot bind must not hold the decisions behind it hostage.
+    if error_code == "persistence":
+        with pytest.raises(FieldEffectError, match="persistence"):
+            service.schedule()
+        assert planner.planned == []
+        repository.failing = False
+        assert service.schedule() == 1
+        assert repository.attempts == 2
+        assert planner.planned == [following.decision_id]
+        return
+    transitions: list[tuple[str, object]] = []
+    service.attach_updates(
+        lambda topic, _: transitions.append((topic, service.activity()["last_failure"]))
+    )
+    assert 1 == service.schedule()
+    assert [following.decision_id] == planner.planned
+    assert "authority_binding" == service.activity()["last_failure"]
+    # The following, unrelated candidate succeeded but did not recover the
+    # rejected decision. Its diagnostic transition must still be observable.
+    assert ("activity", "authority_binding") in transitions
+    assert service.schedule() == 0
+    assert repository.attempts == 1
+    repository.failing = False
+    service.wake()
+    service.schedule()
+    assert repository.attempts == 2
+    assert service.activity()["last_failure"] is None
+    assert transitions[-1] == ("activity", None)
+
+
 def test_schedule_skips_prior_f20_before_no_change_authority_or_capability() -> None:
     decision = _prior_f20_decision()
     assert AutomaticDecision.from_json(decision.to_json()) == decision
@@ -2029,8 +2119,48 @@ def test_background_cycle_bounds_permission_waiting_work_to_one_candidate() -> N
         lambda *_: None,
     )
 
-    assert not service.run_cycle()
+    # A bounded permission refusal advances the cursor: progress is distinct
+    # from creating an effect, without enlarging the one-row critical section.
+    assert service.run_cycle()
     assert repository.limits == [1]
+
+
+def test_wake_during_a_cycle_keeps_the_reset_cursor_and_reports_progress() -> None:
+    class WakingRepository(_PagedRepository):
+        def __init__(self) -> None:
+            super().__init__(_decisions(2))
+            self.afters: list[tuple[int, str] | None] = []
+
+        def pending_field_effect_decision_documents(self, limit, after=None):
+            assert limit == 1
+            self.afters.append(after)
+            documents = super().pending_field_effect_decision_documents(limit, after)
+            if len(self.afters) == 1:
+                service.wake()
+            return documents
+
+        def next_field_effect_plan_id(self, _last_library):
+            return None
+
+    repository = WakingRepository()
+    service = ContinuousGuardedApplication(
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): _Planner()},
+        ),
+        {("primary", "alpha"): _AllowedCapability()},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
+    )
+    assert service.run_cycle()
+    assert service.run_cycle()
+    assert service.run_cycle()
+    assert not service.run_cycle()
+    first = repository.decisions[0]
+    assert repository.afters[:3] == [None, None, (first.occurred_at, first.decision_id)]
 
 
 def _decisions(count: int):

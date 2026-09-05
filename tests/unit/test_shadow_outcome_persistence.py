@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import sqlite3
 import tempfile
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -49,7 +51,11 @@ from mechanical_librarian.application.contained_reviewer_contract import COVER_M
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
-from mechanical_librarian.application.field_effects import GuardedFieldApplication
+from mechanical_librarian.application.field_effects import (
+    GuardedFieldApplication,
+    TargetObservation,
+)
+from mechanical_librarian.application.live_updates import LiveUpdateChannel
 from mechanical_librarian.application.metadata_policy import (
     MAX_SHADOW_SAMPLE_RESPONSE_BYTES,
     PolicyNotebook,
@@ -125,7 +131,9 @@ from mechanical_librarian.interfaces.web.app import (
     _HistoryResponse,
     _ReviewField,
 )
+from mechanical_librarian.interfaces.web.live_stream import stream_frames
 from tests.support.audiobook_reports import admitted_audiobook_report
+from tests.support.automatic_decisions import _automatic_decisions
 from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.proposal_evidence import (
     _claim,
@@ -1355,6 +1363,17 @@ def test_year_current_reaches_one_durable_publication_keep_and_read_models() -> 
         "exact_authors",
         "canonical_authors",
         "formatted_isbn",
+        "series_source_order",
+        "series_all_qualified",
+        "series_primary_narrative",
+        "genres_fill_empty",
+        "genres_add",
+        "genres_replace",
+        "tags_fill_empty",
+        "tags_add",
+        "tags_replace",
+        "description_preserved",
+        "subtitle_preserved",
     ),
 )
 def test_automatic_keep_current_is_a_single_no_change_fact_without_guards(
@@ -1419,6 +1438,12 @@ def test_automatic_keep_current_is_a_single_no_change_fact_without_guards(
             value for value in decisions if value.destination == destination
         )
         assert "keep_current" == decision.outcome
+        if category in {"series", "genres", "tags", "description_fill", "subtitle"}:
+            assert outcome.citation_ids == outcome.combination_ids == ()
+            assert (
+                repository.field_effect_authority_source(decision)["decision_value"]
+                is None
+            )
         if scenario == "exact_title":
             corrupt_case = SimpleNamespace(
                 proposal_set_id=case.proposal_set_id,
@@ -1517,7 +1542,9 @@ def test_automatic_keep_current_is_a_single_no_change_fact_without_guards(
                     source_with(combination_ids=[]),
                 )
         assert repository.persist_shadow_outcome(case_id, 5) == persisted.to_json()
-        assert repository.count_current_attention_fields(None) == 0
+        expected_attention = repository.count_current_attention_fields(None)
+        if category in {"title_layout", "contributor_names", "isbn_form"}:
+            assert expected_attention == 0
 
         class UnexpectedAuthority:
             def resolve(self, _decision):
@@ -1552,7 +1579,7 @@ def test_automatic_keep_current_is_a_single_no_change_fact_without_guards(
             "SELECT count(*) FROM automatic_decisions"
         ).fetchone() == (len(expected_decisions),)
         assert repository.pending_field_effect_decision_documents(100) == ()
-        assert repository.count_current_attention_fields(None) == 0
+        assert repository.count_current_attention_fields(None) == expected_attention
         with patch.object(
             ReviewCase, "from_json", wraps=ReviewCase.from_json
         ) as parse_case:
@@ -2091,6 +2118,462 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
             assert "verified" == service.apply(plan.plan.plan_id).state
             assert expected["value"] == target.read(plan.plan).value
             repository.close()
+
+
+@pytest.mark.parametrize(
+    "consumer", ("repository", "scheduler", "run_cycle", "background_recovery")
+)
+def test_rich_no_change_storage_failure_retries_without_a_wake(
+    tmp_path: Path, consumer: str
+) -> None:
+    report, category, option, _ = _automatic_no_change_inputs("genres_fill_empty")
+    repository = open_repository(tmp_path / "reports.sqlite")
+    try:
+        (decision,) = _automatic_decisions(
+            SimpleNamespace(repository=repository),
+            report,
+            category,
+            option,
+            qualified=True,
+        )
+
+        class UnexpectedAuthority:
+            def resolve(self, _decision):
+                raise AssertionError("keep-current decision reached authority")
+
+        scheduler = ContinuousGuardedApplication(
+            repository,
+            {
+                ("primary", "ebooks"): cast(
+                    GuardedFieldApplication,
+                    SimpleNamespace(
+                        run_pending_cleanups=lambda **_: 0,
+                        resume_admission=lambda: None,
+                        begin_drain=lambda: None,
+                    ),
+                )
+            },
+            {("primary", "ebooks"): FakeCapabilityObserver("c" * 64)},
+            PersistedFieldEffectAuthority(repository)
+            if consumer == "background_recovery"
+            else UnexpectedAuthority(),
+            (("primary", "ebooks"),),
+            lambda: 10,
+            lambda *_: None,
+            polling_seconds=0.1,
+        )
+        # Exercise the real SQLite write boundary, not an injected domain error.
+        repository._connection.execute("PRAGMA query_only=ON")
+        if consumer == "background_recovery":
+            transitions: list[object] = []
+            announcements: list[str] = []
+            restored = False
+            scheduler.attach_updates(lambda topic, _: announcements.append(topic))
+
+            def serialize(call: Callable[[], object]) -> object:
+                nonlocal restored
+                if announcements and not restored:
+                    assert repository.pending_field_effect_decision_documents(10) == (
+                        decision.to_json(),
+                    )
+                    repository._connection.execute("PRAGMA query_only=OFF")
+                    restored = True
+                    transitions.append(scheduler.activity()["last_failure"])
+                result = call()
+                if repository.pending_field_effect_decision_documents(10) == ():
+                    scheduler.close_admission()
+                return result
+
+            scheduler.attach_serialization(serialize)
+            scheduler.admit()
+            scheduler._run()
+            transitions.append(scheduler.activity()["last_failure"])
+            assert transitions == ["persistence", None]
+            assert announcements == ["activity", "activity"]
+            assert repository.record_current_field_effect_no_change(decision, 11)
+            assert repository._connection.execute(
+                "SELECT count(*) FROM field_effect_no_changes"
+            ).fetchone() == (1,)
+            return
+        with pytest.raises(FieldEffectError, match="^persistence$") as raised:
+            if consumer == "repository":
+                repository.record_current_field_effect_no_change(decision, 10)
+            elif consumer == "run_cycle":
+                scheduler.run_cycle()
+            else:
+                scheduler.schedule()
+        assert isinstance(raised.value.__cause__, sqlite3.OperationalError)
+        assert not repository._connection.in_transaction
+        assert repository.pending_field_effect_decision_documents(10) == (
+            decision.to_json(),
+        )
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effect_no_changes"
+        ).fetchone() == (0,)
+
+        repository._connection.execute("PRAGMA query_only=OFF")
+        # Retry this same scheduler without wake/reset: a storage fault cannot
+        # advance its cursor past the still-pending no-change decision.
+        assert scheduler.schedule() == 0
+        assert repository.pending_field_effect_decision_documents(10) == ()
+        assert repository.record_current_field_effect_no_change(decision, 11)
+        assert scheduler.schedule() == 0
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effect_no_changes"
+        ).fetchone() == (1,)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effects"
+        ).fetchone() == (0,)
+    finally:
+        repository.close()
+
+
+@pytest.mark.parametrize("field", ("citation_ids", "combination_ids"))
+def test_rich_no_change_rejects_corrupted_explicit_proof(
+    tmp_path: Path, field: str
+) -> None:
+    report, category, option, _ = _automatic_no_change_inputs("series_source_order")
+    repository = open_repository(tmp_path / "reports.sqlite")
+    try:
+        (decision,) = _automatic_decisions(
+            SimpleNamespace(repository=repository),
+            report,
+            category,
+            option,
+            qualified=True,
+        )
+        document = json.loads(repository.list_shadow_outcomes(1)[0][0])
+        source = next(
+            value for value in document["outcomes"] if value["destination"] == "series"
+        )
+        source[field] = (
+            ["provider_" + "a" * 64]
+            if field == "citation_ids"
+            else ["combination_" + "b" * 64]
+        )
+        # A hostile stored document with altered proof must not acquire a
+        # no-change fact. No alternate authority chain is fabricated here.
+        repository._connection.execute(
+            "DROP TRIGGER shadow_decision_outcomes_no_update"
+        )
+        repository._connection.execute(
+            "UPDATE shadow_decision_outcomes SET document=?", (json.dumps(document),)
+        )
+        repository._connection.commit()
+        with pytest.raises(FieldEffectError, match="authority_binding"):
+            repository.record_current_field_effect_no_change(decision, 5)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effect_no_changes"
+        ).fetchone() == (0,)
+    finally:
+        repository.close()
+
+
+def test_rich_no_change_rejects_a_superseded_report(tmp_path: Path) -> None:
+    report, category, option, _ = _automatic_no_change_inputs("series_source_order")
+    repository = open_repository(tmp_path / "reports.sqlite")
+    try:
+        (decision,) = _automatic_decisions(
+            SimpleNamespace(repository=repository),
+            report,
+            category,
+            option,
+            qualified=True,
+        )
+        replacement = _proposal_report(
+            fields=_fields("Changed title"), providers=report.providers
+        )
+        repository.publish(replacement, lambda: True, expected_current=report.report_id)
+        with pytest.raises(FieldEffectError, match="authority_binding"):
+            repository.record_current_field_effect_no_change(decision, 5)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effect_no_changes"
+        ).fetchone() == (0,)
+    finally:
+        repository.close()
+
+
+def test_primary_narrative_exact_preservation_remains_an_abstention(
+    tmp_path: Path,
+) -> None:
+    report, category, _, _ = _automatic_no_change_inputs("series_source_order")
+    repository = open_repository(tmp_path / "reports.sqlite")
+    try:
+        assert (
+            _automatic_decisions(
+                SimpleNamespace(repository=repository),
+                report,
+                category,
+                "primary_narrative",
+                qualified=True,
+            )
+            == ()
+        )
+        source = next(
+            value
+            for value in ShadowOutcomeSet.from_json(
+                repository.list_shadow_outcomes(1)[0][0]
+            ).outcomes
+            if value.destination == "series"
+        )
+        assert source.disposition == "abstention"
+    finally:
+        repository.close()
+
+
+@pytest.mark.parametrize(
+    "consumer", ("schedule", "run_cycle", "background", "owner_boundary")
+)
+def test_unbindable_isbn_does_not_starve_a_later_human_acceptance(
+    tmp_path: Path,
+    consumer: str,
+) -> None:
+    first, category, option, _ = _automatic_no_change_inputs("unmatched_isbn")
+    second_base = _proposal_report(
+        providers=(
+            _provider(
+                "catalogue",
+                "edition-2",
+                (
+                    _claim(
+                        "catalogue",
+                        "edition-2",
+                        ClaimKind.TITLE,
+                        "Accepted title",
+                        scope=ClaimScope.WORK,
+                    ),
+                ),
+            ),
+        )
+    )
+    second = MetadataReport.create(
+        target=TargetFacts("primary", "later", "item-2", second_base.target.fields),
+        file=second_base.file,
+        local_claims=second_base.local_claims,
+        local_reasons=second_base.local_reasons,
+        providers=second_base.providers,
+    )
+    options = dict(DEFAULT_OPTIONS)
+    options[category] = option
+    destinations = {
+        name: "unsupported" if name == "explicit" else "ask"
+        for name in OPTION_CATALOGUE
+    }
+    destinations[category] = "automatic"
+    profile = MetadataPolicyProfile.create(
+        "Cross-library no-change", options, destinations
+    )
+    resolutions = tuple(
+        resolve_policy(profile, report.target.library) for report in (first, second)
+    )
+    repository = open_repository(tmp_path / "reports.sqlite")
+    try:
+        repository.enter_shadow_preview(1)
+        repository.create_metadata_policy_draft(profile.canonical_json)
+        repository.activate_metadata_policy(
+            profile.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            tuple(
+                (report.target.library, policy.resolved_id, policy.canonical_json)
+                for report, policy in zip((first, second), resolutions, strict=True)
+            ),
+            2,
+        )
+        repository.activate_qualified_automatic(3)
+        cases = []
+        for report, policy in zip((first, second), resolutions, strict=True):
+            proposal = evaluate_report(
+                report, policy.resolved_id, human_review_destinations(policy)
+            )
+            repository.publish(report, lambda: True)
+            repository.publish_proposal(proposal)
+            cases.append(
+                json.loads(repository.admit_review_case(proposal))["review_case_id"]
+            )
+        repository.persist_shadow_outcome(cases[0], 4)
+        decision = AutomaticDecision.from_json(
+            repository.get_review_case_decisions(cases[0])[0]
+        )
+        assert decision.outcome == "keep_current"
+        # ISBN still has to prove its exact representation: a populated target
+        # alone cannot admit this no-op, unlike the canonical rich categories.
+        with pytest.raises(FieldEffectError, match="authority_binding"):
+            repository.record_current_field_effect_no_change(decision, 5)
+        human = _human_title_decision(repository, cases[1], 6)
+        repository.record_human_decision(human)
+        repository.grant_field_effect_consents("primary", ("later",), ("title",), 7)
+        authority = PersistedFieldEffectAuthority(repository)
+        capabilities = FakeCapabilityObserver("c" * 64)
+
+        class SeededTarget(FakeTargetService):
+            def __init__(self) -> None:
+                super().__init__()
+                self.seen: set[str] = set()
+
+            def read(self, plan: FieldEffectPlan) -> TargetObservation:
+                if plan.plan_id not in self.seen:
+                    self.seed(plan)
+                    self.seen.add(plan.plan_id)
+                return super().read(plan)
+
+        target = SeededTarget()
+        application = GuardedFieldApplication(
+            repository,
+            target,
+            FakeBackupReadiness(),
+            capabilities,
+            authority,
+            FakeDependencyCurrentness(),
+            PersistedEffectConsent(repository),
+            SimpleNamespace(),
+            FakeForwardReevaluation(),
+            lambda: 10,
+        )
+        scheduler = ContinuousGuardedApplication(
+            repository,
+            {("primary", library): application for library in ("ebooks", "later")},
+            {("primary", library): capabilities for library in ("ebooks", "later")},
+            authority,
+            (("primary", "ebooks"), ("primary", "later")),
+            lambda: 10,
+            lambda *_: None,
+        )
+        if consumer == "owner_boundary":
+            owner_calls = []
+            gate_calls = 0
+
+            def serialize(call: Callable[[], object]) -> object:
+                nonlocal gate_calls
+                gate_calls += 1
+                assert gate_calls <= 3
+                result = call()
+                if scheduler.activity()["last_failure"] != "authority_binding":
+                    return result
+                # This callback's return is the real owner-gate release seam.
+                # A progress correction must not drain the entire queue while
+                # an owner operation is waiting outside this critical section.
+                assert repository._connection.execute(
+                    "SELECT count(*) FROM field_effects"
+                ).fetchone() == (0,)
+                owner_calls.append("stop")
+                scheduler.close_admission()
+                return result
+
+            scheduler.attach_serialization(serialize)
+            scheduler.admit()
+            scheduler._run()
+            assert owner_calls == ["stop"]
+            assert len(repository.pending_field_effect_decision_documents(10)) == 2
+            return
+        if consumer == "run_cycle":
+            assert scheduler.run_cycle(), "a skipped row is progress, not queue idle"
+        if consumer == "background":
+            scheduler._run_until_idle()
+            rows = repository._connection.execute(
+                "SELECT plan_id FROM field_effects"
+            ).fetchall()
+            assert len(rows) == 1, "background drain stranded the later human decision"
+            operation = repository.get_field_effect(rows[0][0])
+            assert operation.plan.authority.decision_id == human.decision_id
+            assert operation.state == "verified"
+            assert target.read(operation.plan).value == "Accepted title"
+            return
+        assert scheduler.schedule() == 1
+        assert scheduler.activity()["last_failure"] == "authority_binding"
+        pending = repository.next_field_effect_plan_id(None)
+        assert pending is not None
+        plan_id, library = pending
+        assert library == "later"
+        operation = repository.get_field_effect(plan_id)
+        assert operation.plan.authority.decision_id == human.decision_id
+        target.seed(operation.plan)
+        assert scheduler.apply(plan_id).state == "verified"
+        assert target.read(operation.plan).value == "Accepted title"
+        assert repository.pending_field_effect_decision_documents(10) == (
+            decision.to_json(),
+        )
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effect_no_changes"
+        ).fetchone() == (0,)
+    finally:
+        repository.close()
+
+
+@pytest.mark.parametrize("observation", ("announcement", "next_poll"))
+def test_lone_unbindable_decision_reaches_the_activity_stream(
+    tmp_path: Path, observation: str
+) -> None:
+    report, category, option, _ = _automatic_no_change_inputs("unmatched_isbn")
+    repository = open_repository(tmp_path / "reports.sqlite")
+    channel = LiveUpdateChannel()
+    subscription = channel.subscribe(channel.sequence)
+    try:
+        (decision,) = _automatic_decisions(
+            SimpleNamespace(repository=repository),
+            report,
+            category,
+            option,
+            qualified=True,
+        )
+        scheduler = ContinuousGuardedApplication(
+            repository,
+            {
+                ("primary", "ebooks"): cast(
+                    GuardedFieldApplication,
+                    SimpleNamespace(
+                        run_pending_cleanups=lambda **_: 0,
+                        resume_admission=lambda: None,
+                        begin_drain=lambda: None,
+                    ),
+                )
+            },
+            {("primary", "ebooks"): SimpleNamespace()},
+            PersistedFieldEffectAuthority(repository),
+            (("primary", "ebooks"),),
+            lambda: 10,
+            lambda *_: None,
+        )
+
+        def announce(topic: str, subject: str | None) -> None:
+            channel.publish(topic, subject)
+
+        scheduler.attach_updates(announce)
+        scheduler.run_cycle()
+        assert scheduler.activity()["last_failure"] == "authority_binding"
+        assert repository.pending_field_effect_decision_documents(10) == (
+            decision.to_json(),
+        )
+        if observation == "next_poll":
+
+            def serialize(call: Callable[[], object]) -> object:
+                result = call()
+                scheduler.close_admission()
+                return result
+
+            scheduler.attach_serialization(serialize)
+            scheduler.admit()
+            scheduler._run()
+            assert scheduler.activity()["last_failure"] == "authority_binding", (
+                "an idle poll is not recovery of the still-rejected decision"
+            )
+        channel.close()
+
+        async def receive() -> list[bytes]:
+            return [
+                chunk
+                async for chunk in stream_frames(
+                    subscription, "a" * 32, still_authenticated=lambda: True
+                )
+            ]
+
+        frames = b"".join(asyncio.run(receive()))
+        assert b"event: activity\n" in frames, (
+            "connected Activity has no invalidation to refetch"
+        )
+        assert b"authority_binding" not in frames  # The stream carries no state.
+    finally:
+        channel.close()
+        repository.close()
 
 
 def test_uncorroborated_subtitle_under_automatic_mints_no_decision() -> None:

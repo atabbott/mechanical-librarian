@@ -70,6 +70,14 @@ from mechanical_librarian.domain.validation import (
 
 __all__ = ["_automatic_decision_value", "_validate_field_effect_state"]
 
+# F20 categories whose preview can preserve a filled target without electing an
+# alternative, so the outcome it produces cites no evidence and no combination.
+# `isbn_form` is deliberately absent: it proves preservation by reprojecting the
+# exact identifier representation, and that stricter rule stands on its own.
+_RICH_PRESERVATION_CATEGORIES = frozenset(
+    {"description_fill", "genres", "series", "subtitle", "tags"}
+)
+
 
 def _validate_automatic_decision_authority(
     decision: AutomaticDecision,
@@ -256,13 +264,29 @@ def _automatic_decision_value(
                     )
                     and source.combination_ids == preservation_combinations
                 )
+        # A rich no-op cites nothing: the preview preserved the target without
+        # electing an alternative, so there is no typed preservation to match.
+        # The whole added trust is "the target currently holds a value", which
+        # is exactly what the preview asserted, and `keep_current` returns None
+        # and never writes.
+        rich_preservation = (
+            decision.policy_category in _RICH_PRESERVATION_CATEGORIES
+            and not source.citation_ids
+            and not source.combination_ids
+            and canonical_target.state is TargetFieldState.VALUE
+        )
         if (
             decision.candidate_id is not None
-            or (not typed_preservation_matches and not identifier_preservation)
+            or (
+                not typed_preservation_matches
+                and not identifier_preservation
+                and not rich_preservation
+            )
             or any(
                 (
                     source.reason_code != "unique_supported_preservation",
                     not typed_preservation_matches
+                    and not rich_preservation
                     and not (
                         decision.policy_category == "isbn_form"
                         and not source.citation_ids
