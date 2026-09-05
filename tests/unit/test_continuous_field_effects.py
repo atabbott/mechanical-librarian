@@ -888,15 +888,24 @@ def test_unbindable_decision_is_named_and_stepped_over_not_left_to_starve(
         assert repository.attempts == 2
         assert planner.planned == [following.decision_id]
         return
+    transitions: list[tuple[str, object]] = []
+    service.attach_updates(
+        lambda topic, _: transitions.append((topic, service.activity()["last_failure"]))
+    )
     assert 1 == service.schedule()
     assert [following.decision_id] == planner.planned
     assert "authority_binding" == service.activity()["last_failure"]
+    # The following, unrelated candidate succeeded but did not recover the
+    # rejected decision. Its diagnostic transition must still be observable.
+    assert ("activity", "authority_binding") in transitions
     assert service.schedule() == 0
     assert repository.attempts == 1
     repository.failing = False
     service.wake()
     service.schedule()
     assert repository.attempts == 2
+    assert service.activity()["last_failure"] is None
+    assert transitions[-1] == ("activity", None)
 
 
 def test_schedule_skips_prior_f20_before_no_change_authority_or_capability() -> None:
@@ -2110,8 +2119,48 @@ def test_background_cycle_bounds_permission_waiting_work_to_one_candidate() -> N
         lambda *_: None,
     )
 
-    assert not service.run_cycle()
+    # A bounded permission refusal advances the cursor: progress is distinct
+    # from creating an effect, without enlarging the one-row critical section.
+    assert service.run_cycle()
     assert repository.limits == [1]
+
+
+def test_wake_during_a_cycle_keeps_the_reset_cursor_and_reports_progress() -> None:
+    class WakingRepository(_PagedRepository):
+        def __init__(self) -> None:
+            super().__init__(_decisions(2))
+            self.afters: list[tuple[int, str] | None] = []
+
+        def pending_field_effect_decision_documents(self, limit, after=None):
+            assert limit == 1
+            self.afters.append(after)
+            documents = super().pending_field_effect_decision_documents(limit, after)
+            if len(self.afters) == 1:
+                service.wake()
+            return documents
+
+        def next_field_effect_plan_id(self, _last_library):
+            return None
+
+    repository = WakingRepository()
+    service = ContinuousGuardedApplication(
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): _Planner()},
+        ),
+        {("primary", "alpha"): _AllowedCapability()},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
+    )
+    assert service.run_cycle()
+    assert service.run_cycle()
+    assert service.run_cycle()
+    assert not service.run_cycle()
+    first = repository.decisions[0]
+    assert repository.afters[:3] == [None, None, (first.occurred_at, first.decision_id)]
 
 
 def _decisions(count: int):
