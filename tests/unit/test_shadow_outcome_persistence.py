@@ -2113,6 +2113,67 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
             repository.close()
 
 
+@pytest.mark.parametrize("consumer", ("repository", "scheduler"))
+def test_rich_no_change_storage_failure_retries_without_a_wake(
+    tmp_path: Path, consumer: str
+) -> None:
+    report, category, option, _ = _automatic_no_change_inputs("genres_fill_empty")
+    repository = open_repository(tmp_path / "reports.sqlite")
+    try:
+        (decision,) = _automatic_decisions(
+            SimpleNamespace(repository=repository),
+            report,
+            category,
+            option,
+            qualified=True,
+        )
+
+        class UnexpectedAuthority:
+            def resolve(self, _decision):
+                raise AssertionError("keep-current decision reached authority")
+
+        scheduler = ContinuousGuardedApplication(
+            repository,
+            {("primary", "ebooks"): cast(GuardedFieldApplication, SimpleNamespace())},
+            {("primary", "ebooks"): SimpleNamespace()},
+            UnexpectedAuthority(),
+            (("primary", "ebooks"),),
+            lambda: 10,
+            lambda *_: None,
+        )
+        # Exercise the real SQLite write boundary, not an injected domain error.
+        repository._connection.execute("PRAGMA query_only=ON")
+        with pytest.raises(FieldEffectError, match="^persistence$") as raised:
+            if consumer == "repository":
+                repository.record_current_field_effect_no_change(decision, 10)
+            else:
+                scheduler.schedule()
+        assert isinstance(raised.value.__cause__, sqlite3.OperationalError)
+        assert not repository._connection.in_transaction
+        assert repository.pending_field_effect_decision_documents(10) == (
+            decision.to_json(),
+        )
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effect_no_changes"
+        ).fetchone() == (0,)
+
+        repository._connection.execute("PRAGMA query_only=OFF")
+        # Retry this same scheduler without wake/reset: a storage fault cannot
+        # advance its cursor past the still-pending no-change decision.
+        assert scheduler.schedule() == 0
+        assert repository.pending_field_effect_decision_documents(10) == ()
+        assert repository.record_current_field_effect_no_change(decision, 11)
+        assert scheduler.schedule() == 0
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effect_no_changes"
+        ).fetchone() == (1,)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effects"
+        ).fetchone() == (0,)
+    finally:
+        repository.close()
+
+
 @pytest.mark.parametrize("field", ("citation_ids", "combination_ids"))
 def test_rich_no_change_rejects_corrupted_explicit_proof(
     tmp_path: Path, field: str
