@@ -75,12 +75,15 @@ including convention-qualified views of the same grouping, six correct sequence
 occurrences and one unknown; its support denominator is still five books.
 Actual target values are scored separately from full qualified memberships.
 
-The runtime binds the v13 digest, source dependencies, closed option
+The runtime binds the v14 digest, source dependencies, closed option
 matrix and tested zero-tolerance controls. Metrics alone do not authorize
-activation. Historical v11/v12 bytes and decisions remain readable, while fresh
+activation. Historical v11/v12/v13 bytes and decisions remain readable, while fresh
 decisions and guarded effects require the exact current qualification. Retained
-historical non-series compiler evidence compares 980 serialized observations unchanged;
-the rotation intentionally changes authority-derived identities. The earlier
+historical non-series compiler evidence for v13 compared 980 serialized
+observations unchanged. V14 changes 18 genre previews in the two-scenario
+continuity replay, restoring the 15 correct same-mode option projections that
+the first #1000 candidate withheld; no other field changes. The rotation also
+changes authority-derived identities. The earlier
 50-case gold programme and operator evidence remain retained evidence, not 50
 new cases. Exact-clean-head postrotation retained replay, supported isolated
 field effects and installed acceptance remain required delivery checks; the

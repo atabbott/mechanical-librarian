@@ -370,6 +370,16 @@ the fallback. This is a request-scheduling rule, not an evidence election:
 failed and unanswered lanes remain unavailable rather than dissent, and every
 returned claim stays in the immutable report.
 
+After that fallback, a contradictory provider ISBN candidate remains unavailable
+when an existing title query overlaps and its complete creator set differs only
+by one omitted middle initial per creator: `Given Family` and `Given I[.] Family`
+are the only accepted shapes, with equal given and family names and a matching
+initial wherever both sides state one. The comparison requires a complete
+one-to-one creator matching and rejects duplicates, cardinality changes, full
+middle names, initial-only given or family names, and arbitrary punctuation
+folding. This narrow display exception can close a contradiction; it never
+admits a candidate, establishes positive identity, or grants field authority.
+
 Work search shapes are deterministic and never alter retained target values,
 claims, or evidence. The domain owns this closed table; each row remains
 independent so later election work can consume the same grammar without

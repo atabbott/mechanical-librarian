@@ -36,8 +36,9 @@ MANIFEST = (
     / "docs/reference/f20-rich-metadata-qualification-candidate-v11.json"
 )
 V12_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v12.json")
+V13_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v13.json")
 CURRENT_MANIFEST = MANIFEST.with_name(
-    "f20-rich-metadata-qualification-candidate-v13.json"
+    "f20-rich-metadata-qualification-candidate-v14.json"
 )
 HISTORICAL_MANIFEST = (
     Path(__file__).parents[2]
@@ -80,9 +81,9 @@ RICH_FIELDS = (
 )
 
 
-def test_v13_binds_current_source_and_preserves_historical_v11_v12_bytes() -> None:
+def test_v14_binds_current_source_and_preserves_historical_v11_v12_v13_bytes() -> None:
     manifest = json.loads(CURRENT_MANIFEST.read_bytes())
-    assert manifest["schema"] == "f20-rich-metadata-qualification-candidate-v13"
+    assert manifest["schema"] == "f20-rich-metadata-qualification-candidate-v14"
     assert manifest["automatic_authority"] == "decision_only"
     prior = hashlib.sha256(MANIFEST.read_bytes()).hexdigest()
     assert prior == "4ede15a2aa84e8726ea2dff4e4f9f0d04b27a70276ed53c400c2de5f7619d445"
@@ -94,7 +95,15 @@ def test_v13_binds_current_source_and_preserves_historical_v11_v12_bytes() -> No
         ]
         == prior
     )
-    assert manifest["authority_rotation"]["prior_manifest_sha256"] == v12
+    v13 = hashlib.sha256(V13_MANIFEST.read_bytes()).hexdigest()
+    assert v13 == "70563a47e768fe51cb911511ca67849893e4495266c84bb2e9fc7f6165ed2879"
+    assert (
+        json.loads(V13_MANIFEST.read_bytes())["authority_rotation"][
+            "prior_manifest_sha256"
+        ]
+        == v12
+    )
+    assert manifest["authority_rotation"]["prior_manifest_sha256"] == v13
     assert prior != F20_QUALIFICATION_CANDIDATE_SHA256
     sources = manifest["frozen_contract"]["behavior_sources"]
     assert {
@@ -115,12 +124,13 @@ def test_v13_binds_current_source_and_preserves_historical_v11_v12_bytes() -> No
     rotation = manifest["authority_rotation"]
     assert (
         rotation["measured_candidate_head"]
-        == "4b8bf7d00aafdaf88c8c2b8f7c098b0e51fbf4dd"
+        == "7f4e2cb59b5c8940b7c5a29c2ee1f90716e6596c"
     )
     assert rotation["measured_behavior_sources"] == {
-        "src/mechanical_librarian/domain/metadata_report.py": "b1e2e7e760358960b50bee21e516beb48a8c3d5c816ae753840eae6241f7f34e",
-        "src/mechanical_librarian/domain/proposal_set.py": "1340a77ba7277e0a69c121337840e3e407d892f9f0fe161d97a7e11c5fa05277",
-        "src/mechanical_librarian/domain/rich_metadata_preview.py": "4de4e624717c0dd29860fbb18a1b433f4832631b2208140c30c601a2590e8849",
+        "src/mechanical_librarian/domain/metadata_report.py": "d624e3ef9176de6fd8e9b569b0b8d2cb65b0c964c724ffbbcc2ff8fcdd2dd344",
+        "src/mechanical_librarian/domain/proposal_set.py": "75a3ba7457bf4a57fe99f2ea33648891c8187b6e0d0f932463c4d9e0b62d64d0",
+        "src/mechanical_librarian/domain/rich_metadata_preview.py": "479adb79d91c172ff087658d20616efca823386b7c9c4b68e6dd2d5992eb5394",
+        "src/mechanical_librarian/domain/work_identity.py": "391014c5643d1e450c8314a532bba8ff9fbc7e9d01fc220bfdcc5c9b8b095424",
     }
     assert all(
         sources[name] == digest
@@ -130,7 +140,7 @@ def test_v13_binds_current_source_and_preserves_historical_v11_v12_bytes() -> No
     assert history["current_sha256"] == sources[history["identity"]]
     assert (
         history["measured_sha256"]
-        == json.loads(V12_MANIFEST.read_bytes())["frozen_contract"]["behavior_sources"][
+        == json.loads(V13_MANIFEST.read_bytes())["frozen_contract"]["behavior_sources"][
             history["identity"]
         ]
     )
@@ -141,6 +151,72 @@ def test_v13_binds_current_source_and_preserves_historical_v11_v12_bytes() -> No
         manifest["frozen_contract"]["uv_lock_sha256"]
         == hashlib.sha256((root / "uv.lock").read_bytes()).hexdigest()
     )
+
+
+def test_v14_records_target_work_regression_without_fresh_holdout_claim() -> None:
+    manifest = json.loads(CURRENT_MANIFEST.read_bytes())
+    evidence = manifest["evidence_method"]["target_work_contradiction"]
+
+    assert manifest["proposal_policy_version"] == "fixed-conservative-v20"
+    assert evidence["qualification_method"] == "owner_approved_exposed_regression"
+    assert evidence["fresh_holdout_claim"] is False
+    assert evidence["measured_candidate_head"] == (
+        "7f4e2cb59b5c8940b7c5a29c2ee1f90716e6596c"
+    )
+    retained = evidence["same_mode_retained_reports"]
+    assert retained["evaluator_sha256"] == (
+        "07b9d4130cbf43d41664c182db6ea0c436692163df0ef5da00ca978b7bcfcb37"
+    )
+    assert retained["correct_genre_projections"] == {
+        "add": 9,
+        "fill_empty": 30,
+        "replace": 9,
+    }
+    assert retained["restored_correct_genre_projections"] == {
+        "add": 3,
+        "fill_empty": 9,
+        "replace": 3,
+        "total": 15,
+    }
+    for name in (
+        "changed_outcomes",
+        "changed_values",
+        "lost_correct_projections",
+        "gained_incorrect_projections",
+        "series_option_changes",
+    ):
+        assert retained[name] == 0
+    assert {artifact["mode"] for artifact in retained["artifacts"]} == {
+        "live-three-provider-49-v1",
+        "live-three-provider-49-v2",
+    }
+    assert all(
+        re.fullmatch(r"[0-9a-f]{64}", artifact[name])
+        for artifact in retained["artifacts"]
+        for name in (
+            "baseline_result_sha256",
+            "candidate_result_sha256",
+            "comparison_sha256",
+        )
+    )
+    continuity = evidence["non_series_continuity"]
+    assert continuity["changed_preview_observations"] == 18
+    assert continuity["changed_fields"] == {
+        "genres:add": 6,
+        "genres:fill_empty": 6,
+        "genres:replace": 6,
+    }
+    assert continuity["unchanged_non_genre_observations"] == 686
+    assert evidence["synthetic_request_cost"] == {
+        "actual_total_requests_before": 2,
+        "actual_total_requests_after": 4,
+        "added_work_fallback_requests": 2,
+        "provider_count": 2,
+    }
+    assert evidence["retained_request_cost"] == {
+        "network_requests": 0,
+        "production_scheduling_estimate": "not_measured",
+    }
 
 
 @pytest.mark.parametrize("batch", ("confirmation", "final"))
@@ -226,8 +302,10 @@ def test_v12_separates_membership_sequence_and_distinct_book_support(
         assert re.fullmatch(r"[0-9a-f]{64}", evidence[name])
 
 
-@pytest.mark.parametrize("manifest_path", (V12_MANIFEST, CURRENT_MANIFEST))
-def test_v12_v13_retain_non_series_dispositions_and_historical_metrics(
+@pytest.mark.parametrize(
+    "manifest_path", (V12_MANIFEST, V13_MANIFEST, CURRENT_MANIFEST)
+)
+def test_v12_v13_v14_retain_non_series_dispositions_and_historical_metrics(
     manifest_path: Path,
 ) -> None:
     historical = json.loads(MANIFEST.read_bytes())
@@ -261,7 +339,7 @@ def test_v12_v13_retain_non_series_dispositions_and_historical_metrics(
 def test_v13_records_exposed_regression_without_relabelling_holdouts(
     batch: str, option: str
 ) -> None:
-    manifest = json.loads(CURRENT_MANIFEST.read_bytes())
+    manifest = json.loads(V13_MANIFEST.read_bytes())
     series = manifest["evidence_method"]["series"]
     assert series["qualification_method"] == "owner_approved_exposed_regression"
     assert series["fresh_holdout_claim"] is False
