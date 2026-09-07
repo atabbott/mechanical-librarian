@@ -513,6 +513,64 @@ def test_exact_multi_isbn_work_keeps_all_automatic_work_fields() -> None:
     }
 
 
+@pytest.mark.parametrize(
+    ("identity", "expected_outcome", "expected_reason"),
+    (
+        ("applicable", "projected", None),
+        ("contradictory", "abstain", "target_work_contradicted"),
+        ("unavailable", "projected", None),
+    ),
+)
+def test_automatic_genre_rejects_only_explicit_work_contradiction(
+    identity: str,
+    expected_outcome: str,
+    expected_reason: str | None,
+) -> None:
+    candidate = _target_work_candidate("catalogue", "edition-1", "work-1")
+    identity_claims = (
+        (
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.TITLE,
+                "Different Book" if identity == "contradictory" else "Real Tigers",
+                scope=ClaimScope.WORK,
+            ),
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.CREATOR,
+                "Other Author" if identity == "contradictory" else "Mick Herron",
+                scope=ClaimScope.WORK,
+                role="author",
+            ),
+        )
+        if identity != "unavailable"
+        else ()
+    )
+    candidate = replace(
+        candidate,
+        claims=(
+            *identity_claims,
+            *(
+                claim
+                for claim in candidate.claims
+                if claim.kind not in {ClaimKind.TITLE, ClaimKind.CREATOR}
+            ),
+        ),
+    )
+    report = _target_work_report((("catalogue", "hardcover", (candidate,), True),))
+
+    _, fields = _target_work_preview(report)
+
+    assert expected_outcome == fields["genres"].outcome
+    assert expected_reason == fields["genres"].reason
+    assert any(
+        claim.kind is ClaimKind.GENRE
+        for claim in report.providers[0].candidates[0].claims
+    )
+
+
 def test_automatic_description_filters_applicability_before_floor_and_order() -> None:
     unproved = _description_candidate(
         "preferred",

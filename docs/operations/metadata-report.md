@@ -158,8 +158,8 @@ source order. Front and rear subtitle/publisher/imprint canonical values share
 NFC and whitespace normalization. Rear position does not increase authority.
 Provider comparisons link only claims with the same role; no publisher/imprint
 hierarchy is inferred. The exact-current persisted report and database
-discriminator is `metadata-report-v37`. Every earlier report discriminator,
-including immediate prior `metadata-report-v36`, remains offline and requires a
+discriminator is `metadata-report-v38`. Every earlier report discriminator,
+including immediate prior `metadata-report-v37`, remains offline and requires a
 clean current database under ADR-0013.
 
 An audiobook item in a mounted audiobook library, with 1 to 512 audio files in
@@ -361,6 +361,14 @@ selecting a subset. Candidate admission then requires one exact normalized work 
 complete ordered author list, one provider-local work identity, and no
 translation, adaptation, or uncertain abridgement marker. Competing works and
 same-title/different-author results are `no_match`.
+
+An ISBN lane suppresses that provider's bounded WORK fallback only when its
+entire non-empty candidate set proves one exact target work under the same
+closed admission grammar. A set containing one contradictory candidate, one
+candidate without enough work identity, or more than one work identity keeps
+the fallback. This is a request-scheduling rule, not an evidence election:
+failed and unanswered lanes remain unavailable rather than dissent, and every
+returned claim stays in the immutable report.
 
 Work search shapes are deterministic and never alter retained target values,
 claims, or evidence. The domain owns this closed table; each row remains

@@ -5,9 +5,19 @@ rich-metadata qualification contract and its exact option-level decisions. It
 grants decision-only Automatic authority to the passing options; it does not
 grant effect consent, construct a target write, or change provider selection.
 
+## Contradictory work evidence (#1000)
+
+The [v14 candidate](../reference/f20-rich-metadata-qualification-candidate-v14.json)
+binds the target-work contradiction guard for publication dates and automatic
+genres. Claims about another work remain inspectable, but they cannot become a
+field decision or persisted candidate outcome. Where identity proof is absent,
+the candidate stays unresolved rather than being promoted or discarded. The
+same successor preserves every previously qualified option through the existing
+non-series and exact-source continuity routes.
+
 ## Qualified series fill (#895)
 
-The [v13 candidate](../reference/f20-rich-metadata-qualification-candidate-v13.json)
+The historical [v13 candidate](../reference/f20-rich-metadata-qualification-candidate-v13.json)
 binds the applicability repair: it refuses unrelated ISBN work candidates while
 permitting the bounded
 [source-attested identity formatting rule](../architecture/decisions/0070-isbn-backed-series-identity.md).

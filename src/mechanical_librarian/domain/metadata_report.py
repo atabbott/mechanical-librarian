@@ -71,11 +71,12 @@ from mechanical_librarian.domain.work_identity import (
     direct_work_title_election_matches,
     replay_provider_work_identity_admission,
     work_dispatch_lineage_from_data,
+    work_query_ladder,
     work_title_has_variant_marker,
     work_title_transformation_lineage_from_data,
 )
 
-REPORT_SCHEMA = "metadata-report-v37"
+REPORT_SCHEMA = "metadata-report-v38"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v5"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -245,6 +246,14 @@ class DateLinkConfidence(StrEnum):
 
     EXPLICIT = "explicit"
     UNRESOLVED = "unresolved"
+
+
+class WorkIdentityContradiction(StrEnum):
+    """Whether complete retained work evidence contradicts the exact target."""
+
+    EXPLICIT = "explicit_contradiction"
+    NOT_CONTRADICTED = "not_contradicted"
+    UNAVAILABLE = "unavailable"
 
 
 class FieldState(StrEnum):
@@ -2613,6 +2622,87 @@ def provider_candidate_exact_work_identity_admission(
         provider_authors=authors,
         provider_work_identity=work_identity,
         variant_excluded=variant_excluded,
+    )
+
+
+def target_work_identity_context(
+    target: TargetFacts,
+) -> tuple[str, tuple[str, ...]] | None:
+    """Return the exact normalized target title and complete creator set."""
+    if type(target) is not TargetFacts:
+        return None
+    fields = {field.destination: field for field in target.fields}
+    title = fields[TargetDestination.TITLE]
+    authors = fields[TargetDestination.AUTHORS]
+    if (
+        title.state is not TargetFieldState.VALUE
+        or type(title.value) is not str
+        or authors.state is not TargetFieldState.VALUE
+        or type(authors.value) is not tuple
+        or not authors.value
+        or not all(type(value) is str for value in authors.value)
+    ):
+        return None
+    normalized_title = normalize_title(title.value)
+    normalized_authors = tuple(
+        normalize_title(value) for value in cast("tuple[str, ...]", authors.value)
+    )
+    if (
+        not normalized_title
+        or any(not value for value in normalized_authors)
+        or len({value.casefold() for value in normalized_authors})
+        != len(normalized_authors)
+    ):
+        return None
+    return normalized_title, normalized_authors
+
+
+def provider_candidate_work_identity_contradiction(
+    candidate: ProviderCandidate,
+    target_title: str,
+    target_authors: tuple[str, ...],
+) -> WorkIdentityContradiction:
+    """Classify only explicit contradiction from one complete work identity."""
+    claims = _provider_candidate_work_identity_claims(candidate)
+    if (
+        claims is None
+        or type(target_title) is not str
+        or not target_title
+        or type(target_authors) is not tuple
+        or not target_authors
+        or any(type(value) is not str or not value for value in target_authors)
+        or len({normalize_title(value).casefold() for value in target_authors})
+        != len(target_authors)
+        or work_title_has_variant_marker(target_title)
+    ):
+        return WorkIdentityContradiction.UNAVAILABLE
+    title, authors, work_identity, variant_excluded = claims
+    if variant_excluded or len(
+        {normalize_title(value).casefold() for value in authors}
+    ) != len(authors):
+        return WorkIdentityContradiction.UNAVAILABLE
+    admission = admit_provider_work_identity(
+        local_title=target_title,
+        local_authors=target_authors,
+        provider_title=title,
+        provider_authors=authors,
+        provider_work_identity=work_identity,
+        allow_reordered_authors=True,
+    )
+    if admission.admitted:
+        return WorkIdentityContradiction.NOT_CONTRADICTED
+    target_queries = {
+        (query.title.casefold(), tuple(value.casefold() for value in query.authors))
+        for query in work_query_ladder(target_title, target_authors)
+    }
+    candidate_queries = {
+        (query.title.casefold(), tuple(value.casefold() for value in query.authors))
+        for query in work_query_ladder(title, authors)
+    }
+    return (
+        WorkIdentityContradiction.UNAVAILABLE
+        if target_queries & candidate_queries
+        else WorkIdentityContradiction.EXPLICIT
     )
 
 
@@ -5458,6 +5548,7 @@ __all__ = [
     "ProviderWorkIdentitySetAdmission",
     "ProviderQueryKind",
     "ProviderStatus",
+    "WorkIdentityContradiction",
     "REPORT_SCHEMA",
     "ReportValueError",
     "TargetDestination",
@@ -5465,6 +5556,8 @@ __all__ = [
     "TargetField",
     "TargetFieldState",
     "TargetSeries",
+    "provider_candidate_work_identity_contradiction",
+    "target_work_identity_context",
     "canonical_json",
     "claim_scope",
     "comparison_links",

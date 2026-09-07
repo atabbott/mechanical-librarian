@@ -55,6 +55,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetField,
     TargetFieldState,
     TargetSeries,
+    WorkIdentityContradiction,
     canonical_asin,
     canonical_json,
     complete_creator_identity_bindings,
@@ -66,7 +67,9 @@ from mechanical_librarian.domain.metadata_report import (
     provider_candidate_series_identity_matches,
     provider_candidate_set_exact_work_identity_admission,
     provider_candidate_set_work_identity_admission,
+    provider_candidate_work_identity_contradiction,
     publication_date_is_voting,
+    target_work_identity_context,
 )
 from mechanical_librarian.domain.work_identity import (
     WorkTitleElectionMatch,
@@ -84,7 +87,7 @@ PROPOSAL_SCHEMA = "proposal-set-v6"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v19"
+POLICY_VERSION = "fixed-conservative-v20"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -2650,25 +2653,12 @@ def provider_candidate_represents_target_work(
     candidate: ProviderCandidate,
 ) -> bool:
     """Prove one retained candidate describes the target work through its lane."""
-    targets = {field.destination: field for field in report.target.fields}
-    title = targets[TargetDestination.TITLE]
-    authors = targets[TargetDestination.AUTHORS]
-    if (
-        title.state is not TargetFieldState.VALUE
-        or type(title.value) is not str
-        or authors.state is not TargetFieldState.VALUE
-        or type(authors.value) is not tuple
-        or not authors.value
-        or not all(type(value) is str for value in authors.value)
-        or not _target_backed_lookup_contains(report, provider, candidate)
+    context = target_work_identity_context(report.target)
+    if context is None or not _target_backed_lookup_contains(
+        report, provider, candidate
     ):
         return False
-    expected_title = normalize_title(title.value)
-    expected_authors = tuple(
-        normalize_title(value) for value in cast("tuple[str, ...]", authors.value)
-    )
-    if len({value.casefold() for value in expected_authors}) != len(expected_authors):
-        return False
+    expected_title, expected_authors = context
     candidates_by_identity = {value.identity: value for value in provider.candidates}
     for lane in provider.lanes:
         if (
@@ -3029,6 +3019,7 @@ def _series_from_claims(
 
 def _date_observations(report: MetadataReport) -> tuple[_Observed, ...]:
     values: list[_Observed] = []
+    work_context = target_work_identity_context(report.target)
     claim: LocalClaim | ProviderClaim
     for claim in report.local_claims:
         if (
@@ -3059,6 +3050,14 @@ def _date_observations(report: MetadataReport) -> tuple[_Observed, ...]:
                 )
     for provider in report.providers:
         for candidate in provider.candidates:
+            if (
+                work_context is not None
+                and provider_candidate_work_identity_contradiction(
+                    candidate, *work_context
+                )
+                is WorkIdentityContradiction.EXPLICIT
+            ):
+                continue
             for claim in candidate.claims:
                 if (
                     claim.kind is ClaimKind.PUBLICATION_DATE

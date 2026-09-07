@@ -146,7 +146,7 @@ does not interpret reports from prior or intermediate development schemas.
 ## Explainable ProposalSet
 
 `ProposalSet` is the deterministic, content-addressed evaluation of one exact
-`MetadataReport` under `fixed-conservative-v19`. It binds the report ID and
+`MetadataReport` under `fixed-conservative-v20`. It binds the report ID and
 derived target fingerprint and fixed policy version. Its ordered result tuple
 contains exactly one result for every
 `TargetDestination`.

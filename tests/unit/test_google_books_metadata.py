@@ -171,6 +171,33 @@ def test_identifier_candidate_suppresses_google_books_discovery() -> None:
     assert 1 == observation.request_accounting.logical_requests
 
 
+def test_contradictory_isbn_candidate_preserves_google_books_work_fallback() -> None:
+    queries: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        query = request.url.params["q"]
+        queries.append(query)
+        volume = _volume()
+        if query.startswith("isbn:"):
+            volume["volumeInfo"]["title"] = "Different Book"
+            volume["volumeInfo"]["authors"] = ["Other Author"]
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"totalItems": 1, "items": [volume]},
+        )
+
+    observation = GoogleBooksMetadataProvider(
+        "google_books", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
+    ).observe(_identifier_first_plan())
+
+    assert 2 == len(queries)
+    assert [ProviderQueryKind.WORK, ProviderQueryKind.ISBN] == [
+        lane.kind for lane in observation.lanes
+    ]
+    assert 2 == observation.request_accounting.logical_requests
+
+
 def test_identifier_no_match_falls_back_to_google_books_discovery() -> None:
     queries: list[str] = []
 

@@ -171,6 +171,20 @@ describe('policy impact projections', () => {
     })
     expect(
       policyImpactDisplay({
+        current_value: null,
+        desired_value: null,
+        field: 'genres',
+        outcome: 'abstain',
+        reason: 'target_work_contradicted',
+        target_state: 'empty',
+      }),
+    ).toMatchObject({
+      changed: false,
+      title: 'No supported value found',
+      detail: 'remains empty — the retained provider evidence names a different work',
+    })
+    expect(
+      policyImpactDisplay({
         current_value: 'Current title',
         desired_value: null,
         field: 'title_layout',

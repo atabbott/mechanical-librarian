@@ -19,8 +19,9 @@ from mechanical_librarian.domain.metadata_report import (
     MAX_TAGS, ClaimKind, ClaimScope, FieldState, IdentifierRelation,
     MetadataReport, ProviderCandidate, ProviderClaim, ProviderEvidenceKind,
     ProviderObservation, ProviderQueryKind, ProviderStatus,
-    TargetDestination, TargetField, TargetFieldState, isbn_family,
-    normalize_title,
+    TargetDestination, TargetField, TargetFieldState, WorkIdentityContradiction,
+    isbn_family, normalize_title, provider_candidate_work_identity_contradiction,
+    target_work_identity_context,
 )
 from mechanical_librarian.domain.proposal_set import (
     BibliographicSelectionKind, ProposalAlternative, ProposalAssessment,
@@ -109,6 +110,34 @@ def _automatic_work_evidence(
             and provider_candidate_represents_target_work(
                 report, retained.provider, retained.candidate
             )
+        )
+        if admitted:
+            alternatives.append(alternative)
+            references[alternative.alternative_id] = admitted
+    return _AutomaticWorkEvidence(tuple(alternatives), references)
+
+
+def _automatic_genre_evidence(
+    report: MetadataReport,
+    result: ProposalResult,
+    retained_claims: dict[str, _RetainedClaim],
+) -> _AutomaticWorkEvidence:
+    """Remove only genre evidence that explicitly contradicts the target work."""
+    context = target_work_identity_context(report.target)
+    alternatives: list[ProposalAlternative] = []
+    references: dict[str, tuple[str, ...]] = {}
+    for alternative in result.alternatives:
+        admitted = tuple(
+            reference
+            for reference in alternative.evidence_references
+            if (retained := retained_claims.get(reference)) is None
+            or type(retained.provider) is not ProviderObservation
+            or type(retained.candidate) is not ProviderCandidate
+            or context is None
+            or provider_candidate_work_identity_contradiction(
+                retained.candidate, *context
+            )
+            is not WorkIdentityContradiction.EXPLICIT
         )
         if admitted:
             alternatives.append(alternative)
@@ -219,11 +248,16 @@ def _project(
         or (field == "series" and destination == "automatic")
     ):
         return _preserved(field, option, target, current)
-    automatic_work = (
-        _automatic_work_evidence(report, result, retained_claims)
-        if destination == "automatic" and field in {"description_fill", "tags"}
-        else None
-    )
+    automatic_work = None
+    if destination == "automatic":
+        if field == "genres":
+            automatic_work = _automatic_genre_evidence(
+                report, result, retained_claims
+            )
+        elif field in {"description_fill", "tags"}:
+            automatic_work = _automatic_work_evidence(
+                report, result, retained_claims
+            )
     if (
         automatic_work is not None
         and result.alternatives
@@ -234,7 +268,11 @@ def _project(
             option,
             target,
             current,
-            "target_work_applicability_unproved",
+            (
+                "target_work_contradicted"
+                if field == "genres"
+                else "target_work_applicability_unproved"
+            ),
         )
     if field == "subtitle" and option == "corroborated_split":
         return _subtitle_bundle(field, option, target, result, proposal, report)

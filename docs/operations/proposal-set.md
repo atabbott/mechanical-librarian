@@ -6,7 +6,7 @@ preparation; source-only contributor inspection uses the typed workbench and is
 not an installed runtime capability. The operation reopens the exact report, revalidates its
 current Audiobookshelf target projection, selected EPUB bytes, ABS cover, and
 both blobs of every referenced private cover artifact, then evaluates the built-in
-`fixed-conservative-v19` policy. It does not construct or contact a metadata or
+`fixed-conservative-v20` policy. It does not construct or contact a metadata or
 cover provider.
 
 An exact ProposalSet can be reopened offline through the application repository
@@ -29,14 +29,15 @@ title-specific runtime knowledge.
 Success is exactly one canonical `proposal-set-v6` JSON document plus a
 newline. Failure emits no document and one value-free diagnostic.
 
-Only `proposal-set-v6` documents under `fixed-conservative-v19` and the exact current
+Only `proposal-set-v6` documents under `fixed-conservative-v20` and the exact current
 `proposal_sets` table envelope are accepted. A database with the earlier
 `fixed-conservative-v1`, `fixed-conservative-v2`, `fixed-conservative-v3`, or
 `fixed-conservative-v4`, `fixed-conservative-v5`, `fixed-conservative-v6`,
 `fixed-conservative-v7`, `fixed-conservative-v8`, `fixed-conservative-v9`,
 `fixed-conservative-v10`, `fixed-conservative-v11`, `fixed-conservative-v12`,
 `fixed-conservative-v13`, `fixed-conservative-v14`, `fixed-conservative-v15`, or
-`fixed-conservative-v16`, `fixed-conservative-v17`, or `fixed-conservative-v18`
+`fixed-conservative-v16`, `fixed-conservative-v17`, `fixed-conservative-v18`, or
+`fixed-conservative-v19`
 table shape is incompatible
 and is rejected before mutation. A clean rebuild is required; there is no
 proposal migration, import, conversion, or compatibility parser.
@@ -117,6 +118,10 @@ The publication projection retains one independently corroborated canonical
 fact at the strongest shared year, month, or day precision. It never pads a
 date, accepts local-only precision, or turns the derived Published year context
 into a second proposal, decision, outcome, or activity event.
+An edition date whose candidate explicitly names a different work is retained
+in the report but casts no publication vote. A candidate whose target-work
+identity is unavailable stays in the ordinary bounded evidence set; lack of
+proof is not recast as contradiction.
 
 ## Fixed policy
 
@@ -247,6 +252,10 @@ The policy is deliberately conservative:
   conflicting. No rule fills or invents a missing month or day;
 - provider publication text whose event or manifestation linkage is unresolved
   remains visible evidence and never becomes a selectable candidate;
+- provider evidence that explicitly names a different work cannot vote for a
+  manifestation publication value or an automatic genre. Unavailable identity
+  proof remains unresolved evidence, so filtering a contradiction cannot elect
+  one otherwise unsupported survivor;
 - local work subtitles and exact-edition provider subtitles remain in their
   respective evidence scopes;
 - populated description, genres, and tags are never merged, replaced, or

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- An ISBN hit about a different work no longer suppresses bounded title-and-author
+  discovery or lends publication-date or automatic-genre authority. The retained
+  evidence stays inspectable, including cases where exact work identity cannot be
+  proved. Existing installs require a clean `metadata-report-v38` database and
+  `fixed-conservative-v20` proposal state. (#1000)
+
 - Automatic series fill refuses unproved work identity, including mismatched
   ISBN results, while accepting source-attested title decorations, exact
   edition titles and conservative single-author comma inversion. Ask choices
