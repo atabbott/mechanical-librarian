@@ -161,6 +161,19 @@ def _require_installed_automatic_series_evidence(
         raise QualificationError("installed_automatic_series_unproved:" + scenario)
 
 
+def _suspend_installed_cover_capability(repository, continuous) -> None:
+    """Exercise the suspension fixture without racing the composed scheduler."""
+    continuous._serialize(
+        lambda: repository.suspend_field_effect_capability(
+            scope="destination",
+            connection="canary",
+            destination="cover",
+            reason="unexpected_effect_behavior",
+            changed_at=int(time.time()),
+        )
+    )
+
+
 def _installed_mutation_headers(
     origin: dict[str, str],
     csrf_token: str,
@@ -2139,13 +2152,7 @@ def _installed_continuous_qualification(
             }
             if regenerated.status_code != 200 or regenerated_ids == original_case_ids:
                 raise QualificationError("installed_drift_not_regenerated")
-            repository.suspend_field_effect_capability(
-                scope="destination",
-                connection="canary",
-                destination="cover",
-                reason="unexpected_effect_behavior",
-                changed_at=int(time.time()),
-            )
+            _suspend_installed_cover_capability(repository, continuous)
             lifecycle_activity = client.get("/api/v1/activity")
             _require_installed_lifecycle_evidence(
                 activity_status=lifecycle_activity.status_code,
@@ -2440,7 +2447,6 @@ def _installed_automatic_series_qualification(
                 destinations = grants[0]["destinations"]
                 if type(destinations) is not list or "series" not in destinations:
                     raise QualificationError("installed_series_capability_missing")
-                grants[0]["destinations"] = ["series"]
                 if (
                     client.post(
                         "/api/v1/activity/consent",

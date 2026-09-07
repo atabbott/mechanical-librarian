@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
 import xml.etree.ElementTree as ET
 import zipfile
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,6 +28,13 @@ from scripts.qualify_audiobookshelf_field_effect import (
     _require_installed_return_lineage_progress,
 )
 
+from mechanical_librarian.adapters.field_effect_authority import (
+    PersistedFieldEffectAuthority,
+)
+from mechanical_librarian.adapters.persistence.transactions import TransactionScope
+from mechanical_librarian.application.continuous_field_effects import (
+    ContinuousGuardedApplication,
+)
 from mechanical_librarian.application.field_effects import authority_from_decision
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.field_effect import (
@@ -39,6 +48,68 @@ from mechanical_librarian.interfaces.web.react_assets import ReactAssetRecovery
 
 class _ConfigurationAdmitted(Exception):
     pass
+
+
+def test_installed_suspension_uses_the_composed_scheduler_serialization_gate(
+    tmp_path: Path,
+) -> None:
+    repository = qualification.open_repository(
+        tmp_path / "application.sqlite3", cross_thread=True
+    )
+    continuous = ContinuousGuardedApplication(
+        repository,
+        {},
+        {},
+        PersistedFieldEffectAuthority(repository),
+        (("canary", "books"),),
+        lambda: 1,
+        lambda _connection, _library: None,
+        activity_only=True,
+    )
+    gate = threading.RLock()
+    gate_entered = threading.Event()
+    errors: list[BaseException] = []
+
+    def serialized(call: Callable[[], object]) -> object:
+        gate_entered.set()
+        with gate:
+            return call()
+
+    continuous.attach_serialization(serialized)
+
+    def suspend() -> None:
+        try:
+            qualification._suspend_installed_cover_capability(repository, continuous)
+        except BaseException as error:
+            errors.append(error)
+
+    worker = threading.Thread(target=suspend)
+    try:
+        with gate:
+            transaction = TransactionScope(repository._connection, "scheduler_control")
+            transaction.begin()
+            worker.start()
+            try:
+                assert gate_entered.wait(1), (
+                    "fixture mutation bypassed scheduler serialization"
+                )
+                assert (
+                    repository.field_effect_capability_suspension("canary", "cover")
+                    is None
+                )
+                assert repository._connection.in_transaction
+            finally:
+                transaction.commit()
+        worker.join(2)
+        assert not worker.is_alive()
+        assert not errors
+        assert (
+            repository.field_effect_capability_suspension("canary", "cover") is not None
+        )
+        assert not repository._connection.in_transaction
+    finally:
+        worker.join(2)
+        repository.close()
 
 
 def test_generated_field_effect_configuration_admits_the_current_schema(
