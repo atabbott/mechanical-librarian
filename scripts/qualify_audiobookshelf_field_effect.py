@@ -28,6 +28,8 @@ import urllib.request
 import uuid
 import xml.etree.ElementTree as ET
 import zipfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
 from unittest.mock import patch
@@ -124,13 +126,14 @@ def _require_installed_automatic_series_evidence(
 ) -> None:
     """Fail closed on actual persisted authority, effects and service observations."""
     if scenario == "wrong_author":
-        proved = (
-            before is None
-            and after is None
-            and series_requests == 0
-            and not operations
-            and (decision is None or decision.outcome != "candidate")
-        )
+        checks = {
+            "empty_before": before is None,
+            "empty_after": after is None,
+            "no_series_request": series_requests == 0,
+            "no_series_plan": not operations,
+            "no_candidate_authority": decision is None
+            or decision.outcome != "candidate",
+        }
     elif scenario in {"supplied", "missing"}:
         desired = [
             {
@@ -138,27 +141,50 @@ def _require_installed_automatic_series_evidence(
                 "sequence": "2.5" if scenario == "supplied" else None,
             }
         ]
-        proved = (
-            before is None
-            and after == desired
-            and series_requests == 1
-            and decision is not None
-            and decision.destination == decision.policy_category == "series"
-            and decision.policy_option == "primary_narrative"
-            and decision.outcome == "candidate"
+        operation = operations[0] if len(operations) == 1 else None
+        checks = {
+            "empty_before": before is None,
+            "exact_readback": after == desired,
+            "one_series_request": series_requests == 1,
+            "persisted_series_decision": decision is not None
+            and decision.destination == decision.policy_category == "series",
+            "selected_option": decision is not None
+            and decision.policy_option == "primary_narrative",
+            "candidate_authority": decision is not None
+            and decision.outcome == "candidate",
+            "current_manifest": decision is not None
             and decision.qualification_manifest_sha256
-            == F20_QUALIFICATION_CANDIDATE_SHA256
-            and len(operations) == 1
-            and operations[0].state == "verified"
-            and operations[0].plan.destination == "series"
-            and operations[0].plan.pre_value is None
-            and operations[0].plan.desired_value == desired
-            and operations[0].plan.authority == authority_from_decision(decision)
-        )
+            == F20_QUALIFICATION_CANDIDATE_SHA256,
+            "one_series_plan": operation is not None,
+            "verified_effect": operation is not None and operation.state == "verified",
+            "series_destination": operation is not None
+            and operation.plan.destination == "series",
+            "empty_pre_value": operation is not None
+            and operation.plan.pre_value is None,
+            "exact_desired_value": operation is not None
+            and operation.plan.desired_value == desired,
+            "exact_authority_binding": operation is not None
+            and decision is not None
+            and operation.plan.authority == authority_from_decision(decision),
+        }
     else:
-        proved = False
-    if not proved:
-        raise QualificationError("installed_automatic_series_unproved:" + scenario)
+        checks = {"known_scenario": False}
+    if not all(checks.values()):
+        raise QualificationError(
+            "installed_automatic_series_unproved:"
+            + scenario
+            + ":"
+            + json.dumps(
+                {
+                    "failed_checks": sorted(
+                        name for name, proved in checks.items() if not proved
+                    ),
+                    "series_requests": series_requests,
+                    "operation_states": [operation.state for operation in operations],
+                },
+                sort_keys=True,
+            )
+        )
 
 
 def _suspend_installed_cover_capability(repository, continuous) -> None:
@@ -172,6 +198,27 @@ def _suspend_installed_cover_capability(repository, continuous) -> None:
             changed_at=int(time.time()),
         )
     )
+
+
+@contextmanager
+def _observe_installed_series_requests(series_requests: list[str]) -> Iterator[None]:
+    """Observe the installed secret-file client's real requests, without replacing HTTP."""
+    original_target_client = composition.target_client
+
+    def observed_target_client(*args: object, **kwargs: object) -> httpx.Client:
+        client = original_target_client(*args, **kwargs)
+
+        def observe(request: httpx.Request) -> None:
+            if request.method in {"PATCH", "POST", "PUT"}:
+                payload = json.loads(request.content)
+                if "series" in payload.get("metadata", {}):
+                    series_requests.append(request.url.path.split("/")[3])
+
+        client.event_hooks["request"].append(observe)
+        return client
+
+    with patch.object(composition, "target_client", observed_target_client):
+        yield
 
 
 def _installed_mutation_headers(
@@ -2286,19 +2333,6 @@ def _installed_automatic_series_qualification(
     open_catalogue(catalogue, create=True).close()
     observations: dict[str, int] = {}
     series_requests: list[str] = []
-    original_target_client = composition.target_client_token
-
-    def observed_target_client(*args: object, **kwargs: object) -> httpx.Client:
-        client = original_target_client(*args, **kwargs)
-
-        def observe(request: httpx.Request) -> None:
-            if request.method in {"PATCH", "POST", "PUT"}:
-                payload = json.loads(request.content)
-                if "series" in payload.get("metadata", {}):
-                    series_requests.append(request.url.path.split("/")[3])
-
-        client.event_hooks["request"].append(observe)
-        return client
 
     def provider_client(*args: object, **kwargs: object) -> httpx.Client:
         return _qualification_hardcover_client(
@@ -2314,7 +2348,7 @@ def _installed_automatic_series_qualification(
     try:
         with (
             patch.object(composition, "hardcover_client", provider_client),
-            patch.object(composition, "target_client_token", observed_target_client),
+            _observe_installed_series_requests(series_requests),
         ):
             recovery = composition.SQLiteProviderRecoveryStore.open(
                 composition._private_root(database) / "provider-recovery.sqlite"

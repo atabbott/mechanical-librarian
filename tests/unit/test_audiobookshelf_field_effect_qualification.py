@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import httpx
 import pytest
 import scripts.qualify_audiobookshelf_field_effect as qualification
 from scripts.qualify_audiobookshelf_field_effect import (
@@ -32,6 +33,11 @@ from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
 from mechanical_librarian.adapters.persistence.transactions import TransactionScope
+from mechanical_librarian.application.configuration import (
+    ApplicationConfiguration,
+    LibraryConfiguration,
+    TargetConnectionConfiguration,
+)
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
@@ -48,6 +54,56 @@ from mechanical_librarian.interfaces.web.react_assets import ReactAssetRecovery
 
 class _ConfigurationAdmitted(Exception):
     pass
+
+
+def test_series_request_observer_uses_real_configured_secret_file_factory(
+    tmp_path: Path,
+) -> None:
+    secret = tmp_path / "target.secret"
+    secret.write_text("synthetic-secret", encoding="ascii")
+    secret.chmod(0o600)
+    configuration = ApplicationConfiguration(
+        (TargetConnectionConfiguration("canary", "http://127.0.0.1:9", str(secret)),),
+        (LibraryConfiguration("series", "canary", "library", "book", None, ()),),
+        (),
+        (),
+    )
+    artifacts = tmp_path / "artifacts"
+    qualification.CoverArtifactStore(artifacts)
+    requests: list[str] = []
+    observed_authorization: list[str] = []
+
+    def respond(
+        _transport: httpx.HTTPTransport, request: httpx.Request
+    ) -> httpx.Response:
+        observed_authorization.append(request.headers["Authorization"])
+        return httpx.Response(200, json={"updated": True})
+
+    with (
+        patch.object(httpx.HTTPTransport, "handle_request", respond),
+        qualification._observe_installed_series_requests(requests),
+    ):
+        target = qualification.composition.compose_audiobookshelf_field_effect_target(
+            configuration, artifacts, "canary", "series"
+        )
+        with target._client_factory() as client:
+            client.patch(
+                "/api/items/item/media",
+                json={
+                    "metadata": {
+                        "series": [{"name": "Guarded Qualification", "sequence": None}]
+                    }
+                },
+            )
+            client.patch(
+                "/api/items/item/media",
+                json={"metadata": {"title": "Unchanged sentinel"}},
+            )
+    assert observed_authorization == [
+        "Bearer synthetic-secret",
+        "Bearer synthetic-secret",
+    ]
+    assert requests == ["item"]
 
 
 def test_installed_suspension_uses_the_composed_scheduler_serialization_gate(
@@ -414,7 +470,9 @@ def test_missing_installed_destination_fails_full_chain_qualification() -> None:
 
 
 def test_missing_persisted_automatic_series_authority_fails_qualification() -> None:
-    with pytest.raises(QualificationError, match="installed_automatic_series_unproved"):
+    with pytest.raises(
+        QualificationError, match="installed_automatic_series_unproved"
+    ) as failure:
         qualification._require_installed_automatic_series_evidence(
             "supplied",
             decision=None,
@@ -423,6 +481,10 @@ def test_missing_persisted_automatic_series_authority_fails_qualification() -> N
             after=[{"name": "Guarded Qualification", "sequence": "2.5"}],
             series_requests=1,
         )
+    diagnostic = json.loads(str(failure.value).split(":", 2)[2])
+    assert "persisted_series_decision" in diagnostic["failed_checks"]
+    assert diagnostic["series_requests"] == 1
+    assert "Guarded Qualification" not in str(failure.value)
 
 
 @pytest.fixture
