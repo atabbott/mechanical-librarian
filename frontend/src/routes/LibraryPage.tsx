@@ -343,7 +343,7 @@ const PreparationDetail = ({
 const bounded = (value: string, fallback: string) =>
   opaqueSource.test(value) ? fallback : value.length > 160 ? `${value.slice(0, 157)}…` : value
 const decisionValue = (field: ReviewField) => {
-  const selected = field.humanDecision?.selected_value ?? field.automaticDecision?.selected_value
+  const selected = (field.humanDecision ?? field.automaticDecision)?.selected_value
   return selected === null || selected === undefined
     ? field.currentValue
     : displayValue(selected.value)
@@ -862,6 +862,7 @@ function ContextValue({
 function ProviderConsensusAutomaticStatement({ field }: { field: ReviewField }) {
   const decision = field.automaticDecision
   if (
+    field.humanDecision !== null ||
     decision?.outcome !== 'candidate' ||
     !field.notices.includes('provider_consensus_contributor_display')
   ) {

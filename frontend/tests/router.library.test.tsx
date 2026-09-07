@@ -2045,41 +2045,66 @@ describe('Library route', () => {
     )
   })
 
-  it('states the provider-chosen contributor display and local form it normalized', async () => {
-    const base = detail.fields[0]
-    if (!base) throw new Error('workspace fixture requires a field')
-    const candidate = { kind: 'list' as const, value: ['Ada Example'] }
-    const authors = {
-      ...base,
-      automaticDecision: {
-        candidate_id: 'alternative-authors-1',
-        decision_id: 'automatic-authors',
+  it.each([null, 'keep_current', 'reject'] as const)(
+    'states the provider-chosen contributor display only without an owner outcome: %s',
+    async (outcome) => {
+      const base = detail.fields[0]
+      if (!base) throw new Error('workspace fixture requires a field')
+      const candidate = { kind: 'list' as const, value: ['Ada Example'] }
+      const authors = {
+        ...base,
+        automaticDecision: {
+          candidate_id: 'alternative-authors-1',
+          decision_id: 'automatic-authors',
+          destination: 'authors' as const,
+          occurred_at: 1,
+          outcome: 'candidate' as const,
+          proposal_id: base.proposalId,
+          review_case_id: 'case-1',
+          selected_value: candidate,
+          target_fingerprint: base.targetFingerprint,
+        },
+        currentValue: 'Example, Ada',
         destination: 'authors' as const,
-        occurred_at: 1,
-        outcome: 'candidate' as const,
-        proposal_id: base.proposalId,
-        review_case_id: 'case-1',
-        selected_value: candidate,
-        target_fingerprint: base.targetFingerprint,
-      },
-      currentValue: 'Example, Ada',
-      destination: 'authors' as const,
-      decisionActions: [],
-      editable: false,
-      needsAttention: false,
-      navigationRole: 'resolved' as const,
-      notices: ['provider_consensus_contributor_display'],
-      proposedValues: [candidate],
-    }
-    renderRoute('/library?lens=all&preview=case-1&field=authors', {
-      ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [authors] })),
-    })
+        humanDecision:
+          outcome === null
+            ? null
+            : {
+                actor: 'owner',
+                application: 'apply' as const,
+                decision_id: 'owner-authors',
+                destination: 'authors',
+                occurred_at: 2,
+                outcome,
+                proposal_id: base.proposalId,
+                review_case_id: 'case-1',
+                selected_value: null,
+                target_fingerprint: base.targetFingerprint,
+              },
+        decisionActions: [],
+        editable: false,
+        needsAttention: false,
+        navigationRole: 'resolved' as const,
+        notices: ['provider_consensus_contributor_display'],
+        proposedValues: [candidate],
+      }
+      renderRoute('/library?lens=all&preview=case-1&field=authors', {
+        ...createHttp(),
+        getCaseDetail: vi.fn(async () => ({ ...detail, fields: [authors] })),
+      })
 
-    const recorded = await screen.findByRole('region', { name: 'Authors recorded outcome' })
-    expect(recorded).toHaveTextContent('Providers chose Ada Example; normalized from Example, Ada.')
-    expect(recorded).toHaveTextContent('Chosen value')
-  })
+      const recorded = await screen.findByRole('region', { name: 'Authors recorded outcome' })
+      if (outcome === null) {
+        expect(recorded).toHaveTextContent(
+          'Providers chose Ada Example; normalized from Example, Ada.',
+        )
+        expect(recorded).toHaveTextContent('Chosen value')
+      } else {
+        expect(recorded).not.toHaveTextContent('Providers chose')
+        expect(recorded.querySelector('dd')).toHaveTextContent('Example, Ada')
+      }
+    },
+  )
 
   it('keeps the provider-consensus contributor statement visible while revisiting choices', async () => {
     const base = detail.fields[0]
@@ -2205,49 +2230,134 @@ describe('Library route', () => {
     )
   })
 
-  it('keeps the owner outcome final when automatic authority remains in history', async () => {
+  it.each([
+    { outcome: 'keep_current' as const, currentValue: 'Unavailable', currentRaw: null },
+    { outcome: 'reject' as const, currentValue: 'Unavailable', currentRaw: null },
+    { outcome: 'keep_current' as const, currentValue: 'Old title', currentRaw: 'Old title' },
+    { outcome: 'reject' as const, currentValue: 'Old title', currentRaw: 'Old title' },
+  ])(
+    'keeps the nullable owner outcome final when automatic authority remains in history: %j',
+    async ({ outcome, currentValue, currentRaw }) => {
+      const base = detail.fields[0]
+      if (!base) throw new Error('owner-final fixture requires a field')
+      const field = {
+        ...base,
+        automaticDecision: {
+          candidate_id: 'alternative-title-1',
+          decision_id: 'automatic-title',
+          destination: 'title' as const,
+          occurred_at: 1,
+          outcome: 'candidate' as const,
+          proposal_id: base.proposalId,
+          review_case_id: 'case-1',
+          selected_value: base.proposedValues[0] ?? null,
+          target_fingerprint: base.targetFingerprint,
+        },
+        decisionActions: [],
+        editable: false,
+        currentValue,
+        currentRaw,
+        humanDecision: {
+          actor: 'owner',
+          application: 'apply' as const,
+          decision_id: 'decision-title',
+          destination: 'title',
+          occurred_at: 2,
+          outcome,
+          proposal_id: base.proposalId,
+          review_case_id: 'case-1',
+          selected_value: null,
+          target_fingerprint: base.targetFingerprint,
+        },
+        needsAttention: false,
+        navigationRole: 'resolved' as const,
+      }
+      renderRoute('/library?lens=all&preview=case-1&field=title', {
+        ...createHttp(),
+        getCaseDetail: vi.fn(async () => ({ ...detail, fields: [field] })),
+      })
+
+      const recorded = await screen.findByRole('region', { name: 'Title recorded outcome' })
+      expect(recorded).toHaveTextContent(
+        outcome === 'keep_current' ? 'Current value retained' : 'No action recorded',
+      )
+      expect(recorded.querySelector('dd')).toHaveTextContent(currentValue)
+      expect(recorded).not.toHaveTextContent('New title')
+      expect(recorded).not.toHaveTextContent('Resolved automatically')
+      const automaticCount = screen.getByText('Resolved automatically').closest('div')
+      expect(automaticCount).toHaveTextContent('0')
+    },
+  )
+
+  it('keeps empty series in completion and revisited choices after an automatic candidate is overridden', async () => {
+    const user = userEvent.setup()
     const base = detail.fields[0]
-    if (!base) throw new Error('owner-final fixture requires a field')
-    const field = {
+    if (!base) throw new Error('owner override fixture requires a field')
+    const candidate = {
+      kind: 'series' as const,
+      value: [{ name: 'Reading Order', sequence: null }],
+    }
+    const series = {
       ...base,
+      destination: 'series',
+      currentRaw: null,
+      currentValue: 'Unavailable',
+      automaticSelectionSources: ['Hardcover'],
+      proposedValues: [candidate],
+      decisionActions: ['keep_current' as const, 'accept' as const],
+      classification: 'automatic_recorded' as const,
+      needsAttention: false,
+      navigationRole: 'resolved' as const,
+      editable: true,
       automaticDecision: {
-        candidate_id: 'alternative-title-1',
-        decision_id: 'automatic-title',
-        destination: 'title' as const,
+        candidate_id: 'alternative-series-1',
+        decision_id: 'automatic-series',
+        destination: 'series' as const,
         occurred_at: 1,
         outcome: 'candidate' as const,
         proposal_id: base.proposalId,
         review_case_id: 'case-1',
-        selected_value: base.proposedValues[0] ?? null,
+        selected_value: candidate,
         target_fingerprint: base.targetFingerprint,
       },
-      decisionActions: [],
-      editable: false,
-      humanDecision: {
-        actor: 'owner',
-        application: 'apply' as const,
-        decision_id: 'decision-title',
-        destination: 'title',
-        occurred_at: 2,
-        outcome: 'keep_current' as const,
-        proposal_id: base.proposalId,
-        review_case_id: 'case-1',
-        selected_value: null,
-        target_fingerprint: base.targetFingerprint,
-      },
-      needsAttention: false,
-      navigationRole: 'resolved' as const,
     }
-    renderRoute('/library?lens=all&preview=case-1&field=title', {
+    const owner = {
+      actor: 'owner',
+      application: 'apply' as const,
+      decision_id: 'owner-series',
+      destination: 'series',
+      occurred_at: 2,
+      outcome: 'keep_current' as const,
+      proposal_id: base.proposalId,
+      review_case_id: 'case-1',
+      selected_value: null,
+      target_fingerprint: base.targetFingerprint,
+    }
+    let current: CaseDetailView = { ...detail, fields: [series] }
+    const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [field] })),
-    })
-
-    const recorded = await screen.findByRole('region', { name: 'Title recorded outcome' })
-    expect(recorded).toHaveTextContent('Current value retained')
-    expect(recorded).not.toHaveTextContent('Resolved automatically')
-    const automaticCount = screen.getByText('Resolved automatically').closest('div')
-    expect(automaticCount).toHaveTextContent('0')
+      getCaseDetail: vi.fn(async () => current),
+      recordDecision: vi.fn(async () => {
+        current = { ...detail, fields: [{ ...series, humanDecision: owner }] }
+        return { ...owner, schema_version: 'review-decision-v1', invalidation_sequences: [] }
+      }),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=series', http)
+    expect(await screen.findByText(/No series number was supplied/u)).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Choose current value: Unavailable' }))
+    await screen.findByRole('heading', { name: 'Review complete' })
+    const completed = screen.getByRole('button', { name: /Series · Current value retained/u })
+    expect(completed).toHaveTextContent('Unavailable')
+    expect(completed).not.toHaveTextContent('Reading Order')
+    await user.click(completed)
+    expect(
+      screen.getByRole('button', { name: 'Choose current value: Unavailable' }),
+    ).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByText(/No series number was supplied/u)).toBeNull()
+    await user.click(screen.getByRole('button', { name: '← Back to completion' }))
+    expect(
+      screen.getByRole('button', { name: /Series · Current value retained/u }),
+    ).toHaveTextContent('Unavailable')
   })
 
   it('opens a long description without recording a choice', async () => {

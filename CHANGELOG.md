@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Library completion and recorded summaries retain the owner's current value,
+  including an empty value, after overriding an automatic candidate. (#895)
+
 - Qualified series fill preserves populated Automatic fields, accepts
   absent numbers without inventing them, and selects one uniquely compatible
   source bundle instead of combining memberships. Failure checks follow its
