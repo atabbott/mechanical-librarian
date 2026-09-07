@@ -555,6 +555,13 @@ def _automatic_series_abstention(
         if type(claim := retained.claim) is ProviderClaim
     ):
         return "series_membership_incomplete"
+    if any(
+        not provider_candidate_represents_target_work(report, provider, source)
+        for provider in report.providers
+        for source in provider.candidates
+        if (provider.provider, source.identity) in relevant_candidates
+    ):
+        return "target_work_applicability_unproved"
     return None
 
 

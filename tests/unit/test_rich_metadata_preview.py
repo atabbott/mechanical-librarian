@@ -8,6 +8,12 @@ from typing import cast
 
 import pytest
 
+from mechanical_librarian.application.metadata_report import (
+    ProviderLaneResult,
+    TargetSnapshot,
+    metadata_discovery_plan,
+    provider_observation,
+)
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
     resolve_policy,
@@ -24,7 +30,6 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderClaim,
     ProviderEvidence,
     ProviderEvidenceKind,
-    ProviderLaneCandidate,
     ProviderLaneObservation,
     ProviderObservation,
     ProviderQueryKind,
@@ -34,7 +39,6 @@ from mechanical_librarian.domain.metadata_report import (
     TargetField,
     TargetFieldState,
     TargetSeries,
-    provider_lane_candidate_reference,
 )
 from mechanical_librarian.domain.proposal_set import (
     BibliographicCombination,
@@ -154,7 +158,10 @@ def test_series_elects_existing_superset_with_exact_order_values_and_own_evidenc
         fields=_fields(
             series=TargetField(TargetDestination.SERIES, TargetFieldState.MISSING)
         ),
-        local_claims=_local_series_claims(sequence="1.0"),
+        local_claims=(
+            _local_isbn("9780306406157", "valid_isbn_13"),
+            *_local_series_claims(sequence="1.0"),
+        ),
         providers=(_series_provider("catalogue", "edition", "hardcover", claims),),
     )
 
@@ -268,20 +275,61 @@ def _local_series_claims(name="Reading Order", sequence="2"):
     )
 
 
-def _automatic_series_report(*providers):
+def _automatic_series_report(*providers, current_title="Current title"):
     return _report(
-        fields=_fields(
-            series=TargetField(TargetDestination.SERIES, TargetFieldState.MISSING)
-        ),
+        fields=_automatic_series_fields(current_title),
+        local_claims=(_local_isbn("9780306406157", "valid_isbn_13"),),
         providers=providers,
     )
 
 
-def _series_provider(name, candidate, authority, claims=None):
-    return _provider(
+def _automatic_series_fields(current_title="Current title"):
+    return _fields(
+        current_title,
+        authors=TargetField(
+            TargetDestination.AUTHORS, TargetFieldState.VALUE, ("Ada Example",)
+        ),
+        series=TargetField(TargetDestination.SERIES, TargetFieldState.MISSING),
+    )
+
+
+def _series_provider(
+    name, candidate, authority, claims=None, *, current_title="Current title"
+):
+    identity = (
+        _claim(name, candidate, ClaimKind.TITLE, current_title, scope=ClaimScope.WORK),
+        _claim(
+            name,
+            candidate,
+            ClaimKind.CREATOR,
+            "Ada Example",
+            scope=ClaimScope.WORK,
+            role="author",
+        ),
+        _claim(
+            name,
+            candidate,
+            ClaimKind.ISBN,
+            "9780306406157",
+            scope=ClaimScope.EDITION,
+            applicability="ebook",
+        ),
+    )
+    source = _provider(
         name,
         candidate,
-        _series_claims(name, candidate) if claims is None else claims,
+        identity + (_series_claims(name, candidate) if claims is None else claims),
+        authority=authority,
+    )
+    lane = metadata_discovery_plan(
+        TargetSnapshot(
+            "ebook", current_title, (), fields=_automatic_series_fields(current_title)
+        ),
+        (_local_isbn("9780306406157", "valid_isbn_13"),),
+    ).lanes[0]
+    return provider_observation(
+        name,
+        (ProviderLaneResult(lane, ProviderStatus.CANDIDATES, source.candidates),),
         authority=authority,
     )
 
@@ -308,6 +356,7 @@ def test_automatic_series_preserves_populated_target_before_evidence(
             ),
         )
     report = _report(
+        local_claims=(_local_isbn("9780306406157", "valid_isbn_13"),),
         fields=_fields(
             series=TargetField(
                 TargetDestination.SERIES,
@@ -804,7 +853,9 @@ def test_nonintersecting_or_conflicting_isbns_remain_manual(
     )
 
 
-def test_only_tag_citations_exclude_retained_unproved_sources() -> None:
+def test_series_refuses_selected_unproved_sources_without_changing_other_fields() -> (
+    None
+):
     catalogue = _target_work_candidate("catalogue", "edition-1", "work-1")
     search = _target_work_candidate("search", "edition-2", "work-1")
     unproved = _target_work_candidate("unproved", "edition-3", "work-1")
@@ -819,14 +870,21 @@ def test_only_tag_citations_exclude_retained_unproved_sources() -> None:
     )
 
     unproved_references = {claim.reference for claim in unproved.claims}
-    assert all(preview.outcome == "projected" for preview in fields.values())
+    assert all(
+        fields[field].outcome == "projected"
+        for field in ("description_fill", "tags", "genres")
+    )
+    assert (fields["series"].outcome, fields["series"].reason) == (
+        "abstain",
+        "target_work_applicability_unproved",
+    )
     assert all(
         not (set(fields[field].source_evidence_references) & unproved_references)
         for field in ("description_fill", "tags")
     )
     assert all(
         set(fields[field].source_evidence_references) & unproved_references
-        for field in ("series", "genres")
+        for field in ("genres",)
     )
 
 
@@ -902,7 +960,10 @@ def test_unproved_work_blocks_automatic_work_scoped_fields(
     assert fields["description_fill"].outcome == "abstain"
     assert fields["description_fill"].reason == "target_work_applicability_unproved"
     assert fields["genres"].outcome == "projected"
-    assert fields["series"].reason != "target_work_applicability_unproved"
+    assert (fields["series"].outcome, fields["series"].reason) == (
+        "abstain",
+        "target_work_applicability_unproved",
+    )
     assert (
         fields["tags"].outcome,
         fields["tags"].reason,
@@ -2095,7 +2156,7 @@ def test_automatic_series_ignores_interleaved_nonseries_claims_when_pairing() ->
                 _claim(
                     "catalogue",
                     "edition-1",
-                    ClaimKind.TITLE,
+                    ClaimKind.GENRE,
                     "Ignored",
                     scope=ClaimScope.WORK,
                     order=1,
@@ -2112,7 +2173,7 @@ def test_automatic_series_ignores_interleaved_nonseries_claims_when_pairing() ->
                 _claim(
                     "search",
                     "edition-2",
-                    ClaimKind.TITLE,
+                    ClaimKind.GENRE,
                     "Ignored",
                     scope=ClaimScope.WORK,
                     order=1,
@@ -2161,10 +2222,11 @@ def test_automatic_series_requires_retained_provider_evidence() -> None:
 
 def test_automatic_series_allows_local_and_provider_evidence() -> None:
     report = _report(
-        fields=_fields(
-            series=TargetField(TargetDestination.SERIES, TargetFieldState.MISSING)
+        fields=_automatic_series_fields(),
+        local_claims=(
+            _local_isbn("9780306406157", "valid_isbn_13"),
+            *_local_series_claims(),
         ),
-        local_claims=_local_series_claims(),
         providers=(_series_provider("catalogue", "edition-1", "hardcover"),),
     )
 
@@ -2245,37 +2307,9 @@ def test_automatic_series_ignores_an_unrelated_failed_lane() -> None:
         _series_provider("catalogue", "edition-1", "hardcover"),
         _series_provider("search", "edition-2", "open_library"),
     )
-    local = LocalClaim.create(
-        kind=ClaimKind.TITLE,
-        observed="Current title",
-        canonical="Current title",
-        excerpt="Current title",
-        applicability="not_applicable",
-        checksum="not_applicable",
-        applicability_basis="not_applicable",
-        scope=ClaimScope.WORK,
-    )
+    local = _local_isbn("9780306406157", "valid_isbn_13")
     provider = base.providers[0]
-    candidate = provider.candidates[0]
-    successful_lane = ProviderLaneObservation(
-        "lane_" + "a" * 64,
-        ProviderQueryKind.ISBN,
-        ProviderStatus.CANDIDATES,
-        (local.reference,),
-        "9780306406157",
-        candidates=(
-            ProviderLaneCandidate(
-                provider_lane_candidate_reference(
-                    provider.provider,
-                    "lane_" + "a" * 64,
-                    candidate.identity,
-                    candidate.work_identity,
-                ),
-                candidate.identity,
-                candidate.work_identity,
-            ),
-        ),
-    )
+    successful_lane = provider.lanes[0]
     failed_lane = ProviderLaneObservation(
         "lane_" + "c" * 64,
         ProviderQueryKind.WORK,
@@ -2319,18 +2353,8 @@ def test_automatic_series_scopes_failed_dispatch_to_contributing_provenance(
     base = _automatic_series_report(
         _series_provider("catalogue", "edition-1", "hardcover"),
     )
-    local = LocalClaim.create(
-        kind=ClaimKind.TITLE,
-        observed="Current title",
-        canonical="Current title",
-        excerpt="Current title",
-        applicability="not_applicable",
-        checksum="not_applicable",
-        applicability_basis="not_applicable",
-        scope=ClaimScope.WORK,
-    )
+    local = _local_isbn("9780306406157", "valid_isbn_13")
     provider = base.providers[0]
-    candidate = provider.candidates[0]
     other_input = LocalClaim.create(
         kind=ClaimKind.TITLE,
         observed="Other query",
@@ -2341,25 +2365,7 @@ def test_automatic_series_scopes_failed_dispatch_to_contributing_provenance(
         applicability_basis="not_applicable",
         scope=ClaimScope.WORK,
     )
-    lane = ProviderLaneObservation(
-        "lane_" + "a" * 64,
-        ProviderQueryKind.ISBN,
-        ProviderStatus.CANDIDATES,
-        (local.reference,),
-        "9780306406157",
-        candidates=(
-            ProviderLaneCandidate(
-                provider_lane_candidate_reference(
-                    provider.provider,
-                    "lane_" + "a" * 64,
-                    candidate.identity,
-                    candidate.work_identity,
-                ),
-                candidate.identity,
-                candidate.work_identity,
-            ),
-        ),
-    )
+    lane = provider.lanes[0]
     failed = ProviderLaneObservation(
         "lane_" + "b" * 64,
         ProviderQueryKind.WORK

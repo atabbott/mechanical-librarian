@@ -178,6 +178,11 @@ from tests.unit.test_cover_packets import (
 from tests.unit.test_cover_packets import (
     _source as _cover_source,
 )
+from tests.unit.test_rich_metadata_preview import (
+    _automatic_series_report,
+    _series_claims,
+    _series_provider,
+)
 
 
 class _UsableCodexAuth:
@@ -1736,63 +1741,32 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
             order=4,
         ),
     )
-    series_report = _bibliographic_report(
-        current_title="Book",
-        providers=(
-            _provider(
-                "catalogue",
-                "edition-1",
-                series_claims,
-                authority="hardcover",
-            ),
-            _provider(
-                "search",
-                "edition-2",
-                (
-                    _claim(
-                        "search",
-                        "edition-2",
-                        ClaimKind.TITLE,
-                        "Book",
-                        scope=ClaimScope.WORK,
-                        order=0,
-                    ),
-                    _claim(
-                        "search",
-                        "edition-2",
-                        ClaimKind.SERIES,
-                        "Reading Order",
-                        scope=ClaimScope.WORK,
-                        order=1,
-                    ),
-                    _claim(
-                        "search",
-                        "edition-2",
-                        ClaimKind.SERIES_SEQUENCE,
-                        "2",
-                        scope=ClaimScope.WORK,
-                        order=2,
-                    ),
-                    _claim(
-                        "search",
-                        "edition-2",
-                        ClaimKind.SERIES,
-                        "Publication Order",
-                        scope=ClaimScope.WORK,
-                        order=3,
-                    ),
-                    _claim(
-                        "search",
-                        "edition-2",
-                        ClaimKind.SERIES_SEQUENCE,
-                        "4",
-                        scope=ClaimScope.WORK,
-                        order=4,
-                    ),
-                ),
-                authority="open_library",
-            ),
+    series_report = _automatic_series_report(
+        _series_provider(
+            "catalogue",
+            "edition-1",
+            "hardcover",
+            series_claims[1:],
+            current_title="Book",
         ),
+        _series_provider(
+            "search",
+            "edition-2",
+            "open_library",
+            tuple(
+                _claim(
+                    "search",
+                    "edition-2",
+                    claim.kind,
+                    claim.value,
+                    scope=claim.scope,
+                    order=claim.raw_order,
+                )
+                for claim in series_claims[1:]
+            ),
+            current_title="Book",
+        ),
+        current_title="Book",
     )
     genre_claims = tuple(
         _claim(
@@ -5822,22 +5796,29 @@ def test_provider_consensus_title_respects_title_layout_suspension_at_admission(
 def test_absent_series_positions_reach_effect_authority_after_persistence(
     option,
 ) -> None:
-    report = _bibliographic_report(
-        current_title="Current title",
-        providers=(
-            _source(
-                "hardcover",
-                "edition-1",
-                titles=("Current title",),
-                series="Reading Order",
-            ),
-            _source(
-                "open_library",
-                "edition-2",
-                titles=("Current title",),
-                series="Reading Order",
-            ),
+    report = _automatic_series_report(
+        _series_provider(
+            "hardcover",
+            "edition-1",
+            "hardcover",
+            _series_claims("hardcover", "edition-1")[:1],
         ),
+        _series_provider(
+            "open_library",
+            "edition-2",
+            "open_library",
+            _series_claims("open_library", "edition-2")[:1],
+        ),
+    )
+    report = _proposal_report(
+        fields=tuple(
+            TargetField(TargetDestination.ISBN, TargetFieldState.VALUE, "9780306406157")
+            if field.destination is TargetDestination.ISBN
+            else field
+            for field in report.target.fields
+        ),
+        local_claims=report.local_claims,
+        providers=report.providers,
     )
     base = _preview_automatic_profile()
     profile = MetadataPolicyProfile.create(
