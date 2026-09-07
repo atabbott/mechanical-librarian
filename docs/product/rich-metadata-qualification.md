@@ -13,7 +13,11 @@ genres. Claims about another work remain inspectable, but they cannot become a
 field decision or persisted candidate outcome. Where identity proof is absent,
 the candidate stays unresolved rather than being promoted or discarded. The
 same successor preserves every previously qualified option through the existing
-non-series and exact-source continuity routes.
+non-series and exact-source continuity routes. The series route replays the
+original 24-work confirmation and 12-work final captures. Their canonical v37
+documents are relabelled to v38 with a recomputed content-derived report
+identity; every other field, sealed input binding, truth label, scorer and
+threshold remains unchanged.
 
 ## Qualified series fill (#895)
 
@@ -85,9 +89,10 @@ continuity replay, restoring the 15 correct same-mode option projections that
 the first #1000 candidate withheld; no other field changes. The rotation also
 changes authority-derived identities. The earlier
 50-case gold programme and operator evidence remain retained evidence, not 50
-new cases. Exact-clean-head postrotation retained replay, supported isolated
-field effects and installed acceptance remain required delivery checks; the
-manifest does not claim a future receipt or replace those checks.
+new cases. The exact-clean-head retained series and non-series replays are bound
+in v14. Supported isolated field effects and installed acceptance remain
+required delivery checks; the manifest does not claim a future receipt or
+replace those checks.
 
 ## Historical qualification record
 

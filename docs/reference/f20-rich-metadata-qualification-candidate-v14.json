@@ -4,13 +4,13 @@
   "proposal_policy_version": "fixed-conservative-v20",
   "authority_rotation": {
     "prior_manifest_sha256": "70563a47e768fe51cb911511ca67849893e4495266c84bb2e9fc7f6165ed2879",
-    "measured_candidate_head": "7f4e2cb59b5c8940b7c5a29c2ee1f90716e6596c",
+    "measured_candidate_head": "d8d724fdbbe82cef2a4f18f2cc801c452c15d994",
     "scope": "Bind explicit target-work contradiction while preserving every previously qualified option. Add exact v13 historical read acceptance and rotate the current manifest digest; authority-derived identifiers change, not selected values or evidence.",
     "measured_behavior_sources": {
       "src/mechanical_librarian/domain/metadata_report.py": "d624e3ef9176de6fd8e9b569b0b8d2cb65b0c964c724ffbbcc2ff8fcdd2dd344",
       "src/mechanical_librarian/domain/proposal_set.py": "75a3ba7457bf4a57fe99f2ea33648891c8187b6e0d0f932463c4d9e0b62d64d0",
       "src/mechanical_librarian/domain/rich_metadata_preview.py": "479adb79d91c172ff087658d20616efca823386b7c9c4b68e6dd2d5992eb5394",
-      "src/mechanical_librarian/domain/work_identity.py": "391014c5643d1e450c8314a532bba8ff9fbc7e9d01fc220bfdcc5c9b8b095424"
+      "src/mechanical_librarian/domain/work_identity.py": "da96b62cb77a4b0246ed3bfb6e381d9f4f9fdde1c035073e356a52da44b912a7"
     },
     "historical_reader_delta": {
       "identity": "src/mechanical_librarian/domain/automatic_decision.py",
@@ -55,7 +55,7 @@
       "src/mechanical_librarian/domain/shadow_review.py": "16153d513d6d5ddf7b7844533f42c988103167d443c1b7af6c1708f986ce5b5c",
       "src/mechanical_librarian/domain/shadow_review_actions.py": "24b9473a8cc102226c99e2ce5b497c3a30e60132354bd1608689803d32db4791",
       "src/mechanical_librarian/domain/validation.py": "c72da11903fc02514af0430bee2e813a58e70dfd285d4e82bcfa42a4f72e526f",
-      "src/mechanical_librarian/domain/work_identity.py": "391014c5643d1e450c8314a532bba8ff9fbc7e9d01fc220bfdcc5c9b8b095424"
+      "src/mechanical_librarian/domain/work_identity.py": "da96b62cb77a4b0246ed3bfb6e381d9f4f9fdde1c035073e356a52da44b912a7"
     },
     "runtime_envelope": {
       "identity": "src/mechanical_librarian/domain/rich_metadata_qualification.py",
@@ -500,7 +500,7 @@
     "target_work_contradiction": {
       "qualification_method": "owner_approved_exposed_regression",
       "fresh_holdout_claim": false,
-      "measured_candidate_head": "7f4e2cb59b5c8940b7c5a29c2ee1f90716e6596c",
+      "measured_candidate_head": "d8d724fdbbe82cef2a4f18f2cc801c452c15d994",
       "current_main_head": "dc8de6f51417c209aa95941864273a9fe8ebbac9",
       "same_mode_retained_reports": {
         "evaluator_sha256": "07b9d4130cbf43d41664c182db6ea0c436692163df0ef5da00ca978b7bcfcb37",
@@ -524,21 +524,22 @@
         "series_option_changes": 0,
         "artifacts": [
           {
-            "mode": "live-three-provider-49-v1",
             "baseline_result_sha256": "aa598126cfbfcdd6d4213686ef2f86efea782edc4af7f0b9dcd4ff4f94ec4ec2",
-            "candidate_result_sha256": "d3ab36939346d7b44fe0212a8f34160c8ae6c5837528394ae8141674e452dd87",
-            "comparison_sha256": "3e2725e1e1f2e5090e923ae528af0e4ed7a029ff1f5970eed9de32961d8170f6"
+            "candidate_result_sha256": "ce3237b0775e17c07f2b6215ca2f33c15dfc2e537e12da315c4003a296a7b037",
+            "comparison_sha256": "742ce27fad4bb16d870bc1078d6b90100da8d6ca5a0569bd83c07dbfa5e59973",
+            "mode": "live-three-provider-49-v1"
           },
           {
-            "mode": "live-three-provider-49-v2",
             "baseline_result_sha256": "5b12932f532bd2871632c072febc3fac3bd89c3b72b3df1592952e73b0a4f60c",
-            "candidate_result_sha256": "e354dd128bb2cc952b79cfbd094c0cb9b77ac88f94b0a39ec7563cd34ea5fac1",
-            "comparison_sha256": "3e2725e1e1f2e5090e923ae528af0e4ed7a029ff1f5970eed9de32961d8170f6"
+            "candidate_result_sha256": "08beeccfe860082c6b5dfe0be5fc71ff1352294dc7bd21b1926c46b9e2e9d176",
+            "comparison_sha256": "742ce27fad4bb16d870bc1078d6b90100da8d6ca5a0569bd83c07dbfa5e59973",
+            "mode": "live-three-provider-49-v2"
           }
-        ]
+        ],
+        "cohort_relationship": "Separate 49-work current-provider regression; it does not substitute for the original 24-work confirmation and 12-work final series batches."
       },
       "non_series_continuity": {
-        "artifact_sha256": "41f190620a3464b586957fab5150bb91ae660f33239e97a506d48b88a28b4206",
+        "artifact_sha256": "63cb315c2467454a937beaf621de8ce003793849bc8befbf341b31d15793bbcd",
         "prior_candidate_artifact_sha256": "df4672995b86f9986c92b0b0c476d416478506268800729714052f04cbf9a8ca",
         "reports": 49,
         "options": 10,
@@ -566,9 +567,46 @@
       },
       "limitations": [
         "All retained reports were previously exposed. They prove current behavior continuity, not fresh provider accuracy or a new holdout result.",
-        "The spent series development replay cannot read report v38. Series continuity is the zero-change same-mode result above, which includes all three series options in both retained cohorts.",
-        "The retained compiler replay makes no provider requests. Its result cannot estimate production request cost, pacing or quota behavior."
-      ]
+        "The original series captures use canonical report v37. A private bounded wrapper changes only the schema label and content-derived report identity, proves all other fields equal, and delegates validation to the real v38 parser before the unchanged sealed replay.",
+        "The separate 49-work current-provider cohort has no source overlap with the original series confirmation or final batches and is not used as their continuity proof.",
+        "The retained compiler replays make no provider requests. Their results cannot estimate production request cost, pacing or quota behavior."
+      ],
+      "series_continuity": {
+        "artifact_sha256": "c464292ad19f459f57cc1b0fdd7aaab5b3220a470c8e84e04596150d30d8c9d4",
+        "receipt_sha256": "b70b16ecd2f4f278c84018d112c150e714887a6c2968dfc839dbe4f569c0ad88",
+        "wrapper_sha256": "b1358b5fb83e0d3efad937e94ce851bb4c60d40e7a787c0fbdac17800d3a90d5",
+        "sealed_replay_sha256": "8e2c4a7ca4229fb981a99adf3fb64b5a7fd5eba5f8094babd1e85e7c3d01b3d5",
+        "derivative_rule": "Replace only schema_version v37 with v38, recompute the content-derived report_id, and require every other canonical field to remain equal before delegating to the current parser.",
+        "source_schema": "metadata-report-v37",
+        "target_schema": "metadata-report-v38",
+        "reports": 36,
+        "sealed_bindings_unchanged": true,
+        "fresh_holdout_claim": false,
+        "network_requests": 0,
+        "monotonic_comparison": {
+          "removed_projections": 6,
+          "unchanged_projections": 39,
+          "unchanged_nonprojections": 63
+        },
+        "batches": {
+          "confirmation": {
+            "cases": 24,
+            "correct_projections_per_option": 9,
+            "abstentions_per_option": 15,
+            "membership_precision": 1,
+            "sequence_precision": 1,
+            "negative_false_positives": 0
+          },
+          "final": {
+            "cases": 12,
+            "correct_projections_per_option": 4,
+            "abstentions_per_option": 8,
+            "membership_precision": 1,
+            "sequence_precision": 1,
+            "negative_false_positives": 0
+          }
+        }
+      }
     }
   },
   "excluded_destinations": [
@@ -872,7 +910,6 @@
     "proof": "Focused synthetic proposal, preview, identity, automatic-decision, persisted outcome, guarded effect and supported-adapter regression tests, plus exact full-preview exposed regression. Historical non-series controls are retained; metric results do not replace source/current-authority proof."
   },
   "external_acceptance_required": [
-    "Exact-clean-head postrotation retained series and non-series replay",
     "Supported isolated Audiobookshelf decision-to-effect qualification",
     "Exact-installed acceptance and terminal candidate preflight"
   ]

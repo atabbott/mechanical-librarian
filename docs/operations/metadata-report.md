@@ -373,8 +373,9 @@ returned claim stays in the immutable report.
 After that fallback, a contradictory provider ISBN candidate remains unavailable
 when an existing title query overlaps and its complete creator set differs only
 by one omitted middle initial per creator: `Given Family` and `Given I[.] Family`
-are the only accepted shapes, with equal given and family names and a matching
-initial wherever both sides state one. The comparison requires a complete
+are the only accepted shapes, with equal two-or-more-letter alphabetic given and
+family names and a matching initial wherever both sides state one. The
+comparison requires a complete
 one-to-one creator matching and rejects duplicates, cardinality changes, full
 middle names, initial-only given or family names, and arbitrary punctuation
 folding. This narrow display exception can close a contradiction; it never

@@ -124,13 +124,13 @@ def test_v14_binds_current_source_and_preserves_historical_v11_v12_v13_bytes() -
     rotation = manifest["authority_rotation"]
     assert (
         rotation["measured_candidate_head"]
-        == "7f4e2cb59b5c8940b7c5a29c2ee1f90716e6596c"
+        == "d8d724fdbbe82cef2a4f18f2cc801c452c15d994"
     )
     assert rotation["measured_behavior_sources"] == {
         "src/mechanical_librarian/domain/metadata_report.py": "d624e3ef9176de6fd8e9b569b0b8d2cb65b0c964c724ffbbcc2ff8fcdd2dd344",
         "src/mechanical_librarian/domain/proposal_set.py": "75a3ba7457bf4a57fe99f2ea33648891c8187b6e0d0f932463c4d9e0b62d64d0",
         "src/mechanical_librarian/domain/rich_metadata_preview.py": "479adb79d91c172ff087658d20616efca823386b7c9c4b68e6dd2d5992eb5394",
-        "src/mechanical_librarian/domain/work_identity.py": "391014c5643d1e450c8314a532bba8ff9fbc7e9d01fc220bfdcc5c9b8b095424",
+        "src/mechanical_librarian/domain/work_identity.py": "da96b62cb77a4b0246ed3bfb6e381d9f4f9fdde1c035073e356a52da44b912a7",
     }
     assert all(
         sources[name] == digest
@@ -161,7 +161,7 @@ def test_v14_records_target_work_regression_without_fresh_holdout_claim() -> Non
     assert evidence["qualification_method"] == "owner_approved_exposed_regression"
     assert evidence["fresh_holdout_claim"] is False
     assert evidence["measured_candidate_head"] == (
-        "7f4e2cb59b5c8940b7c5a29c2ee1f90716e6596c"
+        "d8d724fdbbe82cef2a4f18f2cc801c452c15d994"
     )
     retained = evidence["same_mode_retained_reports"]
     assert retained["evaluator_sha256"] == (
@@ -207,6 +207,44 @@ def test_v14_records_target_work_regression_without_fresh_holdout_claim() -> Non
         "genres:replace": 6,
     }
     assert continuity["unchanged_non_genre_observations"] == 686
+    series = evidence["series_continuity"]
+    assert series["reports"] == 36
+    assert series["source_schema"] == "metadata-report-v37"
+    assert series["target_schema"] == "metadata-report-v38"
+    assert series["sealed_bindings_unchanged"] is True
+    assert series["fresh_holdout_claim"] is False
+    assert series["monotonic_comparison"] == {
+        "removed_projections": 6,
+        "unchanged_projections": 39,
+        "unchanged_nonprojections": 63,
+    }
+    assert series["batches"] == {
+        "confirmation": {
+            "cases": 24,
+            "correct_projections_per_option": 9,
+            "abstentions_per_option": 15,
+            "membership_precision": 1,
+            "sequence_precision": 1,
+            "negative_false_positives": 0,
+        },
+        "final": {
+            "cases": 12,
+            "correct_projections_per_option": 4,
+            "abstentions_per_option": 8,
+            "membership_precision": 1,
+            "sequence_precision": 1,
+            "negative_false_positives": 0,
+        },
+    }
+    assert all(
+        re.fullmatch(r"[0-9a-f]{64}", series[name])
+        for name in (
+            "artifact_sha256",
+            "receipt_sha256",
+            "wrapper_sha256",
+            "sealed_replay_sha256",
+        )
+    )
     assert evidence["synthetic_request_cost"] == {
         "actual_total_requests_before": 2,
         "actual_total_requests_after": 4,
@@ -217,6 +255,10 @@ def test_v14_records_target_work_regression_without_fresh_holdout_claim() -> Non
         "network_requests": 0,
         "production_scheduling_estimate": "not_measured",
     }
+    assert manifest["external_acceptance_required"] == [
+        "Supported isolated Audiobookshelf decision-to-effect qualification",
+        "Exact-installed acceptance and terminal candidate preflight",
+    ]
 
 
 @pytest.mark.parametrize("batch", ("confirmation", "final"))
