@@ -517,6 +517,7 @@ def test_exact_multi_isbn_work_keeps_all_automatic_work_fields() -> None:
     ("identity", "expected_outcome", "expected_reason"),
     (
         ("applicable", "projected", None),
+        ("display_variant", "projected", None),
         ("contradictory", "abstain", "target_work_contradicted"),
         ("unavailable", "projected", None),
     ),
@@ -540,7 +541,13 @@ def test_automatic_genre_rejects_only_explicit_work_contradiction(
                 "catalogue",
                 "edition-1",
                 ClaimKind.CREATOR,
-                "Other Author" if identity == "contradictory" else "Mick Herron",
+                (
+                    "Other Author"
+                    if identity == "contradictory"
+                    else "Mick J Herron"
+                    if identity == "display_variant"
+                    else "Mick Herron"
+                ),
                 scope=ClaimScope.WORK,
                 role="author",
             ),
@@ -569,6 +576,14 @@ def test_automatic_genre_rejects_only_explicit_work_contradiction(
         claim.kind is ClaimKind.GENRE
         for claim in report.providers[0].candidates[0].claims
     )
+    if identity == "display_variant":
+        assert {
+            field: (fields[field].outcome, fields[field].reason)
+            for field in ("description_fill", "tags")
+        } == {
+            "description_fill": ("abstain", "target_work_applicability_unproved"),
+            "tags": ("abstain", "target_work_applicability_unproved"),
+        }
 
 
 def test_automatic_description_filters_applicability_before_floor_and_order() -> None:

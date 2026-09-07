@@ -166,6 +166,63 @@ def test_work_identity_contradiction_requires_complete_unambiguous_evidence(
     )
 
 
+@pytest.mark.parametrize(
+    ("target_authors", "provider_authors", "expected"),
+    (
+        (("Ada Example",), ("Ada L Example",), WorkIdentityContradiction.UNAVAILABLE),
+        (("Ada L Example",), ("Ada Example",), WorkIdentityContradiction.UNAVAILABLE),
+        (
+            ("Ada L. Example",),
+            ("Ada L Example",),
+            WorkIdentityContradiction.UNAVAILABLE,
+        ),
+        (("Ada L Example",), ("Ada M Example",), WorkIdentityContradiction.EXPLICIT),
+        (("Ada Example",), ("Other Author",), WorkIdentityContradiction.EXPLICIT),
+        (
+            ("Ada Example", "Bob B Example"),
+            ("Bob Example", "Ada A Example"),
+            WorkIdentityContradiction.UNAVAILABLE,
+        ),
+        (
+            ("Ada Example", "Ada B Example"),
+            ("Ada Example", "Ada B. Example"),
+            WorkIdentityContradiction.UNAVAILABLE,
+        ),
+    ),
+    ids=(
+        "target_omits_middle",
+        "provider_omits_middle",
+        "optional_period",
+        "unequal_initials",
+        "disjoint",
+        "permutation",
+        "ambiguous_complete_pairings",
+    ),
+)
+def test_work_identity_contradiction_uses_creator_display_only_for_negative_proof(
+    target_authors: tuple[str, ...],
+    provider_authors: tuple[str, ...],
+    expected: WorkIdentityContradiction,
+) -> None:
+    candidate = _work_identity_candidate(
+        authors=tuple((author, "author") for author in provider_authors)
+    )
+
+    assert expected is provider_candidate_work_identity_contradiction(
+        candidate, "Example Book", target_authors
+    )
+
+
+def test_creator_display_possibility_requires_existing_title_query_overlap() -> None:
+    assert WorkIdentityContradiction.EXPLICIT is (
+        provider_candidate_work_identity_contradiction(
+            _work_identity_candidate("Different Book", (("Ada L Example", "author"),)),
+            "Example Book",
+            ("Ada Example",),
+        )
+    )
+
+
 def test_comparison_links_are_complete_per_local_claim_and_canonical() -> None:
     agree = LocalClaim.create(
         kind=ClaimKind.TITLE,

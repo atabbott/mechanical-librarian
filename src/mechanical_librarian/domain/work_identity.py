@@ -1039,6 +1039,76 @@ def _closed_author_multiset_equal(
     return not unmatched
 
 
+_MIDDLE_INITIAL = re.compile(r"([A-Za-z])\.?")
+
+
+def _creator_display_parts(value: str) -> tuple[str, str | None, str] | None:
+    parts = tuple(part for part in _ASCII_SPACE.split(value.strip()) if part)
+    if len(parts) not in {2, 3}:
+        return None
+    given, family = parts[0], parts[-1]
+    if _MIDDLE_INITIAL.fullmatch(given) or _MIDDLE_INITIAL.fullmatch(family):
+        return None
+    if len(parts) == 2:
+        return given, None, family
+    middle = _MIDDLE_INITIAL.fullmatch(parts[1])
+    return None if middle is None else (given, middle.group(1).casefold(), family)
+
+
+def _creator_display_pair_possible(left: str, right: str) -> bool:
+    if _closed_equal(left, right):
+        return True
+    left_parts = _creator_display_parts(left)
+    right_parts = _creator_display_parts(right)
+    if left_parts is None or right_parts is None:
+        return False
+    left_given, left_middle, left_family = left_parts
+    right_given, right_middle, right_family = right_parts
+    return (
+        _closed_equal(left_given, right_given)
+        and _closed_equal(left_family, right_family)
+        and (left_middle is None or right_middle is None or left_middle == right_middle)
+    )
+
+
+def closed_creator_display_possibility(
+    left_creators: tuple[str, ...], right_creators: tuple[str, ...]
+) -> bool:
+    """Find a complete negative-only match across closed creator displays."""
+    if (
+        type(left_creators) is not tuple
+        or type(right_creators) is not tuple
+        or not left_creators
+        or len(left_creators) != len(right_creators)
+        or any(
+            type(value) is not str or not value
+            for value in (*left_creators, *right_creators)
+        )
+        or len({_comparison_text(value) for value in left_creators})
+        != len(left_creators)
+        or len({_comparison_text(value) for value in right_creators})
+        != len(right_creators)
+    ):
+        return False
+
+    matched_left: dict[int, int] = {}
+
+    def assign(right_index: int, seen_left: set[int]) -> bool:
+        for left_index, left in enumerate(left_creators):
+            if left_index in seen_left or not _creator_display_pair_possible(
+                left, right_creators[right_index]
+            ):
+                continue
+            seen_left.add(left_index)
+            previous_right = matched_left.get(left_index)
+            if previous_right is None or assign(previous_right, seen_left):
+                matched_left[left_index] = right_index
+                return True
+        return False
+
+    return all(assign(index, set()) for index in range(len(right_creators)))
+
+
 def _balanced_typographic(value: str) -> str | None:
     translated = _balanced_typographic_preserving_case(value, admission=True)
     return None if translated is None else _comparison_text(translated)
@@ -1230,6 +1300,7 @@ __all__ = [
     "WorkTitleTransformationSide",
     "apply_work_title_transformation",
     "admit_provider_work_identity",
+    "closed_creator_display_possibility",
     "direct_work_title_election_matches",
     "narrowing_work_query",
     "replay_provider_work_identity_admission",

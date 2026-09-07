@@ -68,6 +68,7 @@ from mechanical_librarian.domain.work_identity import (
     WorkTitleTransformationFamily,
     WorkTitleTransformationLineage,
     admit_provider_work_identity,
+    closed_creator_display_possibility,
     direct_work_title_election_matches,
     replay_provider_work_identity_admission,
     work_dispatch_lineage_from_data,
@@ -2692,16 +2693,16 @@ def provider_candidate_work_identity_contradiction(
     if admission.admitted:
         return WorkIdentityContradiction.NOT_CONTRADICTED
     target_queries = {
-        (query.title.casefold(), tuple(value.casefold() for value in query.authors))
+        query.title.casefold()
         for query in work_query_ladder(target_title, target_authors)
     }
     candidate_queries = {
-        (query.title.casefold(), tuple(value.casefold() for value in query.authors))
-        for query in work_query_ladder(title, authors)
+        query.title.casefold() for query in work_query_ladder(title, authors)
     }
     return (
         WorkIdentityContradiction.UNAVAILABLE
         if target_queries & candidate_queries
+        and closed_creator_display_possibility(target_authors, authors)
         else WorkIdentityContradiction.EXPLICIT
     )
 
