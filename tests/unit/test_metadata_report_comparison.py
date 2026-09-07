@@ -188,6 +188,11 @@ def test_work_identity_contradiction_requires_complete_unambiguous_evidence(
             ("Ada Example", "Ada B. Example"),
             WorkIdentityContradiction.UNAVAILABLE,
         ),
+        (
+            (". Example",),
+            (". B. Example",),
+            WorkIdentityContradiction.EXPLICIT,
+        ),
     ),
     ids=(
         "target_omits_middle",
@@ -197,6 +202,7 @@ def test_work_identity_contradiction_requires_complete_unambiguous_evidence(
         "disjoint",
         "permutation",
         "ambiguous_complete_pairings",
+        "punctuation_is_not_a_given_name",
     ),
 )
 def test_work_identity_contradiction_uses_creator_display_only_for_negative_proof(

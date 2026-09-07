@@ -1047,7 +1047,14 @@ def _creator_display_parts(value: str) -> tuple[str, str | None, str] | None:
     if len(parts) not in {2, 3}:
         return None
     given, family = parts[0], parts[-1]
-    if _MIDDLE_INITIAL.fullmatch(given) or _MIDDLE_INITIAL.fullmatch(family):
+    normalized_given = unicodedata.normalize("NFC", given)
+    normalized_family = unicodedata.normalize("NFC", family)
+    if (
+        len(normalized_given) < 2
+        or not normalized_given.isalpha()
+        or len(normalized_family) < 2
+        or not normalized_family.isalpha()
+    ):
         return None
     if len(parts) == 2:
         return given, None, family

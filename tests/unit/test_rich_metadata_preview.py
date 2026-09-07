@@ -518,6 +518,7 @@ def test_exact_multi_isbn_work_keeps_all_automatic_work_fields() -> None:
     (
         ("applicable", "projected", None),
         ("display_variant", "projected", None),
+        ("malformed_display", "abstain", "target_work_contradicted"),
         ("contradictory", "abstain", "target_work_contradicted"),
         ("unavailable", "projected", None),
     ),
@@ -544,6 +545,8 @@ def test_automatic_genre_rejects_only_explicit_work_contradiction(
                 (
                     "Other Author"
                     if identity == "contradictory"
+                    else ". B. Herron"
+                    if identity == "malformed_display"
                     else "Mick J Herron"
                     if identity == "display_variant"
                     else "Mick Herron"
@@ -566,7 +569,12 @@ def test_automatic_genre_rejects_only_explicit_work_contradiction(
             ),
         ),
     )
-    report = _target_work_report((("catalogue", "hardcover", (candidate,), True),))
+    report = _target_work_report(
+        (("catalogue", "hardcover", (candidate,), True),),
+        target_authors=(". Herron",)
+        if identity == "malformed_display"
+        else ("Mick Herron",),
+    )
 
     _, fields = _target_work_preview(report)
 
