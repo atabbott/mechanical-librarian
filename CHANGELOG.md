@@ -14,8 +14,8 @@
   absent numbers without inventing them, and selects one uniquely compatible
   source bundle instead of combining memberships. Failure checks follow its
   actual evidence; Library explains editable automatic outcomes and number
-  certainty. V12 binds the qualified behavior; historical decisions remain
-  readable and guarded writes require current authority. (#895)
+  certainty. V13 binds the repair through exposed regression; historical v11/v12
+  decisions remain readable and guarded writes require current authority. (#895)
 
 - Preparation no longer stalls when a recovery wake opens the database while
   another connection is writing: same-process dependent opens borrow the live

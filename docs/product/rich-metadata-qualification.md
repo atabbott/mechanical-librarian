@@ -7,13 +7,30 @@ grant effect consent, construct a target write, or change provider selection.
 
 ## Qualified series fill (#895)
 
-The current applicability repair is awaiting successor qualification. It
-refuses unrelated ISBN work candidates while permitting the bounded
+The [v13 candidate](../reference/f20-rich-metadata-qualification-candidate-v13.json)
+binds the applicability repair: it refuses unrelated ISBN work candidates while
+permitting the bounded
 [source-attested identity formatting rule](../architecture/decisions/0070-isbn-backed-series-identity.md).
-V12 and its measurements below remain unchanged historical evidence for the
-earlier source; they do not qualify this repair. Owner-approved exposed
-regression retains the existing works, truth and scorers without claiming a
-fresh holdout pass. Runtime authority rotation requires the completed successor.
+Owner-approved exposed regression retains the existing works, captures, truth,
+scorer and thresholds. Both batches were already exposed; this is not a fresh
+confirmation or another holdout pass.
+
+Each option now makes 9 correct complete projections from the 24-work batch
+(15 abstentions), and 4 from the 12-work batch (8 abstentions), with no wrong
+projections or negative/unknown-source fills. Supported coverage is 9/19 and
+4/7. Two previously correct fills remain reviewable because their identity
+formatting falls outside the permitted grammar. All surviving previews retain
+their exact values, order, identifiers and references; six option projections
+are removed across the three options, not six independent books.
+
+Membership and sequence retain precision 1.0 and at least three distinct scored
+books per option per batch. The 24-work batch has nine scored membership books
+and seven scored sequence books, plus one missing and one unknown position.
+The 12-work batch has four distinct scored books for each claim. Its full
+`all_qualified` output contains six membership occurrences, five known sequence
+occurrences and one unknown; repeated convention-qualified views do not increase
+independent support. Actual desired values are separately scored: four correct
+memberships and positions in that batch.
 
 The [v12 candidate](../reference/f20-rich-metadata-qualification-candidate-v12.json)
 qualified the three existing series options for empty Automatic targets. Its
@@ -26,7 +43,8 @@ shared proposal correction also applies to those compatible Ask alternatives.
 Failure checks follow the selected provider candidates and their contributing
 dispatch provenance, not an unrelated provider with the same query kind.
 
-The first 15-work confirmation produced no automatic series projections and
+V12 remains the unchanged historical record below. The first 15-work
+confirmation produced no automatic series projections and
 remains failed, spent development evidence. The repaired, frozen candidate then
 passed a fresh 24-work confirmation and its once-only 12-work final capture.
 Each option made 10 correct complete membership projections in confirmation and
@@ -47,15 +65,16 @@ including convention-qualified views of the same grouping, six correct sequence
 occurrences and one unknown; its support denominator is still five books.
 Actual target values are scored separately from full qualified memberships.
 
-The runtime binds the completed v12 digest, source dependencies, closed option
+The runtime binds the v13 digest, source dependencies, closed option
 matrix and tested zero-tolerance controls. Metrics alone do not authorize
-activation. Historical v11 bytes and decisions remain readable, while fresh
+activation. Historical v11/v12 bytes and decisions remain readable, while fresh
 decisions and guarded effects require the exact current qualification. Retained
-non-series compiler evidence compares 980 serialized observations unchanged;
+historical non-series compiler evidence compares 980 serialized observations unchanged;
 the rotation intentionally changes authority-derived identities. The earlier
 50-case gold programme and operator evidence remain retained evidence, not 50
-new cases. Supported isolated field effects and the exact installed candidate
-are qualified through the existing delivery checks.
+new cases. Exact-clean-head postrotation retained replay, supported isolated
+field effects and installed acceptance remain required delivery checks; the
+manifest does not claim a future receipt or replace those checks.
 
 ## Historical qualification record
 
@@ -230,6 +249,6 @@ least as many as the authorities carrying the decorated form, counting the local
 title on the decorated side. Every other option replays unchanged, and the
 option keeps 1.0 precision with zero structural or unsupported outputs.
 
-The machine-readable candidate is
+The historical machine-readable candidate described in this section is
 [`f20-rich-metadata-qualification-candidate-v11.json`](../reference/f20-rich-metadata-qualification-candidate-v11.json).
 The v10 manifest remains a readable historical record.

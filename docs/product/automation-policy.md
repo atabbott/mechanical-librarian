@@ -127,13 +127,13 @@ candidate. It does not admit unrelated works, general subtitle stripping or
 WORK-query transformations. All candidates in the successful target-backed
 ISBN lane must qualify; Ask and non-series applicability stay unchanged.
 
-The [F20 v12 candidate](../reference/f20-rich-metadata-qualification-candidate-v12.json)
-records the earlier qualified rules and separately scored confirmation/final
-membership and sequence results; the identity repair awaits successor
-qualification. V11 remains immutable historical evidence; its decisions
+The [F20 v13 candidate](../reference/f20-rich-metadata-qualification-candidate-v13.json)
+binds the repaired identity rule and separately scored membership/sequence
+results from owner-approved exposed regression. V11/v12 remain immutable
+historical evidence; their decisions
 are readable but cannot authorize new writes. The
 [qualification record](rich-metadata-qualification.md) states the source-label
-corrections, distinct-book denominators and limits of the evidence.
+corrections, reduced coverage, distinct-book denominators and limits of the evidence.
 
 ## Availability before curation
 

@@ -180,8 +180,15 @@ def test_f38_contributor_consensus_binds_its_own_manifest() -> None:
     "option", ("primary_narrative", "source_order", "all_qualified")
 )
 @pytest.mark.parametrize("narrowed", (False, True))
-def test_v11_series_history_survives_narrowed_current_authority(
-    monkeypatch: pytest.MonkeyPatch, option: str, narrowed: bool
+@pytest.mark.parametrize(
+    "prior_digest",
+    (
+        "4ede15a2aa84e8726ea2dff4e4f9f0d04b27a70276ed53c400c2de5f7619d445",
+        "091cdf7f08f60e9e4e1860ff574a9c04c405c914d498560e9802294b69c53a30",
+    ),
+)
+def test_v11_v12_series_history_survives_narrowed_current_authority(
+    monkeypatch: pytest.MonkeyPatch, option: str, narrowed: bool, prior_digest: str
 ) -> None:
     prior_core = {
         "review_case_id": "review_case_" + "a" * 64,
@@ -197,7 +204,7 @@ def test_v11_series_history_survives_narrowed_current_authority(
         "rule_id": "shadow_rule_" + "1" * 64,
         "policy_category": "series",
         "policy_option": option,
-        "qualification_manifest_sha256": "4ede15a2aa84e8726ea2dff4e4f9f0d04b27a70276ed53c400c2de5f7619d445",
+        "qualification_manifest_sha256": prior_digest,
         "source_outcome_id": "shadow_outcome_" + "3" * 64,
         "bundle_id": None,
     }
