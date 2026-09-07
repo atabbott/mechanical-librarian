@@ -30,6 +30,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 from unittest.mock import patch
@@ -142,6 +143,7 @@ def _require_installed_automatic_series_evidence(
             }
         ]
         operation = operations[0] if len(operations) == 1 else None
+        projected = authority_from_decision(decision) if decision is not None else None
         checks = {
             "empty_before": before is None,
             "exact_readback": after == desired,
@@ -164,8 +166,11 @@ def _require_installed_automatic_series_evidence(
             "exact_desired_value": operation is not None
             and operation.plan.desired_value == desired,
             "exact_authority_binding": operation is not None
-            and decision is not None
-            and operation.plan.authority == authority_from_decision(decision),
+            and projected is not None
+            and operation.plan.authority
+            == replace(projected, source="persisted_review_case"),
+            "persisted_authority_source": operation is not None
+            and operation.plan.authority.source == "persisted_review_case",
         }
     else:
         checks = {"known_scenario": False}
@@ -2475,6 +2480,34 @@ def _installed_automatic_series_qualification(
                 if set(cases) != {"supplied", "missing", "wrong_author"}:
                     raise QualificationError("installed_series_cases_missing")
                 activity = client.get("/api/v1/activity")
+                if activity.status_code != 200:
+                    body = activity.json()
+                    activity_error = (
+                        body.get("detail", body.get("error"))
+                        if type(body) is dict
+                        else None
+                    )
+                    code = (
+                        activity_error.get("code")
+                        if type(activity_error) is dict
+                        else None
+                    )
+                    raise QualificationError(
+                        "installed_series_activity_failed:"
+                        + json.dumps(
+                            {
+                                "status": activity.status_code,
+                                "error_code": code if type(code) is str else "unknown",
+                                "prepared_cases": len(cases),
+                                "candidate_decisions": sum(
+                                    value[2] is not None
+                                    and value[2].outcome == "candidate"
+                                    for value in cases.values()
+                                ),
+                            },
+                            sort_keys=True,
+                        )
+                    )
                 grants = _installed_consent_grants(
                     activity.json(), (("series", library_id, mount),)
                 )

@@ -533,7 +533,7 @@ def test_installed_series_requires_exact_current_decision_effect_and_readback(
         target_fingerprint="e" * 64,
         target_version="version",
         dependency_digests=("d" * 64,),
-        authority=authority,
+        authority=replace(authority, source="persisted_review_case"),
         consent=EffectConsent.create(
             connection="canary",
             library="series",
@@ -576,6 +576,9 @@ def test_installed_series_requires_exact_current_decision_effect_and_readback(
 
     assert_unproved(operations=())
     assert_unproved(operations=(replace(operation, state="planned"),))
+    assert_unproved(
+        operations=(replace(operation, plan=replace(plan, authority=authority)),)
+    )
     assert_unproved(series_requests=0)
     assert_unproved(series_requests=2)
     assert_unproved(before=[{"name": "Existing", "sequence": None}])
