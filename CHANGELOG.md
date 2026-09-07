@@ -2,9 +2,10 @@
 
 ## Unreleased
 
-- Automatic series fill now refuses selected provider evidence whose work
-  identity is unproved, including mismatched ISBN results. Ask choices and
-  surviving automatic values retain their original bundle and provenance. (#895)
+- Automatic series fill refuses unproved work identity, including mismatched
+  ISBN results, while accepting source-attested title decorations, exact
+  edition titles and conservative single-author comma inversion. Ask choices
+  and surviving values retain their original bundle and provenance. (#895)
 
 - Library completion and recorded summaries retain the owner's current value,
   including an empty value, after overriding an automatic candidate. (#895)

@@ -27,6 +27,7 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalOutcome, ProposalResult, ProposalSet,
     ProposalValueKind, VERIFIED_MANIFESTATION_ISBN_REASON,
     provider_candidate_represents_target_work,
+    provider_candidate_represents_target_series_work,
     series_name_equivalence_key,
     segment_corroboration,
 )
@@ -556,7 +557,7 @@ def _automatic_series_abstention(
     ):
         return "series_membership_incomplete"
     if any(
-        not provider_candidate_represents_target_work(report, provider, source)
+        not provider_candidate_represents_target_series_work(report, provider, source)
         for provider in report.providers
         for source in provider.candidates
         if (provider.provider, source.identity) in relevant_candidates

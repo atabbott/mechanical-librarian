@@ -7,8 +7,16 @@ grant effect consent, construct a target write, or change provider selection.
 
 ## Qualified series fill (#895)
 
+The current applicability repair is awaiting successor qualification. It
+refuses unrelated ISBN work candidates while permitting the bounded
+[source-attested identity formatting rule](../architecture/decisions/0070-isbn-backed-series-identity.md).
+V12 and its measurements below remain unchanged historical evidence for the
+earlier source; they do not qualify this repair. Owner-approved exposed
+regression retains the existing works, truth and scorers without claiming a
+fresh holdout pass. Runtime authority rotation requires the completed successor.
+
 The [v12 candidate](../reference/f20-rich-metadata-qualification-candidate-v12.json)
-qualifies the three existing series options for empty Automatic targets. Its
+qualified the three existing series options for empty Automatic targets. Its
 series rules preserve populated targets and
 permit an absent position without inventing a number. A unique existing source
 bundle may resolve compatible subset alternatives, retaining its exact values,

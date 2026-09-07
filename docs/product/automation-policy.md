@@ -119,9 +119,18 @@ as ordinary unsigned decimals. Ambiguous maxima, disjoint bundles and known
 position conflicts remain reviewable. No fuzzy matching, provider ranking or
 number inference is available.
 
+Selected series sources must also describe the target work. The
+[series-only ISBN identity rule](../architecture/decisions/0070-isbn-backed-series-identity.md)
+permits complete ordered author comparison, an exact retained edition title,
+or a one-step parenthesized series name explicitly attested by that same
+candidate. It does not admit unrelated works, general subtitle stripping or
+WORK-query transformations. All candidates in the successful target-backed
+ISBN lane must qualify; Ask and non-series applicability stay unchanged.
+
 The [F20 v12 candidate](../reference/f20-rich-metadata-qualification-candidate-v12.json)
-binds the qualified rules and separately scored confirmation/final membership
-and sequence results. V11 remains immutable historical evidence; its decisions
+records the earlier qualified rules and separately scored confirmation/final
+membership and sequence results; the identity repair awaits successor
+qualification. V11 remains immutable historical evidence; its decisions
 are readable but cannot authorize new writes. The
 [qualification record](rich-metadata-qualification.md) states the source-label
 corrections, distinct-book denominators and limits of the evidence.

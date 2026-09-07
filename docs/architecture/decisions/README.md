@@ -83,6 +83,7 @@ context and consequences rather than reproducing code.
 | [0067](0067-decoration-equivalence-and-compound-admission.md) | accepted | Elect decoration-equivalent titles and admit the author-prefix-plus-underscores WORK compound |
 | [0068](0068-latin-combining-mark-work-identity.md) | accepted | Admit exact Latin combining-mark work identity |
 | [0069](0069-audiobook-review-cases-and-terminal-outcomes.md) | accepted | Form audiobook review cases and record caseless-complete terminals |
+| [0070](0070-isbn-backed-series-identity.md) | accepted | Admit source-attested ISBN identity formatting only for automatic series fill |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.
