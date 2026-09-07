@@ -4,6 +4,7 @@ import json
 import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -25,6 +26,13 @@ from scripts.qualify_audiobookshelf_field_effect import (
     _require_installed_return_lineage_progress,
 )
 
+from mechanical_librarian.application.field_effects import authority_from_decision
+from mechanical_librarian.domain.automatic_decision import AutomaticDecision
+from mechanical_librarian.domain.field_effect import (
+    EffectConsent,
+    FieldEffectOperation,
+    FieldEffectPlan,
+)
 from mechanical_librarian.infrastructure.configuration import ConfigurationInput
 from mechanical_librarian.interfaces.web.react_assets import ReactAssetRecovery
 
@@ -331,6 +339,199 @@ def test_missing_installed_destination_fails_full_chain_qualification() -> None:
         expected,
         activity_present=True,
         diagnostics={},
+    )
+
+
+def test_missing_persisted_automatic_series_authority_fails_qualification() -> None:
+    with pytest.raises(QualificationError, match="installed_automatic_series_unproved"):
+        qualification._require_installed_automatic_series_evidence(
+            "supplied",
+            decision=None,
+            operations=(),
+            before=None,
+            after=[{"name": "Guarded Qualification", "sequence": "2.5"}],
+            series_requests=1,
+        )
+
+
+@pytest.fixture
+def automatic_series_decision() -> AutomaticDecision:
+    return _series_decision(1)
+
+
+def _series_decision(occurred_at: int) -> AutomaticDecision:
+    return AutomaticDecision.create(
+        review_case_id="review_case_" + "a" * 64,
+        report_id="report_" + "b" * 64,
+        proposal_set_id="proposal_set_" + "c" * 64,
+        proposal_id="review_proposal_" + "d" * 64,
+        target_fingerprint="e" * 64,
+        destination="series",
+        outcome="candidate",
+        candidate_id="alternative_" + "f" * 64,
+        resolved_policy_id="resolved_policy_" + "0" * 64,
+        policy_generation=1,
+        rule_id="shadow_rule_" + "1" * 64,
+        policy_category="series",
+        policy_option="primary_narrative",
+        qualification_manifest_sha256=qualification.F20_QUALIFICATION_CANDIDATE_SHA256,
+        source_outcome_id="shadow_outcome_" + "3" * 64,
+        occurred_at=occurred_at,
+        bundle_id=None,
+    )
+
+
+@pytest.mark.parametrize("scenario,sequence", (("supplied", "2.5"), ("missing", None)))
+def test_installed_series_requires_exact_current_decision_effect_and_readback(
+    automatic_series_decision: AutomaticDecision,
+    scenario: str,
+    sequence: str | None,
+) -> None:
+    desired = [{"name": "Guarded Qualification", "sequence": sequence}]
+    authority = authority_from_decision(automatic_series_decision)
+    assert authority is not None
+    plan = FieldEffectPlan.create(
+        connection="canary",
+        library="series",
+        work_id="item",
+        destination="series",
+        pre_value=None,
+        desired_value=desired,
+        target_fingerprint="e" * 64,
+        target_version="version",
+        dependency_digests=("d" * 64,),
+        authority=authority,
+        consent=EffectConsent.create(
+            connection="canary",
+            library="series",
+            destination="series",
+            envelope_identity="e" * 64,
+            granted_at=1,
+        ),
+        capability_digest="f" * 64,
+        created_at=1,
+    )
+    operation = FieldEffectOperation(plan, state="verified", attempt=1, updated_at=2)
+    qualification._require_installed_automatic_series_evidence(
+        scenario,
+        decision=automatic_series_decision,
+        operations=(operation,),
+        before=None,
+        after=desired,
+        series_requests=1,
+    )
+
+    def assert_unproved(
+        *,
+        decision: AutomaticDecision | None = automatic_series_decision,
+        operations: tuple[FieldEffectOperation, ...] = (operation,),
+        before: object = None,
+        after: object = desired,
+        series_requests: int = 1,
+    ) -> None:
+        with pytest.raises(
+            QualificationError, match="installed_automatic_series_unproved"
+        ):
+            qualification._require_installed_automatic_series_evidence(
+                scenario,
+                decision=decision,
+                operations=operations,
+                before=before,
+                after=after,
+                series_requests=series_requests,
+            )
+
+    assert_unproved(operations=())
+    assert_unproved(operations=(replace(operation, state="planned"),))
+    assert_unproved(series_requests=0)
+    assert_unproved(series_requests=2)
+    assert_unproved(before=[{"name": "Existing", "sequence": None}])
+    assert_unproved(after=[{"name": "Guarded Qualification", "sequence": "1"}])
+    assert_unproved(decision=None)
+    assert_unproved(decision=_series_decision(2))
+    with pytest.raises(QualificationError, match="installed_automatic_series_unproved"):
+        qualification._require_installed_automatic_series_evidence(
+            "wrong_author",
+            decision=None,
+            operations=(operation,),
+            before=None,
+            after=None,
+            series_requests=0,
+        )
+
+
+def test_wrong_author_refusal_requires_no_candidate_plan_or_series_request(
+    automatic_series_decision: AutomaticDecision,
+) -> None:
+    qualification._require_installed_automatic_series_evidence(
+        "wrong_author",
+        decision=None,
+        operations=(),
+        before=None,
+        after=None,
+        series_requests=0,
+    )
+
+    def assert_unproved(
+        *,
+        decision: AutomaticDecision | None = None,
+        after: object = None,
+        series_requests: int = 0,
+    ) -> None:
+        with pytest.raises(
+            QualificationError, match="installed_automatic_series_unproved"
+        ):
+            qualification._require_installed_automatic_series_evidence(
+                "wrong_author",
+                decision=decision,
+                operations=(),
+                before=None,
+                after=after,
+                series_requests=series_requests,
+            )
+
+    assert_unproved(decision=automatic_series_decision)
+    assert_unproved(series_requests=1)
+    assert_unproved(after=[{"name": "Guarded Qualification", "sequence": None}])
+
+
+@pytest.mark.parametrize("scenario", ("supplied", "missing", "wrong_author"))
+@pytest.mark.parametrize("lane", ("isbn", "work"))
+def test_installed_series_provider_controls_retain_number_and_author_boundaries(
+    scenario: str,
+    lane: str,
+) -> None:
+    title = "Synthetic series control"
+    with _qualification_hardcover_client(
+        {},
+        "synthetic-provider-token-a",
+        {},
+        {"9780140328721": title},
+        {},
+        series_scenarios={title: scenario},
+    ) as client:
+        response = client.post(
+            "https://qualification.invalid/graphql",
+            json={
+                "variables": {"isbns": ["9780140328721"]}
+                if lane == "isbn"
+                else {
+                    "title": title,
+                    "authors": ["Synthetic Author", "Second Qualified Author"],
+                }
+            },
+        )
+    data = response.json()["data"]
+    assert data["editions"][0]["isbn_13"] == "9780140328721"
+    book = data["books"][0]
+    assert book["title"] == title
+    assert book["book_series"][0]["position"] == (
+        None if scenario == "missing" else "2.5"
+    )
+    assert [value["author"]["name"] for value in book["contributions"]] == (
+        ["Unrelated Author"]
+        if scenario == "wrong_author"
+        else ["Synthetic Author", "Second Qualified Author"]
     )
 
 

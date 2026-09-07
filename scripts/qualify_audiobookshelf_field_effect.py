@@ -66,7 +66,10 @@ from mechanical_librarian.adapters.persistence.review_sessions import (
     SQLiteReviewSessionRepository,
 )
 from mechanical_librarian.adapters.private_recovery import PrivateCoverRecoveryStore
-from mechanical_librarian.application.field_effects import GuardedFieldApplication
+from mechanical_librarian.application.field_effects import (
+    GuardedFieldApplication,
+    authority_from_decision,
+)
 from mechanical_librarian.application.review_application import (
     compose_review_application,
 )
@@ -75,6 +78,7 @@ from mechanical_librarian.bootstrap.composition import (
     compose_continuous_guarded_application,
     create_review_pipeline,
 )
+from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.cover_evidence import CoverArtifact
 from mechanical_librarian.domain.field_effect import (
     EffectAuthority,
@@ -84,6 +88,9 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectPlan,
 )
 from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.rich_metadata_qualification import (
+    F20_QUALIFICATION_CANDIDATE_SHA256,
+)
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 from mechanical_librarian.infrastructure.security.credentials import target_client_token
 from mechanical_librarian.interfaces.web.app import (
@@ -104,6 +111,54 @@ OWNERSHIP_LABEL = "org.mechanical-librarian.qualification-run"
 
 class QualificationError(RuntimeError):
     """A fixed, secret-free qualification failure."""
+
+
+def _require_installed_automatic_series_evidence(
+    scenario: str,
+    *,
+    decision: AutomaticDecision | None,
+    operations: tuple[FieldEffectOperation, ...],
+    before: object,
+    after: object,
+    series_requests: int,
+) -> None:
+    """Fail closed on actual persisted authority, effects and service observations."""
+    if scenario == "wrong_author":
+        proved = (
+            before is None
+            and after is None
+            and series_requests == 0
+            and not operations
+            and (decision is None or decision.outcome != "candidate")
+        )
+    elif scenario in {"supplied", "missing"}:
+        desired = [
+            {
+                "name": "Guarded Qualification",
+                "sequence": "2.5" if scenario == "supplied" else None,
+            }
+        ]
+        proved = (
+            before is None
+            and after == desired
+            and series_requests == 1
+            and decision is not None
+            and decision.destination == decision.policy_category == "series"
+            and decision.policy_option == "primary_narrative"
+            and decision.outcome == "candidate"
+            and decision.qualification_manifest_sha256
+            == F20_QUALIFICATION_CANDIDATE_SHA256
+            and len(operations) == 1
+            and operations[0].state == "verified"
+            and operations[0].plan.destination == "series"
+            and operations[0].plan.pre_value is None
+            and operations[0].plan.desired_value == desired
+            and operations[0].plan.authority == authority_from_decision(decision)
+        )
+    else:
+        proved = False
+    if not proved:
+        raise QualificationError("installed_automatic_series_unproved:" + scenario)
 
 
 def _installed_mutation_headers(
@@ -479,7 +534,7 @@ def _wait(base: str) -> None:
     raise RuntimeError("disposable Audiobookshelf did not become ready")
 
 
-def _epub(path: Path) -> None:
+def _epub(path: Path, *, title: str = "Before", isbn: str = "9780306406157") -> None:
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr(
             "mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED
@@ -490,7 +545,11 @@ def _epub(path: Path) -> None:
         )
         archive.writestr(
             "OEBPS/content.opf",
-            "<?xml version='1.0'?><package xmlns='http://www.idpf.org/2007/opf' xmlns:opf='http://www.idpf.org/2007/opf' version='3.0' unique-identifier='book'><metadata xmlns:dc='http://purl.org/dc/elements/1.1/'><dc:identifier id='book'>9780306406157</dc:identifier><dc:title>Before</dc:title><dc:creator opf:role='aut'>Synthetic Author</dc:creator><dc:creator opf:role='aut'>Second Qualified Author</dc:creator><dc:language>fr</dc:language><dc:publisher>Qualification Press</dc:publisher><dc:date>2025-02-03</dc:date><meta property='dcterms:modified'>2026-01-01T00:00:00Z</meta></metadata><manifest><item id='nav' href='nav.xhtml' media-type='application/xhtml+xml' properties='nav'/><item id='chapter' href='chapter.xhtml' media-type='application/xhtml+xml'/></manifest><spine><itemref idref='chapter'/></spine></package>",
+            "<?xml version='1.0'?><package xmlns='http://www.idpf.org/2007/opf' xmlns:opf='http://www.idpf.org/2007/opf' version='3.0' unique-identifier='book'><metadata xmlns:dc='http://purl.org/dc/elements/1.1/'><dc:identifier id='book'>"
+            + isbn
+            + "</dc:identifier><dc:title>"
+            + title
+            + "</dc:title><dc:creator opf:role='aut'>Synthetic Author</dc:creator><dc:creator opf:role='aut'>Second Qualified Author</dc:creator><dc:language>fr</dc:language><dc:publisher>Qualification Press</dc:publisher><dc:date>2025-02-03</dc:date><meta property='dcterms:modified'>2026-01-01T00:00:00Z</meta></metadata><manifest><item id='nav' href='nav.xhtml' media-type='application/xhtml+xml' properties='nav'/><item id='chapter' href='chapter.xhtml' media-type='application/xhtml+xml'/></manifest><spine><itemref idref='chapter'/></spine></package>",
         )
         archive.writestr(
             "OEBPS/nav.xhtml",
@@ -912,6 +971,7 @@ def _qualification_hardcover_client(
     isbn_titles: dict[str, str],
     isbn_authors: dict[str, str],
     *_: object,
+    series_scenarios: dict[str, str] | None = None,
     **__: object,
 ) -> httpx.Client:
     """Return an isolated provider boundary backed by request-local evidence."""
@@ -967,6 +1027,16 @@ def _qualification_hardcover_client(
                 contribution_authors = ("Synthetic Author", "Second Qualified Author")
         except (UnicodeError, json.JSONDecodeError):
             raise QualificationError("installed_provider_request_invalid") from None
+        scenario = (series_scenarios or {}).get(requested_title)
+        if scenario is not None:
+            requested_isbn = next(
+                isbn for isbn, title in isbn_titles.items() if title == requested_title
+            )
+            contribution_authors = (
+                ("Unrelated Author",)
+                if scenario == "wrong_author"
+                else ("Synthetic Author", "Second Qualified Author")
+            )
         operator_title = requested_title in isbn_titles.values()
         operator_correction = title_corrections.get(requested_title, requested_title)
         title = (
@@ -1045,7 +1115,9 @@ def _qualification_hardcover_client(
                             "book_series": [
                                 {
                                     "id": 1,
-                                    "position": "2.5",
+                                    "position": None
+                                    if scenario == "missing"
+                                    else "2.5",
                                     "series": {
                                         "id": 1,
                                         "name": "Guarded Qualification",
@@ -2156,6 +2228,304 @@ def _installed_continuous_qualification(
     }
 
 
+def _installed_automatic_series_qualification(
+    root: Path,
+    base: str,
+    writer_key: str,
+    library_id: str,
+    mount: Path,
+    isbn_titles: dict[str, str],
+    scenarios: dict[str, str],
+) -> dict[str, object]:
+    """Run three synthetic controls through installed preparation and real ABS.
+
+    This separate phase preserves the operator programme's human-series proof.
+    Only the catalogue HTTP boundary is synthetic; no decision or plan is injected.
+    """
+    phase = root / "automatic-series"
+    phase.mkdir(mode=0o700)
+    document = json.loads((root / "installed-config.json").read_text())
+    document["libraries"] = [
+        {
+            "name": "series",
+            "connection": "canary",
+            "library_id": library_id,
+            "mount": "series",
+            "provider_connections": ["qualification-catalogue-a"],
+            "policy_override": {
+                "options": {"series": "primary_narrative"},
+                "destinations": {"series": "automatic"},
+            },
+        }
+    ]
+    document["mounts"] = [
+        {
+            "name": "series",
+            "container_path": str(mount),
+            "service_path": "/library/series",
+            "read_only": True,
+        }
+    ]
+    for provider in document["providers"]:
+        provider["cover_enabled"] = False
+    config_path = phase / "config.json"
+    config_path.write_text(json.dumps(document, sort_keys=True), encoding="utf-8")
+    os.chmod(config_path, 0o600)
+    configuration = load_configuration_file(config_path)
+    database = phase / "application.sqlite3"
+    catalogue = phase / "catalogue.sqlite3"
+    artifacts = phase / "artifacts"
+    repository = open_repository(database, cross_thread=True)
+    open_catalogue(catalogue, create=True).close()
+    observations: dict[str, int] = {}
+    series_requests: list[str] = []
+    original_target_client = composition.target_client_token
+
+    def observed_target_client(*args: object, **kwargs: object) -> httpx.Client:
+        client = original_target_client(*args, **kwargs)
+
+        def observe(request: httpx.Request) -> None:
+            if request.method in {"PATCH", "POST", "PUT"}:
+                payload = json.loads(request.content)
+                if "series" in payload.get("metadata", {}):
+                    series_requests.append(request.url.path.split("/")[3])
+
+        client.event_hooks["request"].append(observe)
+        return client
+
+    def provider_client(*args: object, **kwargs: object) -> httpx.Client:
+        return _qualification_hardcover_client(
+            {},
+            "synthetic-provider-token-a",
+            observations,
+            isbn_titles,
+            {},
+            series_scenarios=scenarios,
+        )
+
+    outcomes: list[dict[str, object]] = []
+    try:
+        with (
+            patch.object(composition, "hardcover_client", provider_client),
+            patch.object(composition, "target_client_token", observed_target_client),
+        ):
+            recovery = composition.SQLiteProviderRecoveryStore.open(
+                composition._private_root(database) / "provider-recovery.sqlite"
+            )
+            access = composition._compose_reviewer_access(
+                repository, configuration.review
+            )
+            preparation = create_review_pipeline(
+                configuration,
+                database,
+                catalogue,
+                artifacts,
+                access,
+                repository.authority,
+                provider_recovery=recovery,
+            )
+            continuous = compose_continuous_guarded_application(
+                configuration,
+                repository,
+                database,
+                artifacts,
+                preparation,
+                provider_recovery=recovery,
+            )
+            target = AudiobookshelfFieldEffectTarget(
+                client_factory=lambda: target_client_token(base, writer_key, 20),
+                endpoint=base,
+                library_id=library_id,
+                artifacts=CoverArtifactStore(artifacts),
+            )
+            client = _compose_review_client(
+                repository,
+                configuration.review,
+                access,
+                preparation,
+                continuous,
+                (
+                    (
+                        "series",
+                        cast(
+                            "dict[str, object]",
+                            configuration.libraries[0].policy_override,
+                        ),
+                    ),
+                ),
+                artifacts,
+            )
+            with client:
+                origin = {"Origin": "https://review.test"}
+                login = client.post(
+                    "/api/v1/session/login",
+                    headers=origin,
+                    json={"password": "installed-owner-qualification"},
+                )
+                if login.status_code != 200:
+                    raise QualificationError("installed_series_login_failed")
+                headers = _installed_mutation_headers(
+                    origin, login.json()["csrf_token"]
+                )
+                if (
+                    client.post(
+                        "/api/v1/field-effects/pause", headers=headers
+                    ).status_code
+                    != 204
+                ):
+                    raise QualificationError("installed_series_pause_failed")
+                deadline = time.monotonic() + 30
+                while True:
+                    response = client.post(
+                        "/api/v1/review-preparation/canary/series/scan",
+                        headers=headers,
+                    )
+                    if response.status_code != 503 or time.monotonic() >= deadline:
+                        break
+                    time.sleep(0.25)
+                if response.status_code not in {202, 409}:
+                    raise QualificationError("installed_series_scan_failed")
+                _wait_for_preparation(client, 1)
+                listing = client.get("/api/v1/library?lens=all&limit=50")
+                if (
+                    listing.status_code != 200
+                    or len(listing.json().get("items", [])) != 3
+                ):
+                    raise QualificationError("installed_series_cases_missing")
+                cases = {}
+                for summary in listing.json()["items"]:
+                    case_id = summary["review_case_id"]
+                    detail = client.get(f"/api/v1/review-cases/{case_id}")
+                    if detail.status_code != 200:
+                        raise QualificationError("installed_series_case_unavailable")
+                    value = detail.json()
+                    item = value["target"]["item"]
+                    service_item = _request(
+                        "GET", base, "/api/items/" + item, token=writer_key
+                    )
+                    title = service_item["media"]["metadata"]["title"]
+                    scenario = scenarios[title]
+                    field = next(
+                        field
+                        for field in value["fields"]
+                        if field["destination"] == "series"
+                    )
+                    if not field.get("proposed_values"):
+                        raise QualificationError(
+                            "installed_series_provider_candidate_missing"
+                        )
+                    decisions = tuple(
+                        AutomaticDecision.from_json(document)
+                        for document in repository.get_review_case_decisions(case_id)
+                        if json.loads(document).get("origin") == "automatic_policy"
+                        and json.loads(document).get("destination") == "series"
+                    )
+                    if len(decisions) > 1:
+                        raise QualificationError("installed_series_decision_ambiguous")
+                    before = target.read(
+                        type("Read", (), {"work_id": item, "destination": "series"})()
+                    ).value
+                    cases[scenario] = (
+                        item,
+                        case_id,
+                        decisions[0] if decisions else None,
+                        before,
+                    )
+                if set(cases) != {"supplied", "missing", "wrong_author"}:
+                    raise QualificationError("installed_series_cases_missing")
+                activity = client.get("/api/v1/activity")
+                grants = _installed_consent_grants(
+                    activity.json(), (("series", library_id, mount),)
+                )
+                destinations = grants[0]["destinations"]
+                if type(destinations) is not list or "series" not in destinations:
+                    raise QualificationError("installed_series_capability_missing")
+                grants[0]["destinations"] = ["series"]
+                if (
+                    client.post(
+                        "/api/v1/activity/consent",
+                        headers=headers,
+                        json={"grants": grants},
+                    ).status_code
+                    != 200
+                ):
+                    raise QualificationError("installed_series_consent_failed")
+                if (
+                    client.post(
+                        "/api/v1/field-effects/resume", headers=headers
+                    ).status_code
+                    != 204
+                ):
+                    raise QualificationError("installed_series_resume_failed")
+                deadline = time.monotonic() + 90
+                while time.monotonic() < deadline:
+                    operations = tuple(
+                        FieldEffectOperation.from_json(document)
+                        for (document,) in repository._connection.execute(
+                            "SELECT document FROM field_effects WHERE destination='series'"
+                        ).fetchall()
+                    )
+                    if (
+                        len(
+                            [
+                                operation
+                                for operation in operations
+                                if operation.state == "verified"
+                            ]
+                        )
+                        == 2
+                    ):
+                        break
+                    activity = client.get("/api/v1/activity")
+                    if (
+                        activity.status_code == 200
+                        and activity.json().get("last_failure") is not None
+                    ):
+                        break
+                    time.sleep(0.25)
+                for scenario, (item, case_id, decision, before) in cases.items():
+                    relevant = tuple(
+                        operation
+                        for operation in operations
+                        if operation.plan.work_id == item
+                    )
+                    after = target.read(
+                        type("Read", (), {"work_id": item, "destination": "series"})()
+                    ).value
+                    _require_installed_automatic_series_evidence(
+                        scenario,
+                        decision=decision,
+                        operations=relevant,
+                        before=before,
+                        after=after,
+                        series_requests=series_requests.count(item),
+                    )
+                    outcomes.append(
+                        {
+                            "scenario": scenario,
+                            "review_case_id": case_id,
+                            "decision_id": decision.decision_id if decision else None,
+                            "qualification_manifest_sha256": decision.qualification_manifest_sha256
+                            if decision
+                            else None,
+                            "plan_ids": [
+                                operation.plan.plan_id for operation in relevant
+                            ],
+                            "series_requests": series_requests.count(item),
+                            "before_digest": _value_digest(before),
+                            "after_digest": _value_digest(after),
+                            "null_sequence_preserved": scenario == "missing"
+                            and after[0]["sequence"] is None,
+                            "state": "refused"
+                            if scenario == "wrong_author"
+                            else "verified",
+                        }
+                    )
+    finally:
+        repository.close()
+    return {"installed_composition": True, "synthetic_cases": 3, "outcomes": outcomes}
+
+
 def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
     image = IMAGES[version]
     owner = "ml-f14-" + uuid.uuid4().hex
@@ -2170,6 +2540,22 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
         alpha_dir.mkdir(mode=0o700)
         beta_dir = library_dir / "beta"
         beta_dir.mkdir(mode=0o700)
+        series_dir = library_dir / "series"
+        series_dir.mkdir(mode=0o700)
+        series_titles = {
+            "9780306406157": "Series supplied control",
+            "9780140328721": "Series missing control",
+            "9780261103573": "Series wrong author control",
+        }
+        series_scenarios = dict(
+            zip(
+                series_titles.values(),
+                ("supplied", "missing", "wrong_author"),
+                strict=True,
+            )
+        )
+        for isbn, title in series_titles.items():
+            _epub(series_dir / (isbn + ".epub"), title=title, isbn=isbn)
         config_dir = root / "config"
         config_dir.mkdir(mode=0o700)
         metadata_dir = root / "metadata"
@@ -2262,7 +2648,26 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
         second_library_id = _string(
             second_created.get("id"), "library_response_invalid"
         )
-        library_ids = (library_id, second_library_id)
+        series_created = _mapping(
+            _request(
+                "POST",
+                base,
+                "/api/libraries",
+                token=root_token,
+                payload={
+                    "name": "canary-series",
+                    "folders": [{"fullPath": "/library/series"}],
+                    "mediaType": "book",
+                    "provider": "openlibrary",
+                    "settings": {"disableWatcher": True},
+                },
+            ),
+            "series_library_response_invalid",
+        )
+        series_library_id = _string(
+            series_created.get("id"), "series_library_response_invalid"
+        )
+        library_ids = (library_id, second_library_id, series_library_id)
         writer_id = _create_user(
             base,
             root_token,
@@ -2712,6 +3117,34 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
             operator_authors,
             set(),
         )
+        _request(
+            "POST",
+            base,
+            "/api/libraries/" + series_library_id + "/scan?force=1",
+            token=root_token,
+        )
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline:
+            series_listing = _request(
+                "GET",
+                base,
+                "/api/libraries/" + series_library_id + "/items?limit=10",
+                token=writer_key,
+            )
+            if series_listing.get("total") == 3:
+                break
+            time.sleep(0.25)
+        else:
+            raise QualificationError("series_library_did_not_scan")
+        automatic_series = _installed_automatic_series_qualification(
+            root,
+            base,
+            writer_key,
+            series_library_id,
+            series_dir,
+            series_titles,
+            series_scenarios,
+        )
         repository.close()
         digest = _run(
             "docker", "image", "inspect", image, "--format", "{{index .RepoDigests 0}}"
@@ -2735,6 +3168,7 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
             "metadata_tags": True,
             "cover": installed["full_chain_origins"].get("cover") == "human",
             "installed_continuous": installed,
+            "installed_automatic_series": automatic_series,
             "real_automatic_adapter": real_automatic_adapter,
             "adapter_canary": adapter_outcomes,
             "outcomes": installed_outcomes,
@@ -2787,6 +3221,7 @@ def main() -> None:
         json.dumps(
             {
                 "schema": "audiobookshelf-field-effect-v2",
+                "source_sha": arguments.source_sha,
                 "installed_artifact": True,
                 "latest_stable_version": latest,
                 "operator_corpus": arguments.corpus is not None,
