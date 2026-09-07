@@ -118,7 +118,7 @@ const fields: readonly FieldDefinition[] = [
   {
     key: 'series',
     label: 'Series memberships',
-    meaning: 'Keep qualified memberships while projecting one supported value.',
+    meaning: 'Automatic fills an empty Series field only and preserves existing memberships.',
     options: ['primary_narrative', 'source_order', 'all_qualified'],
     optionLabels: {
       primary_narrative: 'Primary narrative',
@@ -295,22 +295,22 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
     fallback: 'abstains when no admitted ISBN-13 is available',
   },
   'series:primary_narrative': {
-    admitted: 'qualified series memberships',
+    admitted: 'provider-backed memberships for this work',
     transformation: 'selects the primary narrative membership',
-    effect: 'sets Series memberships',
+    effect: 'Automatic fills an empty Series field only',
     fallback: 'abstains when no membership is qualified',
   },
   'series:source_order': {
-    admitted: 'qualified series memberships',
+    admitted: 'provider-backed memberships for this work',
     transformation: 'selects the first admitted source membership',
-    effect: 'sets Series memberships',
+    effect: 'Automatic fills an empty Series field only',
     fallback: 'abstains when no membership is qualified',
   },
   'series:all_qualified': {
-    admitted: 'all qualified series memberships',
+    admitted: 'all provider-backed qualified memberships for this work',
     transformation: 'keeps them visible in admitted order',
     effect:
-      'keeps the full context while the supported projection writes only its first membership',
+      'keeps the full context while Automatic fills an empty Series field with only its first membership',
     fallback: 'abstains when no membership is qualified',
   },
   'genres:fill_empty': {
@@ -1141,6 +1141,14 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                     <p>{field.meaning}</p>
                     <details className="cm-policy-field-guidance">
                       <summary>What this changes</summary>
+                      {field.key === 'series' ? (
+                        <p>
+                          One provider can supply enough backing; corroboration strengthens the
+                          evidence. Qualification measures these rules against checked books.
+                          Numbering is supplied by the provider and is not independently verified
+                          for each book.
+                        </p>
+                      ) : null}
                       <ul>
                         {field.options.map((value) => (
                           <li key={value}>

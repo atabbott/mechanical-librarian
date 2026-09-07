@@ -7,6 +7,7 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass
+from decimal import Decimal
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Mapping, Self, cast
 
@@ -62,6 +63,7 @@ from mechanical_librarian.domain.metadata_report import (
     manifestation_publication_compatible,
     normalize_date_value,
     normalize_title,
+    provider_candidate_series_identity_matches,
     provider_candidate_set_exact_work_identity_admission,
     provider_candidate_set_work_identity_admission,
     publication_date_is_voting,
@@ -1118,6 +1120,8 @@ def evaluate_report(
             observations,
             _dependencies(destination),
         )
+        if destination is TargetDestination.SERIES:
+            result = _resolve_series_subset(result, targets[destination], observations)
         if (
             destination is TargetDestination.ISBN
             and not observations
@@ -2468,6 +2472,8 @@ def _target_backed_lookup_contains(
     report: MetadataReport,
     provider: ProviderObservation,
     candidate: ProviderCandidate,
+    *,
+    required_lane: ProviderLaneObservation | None = None,
 ) -> bool:
     """Require a successful candidate lane backed by the exact report target."""
     local_claims = {claim.reference: claim for claim in report.local_claims}
@@ -2586,6 +2592,7 @@ def _target_backed_lookup_contains(
             )
         )
         for lane in provider.lanes
+        if required_lane is None or lane == required_lane
     )
 
 
@@ -2724,6 +2731,76 @@ def provider_candidate_represents_target_work(
     return False
 
 
+def provider_candidate_represents_target_series_work(
+    report: MetadataReport,
+    provider: ProviderObservation,
+    candidate: ProviderCandidate,
+) -> bool:
+    """Keep strict WORK admission first, with a series-only ISBN fallback."""
+    if provider_candidate_represents_target_work(report, provider, candidate):
+        return True
+    targets = {field.destination: field for field in report.target.fields}
+    title = targets[TargetDestination.TITLE]
+    authors = targets[TargetDestination.AUTHORS]
+    if (
+        title.state is not TargetFieldState.VALUE
+        or type(title.value) is not str
+        or not title.value
+        or authors.state is not TargetFieldState.VALUE
+        or type(authors.value) is not tuple
+        or not authors.value
+        or not all(type(value) is str and value for value in authors.value)
+    ):
+        return False
+    by_identity = {value.identity: value for value in provider.candidates}
+    for lane in provider.lanes:
+        if (
+            lane.kind is not ProviderQueryKind.ISBN
+            or lane.status is not ProviderStatus.CANDIDATES
+            or lane.matched_family is None
+            or not lane.input_references
+            or not lane.candidates
+            or any(
+                member.edition_identity not in by_identity for member in lane.candidates
+            )
+        ):
+            continue
+        sources = tuple(
+            by_identity[member.edition_identity] for member in lane.candidates
+        )
+        if (
+            candidate not in sources
+            or len({source.work_identity for source in sources}) != 1
+            or any(
+                source.work_identity in {"", "unresolved"}
+                or member.work_identity != source.work_identity
+                for member, source in zip(lane.candidates, sources, strict=True)
+            )
+        ):
+            continue
+        if not all(
+            _target_backed_lookup_contains(report, provider, source, required_lane=lane)
+            and (
+                families := tuple(
+                    isbn_family(claim.value)
+                    for claim in source.claims
+                    if claim.kind is ClaimKind.ISBN
+                    and claim.scope is ClaimScope.EDITION
+                    and claim.state is FieldState.VALID
+                    and type(claim.value) is str
+                )
+            )
+            and all(family == lane.matched_family for family in families)
+            and provider_candidate_series_identity_matches(
+                source, title.value, cast("tuple[str, ...]", authors.value)
+            )
+            for source in sources
+        ):
+            continue
+        return True
+    return False
+
+
 def _creator_sets_match(
     authors: tuple[ProviderClaim, ...],
     author_bindings: tuple[ProviderIdentityBinding, ...] | None,
@@ -2768,6 +2845,73 @@ def _controlled_creator_placeholder(claim: LocalClaim) -> bool:
         and claim.canonical is not None
         and " ".join(unicodedata.normalize("NFKC", claim.canonical).split()).casefold()
         == "unknown"
+    )
+
+
+def _series_bundle_dominates(candidate: ProposalValue, other: ProposalValue) -> bool:
+    """Compare source bundles without rewriting their names or positions."""
+    if (
+        candidate.kind is not ProposalValueKind.SERIES
+        or other.kind is not ProposalValueKind.SERIES
+    ):
+        return False
+    # ProposalValue validates the correlated TargetSeries tuple for this kind.
+    candidate_memberships = cast("tuple[TargetSeries, ...]", candidate.value)
+    other_memberships = cast("tuple[TargetSeries, ...]", other.value)
+    memberships = {
+        series_name_equivalence_key(item.name): item.sequence
+        for item in candidate_memberships
+    }
+    if len(memberships) != len(candidate_memberships):
+        return False
+    for item in other_memberships:
+        name = series_name_equivalence_key(item.name)
+        if name not in memberships:
+            return False
+        position = memberships[name]
+        if item.sequence is None or item.sequence == position:
+            continue
+        if (
+            position is None
+            or not all(
+                re.fullmatch(r"(?:0|[1-9][0-9]*)(?:\.[0-9]+)?", value)
+                for value in (position, item.sequence)
+            )
+            or Decimal(position) != Decimal(item.sequence)
+        ):
+            return False
+    return True
+
+
+def _resolve_series_subset(
+    result: ProposalResult, target: TargetField, observations: tuple[_Observed, ...]
+) -> ProposalResult:
+    """Elect only a unique existing bundle that covers every alternative."""
+    if (
+        result.outcome is not ProposalOutcome.UNRESOLVED_CHOICE
+        or len(result.alternatives) < 2
+    ):
+        return result
+    dominant = tuple(
+        candidate
+        for candidate in result.alternatives
+        if all(
+            _series_bundle_dominates(candidate.value, other.value)
+            for other in result.alternatives
+        )
+    )
+    if len(dominant) != 1:
+        return result
+    references = set(dominant[0].evidence_references)
+    return _evaluate(
+        TargetDestination.SERIES,
+        target,
+        tuple(
+            observed
+            for observed in observations
+            if set(observed.references) <= references
+        ),
+        result.dependencies,
     )
 
 

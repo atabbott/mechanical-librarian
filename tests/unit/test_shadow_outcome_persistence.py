@@ -78,6 +78,7 @@ from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
     AutomaticDecisionError,
     AutomaticSafetyState,
+    qualification_manifest_is_current,
 )
 from mechanical_librarian.domain.contributor_display_qualification import (
     F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY,
@@ -126,6 +127,10 @@ from mechanical_librarian.domain.reviewer_access import (
     CodexTaskSelection,
     ReviewerAccessDocument,
 )
+from mechanical_librarian.domain.rich_metadata_preview import (
+    RichMetadataPreviewError,
+    compile_rich_metadata_preview,
+)
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 from mechanical_librarian.interfaces.web.app import (
     _HistoryResponse,
@@ -172,6 +177,11 @@ from tests.unit.test_cover_packets import (
 )
 from tests.unit.test_cover_packets import (
     _source as _cover_source,
+)
+from tests.unit.test_rich_metadata_preview import (
+    _automatic_series_report,
+    _series_claims,
+    _series_provider,
 )
 
 
@@ -1731,63 +1741,32 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
             order=4,
         ),
     )
-    series_report = _bibliographic_report(
-        current_title="Book",
-        providers=(
-            _provider(
-                "catalogue",
-                "edition-1",
-                series_claims,
-                authority="hardcover",
-            ),
-            _provider(
-                "search",
-                "edition-2",
-                (
-                    _claim(
-                        "search",
-                        "edition-2",
-                        ClaimKind.TITLE,
-                        "Book",
-                        scope=ClaimScope.WORK,
-                        order=0,
-                    ),
-                    _claim(
-                        "search",
-                        "edition-2",
-                        ClaimKind.SERIES,
-                        "Reading Order",
-                        scope=ClaimScope.WORK,
-                        order=1,
-                    ),
-                    _claim(
-                        "search",
-                        "edition-2",
-                        ClaimKind.SERIES_SEQUENCE,
-                        "2",
-                        scope=ClaimScope.WORK,
-                        order=2,
-                    ),
-                    _claim(
-                        "search",
-                        "edition-2",
-                        ClaimKind.SERIES,
-                        "Publication Order",
-                        scope=ClaimScope.WORK,
-                        order=3,
-                    ),
-                    _claim(
-                        "search",
-                        "edition-2",
-                        ClaimKind.SERIES_SEQUENCE,
-                        "4",
-                        scope=ClaimScope.WORK,
-                        order=4,
-                    ),
-                ),
-                authority="open_library",
-            ),
+    series_report = _automatic_series_report(
+        _series_provider(
+            "catalogue",
+            "edition-1",
+            "hardcover",
+            series_claims[1:],
+            current_title="Book",
         ),
+        _series_provider(
+            "search",
+            "edition-2",
+            "open_library",
+            tuple(
+                _claim(
+                    "search",
+                    "edition-2",
+                    claim.kind,
+                    claim.value,
+                    scope=claim.scope,
+                    order=claim.raw_order,
+                )
+                for claim in series_claims[1:]
+            ),
+            current_title="Book",
+        ),
+        current_title="Book",
     )
     genre_claims = tuple(
         _claim(
@@ -2293,22 +2272,24 @@ def test_rich_no_change_rejects_a_superseded_report(tmp_path: Path) -> None:
         repository.close()
 
 
-def test_primary_narrative_exact_preservation_remains_an_abstention(
+@pytest.mark.parametrize(
+    "option", ("primary_narrative", "source_order", "all_qualified")
+)
+def test_populated_series_records_one_no_change_fact(
     tmp_path: Path,
+    option: str,
 ) -> None:
     report, category, _, _ = _automatic_no_change_inputs("series_source_order")
     repository = open_repository(tmp_path / "reports.sqlite")
     try:
-        assert (
-            _automatic_decisions(
-                SimpleNamespace(repository=repository),
-                report,
-                category,
-                "primary_narrative",
-                qualified=True,
-            )
-            == ()
+        (decision,) = _automatic_decisions(
+            SimpleNamespace(repository=repository),
+            report,
+            category,
+            option,
+            qualified=True,
         )
+        assert decision.outcome == "keep_current"
         source = next(
             value
             for value in ShadowOutcomeSet.from_json(
@@ -2316,7 +2297,80 @@ def test_primary_narrative_exact_preservation_remains_an_abstention(
             ).outcomes
             if value.destination == "series"
         )
-        assert source.disposition == "abstention"
+        assert source.disposition == "keep_current"
+        assert source.citation_ids == ()
+        assert source.combination_ids == ()
+        repository.record_current_field_effect_no_change(decision, 5)
+        repository.record_current_field_effect_no_change(decision, 6)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effect_no_changes"
+        ).fetchone() == (1,)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effects"
+        ).fetchone() == (0,)
+    finally:
+        repository.close()
+
+
+@pytest.mark.parametrize(
+    "option", ("primary_narrative", "source_order", "all_qualified")
+)
+def test_persistence_rejects_fresh_populated_series_from_faulty_preview(
+    tmp_path: Path,
+    option: str,
+) -> None:
+    report, category, _, _ = _automatic_no_change_inputs("series_source_order")
+
+    def faulty_preview(policy, report, proposal):
+        preview = compile_rich_metadata_preview(policy, report, proposal)
+        result = next(
+            item for item in proposal.results if item.destination.value == "series"
+        )
+        candidate = result.alternatives[0]
+        # Model a faulty upstream preview at the collaborator boundary. The
+        # persistence consumer must independently reject populated replacements
+        # even when the decision and its source carry fresh, matching identities.
+        return replace(
+            preview,
+            fields=tuple(
+                replace(
+                    field,
+                    outcome="projected",
+                    reason=None,
+                    desired_value=candidate.value.value,
+                    qualified_value=candidate.value.value,
+                    source_candidate_id=candidate.alternative_id,
+                    source_evidence_references=candidate.evidence_references,
+                )
+                if field.field == "series"
+                else field
+                for field in preview.fields
+            ),
+        )
+
+    repository = open_repository(tmp_path / "reports.sqlite")
+    try:
+        with patch(
+            "mechanical_librarian.domain.shadow_outcome.compile_rich_metadata_preview",
+            side_effect=faulty_preview,
+        ):
+            (decision,) = _automatic_decisions(
+                SimpleNamespace(repository=repository),
+                report,
+                category,
+                option,
+                qualified=True,
+            )
+        assert decision.outcome == "candidate"
+        assert qualification_manifest_is_current(
+            "series", option, decision.qualification_manifest_sha256
+        )
+        with pytest.raises(FieldEffectError, match="authority_binding") as rejected:
+            repository.field_effect_authority_source(decision)
+        assert isinstance(rejected.value.__cause__, RichMetadataPreviewError)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effects"
+        ).fetchone() == (0,)
     finally:
         repository.close()
 
@@ -5736,28 +5790,40 @@ def test_provider_consensus_title_respects_title_layout_suspension_at_admission(
         repository.close()
 
 
-def test_incomplete_series_memberships_remain_in_attention_after_persistence() -> None:
-    report = _bibliographic_report(
-        current_title="Current title",
-        providers=(
-            _source(
-                "hardcover",
-                "edition-1",
-                titles=("Current title",),
-                series="Reading Order",
-            ),
-            _source(
-                "open_library",
-                "edition-2",
-                titles=("Current title",),
-                series="Reading Order",
-            ),
+@pytest.mark.parametrize(
+    "option", ("primary_narrative", "source_order", "all_qualified")
+)
+def test_absent_series_positions_reach_effect_authority_after_persistence(
+    option,
+) -> None:
+    report = _automatic_series_report(
+        _series_provider(
+            "hardcover",
+            "edition-1",
+            "hardcover",
+            _series_claims("hardcover", "edition-1")[:1],
         ),
+        _series_provider(
+            "open_library",
+            "edition-2",
+            "open_library",
+            _series_claims("open_library", "edition-2")[:1],
+        ),
+    )
+    report = _proposal_report(
+        fields=tuple(
+            TargetField(TargetDestination.ISBN, TargetFieldState.VALUE, "9780306406157")
+            if field.destination is TargetDestination.ISBN
+            else field
+            for field in report.target.fields
+        ),
+        local_claims=report.local_claims,
+        providers=report.providers,
     )
     base = _preview_automatic_profile()
     profile = MetadataPolicyProfile.create(
-        "Automatic series requires positions",
-        {**dict(base.options), "series": "source_order"},
+        "Automatic series preserves absent positions",
+        {**dict(base.options), "series": option},
         {**dict(base.destinations), "series": "automatic"},
     )
 
@@ -5782,17 +5848,32 @@ def test_incomplete_series_memberships_remain_in_attention_after_persistence() -
         repository.set_automatic_safety_state(AutomaticSafetyState(False, None, ()), 2)
 
         repository.persist_shadow_outcome(case_id, 3)
-        assert 1 == repository.count_current_attention_fields(None)
+        assert 0 == repository.count_current_attention_fields(None)
         detail = InspectCurrentReviewCase(repository).run(case_id)
         series = next(
             value for value in detail["fields"] if value["destination"] == "series"
         )
-        assert series["needs_attention"]
+        assert not series["needs_attention"]
+        assert series["editable"]
+        assert series["human_decision"] is None
+        assert series["automatic_selection_sources"] == ["Hardcover", "Open Library"]
         assert "propose_change" == series["deterministic_disposition"]
-        assert 1 == repository.read_review_attention(None, 50, 0).total
-        assert (0,) == repository._connection.execute(
-            "SELECT COUNT(*) FROM automatic_decisions WHERE destination='series'"
-        ).fetchone()
+        assert 0 == repository.read_review_attention(None, 50, 0).total
+        decision = next(
+            AutomaticDecision.from_json(document)
+            for document in repository.get_review_case_decisions(case_id)
+            if json.loads(document)["destination"] == "series"
+        )
+        assert repository.field_effect_authority_source(decision)["decision_value"] == {
+            "kind": "series",
+            "value": [{"name": "Reading Order", "sequence": None}],
+        }
+        assert qualification_manifest_is_current(
+            "series", option, decision.qualification_manifest_sha256
+        )
+        documents = repository.get_review_case_decisions(case_id)
+        repository.persist_shadow_outcome(case_id, 4)
+        assert repository.get_review_case_decisions(case_id) == documents
         repository.close()
 
 

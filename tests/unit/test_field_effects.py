@@ -101,6 +101,7 @@ from tests.unit.review_app_fixture import (
     TEST_REACT_BUILD_IDENTITY,
     create_transport_test_app,
 )
+from tests.unit.test_series_work_applicability import _isbn_series_report
 
 if TYPE_CHECKING:
     # Annotation-only: `TimingCollector` stands in for `TimingRepository`, whose
@@ -2559,14 +2560,36 @@ def test_qualified_automatic_origin_uses_the_identical_plan_and_effect_path(
     assert effects.service.apply(result.plan.plan_id).state == "verified"
 
 
-def test_legacy_tag_decision_stays_readable_without_effect_authority(
+@pytest.mark.parametrize(
+    "prior_digest",
+    (
+        "99ba8426ee53e4d31e52ecf0f65a0fce4eb237d3e5acef42e4ee17217b57dae9",
+        "4ede15a2aa84e8726ea2dff4e4f9f0d04b27a70276ed53c400c2de5f7619d445",
+        "091cdf7f08f60e9e4e1860ff574a9c04c405c914d498560e9802294b69c53a30",
+    ),
+)
+@pytest.mark.parametrize(
+    "category, option",
+    (
+        ("tags", "fill_empty"),
+        ("series", "primary_narrative"),
+        ("series", "source_order"),
+        ("series", "all_qualified"),
+    ),
+)
+def test_legacy_rich_decision_stays_readable_without_effect_authority(
     effects: _EffectEnvironment,
+    prior_digest: str,
+    category: str,
+    option: str,
 ) -> None:
     current = next(
         decision
         for decision in _automatic_decisions(
             effects,
-            _target_work_report(
+            _isbn_series_report()
+            if category == "series"
+            else _target_work_report(
                 (
                     (
                         "catalogue",
@@ -2576,17 +2599,17 @@ def test_legacy_tag_decision_stays_readable_without_effect_authority(
                     ),
                 )
             ),
-            "tags",
-            "fill_empty",
+            category,
+            option,
             qualified=True,
         )
-        if decision.destination == "tags" and decision.outcome == "candidate"
+        if decision.destination == category and decision.outcome == "candidate"
     )
+    assert current.qualification_manifest_sha256 != prior_digest
+    assert authority_from_decision(current) is not None
     legacy_core = {
         **current._core(),
-        "qualification_manifest_sha256": (
-            "99ba8426ee53e4d31e52ecf0f65a0fce4eb237d3e5acef42e4ee17217b57dae9"
-        ),
+        "qualification_manifest_sha256": prior_digest,
     }
 
     def digest(value: object) -> str:

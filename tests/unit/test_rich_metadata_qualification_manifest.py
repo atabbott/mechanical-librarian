@@ -35,6 +35,10 @@ MANIFEST = (
     Path(__file__).parents[2]
     / "docs/reference/f20-rich-metadata-qualification-candidate-v11.json"
 )
+V12_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v12.json")
+CURRENT_MANIFEST = MANIFEST.with_name(
+    "f20-rich-metadata-qualification-candidate-v13.json"
+)
 HISTORICAL_MANIFEST = (
     Path(__file__).parents[2]
     / "docs/reference/f20-rich-metadata-qualification-candidate-v10.json"
@@ -76,7 +80,271 @@ RICH_FIELDS = (
 )
 
 
-def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
+def test_v13_binds_current_source_and_preserves_historical_v11_v12_bytes() -> None:
+    manifest = json.loads(CURRENT_MANIFEST.read_bytes())
+    assert manifest["schema"] == "f20-rich-metadata-qualification-candidate-v13"
+    assert manifest["automatic_authority"] == "decision_only"
+    prior = hashlib.sha256(MANIFEST.read_bytes()).hexdigest()
+    assert prior == "4ede15a2aa84e8726ea2dff4e4f9f0d04b27a70276ed53c400c2de5f7619d445"
+    v12 = hashlib.sha256(V12_MANIFEST.read_bytes()).hexdigest()
+    assert v12 == "091cdf7f08f60e9e4e1860ff574a9c04c405c914d498560e9802294b69c53a30"
+    assert (
+        json.loads(V12_MANIFEST.read_bytes())["authority_rotation"][
+            "prior_manifest_sha256"
+        ]
+        == prior
+    )
+    assert manifest["authority_rotation"]["prior_manifest_sha256"] == v12
+    assert prior != F20_QUALIFICATION_CANDIDATE_SHA256
+    sources = manifest["frozen_contract"]["behavior_sources"]
+    assert {
+        "src/mechanical_librarian/domain/work_identity.py",
+        "src/mechanical_librarian/domain/field_value_comparison.py",
+        "src/mechanical_librarian/domain/review_case.py",
+        "src/mechanical_librarian/application/field_effects.py",
+        "src/mechanical_librarian/application/continuous_field_effects.py",
+        "src/mechanical_librarian/adapters/persistence/metadata_reports.py",
+        "src/mechanical_librarian/adapters/persistence/field_effect_validation.py",
+        "src/mechanical_librarian/adapters/persistence/field_effect_activity.py",
+    } <= sources.keys()
+    for source, digest in sources.items():
+        assert (
+            hashlib.sha256((MANIFEST.parents[2] / source).read_bytes()).hexdigest()
+            == digest
+        )
+    rotation = manifest["authority_rotation"]
+    assert (
+        rotation["measured_candidate_head"]
+        == "4b8bf7d00aafdaf88c8c2b8f7c098b0e51fbf4dd"
+    )
+    assert rotation["measured_behavior_sources"] == {
+        "src/mechanical_librarian/domain/metadata_report.py": "b1e2e7e760358960b50bee21e516beb48a8c3d5c816ae753840eae6241f7f34e",
+        "src/mechanical_librarian/domain/proposal_set.py": "1340a77ba7277e0a69c121337840e3e407d892f9f0fe161d97a7e11c5fa05277",
+        "src/mechanical_librarian/domain/rich_metadata_preview.py": "4de4e624717c0dd29860fbb18a1b433f4832631b2208140c30c601a2590e8849",
+    }
+    assert all(
+        sources[name] == digest
+        for name, digest in rotation["measured_behavior_sources"].items()
+    )
+    history = rotation["historical_reader_delta"]
+    assert history["current_sha256"] == sources[history["identity"]]
+    assert (
+        history["measured_sha256"]
+        == json.loads(V12_MANIFEST.read_bytes())["frozen_contract"]["behavior_sources"][
+            history["identity"]
+        ]
+    )
+    assert len(sources) == 35
+    assert manifest["frozen_contract"]["runtime_envelope"]["identity"] not in sources
+    root = MANIFEST.parents[2]
+    assert (
+        manifest["frozen_contract"]["uv_lock_sha256"]
+        == hashlib.sha256((root / "uv.lock").read_bytes()).hexdigest()
+    )
+
+
+@pytest.mark.parametrize("batch", ("confirmation", "final"))
+@pytest.mark.parametrize(
+    "option", ("primary_narrative", "source_order", "all_qualified")
+)
+def test_v12_separates_membership_sequence_and_distinct_book_support(
+    batch: str, option: str
+) -> None:
+    manifest = json.loads(V12_MANIFEST.read_bytes())
+    series = manifest["evidence_method"]["series"]
+    assert series["precision_required"] == 1
+    assert series["minimum_distinct_scored_books_per_option_per_batch"] == 3
+    assert series["options_or_batches_pooled"] is False
+    assert series["metric_result_alone_grants_authority"] is False
+    assert series["recall_is_gate"] is False
+    assert series["unknown_positions"] == "unscored"
+    assert series["known_wrong_positions"] == "block_option"
+    evidence = series["batches"][batch]
+    expected = (
+        (24, 19, 4, 1, 10, 14, 8) if batch == "confirmation" else (12, 7, 3, 2, 5, 7, 5)
+    )
+    cases, supported, negative, unknown, correct, abstained, scored = expected
+    assert evidence["case_count"] == cases
+    assert evidence["source_states"] == {
+        "supported": supported,
+        "known_empty": negative,
+        "unknown": unknown,
+    }
+    metrics = evidence["options"][option]
+    assert metrics["complete_projection_counts"] == {
+        "correct": correct,
+        "abstained": abstained,
+    }
+    assert metrics["distinct_membership_scored_books"] == correct
+    assert metrics["distinct_sequence_scored_books"] == scored
+    assert metrics["membership_gate"] == "passed"
+    assert metrics["sequence_gate"] == "qualified"
+    assert metrics["negative_false_positives"] == 0
+    assert metrics["supported_complete_projection_coverage"] == correct / supported
+    for name in (
+        "membership_projection_precision",
+        "membership_claim_precision",
+        "sequence_precision",
+    ):
+        assert metrics[name] == 1.0
+    extra_convention = batch == "final" and option == "all_qualified"
+    assert metrics["membership_claim_counts"] == {
+        "correct": 7 if extra_convention else correct
+    }
+    assert metrics["sequence_claim_counts"] == (
+        {"correct": 8, "missing": 1, "unknown": 1}
+        if batch == "confirmation"
+        else {"correct": 6, "unknown": 1}
+        if extra_convention
+        else {"correct": 5}
+    )
+    target = metrics["target_value_metrics"]
+    assert target["membership_counts"] == {"correct": correct}
+    assert target["sequence_scored_cases"] == scored
+    assert target["sequence_counts"] == (
+        {"correct": 8, "missing": 1, "unknown": 1}
+        if batch == "confirmation"
+        else {"correct": 5}
+    )
+    assert target["activation_authorized"] is False
+    correction = evidence["correction"]
+    assert correction["source_rows_corrected"] == (1 if batch == "confirmation" else 2)
+    assert correction["blind_source_review"] is True
+    for name in (
+        "candidate_changed",
+        "scorer_changed",
+        "thresholds_changed",
+        "recaptured",
+    ):
+        assert correction[name] is False
+    for name in (
+        "result_sha256",
+        "execution_seal_sha256",
+        "capture_receipt_sha256",
+        "original_evaluation_sha256",
+    ):
+        assert re.fullmatch(r"[0-9a-f]{64}", evidence[name])
+
+
+@pytest.mark.parametrize("manifest_path", (V12_MANIFEST, CURRENT_MANIFEST))
+def test_v12_v13_retain_non_series_dispositions_and_historical_metrics(
+    manifest_path: Path,
+) -> None:
+    historical = json.loads(MANIFEST.read_bytes())
+    current = json.loads(manifest_path.read_bytes())
+    assert (
+        current["passing_automatic_options"] == historical["passing_automatic_options"]
+    )
+    prior_options = {entry["identity"]: entry for entry in historical["options"]}
+    for entry in current["options"]:
+        if not entry["identity"].startswith("series:"):
+            assert entry == {
+                **prior_options[entry["identity"]],
+                "evidence_origin": "historical_v11",
+            }
+    controls = current["zero_tolerance"]
+    assert controls["evaluation_status"] == "passed"
+    assert controls["failure_counts"] == {
+        name: 0 for name in controls["required_controls"]
+    }
+    assert {
+        "populated_series_replacement",
+        "historical_qualification_write",
+        "inferred_series_sequence",
+    } <= set(controls["required_controls"])
+
+
+@pytest.mark.parametrize("batch", ("confirmation", "final"))
+@pytest.mark.parametrize(
+    "option", ("primary_narrative", "source_order", "all_qualified")
+)
+def test_v13_records_exposed_regression_without_relabelling_holdouts(
+    batch: str, option: str
+) -> None:
+    manifest = json.loads(CURRENT_MANIFEST.read_bytes())
+    series = manifest["evidence_method"]["series"]
+    assert series["qualification_method"] == "owner_approved_exposed_regression"
+    assert series["fresh_holdout_claim"] is False
+    assert series["precision_required"] == 1
+    assert series["minimum_distinct_scored_books_per_option_per_batch"] == 3
+    assert series["options_or_batches_pooled"] is False
+    assert series["metric_result_alone_grants_authority"] is False
+    assert series["recall_is_gate"] is False
+    replay = series["replay"]
+    assert (
+        replay["candidate_result_sha256"]
+        == "1e8414fa7903b1ba3a80c7098bb95ffac2caab4eff747cb92d46f030129ee611"
+    )
+    assert (
+        replay["sha256"]
+        == "8e2c4a7ca4229fb981a99adf3fb64b5a7fd5eba5f8094babd1e85e7c3d01b3d5"
+    )
+    assert replay["complete_preview_comparison"] == {
+        "removed_option_projections": 6,
+        "unchanged_option_projections": 39,
+        "unchanged_nonprojections": 63,
+        "new_or_changed_projections": 0,
+    }
+    evidence = series["batches"][batch]
+    historical = json.loads(V12_MANIFEST.read_bytes())["evidence_method"]["series"][
+        "batches"
+    ][batch]
+    assert evidence["historical_capture_and_adjudication"] == {
+        name: entry
+        for name, entry in historical.items()
+        if name not in {"options", "case_count", "source_states"}
+    }
+    assert evidence["case_count"] == historical["case_count"]
+    assert evidence["source_states"] == historical["source_states"]
+    assert evidence["evidence_role"] == "previously_exposed_" + batch
+    assert evidence["result_sha256"] == replay["candidate_result_sha256"]
+    correct, abstained, scored = (9, 15, 7) if batch == "confirmation" else (4, 8, 4)
+    metrics = evidence["options"][option]
+    assert metrics["complete_projection_counts"] == {
+        "correct": correct,
+        "abstained": abstained,
+    }
+    assert metrics["distinct_membership_scored_books"] == correct
+    assert metrics["distinct_sequence_scored_books"] == scored
+    extra = batch == "final" and option == "all_qualified"
+    assert metrics["membership_claim_counts"] == {"correct": 6 if extra else correct}
+    assert metrics["sequence_claim_counts"] == (
+        {"correct": 7, "missing": 1, "unknown": 1}
+        if batch == "confirmation"
+        else {"correct": 5, "unknown": 1}
+        if extra
+        else {"correct": 4}
+    )
+    assert metrics["membership_gate"] == "passed"
+    assert metrics["sequence_gate"] == "qualified"
+    assert (
+        metrics["negative_false_positives"]
+        == metrics["unknown_source_projections"]
+        == 0
+    )
+    assert (
+        metrics["supported_complete_projection_coverage"]
+        == correct / evidence["source_states"]["supported"]
+    )
+    for name in (
+        "membership_projection_precision",
+        "membership_claim_precision",
+        "sequence_precision",
+    ):
+        assert metrics[name] == 1
+    target = metrics["target_value_metrics"]
+    assert target["projection_counts"] == metrics["complete_projection_counts"]
+    assert target["membership_counts"] == {"correct": correct}
+    assert target["sequence_counts"] == (
+        {"correct": 7, "missing": 1, "unknown": 1}
+        if batch == "confirmation"
+        else {"correct": 4}
+    )
+    assert target["sequence_scored_cases"] == scored
+    assert target["activation_authorized"] is False
+
+
+def test_historical_v11_retains_its_exact_option_metrics_and_evidence() -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
 
     assert "f20-rich-metadata-qualification-candidate-v11" == manifest["schema"]
@@ -486,13 +754,9 @@ def test_candidate_exposes_only_closed_aggregate_contract_data() -> None:
     for name in ("automatic_decision", "compiler", "policy", "target_shape"):
         item = manifest["frozen_contract"][name]
         assert {"identity", "sha256"} == set(item)
-        if item["sha256"] != ROOT_PLACEHOLDER:
-            assert (
-                hashlib.sha256(
-                    (MANIFEST.parents[2] / item["identity"]).read_bytes()
-                ).hexdigest()
-                == item["sha256"]
-            )
+        # Historical source bindings describe the earlier measured compiler.
+        # Their immutable bytes are pinned above; current source is bound by v13.
+        assert re.fullmatch(r"[0-9a-f]{64}", item["sha256"])
     for name in ("adjudication", "evaluator", "evidence_execution", "thresholds"):
         item = manifest["frozen_contract"][name]
         assert {"identity", "sha256"} == set(item)
@@ -520,17 +784,13 @@ def test_candidate_exposes_only_closed_aggregate_contract_data() -> None:
         "initial_holdout_receipt_sha256": "4637df813899ec39d2896fc626076d09924165433674cef35cfcc4fc0c6c48dd",
         "preview_sha256": "f5fdad27f901735ef0e3075bfb1a98cb4aa5eb0461cdc7e63f0deb638b05e52b",
     } == manifest["frozen_contract"]["description_tiebreaker"]
-    for source, name in {
+    for _source, name in {
         "src/mechanical_librarian/domain/automatic_decision.py": "automatic_decision_sha256",
         "src/mechanical_librarian/domain/rich_metadata_preview.py": "preview_sha256",
         "src/mechanical_librarian/domain/proposal_set.py": "proposal_policy_sha256",
     }.items():
         bound = manifest["frozen_contract"]["isbn_manifestation_election"][name]
-        if bound != ROOT_PLACEHOLDER:
-            assert (
-                hashlib.sha256((MANIFEST.parents[2] / source).read_bytes()).hexdigest()
-                == bound
-            )
+        assert re.fullmatch(r"[0-9a-f]{64}", bound)
 
 
 def test_v10_manifest_remains_historical_readable_after_v11_rotation() -> None:
@@ -590,6 +850,7 @@ def test_v10_manifest_remains_historical_readable_after_v11_rotation() -> None:
                 yield from keys(child)
 
     assert forbidden.isdisjoint(keys(manifest))
+    assert forbidden.isdisjoint(keys(json.loads(CURRENT_MANIFEST.read_bytes())))
 
 
 def test_f19a_authority_is_preserved_and_exact_f20_is_added() -> None:
@@ -759,12 +1020,11 @@ def test_f38_manifest_separately_qualifies_provider_consensus_contributor_displa
 
 
 def test_runtime_envelope_pins_every_terminal_disposition_and_authority() -> None:
-    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
-    if F20_QUALIFICATION_CANDIDATE_SHA256 not in PLACEHOLDER_DIGESTS:
-        assert (
-            hashlib.sha256(MANIFEST.read_bytes()).hexdigest()
-            == F20_QUALIFICATION_CANDIDATE_SHA256
-        )
+    manifest = json.loads(CURRENT_MANIFEST.read_text(encoding="utf-8"))
+    assert (
+        hashlib.sha256(CURRENT_MANIFEST.read_bytes()).hexdigest()
+        == F20_QUALIFICATION_CANDIDATE_SHA256
+    )
     passing = frozenset(
         {
             "description_fill:safe_plain_text",
@@ -789,6 +1049,9 @@ def test_runtime_envelope_pins_every_terminal_disposition_and_authority() -> Non
         | {"tags:off": "policy_only"}
     ) == F20_OPTION_DISPOSITIONS
     summary = public_summary()
+    assert {entry["candidate_sha256"] for entry in summary} == {
+        F20_QUALIFICATION_CANDIDATE_SHA256
+    }
     assert set(F20_OPTION_DISPOSITIONS) == {
         f"{entry['field']}:{entry['option']}" for entry in summary
     }

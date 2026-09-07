@@ -343,7 +343,7 @@ const PreparationDetail = ({
 const bounded = (value: string, fallback: string) =>
   opaqueSource.test(value) ? fallback : value.length > 160 ? `${value.slice(0, 157)}…` : value
 const decisionValue = (field: ReviewField) => {
-  const selected = field.humanDecision?.selected_value ?? field.automaticDecision?.selected_value
+  const selected = (field.humanDecision ?? field.automaticDecision)?.selected_value
   return selected === null || selected === undefined
     ? field.currentValue
     : displayValue(selected.value)
@@ -862,6 +862,7 @@ function ContextValue({
 function ProviderConsensusAutomaticStatement({ field }: { field: ReviewField }) {
   const decision = field.automaticDecision
   if (
+    field.humanDecision !== null ||
     decision?.outcome !== 'candidate' ||
     !field.notices.includes('provider_consensus_contributor_display')
   ) {
@@ -901,6 +902,38 @@ function VerifiedManifestationIsbnAutomaticStatement({ field }: { field: ReviewF
     return null
   }
   return <p>Deterministic identity evidence bound this ISBN to this file&apos;s work.</p>
+}
+
+function SeriesAutomaticStatement({ field }: { field: ReviewField }) {
+  const providers = field.automaticSelectionSources ?? []
+  if (
+    field.humanDecision !== null ||
+    field.destination !== 'series' ||
+    field.automaticDecision?.outcome !== 'candidate' ||
+    !providers.length ||
+    !(field.currentRaw == null || (Array.isArray(field.currentRaw) && !field.currentRaw.length))
+  ) {
+    return null
+  }
+  const memberships = field.automaticDecision.selected_value?.value
+  const hasNumber =
+    Array.isArray(memberships) &&
+    memberships.some(
+      (membership: unknown) =>
+        typeof membership === 'object' &&
+        membership !== null &&
+        'sequence' in membership &&
+        typeof membership.sequence === 'string',
+    )
+  return (
+    <p>
+      Selected from {providers.join(' and ')} to fill an empty Series field under a qualified
+      automatic policy.{' '}
+      {hasNumber
+        ? 'Numbering is supplied by the provider and is not independently verified for this book.'
+        : 'No series number was supplied.'}
+    </p>
+  )
 }
 
 function RecordedOutcome({
@@ -955,6 +988,7 @@ function RecordedOutcome({
       </dl>
       <ProviderConsensusAutomaticStatement field={field} />
       <DescriptionAutomaticStatement field={field} />
+      <SeriesAutomaticStatement field={field} />
       <VerifiedManifestationIsbnAutomaticStatement field={field} />
       <button
         type="button"
@@ -3015,6 +3049,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                           <>
                             <ProviderConsensusAutomaticStatement field={selected} />
                             <DescriptionAutomaticStatement field={selected} />
+                            <SeriesAutomaticStatement field={selected} />
                             <VerifiedManifestationIsbnAutomaticStatement field={selected} />
                           </>
                         ) : null}

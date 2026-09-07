@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Automatic series fill refuses unproved work identity, including mismatched
+  ISBN results, while accepting source-attested title decorations, exact
+  edition titles and conservative single-author comma inversion. Ask choices
+  and surviving values retain their original bundle and provenance. (#895)
+
+- Library completion and recorded summaries retain the owner's current value,
+  including an empty value, after overriding an automatic candidate. (#895)
+
+- Qualified series fill preserves populated Automatic fields, accepts
+  absent numbers without inventing them, and selects one uniquely compatible
+  source bundle instead of combining memberships. Failure checks follow its
+  actual evidence; Library explains editable automatic outcomes and number
+  certainty. V13 binds the repair through exposed regression; historical v11/v12
+  decisions remain readable and guarded writes require current authority. (#895)
+
 - Preparation no longer stalls when a recovery wake opens the database while
   another connection is writing: same-process dependent opens borrow the live
   root's admission on every platform, schema validation reads one snapshot, and

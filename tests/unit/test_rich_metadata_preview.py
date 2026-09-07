@@ -8,6 +8,12 @@ from typing import cast
 
 import pytest
 
+from mechanical_librarian.application.metadata_report import (
+    ProviderLaneResult,
+    TargetSnapshot,
+    metadata_discovery_plan,
+    provider_observation,
+)
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
     resolve_policy,
@@ -24,7 +30,6 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderClaim,
     ProviderEvidence,
     ProviderEvidenceKind,
-    ProviderLaneCandidate,
     ProviderLaneObservation,
     ProviderObservation,
     ProviderQueryKind,
@@ -34,7 +39,6 @@ from mechanical_librarian.domain.metadata_report import (
     TargetField,
     TargetFieldState,
     TargetSeries,
-    provider_lane_candidate_reference,
 )
 from mechanical_librarian.domain.proposal_set import (
     BibliographicCombination,
@@ -127,6 +131,124 @@ def _series_claims(provider, candidate, name="Reading Order", sequence="2"):
     )
 
 
+def _series_source_bundle(provider, identity, memberships):
+    return tuple(
+        ProviderClaim.create(
+            provider=provider,
+            candidate=identity,
+            kind=kind,
+            value=value,
+            state=FieldState.ABSENT if value is None else FieldState.VALID,
+            scope=ClaimScope.WORK,
+            applicability="not_applicable",
+            raw_order=index * 2 + slot,
+        )
+        for index, (name, sequence) in enumerate(memberships)
+        for slot, (kind, value) in enumerate(
+            ((ClaimKind.SERIES, name), (ClaimKind.SERIES_SEQUENCE, sequence))
+        )
+    )
+
+
+def test_series_elects_existing_superset_with_exact_order_values_and_own_evidence():
+    claims = _series_source_bundle(
+        "catalogue", "edition", (("Umbrella", "7"), ("Reading Order", "1"))
+    )
+    report = _report(
+        fields=_fields(
+            series=TargetField(TargetDestination.SERIES, TargetFieldState.MISSING)
+        ),
+        local_claims=(
+            _local_isbn("9780306406157", "valid_isbn_13"),
+            *_local_series_claims(sequence="1.0"),
+        ),
+        providers=(_series_provider("catalogue", "edition", "hardcover", claims),),
+    )
+
+    result = _result(evaluate_report(report), TargetDestination.SERIES)
+
+    assert result.outcome is ProposalOutcome.PROPOSE_CHANGE
+    assert len(result.alternatives) == 1
+    selected = result.alternatives[0]
+    assert selected.value.to_data() == {
+        "kind": "series",
+        "value": [
+            {"name": "Umbrella", "sequence": "7"},
+            {"name": "Reading Order", "sequence": "1"},
+        ],
+    }
+    assert set(selected.evidence_references) == {claim.reference for claim in claims}
+    assert len(selected.correlations) == 1
+
+
+@pytest.mark.parametrize(
+    ("smaller", "larger", "elect"),
+    (
+        (
+            (("Reading Order", "0.70"),),
+            (("Reading Order", "0.7"), ("Umbrella", None)),
+            True,
+        ),
+        ((("Reading Order", None),), (("Reading Order", "1"),), True),
+        (
+            (("Reading Order", None),),
+            (("Reading Order", None), ("Umbrella", "3")),
+            True,
+        ),
+        (
+            (("Reading Order", "1"),),
+            (("Reading Order", None), ("Umbrella", "3")),
+            False,
+        ),
+        ((("Reading Order", "1"),), (("Reading Order", "2"), ("Umbrella", "3")), False),
+        (
+            (("Reading Order", "1e0"),),
+            (("Reading Order", "1"), ("Umbrella", "3")),
+            False,
+        ),
+        (
+            (("Reading Order", "01"),),
+            (("Reading Order", "1"), ("Umbrella", "3")),
+            False,
+        ),
+        ((("Reading Order", "I"),), (("Reading Order", "1"), ("Umbrella", "3")), False),
+        ((("Reading Order", "1.0"),), (("Reading Order", "1"),), False),
+        ((("Reading Order", "1"),), (("Other Order", "1"),), False),
+        (
+            (("Reading Order", "1"), ("One", "2")),
+            (("Reading Order", "1"), ("Two", "2")),
+            False,
+        ),
+        (
+            (("Reading Order", "1"), ("Umbrella", "2")),
+            (("Umbrella", "2"), ("Reading Order", "1")),
+            False,
+        ),
+    ),
+)
+def test_series_bundle_dominance_is_unique_complete_and_position_compatible(
+    smaller, larger, elect
+):
+    report = _automatic_series_report(
+        _series_provider(
+            "first", "a", "hardcover", _series_source_bundle("first", "a", smaller)
+        ),
+        _series_provider(
+            "second", "b", "open_library", _series_source_bundle("second", "b", larger)
+        ),
+    )
+    result = _result(evaluate_report(report), TargetDestination.SERIES)
+
+    assert result.outcome is (
+        ProposalOutcome.PROPOSE_CHANGE if elect else ProposalOutcome.UNRESOLVED_CHOICE
+    )
+    assert len(result.alternatives) == (1 if elect else 2)
+    if elect:
+        assert [
+            (item.name, item.sequence) for item in result.alternatives[0].value.value
+        ] == list(larger)
+
+
 def _local_series_claims(name="Reading Order", sequence="2"):
     return (
         LocalClaim.create(
@@ -153,22 +275,125 @@ def _local_series_claims(name="Reading Order", sequence="2"):
     )
 
 
-def _automatic_series_report(*providers):
+def _automatic_series_report(*providers, current_title="Current title"):
     return _report(
-        fields=_fields(
-            series=TargetField(TargetDestination.SERIES, TargetFieldState.MISSING)
-        ),
+        fields=_automatic_series_fields(current_title),
+        local_claims=(_local_isbn("9780306406157", "valid_isbn_13"),),
         providers=providers,
     )
 
 
-def _series_provider(name, candidate, authority, claims=None):
-    return _provider(
+def _automatic_series_fields(current_title="Current title"):
+    return _fields(
+        current_title,
+        authors=TargetField(
+            TargetDestination.AUTHORS, TargetFieldState.VALUE, ("Ada Example",)
+        ),
+        series=TargetField(TargetDestination.SERIES, TargetFieldState.MISSING),
+    )
+
+
+def _series_provider(
+    name, candidate, authority, claims=None, *, current_title="Current title"
+):
+    identity = (
+        _claim(name, candidate, ClaimKind.TITLE, current_title, scope=ClaimScope.WORK),
+        _claim(
+            name,
+            candidate,
+            ClaimKind.CREATOR,
+            "Ada Example",
+            scope=ClaimScope.WORK,
+            role="author",
+        ),
+        _claim(
+            name,
+            candidate,
+            ClaimKind.ISBN,
+            "9780306406157",
+            scope=ClaimScope.EDITION,
+            applicability="ebook",
+        ),
+    )
+    source = _provider(
         name,
         candidate,
-        _series_claims(name, candidate) if claims is None else claims,
+        identity + (_series_claims(name, candidate) if claims is None else claims),
         authority=authority,
     )
+    lane = metadata_discovery_plan(
+        TargetSnapshot(
+            "ebook", current_title, (), fields=_automatic_series_fields(current_title)
+        ),
+        (_local_isbn("9780306406157", "valid_isbn_13"),),
+    ).lanes[0]
+    return provider_observation(
+        name,
+        (ProviderLaneResult(lane, ProviderStatus.CANDIDATES, source.candidates),),
+        authority=authority,
+    )
+
+
+@pytest.mark.parametrize(
+    "option", ("primary_narrative", "source_order", "all_qualified")
+)
+@pytest.mark.parametrize("evidence", ("candidate", "conflict", "absent"))
+def test_automatic_series_preserves_populated_target_before_evidence(
+    option: str, evidence: str
+) -> None:
+    providers = (
+        ()
+        if evidence == "absent"
+        else (_series_provider("source-a", "a", "hardcover"),)
+    )
+    if evidence == "conflict":
+        providers += (
+            _series_provider(
+                "source-b",
+                "b",
+                "open_library",
+                _series_claims("source-b", "b", sequence="3"),
+            ),
+        )
+    report = _report(
+        local_claims=(_local_isbn("9780306406157", "valid_isbn_13"),),
+        fields=_fields(
+            series=TargetField(
+                TargetDestination.SERIES,
+                TargetFieldState.VALUE,
+                (TargetSeries("Owner's reading order", "7"),),
+            )
+        ),
+        providers=providers,
+    )
+    field = _automatic_series_preview(report, option)
+    assert field.outcome == "no_op"
+    assert field.reason == "target_preserved"
+    assert field.desired_value == ({"name": "Owner's reading order", "sequence": "7"},)
+    assert field.source_candidate_id is None
+    assert field.source_evidence_references == ()
+    assert _preview_field(report, "series", option).reason != "target_preserved"
+
+
+@pytest.mark.parametrize(
+    "option", ("primary_narrative", "source_order", "all_qualified")
+)
+def test_automatic_series_projection_rejects_populated_current_value(
+    option: str,
+) -> None:
+    candidate = {
+        "kind": "series",
+        "value": [{"name": "Reading Order", "sequence": "2"}],
+    }
+    with pytest.raises(
+        RichMetadataPreviewError, match="rich automatic projection is invalid"
+    ):
+        project_f20_automatic_decision_value(
+            "series",
+            option,
+            candidate,
+            current_value=({"name": "Owner's reading order", "sequence": "7"},),
+        )
 
 
 def _isbn_target_work_candidate(
@@ -628,7 +853,9 @@ def test_nonintersecting_or_conflicting_isbns_remain_manual(
     )
 
 
-def test_only_tag_citations_exclude_retained_unproved_sources() -> None:
+def test_series_refuses_selected_unproved_sources_without_changing_other_fields() -> (
+    None
+):
     catalogue = _target_work_candidate("catalogue", "edition-1", "work-1")
     search = _target_work_candidate("search", "edition-2", "work-1")
     unproved = _target_work_candidate("unproved", "edition-3", "work-1")
@@ -643,14 +870,21 @@ def test_only_tag_citations_exclude_retained_unproved_sources() -> None:
     )
 
     unproved_references = {claim.reference for claim in unproved.claims}
-    assert all(preview.outcome == "projected" for preview in fields.values())
+    assert all(
+        fields[field].outcome == "projected"
+        for field in ("description_fill", "tags", "genres")
+    )
+    assert (fields["series"].outcome, fields["series"].reason) == (
+        "abstain",
+        "target_work_applicability_unproved",
+    )
     assert all(
         not (set(fields[field].source_evidence_references) & unproved_references)
         for field in ("description_fill", "tags")
     )
     assert all(
         set(fields[field].source_evidence_references) & unproved_references
-        for field in ("series", "genres")
+        for field in ("genres",)
     )
 
 
@@ -726,7 +960,10 @@ def test_unproved_work_blocks_automatic_work_scoped_fields(
     assert fields["description_fill"].outcome == "abstain"
     assert fields["description_fill"].reason == "target_work_applicability_unproved"
     assert fields["genres"].outcome == "projected"
-    assert fields["series"].reason != "target_work_applicability_unproved"
+    assert (fields["series"].outcome, fields["series"].reason) == (
+        "abstain",
+        "target_work_applicability_unproved",
+    )
     assert (
         fields["tags"].outcome,
         fields["tags"].reason,
@@ -1774,7 +2011,10 @@ def test_automatic_series_records_two_independent_agreeing_provider_lineages() -
     )
 
 
-def test_automatic_series_abstains_without_an_explicit_membership_position() -> None:
+@pytest.mark.parametrize(
+    "option", ("primary_narrative", "source_order", "all_qualified")
+)
+def test_automatic_series_preserves_absent_membership_position(option) -> None:
     report = _automatic_series_report(
         _series_provider(
             "catalogue",
@@ -1795,17 +2035,35 @@ def test_automatic_series_abstains_without_an_explicit_membership_position() -> 
         for value in evaluate_report(report).results
         if value.destination is TargetDestination.SERIES
     )
-    field = _automatic_series_preview(report)
+    field = _automatic_series_preview(report, option)
 
     assert ProposalOutcome.PROPOSE_CHANGE is manual.outcome
-    assert ("abstain", "series_membership_incomplete", None) == (
+    assert ("projected", None, ({"name": "Reading Order", "sequence": None},)) == (
         field.outcome,
         field.reason,
         field.desired_value,
     )
 
 
-def test_automatic_series_abstains_for_one_unpositioned_matching_membership() -> None:
+@pytest.mark.parametrize(
+    "option", ("primary_narrative", "source_order", "all_qualified")
+)
+def test_automatic_series_ignores_an_unrelated_provider_with_same_query_kind(option):
+    provider = replace(
+        _series_provider("catalogue", "edition-1", "hardcover"),
+        query_kind=ProviderQueryKind.ISBN,
+    )
+    report = _automatic_series_report(
+        provider,
+        ProviderObservation(
+            "other", ProviderStatus.UNAVAILABLE, query_kind=ProviderQueryKind.ISBN
+        ),
+    )
+    field = _automatic_series_preview(report, option)
+    assert (field.outcome, field.reason) == ("projected", None)
+
+
+def test_automatic_series_uses_one_explicitly_positioned_matching_bundle() -> None:
     report = _automatic_series_report(
         _series_provider("catalogue", "edition-1", "hardcover"),
         _series_provider(
@@ -1818,7 +2076,7 @@ def test_automatic_series_abstains_for_one_unpositioned_matching_membership() ->
 
     field = _automatic_series_preview(report)
 
-    assert ("abstain", "series_membership_incomplete", None) == (
+    assert ("projected", None, ({"name": "Reading Order", "sequence": "2"},)) == (
         field.outcome,
         field.reason,
         field.desired_value,
@@ -1880,7 +2138,7 @@ def test_automatic_series_pairs_absent_sequence_with_its_own_membership() -> Non
 
     field = _automatic_series_preview(report)
 
-    assert ("abstain", "series_membership_incomplete", None) == (
+    assert ("abstain", "series_conflicting_membership", None) == (
         field.outcome,
         field.reason,
         field.desired_value,
@@ -1898,7 +2156,7 @@ def test_automatic_series_ignores_interleaved_nonseries_claims_when_pairing() ->
                 _claim(
                     "catalogue",
                     "edition-1",
-                    ClaimKind.TITLE,
+                    ClaimKind.GENRE,
                     "Ignored",
                     scope=ClaimScope.WORK,
                     order=1,
@@ -1915,7 +2173,7 @@ def test_automatic_series_ignores_interleaved_nonseries_claims_when_pairing() ->
                 _claim(
                     "search",
                     "edition-2",
-                    ClaimKind.TITLE,
+                    ClaimKind.GENRE,
                     "Ignored",
                     scope=ClaimScope.WORK,
                     order=1,
@@ -1964,10 +2222,11 @@ def test_automatic_series_requires_retained_provider_evidence() -> None:
 
 def test_automatic_series_allows_local_and_provider_evidence() -> None:
     report = _report(
-        fields=_fields(
-            series=TargetField(TargetDestination.SERIES, TargetFieldState.MISSING)
+        fields=_automatic_series_fields(),
+        local_claims=(
+            _local_isbn("9780306406157", "valid_isbn_13"),
+            *_local_series_claims(),
         ),
-        local_claims=_local_series_claims(),
         providers=(_series_provider("catalogue", "edition-1", "hardcover"),),
     )
 
@@ -2048,37 +2307,9 @@ def test_automatic_series_ignores_an_unrelated_failed_lane() -> None:
         _series_provider("catalogue", "edition-1", "hardcover"),
         _series_provider("search", "edition-2", "open_library"),
     )
-    local = LocalClaim.create(
-        kind=ClaimKind.TITLE,
-        observed="Current title",
-        canonical="Current title",
-        excerpt="Current title",
-        applicability="not_applicable",
-        checksum="not_applicable",
-        applicability_basis="not_applicable",
-        scope=ClaimScope.WORK,
-    )
+    local = _local_isbn("9780306406157", "valid_isbn_13")
     provider = base.providers[0]
-    candidate = provider.candidates[0]
-    successful_lane = ProviderLaneObservation(
-        "lane_" + "a" * 64,
-        ProviderQueryKind.ISBN,
-        ProviderStatus.CANDIDATES,
-        (local.reference,),
-        "9780306406157",
-        candidates=(
-            ProviderLaneCandidate(
-                provider_lane_candidate_reference(
-                    provider.provider,
-                    "lane_" + "a" * 64,
-                    candidate.identity,
-                    candidate.work_identity,
-                ),
-                candidate.identity,
-                candidate.work_identity,
-            ),
-        ),
-    )
+    successful_lane = provider.lanes[0]
     failed_lane = ProviderLaneObservation(
         "lane_" + "c" * 64,
         ProviderQueryKind.WORK,
@@ -2110,66 +2341,69 @@ def test_automatic_series_ignores_an_unrelated_failed_lane() -> None:
     )
 
 
-def test_automatic_series_abstains_for_a_relevant_failed_lane() -> None:
+@pytest.mark.parametrize(
+    "option", ("primary_narrative", "source_order", "all_qualified")
+)
+@pytest.mark.parametrize(
+    "relation", ("same", "different_family", "different_input", "different_kind")
+)
+def test_automatic_series_scopes_failed_dispatch_to_contributing_provenance(
+    option, relation
+) -> None:
     base = _automatic_series_report(
         _series_provider("catalogue", "edition-1", "hardcover"),
     )
-    local = LocalClaim.create(
+    local = _local_isbn("9780306406157", "valid_isbn_13")
+    provider = base.providers[0]
+    other_input = LocalClaim.create(
         kind=ClaimKind.TITLE,
-        observed="Current title",
-        canonical="Current title",
-        excerpt="Current title",
+        observed="Other query",
+        canonical="Other query",
+        excerpt="Other query",
         applicability="not_applicable",
         checksum="not_applicable",
         applicability_basis="not_applicable",
         scope=ClaimScope.WORK,
     )
-    provider = base.providers[0]
-    candidate = provider.candidates[0]
-    lane = ProviderLaneObservation(
-        "lane_" + "a" * 64,
-        ProviderQueryKind.ISBN,
-        ProviderStatus.CANDIDATES,
-        (local.reference,),
-        "9780306406157",
-        candidates=(
-            ProviderLaneCandidate(
-                provider_lane_candidate_reference(
-                    provider.provider,
-                    "lane_" + "a" * 64,
-                    candidate.identity,
-                    candidate.work_identity,
-                ),
-                candidate.identity,
-                candidate.work_identity,
-            ),
-        ),
-    )
+    lane = provider.lanes[0]
     failed = ProviderLaneObservation(
         "lane_" + "b" * 64,
-        ProviderQueryKind.ISBN,
+        ProviderQueryKind.WORK
+        if relation == "different_kind"
+        else ProviderQueryKind.ISBN,
         ProviderStatus.UNAVAILABLE,
-        (local.reference,),
-        "9780306406157",
+        (other_input.reference if relation == "different_input" else local.reference,),
+        None
+        if relation == "different_kind"
+        else "9780140328721"
+        if relation == "different_family"
+        else "9780306406157",
     )
     report = MetadataReport.create(
         target=base.target,
         file=base.file,
-        local_claims=(local,),
+        local_claims=(local, other_input),
         local_reasons=("no_opening_matter",),
         providers=(
             replace(
                 provider,
-                input_references=(local.reference,),
+                input_references=tuple(
+                    sorted(set(lane.input_references + failed.input_references))
+                ),
                 query_kind=ProviderQueryKind.DISCOVERY,
                 lanes=(lane, failed),
             ),
         ),
     )
 
-    field = _automatic_series_preview(report)
+    field = _automatic_series_preview(report, option)
 
-    assert ("abstain", "series_provider_failure_isbn", None) == (
+    expected = (
+        ("abstain", "series_provider_failure_isbn", None)
+        if relation == "same"
+        else ("projected", None, ({"name": "Reading Order", "sequence": "2"},))
+    )
+    assert expected == (
         field.outcome,
         field.reason,
         field.desired_value,
@@ -2214,7 +2448,7 @@ def test_automatic_series_treats_provider_wide_unsupported_output_as_no_evidence
     assert "projected" == field.outcome
 
 
-def test_automatic_series_abstains_for_named_unsupported_duplicate_membership() -> None:
+def test_automatic_series_ignores_unselected_unsupported_duplicate_membership() -> None:
     unsupported_sequence = ProviderClaim.create(
         provider="open_library",
         candidate="edition-2",
@@ -2246,14 +2480,19 @@ def test_automatic_series_abstains_for_named_unsupported_duplicate_membership() 
 
     field = _automatic_series_preview(report)
 
-    assert ("abstain", "series_membership_incomplete", None) == (
+    assert ("projected", None, ({"name": "Reading Order", "sequence": "2"},)) == (
         field.outcome,
         field.reason,
         field.desired_value,
     )
 
 
-def test_automatic_series_abstains_when_membership_is_materially_incomplete() -> None:
+@pytest.mark.parametrize(
+    "option", ("primary_narrative", "source_order", "all_qualified")
+)
+def test_automatic_series_abstains_when_membership_is_materially_incomplete(
+    option,
+) -> None:
     incomplete = ProviderClaim.create(
         provider="catalogue",
         candidate="edition-1",
@@ -2273,7 +2512,7 @@ def test_automatic_series_abstains_when_membership_is_materially_incomplete() ->
         ),
     )
 
-    field = _automatic_series_preview(report)
+    field = _automatic_series_preview(report, option)
 
     assert ("abstain", "series_membership_incomplete", None) == (
         field.outcome,
@@ -2291,12 +2530,19 @@ def test_automatic_series_abstains_when_membership_is_materially_incomplete() ->
         (ClaimKind.SERIES_SEQUENCE, FieldState.OVERSIZED),
     ),
 )
-def test_automatic_series_abstains_for_any_malformed_provider_marker(
+@pytest.mark.parametrize(
+    "option", ("primary_narrative", "source_order", "all_qualified")
+)
+@pytest.mark.parametrize("same_provider", (False, True))
+def test_automatic_series_ignores_malformed_unselected_provider_candidate(
     kind: ClaimKind,
     state: FieldState,
+    option,
+    same_provider,
 ) -> None:
+    other_provider = "catalogue" if same_provider else "open_library"
     marker = ProviderClaim.create(
-        provider="open_library",
+        provider=other_provider,
         candidate="edition-2",
         kind=kind,
         value=None,
@@ -2305,14 +2551,21 @@ def test_automatic_series_abstains_for_any_malformed_provider_marker(
         applicability="not_applicable",
         raw_order=0,
     )
+    selected = _series_provider("catalogue", "edition-1", "hardcover")
+    unselected = _series_provider(
+        other_provider, "edition-2", "open_library", (marker,)
+    )
     report = _automatic_series_report(
-        _series_provider("catalogue", "edition-1", "hardcover"),
-        _series_provider("open_library", "edition-2", "open_library", (marker,)),
+        *(
+            (replace(selected, candidates=selected.candidates + unselected.candidates),)
+            if same_provider
+            else (selected, unselected)
+        )
     )
 
-    field = _automatic_series_preview(report)
+    field = _automatic_series_preview(report, option)
 
-    assert ("abstain", "series_membership_incomplete", None) == (
+    assert ("projected", None, ({"name": "Reading Order", "sequence": "2"},)) == (
         field.outcome,
         field.reason,
         field.desired_value,

@@ -65,8 +65,10 @@ from mechanical_librarian.domain.failure_diagnostics import (
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     WorkIdentityAdmission,
+    WorkTitleTransformationFamily,
     WorkTitleTransformationLineage,
     admit_provider_work_identity,
+    direct_work_title_election_matches,
     replay_provider_work_identity_admission,
     work_dispatch_lineage_from_data,
     work_title_has_variant_marker,
@@ -2611,6 +2613,67 @@ def provider_candidate_exact_work_identity_admission(
         provider_authors=authors,
         provider_work_identity=work_identity,
         variant_excluded=variant_excluded,
+    )
+
+
+def provider_candidate_series_identity_matches(
+    candidate: ProviderCandidate,
+    local_title: str,
+    local_authors: tuple[str, ...],
+) -> bool:
+    """Compare ISBN-backed series identity, without granting WORK admission.
+
+    The caller must independently prove the complete target-backed ISBN lane.
+    Decorations are attested by this candidate only; they create no claims,
+    values, dispatch lineage, or authority for another metadata destination.
+    """
+    claims = _provider_candidate_work_identity_claims(candidate)
+    if claims is None:
+        return False
+    title, authors, _work_identity, variant_excluded = claims
+    if (
+        candidate.work_identity in {"", "unresolved"}
+        or variant_excluded
+        or work_title_has_variant_marker(local_title)
+        or any(
+            claim.state is not FieldState.VALID or not claim.value
+            for claim in candidate.claims
+            if claim.scope is ClaimScope.WORK and claim.kind is ClaimKind.TITLE
+        )
+        or not _creator_sequence_methods(authors, local_authors)
+    ):
+        return False
+    if (
+        _comparison_method(ClaimKind.TITLE, title, local_title)
+        is not ComparisonMethod.NONE
+    ):
+        return True
+    edition_titles = tuple(
+        claim
+        for claim in candidate.claims
+        if claim.scope is ClaimScope.EDITION and claim.kind is ClaimKind.TITLE
+    )
+    if (
+        len(edition_titles) == 1
+        and edition_titles[0].state is FieldState.VALID
+        and edition_titles[0].value == local_title
+    ):
+        return True
+    matches = direct_work_title_election_matches(local_title, local_authors)
+    if len(matches) != 1:
+        return False
+    match = matches[0]
+    return (
+        match.family is WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME
+        and match.clean_title == title
+        and not direct_work_title_election_matches(match.clean_title, local_authors)
+        and any(
+            claim.scope is ClaimScope.WORK
+            and claim.kind is ClaimKind.SERIES
+            and claim.state is FieldState.VALID
+            and claim.value == match.preserved_component
+            for claim in candidate.claims
+        )
     )
 
 
