@@ -106,7 +106,7 @@ Google visible-text remain `not_qualified`; ASIN remains
 every non-automatic rich option. This authority records immutable decisions
 only and does not bypass effect consent or any guarded-write control.
 
-The #895 series repair candidate fills empty Automatic targets only and
+Qualified series fill (#895) fills empty Automatic targets only and
 preserves existing memberships. One provider can supply the required WORK
 backing; independent corroboration is not a quorum. Absent numbers remain
 absent. Malformed selected evidence and failures of contributing dispatches
@@ -119,10 +119,12 @@ as ordinary unsigned decimals. Ambiguous maxima, disjoint bundles and known
 position conflicts remain reviewable. No fuzzy matching, provider ranking or
 number inference is available.
 
-The F20 v11 evidence is historical development evidence. The first fresh
-confirmation produced no series projections and did not qualify the candidate.
-The [v12 scaffold](../reference/f20-rich-metadata-qualification-candidate-v12.json)
-grants no activation authority; the repaired rules require fresh qualification.
+The [F20 v12 candidate](../reference/f20-rich-metadata-qualification-candidate-v12.json)
+binds the qualified rules and separately scored confirmation/final membership
+and sequence results. V11 remains immutable historical evidence; its decisions
+are readable but cannot authorize new writes. The
+[qualification record](rich-metadata-qualification.md) states the source-label
+corrections, distinct-book denominators and limits of the evidence.
 
 ## Availability before curation
 

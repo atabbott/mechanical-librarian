@@ -2559,8 +2559,16 @@ def test_qualified_automatic_origin_uses_the_identical_plan_and_effect_path(
     assert effects.service.apply(result.plan.plan_id).state == "verified"
 
 
+@pytest.mark.parametrize(
+    "prior_digest",
+    (
+        "99ba8426ee53e4d31e52ecf0f65a0fce4eb237d3e5acef42e4ee17217b57dae9",
+        "4ede15a2aa84e8726ea2dff4e4f9f0d04b27a70276ed53c400c2de5f7619d445",
+    ),
+)
 def test_legacy_tag_decision_stays_readable_without_effect_authority(
     effects: _EffectEnvironment,
+    prior_digest: str,
 ) -> None:
     current = next(
         decision
@@ -2584,9 +2592,7 @@ def test_legacy_tag_decision_stays_readable_without_effect_authority(
     )
     legacy_core = {
         **current._core(),
-        "qualification_manifest_sha256": (
-            "99ba8426ee53e4d31e52ecf0f65a0fce4eb237d3e5acef42e4ee17217b57dae9"
-        ),
+        "qualification_manifest_sha256": prior_digest,
     }
 
     def digest(value: object) -> str:

@@ -226,6 +226,17 @@ def test_rich_metadata_target_shapes_read_apply_and_read_back(
     assert desired == case.target.read(plan).value
 
 
+def test_series_fill_preserves_null_sequence_through_supported_adapter(
+    case: _Case,
+) -> None:
+    case.detail["media"]["metadata"]["series"] = []
+    desired = [{"name": "Synthetic series", "sequence": None}]
+    plan = _plan("series", None, desired)
+    assert case.target.read(plan).value is None
+    assert case.target.apply(plan).outcome == "accepted"
+    assert case.target.read(plan).value == desired
+
+
 def test_cover_reads_digest_and_uploads_only_verified_original(case: _Case) -> None:
     plan = _plan("cover", None, case.cover)
     assert case.target.read(plan).value is None

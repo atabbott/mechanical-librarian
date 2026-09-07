@@ -179,8 +179,9 @@ def test_f38_contributor_consensus_binds_its_own_manifest() -> None:
 @pytest.mark.parametrize(
     "option", ("primary_narrative", "source_order", "all_qualified")
 )
+@pytest.mark.parametrize("narrowed", (False, True))
 def test_v11_series_history_survives_narrowed_current_authority(
-    monkeypatch: pytest.MonkeyPatch, option: str
+    monkeypatch: pytest.MonkeyPatch, option: str, narrowed: bool
 ) -> None:
     prior_core = {
         "review_case_id": "review_case_" + "a" * 64,
@@ -215,10 +216,21 @@ def test_v11_series_history_survives_narrowed_current_authority(
     )
     # A future qualification may narrow the live options; historical authority
     # belongs to its exact frozen manifest rather than that live option set.
-    monkeypatch.setattr(
-        automatic_decision, "F20_PASSING_AUTOMATIC_OPTIONS", frozenset()
+    current = AutomaticDecision.create(
+        **{
+            **prior_core,
+            "qualification_manifest_sha256": F20_QUALIFICATION_CANDIDATE_SHA256,
+        },
+        occurred_at=2,
     )
-    monkeypatch.setattr(automatic_decision, "QUALIFIED_POLICY_OPTIONS", frozenset())
+    assert qualification_manifest_is_current(
+        "series", option, current.qualification_manifest_sha256
+    )
+    if narrowed:
+        monkeypatch.setattr(
+            automatic_decision, "F20_PASSING_AUTOMATIC_OPTIONS", frozenset()
+        )
+        monkeypatch.setattr(automatic_decision, "QUALIFIED_POLICY_OPTIONS", frozenset())
     prior = AutomaticDecision.from_json(document)
     assert prior.to_json() == document
     assert not qualification_manifest_is_current(

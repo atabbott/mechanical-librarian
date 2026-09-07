@@ -78,6 +78,7 @@ from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
     AutomaticDecisionError,
     AutomaticSafetyState,
+    qualification_manifest_is_current,
 )
 from mechanical_librarian.domain.contributor_display_qualification import (
     F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY,
@@ -125,6 +126,10 @@ from mechanical_librarian.domain.review_case import ReviewCase, ReviewTransition
 from mechanical_librarian.domain.reviewer_access import (
     CodexTaskSelection,
     ReviewerAccessDocument,
+)
+from mechanical_librarian.domain.rich_metadata_preview import (
+    RichMetadataPreviewError,
+    compile_rich_metadata_preview,
 )
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 from mechanical_librarian.interfaces.web.app import (
@@ -2293,8 +2298,12 @@ def test_rich_no_change_rejects_a_superseded_report(tmp_path: Path) -> None:
         repository.close()
 
 
-def test_primary_narrative_populated_series_records_one_no_change_fact(
+@pytest.mark.parametrize(
+    "option", ("primary_narrative", "source_order", "all_qualified")
+)
+def test_populated_series_records_one_no_change_fact(
     tmp_path: Path,
+    option: str,
 ) -> None:
     report, category, _, _ = _automatic_no_change_inputs("series_source_order")
     repository = open_repository(tmp_path / "reports.sqlite")
@@ -2303,7 +2312,7 @@ def test_primary_narrative_populated_series_records_one_no_change_fact(
             SimpleNamespace(repository=repository),
             report,
             category,
-            "primary_narrative",
+            option,
             qualified=True,
         )
         assert decision.outcome == "keep_current"
@@ -2322,6 +2331,69 @@ def test_primary_narrative_populated_series_records_one_no_change_fact(
         assert repository._connection.execute(
             "SELECT count(*) FROM field_effect_no_changes"
         ).fetchone() == (1,)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effects"
+        ).fetchone() == (0,)
+    finally:
+        repository.close()
+
+
+@pytest.mark.parametrize(
+    "option", ("primary_narrative", "source_order", "all_qualified")
+)
+def test_persistence_rejects_fresh_populated_series_from_faulty_preview(
+    tmp_path: Path,
+    option: str,
+) -> None:
+    report, category, _, _ = _automatic_no_change_inputs("series_source_order")
+
+    def faulty_preview(policy, report, proposal):
+        preview = compile_rich_metadata_preview(policy, report, proposal)
+        result = next(
+            item for item in proposal.results if item.destination.value == "series"
+        )
+        candidate = result.alternatives[0]
+        # Model a faulty upstream preview at the collaborator boundary. The
+        # persistence consumer must independently reject populated replacements
+        # even when the decision and its source carry fresh, matching identities.
+        return replace(
+            preview,
+            fields=tuple(
+                replace(
+                    field,
+                    outcome="projected",
+                    reason=None,
+                    desired_value=candidate.value.value,
+                    qualified_value=candidate.value.value,
+                    source_candidate_id=candidate.alternative_id,
+                    source_evidence_references=candidate.evidence_references,
+                )
+                if field.field == "series"
+                else field
+                for field in preview.fields
+            ),
+        )
+
+    repository = open_repository(tmp_path / "reports.sqlite")
+    try:
+        with patch(
+            "mechanical_librarian.domain.shadow_outcome.compile_rich_metadata_preview",
+            side_effect=faulty_preview,
+        ):
+            (decision,) = _automatic_decisions(
+                SimpleNamespace(repository=repository),
+                report,
+                category,
+                option,
+                qualified=True,
+            )
+        assert decision.outcome == "candidate"
+        assert qualification_manifest_is_current(
+            "series", option, decision.qualification_manifest_sha256
+        )
+        with pytest.raises(FieldEffectError, match="authority_binding") as rejected:
+            repository.field_effect_authority_source(decision)
+        assert isinstance(rejected.value.__cause__, RichMetadataPreviewError)
         assert repository._connection.execute(
             "SELECT count(*) FROM field_effects"
         ).fetchone() == (0,)
@@ -5815,6 +5887,12 @@ def test_absent_series_positions_reach_effect_authority_after_persistence(
             "kind": "series",
             "value": [{"name": "Reading Order", "sequence": None}],
         }
+        assert qualification_manifest_is_current(
+            "series", option, decision.qualification_manifest_sha256
+        )
+        documents = repository.get_review_case_decisions(case_id)
+        repository.persist_shadow_outcome(case_id, 4)
+        assert repository.get_review_case_decisions(case_id) == documents
         repository.close()
 
 

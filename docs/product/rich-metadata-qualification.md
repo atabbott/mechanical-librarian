@@ -5,10 +5,11 @@ rich-metadata qualification contract and its exact option-level decisions. It
 grants decision-only Automatic authority to the passing options; it does not
 grant effect consent, construct a target write, or change provider selection.
 
-## Series repair candidate (#895): qualification pending
+## Qualified series fill (#895)
 
-The [v12 scaffold](../reference/f20-rich-metadata-qualification-candidate-v12.json)
-grants no authority. Its series rules preserve populated Automatic targets and
+The [v12 candidate](../reference/f20-rich-metadata-qualification-candidate-v12.json)
+qualifies the three existing series options for empty Automatic targets. Its
+series rules preserve populated targets and
 permit an absent position without inventing a number. A unique existing source
 bundle may resolve compatible subset alternatives, retaining its exact values,
 order and evidence; no union is constructed. Known positions compare by exact
@@ -17,15 +18,36 @@ shared proposal correction also applies to those compatible Ask alternatives.
 Failure checks follow the selected provider candidates and their contributing
 dispatch provenance, not an unrelated provider with the same query kind.
 
-The first fresh 15-work confirmation produced no automatic series projections;
-it did not qualify membership or sequence. That consumed batch remains
-development evidence, and the final batch remains sealed. The repaired candidate
-requires a newly frozen evaluator and fresh confirmation before final execution
-or genuine v12 authority. Membership and sequence are separate claims: each
-requires precision 1.0 and three distinct scored works; unknown positions are
-unscored, while known wrong positions block the affected option. All claimed
-memberships, including full `all_qualified` values, are evaluated. Historical
-v11 bytes and option identities remain unchanged and readable, not new authority.
+The first 15-work confirmation produced no automatic series projections and
+remains failed, spent development evidence. The repaired, frozen candidate then
+passed a fresh 24-work confirmation and its once-only 12-work final capture.
+Each option made 10 correct complete membership projections in confirmation and
+5 in final, with no incorrect projections or negative-control false positives.
+Coverage of supported works was 10/19 and 5/7 respectively; recall is measured,
+not a pass gate. One confirmation and two final source-label corrections were
+adjudicated independently of predictions; their original evaluations and
+acceptance receipts remain bound. These offline correction replays changed no
+candidate, scorer, threshold or capture and are not extra independent batches.
+
+Membership and sequence are separate claims. Each requires precision 1.0 and
+three distinct scored works per option per batch; unknown positions are
+unscored, while known wrong positions block the affected option. Confirmation
+has eight distinct correct sequence cases, one absent number and one unknown
+number per option. Final has five distinct correct sequence cases per option.
+The full `all_qualified` final output has seven raw membership occurrences,
+including convention-qualified views of the same grouping, six correct sequence
+occurrences and one unknown; its support denominator is still five books.
+Actual target values are scored separately from full qualified memberships.
+
+The runtime binds the completed v12 digest, source dependencies, closed option
+matrix and tested zero-tolerance controls. Metrics alone do not authorize
+activation. Historical v11 bytes and decisions remain readable, while fresh
+decisions and guarded effects require the exact current qualification. Retained
+non-series compiler evidence compares 980 serialized observations unchanged;
+the rotation intentionally changes authority-derived identities. The earlier
+50-case gold programme and operator evidence remain retained evidence, not 50
+new cases. Supported isolated field effects and the exact installed candidate
+are qualified through the existing delivery checks.
 
 ## Historical qualification record
 
@@ -66,8 +88,8 @@ provider-document development cohorts each reached 100% precision on their
 positive scored denominators. The two mixed cohorts each include two allowed
 memberships with explicitly unknown position, which are unscored rather than
 treated as exact proof. This is development-exposed evidence, not a holdout;
-a separately frozen fresh mixed confirmation remains required before #895
-activation. The historical v5 record gave the two ISBN policies 22 correct
+that historical record required the separately frozen confirmation now recorded
+above. The historical v5 record gave the two ISBN policies 22 correct
 predictions from 41 eligible opportunities, each at 100% precision.
 The admitted proposal and decision retain every qualified membership; the
 existing Audiobookshelf effect planner projects only the preferred first

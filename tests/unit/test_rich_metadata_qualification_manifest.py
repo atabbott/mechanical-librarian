@@ -35,6 +35,9 @@ MANIFEST = (
     Path(__file__).parents[2]
     / "docs/reference/f20-rich-metadata-qualification-candidate-v11.json"
 )
+CURRENT_MANIFEST = MANIFEST.with_name(
+    "f20-rich-metadata-qualification-candidate-v12.json"
+)
 HISTORICAL_MANIFEST = (
     Path(__file__).parents[2]
     / "docs/reference/f20-rich-metadata-qualification-candidate-v10.json"
@@ -76,25 +79,22 @@ RICH_FIELDS = (
 )
 
 
-def test_v12_scaffold_binds_source_without_claiming_qualification() -> None:
-    scaffold_path = MANIFEST.with_name(
-        "f20-rich-metadata-qualification-candidate-v12.json"
-    )
-    scaffold = json.loads(scaffold_path.read_bytes())
-    assert scaffold["status"] == "unqualified_scaffold"
-    assert scaffold["automatic_authority"] == "none"
-    assert scaffold["qualification"] is None
-    assert scaffold["passing_automatic_options"] == []
-    assert (
-        scaffold["prior_manifest_sha256"]
-        == hashlib.sha256(MANIFEST.read_bytes()).hexdigest()
-    )
-    assert (
-        hashlib.sha256(scaffold_path.read_bytes()).hexdigest()
-        != F20_QUALIFICATION_CANDIDATE_SHA256
-    )
-    sources = scaffold["frozen_contract"]["behavior_sources"]
+def test_v12_binds_current_source_and_preserves_historical_v11_bytes() -> None:
+    manifest = json.loads(CURRENT_MANIFEST.read_bytes())
+    assert manifest["schema"] == "f20-rich-metadata-qualification-candidate-v12"
+    assert manifest["automatic_authority"] == "decision_only"
+    prior = hashlib.sha256(MANIFEST.read_bytes()).hexdigest()
+    assert prior == "4ede15a2aa84e8726ea2dff4e4f9f0d04b27a70276ed53c400c2de5f7619d445"
+    assert manifest["authority_rotation"]["prior_manifest_sha256"] == prior
+    assert prior != F20_QUALIFICATION_CANDIDATE_SHA256
+    sources = manifest["frozen_contract"]["behavior_sources"]
     assert {
+        "src/mechanical_librarian/domain/work_identity.py",
+        "src/mechanical_librarian/domain/field_value_comparison.py",
+        "src/mechanical_librarian/domain/review_case.py",
+        "src/mechanical_librarian/application/field_effects.py",
+        "src/mechanical_librarian/application/continuous_field_effects.py",
+        "src/mechanical_librarian/adapters/persistence/metadata_reports.py",
         "src/mechanical_librarian/adapters/persistence/field_effect_validation.py",
         "src/mechanical_librarian/adapters/persistence/field_effect_activity.py",
     } <= sources.keys()
@@ -103,9 +103,122 @@ def test_v12_scaffold_binds_source_without_claiming_qualification() -> None:
             hashlib.sha256((MANIFEST.parents[2] / source).read_bytes()).hexdigest()
             == digest
         )
+    root = MANIFEST.parents[2]
+    assert (
+        manifest["frozen_contract"]["uv_lock_sha256"]
+        == hashlib.sha256((root / "uv.lock").read_bytes()).hexdigest()
+    )
 
 
-def test_candidate_is_closed_field_local_and_exactly_authorizing() -> None:
+@pytest.mark.parametrize("batch", ("confirmation", "final"))
+@pytest.mark.parametrize(
+    "option", ("primary_narrative", "source_order", "all_qualified")
+)
+def test_v12_separates_membership_sequence_and_distinct_book_support(
+    batch: str, option: str
+) -> None:
+    manifest = json.loads(CURRENT_MANIFEST.read_bytes())
+    series = manifest["evidence_method"]["series"]
+    assert series["precision_required"] == 1
+    assert series["minimum_distinct_scored_books_per_option_per_batch"] == 3
+    assert series["options_or_batches_pooled"] is False
+    assert series["metric_result_alone_grants_authority"] is False
+    assert series["recall_is_gate"] is False
+    assert series["unknown_positions"] == "unscored"
+    assert series["known_wrong_positions"] == "block_option"
+    evidence = series["batches"][batch]
+    expected = (
+        (24, 19, 4, 1, 10, 14, 8) if batch == "confirmation" else (12, 7, 3, 2, 5, 7, 5)
+    )
+    cases, supported, negative, unknown, correct, abstained, scored = expected
+    assert evidence["case_count"] == cases
+    assert evidence["source_states"] == {
+        "supported": supported,
+        "known_empty": negative,
+        "unknown": unknown,
+    }
+    metrics = evidence["options"][option]
+    assert metrics["complete_projection_counts"] == {
+        "correct": correct,
+        "abstained": abstained,
+    }
+    assert metrics["distinct_membership_scored_books"] == correct
+    assert metrics["distinct_sequence_scored_books"] == scored
+    assert metrics["membership_gate"] == "passed"
+    assert metrics["sequence_gate"] == "qualified"
+    assert metrics["negative_false_positives"] == 0
+    assert metrics["supported_complete_projection_coverage"] == correct / supported
+    for name in (
+        "membership_projection_precision",
+        "membership_claim_precision",
+        "sequence_precision",
+    ):
+        assert metrics[name] == 1.0
+    extra_convention = batch == "final" and option == "all_qualified"
+    assert metrics["membership_claim_counts"] == {
+        "correct": 7 if extra_convention else correct
+    }
+    assert metrics["sequence_claim_counts"] == (
+        {"correct": 8, "missing": 1, "unknown": 1}
+        if batch == "confirmation"
+        else {"correct": 6, "unknown": 1}
+        if extra_convention
+        else {"correct": 5}
+    )
+    target = metrics["target_value_metrics"]
+    assert target["membership_counts"] == {"correct": correct}
+    assert target["sequence_scored_cases"] == scored
+    assert target["sequence_counts"] == (
+        {"correct": 8, "missing": 1, "unknown": 1}
+        if batch == "confirmation"
+        else {"correct": 5}
+    )
+    assert target["activation_authorized"] is False
+    correction = evidence["correction"]
+    assert correction["source_rows_corrected"] == (1 if batch == "confirmation" else 2)
+    assert correction["blind_source_review"] is True
+    for name in (
+        "candidate_changed",
+        "scorer_changed",
+        "thresholds_changed",
+        "recaptured",
+    ):
+        assert correction[name] is False
+    for name in (
+        "result_sha256",
+        "execution_seal_sha256",
+        "capture_receipt_sha256",
+        "original_evaluation_sha256",
+    ):
+        assert re.fullmatch(r"[0-9a-f]{64}", evidence[name])
+
+
+def test_v12_retains_non_series_dispositions_and_historical_metrics() -> None:
+    historical = json.loads(MANIFEST.read_bytes())
+    current = json.loads(CURRENT_MANIFEST.read_bytes())
+    assert (
+        current["passing_automatic_options"] == historical["passing_automatic_options"]
+    )
+    prior_options = {entry["identity"]: entry for entry in historical["options"]}
+    for entry in current["options"]:
+        if not entry["identity"].startswith("series:"):
+            assert entry == {
+                **prior_options[entry["identity"]],
+                "evidence_origin": "historical_v11",
+            }
+    controls = current["zero_tolerance"]
+    assert controls["evaluation_status"] == "passed"
+    assert controls["failure_counts"] == {
+        name: 0 for name in controls["required_controls"]
+    }
+    assert {
+        "populated_series_replacement",
+        "historical_qualification_write",
+        "inferred_series_sequence",
+    } <= set(controls["required_controls"])
+
+
+def test_historical_v11_retains_its_exact_option_metrics_and_evidence() -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
 
     assert "f20-rich-metadata-qualification-candidate-v11" == manifest["schema"]
@@ -515,13 +628,9 @@ def test_candidate_exposes_only_closed_aggregate_contract_data() -> None:
     for name in ("automatic_decision", "compiler", "policy", "target_shape"):
         item = manifest["frozen_contract"][name]
         assert {"identity", "sha256"} == set(item)
-        if item["sha256"] != ROOT_PLACEHOLDER:
-            assert (
-                hashlib.sha256(
-                    (MANIFEST.parents[2] / item["identity"]).read_bytes()
-                ).hexdigest()
-                == item["sha256"]
-            )
+        # Historical source bindings describe the earlier measured compiler.
+        # Their immutable bytes are pinned above; current source is bound by v12.
+        assert re.fullmatch(r"[0-9a-f]{64}", item["sha256"])
     for name in ("adjudication", "evaluator", "evidence_execution", "thresholds"):
         item = manifest["frozen_contract"][name]
         assert {"identity", "sha256"} == set(item)
@@ -549,17 +658,13 @@ def test_candidate_exposes_only_closed_aggregate_contract_data() -> None:
         "initial_holdout_receipt_sha256": "4637df813899ec39d2896fc626076d09924165433674cef35cfcc4fc0c6c48dd",
         "preview_sha256": "f5fdad27f901735ef0e3075bfb1a98cb4aa5eb0461cdc7e63f0deb638b05e52b",
     } == manifest["frozen_contract"]["description_tiebreaker"]
-    for source, name in {
+    for _source, name in {
         "src/mechanical_librarian/domain/automatic_decision.py": "automatic_decision_sha256",
         "src/mechanical_librarian/domain/rich_metadata_preview.py": "preview_sha256",
         "src/mechanical_librarian/domain/proposal_set.py": "proposal_policy_sha256",
     }.items():
         bound = manifest["frozen_contract"]["isbn_manifestation_election"][name]
-        if bound != ROOT_PLACEHOLDER:
-            assert (
-                hashlib.sha256((MANIFEST.parents[2] / source).read_bytes()).hexdigest()
-                == bound
-            )
+        assert re.fullmatch(r"[0-9a-f]{64}", bound)
 
 
 def test_v10_manifest_remains_historical_readable_after_v11_rotation() -> None:
@@ -619,6 +724,7 @@ def test_v10_manifest_remains_historical_readable_after_v11_rotation() -> None:
                 yield from keys(child)
 
     assert forbidden.isdisjoint(keys(manifest))
+    assert forbidden.isdisjoint(keys(json.loads(CURRENT_MANIFEST.read_bytes())))
 
 
 def test_f19a_authority_is_preserved_and_exact_f20_is_added() -> None:
@@ -788,12 +894,11 @@ def test_f38_manifest_separately_qualifies_provider_consensus_contributor_displa
 
 
 def test_runtime_envelope_pins_every_terminal_disposition_and_authority() -> None:
-    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
-    if F20_QUALIFICATION_CANDIDATE_SHA256 not in PLACEHOLDER_DIGESTS:
-        assert (
-            hashlib.sha256(MANIFEST.read_bytes()).hexdigest()
-            == F20_QUALIFICATION_CANDIDATE_SHA256
-        )
+    manifest = json.loads(CURRENT_MANIFEST.read_text(encoding="utf-8"))
+    assert (
+        hashlib.sha256(CURRENT_MANIFEST.read_bytes()).hexdigest()
+        == F20_QUALIFICATION_CANDIDATE_SHA256
+    )
     passing = frozenset(
         {
             "description_fill:safe_plain_text",
@@ -818,6 +923,9 @@ def test_runtime_envelope_pins_every_terminal_disposition_and_authority() -> Non
         | {"tags:off": "policy_only"}
     ) == F20_OPTION_DISPOSITIONS
     summary = public_summary()
+    assert {entry["candidate_sha256"] for entry in summary} == {
+        F20_QUALIFICATION_CANDIDATE_SHA256
+    }
     assert set(F20_OPTION_DISPOSITIONS) == {
         f"{entry['field']}:{entry['option']}" for entry in summary
     }
