@@ -369,16 +369,18 @@ class _CoverPolicyPreferences(_ClosedModel):
 
 class _CoverPolicyReport(_ClosedModel):
     acceptable_candidate_references: list[str]
+    actual_target_state: Literal["known_empty", "confirmed", "unknown"]
     cover_packet_reference: str
     identity_classifier_reference: str
     identity_report_sha256: str
     observation_report_sha256: str | None
     observation_taxonomy_reference: str
+    owner_ready: bool
     policy_reference: str
     reasons: list[str]
     recommended_candidate_reference: str | None
-    schema_version: str
-    status: str
+    schema_version: Literal["cover-policy-report-v2"]
+    status: Literal["recommended", "abstained"]
 
 
 class _CoverConsiderationResponse(_ClosedModel):
@@ -398,7 +400,7 @@ class _CoverConsiderationResponse(_ClosedModel):
     reviewer_access_revision: StrictInt | None
     reviewer_status: str
     reviewer_unavailable_reason: str | None
-    schema_version: Literal["cover-consideration-v3"]
+    schema_version: Literal["cover-consideration-v4"]
     supersedes_id: str | None
     target_fingerprint: str
 

@@ -3,15 +3,17 @@
 A workbench instrument, deliberately not part of the installed product: run it
 from a checkout against the configuration file and COPIES of (or read-only
 access to) the application and catalogue databases. It writes nothing and
-prints one ``cold-start-report-v1`` JSON document to stdout.
+prints one ``cold-start-report-v2`` JSON document to stdout.
 
 The report is aggregate-only by construction. It contains connection,
 library, provider, and mount names from the operator's own configuration,
 destination names, closed reason codes, file extensions, and counts — never a
 title, author, filename, media path, or item identifier. The attention
 predicate is not re-derived: the queries compose the same shared
-``review_sql`` fragments the Attention surface executes, so the report cannot
-disagree with the interface about which field needs attention.
+``review_sql`` fragments the Attention surface executes. The offline report
+cannot establish the live cover policy and replay authority, so a library with
+a current cover consideration reports its attention aggregates as unavailable
+instead of guessing that its cover fields are quiet.
 
 Usage:
     uv run python scripts/cold_start_report.py \
@@ -48,7 +50,7 @@ from mechanical_librarian.application.configuration import ApplicationConfigurat
 from mechanical_librarian.domain.reviewer_decision_summary import correlation_identity
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 
-COLD_START_REPORT_SCHEMA = "cold-start-report-v1"
+COLD_START_REPORT_SCHEMA = "cold-start-report-v2"
 
 _ATTENTION_FIELD_ROWS_SQL = (
     "SELECT c.connection_name,c.library_name,"
@@ -77,6 +79,13 @@ _LIBRARY_WORK_COUNTS_SQL = (
     + _CURRENT_LIBRARY_FROM_SQL
     + " WHERE ml.outcome!='report_only' "
     "GROUP BY ml.connection_name,ml.library_name"
+)
+_CURRENT_COVER_POINTER_LIBRARIES_SQL = (
+    "SELECT DISTINCT ml.connection_name,ml.library_name "
+    + _CURRENT_LIBRARY_FROM_SQL
+    + " JOIN current_cover_considerations current_cover "
+    "ON current_cover.review_case_id=rc.review_case_id "
+    "WHERE ml.outcome!='report_only'"
 )
 _PROVIDER_ROWS_SQL = (
     "SELECT ml.connection_name,ml.library_name,"
@@ -228,15 +237,20 @@ def _without_identities(value: object) -> object:
     return value
 
 
-def _rows(connection: sqlite3.Connection, sql: str) -> list[tuple[object, ...]]:
-    return [tuple(row) for row in connection.execute(sql).fetchall()]
+def _rows(
+    connection: sqlite3.Connection,
+    sql: str,
+    parameters: tuple[object, ...] = (),
+) -> list[tuple[object, ...]]:
+    return [tuple(row) for row in connection.execute(sql, parameters).fetchall()]
 
 
 def _attention_field_rows(
     connection: sqlite3.Connection,
+    parameters: tuple[object, ...] = (),
 ) -> list[tuple[object, ...]]:
     rows: list[tuple[object, ...]] = []
-    for row in connection.execute(_ATTENTION_FIELD_ROWS_SQL).fetchall():
+    for row in connection.execute(_ATTENTION_FIELD_ROWS_SQL, parameters).fetchall():
         reasons = row[4]
         parsed: tuple[str, ...] = ()
         if isinstance(reasons, str) and reasons:
@@ -394,8 +408,11 @@ def cold_start_snapshot(connection: sqlite3.Connection) -> dict[str, object]:
     connection.execute("BEGIN")
     try:
         return {
-            "libraries": _rows(connection, _LIBRARY_WORK_COUNTS_SQL),
-            "attention_fields": _attention_field_rows(connection),
+            "libraries": _rows(connection, _LIBRARY_WORK_COUNTS_SQL, (None, None)),
+            "attention_fields": _attention_field_rows(connection, (None, None)),
+            "current_cover_pointer_libraries": _rows(
+                connection, _CURRENT_COVER_POINTER_LIBRARIES_SQL
+            ),
             "provider_lanes": _provider_lane_rows(connection),
             "unmatched_works": _rows(connection, _UNMATCHED_WORKS_SQL),
             "scans": _rows(connection, _SCAN_ROWS_SQL),
@@ -506,7 +523,7 @@ def assemble_cold_start_report(
     mount_files: dict[str, dict[str, int] | None],
     generated_at: int,
 ) -> dict[str, object]:
-    """Build the ``cold-start-report-v1`` document from persisted aggregates.
+    """Build the ``cold-start-report-v2`` document from persisted aggregates.
 
     Pure assembly: every input is injected, so the document is deterministic
     for identical inputs and testable without a filesystem or database.
@@ -520,6 +537,13 @@ def assemble_cold_start_report(
     }
     mount_by_library = {
         library.name: library.mount for library in configuration.libraries
+    }
+    unavailable_attention = {
+        (row[0], row[1])
+        for row in cast(
+            "list[tuple[object, ...]]",
+            snapshot["current_cover_pointer_libraries"],
+        )
     }
 
     work_counts = {
@@ -631,6 +655,10 @@ def assemble_cold_start_report(
     for connection_name, library_name in library_keys:
         key = (connection_name, library_name)
         total, attention_works = work_counts.get(key, (0, 0))
+        attention_unavailable = key in unavailable_attention
+        attention_unavailable_reason = (
+            "current_cover_authority_unavailable" if attention_unavailable else None
+        )
         scan = scans.get(key)
         states = work_states.get(key)
         ready = int(cast("int", states[2])) if states else 0
@@ -708,8 +736,8 @@ def assemble_cold_start_report(
                 },
                 "works": {
                     "current_total": total,
-                    "attention": attention_works,
-                    "quiet": total - attention_works,
+                    "attention": None if attention_unavailable else attention_works,
+                    "quiet": None if attention_unavailable else total - attention_works,
                     "ledger_total": ledger_total,
                     "ready": ready,
                     "blocked": blocked,
@@ -717,12 +745,15 @@ def assemble_cold_start_report(
                         sorted(absence_counts.get(key, Counter()).items())
                     ),
                 },
-                "attention_fields": {
+                "attention_fields": None
+                if attention_unavailable
+                else {
                     "total": sum(attention["by_destination"].values()),
                     "by_destination": dict(sorted(attention["by_destination"].items())),
                     "by_cause": dict(sorted(attention["by_cause"].items())),
                     "by_class": dict(sorted(attention["by_class"].items())),
                 },
+                "attention_unavailable_reason": attention_unavailable_reason,
                 "providers": provider_rows,
                 "works_without_provider_candidates": unmatched.get(key, 0),
                 "timing": timing,
@@ -751,19 +782,34 @@ def assemble_cold_start_report(
 
     total_works = sum(work_counts.get(key, (0, 0))[0] for key in library_keys)
     total_attention = sum(work_counts.get(key, (0, 0))[1] for key in library_keys)
+    configured_attention_unavailable = any(
+        key in unavailable_attention for key in library_keys
+    )
+    total_attention_unavailable_reason = (
+        "current_cover_authority_unavailable"
+        if configured_attention_unavailable
+        else None
+    )
     return {
         "schema_version": COLD_START_REPORT_SCHEMA,
         "generated_at": generated_at,
         "catalogue_generation": catalogue_generation,
         "totals": {
             "works": total_works,
-            "attention_works": total_attention,
-            "quiet_works": total_works - total_attention,
+            "attention_works": (
+                None if configured_attention_unavailable else total_attention
+            ),
+            "quiet_works": (
+                None
+                if configured_attention_unavailable
+                else total_works - total_attention
+            ),
             "quiet_fraction": (
                 round((total_works - total_attention) / total_works, 4)
-                if total_works
+                if total_works and not configured_attention_unavailable
                 else None
             ),
+            "attention_unavailable_reason": total_attention_unavailable_reason,
         },
         "determinism": {
             "duplicate_groups_compared": len(compared),

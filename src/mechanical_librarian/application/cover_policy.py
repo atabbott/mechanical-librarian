@@ -10,8 +10,14 @@ from dataclasses import dataclass
 from typing import cast
 
 from mechanical_librarian.domain.deterministic_cover_election import (
+    CoverActualTargetState,
     CoverElectionCandidate,
     elect_confirmed_covers,
+)
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    TargetDestination,
+    TargetFieldState,
 )
 
 from .cover_identity import (
@@ -42,7 +48,7 @@ from .cover_observation import (
 )
 from .cover_packet_semantics import bind_cover_packet, canonical_packet_json
 
-SCHEMA_VERSION = "cover-policy-report-v1"
+SCHEMA_VERSION = "cover-policy-report-v2"
 POLICY_SCHEMA_VERSION = "cover-policy-v1"
 _IDENTITY_OUTCOMES = frozenset(
     {
@@ -156,31 +162,58 @@ def adjudicate_cover_policy(
             profile_payload,
         )
         observation_taxonomy_reference = cast("str", observation["taxonomy_reference"])
+    election_candidates = tuple(
+        CoverElectionCandidate(
+            reference=reference,
+            identity=cast("str", identity_by_reference[reference]["outcome"]),
+            identity_citations=tuple(
+                cast(
+                    "list[str]",
+                    identity_by_reference[reference]["evidence_references"],
+                )
+            ),
+            source_citations=tuple(
+                cast("str", binding["reference"])
+                for binding in candidates[index]["source_bindings"]
+            ),
+            incumbent=cast("bool", candidates[index]["incumbent"]),
+            width=cast("int", candidates[index]["width"]),
+            height=cast("int", candidates[index]["height"]),
+            packet_ordinal=index,
+        )
+        for index, reference in enumerate(references)
+        if identity_by_reference[reference]["outcome"]
+        in {"verified_manifestation_match", "verified_work_match"}
+    )
+    report = MetadataReport.from_json(report_document)
+    target_cover = next(
+        value
+        for value in report.target.fields
+        if value.destination is TargetDestination.COVER
+    )
+    has_confirmed_incumbent = any(
+        candidate.incumbent for candidate in election_candidates
+    )
+    has_retained_incumbent = any(
+        cast("bool", candidate["incumbent"]) for candidate in candidates
+    )
+    actual_target_state = (
+        CoverActualTargetState.CONFIRMED
+        if target_cover.state is TargetFieldState.VALUE and has_confirmed_incumbent
+        else CoverActualTargetState.KNOWN_EMPTY
+        if target_cover.state
+        in {
+            TargetFieldState.MISSING,
+            TargetFieldState.NULL,
+            TargetFieldState.EMPTY,
+        }
+        and not has_retained_incumbent
+        else CoverActualTargetState.UNKNOWN
+    )
     election = elect_confirmed_covers(
-        tuple(
-            CoverElectionCandidate(
-                reference=reference,
-                identity=cast("str", identity_by_reference[reference]["outcome"]),
-                identity_citations=tuple(
-                    cast(
-                        "list[str]",
-                        identity_by_reference[reference]["evidence_references"],
-                    )
-                ),
-                source_citations=tuple(
-                    cast("str", binding["reference"])
-                    for binding in candidates[index]["source_bindings"]
-                ),
-                incumbent=cast("bool", candidates[index]["incumbent"]),
-                width=cast("int", candidates[index]["width"]),
-                height=cast("int", candidates[index]["height"]),
-                packet_ordinal=index,
-            )
-            for index, reference in enumerate(references)
-            if identity_by_reference[reference]["outcome"]
-            in {"verified_manifestation_match", "verified_work_match"}
-        ),
+        election_candidates,
         provider_fetching=provider_fetching,
+        actual_target_state=actual_target_state,
     )
     acceptable = tuple(item.candidate.reference for item in election.ranked)
     return _report(
@@ -194,9 +227,17 @@ def adjudicate_cover_policy(
         None
         if election.recommendation is None
         else election.recommendation.candidate.reference,
+        election.ready,
+        actual_target_state.value,
         (
             ("provider_fetching",)
             if acceptable and provider_fetching
+            else ("actual_target_unverified",)
+            if acceptable and actual_target_state is CoverActualTargetState.UNKNOWN
+            else ("confirmed_incumbent_not_improved",)
+            if acceptable
+            and actual_target_state is CoverActualTargetState.CONFIRMED
+            and election.recommendation is None
             else ("deterministic_confirmed_order",)
             if acceptable
             else ("no_confirmed_candidates",)
@@ -422,6 +463,8 @@ def _report(
     observation_taxonomy_reference: str,
     acceptable: tuple[str, ...],
     recommendation: str | None,
+    owner_ready: bool,
+    actual_target_state: str,
     reasons: tuple[str, ...],
 ) -> CoverPolicyReport:
     if recommendation is not None and recommendation not in acceptable:
@@ -429,6 +472,7 @@ def _report(
     status = "recommended" if recommendation is not None else "abstained"
     body = {
         "acceptable_candidate_references": list(acceptable),
+        "actual_target_state": actual_target_state,
         "cover_packet_reference": packet_reference,
         "identity_classifier_reference": classifier_reference,
         "identity_report_sha256": hashlib.sha256(
@@ -440,6 +484,7 @@ def _report(
             else None
         ),
         "observation_taxonomy_reference": observation_taxonomy_reference,
+        "owner_ready": owner_ready,
         "policy_reference": policy.reference,
         "reasons": list(reasons),
         "recommended_candidate_reference": recommendation,

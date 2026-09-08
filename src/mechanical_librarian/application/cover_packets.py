@@ -150,6 +150,8 @@ def prepare_cover_packet(
                 existing.incumbent = True
                 existing.reference = reference
                 existing.source_digest = artifact.preview_digest
+                existing.width = artifact.width
+                existing.height = artifact.height
             continue
         candidates_by_digest[transport_digest] = _Candidate(
             reference=reference,

@@ -51,8 +51,28 @@ _AUTOMATIC_SAFETY_ATTENTION_SQL = (
 _AUDIOBOOK_OWNER_ONLY_ATTENTION_SQL = (
     "json_extract(mr.document,'$.file.format') <> 'epub'"
 )
+_CURRENT_COVER_ATTENTION_AUTHORITY_SQL = (
+    "(result.destination<>'cover' OR NOT EXISTS (SELECT 1 "
+    "FROM current_cover_considerations current_cover_pointer "
+    "WHERE current_cover_pointer.review_case_id=rc.review_case_id) "
+    "OR EXISTS (SELECT 1 "
+    "FROM current_cover_considerations current_cover_authority "
+    "JOIN cover_considerations authority_consideration "
+    "ON authority_consideration.consideration_id="
+    "current_cover_authority.consideration_id "
+    "WHERE current_cover_authority.review_case_id=rc.review_case_id "
+    "AND json_extract(authority_consideration.document,'$.policy_reference')=? "
+    "AND json_extract(authority_consideration.document,'$.replay_reference')=?))"
+)
 _REVIEW_FIELD_ATTENTION_SQL = (
     "result.has_owner_decision_actions=1 AND (result.unresolved_choice=1 "
+    "OR (result.destination='cover' AND EXISTS (SELECT 1 "
+    "FROM current_cover_considerations current_cover "
+    "JOIN cover_considerations consideration "
+    "ON consideration.consideration_id=current_cover.consideration_id "
+    "WHERE current_cover.review_case_id=rc.review_case_id "
+    "AND json_extract(json_extract(consideration.document,'$.policy_report_document'),"
+    "'$.owner_ready')=1)) "
     "OR "
     + _AUDIOBOOK_OWNER_ONLY_ATTENTION_SQL
     + " OR "
@@ -61,13 +81,25 @@ _REVIEW_FIELD_ATTENTION_SQL = (
     + _AUTOMATIC_SAFETY_ATTENTION_SQL
     + " OR "
     + _SHADOW_ABSTENTION_SQL
-    + ") AND NOT EXISTS (SELECT 1 FROM human_decisions decision "
+    + ") AND "
+    + _CURRENT_COVER_ATTENTION_AUTHORITY_SQL
+    + " AND NOT EXISTS (SELECT 1 FROM human_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
     "AND decision.destination=result.destination) "
     "AND NOT EXISTS (SELECT 1 FROM automatic_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
     "AND decision.destination=result.destination "
     ") "
+    "AND NOT EXISTS (SELECT 1 FROM current_cover_selection_authorities current_selection "
+    "JOIN cover_selection_authorities selection "
+    "ON selection.selection_id=current_selection.selection_id "
+    "JOIN current_cover_considerations current_cover "
+    "ON current_cover.consideration_id=selection.consideration_id "
+    "WHERE result.destination='cover' AND selection.kind='automatic' "
+    "AND current_cover.review_case_id=rc.review_case_id "
+    "AND current_selection.connection_name=c.connection_name "
+    "AND current_selection.library_name=c.library_name "
+    "AND current_selection.item_id=c.item_id) "
     "AND NOT EXISTS (SELECT 1 FROM field_effect_suspensions suspension "
     "WHERE suspension.connection_name=c.connection_name AND ("
     "(suspension.scope='connection' AND suspension.destination='') OR "
@@ -120,6 +152,7 @@ _SHADOW_OUTCOME_HISTORY_SQL = (
 
 __all__ = [
     "_AUTOMATIC_SAFETY_ATTENTION_SQL",
+    "_CURRENT_COVER_ATTENTION_AUTHORITY_SQL",
     "_CURRENT_LIBRARY_FROM_SQL",
     "_CURRENT_REVIEW_CASE_COUNT_SQL",
     "_CURRENT_REVIEW_FROM_SQL",

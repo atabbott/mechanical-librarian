@@ -23,8 +23,12 @@ precedence, and finally the opaque candidate reference. Exact duplicate
 collapse and every source binding remain upstream inputs; reviewer observations
 are validated and retained but cannot admit, exclude, order, delay, or decide.
 
-Owner and automatic paths share one readiness rule: at least one confirmed
-candidate and no exact persisted provider/report lane actively fetching.
+Owner readiness requires at least one confirmed non-incumbent candidate and no
+exact persisted provider/report lane actively fetching. Automatic choice is a
+separate result. A known-empty target may use the first ranked candidate; a
+confirmed target may use one only when its complete seven-part rank is strictly
+better than the confirmed incumbent. Missing or inconsistent incumbent facts
+abstain automatically while retaining the owner's ranked choices.
 Checking and running are active; queued retry/backoff waiting is quiescent.
 Readiness, rank and citations are persisted with the consideration. A changed
 fetching state or evidence creates a successor rather than rewriting history.
@@ -34,17 +38,19 @@ frozen aggregate-safe qualification manifest. It uses the same immutable
 decision and guarded effect path as other automatic fields, including current
 policy, consent, capability, backup, optimistic-currentness, recovery and
 read-back verification. A later strictly better candidate may supersede an
-automatic cover decision while automatic authority remains active. Any manual
+automatic cover decision while automatic authority remains active. The first
+automatic decision and every later one use the same strict rank comparison. Any manual
 owner cover decision is final for this slice and prevents reopening or
 supersession.
 
 ## Consequences
 
-Reviewer-less deployments receive a functional recommendation, while reviewer
-availability varies independently as advisory evidence. Unconfirmed matches
-remain inspectable but never selectable. The clean pre-release schema and
-generated API contract advance together; existing state requires a clean
-rebuild under ADR-0013.
+Reviewer-less deployments retain functional owner choices while reviewer
+availability varies independently as advisory evidence. A sole confirmed
+choice remains actionable after a typed sibling timeout. Unconfirmed matches
+remain inspectable but never selectable. The clean pre-release proposal,
+consideration, policy-report, and policy contracts advance together; existing
+state requires a clean rebuild under ADR-0013.
 
 Qualification may expose only cohort aggregates. Private identities, values,
 rows, media, paths and per-case outcomes never enter the repository. All three

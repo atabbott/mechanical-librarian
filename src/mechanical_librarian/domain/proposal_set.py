@@ -81,13 +81,13 @@ from mechanical_librarian.domain.work_identity import (
 if TYPE_CHECKING:
     from mechanical_librarian.domain.cover_evidence import CoverArtifact
 
-PROPOSAL_SCHEMA = "proposal-set-v6"
+PROPOSAL_SCHEMA = "proposal-set-v7"
 # What the proposals in one set were formed for. F47 owns the writes, so this
 # is what tells a decision recorded against an audiobook apart from one that
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v21"
+POLICY_VERSION = "fixed-conservative-v22"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -288,6 +288,7 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
             ("field_policy_conflict",),
             ("no_safe_bibliographic_combination",),
             ("current_cover_verified", "owner_cover_choice_required"),
+            ("cover_gallery_incomplete", "owner_cover_choice_required"),
             (
                 "current_cover_unavailable",
                 "current_cover_unverified",
@@ -3409,6 +3410,14 @@ def _cover_result(report: MetadataReport, target: TargetField) -> ProposalResult
             ("no_supported_evidence",),
         )
     if incomplete:
+        if candidates:
+            return ProposalResult(
+                TargetDestination.COVER,
+                ProposalOutcome.UNRESOLVED_CHOICE,
+                candidates,
+                None,
+                ("cover_gallery_incomplete", "owner_cover_choice_required"),
+            )
         return ProposalResult(
             TargetDestination.COVER,
             ProposalOutcome.DEFER,

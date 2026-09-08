@@ -3113,7 +3113,9 @@ def test_closed_policy_is_content_bound_and_plain_policy_uses_packet_order() -> 
         == report["acceptable_candidate_references"][0]
     )
     assert report["reasons"] == ["deterministic_confirmed_order"]
-    assert report["schema_version"] == "cover-policy-report-v1"
+    assert report["schema_version"] == "cover-policy-report-v2"
+    assert report["actual_target_state"] == "known_empty"
+    assert report["owner_ready"] is True
     assert report["observation_taxonomy_reference"] == TAXONOMY_REFERENCE
     assert CoverPolicy().reference != CoverPolicy(avoid_promotional_text=True).reference
     with pytest.raises(ValueError):

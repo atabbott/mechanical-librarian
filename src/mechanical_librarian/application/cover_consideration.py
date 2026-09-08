@@ -66,7 +66,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
 )
 
-SCHEMA_VERSION = "cover-consideration-v3"
+SCHEMA_VERSION = "cover-consideration-v4"
 _IDENTITY_ELIGIBLE = frozenset({"verified_manifestation_match", "verified_work_match"})
 
 
@@ -820,16 +820,19 @@ class CoverConsiderationService:
                     raise CoverConsiderationError("incumbent_binding")
                 selected = incumbent_sources[0]
             else:
-                # ``source_by_reference`` only retains RETRIEVED sources whose
-                # artifact is not None.
+                # Packet dimensions identify the representative used by policy;
+                # the artifact-id tie break keeps that same representative here.
                 selected = max(
-                    sources,
+                    (
+                        source
+                        for source in sources
+                        if cast("CoverArtifact", source.artifact).width
+                        == candidate["width"]
+                        and cast("CoverArtifact", source.artifact).height
+                        == candidate["height"]
+                    ),
                     key=lambda source: (
-                        cast("CoverArtifact", source.artifact).width
-                        * cast("CoverArtifact", source.artifact).height,
-                        cast("CoverArtifact", source.artifact).width,
-                        cast("CoverArtifact", source.artifact).height,
-                        cast("CoverArtifact", source.artifact).artifact_id,
+                        cast("CoverArtifact", source.artifact).artifact_id
                     ),
                 )
             artifact = selected.artifact
@@ -837,7 +840,11 @@ class CoverConsiderationService:
             identity_row = identity_rows[reference]
             identity_eligible = identity_row["outcome"] in _IDENTITY_ELIGIBLE
             observation_row = observation_rows.get(reference)
-            selectable = identity_eligible and candidate["incumbent"] is False
+            selectable = (
+                identity_eligible
+                and candidate["incumbent"] is False
+                and policy.get("owner_ready") is True
+            )
             rank_key = (
                 CoverElectionCandidate(
                     reference=reference,
@@ -937,7 +944,7 @@ class CoverConsiderationService:
             "policy_preferences": json.loads(value["policy_document"]),
             "policy_reference": value["policy_reference"],
             "provider_fetching": value["provider_fetching"],
-            "ready": policy is not None and policy["status"] == "recommended",
+            "ready": policy is not None and policy["owner_ready"] is True,
             "reviewer_access_revision": value["reviewer_access_revision"],
             "reviewer_status": value["reviewer_status"],
             "reviewer_engine": value["reviewer_engine"],

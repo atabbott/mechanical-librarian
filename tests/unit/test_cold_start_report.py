@@ -21,7 +21,11 @@ import pytest
 import scripts.cold_start_report as cold_start
 import scripts.persistence_census as persistence_census
 
-from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
+from mechanical_librarian.adapters.persistence.metadata_reports import (
+    SQLiteMetadataReportRepository,
+    open_repository,
+)
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
     LibraryConfiguration,
@@ -29,6 +33,10 @@ from mechanical_librarian.application.configuration import (
     ProviderConnectionConfiguration,
     TargetConnectionConfiguration,
 )
+from mechanical_librarian.application.cover_consideration import (
+    CoverConsiderationService,
+)
+from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.domain.metadata_report import (
     FileFacts,
     MetadataReport,
@@ -42,6 +50,7 @@ from tests.unit.test_bibliographic_bundles import (
 from tests.unit.test_bibliographic_bundles import (
     _source as _bibliographic_source,
 )
+from tests.unit.test_shadow_outcome_persistence import _qualified_cover_report
 
 
 def _configuration() -> ApplicationConfiguration:
@@ -63,11 +72,18 @@ def _configuration() -> ApplicationConfiguration:
     )
 
 
-def _for_item(source: MetadataReport, item: str, identity: str) -> MetadataReport:
+def _for_item(
+    source: MetadataReport,
+    item: str,
+    identity: str,
+    *,
+    connection: str | None = None,
+    library: str | None = None,
+) -> MetadataReport:
     return MetadataReport.create(
         target=TargetFacts(
-            source.target.connection,
-            source.target.library,
+            connection or source.target.connection,
+            library or source.target.library,
             item,
             source.target.fields,
         ),
@@ -83,6 +99,7 @@ def _empty_snapshot() -> dict[str, object]:
     return {
         "libraries": [],
         "attention_fields": [],
+        "current_cover_pointer_libraries": [],
         "provider_lanes": [],
         "unmatched_works": [],
         "scans": [],
@@ -91,6 +108,58 @@ def _empty_snapshot() -> dict[str, object]:
         "duplicates": [],
         "agreement": [],
     }
+
+
+def _publish_current_cover_consideration(
+    repository: SQLiteMetadataReportRepository,
+    *,
+    root: Path,
+    connection: str,
+    library: str,
+    item: str,
+    identity: str,
+) -> str:
+    qualified, _proposal = _qualified_cover_report(root)
+    report = _for_item(
+        qualified,
+        item,
+        identity,
+        connection=connection,
+        library=library,
+    )
+    proposal = evaluate_report(report)
+    repository.publish(report, lambda: True)
+    repository.publish_proposal(proposal)
+    admission = json.loads(repository.admit_review_case(proposal))
+    review_case_id = cast("str", admission["review_case_id"])
+    detail = InspectCurrentReviewCase(repository).run(review_case_id)
+    cover_field = next(
+        field
+        for field in cast("list[dict[str, object]]", detail["fields"])
+        if field["destination"] == "cover"
+    )
+    cover_result = next(
+        dict(result)
+        for result in cast("list[dict[str, object]]", proposal.to_data()["results"])
+        if result["destination"] == "cover"
+    )
+    cover_result["proposal_id"] = cover_field["proposal_id"]
+    artifacts = CoverArtifactStore(root / "artifacts", create=False)
+    preview_digests = {
+        source.artifact.artifact_id: source.artifact.preview_digest
+        for source in report.cover_sources
+        if source.artifact is not None
+    }
+    consideration = CoverConsiderationService(
+        repository,
+        read_preview=lambda artifact, _variant: artifacts.read_preview_digest(
+            preview_digests[artifact]
+        ),
+        read_preview_digest=artifacts.read_preview_digest,
+        clock=lambda: 1,
+    ).ensure(review_case_id, report.to_json(), cover_result)
+    assert consideration["consideration_id"]
+    return review_case_id
 
 
 def test_snapshot_reconciles_with_the_attention_surface_and_redacts() -> None:
@@ -176,6 +245,7 @@ def test_snapshot_reconciles_with_the_attention_surface_and_redacts() -> None:
             "attention_works": 1,
             "quiet_works": 2,
             "quiet_fraction": 0.6667,
+            "attention_unavailable_reason": None,
         }
         assert report["determinism"] == {
             "duplicate_groups_compared": 1,
@@ -223,6 +293,171 @@ def test_snapshot_reconciles_with_the_attention_surface_and_redacts() -> None:
             "edition-1",
         ):
             assert leaked not in serialized
+
+
+def test_current_cover_pointer_marks_attention_counts_unavailable(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "application.sqlite3"
+    repository = open_repository(database)
+    attention_work = _bibliographic_report(
+        current_title="Mistborn Secret History",
+        providers=(
+            _bibliographic_source(
+                "catalogue", "edition-1", titles=(), series="Mistborn"
+            ),
+        ),
+    )
+    repository.publish(attention_work, lambda: True)
+    attention_proposal = evaluate_report(attention_work)
+    repository.publish_proposal(attention_proposal)
+    repository.admit_review_case(attention_proposal)
+    cover_case_id = _publish_current_cover_consideration(
+        repository,
+        root=tmp_path / "current-cover",
+        connection="primary",
+        library="ebooks",
+        item="private-cover-item",
+        identity="c",
+    )
+    current_consideration = json.loads(
+        cast(
+            "str",
+            repository.current_cover_consideration_document(cover_case_id),
+        )
+    )
+    repository.bind_current_cover_authority(
+        cast("str", current_consideration["policy_reference"]),
+        cast("str", current_consideration["replay_reference"]),
+    )
+    assert repository.count_current_attention_fields(None) == 2
+    repository.bind_current_cover_authority(
+        "cover_policy_" + "d" * 64,
+        "cover_replay_" + "e" * 64,
+    )
+    assert repository.count_current_attention_fields(None) == 1
+    repository.close()
+    before = database.read_bytes()
+
+    connection = cold_start._open_read_only(database)
+    try:
+        snapshot = cold_start.cold_start_snapshot(connection)
+    finally:
+        connection.close()
+    census_connection = persistence_census._open_read_only(database)
+    try:
+        plans = persistence_census._plans(census_connection)
+    finally:
+        census_connection.close()
+
+    assert database.read_bytes() == before
+    assert snapshot["current_cover_pointer_libraries"] == [("primary", "ebooks")]
+    assert "steps" in plans["library_work_counts"]
+    assert "steps" in plans["attention_field_rows"]
+    assert "steps" in plans["attention_field_count"]
+    report = cold_start.assemble_cold_start_report(
+        _configuration(), snapshot, None, {}, 1000
+    )
+    assert report["totals"] == {
+        "works": 2,
+        "attention_works": None,
+        "quiet_works": None,
+        "quiet_fraction": None,
+        "attention_unavailable_reason": "current_cover_authority_unavailable",
+    }
+    library = cast("list[dict[str, object]]", report["libraries"])[0]
+    assert library["works"] == {
+        "current_total": 2,
+        "attention": None,
+        "quiet": None,
+        "ledger_total": 0,
+        "ready": 0,
+        "blocked": 0,
+        "absences": {},
+    }
+    assert library["attention_fields"] is None
+    assert (
+        library["attention_unavailable_reason"] == "current_cover_authority_unavailable"
+    )
+    assert library["works_without_provider_candidates"] == 0
+    serialized = json.dumps(report)
+    assert "private-cover-item" not in serialized
+    assert "edition-3" not in serialized
+    assert "cover_policy_" not in serialized
+    assert "cover_replay_" not in serialized
+
+
+def test_historical_and_unconfigured_cover_pointers_do_not_hide_totals(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "application.sqlite3"
+    repository = open_repository(database)
+    attention_work = _bibliographic_report(
+        current_title="Mistborn Secret History",
+        providers=(
+            _bibliographic_source(
+                "catalogue", "edition-1", titles=(), series="Mistborn"
+            ),
+        ),
+    )
+    repository.publish(attention_work, lambda: True)
+    attention_proposal = evaluate_report(attention_work)
+    repository.publish_proposal(attention_proposal)
+    repository.admit_review_case(attention_proposal)
+    _publish_current_cover_consideration(
+        repository,
+        root=tmp_path / "historical-cover",
+        connection="primary",
+        library="ebooks",
+        item="historical-cover-item",
+        identity="c",
+    )
+    replacement = _for_item(
+        _plain_report("Current quiet replacement", "8", "9", actionable=False),
+        "historical-cover-item",
+        "d",
+    )
+    repository.publish(replacement, lambda: True)
+    replacement_proposal = evaluate_report(replacement)
+    repository.publish_proposal(replacement_proposal)
+    assert json.loads(repository.admit_review_case(replacement_proposal))["status"] == (
+        "retired"
+    )
+    _publish_current_cover_consideration(
+        repository,
+        root=tmp_path / "unconfigured-cover",
+        connection="retired",
+        library="archive",
+        item="unconfigured-cover-item",
+        identity="e",
+    )
+    repository.close()
+    before = database.read_bytes()
+
+    connection = cold_start._open_read_only(database)
+    try:
+        assert connection.execute(
+            "SELECT count(*) FROM current_cover_considerations"
+        ).fetchone() == (2,)
+        snapshot = cold_start.cold_start_snapshot(connection)
+    finally:
+        connection.close()
+
+    assert database.read_bytes() == before
+    assert snapshot["current_cover_pointer_libraries"] == [("retired", "archive")]
+    report = cold_start.assemble_cold_start_report(
+        _configuration(), snapshot, None, {}, 1000
+    )
+    assert report["totals"] == {
+        "works": 2,
+        "attention_works": 1,
+        "quiet_works": 1,
+        "quiet_fraction": 0.5,
+        "attention_unavailable_reason": None,
+    }
+    library = cast("list[dict[str, object]]", report["libraries"])[0]
+    assert library["attention_unavailable_reason"] is None
+    assert cast("dict[str, object]", library["attention_fields"])["total"] == 1
 
 
 def test_duplicate_determinism_is_conditioned_on_target_context() -> None:
@@ -312,6 +547,7 @@ def test_headline_totals_include_only_configured_libraries() -> None:
         "attention_works": 1,
         "quiet_works": 1,
         "quiet_fraction": 0.5,
+        "attention_unavailable_reason": None,
     }
 
 

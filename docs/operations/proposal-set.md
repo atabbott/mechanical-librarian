@@ -6,7 +6,7 @@ preparation; source-only contributor inspection uses the typed workbench and is
 not an installed runtime capability. The operation reopens the exact report, revalidates its
 current Audiobookshelf target projection, selected EPUB bytes, ABS cover, and
 both blobs of every referenced private cover artifact, then evaluates the built-in
-`fixed-conservative-v21` policy. It does not construct or contact a metadata or
+`fixed-conservative-v22` policy. It does not construct or contact a metadata or
 cover provider.
 
 An exact ProposalSet can be reopened offline through the application repository
@@ -26,10 +26,19 @@ failed kind. Election collapses only closed leading-article and trailing
 does not add fuzzy matching, provider ranking, membership synthesis, or
 title-specific runtime knowledge.
 
-Success is exactly one canonical `proposal-set-v6` JSON document plus a
+## Cover choice retention
+
+A cover with at least one bounded usable artifact remains an owner choice when
+a sibling source ends in a typed timeout or another incomplete terminal state.
+This includes a sole usable artifact: the exact cover-only reasons are
+`cover_gallery_incomplete` and `owner_cover_choice_required`. With no usable
+artifact the result remains deferred. The proposal never invents a second
+choice or treats incomplete acquisition as proof that the target is empty.
+
+Success is exactly one canonical `proposal-set-v7` JSON document plus a
 newline. Failure emits no document and one value-free diagnostic.
 
-Only `proposal-set-v6` documents under `fixed-conservative-v21` and the exact current
+Only `proposal-set-v7` documents under `fixed-conservative-v22` and the exact current
 `proposal_sets` table envelope are accepted. A database with the earlier
 `fixed-conservative-v1`, `fixed-conservative-v2`, `fixed-conservative-v3`, or
 `fixed-conservative-v4`, `fixed-conservative-v5`, `fixed-conservative-v6`,
@@ -37,7 +46,8 @@ Only `proposal-set-v6` documents under `fixed-conservative-v21` and the exact cu
 `fixed-conservative-v10`, `fixed-conservative-v11`, `fixed-conservative-v12`,
 `fixed-conservative-v13`, `fixed-conservative-v14`, `fixed-conservative-v15`,
 `fixed-conservative-v16`, `fixed-conservative-v17`, `fixed-conservative-v18`, or
-`fixed-conservative-v19`, or `fixed-conservative-v20` table shape is
+`fixed-conservative-v19`, `fixed-conservative-v20`, or
+`fixed-conservative-v21` table shape is
 incompatible and is rejected before mutation. A clean rebuild is required; there is no
 proposal migration, import, conversion, or compatibility parser.
 

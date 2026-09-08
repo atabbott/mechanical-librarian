@@ -15,40 +15,26 @@ import hashlib
 import json
 import sqlite3
 from collections.abc import Callable
-from typing import cast
 
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
+from mechanical_librarian.domain.deterministic_cover_election import (
+    strictly_better_cover_rank,
+)
 from mechanical_librarian.domain.field_effect import FieldEffectOperation
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
 )
 from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
-from mechanical_librarian.domain.metadata_report import TargetDestination
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    TargetDestination,
+)
 from mechanical_librarian.domain.proposal_set import ProposalSet
 from mechanical_librarian.domain.review_case import ReviewCase
-
-
-def _strictly_better_cover_rank(candidate: object, prior: object) -> bool:
-    """Compare complete frozen rank vectors across persisted considerations."""
-    for value in (candidate, prior):
-        if (
-            type(value) is not list
-            or len(value) != 7
-            or any(type(component) is not int for component in value[:6])
-            or type(value[6]) is not str
-        ):
-            return False
-    candidate_values = cast(list[object], candidate)
-    prior_values = cast(list[object], prior)
-    candidate_key = cast(
-        tuple[int, int, int, int, int, int, str], tuple(candidate_values)
-    )
-    prior_key = cast(tuple[int, int, int, int, int, int, str], tuple(prior_values))
-    return candidate_key < prior_key
 
 
 class SQLiteCoverConsiderationRepository(ConnectionScoped):
@@ -74,7 +60,13 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             policy_report = json.loads(policy_report_document)
         except json.JSONDecodeError:
             return
-        if policy_report.get("status") != "recommended":
+        if (
+            policy_report.get("schema_version") != "cover-policy-report-v2"
+            or policy_report.get("status") != "recommended"
+            or policy_report.get("owner_ready") is not True
+            or policy_report.get("actual_target_state")
+            not in {"known_empty", "confirmed"}
+        ):
             return
         reference = policy_report.get("recommended_candidate_reference")
         candidate = next(
@@ -101,6 +93,16 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         if case_row is None:
             return
         case = ReviewCase.from_json(case_row[0])
+        try:
+            report = MetadataReport.from_json(value["report_document"])
+        except (KeyError, TypeError, ValueError):
+            return
+        if (
+            report.report_id != case.report_id
+            or report.report_id != value.get("report_id")
+            or report.target.fingerprint != case.target_fingerprint
+        ):
+            return
         target = case.target
         connection_name, library_name, item_id = (
             target.get("connection"),
@@ -111,6 +113,24 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             type(item) is str and item
             for item in (connection_name, library_name, item_id)
         ):
+            return
+        lineage = (connection_name, library_name, item_id)
+        if self._connection.execute(
+            "SELECT proposal_set_id,report_id,review_case_id FROM current_review_case_lineages "
+            "WHERE connection_name=? AND library_name=? AND item_id=?",
+            lineage,
+        ).fetchone() != (case.proposal_set_id, case.report_id, case.review_case_id):
+            return
+        if self._connection.execute(
+            "SELECT report_id FROM current_metadata_reports WHERE connection_name=? "
+            "AND library_name=? AND item_id=? AND file_identity=?",
+            (*lineage, report.file.identity),
+        ).fetchone() != (case.report_id,):
+            return
+        if self._connection.execute(
+            "SELECT consideration_id FROM current_cover_considerations WHERE review_case_id=?",
+            (case.review_case_id,),
+        ).fetchone() != (value.get("consideration_id"),):
             return
         state = self._connection.execute(
             "SELECT s.generation,s.posture,r.document FROM metadata_policy_state s "
@@ -181,7 +201,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         prior = None if current is None else json.loads(current[0])
         if prior is not None and (
             prior["kind"] == "owner"
-            or not _strictly_better_cover_rank(
+            or not strictly_better_cover_rank(
                 candidate["deterministic_rank_key"], prior.get("rank_key")
             )
         ):
@@ -429,7 +449,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             value = json.loads(document)
             if (
                 type(value) is not dict
-                or value.get("schema_version") != "cover-consideration-v3"
+                or value.get("schema_version") != "cover-consideration-v4"
                 or value.get("review_case_id") != review_case_id
                 or value.get("report_id") != report_id
                 or value.get("replay_digest") != replay_digest

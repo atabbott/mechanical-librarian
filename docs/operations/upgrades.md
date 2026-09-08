@@ -3,11 +3,11 @@
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
 The reviewer-access authority, `setup-state-v3`, `owner-settings-v3`,
-`cover-consideration-v3`, `metadata-report-v38`, and the added application
+`cover-consideration-v4`, `metadata-report-v38`, and the added application
 tables change the current SQLite objects in this build. Every earlier
 application database therefore requires a clean rebuild; no adoption,
 migration, conversion, import, repair, or downgrade is supplied by #872, #873,
-#749, #956, #965, #896, #888, or #1000.
+#749, #956, #965, #896, #888, #1000, or #999.
 
 The exact predecessors for this change are `config-v7`, `metadata-report-v32`,
 `owner-settings-v2`, and `setup-state-v2`. Inventaire changes all four closed
@@ -61,6 +61,14 @@ decisions remain readable but cannot authorize a current effect. Existing
 pre-release proposal, review, decision, and downstream field-effect state is
 not rewritten or adopted; rebuild the application database.
 
+#999 advances `proposal-set-v6` to `proposal-set-v7`, the exact proposal policy
+to `fixed-conservative-v22`, `cover-consideration-v3` to
+`cover-consideration-v4`, and `cover-policy-report-v1` to
+`cover-policy-report-v2`. Owner readiness is independent from automatic
+recommendation, and automatic replacement binds the actual incumbent state and
+strict rank. Existing pre-release state is not adopted; rebuild the application
+database and artifact store.
+
 F35 advances the exact proposal policy from `fixed-conservative-v13` to
 `fixed-conservative-v14` because provider-consensus title election adds a new
 persisted automatic-decision path. Existing proposal, review, decision, and
@@ -98,7 +106,7 @@ exact retained #744 test schema, an existing complete owner-only clone, an
 independent backup path, and an absent output path under the same private
 directory. The command name remains the frozen authority identifier from its
 original plan; its fresh output is always the exact current schema,
-`metadata-report-v38` with `fixed-conservative-v21`. It leaves the source
+`metadata-report-v38` with `fixed-conservative-v22`. It leaves the source
 untouched, verifies the backup, rebuilds a fresh exact-current report database
 through current derivation, and
 invalidates observations that lack current work-dispatch provenance plus all

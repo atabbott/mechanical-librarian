@@ -36,7 +36,7 @@ def test_measured_indexes_bound_representative_library_reads() -> None:
             count_plan = support._plan(
                 connection,
                 support._CURRENT_REVIEW_CASE_COUNT_SQL,
-                (None, "", "", "", "", ""),
+                (None, None, None, "", "", "", "", ""),
             )
             assert any(
                 "USING INDEX review_preparation_work_lineage_history" in step

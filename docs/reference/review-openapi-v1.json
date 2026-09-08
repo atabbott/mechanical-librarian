@@ -2928,7 +2928,7 @@
             "title": "Reviewer Unavailable Reason"
           },
           "schema_version": {
-            "const": "cover-consideration-v3",
+            "const": "cover-consideration-v4",
             "title": "Schema Version",
             "type": "string"
           },
@@ -3286,6 +3286,15 @@
             "title": "Acceptable Candidate References",
             "type": "array"
           },
+          "actual_target_state": {
+            "enum": [
+              "known_empty",
+              "confirmed",
+              "unknown"
+            ],
+            "title": "Actual Target State",
+            "type": "string"
+          },
           "cover_packet_reference": {
             "title": "Cover Packet Reference",
             "type": "string"
@@ -3313,6 +3322,10 @@
             "title": "Observation Taxonomy Reference",
             "type": "string"
           },
+          "owner_ready": {
+            "title": "Owner Ready",
+            "type": "boolean"
+          },
           "policy_reference": {
             "title": "Policy Reference",
             "type": "string"
@@ -3336,21 +3349,28 @@
             "title": "Recommended Candidate Reference"
           },
           "schema_version": {
+            "const": "cover-policy-report-v2",
             "title": "Schema Version",
             "type": "string"
           },
           "status": {
+            "enum": [
+              "recommended",
+              "abstained"
+            ],
             "title": "Status",
             "type": "string"
           }
         },
         "required": [
           "acceptable_candidate_references",
+          "actual_target_state",
           "cover_packet_reference",
           "identity_classifier_reference",
           "identity_report_sha256",
           "observation_report_sha256",
           "observation_taxonomy_reference",
+          "owner_ready",
           "policy_reference",
           "reasons",
           "recommended_candidate_reference",
