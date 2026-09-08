@@ -13,6 +13,7 @@ and what is asserted is the sentence an owner would read (#636).
 
 from __future__ import annotations
 
+import copy
 import json
 from types import SimpleNamespace
 from typing import cast
@@ -23,6 +24,9 @@ from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.providers.audible_catalog_metadata import (
+    _candidate as _audible_candidate,
+)
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
@@ -42,7 +46,10 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectOperation,
     FieldEffectPlan,
 )
-from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.human_decision import (
+    RECORDED_ONLY_REASON,
+    HumanDecision,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -51,8 +58,15 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.readable_activity import value_text
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+from tests.support.audiobook_providers import payload
+from tests.support.audiobook_reports import (
+    admitted_audiobook_report,
+    audio_local_claims,
+    manual_audiobook_observation,
+)
 from tests.support.automatic_decisions import _automatic_decisions
 from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.proposal_evidence import (
@@ -514,6 +528,116 @@ def _admitted_case(environment: _EffectEnvironment) -> tuple[ReviewCase, dict]:
         if value["result"]["outcome"] == "unresolved_choice"
     )
     return case, proposal
+
+
+def test_audible_rendered_description_owner_choice_reopens_in_activity(
+    effects: _EffectEnvironment,  # noqa: F811
+) -> None:
+    local_claims = audio_local_claims()
+    document = copy.deepcopy(payload("audible_lookup"))["product"]
+    del document["short_description"]
+    candidate = _audible_candidate(
+        "audible",
+        document,
+        local_claims,
+        marketplace="us",
+        schema_rejections=lambda _count: None,
+    )
+    description_claim = next(
+        claim for claim in candidate.claims if claim.kind is ClaimKind.DESCRIPTION
+    )
+    report = admitted_audiobook_report(
+        local_claims,
+        additional_providers=(
+            manual_audiobook_observation("audible", "audible_catalog", candidate),
+        ),
+    )
+    effects.repository.publish(report, lambda: True)
+    proposal_set = evaluate_report(report)
+    effects.repository.publish_proposal(proposal_set)
+    case_id = json.loads(effects.repository.admit_review_case(proposal_set))[
+        "review_case_id"
+    ]
+    case = ReviewCase.create_from_data(
+        json.loads(effects.repository.get_review_case(case_id))["case"]
+    )
+    proposal = next(
+        value for value in case.proposals if value["destination"] == "description"
+    )
+    alternative = proposal["result"]["alternatives"][0]
+    assert alternative["value"] == {
+        "kind": "text",
+        "value": description_claim.value,
+    }
+
+    before = InspectCurrentReviewCase(effects.repository).run(case_id)
+    before_description = next(
+        field for field in before["fields"] if field["destination"] == "description"
+    )
+    assert before_description["automatic_decision"] is None
+    assert before_description["human_decision"] is None
+
+    proposal_id = proposal["proposal_id"]
+    assert type(proposal_id) is str
+    decision = HumanDecision.create(
+        case,
+        proposal_id=proposal_id,
+        target_fingerprint=case.target_fingerprint,
+        destination="description",
+        actor="owner",
+        outcome="accept",
+        selected_value=alternative["value"],
+        idempotency_key="activity-audible-description-0001",
+        occurred_at=1_000,
+    )
+    effects.repository.record_human_decision(decision)
+    assert decision.application == "recorded_only"
+
+    effects.repository.close()
+    effects.repository = open_repository(
+        effects.database_path, create=False, cross_thread=True
+    )
+    reopened = InspectCurrentReviewCase(effects.repository).run(case_id)
+    reopened_description = next(
+        field for field in reopened["fields"] if field["destination"] == "description"
+    )
+    assert reopened_description["automatic_decision"] is None
+    assert reopened_description["human_decision"] == {
+        "actor": "owner",
+        "application": "recorded_only",
+        "application_reason": RECORDED_ONLY_REASON,
+        "decision_id": decision.decision_id,
+        "destination": "description",
+        "occurred_at": 1_000,
+        "outcome": "accept",
+        "proposal_id": decision.proposal_id,
+        "review_case_id": decision.review_case_id,
+        "selected_value": alternative["value"],
+        "target_fingerprint": decision.target_fingerprint,
+    }
+    persisted = [
+        HumanDecision.from_json(value)
+        for value in effects.repository.get_review_case_decisions(case_id)
+        if HumanDecision.from_json(value).destination == "description"
+    ]
+    assert persisted == [decision]
+    assert effects.repository._connection.execute(
+        "SELECT count(*) FROM automatic_decisions WHERE review_case_id=?",
+        (case_id,),
+    ).fetchone() == (0,)
+    assert effects.repository._connection.execute(
+        "SELECT count(*) FROM field_effects",
+    ).fetchone() == (0,)
+    activity = next(
+        event
+        for event in _ledger(effects)
+        if event["category"] == "owner" and event["destination"] == "description"
+    )
+    assert activity["category"] == "owner"
+    assert activity["state"] == "accept"
+    assert _facts(activity)["New value"] == value_text(
+        "description", description_claim.value
+    )
 
 
 def test_each_owner_outcome_reaches_the_ledger_in_its_own_words(

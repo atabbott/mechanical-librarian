@@ -1376,7 +1376,9 @@ def _observations(
                     and _eligible_provider_manifestation(
                         destination, claim, provider, candidate
                     )
-                    and _eligible_provider_description(destination, claim, candidate)
+                    and _eligible_provider_description(
+                        destination, claim.value, candidate
+                    )
                     and not _generic_provider_subtitle(report, destination, claim.value)
                     and _eligible_field_value(destination, claim.value)
                     and (
@@ -3999,12 +4001,10 @@ def ordinary_provider_description_source_is_safe(
 
 def _eligible_provider_description(
     destination: TargetDestination,
-    claim: ProviderClaim,
+    value: str,
     candidate: ProviderCandidate,
 ) -> bool:
-    if destination is not TargetDestination.DESCRIPTION:
-        return True
-    if ordinary_provider_description_source_is_safe(claim, candidate):
+    if _eligible_description(destination, value):
         return True
     descriptions = tuple(
         claim

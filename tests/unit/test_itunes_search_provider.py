@@ -24,12 +24,19 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderEvidenceKind,
     ProviderQueryKind,
     ProviderStatus,
+    TargetDestination,
 )
+from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchRung,
     WorkTitleTransformationFamily,
 )
 from tests.support.audiobook_providers import asin_plan, payload, work_plan
+from tests.support.audiobook_reports import (
+    admitted_audiobook_report,
+    audio_local_claims,
+    manual_audiobook_observation,
+)
 
 
 def _store(value: object, status_code: int = 200, **headers: str) -> httpx.Response:
@@ -183,7 +190,14 @@ def test_an_itunes_candidate_can_never_carry_a_duration_or_a_narrator() -> None:
 
 def test_the_stores_html_description_becomes_visible_plain_text() -> None:
     _seen, handle = _recorder()
-    candidate = _provider(handle).observe(work_plan()).candidates[0]
+    candidate = next(
+        candidate
+        for candidate in _provider(handle).observe(work_plan()).candidates
+        if any(
+            claim.kind is ClaimKind.TITLE and claim.value == "Project Hail Mary"
+            for claim in candidate.claims
+        )
+    )
     description = _claims(candidate, ClaimKind.DESCRIPTION)[0]
     stated = next(
         result["description"]
@@ -201,6 +215,23 @@ def test_the_stores_html_description_becomes_visible_plain_text() -> None:
             candidate, ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION
         )
     )
+    local = audio_local_claims()
+    report = admitted_audiobook_report(
+        local,
+        additional_providers=(
+            manual_audiobook_observation("itunes", "itunes_search", candidate),
+        ),
+    )
+    result = next(
+        value
+        for value in evaluate_report(report).results
+        if value.destination is TargetDestination.DESCRIPTION
+    )
+    assert ProposalOutcome.PROPOSE_CHANGE is result.outcome
+    assert [description.value] == [value.value.value for value in result.alternatives]
+    assert [(description.reference,)] == [
+        value.evidence_references for value in result.alternatives
+    ]
 
 
 def test_a_plan_with_no_work_lane_is_insufficient_input() -> None:

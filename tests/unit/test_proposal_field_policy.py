@@ -3,11 +3,22 @@ complete safe cover artifacts, and the eligibility rules that
 refuse to manufacture evidence.
 """
 
+import copy
 import json
+from collections.abc import Callable
 from dataclasses import replace
 
 import pytest
 
+from mechanical_librarian.adapters.providers.audible_catalog_metadata import (
+    _candidate as _audible_candidate,
+)
+from mechanical_librarian.adapters.providers.audnexus_metadata import (
+    _candidate as _audnexus_candidate,
+)
+from mechanical_librarian.adapters.providers.itunes_search_metadata import (
+    _candidate as _itunes_candidate,
+)
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
     CoverDesignation,
@@ -43,6 +54,12 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalValueError,
     evaluate_report,
 )
+from tests.support.audiobook_providers import payload
+from tests.support.audiobook_reports import (
+    admitted_audiobook_report,
+    audio_local_claims,
+    manual_audiobook_observation,
+)
 from tests.support.proposal_evidence import (
     _claim,
     _exact_edition_cover,
@@ -54,6 +71,48 @@ from tests.support.proposal_evidence import (
     _report,
     _result,
 )
+
+
+def _audible_html_description_candidate(
+    local_claims: tuple[LocalClaim, ...],
+) -> ProviderCandidate:
+    document = copy.deepcopy(payload("audible_lookup"))["product"]
+    del document["short_description"]
+    return _audible_candidate(
+        "audible",
+        document,
+        local_claims,
+        marketplace="us",
+        schema_rejections=lambda _count: None,
+    )
+
+
+def _audnexus_html_description_candidate(
+    local_claims: tuple[LocalClaim, ...],
+) -> ProviderCandidate:
+    document = copy.deepcopy(payload("audnexus_book"))
+    del document["description"]
+    return _audnexus_candidate(
+        "audnexus",
+        document,
+        local_claims,
+        marketplace="us",
+        chapters=None,
+        schema_rejections=lambda _count: None,
+    )
+
+
+def _itunes_html_description_candidate(
+    local_claims: tuple[LocalClaim, ...],
+) -> ProviderCandidate:
+    result = next(
+        value
+        for value in payload("itunes_search")["results"]
+        if value["collectionName"] == "Project Hail Mary"
+    )
+    return _itunes_candidate(
+        "itunes", result, local_claims, schema_rejections=lambda _count: None
+    )
 
 
 def test_populated_subjective_fields_do_not_get_replaced() -> None:
@@ -1208,6 +1267,45 @@ def test_non_google_markup_description_is_ineligible() -> None:
         TargetDestination.DESCRIPTION,
     )
     assert ProposalOutcome.INELIGIBLE == result.outcome
+
+
+@pytest.mark.parametrize(
+    ("provider", "authority", "candidate_factory"),
+    (
+        ("audible", "audible_catalog", _audible_html_description_candidate),
+        ("audnexus", "audnexus", _audnexus_html_description_candidate),
+        ("itunes", "itunes_search", _itunes_html_description_candidate),
+    ),
+)
+def test_generic_html_visible_description_remains_a_manual_alternative(
+    provider: str,
+    authority: str,
+    candidate_factory: Callable[[tuple[LocalClaim, ...]], ProviderCandidate],
+) -> None:
+    local_claims = audio_local_claims()
+    candidate = candidate_factory(local_claims)
+    observation = manual_audiobook_observation(provider, authority, candidate)
+    report = admitted_audiobook_report(
+        local_claims, additional_providers=(observation,)
+    )
+    result = _result(evaluate_report(report), TargetDestination.DESCRIPTION)
+    description = next(
+        claim for claim in candidate.claims if claim.kind is ClaimKind.DESCRIPTION
+    )
+
+    assert ProposalOutcome.PROPOSE_CHANGE is result.outcome
+    assert result.selected_alternative_id is not None
+    assert len(result.alternatives) == 1
+    alternative = result.alternatives[0]
+    assert alternative.value.value == description.value
+    assert ProposalScope.WORK is alternative.scope
+    assert ProposalAssessment.FILLS_EMPTY is alternative.assessment
+    assert (description.reference,) == alternative.evidence_references
+    assert ("html-visible-text-v1",) == tuple(
+        evidence.value
+        for evidence in candidate.evidence
+        if evidence.kind is ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION
+    )
 
 
 def test_transformed_google_visible_angle_characters_remain_eligible() -> None:

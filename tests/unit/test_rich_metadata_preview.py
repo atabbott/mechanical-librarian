@@ -773,6 +773,78 @@ def test_automatic_description_filters_transformed_text_before_quality_floor() -
     assert description.source_evidence_references == (ordinary.claims[3].reference,)
 
 
+def test_generic_transformed_description_is_retained_for_review_but_not_automatic() -> (
+    None
+):
+    transformed = replace(
+        _description_candidate(
+            "catalogue",
+            "edition-1",
+            "work-1",
+            _QUALIFIED_DESCRIPTION + " Rendered from provider markup.",
+        ),
+        evidence=(
+            ProviderEvidence(
+                ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION,
+                "html-visible-text-v1",
+                ClaimScope.WORK,
+            ),
+        ),
+    )
+
+    proposal, fields = _target_work_preview(
+        _target_work_report((("catalogue", "audible_catalog", (transformed,), True),))
+    )
+
+    alternative = _description_result(proposal).alternatives[0]
+    assert alternative.value.value == transformed.claims[3].value
+    assert alternative.evidence_references == (transformed.claims[3].reference,)
+    assert ("abstain", "no_candidate") == (
+        fields["description_fill"].outcome,
+        fields["description_fill"].reason,
+    )
+
+
+def test_generic_transformed_description_uses_equivalent_ordinary_exact_source() -> (
+    None
+):
+    rendered = _QUALIFIED_DESCRIPTION + " Shared source text."
+    transformed = replace(
+        _description_candidate("markup", "edition-1", "work-1", rendered.upper()),
+        evidence=(
+            ProviderEvidence(
+                ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION,
+                "html-visible-text-v1",
+                ClaimScope.WORK,
+            ),
+        ),
+    )
+    ordinary = _description_candidate("ordinary", "edition-2", "work-1", rendered)
+
+    proposal, fields = _target_work_preview(
+        _target_work_report(
+            (
+                ("markup", "audible_catalog", (transformed,), True),
+                ("ordinary", "open_library", (ordinary,), True),
+            )
+        )
+    )
+
+    alternative = _description_result(proposal).alternatives[0]
+    description = fields["description_fill"]
+    assert alternative.value.value == ordinary.claims[3].value
+    assert set(alternative.evidence_references) == {
+        transformed.claims[3].reference,
+        ordinary.claims[3].reference,
+    }
+    assert ("projected", ordinary.claims[3].value) == (
+        description.outcome,
+        description.desired_value,
+    )
+    assert description.source_candidate_id == alternative.alternative_id
+    assert description.source_evidence_references == (ordinary.claims[3].reference,)
+
+
 def test_automatic_description_excludes_unproved_source_for_one_collapsed_value() -> (
     None
 ):
