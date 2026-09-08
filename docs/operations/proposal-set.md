@@ -6,7 +6,7 @@ preparation; source-only contributor inspection uses the typed workbench and is
 not an installed runtime capability. The operation reopens the exact report, revalidates its
 current Audiobookshelf target projection, selected EPUB bytes, ABS cover, and
 both blobs of every referenced private cover artifact, then evaluates the built-in
-`fixed-conservative-v20` policy. It does not construct or contact a metadata or
+`fixed-conservative-v21` policy. It does not construct or contact a metadata or
 cover provider.
 
 An exact ProposalSet can be reopened offline through the application repository
@@ -29,17 +29,16 @@ title-specific runtime knowledge.
 Success is exactly one canonical `proposal-set-v6` JSON document plus a
 newline. Failure emits no document and one value-free diagnostic.
 
-Only `proposal-set-v6` documents under `fixed-conservative-v20` and the exact current
+Only `proposal-set-v6` documents under `fixed-conservative-v21` and the exact current
 `proposal_sets` table envelope are accepted. A database with the earlier
 `fixed-conservative-v1`, `fixed-conservative-v2`, `fixed-conservative-v3`, or
 `fixed-conservative-v4`, `fixed-conservative-v5`, `fixed-conservative-v6`,
 `fixed-conservative-v7`, `fixed-conservative-v8`, `fixed-conservative-v9`,
 `fixed-conservative-v10`, `fixed-conservative-v11`, `fixed-conservative-v12`,
-`fixed-conservative-v13`, `fixed-conservative-v14`, `fixed-conservative-v15`, or
+`fixed-conservative-v13`, `fixed-conservative-v14`, `fixed-conservative-v15`,
 `fixed-conservative-v16`, `fixed-conservative-v17`, `fixed-conservative-v18`, or
-`fixed-conservative-v19`
-table shape is incompatible
-and is rejected before mutation. A clean rebuild is required; there is no
+`fixed-conservative-v19`, or `fixed-conservative-v20` table shape is
+incompatible and is rejected before mutation. A clean rebuild is required; there is no
 proposal migration, import, conversion, or compatibility parser.
 
 ## Consensus title qualification
@@ -261,6 +260,12 @@ The policy is deliberately conservative:
 - populated description, genres, and tags are never merged, replaced, or
   cleaned; exact evidence may preserve them and candidates may fill only an
   empty field;
+- equivalent description evidence retains every source reference, while the
+  grouped alternative uses the canonical exact text of an eligible ordinary
+  provider source when one exists. Automatic preview independently rechecks
+  that exact text, its plain work-scoped source, and target-work applicability.
+  Local or transformed variants may corroborate the group but cannot supply
+  ordinary automatic authority;
 - ISBNs must have an `accepted` report relationship proving validated,
   edition-applicable evidence; unresolved applicability defers, while retained
   invalid identifier lineage supplies its specific ineligible reason rather

@@ -54,6 +54,13 @@ decisions remain readable, but cannot authorize a current effect. Existing
 pre-release proposal, review, decision, and downstream field-effect state is not
 rewritten or adopted; rebuild the application database.
 
+#1001 advances the exact proposal policy from `fixed-conservative-v20` to
+`fixed-conservative-v21` because an equivalent local description can change a
+grouped alternative's exact value and content-derived identity. Historical
+decisions remain readable but cannot authorize a current effect. Existing
+pre-release proposal, review, decision, and downstream field-effect state is
+not rewritten or adopted; rebuild the application database.
+
 F35 advances the exact proposal policy from `fixed-conservative-v13` to
 `fixed-conservative-v14` because provider-consensus title election adds a new
 persisted automatic-decision path. Existing proposal, review, decision, and
@@ -91,7 +98,7 @@ exact retained #744 test schema, an existing complete owner-only clone, an
 independent backup path, and an absent output path under the same private
 directory. The command name remains the frozen authority identifier from its
 original plan; its fresh output is always the exact current schema,
-`metadata-report-v38` with `fixed-conservative-v20`. It leaves the source
+`metadata-report-v38` with `fixed-conservative-v21`. It leaves the source
 untouched, verifies the backup, rebuilds a fresh exact-current report database
 through current derivation, and
 invalidates observations that lack current work-dispatch provenance plus all

@@ -22,6 +22,7 @@ import pytest
 from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
+from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
@@ -57,6 +58,7 @@ from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.proposal_evidence import (
     _claim,
     _fields,
+    _local_description,
     _provider,
     _target_work_candidate,
     _target_work_report,
@@ -169,6 +171,84 @@ def test_automatic_description_read_model_names_only_its_bound_source(
     )
 
     assert description["automatic_selection_sources"] == [label]
+
+
+def test_equivalent_local_description_keeps_exact_automatic_authority_after_reopen(
+    effects: _EffectEnvironment,  # noqa: F811
+) -> None:
+    candidate = _target_work_candidate("catalogue", "edition-1", "work-1")
+    local = _local_description("A QUALIFIED DESCRIPTION.")
+    report = _target_work_report(
+        (("catalogue", "hardcover", (candidate,), True),),
+        additional_local_claims=(local,),
+    )
+    proposal = evaluate_report(report)
+    result = next(
+        value
+        for value in proposal.results
+        if value.destination is TargetDestination.DESCRIPTION
+    )
+    alternative = result.alternatives[0]
+    assert alternative.value.value == "A qualified description."
+
+    decisions = _automatic_decisions(
+        effects,
+        report,
+        "description_fill",
+        "safe_plain_text",
+        qualified=True,
+    )
+    decision = next(
+        value
+        for value in decisions
+        if value.destination == "description" and value.outcome == "candidate"
+    )
+    assert decision.candidate_id == alternative.alternative_id
+
+    effects.repository.close()
+    effects.repository = open_repository(
+        effects.database_path, create=False, cross_thread=True
+    )
+    ShadowOutcomeSet.from_json(
+        effects.repository.persist_shadow_outcome(decision.review_case_id, 4)
+    )
+    persisted = tuple(
+        AutomaticDecision.from_json(value)
+        for value in effects.repository.get_review_case_decisions(
+            decision.review_case_id
+        )
+        if AutomaticDecision.from_json(value).destination == "description"
+    )
+    assert persisted == (decision,)
+
+    authority = PersistedFieldEffectAuthority(effects.repository).resolve(decision)
+    assert authority.decision_value == {
+        "kind": "text",
+        "value": "A qualified description.",
+    }
+    detail = InspectCurrentReviewCase(effects.repository).run(decision.review_case_id)
+    description = next(
+        field for field in detail["fields"] if field["destination"] == "description"
+    )
+    assert description["automatic_decision"] == {
+        "candidate_id": alternative.alternative_id,
+        "decision_id": decision.decision_id,
+        "destination": "description",
+        "occurred_at": 4,
+        "outcome": "candidate",
+        "proposal_id": decision.proposal_id,
+        "review_case_id": decision.review_case_id,
+        "selected_value": {"kind": "text", "value": "A qualified description."},
+        "target_fingerprint": decision.target_fingerprint,
+    }
+    assert description["automatic_selection_sources"] == ["Hardcover"]
+    assert effects.repository._connection.execute(
+        "SELECT count(*) FROM field_effects"
+    ).fetchone() == (0,)
+    activity = next(
+        event for event in _ledger(effects) if event["event_id"] == decision.decision_id
+    )
+    assert _facts(activity)["New value"] == "A qualified description."
 
 
 def test_a_qualified_automatic_decision_reaches_activity_without_raw_inserts(

@@ -87,7 +87,7 @@ PROPOSAL_SCHEMA = "proposal-set-v6"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v20"
+POLICY_VERSION = "fixed-conservative-v21"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -1121,10 +1121,13 @@ def evaluate_report(
             destination,
             targets[destination],
             observations,
+            report,
             _dependencies(destination),
         )
         if destination is TargetDestination.SERIES:
-            result = _resolve_series_subset(result, targets[destination], observations)
+            result = _resolve_series_subset(
+                result, targets[destination], observations, report
+            )
         if (
             destination is TargetDestination.ISBN
             and not observations
@@ -1373,9 +1376,7 @@ def _observations(
                     and _eligible_provider_manifestation(
                         destination, claim, provider, candidate
                     )
-                    and _eligible_provider_description(
-                        destination, claim.value, candidate
-                    )
+                    and _eligible_provider_description(destination, claim, candidate)
                     and not _generic_provider_subtitle(report, destination, claim.value)
                     and _eligible_field_value(destination, claim.value)
                     and (
@@ -2145,6 +2146,7 @@ def _subtitle_component_is_preserved(
         TargetDestination.SUBTITLE,
         target,
         _observations(report, TargetDestination.SUBTITLE),
+        report,
     )
     return any(
         alternative.value.kind is ProposalValueKind.TEXT
@@ -2874,7 +2876,10 @@ def _series_bundle_dominates(candidate: ProposalValue, other: ProposalValue) -> 
 
 
 def _resolve_series_subset(
-    result: ProposalResult, target: TargetField, observations: tuple[_Observed, ...]
+    result: ProposalResult,
+    target: TargetField,
+    observations: tuple[_Observed, ...],
+    report: MetadataReport,
 ) -> ProposalResult:
     """Elect only a unique existing bundle that covers every alternative."""
     if (
@@ -2901,6 +2906,7 @@ def _resolve_series_subset(
             for observed in observations
             if set(observed.references) <= references
         ),
+        report,
         result.dependencies,
     )
 
@@ -3166,6 +3172,7 @@ def _publication_results(
         TargetDestination.PUBLISHED_DATE,
         date_target,
         dates,
+        report,
     )
     year_result = ProposalResult(
         TargetDestination.PUBLISHED_YEAR,
@@ -3420,9 +3427,10 @@ def _evaluate(
     destination: TargetDestination,
     target: TargetField,
     observations: tuple[_Observed, ...],
+    report: MetadataReport,
     dependencies: tuple[TargetDestination, ...] = (),
 ) -> ProposalResult:
-    alternatives = _alternatives(destination, target, observations)
+    alternatives = _alternatives(destination, target, observations, report)
     if target.state in {
         TargetFieldState.UNLOADED,
         TargetFieldState.MALFORMED,
@@ -3602,6 +3610,7 @@ def _alternatives(
     destination: TargetDestination,
     target: TargetField,
     observations: tuple[_Observed, ...],
+    report: MetadataReport,
 ) -> tuple[ProposalAlternative, ...]:
     grouped: dict[
         tuple[
@@ -3634,6 +3643,10 @@ def _alternatives(
     ):
         values = grouped[key]
         proposal_values = tuple(value.value for value in values)
+        if destination is TargetDestination.DESCRIPTION:
+            ordinary_provider_values = _ordinary_description_values(report, values)
+            if ordinary_provider_values:
+                proposal_values = ordinary_provider_values
         if destination is TargetDestination.ISBN:
             isbn13_values = tuple(
                 value
@@ -3962,12 +3975,36 @@ def _eligible_description(destination: TargetDestination, value: str) -> bool:
     )
 
 
-def _eligible_provider_description(
-    destination: TargetDestination,
-    value: str,
+def ordinary_provider_description_source_is_safe(
+    claim: ProviderClaim,
     candidate: ProviderCandidate,
 ) -> bool:
-    if _eligible_description(destination, value):
+    """Recognize one exact ordinary provider description source."""
+    return (
+        type(claim) is ProviderClaim
+        and type(candidate) is ProviderCandidate
+        and claim in candidate.claims
+        and claim.kind is ClaimKind.DESCRIPTION
+        and claim.scope is ClaimScope.WORK
+        and claim.state is FieldState.VALID
+        and type(claim.value) is str
+        and _eligible_description(TargetDestination.DESCRIPTION, claim.value)
+        and not any(
+            evidence.kind is ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION
+            and evidence.scope is ClaimScope.WORK
+            for evidence in candidate.evidence
+        )
+    )
+
+
+def _eligible_provider_description(
+    destination: TargetDestination,
+    claim: ProviderClaim,
+    candidate: ProviderCandidate,
+) -> bool:
+    if destination is not TargetDestination.DESCRIPTION:
+        return True
+    if ordinary_provider_description_source_is_safe(claim, candidate):
         return True
     descriptions = tuple(
         claim
@@ -3982,6 +4019,24 @@ def _eligible_provider_description(
         and evidence.scope is ClaimScope.WORK
         and evidence.value == "google-books-html-visible-text-v1"
         for evidence in candidate.evidence
+    )
+
+
+def _ordinary_description_values(
+    report: MetadataReport,
+    observations: list[_Observed],
+) -> tuple[ProposalValue, ...]:
+    references = {
+        reference for observed in observations for reference in observed.references
+    }
+    return tuple(
+        _value(TargetDestination.DESCRIPTION, claim.value)
+        for provider in report.providers
+        for candidate in provider.candidates
+        for claim in candidate.claims
+        if claim.reference in references
+        and ordinary_provider_description_source_is_safe(claim, candidate)
+        and provider_candidate_represents_target_work(report, provider, candidate)
     )
 
 

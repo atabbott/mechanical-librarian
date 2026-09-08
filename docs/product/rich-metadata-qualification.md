@@ -5,6 +5,19 @@ rich-metadata qualification contract and its exact option-level decisions. It
 grants decision-only Automatic authority to the passing options; it does not
 grant effect consent, construct a target write, or change provider selection.
 
+## Exact description sources (#1001)
+
+The [v15 candidate](../reference/f20-rich-metadata-qualification-candidate-v15.json)
+binds grouped description alternatives to the canonical exact representation
+from an eligible ordinary provider source. Equivalent local evidence remains
+inspectable, but cannot replace the applied bytes or borrow the provider's
+automatic authority. Preview independently rechecks exact value, ordinary
+plain-text provenance, transformation exclusion and target-work applicability.
+The existing competition quality floor and provider authority order are
+unchanged. V15 retains the exposed F37 description replays and the complete
+F20 non-description and series continuity evidence; it makes no fresh holdout
+claim.
+
 ## Contradictory work evidence (#1000)
 
 The [v14 candidate](../reference/f20-rich-metadata-qualification-candidate-v14.json)
@@ -79,9 +92,9 @@ including convention-qualified views of the same grouping, six correct sequence
 occurrences and one unknown; its support denominator is still five books.
 Actual target values are scored separately from full qualified memberships.
 
-The runtime binds the v14 digest, source dependencies, closed option
+The runtime binds the v15 digest, source dependencies, closed option
 matrix and tested zero-tolerance controls. Metrics alone do not authorize
-activation. Historical v11/v12/v13 bytes and decisions remain readable, while fresh
+activation. Historical v11/v12/v13/v14 bytes and decisions remain readable, while fresh
 decisions and guarded effects require the exact current qualification. Retained
 historical non-series compiler evidence for v13 compared 980 serialized
 observations unchanged. V14 changes 18 genre previews in the two-scenario
@@ -90,7 +103,7 @@ the first #1000 candidate withheld; no other field changes. The rotation also
 changes authority-derived identities. The earlier
 50-case gold programme and operator evidence remain retained evidence, not 50
 new cases. The exact-clean-head retained series and non-series replays are bound
-in v14. Supported isolated field effects and installed acceptance remain
+in v14 and is retained unchanged by v15. Supported isolated field effects and installed acceptance remain
 required delivery checks; the manifest does not claim a future receipt or
 replace those checks.
 

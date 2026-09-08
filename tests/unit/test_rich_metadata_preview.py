@@ -64,6 +64,7 @@ from tests.support.proposal_evidence import (
     _claim,
     _exact_edition_cover,
     _fields,
+    _local_description,
     _local_isbn,
     _local_subtitle,
     _provider,
@@ -493,6 +494,115 @@ _QUALIFIED_DESCRIPTION = (
 )
 
 
+def _description_result(proposal: ProposalSet) -> ProposalResult:
+    return next(
+        value
+        for value in proposal.results
+        if value.destination is TargetDestination.DESCRIPTION
+    )
+
+
+def test_equivalent_local_description_keeps_the_exact_provider_representation() -> None:
+    candidate = _description_candidate(
+        "catalogue", "edition-1", "work-1", "A qualified description."
+    )
+    local = _local_description("A QUALIFIED DESCRIPTION.")
+
+    proposal, fields = _target_work_preview(
+        _target_work_report(
+            (("catalogue", "hardcover", (candidate,), True),),
+            additional_local_claims=(local,),
+        )
+    )
+
+    result = _description_result(proposal)
+    assert len(result.alternatives) == 1
+    alternative = result.alternatives[0]
+    assert alternative.value.value == "A qualified description."
+    assert set(alternative.evidence_references) == {
+        local.reference,
+        candidate.claims[3].reference,
+    }
+    assert fields["description_fill"].to_data() == {
+        "current_value": None,
+        "desired_value": "A qualified description.",
+        "field": "description_fill",
+        "narrowed_for_target": False,
+        "option": "safe_plain_text",
+        "outcome": "projected",
+        "qualified_value": None,
+        "reason": None,
+        "target_state": "missing",
+    }
+    assert fields["description_fill"].source_candidate_id == alternative.alternative_id
+    assert fields["description_fill"].source_combination_ids == ()
+    assert fields["description_fill"].source_evidence_references == (
+        candidate.claims[3].reference,
+    )
+
+
+def test_equivalent_provider_representations_use_canonical_order_independent_of_source_order() -> (
+    None
+):
+    uppercase = _description_candidate(
+        "alpha", "edition-1", "work-1", "A QUALIFIED DESCRIPTION."
+    )
+    lowercase = _description_candidate(
+        "zulu", "edition-2", "work-1", "A qualified description."
+    )
+    transformed = replace(
+        _description_candidate(
+            "middle", "edition-3", "work-1", "a qualified description."
+        ),
+        evidence=(
+            ProviderEvidence(
+                ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION,
+                "google-books-html-visible-text-v1",
+                ClaimScope.WORK,
+            ),
+        ),
+    )
+    local_claims = (
+        _local_description("A  qualified description.", occurrence=0),
+        _local_description("a qualified description.", occurrence=1),
+    )
+    sources = (
+        ("alpha", "open_library", (uppercase,), True),
+        ("middle", "google_books", (transformed,), True),
+        ("zulu", "hardcover", (lowercase,), True),
+    )
+    observed = []
+    for providers, local in (
+        (sources, local_claims),
+        (tuple(reversed(sources)), tuple(reversed(local_claims))),
+    ):
+        proposal, fields = _target_work_preview(
+            _target_work_report(
+                providers,
+                additional_local_claims=local,
+            )
+        )
+        result = _description_result(proposal)
+        preview = fields["description_fill"]
+        observed.append(
+            (
+                result.to_data(),
+                preview.to_data(),
+                preview.source_candidate_id,
+                preview.source_evidence_references,
+            )
+        )
+
+    assert observed[0] == observed[1]
+    result_data, preview_data, source_candidate_id, source_references = observed[0]
+    assert result_data["alternatives"][0]["value"]["value"] == (
+        "A QUALIFIED DESCRIPTION."
+    )
+    assert preview_data["desired_value"] == "A QUALIFIED DESCRIPTION."
+    assert source_candidate_id == result_data["alternatives"][0]["alternative_id"]
+    assert source_references == (uppercase.claims[3].reference,)
+
+
 def test_exact_multi_isbn_work_keeps_all_automatic_work_fields() -> None:
     catalogue = _target_work_candidate("catalogue", "edition-1", "work-1")
     search = _target_work_candidate("search", "edition-2", "work-1")
@@ -668,12 +778,12 @@ def test_automatic_description_excludes_unproved_source_for_one_collapsed_value(
 ):
     shared_description = _QUALIFIED_DESCRIPTION + " Shared source text."
     unproved = _description_candidate(
-        "preferred", "edition-1", "work-1", shared_description
+        "preferred", "edition-1", "work-1", shared_description.upper()
     )
     applicable = _description_candidate(
         "fallback", "edition-2", "work-1", shared_description
     )
-    _, fields = _target_work_preview(
+    proposal, fields = _target_work_preview(
         _target_work_report(
             (
                 ("preferred", "hardcover", (unproved,), False),
@@ -683,11 +793,46 @@ def test_automatic_description_excludes_unproved_source_for_one_collapsed_value(
     )
 
     description = fields["description_fill"]
+    alternative = _description_result(proposal).alternatives[0]
+    assert alternative.value.value == shared_description
     assert ("projected", shared_description) == (
         description.outcome,
         description.desired_value,
     )
     assert description.source_evidence_references == (applicable.claims[3].reference,)
+
+
+def test_transformed_description_cannot_borrow_an_equivalent_local_value() -> None:
+    transformed = replace(
+        _description_candidate(
+            "catalogue", "edition-1", "work-1", "A qualified description."
+        ),
+        evidence=(
+            ProviderEvidence(
+                ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION,
+                "google-books-html-visible-text-v1",
+                ClaimScope.WORK,
+            ),
+        ),
+    )
+    local = _local_description("A QUALIFIED DESCRIPTION.")
+
+    proposal, fields = _target_work_preview(
+        _target_work_report(
+            (("catalogue", "google_books", (transformed,), True),),
+            additional_local_claims=(local,),
+        )
+    )
+
+    alternative = _description_result(proposal).alternatives[0]
+    assert set(alternative.evidence_references) == {
+        local.reference,
+        transformed.claims[3].reference,
+    }
+    assert ("abstain", "no_candidate") == (
+        fields["description_fill"].outcome,
+        fields["description_fill"].reason,
+    )
 
 
 def test_single_automatic_description_preserves_the_preexisting_no_floor_path() -> None:

@@ -191,7 +191,7 @@ def test_prior_policy_store_schema_is_rejected_without_mutation() -> None:
         assert before == path.read_bytes()
 
 
-def test_persisted_v17_proposal_state_is_rejected_during_bootstrap() -> None:
+def test_persisted_v20_proposal_state_is_rejected_during_bootstrap() -> None:
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "reports.sqlite"
         repository = open_repository(path)
@@ -204,7 +204,7 @@ def test_persisted_v17_proposal_state_is_rejected_during_bootstrap() -> None:
         connection.execute("PRAGMA writable_schema=ON")
         connection.execute(
             "UPDATE sqlite_master SET sql=replace(sql, ?, ?) WHERE name='proposal_sets'",
-            (POLICY_VERSION, "fixed-conservative-v17"),
+            (POLICY_VERSION, "fixed-conservative-v20"),
         )
         connection.commit()
         connection.close()
@@ -213,7 +213,7 @@ def test_persisted_v17_proposal_state_is_rejected_during_bootstrap() -> None:
         connection.execute("DROP TRIGGER proposal_sets_no_update")
         connection.execute(
             "UPDATE proposal_sets SET policy_version=?,document=replace(document, ?, ?)",
-            ("fixed-conservative-v17", POLICY_VERSION, "fixed-conservative-v17"),
+            ("fixed-conservative-v20", POLICY_VERSION, "fixed-conservative-v20"),
         )
         connection.execute(
             "CREATE TRIGGER proposal_sets_no_update BEFORE UPDATE ON proposal_sets "
