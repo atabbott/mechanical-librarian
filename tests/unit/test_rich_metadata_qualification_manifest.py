@@ -133,11 +133,11 @@ def test_v15_binds_current_source_and_preserves_historical_v11_to_v14_bytes() ->
     rotation = manifest["authority_rotation"]
     assert (
         rotation["measured_candidate_head"]
-        == "0dff10c22c3302bb473d25e430ed59e8eb62c554"
+        == "bfe62a953b3b76b51e89132ff040b9cdaf401eee"
     )
     assert rotation["measured_behavior_sources"] == {
         "src/mechanical_librarian/domain/metadata_report.py": "d624e3ef9176de6fd8e9b569b0b8d2cb65b0c964c724ffbbcc2ff8fcdd2dd344",
-        "src/mechanical_librarian/domain/proposal_set.py": "a2d0feed83a6260d5b08131459a01df2f815e2892f087980a9ab99a816d1f0af",
+        "src/mechanical_librarian/domain/proposal_set.py": "e8afeace64d9fc9ddead526300a6d0a9f59c404ef1b78ceebc12a1c8b3f29ffc",
         "src/mechanical_librarian/domain/rich_metadata_preview.py": "40696bad9423d43a27676b020140a6cb868c960a8b1ee88f1c9e6e114474eea2",
         "src/mechanical_librarian/domain/work_identity.py": "da96b62cb77a4b0246ed3bfb6e381d9f4f9fdde1c035073e356a52da44b912a7",
     }
@@ -278,7 +278,7 @@ def test_v15_records_exact_description_source_and_complete_continuity() -> None:
     assert evidence["qualification_method"] == "owner_approved_exposed_regression"
     assert evidence["fresh_holdout_claim"] is False
     assert evidence["measured_candidate_head"] == (
-        "0dff10c22c3302bb473d25e430ed59e8eb62c554"
+        "bfe62a953b3b76b51e89132ff040b9cdaf401eee"
     )
     f37 = evidence["f37_description"]
     assert f37["evaluator_sha256"] == (
@@ -292,7 +292,7 @@ def test_v15_records_exact_description_source_and_complete_continuity() -> None:
         "errors": 0,
         "automatic_precision": 1,
         "receipt_sha256": (
-            "5f030c36691a5f54dd592b9f2f9af9eda1c68725742fa35937511db2e41fc237"
+            "101c3968e075f6f585e8ddd84f9b8f0a31b0f3159b4b54387522f9ed84620d65"
         ),
     }
     assert f37["holdout"] == {
@@ -303,7 +303,7 @@ def test_v15_records_exact_description_source_and_complete_continuity() -> None:
         "automatic_precision": 1,
         "spent": True,
         "receipt_sha256": (
-            "8eacb18bc89bc0e5f9fcac819bd621dae6ff5bdbe73b84e3f9f0d3c5c56053df"
+            "ec875cd8674752f5c4f2f4bd4ca4c989ef79dbcaf341515623de09fc61fc385e"
         ),
     }
     assert re.fullmatch(r"[0-9a-f]{64}", f37["correctness_comparison_sha256"])

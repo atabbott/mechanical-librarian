@@ -4,11 +4,11 @@
   "proposal_policy_version": "fixed-conservative-v21",
   "authority_rotation": {
     "prior_manifest_sha256": "4a89dfc24a27bbe2a548a9b0c5ad2793cf2da1a2b0445f9dd1ad2f9323822bc9",
-    "measured_candidate_head": "0dff10c22c3302bb473d25e430ed59e8eb62c554",
+    "measured_candidate_head": "bfe62a953b3b76b51e89132ff040b9cdaf401eee",
     "scope": "Bind equivalent description groups to an eligible exact ordinary provider representation before value-derived identity. Preserve every qualified option, add exact v14 historical read acceptance, and rotate current decision authority.",
     "measured_behavior_sources": {
       "src/mechanical_librarian/domain/metadata_report.py": "d624e3ef9176de6fd8e9b569b0b8d2cb65b0c964c724ffbbcc2ff8fcdd2dd344",
-      "src/mechanical_librarian/domain/proposal_set.py": "a2d0feed83a6260d5b08131459a01df2f815e2892f087980a9ab99a816d1f0af",
+      "src/mechanical_librarian/domain/proposal_set.py": "e8afeace64d9fc9ddead526300a6d0a9f59c404ef1b78ceebc12a1c8b3f29ffc",
       "src/mechanical_librarian/domain/rich_metadata_preview.py": "40696bad9423d43a27676b020140a6cb868c960a8b1ee88f1c9e6e114474eea2",
       "src/mechanical_librarian/domain/work_identity.py": "da96b62cb77a4b0246ed3bfb6e381d9f4f9fdde1c035073e356a52da44b912a7"
     },
@@ -46,7 +46,7 @@
       "src/mechanical_librarian/domain/identifiers.py": "ab8862f3259921b9cd5e00bf2bf636c846b810db79c58c293c8cf12bd1c54f6a",
       "src/mechanical_librarian/domain/metadata_policy.py": "b5a1b61fc8dde0c6e08936a28661f4b57ea41fdd1d80bc3e1f249dc307f4a1b0",
       "src/mechanical_librarian/domain/metadata_report.py": "d624e3ef9176de6fd8e9b569b0b8d2cb65b0c964c724ffbbcc2ff8fcdd2dd344",
-      "src/mechanical_librarian/domain/proposal_set.py": "a2d0feed83a6260d5b08131459a01df2f815e2892f087980a9ab99a816d1f0af",
+      "src/mechanical_librarian/domain/proposal_set.py": "e8afeace64d9fc9ddead526300a6d0a9f59c404ef1b78ceebc12a1c8b3f29ffc",
       "src/mechanical_librarian/domain/review_case.py": "9382023a5363fd0200007e7362a5bdcff362bf7a53973c27833b3efdffbca92a",
       "src/mechanical_librarian/domain/reviewer_decision_summary.py": "dabf218ef80bbd59076e7e235dc506819950016dca25f581fd3020edade70555",
       "src/mechanical_librarian/domain/rich_metadata_preview.py": "40696bad9423d43a27676b020140a6cb868c960a8b1ee88f1c9e6e114474eea2",
@@ -611,7 +611,7 @@
     "exact_description_source": {
       "qualification_method": "owner_approved_exposed_regression",
       "fresh_holdout_claim": false,
-      "measured_candidate_head": "0dff10c22c3302bb473d25e430ed59e8eb62c554",
+      "measured_candidate_head": "bfe62a953b3b76b51e89132ff040b9cdaf401eee",
       "f37_description": {
         "evaluator_sha256": "2d0762bea9cf1ad3e79eabfa64c26b999ecd7ca0bf94a5aec0dfc237f515780d",
         "execution_context": "correction_replay",
@@ -621,7 +621,7 @@
           "correct_predictions": 13,
           "errors": 0,
           "automatic_precision": 1,
-          "receipt_sha256": "5f030c36691a5f54dd592b9f2f9af9eda1c68725742fa35937511db2e41fc237"
+          "receipt_sha256": "101c3968e075f6f585e8ddd84f9b8f0a31b0f3159b4b54387522f9ed84620d65"
         },
         "holdout": {
           "cases": 25,
@@ -630,9 +630,9 @@
           "errors": 0,
           "automatic_precision": 1,
           "spent": true,
-          "receipt_sha256": "8eacb18bc89bc0e5f9fcac819bd621dae6ff5bdbe73b84e3f9f0d3c5c56053df"
+          "receipt_sha256": "ec875cd8674752f5c4f2f4bd4ca4c989ef79dbcaf341515623de09fc61fc385e"
         },
-        "correctness_comparison_sha256": "c3552da3e2156f0b99108daff36f1027008fecd0e3b5eb7e60722bfc92eb8bca"
+        "correctness_comparison_sha256": "efcb6c89a1127f816db52f6a0bb3368770472158c41c51d5ec980195794de17f"
       },
       "same_mode_f20_continuity": {
         "modes": [
@@ -643,9 +643,9 @@
             "complete_outcomes_equal": true,
             "non_description_outcomes_equal": true,
             "description_outcomes_equal": true,
-            "result_sha256": "535e8662678a1ce6a76152dcfae6c3c6ff82a9fd20ef517cb05f8ceea6dd2533",
-            "comparison_sha256": "38e23c89f49449b8185074e05d3e4656907a7b7efc870c96701a7c1d5e804e97",
-            "correctness_comparison_sha256": "eeac93e2a5aca023ab3c4df929d68abe9ee5e7661369acb80475910662d61b33"
+            "result_sha256": "34c6dbd9cc01f7cea9b3106ce05cfe353284abf204647b96dcc1b6941ebd995f",
+            "comparison_sha256": "84c12c10eeb931639a338b486084fcba63b51798e2e441d313badb6c73587d93",
+            "correctness_comparison_sha256": "7efc73206b0fd5a0a0f5c1dabc8ab120f45c8646c85a429aae294e8609014909"
           },
           {
             "mode": "live-three-provider-49-v2",
@@ -654,9 +654,9 @@
             "complete_outcomes_equal": true,
             "non_description_outcomes_equal": true,
             "description_outcomes_equal": true,
-            "result_sha256": "af87f3756d25b4fefdd46462bd504df708dfc0612e7b6b83b9d2aaceddaf2a06",
-            "comparison_sha256": "9e5f839a195109c5d68b50a23dde78428bad67b7ee904b741e3850c1ee12c7be",
-            "correctness_comparison_sha256": "ff0691e60476dd0680e8a930672b88ba664e8e63c9b664c01d145a4fa1ccaeff"
+            "result_sha256": "362f3eb31efcf2cc356388f2bcc51062d86c1d675027f1a978bb26b54ca823bd",
+            "comparison_sha256": "9ba82eb904bda5ff23de927bcbe688548b6c8de67f4c109a186ecebfe63b59f6",
+            "correctness_comparison_sha256": "3a81c85e9b698a3b18689a42bf94e4d8d510ea829cf79f4d2ef387acc925795f"
           }
         ],
         "options_or_modes_pooled": false,
@@ -670,8 +670,8 @@
         "description_observations": 98,
         "non_description_observations": 882,
         "canonical_complete_previews_equal": true,
-        "artifact_sha256": "27bfa70ece61933c1537a9c7efb40a9ef3014bb3563c7b1e3060da1d24ef4436",
-        "comparison_sha256": "724d82bb9571273a5ef5e6b10fe30c0817ec00d981985355d76b1aa70257addf",
+        "artifact_sha256": "1437e8b9708b9a5802315abac2b446955aae0356a85460641923f536e9b5c122",
+        "comparison_sha256": "80bbfd74098c43c8975451ecac54e71b16b6ae75f4cf8043b3b9f35998c753ce",
         "comparator_reported_changes": 980,
         "comparator_limitation": "The frozen live comparator compares tuple fields with JSON list fields. Canonical JSON readback proves all complete previews equal."
       },
@@ -680,9 +680,9 @@
         "complete_previews": 108,
         "private_previews_equal": true,
         "per_batch_option_aggregates_equal": true,
-        "artifact_sha256": "7feb5ebbf5ea191b4ef4c7934400d66a981373a92e16b5b50a208f66938ed562",
-        "receipt_sha256": "b68fc470d24de6739837d461ce4378dd2c46106e08bc29200ed5e687f95cfef6",
-        "comparison_sha256": "3061e7ca83c859aecb0c8d51b45e63c42c82940a87b43c07119a3ec3893a8e30",
+        "artifact_sha256": "4105d6866128357238e0a34957283453bf7c036341799ffc768e2cb473e213a4",
+        "receipt_sha256": "903aed77fda77c9ed9cf787eb7ef0bb2e4ab92cc5a3bb8147c5cb37da5c71e37",
+        "comparison_sha256": "0b0571463177b67a27205c31449399c36f10cc0253fab01c7d7a09fdd89c1779",
         "fresh_holdout_claim": false,
         "network_requests": 0
       },
