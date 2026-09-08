@@ -1365,6 +1365,141 @@ def test_year_current_reaches_one_durable_publication_keep_and_read_models() -> 
         reopened.close()
 
 
+def test_full_date_reaches_one_durable_publication_candidate_and_read_models() -> None:
+    """One corroborated full Date reaches the real qualified automatic lane."""
+    local_date = LocalClaim.create(
+        kind=ClaimKind.PUBLICATION_DATE,
+        observed="2001-02-03",
+        canonical="2001-02-03",
+        excerpt="2001-02-03",
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.EDITION,
+        date_event=DateEvent.MANIFESTATION_PUBLICATION,
+        date_precision=DatePrecision.DAY,
+    )
+    report = _proposal_report(
+        fields=_fields(
+            published_year=TargetField(
+                TargetDestination.PUBLISHED_YEAR, TargetFieldState.MISSING
+            ),
+            published_date=TargetField(
+                TargetDestination.PUBLISHED_DATE, TargetFieldState.MISSING
+            ),
+        ),
+        local_claims=(_publication_local_isbn(), local_date),
+        providers=(
+            _publication_provider(
+                "alpha", "alpha-edition", ("2001-02-03",), authority="hardcover"
+            ),
+            _publication_provider(
+                "beta", "beta-edition", ("2001-02-03",), authority="open_library"
+            ),
+        ),
+    )
+    with tempfile.TemporaryDirectory() as temporary:
+        path = Path(temporary) / "reports.sqlite"
+        repository = open_repository(path)
+        options = dict(DEFAULT_OPTIONS)
+        options["date_precision"] = "full_date"
+        destinations = {
+            name: "unsupported" if name == "explicit" else "ask"
+            for name in OPTION_CATALOGUE
+        }
+        destinations["date_precision"] = "automatic"
+        profile = MetadataPolicyProfile.create(
+            "Full publication date", options, destinations
+        )
+        resolved = resolve_policy(profile, report.target.library)
+        repository.enter_shadow_preview(1)
+        repository.create_metadata_policy_draft(profile.canonical_json)
+        repository.activate_metadata_policy(
+            profile.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            2,
+        )
+        repository.activate_qualified_automatic(3)
+        proposal = evaluate_report(
+            report, resolved.resolved_id, human_review_destinations(resolved)
+        )
+        repository.publish(report, lambda: True)
+        repository.publish_proposal(proposal)
+        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+        assert type(case_id) is str
+
+        persisted = repository.persist_shadow_outcome(case_id, 4)
+        outcome = ShadowOutcomeSet.from_json(persisted)
+        publication = next(
+            value for value in outcome.outcomes if value.destination == "publishedDate"
+        )
+        proposal_result = next(
+            value
+            for value in proposal.results
+            if value.destination is TargetDestination.PUBLISHED_DATE
+        )
+        assert publication.disposition == "candidate"
+        assert publication.candidate_id == proposal_result.selected_alternative_id
+        assert (
+            publication.citation_ids
+            == proposal_result.alternatives[0].evidence_references
+        )
+        assert 3 == len(publication.citation_ids)
+
+        document = repository._connection.execute(
+            "SELECT document FROM automatic_decisions WHERE destination='publishedDate'"
+        ).fetchone()
+        assert document is not None
+        decision = AutomaticDecision.from_json(document[0])
+        assert decision.outcome == "candidate"
+        assert decision.candidate_id == publication.candidate_id
+        assert decision.policy_category == "date_precision"
+        assert decision.policy_option == "full_date"
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(case_id))["case"]
+        )
+        assert {"kind": "text", "value": "2001-02-03"} == (
+            _automatic_decision_value(decision, case, report, proposal, outcome)
+        )
+
+        detail = InspectCurrentReviewCase(repository).run(case_id)
+        projected = next(
+            value
+            for value in detail["fields"]
+            if value["destination"] == "publishedDate"
+        )
+        assert projected["automatic_decision"] is not None
+        assert projected["automatic_decision"]["selected_value"] == {
+            "kind": "text",
+            "value": "2001-02-03",
+        }
+        assert not projected["needs_attention"]
+        assert (0,) == repository._connection.execute(
+            "SELECT count(*) FROM field_effects"
+        ).fetchone()
+        history = repository.get_review_case_history(case_id, 10)
+        assert any(
+            event.get("kind") == "automatic_decision_recorded"
+            and event.get("destination") == "publishedDate"
+            for event in history
+        )
+        repository.close()
+
+        reopened = open_repository(path, create=False)
+        assert persisted == reopened.persist_shadow_outcome(case_id, 5)
+        reopened_decision = next(
+            AutomaticDecision.from_json(document)
+            for document in reopened.get_review_case_decisions(case_id)
+            if AutomaticDecision.from_json(document).destination == "publishedDate"
+        )
+        assert reopened_decision.to_json() == decision.to_json()
+        assert (0,) == reopened._connection.execute(
+            "SELECT count(*) FROM field_effects"
+        ).fetchone()
+        reopened.close()
+
+
 @pytest.mark.parametrize(
     "scenario",
     (
