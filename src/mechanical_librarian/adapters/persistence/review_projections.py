@@ -231,8 +231,32 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                     if history_limit is None
                     else self.cover_consideration_history(review_case_id, history_limit)
                 ),
+                current_cover_automatic_decision_id=(
+                    self._current_cover_automatic_decision_id(review_case_id)
+                ),
             )
         return snapshot
+
+    def _current_cover_automatic_decision_id(self, review_case_id: str) -> str | None:
+        row = self._connection.execute(
+            "SELECT selection.decision_id FROM current_review_case_lineages lineage "
+            "JOIN current_cover_considerations current_cover "
+            "ON current_cover.review_case_id=lineage.review_case_id "
+            "JOIN current_cover_selection_authorities current_selection ON "
+            "current_selection.connection_name=lineage.connection_name AND "
+            "current_selection.library_name=lineage.library_name AND "
+            "current_selection.item_id=lineage.item_id "
+            "JOIN cover_selection_authorities selection ON "
+            "selection.selection_id=current_selection.selection_id AND "
+            "selection.consideration_id=current_cover.consideration_id "
+            "WHERE lineage.review_case_id=? AND selection.kind='automatic'",
+            (review_case_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        if len(row) != 1 or type(row[0]) is not str:
+            raise MetadataReportError("review case snapshot is unavailable")
+        return row[0]
 
     def _automatic_source_outcome_documents(
         self, review_case_id: str

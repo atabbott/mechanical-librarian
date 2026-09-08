@@ -1036,7 +1036,10 @@ def _assert_manual_cover_surface(
     assert cover["human_decision"] is None
 
 
-def test_ask_retains_and_records_the_sole_cover_choice_after_timeout() -> None:
+@pytest.mark.parametrize("source_timeout", (False, True), ids=("complete", "timeout"))
+def test_ask_retains_and_records_the_sole_cover_choice_after_timeout(
+    source_timeout: bool,
+) -> None:
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         payload = _cover_preview(2)
@@ -1047,7 +1050,7 @@ def test_ask_retains_and_records_the_sole_cover_choice_after_timeout() -> None:
             artifact=None,
             timeout_scope="attempted",
         )
-        base = _cover_report((candidate, timeout))
+        base = _cover_report((candidate, timeout) if source_timeout else (candidate,))
         report = MetadataReport.create(
             target=TargetFacts("primary", "ebooks", "item-1", base.target.fields),
             file=base.file,
@@ -1066,10 +1069,15 @@ def test_ask_retains_and_records_the_sole_cover_choice_after_timeout() -> None:
             for result in proposal.results
             if result.destination is TargetDestination.COVER
         )
-        assert cover_result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+        assert cover_result.outcome is (
+            ProposalOutcome.UNRESOLVED_CHOICE
+            if source_timeout
+            else ProposalOutcome.PROPOSE_CHANGE
+        )
         assert cover_result.reasons == (
-            "cover_gallery_incomplete",
-            "owner_cover_choice_required",
+            ("cover_gallery_incomplete", "owner_cover_choice_required")
+            if source_timeout
+            else ("unique_safe_cover",)
         )
         assert len(cover_result.alternatives) == 1
 
@@ -1103,6 +1111,18 @@ def test_ask_retains_and_records_the_sole_cover_choice_after_timeout() -> None:
         )
         assert cover["needs_attention"] is True
         assert cover["editable"] is True
+        browse = BrowseReviewLibrary(repository)
+        library = browse.library(lens="all", search=None, limit=10, cursor=None)
+        library_item = next(
+            item for item in library["items"] if item["review_case_id"] == case_id
+        )
+        attention = browse.attention(search=None, limit=10, cursor=None)
+        assert library_item["attention_count"] == 1
+        assert library["counts"]["needs_attention"] == 1
+        assert attention["total"] == 1
+        assert [
+            (item["review_case_id"], item["destination"]) for item in attention["items"]
+        ] == [(case_id, "cover")]
 
         acknowledgement = RecordHumanDecision(repository, clock=lambda: 10).run(
             case_id,
@@ -3832,6 +3852,14 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
             if item["review_case_id"] == automatic.review_case_id
         )
         assert projected_work["detail_url"] == f"/review/{automatic.review_case_id}"
+        assert projected_work["attention_count"] == 0
+        assert library["counts"]["needs_attention"] == 0
+        assert (
+            BrowseReviewLibrary(repository).attention(
+                search=None, limit=50, cursor=None
+            )["items"]
+            == []
+        )
         detail = InspectCurrentReviewCase(repository).run(automatic.review_case_id)
         projected_cover = next(
             field for field in detail["fields"] if field["destination"] == "cover"
@@ -3876,6 +3904,42 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
             "kind": "cover",
             "value": automatic.artifact_id,
         }
+        all_activity = repository.field_effect_activity_page(
+            search=None,
+            event_type="all",
+            occurred_after=0,
+            page=1,
+            page_size=25,
+        )
+        assert [
+            event["record"]["source_kind"]
+            for event in all_activity["events"]
+            if event["event_id"] == automatic.decision_id
+        ] == ["automatic_decision"]
+        activity_service = ContinuousGuardedApplication(
+            repository,
+            {},
+            {},
+            PersistedFieldEffectAuthority(repository),
+            (("primary", "ebooks"),),
+            lambda: 2_000,
+            lambda *_: None,
+            activity_only=True,
+        )
+        readable_activity = activity_service.activity(search=None)["events"]
+        automatic_activity = [
+            event
+            for event in readable_activity
+            if event["event_id"] == automatic.decision_id
+        ]
+        assert len(automatic_activity) == 1
+        assert automatic_activity[0]["category"] == "automatic"
+        assert automatic_activity[0]["origin"] == "automatic_policy"
+        assert not [
+            event
+            for event in activity_service.activity(search="Library owner")["events"]
+            if event["event_id"] == automatic.decision_id
+        ]
 
         authority_adapter = PersistedFieldEffectAuthority(repository)
         snapshot = authority_adapter.resolve(automatic)
@@ -3983,7 +4047,30 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
             field for field in owner_detail["fields"] if field["destination"] == "cover"
         )
         assert owner_cover["human_decision"]["decision_id"] == owner.decision_id
-        assert owner_cover["automatic_decision"]["decision_id"] == automatic.decision_id
+        assert owner_cover["automatic_decision"] is None
+        reopened_activity_service = ContinuousGuardedApplication(
+            repository,
+            {},
+            {},
+            PersistedFieldEffectAuthority(repository),
+            (("primary", "ebooks"),),
+            lambda: 2_000,
+            lambda *_: None,
+            activity_only=True,
+        )
+        reopened_activity = reopened_activity_service.activity(search=None)["events"]
+        assert [
+            (event["category"], event["origin"])
+            for event in reopened_activity
+            if event["event_id"] == automatic.decision_id
+        ] == [("automatic", "automatic_policy")]
+        assert [
+            event["origin"]
+            for event in reopened_activity
+            if event["category"] == "owner"
+            and event["destination"] == "cover"
+            and event["state"] == "selected"
+        ] == ["human"]
         history = reopened_web.history(automatic.review_case_id)
         transport_history = _HistoryResponse.model_validate(history).model_dump(
             mode="json"

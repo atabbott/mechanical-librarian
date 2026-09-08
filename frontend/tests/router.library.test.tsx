@@ -2452,8 +2452,8 @@ describe('Library route', () => {
           evidence: [],
           limitations: [],
           rationale: 'Selectable retained cover.',
-          recommendation: 'no_recommendation',
-          recommendationReason: 'No recommendation retained.',
+          recommendation: 'recommended',
+          recommendationReason: 'Advisory context recommends this candidate.',
         },
         {
           alternativeId: reference(4),
@@ -2529,6 +2529,9 @@ describe('Library route', () => {
     const coverField = {
       ...base,
       destination: 'cover',
+      decisionActions: [],
+      editable: false,
+      needsAttention: false,
       currentValue: `cover_${'1'.repeat(64)}`,
       currentRaw: `cover_${'1'.repeat(64)}`,
       proposalId: 'proposal-cover',
@@ -2553,6 +2556,8 @@ describe('Library route', () => {
       ),
     ).toBeVisible()
     expect(within(comparison).queryByText(/Recommended/u)).not.toBeInTheDocument()
+    expect(comparison.querySelectorAll('.library-cover-card:disabled')).toHaveLength(6)
+    expect(http.recordDecision).not.toHaveBeenCalled()
     const cleanChecks = within(comparison).getByLabelText('Current cover visual checks')
     expect(within(cleanChecks).getByText('No visual defects flagged')).toBeVisible()
     await user.click(within(cleanChecks).getByText('Visual observation details'))
@@ -2585,6 +2590,66 @@ describe('Library route', () => {
     expect(comparison.querySelectorAll('.library-cover-gallery .library-cover-card')).toHaveLength(
       5,
     )
+
+    cleanup()
+    const recommended = {
+      ...consideration,
+      providerFetching: false,
+      ready: true,
+      policy: {
+        ...consideration.policy,
+        status: 'recommended' as const,
+      },
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=cover', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({
+        ...detail,
+        target: { ...detail.target, mediaKind: 'epub' },
+        fields: [{ ...coverField, coverConsideration: recommended }],
+      })),
+    })
+    const recommendedComparison = await screen.findByLabelText('Choose a cover')
+    expect(within(recommendedComparison).getByText('Recommended cover ready')).toBeVisible()
+    expect(
+      within(recommendedComparison).getByText('Alternative 2 cover · Recommended'),
+    ).toBeVisible()
+
+    for (const [reason, explanation] of [
+      [
+        'actual_target_unverified',
+        'The current cover could not be verified, so automatic replacement is withheld.',
+      ],
+      [
+        'confirmed_incumbent_not_improved',
+        'No confirmed alternative improves the current cover, so automatic replacement is withheld.',
+      ],
+    ] as const) {
+      cleanup()
+      const ownerReady = {
+        ...consideration,
+        providerFetching: false,
+        ready: true,
+        policy: {
+          ...consideration.policy,
+          recommended_candidate_reference: null,
+          status: 'abstained' as const,
+          reasons: [reason],
+        },
+      }
+      renderRoute('/library?lens=all&preview=case-1&field=cover', {
+        ...createHttp(),
+        getCaseDetail: vi.fn(async () => ({
+          ...detail,
+          target: { ...detail.target, mediaKind: 'epub' },
+          fields: [{ ...coverField, coverConsideration: ownerReady }],
+        })),
+      })
+      const ownerReadyComparison = await screen.findByLabelText('Choose a cover')
+      expect(within(ownerReadyComparison).getByText('Cover choices ready')).toBeVisible()
+      expect(within(ownerReadyComparison).getByText(explanation)).toBeVisible()
+      expect(within(ownerReadyComparison).queryByText(/· Recommended/u)).not.toBeInTheDocument()
+    }
   })
 
   it.each([
@@ -2687,9 +2752,13 @@ describe('Library route', () => {
         getCaseDetail: vi.fn(async () => ({ ...detail, fields: [coverField] })),
       })
 
-      expect(
-        await screen.findByRole('button', { name: /Current cover.*Unavailable/u }),
-      ).toBeVisible()
+      const currentCover = await screen.findByRole('button', {
+        name: /Current cover.*Unavailable/u,
+      })
+      expect(currentCover).toBeVisible()
+      expect(currentCover.closest('.library-cover-layout')?.firstElementChild).toBe(
+        currentCover.closest('.cover-choice'),
+      )
       expect(screen.getByText('Visual checks unavailable')).toBeVisible()
       expect(screen.queryByText('No visual defects flagged')).not.toBeInTheDocument()
       if (reviewerUnavailableReason === null) {

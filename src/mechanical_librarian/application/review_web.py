@@ -105,6 +105,7 @@ class CurrentReviewCaseSnapshot:
     suspension_causes: tuple[tuple[str, ReviewFieldCause], ...] = ()
     cover_consideration_document: str | None = None
     cover_history: tuple[dict[str, object], ...] = ()
+    current_cover_automatic_decision_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -361,6 +362,12 @@ class InspectCurrentReviewCase:
                     decisions[decision.destination] = decision
                 else:
                     destination = str(projected["destination"])
+                    if (
+                        destination == "cover"
+                        and projected["decision_id"]
+                        != snapshot.current_cover_automatic_decision_id
+                    ):
+                        continue
                     automatic[destination] = projected
                     automatic_source_outcome_ids[destination] = (
                         parse_automatic_authority(document).source_outcome_id
@@ -470,10 +477,17 @@ class InspectCurrentReviewCase:
                 evidence,
             )
             classification = classify_review_field(
-                attention_candidate=_needs_attention(
-                    proposal,
-                    snapshot.automatic_attention_destinations,
-                    owner_only=case.media_kind == "audiobook",
+                attention_candidate=(
+                    _needs_attention(
+                        proposal,
+                        snapshot.automatic_attention_destinations,
+                        owner_only=case.media_kind == "audiobook",
+                    )
+                    or (
+                        destination == "cover"
+                        and current_cover_consideration is not None
+                        and current_cover_consideration["ready"] is True
+                    )
                 ),
                 automatic_outcome=(
                     "abstention"
@@ -2329,6 +2343,7 @@ def _attention_item(
             # the row reports (#966).
             _needs_attention(proposal, owner_only=case.media_kind == "audiobook")
             or cause == "automatic_safety_suspended"
+            or (destination == "cover" and work_attention_count > 0)
         ),
         automatic_outcome=("abstention" if automatic_outcome == "abstention" else None),
         has_human_decision=False,

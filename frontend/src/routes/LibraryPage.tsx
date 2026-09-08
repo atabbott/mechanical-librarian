@@ -1232,6 +1232,11 @@ function LibraryCoverChoicesContent({
       : []
   const policyStatus =
     typeof consideration.policy?.status === 'string' ? consideration.policy.status : null
+  const recommendedReference =
+    policyStatus === 'recommended' &&
+    typeof consideration.policy?.recommended_candidate_reference === 'string'
+      ? consideration.policy.recommended_candidate_reference
+      : null
   const policyReasons = Array.isArray(consideration.policy?.reasons)
     ? consideration.policy.reasons
         .filter((reason): reason is string => typeof reason === 'string')
@@ -1255,8 +1260,9 @@ function LibraryCoverChoicesContent({
       ? null
       : { kind: 'cover', value: candidate.artifactId }
     const selected = choiceSelected(field, progress, outcome, value)
-    const actionableCandidate = candidate.incumbent || candidate.selectable
-    if ((candidate.incumbent && !keeps) || (!candidate.incumbent && !accepts)) return null
+    const eligibleCandidate = candidate.incumbent || candidate.selectable
+    const actionableCandidate = candidate.incumbent ? keeps : accepts && candidate.selectable
+    const recommended = candidate.reference === recommendedReference
     const context = candidate.incumbent
       ? currentContext
       : coverContexts.find((item) => item.alternativeId === candidate.reference)
@@ -1267,13 +1273,13 @@ function LibraryCoverChoicesContent({
     const open = expandedEvidence.has(evidenceKey)
     return (
       <article
-        className={`cover-choice${open ? ' is-evidence-open' : ''}${actionableCandidate ? '' : ' is-unconfirmed'}`}
+        className={`cover-choice${open ? ' is-evidence-open' : ''}${eligibleCandidate ? '' : ' is-unconfirmed'}`}
         key={candidate.reference}
       >
         <button
           type="button"
           aria-pressed={actionableCandidate ? selected : false}
-          className={`library-cover-card${candidate.incumbent ? ' is-current' : ''}${context?.recommendation === 'recommended' ? ' is-recommended' : ''}${selected ? ' is-selected' : ''}`}
+          className={`library-cover-card${candidate.incumbent ? ' is-current' : ''}${recommended ? ' is-recommended' : ''}${selected ? ' is-selected' : ''}`}
           disabled={disabled || !actionableCandidate}
           onClick={() => {
             if (actionableCandidate) choose(outcome, value)
@@ -1295,7 +1301,7 @@ function LibraryCoverChoicesContent({
           <span>
             <small>
               {label}
-              {context?.recommendation === 'recommended' ? ' · Recommended' : ''}
+              {recommended ? ' · Recommended' : ''}
             </small>
             <strong>
               {candidate.matchState === 'same_edition'
@@ -1309,10 +1315,10 @@ function LibraryCoverChoicesContent({
                 `${String(candidate.width)} × ${String(candidate.height)} · ${candidate.sourceKinds.map(fieldLabel).join(', ')}`}
             </em>
             <span className="choice-recommendation">
-              {!actionableCandidate
+              {!eligibleCandidate
                 ? excludedReason(candidate)
-                : context?.recommendation === 'recommended'
-                  ? context.recommendationReason
+                : recommended
+                  ? (context?.recommendationReason ?? 'Deterministic recommendation retained')
                   : 'No recommendation retained'}
             </span>
             {selected && progress?.phase === 'recording' ? <b>Recording…</b> : null}
@@ -1362,18 +1368,24 @@ function LibraryCoverChoicesContent({
     >
       <header>
         <strong>
-          {consideration.ready
+          {recommendedReference !== null
             ? 'Recommended cover ready'
-            : consideration.providerFetching
-              ? 'Waiting for active cover searches'
-              : 'No confirmed cover recommendation'}
+            : consideration.ready
+              ? 'Cover choices ready'
+              : consideration.providerFetching
+                ? 'Waiting for active cover searches'
+                : 'No confirmed cover recommendation'}
         </strong>
         <small>
-          {coverContexts.some((context) => context.recommendation === 'recommended')
+          {recommendedReference !== null
             ? 'The technically best confirmed match is ready for your decision.'
-            : consideration.providerFetching
-              ? 'Confirmed matches remain visible; the shared decision gate opens when fetching pauses.'
-              : 'Only confirmed matches can be recommended.'}
+            : consideration.ready && policyReasons.includes('actual_target_unverified')
+              ? 'The current cover could not be verified, so automatic replacement is withheld.'
+              : consideration.ready && policyReasons.includes('confirmed_incumbent_not_improved')
+                ? 'No confirmed alternative improves the current cover, so automatic replacement is withheld.'
+                : consideration.providerFetching
+                  ? 'Confirmed matches remain visible; the shared decision gate opens when fetching pauses.'
+                  : 'Only confirmed matches can be recommended.'}
         </small>
       </header>
       <p className="reviewer-unavailable-detail">{reviewerLabel}</p>
@@ -1421,60 +1433,66 @@ function LibraryCoverChoicesContent({
           </div>
         </div>
       ) : (
-        <div className="library-cover-layout">{candidates.map(card)}</div>
-      )}
-      {consideration.incumbent.state === 'unavailable' && !incumbent && keeps ? (
-        <article className="cover-choice">
-          <button
-            type="button"
-            aria-pressed={choiceSelected(field, progress, 'keep_current')}
-            className={`library-cover-card is-current${choiceSelected(field, progress, 'keep_current') ? ' is-selected' : ''}`}
-            disabled={disabled}
-            onClick={() => choose('keep_current')}
-          >
-            <span className="library-cover-image" role="img" aria-label="Current cover unavailable">
-              Image unavailable
-            </span>
-            <span>
-              <small>Current cover</small>
-              <strong>Unavailable</strong>
-              <em>
-                {currentContext?.rationale ?? 'Keep the current bound cover without a preview.'}
-              </em>
-              <span className="choice-recommendation">
-                {currentContext?.recommendation === 'recommended'
-                  ? currentContext.recommendationReason
-                  : 'No recommendation retained'}
-              </span>
-              {commandSelected(progress?.command ?? null, field.destination, 'keep_current') &&
-              progress?.phase === 'recording' ? (
-                <b>Recording…</b>
+        <div className="library-cover-layout">
+          {consideration.incumbent.state === 'unavailable' && !incumbent ? (
+            <article className="cover-choice">
+              <button
+                type="button"
+                aria-pressed={choiceSelected(field, progress, 'keep_current')}
+                className={`library-cover-card is-current${choiceSelected(field, progress, 'keep_current') ? ' is-selected' : ''}`}
+                disabled={disabled}
+                onClick={() => choose('keep_current')}
+              >
+                <span
+                  className="library-cover-image"
+                  role="img"
+                  aria-label="Current cover unavailable"
+                >
+                  Image unavailable
+                </span>
+                <span>
+                  <small>Current cover</small>
+                  <strong>Unavailable</strong>
+                  <em>
+                    {currentContext?.rationale ?? 'Keep the current bound cover without a preview.'}
+                  </em>
+                  <span className="choice-recommendation">
+                    {currentContext?.recommendation === 'recommended'
+                      ? currentContext.recommendationReason
+                      : 'No recommendation retained'}
+                  </span>
+                  {commandSelected(progress?.command ?? null, field.destination, 'keep_current') &&
+                  progress?.phase === 'recording' ? (
+                    <b>Recording…</b>
+                  ) : null}
+                </span>
+              </button>
+              {currentContext &&
+              (currentContext.evidence.length || currentContext.limitations.length) ? (
+                <button
+                  type="button"
+                  className="choice-evidence-toggle"
+                  aria-controls="cover-evidence-current-unavailable"
+                  aria-expanded={expandedEvidence.has('cover:current-unavailable')}
+                  aria-label="Evidence for Current cover"
+                  onClick={() => revealEvidence('cover:current-unavailable')}
+                >
+                  {expandedEvidence.has('cover:current-unavailable') ? 'Hide evidence' : 'Evidence'}
+                </button>
               ) : null}
-            </span>
-          </button>
-          {currentContext &&
-          (currentContext.evidence.length || currentContext.limitations.length) ? (
-            <button
-              type="button"
-              className="choice-evidence-toggle"
-              aria-controls="cover-evidence-current-unavailable"
-              aria-expanded={expandedEvidence.has('cover:current-unavailable')}
-              aria-label="Evidence for Current cover"
-              onClick={() => revealEvidence('cover:current-unavailable')}
-            >
-              {expandedEvidence.has('cover:current-unavailable') ? 'Hide evidence' : 'Evidence'}
-            </button>
+              {expandedEvidence.has('cover:current-unavailable') ? (
+                <ChoiceEvidencePanel
+                  context={currentContext}
+                  evidenceId="cover-evidence-current-unavailable"
+                  label="Current cover"
+                  {...(disabled ? {} : { onChoose: () => choose('keep_current') })}
+                />
+              ) : null}
+            </article>
           ) : null}
-          {expandedEvidence.has('cover:current-unavailable') ? (
-            <ChoiceEvidencePanel
-              context={currentContext}
-              evidenceId="cover-evidence-current-unavailable"
-              label="Current cover"
-              {...(disabled ? {} : { onChoose: () => choose('keep_current') })}
-            />
-          ) : null}
-        </article>
-      ) : null}
+          {candidates.map(card)}
+        </div>
+      )}
       {consideration.omissions.length ? (
         <details className="library-cover-excluded">
           <summary>
@@ -2462,6 +2480,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     selected.editable &&
     selected.decisionActions.length > 0
   const selectedChoiceMode = selectedActionable || selectedRevisitable
+  const selectedCoverInspection =
+    selected?.destination === 'cover' && selected.coverConsideration !== null
   const selectedProgress = selected ? controller.phase(selected.destination) : null
   // Attention membership comes from the authoritative exact case. A pending
   // or failed local command has not yet changed it.
@@ -3024,13 +3044,13 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                       </dl>
                     ) : null}
                   </header>
-                  {selectedChoiceMode && !controller.reloadRequired ? (
+                  {(selectedChoiceMode || selectedCoverInspection) && !controller.reloadRequired ? (
                     selected.destination === 'cover' ? (
                       <LibraryCoverChoices
                         reviewCaseId={selectedReviewCaseId}
                         mediaKind={detail.data.target.mediaKind}
                         field={selected}
-                        disabled={false}
+                        disabled={!selectedChoiceMode}
                         expandedEvidence={expandedChoices}
                         progress={selectedProgress}
                         choose={(outcome, value) => choose(selected, outcome, value)}
