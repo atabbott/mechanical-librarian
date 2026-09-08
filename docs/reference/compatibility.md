@@ -11,8 +11,8 @@ The current installed contract is intentionally narrow:
 - Python 3.13 or 3.14;
 - `config-v8` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v38` plus `proposal-set-v6` under
-  `fixed-conservative-v21`, or the separate `catalogue-v2` schema;
+  `metadata-report-v38` plus `proposal-set-v7` under
+  `fixed-conservative-v22`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v6`,
   `shadow-decision-set-v1` under
   `deterministic-shadow-decision-policy-v11`,
@@ -23,6 +23,9 @@ The current installed contract is intentionally narrow:
   evidence/current-case history projections, and the exact-current
   opaque-session, login-throttle, immutable human-decision and decision-event
   tables; older application databases without those exact tables are rejected;
+- `cover-consideration-v4` with `cover-policy-report-v2`; owner readiness and
+  automatic recommendation are independent, and the report binds the actual
+  target state used for strict incumbent comparison;
 - strict `batch-manifest-v5` for foreground evidence batches;
 - Audiobookshelf v2.35.1 library, library-items, and current-item responses for
   explicitly configured book libraries;

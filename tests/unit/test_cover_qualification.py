@@ -7,17 +7,20 @@ from mechanical_librarian.domain.cover_qualification import (
     qualify_cover_election,
 )
 from mechanical_librarian.domain.deterministic_cover_election import (
+    CoverActualTargetState,
     CoverElectionCandidate,
 )
 
 
-def _candidate(reference: str, identity: str, ordinal: int) -> CoverElectionCandidate:
+def _candidate(
+    reference: str, identity: str, ordinal: int, *, incumbent: bool = False
+) -> CoverElectionCandidate:
     return CoverElectionCandidate(
         reference=reference,
         identity=identity,
         identity_citations=("identity_" + reference,),
         source_citations=("source_" + reference,),
-        incumbent=False,
+        incumbent=incumbent,
         width=100 + ordinal,
         height=150 + ordinal,
         packet_ordinal=ordinal,
@@ -61,7 +64,7 @@ def test_candidate_digest_is_the_public_manifest_file_bytes() -> None:
         Path(__file__).parents[2]
         / "docs"
         / "development"
-        / "cover-election-qualification-v1.json"
+        / "cover-election-qualification-v2.json"
     ).read_bytes()
 
     assert hashlib.sha256(manifest).hexdigest() == QUALIFICATION_CANDIDATE_SHA256
@@ -107,3 +110,54 @@ def test_qualification_compares_rank_to_an_independent_expected_order() -> None:
     assert summary["rank_order_disagreements"] == 10
     assert summary["recommendation_disagreements"] == 10
     assert summary["passed"] is False
+
+
+def test_prospective_target_states_separate_owner_readiness_from_automatic_choice() -> (
+    None
+):
+    incumbent = _candidate(
+        "incumbent", "verified_manifestation_match", 0, incumbent=True
+    )
+    downgrade = _candidate("downgrade", "verified_work_match", 1)
+    owner_only = CoverQualificationCase(
+        candidates=(incumbent, downgrade),
+        expected_identity=(
+            (incumbent.reference, incumbent.identity),
+            (downgrade.reference, downgrade.identity),
+        ),
+        expected_order=(downgrade.reference,),
+        expected_recommendation=None,
+        provider_fetching=False,
+        expected_ready=True,
+        duplicates_collapsed=True,
+        actual_target_state=CoverActualTargetState.CONFIRMED,
+    )
+    unknown = CoverQualificationCase(
+        candidates=(downgrade,),
+        expected_identity=((downgrade.reference, downgrade.identity),),
+        expected_order=(downgrade.reference,),
+        expected_recommendation=None,
+        provider_fetching=False,
+        expected_ready=True,
+        duplicates_collapsed=True,
+        actual_target_state=CoverActualTargetState.UNKNOWN,
+    )
+    fetching = CoverQualificationCase(
+        candidates=(downgrade,),
+        expected_identity=((downgrade.reference, downgrade.identity),),
+        expected_order=(downgrade.reference,),
+        expected_recommendation=None,
+        provider_fetching=True,
+        expected_ready=False,
+        duplicates_collapsed=True,
+        actual_target_state=CoverActualTargetState.KNOWN_EMPTY,
+    )
+
+    for case in (owner_only, unknown, fetching):
+        summary = qualify_cover_election("development", (case,))
+        assert summary["packet_count"] == 1
+        assert summary["passed"] is False
+        assert summary["false_admissions"] == 0
+        assert summary["readiness_disagreements"] == 0
+        assert summary["recommendation_disagreements"] == 0
+        assert summary["rank_order_disagreements"] == 0

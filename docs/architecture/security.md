@@ -29,6 +29,16 @@ An equal automatic candidate is a separate identifier-only terminal fact. Its
 atomic currentness comparison happens before, and does not read, authority,
 consent, capability, backup, target, or read-back controls.
 
+Automatic cover admission requires an exact-current case, report,
+consideration, selected artifact, policy, and owner-final state. A known-empty
+target may admit the best confirmed candidate. A populated target must carry a
+confirmed incumbent and admits only a candidate with a strictly better complete
+rank; missing or inconsistent incumbent evidence abstains. Active acquisition,
+unconfirmed identity, stale bindings, and any prior owner cover decision refuse
+admission. An admitted cover decision remains decision-only and must still pass
+consent, backup, capability, target-currentness, supported-API apply, read-back,
+and audit gates.
+
 The `RefreshCurrentCatalogue` application operation may make only bounded GET observations of configured ABS
 book libraries and publish a local current generation. Its bearer credential is
 attached only to the configured origin's library, library-items, and item-detail

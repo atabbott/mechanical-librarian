@@ -300,16 +300,10 @@ def test_active_fetching_blocks_readiness_and_quiescence_creates_successor(
     assert quiescent["supersedes_id"] == active["consideration_id"]
     assert quiescent["provider_fetching"] is False
     assert quiescent["ready"] is True
-    assert quiescent["policy"]["status"] == "recommended"
-    recommended = quiescent["policy"]["recommended_candidate_reference"]
-    assert (
-        next(
-            candidate
-            for candidate in quiescent["candidates"]
-            if candidate["deterministic_rank"] == 1
-        )["reference"]
-        == recommended
-    )
+    assert quiescent["policy"]["status"] == "abstained"
+    assert quiescent["policy"]["actual_target_state"] == "unknown"
+    assert quiescent["policy"]["recommended_candidate_reference"] is None
+    assert any(candidate["selectable"] for candidate in quiescent["candidates"])
 
 
 def test_incumbent_duplicate_remains_bound_to_abs_original(case: _Case) -> None:
@@ -441,7 +435,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
         clock=lambda: case.now + 1,
     )
     assert model_free.replay_reference == (
-        "cover_replay_e3bcce7de084c198f2d7c5a3fa237d3fd5cbe8ad42336911704a0e7d298f5cbc"
+        "cover_replay_b296772d7cdce148b5baaff5c3a95217ee58b52fd3940e1231a40d519b263c99"
     )
     assert (
         model_free.ensure(case_id, case.report.to_json(), case.proposal)[
@@ -484,7 +478,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
     assert len(dispatches) == 1
     replayed_qualified = qualified()
     assert replayed_qualified.replay_reference == (
-        "cover_replay_980505ef4f49a17af9cddee44d17711e166697ec26c09a5f266f2de8f8ddb878"
+        "cover_replay_b3653407352cacacafce4fa9595f7dd78ec6f91c7dca2dae33bf8f3fa97ce689"
     )
     assert (
         replayed_qualified.ensure(
@@ -591,7 +585,7 @@ def test_stale_reviewer_binding_is_current_only_and_replays_exactly(
         "profile contract requires process_limit=32"
     )
     different_document = json.loads(case.store.current[case_id])
-    assert different_document["schema_version"] == "cover-consideration-v3"
+    assert different_document["schema_version"] == "cover-consideration-v4"
     assert different_document["reviewer_failure"] is None
     assert "reviewer_unavailable_reason" not in different_document
 

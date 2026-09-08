@@ -4,8 +4,10 @@ import json
 import os
 import tempfile
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
+from unittest.mock import patch
 
 import pytest
 
@@ -16,12 +18,14 @@ from mechanical_librarian.adapters.field_effect_fakes import (
     FakeBackupReadiness,
     FakeCapabilityObserver,
     FakeConsentCurrentness,
+    FakeDependencyCurrentness,
     FakeForwardReevaluation,
     FakePreclaimHook,
     FakeTargetService,
     PrivateCoverRecoveryStore,
 )
 from mechanical_librarian.adapters.field_effect_runtime import (
+    PersistedEffectConsent,
     PersistedEffectDependencies,
 )
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
@@ -35,8 +39,21 @@ from mechanical_librarian.application.cover_consideration import (
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+from mechanical_librarian.bootstrap import composition
+from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
+from mechanical_librarian.domain.cover_evidence import (
+    CoverDesignation,
+    CoverSourceState,
+)
 from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.metadata_policy import (
+    DEFAULT_OPTIONS,
+    OPTION_CATALOGUE,
+    MetadataPolicyProfile,
+    human_review_destinations,
+    resolve_policy,
+)
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     TargetDestination,
@@ -48,6 +65,189 @@ from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from tests.unit.test_cover_packets import _preview, _report, _source
 from tests.unit.test_field_effects import CAPABILITY, Clock
+from tests.unit.test_shadow_outcome_persistence import (
+    _pipeline_configuration,
+    _qualified_cover_report,
+    _run_qualified_cover_pipeline,
+    _test_reviewer_access,
+)
+
+
+@pytest.mark.parametrize("scenario", ("known_empty", "upgrade", "downgrade"))
+def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
+    scenario: str,
+) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        database = root / "reports.sqlite"
+        repository = open_repository(database)
+        if scenario == "known_empty":
+            preview = _preview(3)
+            candidate = _source(3, preview, embedded=True)
+            timeout = replace(
+                _source(103, preview),
+                state=CoverSourceState.TIMEOUT,
+                artifact=None,
+                timeout_scope="attempted",
+            )
+            base = _report((candidate, timeout))
+            report = MetadataReport.create(
+                target=TargetFacts("primary", "ebooks", "item-1", base.target.fields),
+                file=base.file,
+                local_claims=base.local_claims,
+                local_reasons=base.local_reasons,
+                providers=base.providers,
+                cover_sources=base.cover_sources,
+            )
+            artifacts = CoverArtifactStore(root / "artifacts")
+            assert candidate.artifact is not None
+            artifacts.stage(candidate.artifact, b"original-3", preview)
+        else:
+            report, _ = _qualified_cover_report(
+                root,
+                incumbent_size=(3000, 4500) if scenario == "downgrade" else (300, 450),
+                candidate_size=(300, 450) if scenario == "downgrade" else (3000, 4500),
+                candidate_designation=(
+                    CoverDesignation.WORK
+                    if scenario == "downgrade"
+                    else CoverDesignation.EXACT_EDITION
+                ),
+                typed_timeout=True,
+            )
+
+        options = dict(DEFAULT_OPTIONS)
+        options["cover_order"] = "fixed_source_order"
+        destinations = {
+            category: "unsupported" if category == "explicit" else "ask"
+            for category in OPTION_CATALOGUE
+        }
+        destinations["cover_order"] = "automatic"
+        profile = MetadataPolicyProfile.create(
+            "Deterministic confirmed covers", options, destinations
+        )
+        resolved = resolve_policy(profile, report.target.library)
+        proposal = evaluate_report(
+            report, resolved.resolved_id, human_review_destinations(resolved)
+        )
+        repository.enter_shadow_preview(1)
+        repository.create_metadata_policy_draft(profile.canonical_json)
+        repository.activate_metadata_policy(
+            profile.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            2,
+        )
+        repository.activate_qualified_automatic(3)
+        recovery = composition.SQLiteProviderRecoveryStore.open(
+            root / "provider-recovery.sqlite"
+        )
+        supervisor = composition.create_review_pipeline(
+            _pipeline_configuration(),
+            database,
+            root / "catalogue.sqlite",
+            root / "artifacts",
+            _test_reviewer_access(repository),
+            database_authority=repository.authority,
+            provider_recovery=recovery,
+        )
+        with patch.object(composition, "run_cover_packet_reviewer") as dispatch:
+            pipeline = _run_qualified_cover_pipeline(
+                repository, root, report, proposal, supervisor
+            )
+            for _ in range(64):
+                if not pipeline.run_next(1):
+                    break
+            else:
+                pytest.fail("cover pipeline did not reach a terminal state")
+        dispatch.assert_not_called()
+
+        terminal = repository._connection.execute(
+            "SELECT stage,state,report_id,proposal_set_id,review_case_id,failure_code "
+            "FROM review_preparation_work WHERE item_id='item-1'"
+        ).fetchone()
+        assert terminal is not None
+        assert terminal[:4] == (
+            "complete",
+            "complete",
+            report.report_id,
+            proposal.proposal_set_id,
+        )
+        assert terminal[4] is not None
+        assert terminal[5] is None
+
+        selection_rows = repository._connection.execute(
+            "SELECT selection.document FROM current_cover_selection_authorities current "
+            "JOIN cover_selection_authorities selection "
+            "ON selection.selection_id=current.selection_id"
+        ).fetchall()
+        if scenario == "downgrade":
+            assert selection_rows == []
+            assert repository.pending_field_effect_decision_documents(1) == ()
+            assert repository._connection.execute(
+                "SELECT count(*) FROM field_effects"
+            ).fetchone() == (0,)
+            supervisor.stop()
+            repository.close()
+            return
+
+        assert len(selection_rows) == 1
+        automatic = CoverAutomaticDecision.from_json(
+            json.loads(selection_rows[0][0])["decision_document"]
+        )
+        authority = PersistedFieldEffectAuthority(repository)
+        snapshot = authority.resolve(automatic)
+        repository.grant_field_effect_consents(
+            snapshot.connection,
+            (snapshot.library,),
+            (snapshot.destination,),
+            10,
+        )
+        target = FakeTargetService()
+        application = GuardedFieldApplication(
+            repository,
+            target,
+            FakeBackupReadiness(),
+            FakeCapabilityObserver(CAPABILITY),
+            authority,
+            FakeDependencyCurrentness(),
+            PersistedEffectConsent(repository),
+            PrivateCoverRecoveryStore(
+                root / "recovery", lambda _plan: b"incumbent-original"
+            ),
+            FakeForwardReevaluation(),
+            Clock(),
+            FakePreclaimHook(),
+            FakePreclaimHook(),
+            FakePreclaimHook(),
+        )
+        operation = application.plan(
+            automatic,
+            connection=snapshot.connection,
+            library=snapshot.library,
+            work_id=snapshot.work_id,
+            destination=snapshot.destination,
+            pre_value=snapshot.pre_value,
+            desired_value=snapshot.decision_value,
+            target_fingerprint=snapshot.target_fingerprint,
+            target_version=snapshot.target_version,
+            dependency_digests=snapshot.dependency_digests,
+            capability_digest=CAPABILITY,
+        )
+        assert operation is not None
+        target.seed(operation.plan)
+        verified = application.apply(operation.plan.plan_id)
+        assert verified.state == "verified"
+        assert target.read(operation.plan).value == automatic.artifact_id
+        assert repository.field_effect_activity_page(
+            search=None,
+            event_type="metadata",
+            occurred_after=0,
+            page=1,
+            page_size=25,
+        )["events"]
+        supervisor.stop()
+        repository.close()
 
 
 def test_selected_original_reaches_verified_guarded_fake_service_application() -> None:

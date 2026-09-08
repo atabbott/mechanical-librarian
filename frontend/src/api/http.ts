@@ -2806,7 +2806,7 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
   if (value === null || value === undefined) return null
   if (
     !record(value) ||
-    value.schema_version !== 'cover-consideration-v3' ||
+    value.schema_version !== 'cover-consideration-v4' ||
     !Array.isArray(value.candidates) ||
     !Array.isArray(value.omissions) ||
     !record(value.incumbent) ||
@@ -2890,7 +2890,7 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
       (confirmed &&
         incumbent &&
         (selectable || deterministicRank !== null || deterministicRankKey === null)) ||
-      (confirmed && !incumbent && (!selectable || deterministicRankKey === null))
+      (confirmed && !incumbent && (selectable !== ready || deterministicRankKey === null))
     )
       throw new ApiError(502, 'contradictory_cover_identity')
     return {
@@ -2955,6 +2955,16 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
   const policyStatus = policy === null ? null : stringValue(policy.status, 'cover_policy_status')
   if (policyStatus !== null && !['recommended', 'abstained'].includes(policyStatus))
     throw new ApiError(502, 'invalid_cover_policy_status')
+  const policyOwnerReady = policy === null ? false : policy.owner_ready === true
+  const actualTargetState =
+    policy === null ? null : stringValue(policy.actual_target_state, 'cover_actual_target_state')
+  if (
+    policy !== null &&
+    (policy.schema_version !== 'cover-policy-report-v2' ||
+      typeof policy.owner_ready !== 'boolean' ||
+      !['known_empty', 'confirmed', 'unknown'].includes(actualTargetState ?? ''))
+  )
+    throw new ApiError(502, 'invalid_cover_policy')
   const reviewerStatus = stringValue(value.reviewer_status, 'cover_reviewer_status')
   if (!['completed', 'failed', 'unavailable'].includes(reviewerStatus))
     throw new ApiError(502, 'invalid_cover_reviewer_status')
@@ -2981,18 +2991,20 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
       : stringArray(policy.acceptable_candidate_references, 'cover_acceptable_references')
   if (
     (policyStatus === 'recommended') !== (recommendedReference !== null) ||
-    (policyStatus === 'abstained' && acceptable.length !== 0 && !providerFetching) ||
     new Set(acceptable).size !== acceptable.length
   )
     throw new ApiError(502, 'contradictory_cover_policy')
   const byReference = new Map(candidates.map((candidate) => [candidate.reference, candidate]))
-  const rankedSelectable = candidates
-    .filter((candidate) => candidate.selectable && !candidate.incumbent)
+  const rankedAlternatives = candidates
+    .filter((candidate) => candidate.deterministicRank !== null && !candidate.incumbent)
     .sort((left, right) => (left.deterministicRank ?? 0) - (right.deterministicRank ?? 0))
-  const rankedReferences = rankedSelectable.map((candidate) => candidate.reference)
+  const rankedReferences = rankedAlternatives.map((candidate) => candidate.reference)
   if (
-    acceptable.some((reference) => byReference.get(reference)?.selectable !== true) ||
-    rankedSelectable.some((candidate, index) => candidate.deterministicRank !== index + 1) ||
+    acceptable.some(
+      (reference) =>
+        !byReference.has(reference) || byReference.get(reference)?.deterministicRank === null,
+    ) ||
+    rankedAlternatives.some((candidate, index) => candidate.deterministicRank !== index + 1) ||
     (acceptable.length === 0
       ? !providerFetching && rankedReferences.length !== 0
       : acceptable.length !== rankedReferences.length ||
@@ -3041,7 +3053,7 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
   )
     throw new ApiError(502, 'contradictory_cover_recommendation')
   if (
-    ready !== (policyStatus === 'recommended') ||
+    ready !== policyOwnerReady ||
     (providerFetching === ready && acceptable.length > 0) ||
     candidates.some(
       (candidate) =>

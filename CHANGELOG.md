@@ -1,5 +1,11 @@
 # Changelog
 
+- A sole confirmed ebook cover remains available for owner review when sibling
+  acquisition times out. Automatic cover replacement distinguishes a known
+  empty target from an unverified incumbent and replaces a confirmed incumbent
+  only with a strict rank upgrade. Existing installs require a clean rebuild.
+  (#999)
+
 ## Unreleased
 
 - Equivalent local description evidence no longer replaces an eligible

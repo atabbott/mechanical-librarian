@@ -3,11 +3,37 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
+from typing import cast
 
 _IDENTITY_TIERS = {
     "verified_manifestation_match": 0,
     "verified_work_match": 1,
 }
+
+
+class CoverActualTargetState(Enum):
+    """What exact evidence says about the target's actual current cover."""
+
+    KNOWN_EMPTY = "known_empty"
+    CONFIRMED = "confirmed"
+    UNKNOWN = "unknown"
+
+
+def strictly_better_cover_rank(candidate: object, incumbent: object) -> bool:
+    """Compare two exact seven-part rank vectors, rejecting malformed input."""
+
+    keys: list[tuple[int, int, int, int, int, int, str]] = []
+    for value in (candidate, incumbent):
+        if (
+            type(value) is not list
+            or len(value) != 7
+            or any(type(component) is not int for component in value[:6])
+            or type(value[6]) is not str
+        ):
+            return False
+        keys.append(cast("tuple[int, int, int, int, int, int, str]", tuple(value)))
+    return keys[0] < keys[1]
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,21 +97,28 @@ class ElectedCover:
 
 @dataclass(frozen=True, slots=True)
 class DeterministicCoverElection:
-    """The exact readiness and order that owner and automatic paths share."""
+    """Independent owner readiness, replacement order, and automatic choice."""
 
     ranked: tuple[ElectedCover, ...]
     ready: bool
+    automatic_recommendation: ElectedCover | None
 
     @property
     def recommendation(self) -> ElectedCover | None:
-        return self.ranked[0] if self.ready else None
+        return self.automatic_recommendation
 
 
 def elect_confirmed_covers(
-    candidates: tuple[CoverElectionCandidate, ...], *, provider_fetching: bool
+    candidates: tuple[CoverElectionCandidate, ...],
+    *,
+    provider_fetching: bool,
+    actual_target_state: CoverActualTargetState,
 ) -> DeterministicCoverElection:
     """Rank confirmed candidates without observations or provider preference input."""
-    if type(provider_fetching) is not bool:
+    if (
+        type(provider_fetching) is not bool
+        or type(actual_target_state) is not CoverActualTargetState
+    ):
         raise ValueError("cover election readiness is invalid")
     if len({candidate.reference for candidate in candidates}) != len(candidates):
         raise ValueError("cover election candidates are not unique")
@@ -97,6 +130,36 @@ def elect_confirmed_covers(
         ElectedCover(candidate=candidate, rank=index)
         for index, candidate in enumerate(ordered, start=1)
     )
-    return DeterministicCoverElection(
-        ranked=ranked, ready=bool(ranked) and not provider_fetching
+    incumbents = tuple(candidate for candidate in candidates if candidate.incumbent)
+    if (
+        len(incumbents) > 1
+        or (
+            actual_target_state is CoverActualTargetState.CONFIRMED
+            and len(incumbents) != 1
+        )
+        or (actual_target_state is CoverActualTargetState.KNOWN_EMPTY and incumbents)
+    ):
+        raise ValueError("cover election incumbent is invalid")
+    ready = bool(ranked) and not provider_fetching
+    recommendation = (
+        ranked[0]
+        if ready and actual_target_state is CoverActualTargetState.KNOWN_EMPTY
+        else ranked[0]
+        if ready
+        and actual_target_state is CoverActualTargetState.CONFIRMED
+        and strictly_better_cover_rank(
+            list(ranked[0].candidate.rank_key), list(incumbents[0].rank_key)
+        )
+        else None
     )
+    return DeterministicCoverElection(ranked, ready, recommendation)
+
+
+__all__ = [
+    "CoverActualTargetState",
+    "CoverElectionCandidate",
+    "DeterministicCoverElection",
+    "ElectedCover",
+    "elect_confirmed_covers",
+    "strictly_better_cover_rank",
+]

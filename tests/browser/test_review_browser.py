@@ -12,6 +12,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
+from dataclasses import replace
 from functools import partial
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -56,6 +57,7 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioEmbeddedCover,
     AudioEvidenceSurface,
 )
+from mechanical_librarian.domain.cover_evidence import CoverSourceState
 from mechanical_librarian.domain.human_decision import RECORDED_ONLY_REASON
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -260,6 +262,7 @@ def _server(
     key: Path,
     port: ReservedPort,
     cover: bool = False,
+    sole_cover_timeout: bool = False,
     automatic_fixture: bool = False,
     cover_shapes: tuple[tuple[int, int], ...] = ((1, 1), (1, 1)),
     cohort: int = 0,
@@ -300,22 +303,38 @@ def _server(
             _cover_preview(index, width=width, height=height)
             for index, (width, height) in enumerate(cover_shapes, 1)
         )
-        sources = tuple(
-            _cover_source(index, payload, incumbent=index == 1, embedded=index == 2)
-            for index, payload in enumerate(payloads, 1)
+        sources = (
+            (
+                _cover_source(1, payloads[0], embedded=True),
+                replace(
+                    _cover_source(2, payloads[1]),
+                    state=CoverSourceState.TIMEOUT,
+                    artifact=None,
+                    timeout_scope="attempted",
+                ),
+            )
+            if sole_cover_timeout
+            else tuple(
+                _cover_source(index, payload, incumbent=index == 1, embedded=index == 2)
+                for index, payload in enumerate(payloads, 1)
+            )
         )
         base = _cover_report(sources)
         incumbent = sources[0].artifact
         assert incumbent is not None
-        fields = tuple(
-            TargetField(
-                field.destination,
-                TargetFieldState.VALUE,
-                incumbent.artifact_id,
+        fields = (
+            base.target.fields
+            if sole_cover_timeout
+            else tuple(
+                TargetField(
+                    field.destination,
+                    TargetFieldState.VALUE,
+                    incumbent.artifact_id,
+                )
+                if field.destination is TargetDestination.COVER
+                else field
+                for field in base.target.fields
             )
-            if field.destination is TargetDestination.COVER
-            else field
-            for field in base.target.fields
         )
         report = MetadataReport.create(
             target=TargetFacts(
@@ -343,8 +362,8 @@ def _server(
         for index, (source, payload) in enumerate(
             zip(sources, payloads, strict=True), 1
         ):
-            assert source.artifact is not None
-            artifacts.stage(source.artifact, f"original-{index}".encode(), payload)
+            if source.artifact is not None:
+                artifacts.stage(source.artifact, f"original-{index}".encode(), payload)
         cover_considerations = CoverConsiderationService(
             repository,
             read_preview=lambda artifact_id, _variant: artifacts.read_preview_digest(
@@ -1688,6 +1707,85 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 )
                 assert responses
                 assert all(status == 200 for _, status in responses), responses
+                assert errors == []
+            browser.close()
+
+
+def test_ask_surfaces_and_records_the_sole_cover_choice_after_timeout() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        errors: list[str] = []
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 390, "height": 844},
+            )
+            page = context.new_page()
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.on(
+                "console",
+                lambda message: (
+                    errors.append(message.text) if message.type == "error" else None
+                ),
+            )
+            with (
+                closing(ReservedPort()) as reserved_port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=reserved_port,
+                    cover=True,
+                    sole_cover_timeout=True,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                response = page.request.get(
+                    f"{origin}/api/v1/library?lens=needs_attention&limit=25"
+                )
+                assert response.ok, response.text()
+                library = response.json()
+                assert [case_id] == [
+                    item["review_case_id"] for item in library["items"]
+                ]
+
+                page.goto(f"{origin}/library?preview={case_id}&field=cover")
+                page.get_by_role("button", name="Prepare cover comparison").click()
+                comparison = page.get_by_role("region", name="Choose a cover")
+                comparison.wait_for()
+                expect(page.get_by_alt_text("Alternative 1 cover")).to_be_visible()
+                comparison.get_by_text(
+                    "1 unavailable candidate", exact=False
+                ).wait_for()
+                assert page.locator(".library-cover-card").count() == 1
+                candidate = page.locator(".library-cover-card").filter(
+                    has_text="Alternative 1 cover"
+                )
+                expect(candidate).to_have_attribute("aria-pressed", "false")
+                with page.expect_response(
+                    lambda value: value.url.endswith("/decisions")
+                ) as decision_response:
+                    candidate.focus()
+                    page.keyboard.press("Enter")
+                assert decision_response.value.status == 200
+                page.get_by_role("heading", name="Review complete").wait_for()
+
+                page.goto(f"{origin}/review/{case_id}?field=cover&subview=history")
+                selected = page.get_by_role("heading", name="Cover selected").locator(
+                    ".."
+                )
+                selected.get_by_text("Owner outcome: accept", exact=False).wait_for()
+                assert page.evaluate(
+                    "() => document.documentElement.scrollWidth <= window.innerWidth"
+                )
                 assert errors == []
             browser.close()
 

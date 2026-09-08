@@ -1173,8 +1173,12 @@ def test_cover_requires_one_complete_safe_artifact() -> None:
         evaluate_report(_report(covers=(source, timeout))),
         TargetDestination.COVER,
     )
-    assert ProposalOutcome.DEFER == incomplete.outcome
-    assert "cover_gallery_incomplete" in incomplete.reasons
+    assert ProposalOutcome.UNRESOLVED_CHOICE == incomplete.outcome
+    assert incomplete.alternatives == result.alternatives
+    assert (
+        "cover_gallery_incomplete",
+        "owner_cover_choice_required",
+    ) == incomplete.reasons
 
 
 def test_verified_incumbent_and_alternative_require_owner_cover_choice() -> None:
