@@ -478,10 +478,17 @@ class InspectCurrentReviewCase:
             )
             classification = classify_review_field(
                 attention_candidate=(
-                    _needs_attention(
-                        proposal,
-                        snapshot.automatic_attention_destinations,
-                        owner_only=case.media_kind == "audiobook",
+                    (
+                        (
+                            destination != "cover"
+                            or snapshot.cover_consideration_document is None
+                            or current_cover_consideration is not None
+                        )
+                        and _needs_attention(
+                            proposal,
+                            snapshot.automatic_attention_destinations,
+                            owner_only=case.media_kind == "audiobook",
+                        )
                     )
                     or (
                         destination == "cover"

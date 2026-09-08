@@ -2440,7 +2440,13 @@ describe('Library route', () => {
         {
           alternativeId: reference(2),
           selection: 'proposed',
-          evidence: [],
+          evidence: [
+            {
+              source: 'Bound provider candidate',
+              role: 'external_corroboration',
+              observation: 'Confirmed selectable cover evidence.',
+            },
+          ],
           limitations: [],
           rationale: 'Selectable retained cover.',
           recommendation: 'no_recommendation',
@@ -2461,6 +2467,21 @@ describe('Library route', () => {
           evidence: [],
           limitations: [],
           rationale: 'Selectable retained cover.',
+          recommendation: 'no_recommendation',
+          recommendationReason: 'No recommendation retained.',
+        },
+        {
+          alternativeId: reference(5),
+          selection: 'proposed',
+          evidence: [
+            {
+              source: 'Unconfirmed provider candidate',
+              role: 'external_corroboration',
+              observation: 'Retained evidence without a confirmed target match.',
+            },
+          ],
+          limitations: ['insufficient_identity_evidence'],
+          rationale: 'This retained candidate is not selectable.',
           recommendation: 'no_recommendation',
           recommendationReason: 'No recommendation retained.',
         },
@@ -2590,6 +2611,80 @@ describe('Library route', () => {
     expect(comparison.querySelectorAll('.library-cover-gallery .library-cover-card')).toHaveLength(
       5,
     )
+
+    cleanup()
+    const recordDecision = vi.fn<ReviewHttp['recordDecision']>(() => new Promise(() => undefined))
+    renderRoute('/library?lens=all&preview=case-1&field=cover', {
+      ...createHttp(),
+      recordDecision,
+      getCaseDetail: vi.fn(async () => ({
+        ...detail,
+        target: { ...detail.target, mediaKind: 'epub' },
+        fields: [
+          {
+            ...coverField,
+            decisionActions: ['keep_current', 'accept'] as const,
+            editable: true,
+            needsAttention: true,
+            coverConsideration: { ...consideration, providerFetching: false, ready: true },
+          },
+        ],
+      })),
+    })
+    const mixedComparison = await screen.findByLabelText('Choose a cover')
+    const pinnedTrack = mixedComparison.querySelector<HTMLElement>('.library-cover-pinned')
+    const currentCard = within(mixedComparison).getByRole('button', {
+      name: /Current cover.*Same book/u,
+    })
+    const forwardCard = within(mixedComparison).getByRole('button', {
+      name: /Alternative 3 cover/u,
+    })
+    const forwardChoice = forwardCard.closest<HTMLElement>('.cover-choice')
+    const currentChoice = currentCard.closest<HTMLElement>('.cover-choice')
+    if (!pinnedTrack || !forwardChoice || !currentChoice) {
+      throw new Error('expanded cover track is missing')
+    }
+    Object.defineProperty(pinnedTrack, 'scrollLeft', {
+      configurable: true,
+      value: 0,
+      writable: true,
+    })
+    vi.spyOn(pinnedTrack, 'getBoundingClientRect').mockReturnValue({
+      left: 0,
+      right: 250,
+      width: 250,
+    } as DOMRect)
+    vi.spyOn(forwardChoice, 'getBoundingClientRect').mockReturnValue({
+      left: 310,
+      right: 500,
+      width: 190,
+    } as DOMRect)
+    forwardCard.focus()
+    expect(pinnedTrack.scrollLeft).toBe(250)
+    vi.spyOn(currentChoice, 'getBoundingClientRect').mockReturnValue({
+      left: -120,
+      right: 70,
+      width: 190,
+    } as DOMRect)
+    currentCard.focus()
+    expect(pinnedTrack.scrollLeft).toBe(130)
+
+    await user.click(
+      within(mixedComparison).getByRole('button', { name: 'Evidence for Alternative 4 cover' }),
+    )
+    const ineligibleEvidence = within(mixedComparison).getByLabelText(
+      'Alternative 4 cover evidence',
+    )
+    await user.click(ineligibleEvidence)
+    fireEvent.keyDown(ineligibleEvidence, { key: 'Enter' })
+    fireEvent.keyDown(ineligibleEvidence, { key: ' ' })
+    expect(recordDecision).not.toHaveBeenCalled()
+
+    await user.click(
+      within(mixedComparison).getByRole('button', { name: 'Evidence for Alternative 1 cover' }),
+    )
+    await user.click(within(mixedComparison).getByLabelText('Alternative 1 cover evidence'))
+    expect(recordDecision).toHaveBeenCalledOnce()
 
     cleanup()
     const recommended = {
@@ -2792,6 +2887,37 @@ describe('Library route', () => {
         'false',
       )
       expect(screen.getByText('Choices').nextElementSibling).toHaveTextContent('2')
+      const compactTrack = currentCover.closest<HTMLElement>('.library-cover-layout')
+      const alternativeCover = screen.getByRole('button', { name: /Alternative 1 cover/u })
+      const alternativeChoice = alternativeCover.closest<HTMLElement>('.cover-choice')
+      const compactCurrentChoice = currentCover.closest<HTMLElement>('.cover-choice')
+      if (!compactTrack || !alternativeChoice || !compactCurrentChoice) {
+        throw new Error('compact cover track is missing')
+      }
+      Object.defineProperty(compactTrack, 'scrollLeft', {
+        configurable: true,
+        value: 0,
+        writable: true,
+      })
+      vi.spyOn(compactTrack, 'getBoundingClientRect').mockReturnValue({
+        left: 0,
+        right: 250,
+        width: 250,
+      } as DOMRect)
+      vi.spyOn(alternativeChoice, 'getBoundingClientRect').mockReturnValue({
+        left: 280,
+        right: 450,
+        width: 170,
+      } as DOMRect)
+      alternativeCover.focus()
+      expect(compactTrack.scrollLeft).toBe(200)
+      vi.spyOn(compactCurrentChoice, 'getBoundingClientRect').mockReturnValue({
+        left: -80,
+        right: 90,
+        width: 170,
+      } as DOMRect)
+      currentCover.focus()
+      expect(compactTrack.scrollLeft).toBe(120)
 
       cleanup()
       const acceptOnlyHttp = {
@@ -3870,6 +3996,138 @@ describe('Library route', () => {
     expect(proposed).not.toHaveTextContent('Recording…')
     expect(screen.getByText('1 remaining · field 1 of 1')).toBeVisible()
     expect(screen.getByRole('button', { name: /Title.*Needs review/u })).toBeVisible()
+  })
+
+  it.each([
+    ['a replacement consideration on the same case', null],
+    ['a successor case', 'case-2'],
+  ])('retains a stale cover choice and explicitly opens %s', async (_label, successorId) => {
+    const user = userEvent.setup()
+    const base = detail.fields[0]
+    if (!base) throw new Error('cover stale fixture requires a field')
+    const candidate = (suffix: string, incumbent: boolean) => ({
+      artifactId: `cover_${suffix.repeat(64)}`,
+      deterministicCitations: [`citation-${suffix}`],
+      deterministicRank: incumbent ? null : 0,
+      deterministicRankKey: [1, 0, -960000, -800, -1200, incumbent ? 0 : 1, suffix],
+      height: 1200,
+      identity: { outcome: 'verified_work_match' as const },
+      incumbent,
+      matchState: 'same_book' as const,
+      observation: null,
+      originalSha256: suffix.repeat(64),
+      ordinal: incumbent ? 0 : 1,
+      previewSha256: suffix.repeat(64),
+      reference: `cover_transport_ref_${suffix.repeat(64)}`,
+      selectable: !incumbent,
+      sourceKinds: [incumbent ? 'epub' : 'provider'],
+      state: incumbent ? ('incumbent' as const) : ('acceptable' as const),
+      width: 800,
+    })
+    const coverDetail = (id: string, alternative: string): CaseDetailView => ({
+      ...detail,
+      id,
+      fields: [
+        {
+          ...base,
+          destination: 'cover',
+          currentValue: `cover_${'1'.repeat(64)}`,
+          currentRaw: `cover_${'1'.repeat(64)}`,
+          proposedValues: [{ kind: 'cover', value: `cover_${alternative.repeat(64)}` }],
+          proposalId: `proposal-${id}`,
+          targetFingerprint: `fingerprint-${id}`,
+          coverConsideration: {
+            id: `cover_consideration_${alternative.repeat(64)}`,
+            choiceContexts: [],
+            current: true,
+            candidates: [candidate('1', true), candidate(alternative, false)],
+            incumbent: {
+              reference: `cover_transport_ref_${'1'.repeat(64)}`,
+              state: 'available',
+            },
+            omissions: [],
+            policy: {
+              recommended_candidate_reference: `cover_transport_ref_${alternative.repeat(64)}`,
+              acceptable_candidate_references: [`cover_transport_ref_${alternative.repeat(64)}`],
+              status: 'recommended',
+              reasons: [],
+            },
+            policyPreferences: {
+              avoidPromotionalText: false,
+              avoidTieInBranding: false,
+              preferMinimalComposition: false,
+            },
+            policyReference: `cover_policy_${'3'.repeat(64)}`,
+            providerFetching: false,
+            ready: true,
+            reviewerAccessRevision: null,
+            reviewerEngine: null,
+            reviewerModel: null,
+            reviewerStatus: 'unavailable',
+            reviewerUnavailableReason: null,
+            targetFingerprint: `fingerprint-${id}`,
+          },
+        },
+      ],
+    })
+    const initial = coverDetail('case-1', '2')
+    const current = coverDetail(successorId ?? 'case-1', '3')
+    let stale = false
+    let failCurrentLookup = true
+    const recordDecision = vi.fn<ReviewHttp['recordDecision']>(async () => {
+      stale = true
+      throw new ApiError(409, 'stale')
+    })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      recordDecision,
+      getCaseDetail: vi.fn(async (id) => {
+        if (!stale) return initial
+        if (id === current.id) return current
+        return { ...initial, current: false }
+      }),
+      getCaseSuccessor: vi.fn(async () => {
+        if (failCurrentLookup) {
+          failCurrentLookup = false
+          throw new Error('current comparison unavailable')
+        }
+        return successorId
+      }),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+
+    await user.click(await screen.findByRole('button', { name: /Alternative 1 cover/u }))
+    expect(
+      await screen.findByText(
+        'This cover comparison changed before your choice was recorded. No cover was changed.',
+      ),
+    ).toBeVisible()
+    expect(screen.getByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
+    expect(document.body.textContent).not.toContain('Recording…')
+    expect(recordDecision).toHaveBeenCalledOnce()
+
+    await user.click(screen.getByRole('button', { name: 'Review current comparison' }))
+    expect(
+      await screen.findByText(
+        'The current comparison could not be loaded. Your prior choice remains unrecorded.',
+      ),
+    ).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Review current comparison' })).toBeEnabled()
+
+    await user.click(screen.getByRole('button', { name: 'Review current comparison' }))
+    const currentAlternative = await screen.findByRole('button', {
+      name: /Alternative 1 cover/u,
+    })
+    expect(within(currentAlternative).getByRole('img')).toHaveAttribute(
+      'src',
+      expect.stringContaining(`cover_transport_ref_${'3'.repeat(64)}`),
+    )
+    expect(
+      screen.queryByText(
+        'This cover comparison changed before your choice was recorded. No cover was changed.',
+      ),
+    ).toBeNull()
+    expect(recordDecision).toHaveBeenCalledOnce()
   })
 
   it('does not carry failed same-field advancement into a manual field change', async () => {

@@ -226,6 +226,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             connection, self._setup_serialization_lock
         )
         self._review_scans = SQLiteReviewScanRepository(connection)
+        self._current_cover_authority: tuple[str | None, str | None] = (None, None)
         self._field_effects = SQLiteFieldEffectRepository(
             connection,
             binding,
@@ -247,6 +248,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                     )
                 )
             ),
+            current_cover_authority=(lambda: self._current_cover_authority),
         )
         # Every injected callable resolves its target through this repository at
         # call time rather than capturing a bound method here.  Three review
@@ -292,12 +294,11 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                     report, proposal
                 )
             ),
+            current_cover_authority=(lambda: self._current_cover_authority),
             record_browse_unavailable_exception=(
                 lambda error: self._record_browse_unavailable_exception(error)
             ),
         )
-        self._current_cover_policy_reference: str | None = None
-        self._current_cover_replay_reference: str | None = None
         # The two cover references are rebound by `bind_current_cover_policy`
         # and `bind_current_cover_replay` long after this point, so the
         # projection side reads them through a callable rather than receiving
@@ -340,12 +341,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             field_effect_event_documents=(
                 lambda plan_id: self.field_effect_event_documents(plan_id)
             ),
-            current_cover_policy_reference=(
-                lambda: self._current_cover_policy_reference
-            ),
-            current_cover_replay_reference=(
-                lambda: self._current_cover_replay_reference
-            ),
+            current_cover_policy_reference=(lambda: self._current_cover_authority[0]),
+            current_cover_replay_reference=(lambda: self._current_cover_authority[1]),
         )
         self._decisions = SQLiteDecisionRepository(
             connection,
@@ -438,6 +435,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             count_current_attention_fields=(
                 lambda search: self.count_current_attention_fields(search)
             ),
+            current_cover_authority=(lambda: self._current_cover_authority),
         )
 
     def _record_browse_unavailable_exception(self, error: sqlite3.Error) -> None:
@@ -458,13 +456,13 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         """Bind guarded cover effects to this process's validated policy."""
         if re.fullmatch(r"cover_policy_[0-9a-f]{64}", reference) is None:
             raise ValueError("cover policy reference is invalid")
-        self._current_cover_policy_reference = reference
+        self._current_cover_authority = (reference, self._current_cover_authority[1])
 
     def bind_current_cover_replay(self, reference: str) -> None:
         """Bind guarded cover effects to the current observer/contract profile."""
         if re.fullmatch(r"cover_replay_[0-9a-f]{64}", reference) is None:
             raise ValueError("cover replay reference is invalid")
-        self._current_cover_replay_reference = reference
+        self._current_cover_authority = (self._current_cover_authority[0], reference)
 
     def bind_current_cover_authority(
         self, policy_reference: str, replay_reference: str
@@ -474,8 +472,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             raise ValueError("cover policy reference is invalid")
         if re.fullmatch(r"cover_replay_[0-9a-f]{64}", replay_reference) is None:
             raise ValueError("cover replay reference is invalid")
-        self._current_cover_policy_reference = policy_reference
-        self._current_cover_replay_reference = replay_reference
+        self._current_cover_authority = (policy_reference, replay_reference)
 
     def field_effect_authority_source(
         self, decision: HumanDecision | AutomaticDecision | CoverAutomaticDecision

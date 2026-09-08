@@ -97,6 +97,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             ],
         ],
         count_current_attention_fields: Callable[[str | None], int],
+        current_cover_authority: Callable[[], tuple[str | None, str | None]],
     ) -> None:
         super().__init__(connection, binding)
         self._require_staged_shadow_projection_current = (
@@ -112,6 +113,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         self.count_current_review_cases = count_current_review_cases
         self.list_current_attention_documents = list_current_attention_documents
         self.count_current_attention_fields = count_current_attention_fields
+        self._current_cover_authority = current_cover_authority
 
     @contextmanager
     def _consistent_review_read(self) -> Iterator[None]:
@@ -424,6 +426,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
 
     def _current_attention_count(self, review_case_id: str) -> int:
         """Use the same persisted field-membership predicate as every attention view."""
+        cover_authority = self._current_cover_authority()
         row = self._connection.execute(
             "SELECT count(*) "
             + _CURRENT_REVIEW_FROM_SQL
@@ -432,7 +435,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             "WHERE result.review_case_id=? AND "
             + _REVIEW_FIELD_ATTENTION_SQL
             + _EPUB_INAPPLICABLE_ATTENTION_SQL,
-            (review_case_id,),
+            (review_case_id, *cover_authority),
         ).fetchone()
         if row is None or len(row) != 1 or type(row[0]) is not int or row[0] < 0:
             raise MetadataReportError("review library is unavailable")

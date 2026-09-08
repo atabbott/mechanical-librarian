@@ -48,6 +48,7 @@ from mechanical_librarian.application.contained_reviewer_contract import COVER_M
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
+from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.field_effects import (
     GuardedFieldApplication,
     TargetObservation,
@@ -4191,10 +4192,15 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
             open_repository(database)
 
 
-def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor() -> None:
+@pytest.mark.parametrize("authority_change", ("policy", "replay"))
+def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
+    authority_change: str,
+) -> None:
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         database = root / "reports.sqlite"
+        profile_reader = None
+        profile_contract = None
         repository = open_repository(database)
         report, _ = _qualified_cover_report(root)
         options = dict(DEFAULT_OPTIONS)
@@ -4289,6 +4295,13 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor() -
             assert repository._connection.execute(
                 "SELECT count(*) FROM cover_selection_authorities"
             ).fetchone() == (1,)
+            reviewer_access = _test_reviewer_access(repository)
+            cover_considerations = composition._compose_cover_considerations(
+                repository,
+                root / "artifacts",
+                _pipeline_configuration().review,
+                reviewer_access,
+            )
             library = BrowseReviewLibrary(repository).library(
                 lens="all", search=None, limit=50, cursor=None
             )
@@ -4312,12 +4325,6 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor() -
                 "cover",
                 f"/review/{current_work['review_case_id']}?field=cover",
             )
-            cover_considerations = composition._compose_cover_considerations(
-                repository,
-                root / "artifacts",
-                _pipeline_configuration().review,
-                _test_reviewer_access(repository),
-            )
             detail = InspectCurrentReviewCase(repository, cover_considerations).run(
                 current_work["review_case_id"]
             )
@@ -4330,9 +4337,133 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor() -
             assert cover["cover_consideration"]["policy"]["reasons"] == [
                 "actual_target_unverified"
             ]
+
+            if authority_change == "policy":
+                cover_considerations.update_policy(
+                    CoverPolicy(avoid_promotional_text=True)
+                )
+            else:
+                profile_reader = patch.object(
+                    composition,
+                    "read_contained_reviewer_profile",
+                    return_value=b"profile-1",
+                )
+                profile_contract = patch(
+                    "tests.unit.test_shadow_outcome_persistence.cover_reviewer_profile_contract_mismatch",
+                    return_value=None,
+                )
+                profile_reader.start()
+                profile_contract.start()
+                replay_configuration = _pipeline_configuration(
+                    cover_reviewer_profile_file="/run/synthetic-profile"
+                )
+                reviewer_access = _test_reviewer_access(
+                    repository, replay_configuration.review
+                )
+                cover_considerations = composition._compose_cover_considerations(
+                    repository,
+                    root / "artifacts",
+                    replay_configuration.review,
+                    reviewer_access,
+                )
+
+            stale_library = BrowseReviewLibrary(repository).library(
+                lens="all", search="item", limit=1, cursor=None
+            )
+            assert stale_library["counts"]["needs_attention"] == 0
+            assert len(stale_library["items"]) == 1
+            assert stale_library["items"][0]["attention_count"] == 0
+            assert (
+                BrowseReviewLibrary(repository).library(
+                    lens="needs_attention", search=None, limit=1, cursor=None
+                )["items"]
+                == []
+            )
+            assert (
+                len(
+                    BrowseReviewLibrary(repository).library(
+                        lens="no_attention_needed", search=None, limit=1, cursor=None
+                    )["items"]
+                )
+                == 1
+            )
+            stale_attention = BrowseReviewLibrary(repository).attention(
+                search="item", limit=1, cursor=None
+            )
+            assert stale_attention["items"] == []
+            assert stale_attention["next_cursor"] is None
+            assert stale_attention["total"] == 0
+            stale_detail = InspectCurrentReviewCase(
+                repository, cover_considerations
+            ).run(current_work["review_case_id"])
+            stale_cover = next(
+                field
+                for field in stale_detail["fields"]
+                if field["destination"] == "cover"
+            )
+            assert stale_cover["needs_attention"] is False
+            assert stale_cover["cover_consideration"] is None
+            assert (
+                repository.suspend_field_effect_capability(
+                    scope="destination",
+                    connection=successor_report.target.connection,
+                    destination="cover",
+                    reason="field_unavailable",
+                    changed_at=20,
+                )
+                == ()
+            )
+            repository.clear_field_effect_capability_suspension(
+                scope="destination",
+                connection=successor_report.target.connection,
+                destination="cover",
+                reason="field_unavailable",
+                observed_at=21,
+            )
+
+            current_case = ReviewCase.create_from_data(
+                json.loads(repository.get_review_case(current_work["review_case_id"]))[
+                    "case"
+                ]
+            )
+            cover_proposal = next(
+                item
+                for item in current_case.proposals
+                if item["destination"] == "cover"
+            )
+            refreshed = cover_considerations.ensure(
+                current_work["review_case_id"],
+                successor_report.to_json(),
+                {"proposal_id": cover_proposal["proposal_id"]},
+                retry=True,
+            )
+            assert refreshed["ready"] is True
+            assert (
+                BrowseReviewLibrary(repository).library(
+                    lens="needs_attention", search=None, limit=1, cursor=None
+                )["counts"]["needs_attention"]
+                == 1
+            )
+            assert (
+                BrowseReviewLibrary(repository).attention(
+                    search=None, limit=1, cursor=None
+                )["total"]
+                == 1
+            )
+            assert repository.suspend_field_effect_capability(
+                scope="destination",
+                connection=successor_report.target.connection,
+                destination="cover",
+                reason="field_unavailable",
+                changed_at=22,
+            ) == (current_work["review_case_id"],)
         finally:
             supervisor.stop()
             repository.close()
+            if profile_contract is not None:
+                profile_contract.stop()
+            if profile_reader is not None:
+                profile_reader.stop()
 
 
 @pytest.mark.parametrize(

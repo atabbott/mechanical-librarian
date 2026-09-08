@@ -714,6 +714,21 @@ function ChoiceEvidencePanel({
   )
 }
 
+const revealFocusedCoverChoice = (event: SyntheticEvent<HTMLElement>) => {
+  const choice = event.currentTarget
+  const track = choice.closest<HTMLElement>('.library-cover-layout, .library-cover-pinned')
+  if (!track) return
+  const trackBounds = track.getBoundingClientRect()
+  const choiceBounds = choice.getBoundingClientRect()
+  const delta =
+    choiceBounds.left < trackBounds.left
+      ? choiceBounds.left - trackBounds.left
+      : choiceBounds.right > trackBounds.right
+        ? choiceBounds.right - trackBounds.right
+        : 0
+  if (delta !== 0) track.scrollLeft += delta
+}
+
 const isLongDescription = (destination: string, value: string) =>
   destination === 'description' && value.length > 280
 
@@ -1275,6 +1290,7 @@ function LibraryCoverChoicesContent({
       <article
         className={`cover-choice${open ? ' is-evidence-open' : ''}${eligibleCandidate ? '' : ' is-unconfirmed'}`}
         key={candidate.reference}
+        onFocusCapture={revealFocusedCoverChoice}
       >
         <button
           type="button"
@@ -1346,7 +1362,9 @@ function LibraryCoverChoicesContent({
             context={context}
             evidenceId={evidenceId}
             label={label}
-            {...(disabled ? {} : { onChoose: () => choose(outcome, value) })}
+            {...(disabled || !actionableCandidate
+              ? {}
+              : { onChoose: () => choose(outcome, value) })}
           />
         ) : null}
       </article>
@@ -1435,7 +1453,7 @@ function LibraryCoverChoicesContent({
       ) : (
         <div className="library-cover-layout">
           {consideration.incumbent.state === 'unavailable' && !incumbent ? (
-            <article className="cover-choice">
+            <article className="cover-choice" onFocusCapture={revealFocusedCoverChoice}>
               <button
                 type="button"
                 aria-pressed={choiceSelected(field, progress, 'keep_current')}
@@ -1723,6 +1741,11 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const [automaticResults, setAutomaticResults] = useState<
     Readonly<Record<string, 'success' | 'error'>>
   >({})
+  const [staleCoverReview, setStaleCoverReview] = useState<{
+    caseId: string
+    failed: boolean
+    loading: boolean
+  } | null>(null)
   const [openedWork, setOpenedWork] = useState<LibraryWorkView | null>(null)
   const [expandedChoiceState, setExpandedChoiceState] = useState<{
     work: string
@@ -2128,9 +2151,55 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       }
     },
     onStale: async () => {
+      if (selected?.destination === 'cover') {
+        setStaleCoverReview({ caseId: selectedReviewCaseId, failed: false, loading: false })
+        return
+      }
       await navigate({ search: { lens: 'needs_attention' } })
     },
   })
+  const reviewCurrentCoverComparison = async () => {
+    const stale = staleCoverReview
+    if (!stale || stale.loading) return
+    setStaleCoverReview({ ...stale, failed: false, loading: true })
+    try {
+      await controller.settle()
+      const successor = await http.getCaseSuccessor(stale.caseId)
+      const currentCaseId = successor ?? stale.caseId
+      const currentDetail = await http.getCaseDetail(currentCaseId)
+      const currentCover = currentDetail.fields.find(
+        (field) => field.destination === 'cover' && field.coverConsideration !== null,
+      )
+      if (!currentDetail.current || currentCover === undefined) throw new Error('stale cover')
+      if (successor !== null) setReconciledSuccessorIdentity(currentCaseId)
+      await navigate({
+        replace: true,
+        search: (current) =>
+          current.preview === stale.caseId
+            ? { ...current, preview: currentCaseId, field: 'cover' }
+            : current,
+      })
+      setStaleCoverReview(null)
+    } catch {
+      setStaleCoverReview({ ...stale, failed: true, loading: false })
+    }
+  }
+  const staleCoverNotice =
+    staleCoverReview?.caseId === selectedReviewCaseId ? (
+      <aside className="comparison-notice" role="alert">
+        <p>This cover comparison changed before your choice was recorded. No cover was changed.</p>
+        {staleCoverReview.failed ? (
+          <p>The current comparison could not be loaded. Your prior choice remains unrecorded.</p>
+        ) : null}
+        <button
+          type="button"
+          disabled={staleCoverReview.loading}
+          onClick={() => void reviewCurrentCoverComparison()}
+        >
+          {staleCoverReview.loading ? 'Loading current comparison…' : 'Review current comparison'}
+        </button>
+      </aside>
+    ) : null
   const selectedAutomaticKey = selected
     ? `${selectedReviewCaseId}:${selected.destination}:${selected.targetFingerprint}`
     : null
@@ -2779,6 +2848,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
             </div>
           ) : detail.isPending ? (
             <p role="status">Loading selected work…</p>
+          ) : detail.isError && staleCoverNotice ? (
+            staleCoverNotice
           ) : detail.isError ? (
             <p role="alert">
               Selected work could not be loaded.{' '}
@@ -2796,9 +2867,12 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
             <div className="library-selection">
               <p>Case superseded</p>
               <h2>{displayedIdentity.title}</h2>
-              <p role="alert">
-                This review case is no longer current. Reopen its current replacement from Library.
-              </p>
+              {staleCoverNotice ?? (
+                <p role="alert">
+                  This review case is no longer current. Reopen its current replacement from
+                  Library.
+                </p>
+              )}
             </div>
           ) : (
             <>
@@ -2932,6 +3006,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                   ) : null}
                 </nav>
               </section>
+              {staleCoverNotice}
               {complete?.id === selectedReviewCaseId && completionInspection === null ? (
                 <article
                   className="review-complete"

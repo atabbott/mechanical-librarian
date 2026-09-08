@@ -167,6 +167,22 @@ def test_v16_binds_current_source_and_preserves_historical_v11_to_v15_bytes() ->
         "no duplicate owner row; complete retained F20 scoring receipts remain bound "
         "to measured candidate 0deedf50.",
     }
+    currentness = rotation["post_measurement_currentness_wiring_delta"]
+    assert currentness == {
+        "change": "Bind the atomically current cover policy and replay references "
+        "into Library, Attention, Detail and suspension read-model membership.",
+        "classification": "read_model_projection_only",
+        "current_sha256": sources[currentness["identity"]],
+        "f20_option_outcomes_changed": False,
+        "f20_scoring_inputs_changed": False,
+        "identity": "src/mechanical_librarian/adapters/persistence/metadata_reports.py",
+        "measured_sha256": "9fcf7c35bc7037d559104e9d048f1eda74217e662084d4c81ea7b162ceed8081",
+        "proof": "The exact source diff only supplies the already validated live cover "
+        "authority pair to read-model repositories. Policy and replay rotation "
+        "regressions prove obsolete considerations leave every attention view and a "
+        "refreshed consideration returns; proposal, election, admission and F20 "
+        "scoring inputs remain unchanged.",
+    }
     history = rotation["historical_reader_delta"]
     assert history["current_sha256"] == sources[history["identity"]]
     assert (
