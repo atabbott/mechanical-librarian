@@ -127,12 +127,12 @@ candidate. It does not admit unrelated works, general subtitle stripping or
 WORK-query transformations. All candidates in the successful target-backed
 ISBN lane must qualify; Ask and non-series applicability stay unchanged.
 
-The [F20 v15 candidate](../reference/f20-rich-metadata-qualification-candidate-v15.json)
-binds the target-work contradiction guard while preserving the repaired series
-identity rule and separately scored membership/sequence
-results from owner-approved exposed regression. V11/v12 remain immutable
-historical evidence; their decisions
-are readable but cannot authorize new writes. The
+The [F20 v16 candidate](../reference/f20-rich-metadata-qualification-candidate-v16.json)
+rotates current decision authority after the proposal contract learned to
+retain a confirmed cover across an incomplete sibling source. Its unchanged
+retained replays preserve every qualified non-cover outcome, value, reason,
+source binding and correctness result. Earlier manifests remain immutable
+historical evidence; their decisions are readable but cannot authorize new writes. The
 [qualification record](rich-metadata-qualification.md) states the source-label
 corrections, reduced coverage, distinct-book denominators and limits of the evidence.
 

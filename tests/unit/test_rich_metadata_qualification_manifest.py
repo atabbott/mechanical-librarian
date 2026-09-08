@@ -38,8 +38,9 @@ MANIFEST = (
 V12_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v12.json")
 V13_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v13.json")
 V14_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v14.json")
+V15_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v15.json")
 CURRENT_MANIFEST = MANIFEST.with_name(
-    "f20-rich-metadata-qualification-candidate-v15.json"
+    "f20-rich-metadata-qualification-candidate-v16.json"
 )
 HISTORICAL_MANIFEST = (
     Path(__file__).parents[2]
@@ -82,9 +83,9 @@ RICH_FIELDS = (
 )
 
 
-def test_v15_binds_current_source_and_preserves_historical_v11_to_v14_bytes() -> None:
+def test_v16_binds_current_source_and_preserves_historical_v11_to_v15_bytes() -> None:
     manifest = json.loads(CURRENT_MANIFEST.read_bytes())
-    assert manifest["schema"] == "f20-rich-metadata-qualification-candidate-v15"
+    assert manifest["schema"] == "f20-rich-metadata-qualification-candidate-v16"
     assert manifest["automatic_authority"] == "decision_only"
     prior = hashlib.sha256(MANIFEST.read_bytes()).hexdigest()
     assert prior == "4ede15a2aa84e8726ea2dff4e4f9f0d04b27a70276ed53c400c2de5f7619d445"
@@ -112,7 +113,15 @@ def test_v15_binds_current_source_and_preserves_historical_v11_to_v14_bytes() ->
         ]
         == v13
     )
-    assert manifest["authority_rotation"]["prior_manifest_sha256"] == v14
+    v15 = hashlib.sha256(V15_MANIFEST.read_bytes()).hexdigest()
+    assert v15 == "a7af724b0711177ff04ff1ae56c8a7db42c1166fe97390c29e60fed506440500"
+    assert (
+        json.loads(V15_MANIFEST.read_bytes())["authority_rotation"][
+            "prior_manifest_sha256"
+        ]
+        == v14
+    )
+    assert manifest["authority_rotation"]["prior_manifest_sha256"] == v15
     assert prior != F20_QUALIFICATION_CANDIDATE_SHA256
     sources = manifest["frozen_contract"]["behavior_sources"]
     assert {
@@ -133,13 +142,10 @@ def test_v15_binds_current_source_and_preserves_historical_v11_to_v14_bytes() ->
     rotation = manifest["authority_rotation"]
     assert (
         rotation["measured_candidate_head"]
-        == "e13809341a66371c008e154df80a8b7d50ae1b50"
+        == "0deedf50da25e11fd49f173d95f72251283b1a3f"
     )
     assert rotation["measured_behavior_sources"] == {
-        "src/mechanical_librarian/domain/metadata_report.py": "d624e3ef9176de6fd8e9b569b0b8d2cb65b0c964c724ffbbcc2ff8fcdd2dd344",
-        "src/mechanical_librarian/domain/proposal_set.py": "01a9fdbfbc2f1c7878805ebddd539eaa65762d3f002f4c76d80ee82a3196e102",
-        "src/mechanical_librarian/domain/rich_metadata_preview.py": "40696bad9423d43a27676b020140a6cb868c960a8b1ee88f1c9e6e114474eea2",
-        "src/mechanical_librarian/domain/work_identity.py": "da96b62cb77a4b0246ed3bfb6e381d9f4f9fdde1c035073e356a52da44b912a7",
+        "src/mechanical_librarian/domain/proposal_set.py": "d34802c10673a8269c66b7a9a9fc14437177617a20d9e6e51f82ee3feaee00ce",
     }
     assert all(
         sources[name] == digest
@@ -149,7 +155,7 @@ def test_v15_binds_current_source_and_preserves_historical_v11_to_v14_bytes() ->
     assert history["current_sha256"] == sources[history["identity"]]
     assert (
         history["measured_sha256"]
-        == json.loads(V14_MANIFEST.read_bytes())["frozen_contract"]["behavior_sources"][
+        == json.loads(V15_MANIFEST.read_bytes())["frozen_contract"]["behavior_sources"][
             history["identity"]
         ]
     )
@@ -159,6 +165,75 @@ def test_v15_binds_current_source_and_preserves_historical_v11_to_v14_bytes() ->
     assert (
         manifest["frozen_contract"]["uv_lock_sha256"]
         == hashlib.sha256((root / "uv.lock").read_bytes()).hexdigest()
+    )
+
+
+def test_v16_records_complete_non_cover_continuity_without_fresh_holdout() -> None:
+    manifest = json.loads(CURRENT_MANIFEST.read_bytes())
+    evidence = manifest["evidence_method"]["cover_choice_source_rotation"]
+
+    assert manifest["proposal_policy_version"] == "fixed-conservative-v22"
+    assert evidence["qualification_method"] == "owner_approved_exposed_regression"
+    assert evidence["fresh_holdout_claim"] is False
+    retained = evidence["same_mode_f20_continuity"]
+    assert retained["options_or_modes_pooled"] is False
+    assert retained["lost_correct_projections"] == 0
+    assert retained["gained_incorrect_projections"] == 0
+    assert {item["mode"] for item in retained["modes"]} == {
+        "live-three-provider-49-v1",
+        "live-three-provider-49-v2",
+    }
+    assert all(
+        item["reports"] == 49
+        and item["outcomes"] == 588
+        and item["complete_outcomes_equal"] is True
+        for item in retained["modes"]
+    )
+    non_series = evidence["non_series_continuity"]
+    assert non_series["reports"] == 49
+    assert non_series["complete_previews"] == 980
+    assert non_series["canonical_complete_previews_equal"] is True
+    series = evidence["series_continuity"]
+    assert series["reports"] == 36
+    assert series["complete_previews"] == 108
+    assert series["canonical_complete_previews_equal"] is True
+    assert series["per_batch_option_aggregates_equal"] is True
+    assert series["sealed_bindings_unchanged"] is True
+    assert series["fresh_holdout_claim"] is False
+    exact = evidence["exact_description_source"]
+    assert {
+        name: exact["confirmation"][name]
+        for name in ("cases", "automatic_predictions", "correct_predictions", "errors")
+    } == {
+        "cases": 23,
+        "automatic_predictions": 13,
+        "correct_predictions": 13,
+        "errors": 0,
+    }
+    assert {
+        name: exact["holdout"][name]
+        for name in (
+            "cases",
+            "automatic_predictions",
+            "correct_predictions",
+            "errors",
+            "spent",
+        )
+    } == {
+        "cases": 25,
+        "automatic_predictions": 14,
+        "correct_predictions": 14,
+        "errors": 0,
+        "spent": True,
+    }
+    assert exact["complete_outcomes_and_source_bindings_equal"] is True
+    assert exact["lost_correct_projections"] == 0
+    assert exact["gained_incorrect_projections"] == 0
+    assert all(
+        re.fullmatch(r"[0-9a-f]{64}", value)
+        for section in (retained, non_series, series, exact)
+        for name, value in section.items()
+        if name.endswith("sha256")
     )
 
 
@@ -271,7 +346,7 @@ def test_v14_records_target_work_regression_without_fresh_holdout_claim() -> Non
 
 
 def test_v15_records_exact_description_source_and_complete_continuity() -> None:
-    manifest = json.loads(CURRENT_MANIFEST.read_bytes())
+    manifest = json.loads(V15_MANIFEST.read_bytes())
     evidence = manifest["evidence_method"]["exact_description_source"]
 
     assert manifest["proposal_policy_version"] == "fixed-conservative-v21"
@@ -449,9 +524,10 @@ def test_v12_separates_membership_sequence_and_distinct_book_support(
 
 
 @pytest.mark.parametrize(
-    "manifest_path", (V12_MANIFEST, V13_MANIFEST, V14_MANIFEST, CURRENT_MANIFEST)
+    "manifest_path",
+    (V12_MANIFEST, V13_MANIFEST, V14_MANIFEST, V15_MANIFEST, CURRENT_MANIFEST),
 )
-def test_v12_to_v15_retain_non_series_dispositions_and_historical_metrics(
+def test_v12_to_v16_retain_non_series_dispositions_and_historical_metrics(
     manifest_path: Path,
 ) -> None:
     historical = json.loads(MANIFEST.read_bytes())
