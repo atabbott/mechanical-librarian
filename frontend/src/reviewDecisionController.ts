@@ -210,6 +210,7 @@ export const useReviewDecisionController = ({
       // (#635, #641).
       endDecisionEcho(queryClient, reviewCaseId, acknowledgement.invalidation_sequences)
       converge()
+      await onRecorded?.(reviewCaseId, command.destination)
       const refreshed = await refreshCase()
       if (!refreshed) {
         halt()
@@ -235,7 +236,6 @@ export const useReviewDecisionController = ({
       }
       mark(command, 'confirmed')
       announce(reviewCaseId, command.destination, 'Decision recorded from the authoritative case.')
-      await onRecorded?.(reviewCaseId, command.destination)
       const next = nextUnresolved(
         order.current,
         refreshed.fields,

@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { ApiError } from '../src/api/http'
 import { coalesceMilliseconds } from '../src/liveInvalidation'
+import { reconciliationKey } from '../src/reviewDecisionController'
 import { sourceStatusLabel } from '../src/routes/LibraryPage'
 import { advancePresentationSettled } from '../src/reviewAdvancePresentation'
 import type {
@@ -4001,11 +4002,13 @@ describe('Library route', () => {
   it.each([
     ['a direct replacement choice on the same case', null, false],
     ['a direct replacement choice beside another unresolved field', null, true],
+    ['a direct replacement whose recorded case refresh fails', null, false],
     ['an explicit replacement recovery on the same case', null, false],
     ['an explicit successor-case recovery', 'case-2', false],
   ])('retains a stale cover choice and recovers through %s', async (label, successorId, other) => {
     const user = userEvent.setup()
     const directChoice = label.startsWith('a direct')
+    const failRecordedRefresh = label.includes('recorded case refresh fails')
     const base = detail.fields[0]
     if (!base) throw new Error('cover stale fixture requires a field')
     const candidate = (suffix: string, incumbent: boolean) => ({
@@ -4078,19 +4081,27 @@ describe('Library route', () => {
     const current = coverDetail(successorId ?? 'case-1', '3')
     let stale = false
     let failCurrentLookup = true
+    let successfulDecisions = 0
+    let recordedRefreshFailed = false
     const defaultHttp = createHttp()
     const recordDecision = vi.fn<ReviewHttp['recordDecision']>(async (...args) => {
       if (!stale) {
         stale = true
         throw new ApiError(409, 'stale')
       }
-      return await defaultHttp.recordDecision(...args)
+      const acknowledgement = await defaultHttp.recordDecision(...args)
+      successfulDecisions += 1
+      return acknowledgement
     })
     const http: ReviewHttp = {
       ...createHttp(),
       recordDecision,
       getCaseDetail: vi.fn(async (id) => {
         if (!stale) return initial
+        if (failRecordedRefresh && successfulDecisions === 1 && !recordedRefreshFailed) {
+          recordedRefreshFailed = true
+          throw new Error('recorded current case refresh unavailable')
+        }
         if (id === current.id) return current
         return { ...initial, current: false }
       }),
@@ -4102,7 +4113,7 @@ describe('Library route', () => {
         return successorId
       }),
     }
-    renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+    const { queryClient } = renderRoute('/library?lens=all&preview=case-1&field=cover', http)
 
     await user.click(await screen.findByRole('button', { name: /Alternative 1 cover/u }))
     expect(
@@ -4138,6 +4149,18 @@ describe('Library route', () => {
         ),
       ).toBeNull()
       expect(screen.queryByRole('button', { name: 'Review current comparison' })).toBeNull()
+      if (failRecordedRefresh) {
+        expect(await screen.findByText('Selected work could not be loaded.')).toBeVisible()
+        expect(queryClient.getQueryData(reconciliationKey('case-1'))).toEqual({
+          destination: 'cover',
+          message:
+            'Decision recorded, but the current case could not be refreshed. Reload before reviewing another value.',
+          detailUpdatedAt: expect.any(Number),
+        })
+        expect(recordDecision).toHaveBeenCalledTimes(2)
+        expect(successfulDecisions).toBe(1)
+        return
+      }
       if (other) {
         expect(await screen.findByRole('button', { name: /Title.*Needs review/u })).toBeVisible()
       } else {
