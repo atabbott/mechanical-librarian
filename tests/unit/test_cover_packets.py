@@ -1199,6 +1199,92 @@ def test_duplicate_group_aggregates_best_original_dimensions_canonically() -> No
     ) == (1500, 3000)
 
 
+def test_incumbent_duplicate_keeps_abs_artifact_in_either_source_order() -> None:
+    duplicate_payload = _preview(33)
+    alternative_payload = _preview(34)
+
+    def source(
+        token: str,
+        kind: CoverSourceKind,
+        payload: bytes,
+        width: int,
+        height: int,
+    ) -> CoverSource:
+        artifact = CoverArtifact.create(
+            ("original-" + token).encode(), payload, "image/png", width, height
+        )
+        return CoverSource(
+            cover_source_id(kind, token),
+            kind,
+            CoverSourceState.RETRIEVED,
+            artifact,
+            provenance=(
+                None
+                if kind is CoverSourceKind.ABS
+                else CoverProvenance(
+                    kind.value,
+                    CoverDesignation.WORK,
+                    "work-" + token,
+                )
+            ),
+        )
+
+    incumbent = source("incumbent", CoverSourceKind.ABS, duplicate_payload, 300, 450)
+    duplicate = source(
+        "duplicate", CoverSourceKind.OPEN_LIBRARY, duplicate_payload, 2000, 3000
+    )
+    alternative = source(
+        "alternative", CoverSourceKind.HARDCOVER, alternative_payload, 1000, 1500
+    )
+    assert incumbent.artifact is not None
+    by_artifact = {
+        candidate.artifact.artifact_id: payload
+        for candidate, payload in (
+            (incumbent, duplicate_payload),
+            (duplicate, duplicate_payload),
+            (alternative, alternative_payload),
+        )
+        if candidate.artifact is not None
+    }
+
+    documents = []
+    for sources in (
+        (incumbent, duplicate, alternative),
+        (duplicate, incumbent, alternative),
+    ):
+        packet = prepare_cover_packet(
+            _report(sources).to_json(),
+            lambda artifact, _variant: by_artifact[artifact],
+        )
+        _admit_produced(packet)
+        documents.append(json.loads(packet.document))
+
+    assert documents == [documents[0]] * 2
+    candidates = documents[0]["candidates"]
+    incumbent_candidate = next(value for value in candidates if value["incumbent"])
+    alternative_candidate = next(
+        value for value in candidates if not value["incumbent"]
+    )
+    assert (
+        incumbent_candidate["reference"],
+        incumbent_candidate["preview_sha256"],
+        incumbent_candidate["width"],
+        incumbent_candidate["height"],
+    ) == (
+        packet_builder.cover_source_reference(
+            _report((incumbent, duplicate, alternative)).report_id,
+            incumbent.source_id,
+        ),
+        incumbent.artifact.preview_digest,
+        300,
+        450,
+    )
+    assert (alternative_candidate["width"], alternative_candidate["height"]) == (
+        1000,
+        1500,
+    )
+
+
 def test_digest_group_counts_every_source_kind_for_diversity() -> None:
     def candidate(
         index: int,

@@ -2150,6 +2150,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         })
       }
     },
+    onRecorded: (caseId, destination) => {
+      if (destination !== 'cover') return
+      setStaleCoverReview((current) => (current?.caseId === caseId ? null : current))
+    },
     onStale: async () => {
       if (selected?.destination === 'cover') {
         setStaleCoverReview({ caseId: selectedReviewCaseId, failed: false, loading: false })

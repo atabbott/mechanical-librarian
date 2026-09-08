@@ -221,7 +221,11 @@ _MAX_MOUNT_WALK_FILES = 1_000_000
 
 def _open_read_only(path: Path) -> sqlite3.Connection:
     absolute = str(path.absolute())
-    return sqlite3.connect(f"file:{quote(absolute, safe='/')}?mode=ro", uri=True)
+    connection = sqlite3.connect(f"file:{quote(absolute, safe='/')}?mode=ro", uri=True)
+    connection.create_function(
+        "ml_cover_consideration_current", 2, lambda _document, _replay: 0
+    )
+    return connection
 
 
 def _without_identities(value: object) -> object:

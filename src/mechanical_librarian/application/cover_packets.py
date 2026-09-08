@@ -28,6 +28,7 @@ from mechanical_librarian.domain.cover_evidence import (
 from mechanical_librarian.domain.metadata_report import MetadataReport
 
 SCHEMA_VERSION = "cover-review-packet-v2"
+PRODUCER_REVISION = "cover-packet-producer-v1"
 
 
 def cover_source_reference(report_id: str, source_id: str) -> str:
@@ -141,15 +142,15 @@ def prepare_cover_packet(
         if existing is not None:
             existing.sources.append(source)
             existing.references.append(reference)
-            if _technical_quality(artifact.width, artifact.height) > _technical_quality(
-                existing.width, existing.height
-            ):
-                existing.width = artifact.width
-                existing.height = artifact.height
             if source.kind is CoverSourceKind.ABS:
                 existing.incumbent = True
                 existing.reference = reference
                 existing.source_digest = artifact.preview_digest
+                existing.width = artifact.width
+                existing.height = artifact.height
+            elif not existing.incumbent and _technical_quality(
+                artifact.width, artifact.height
+            ) > _technical_quality(existing.width, existing.height):
                 existing.width = artifact.width
                 existing.height = artifact.height
             continue

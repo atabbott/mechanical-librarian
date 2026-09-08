@@ -62,7 +62,9 @@ _CURRENT_COVER_ATTENTION_AUTHORITY_SQL = (
     "current_cover_authority.consideration_id "
     "WHERE current_cover_authority.review_case_id=rc.review_case_id "
     "AND json_extract(authority_consideration.document,'$.policy_reference')=? "
-    "AND json_extract(authority_consideration.document,'$.replay_reference')=?))"
+    "AND json_extract(json_extract(authority_consideration.document,"
+    "'$.policy_report_document'),'$.owner_ready')=1 "
+    "AND ml_cover_consideration_current(authority_consideration.document,?)=1))"
 )
 _REVIEW_FIELD_ATTENTION_SQL = (
     "result.has_owner_decision_actions=1 AND (result.unresolved_choice=1 "

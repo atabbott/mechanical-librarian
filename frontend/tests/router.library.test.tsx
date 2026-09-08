@@ -3999,9 +3999,10 @@ describe('Library route', () => {
   })
 
   it.each([
-    ['a replacement consideration on the same case', null],
-    ['a successor case', 'case-2'],
-  ])('retains a stale cover choice and explicitly opens %s', async (_label, successorId) => {
+    ['a replacement consideration on the same case', null, false],
+    ['a replacement consideration beside another unresolved field', null, true],
+    ['a successor case', 'case-2', false],
+  ])('retains a stale cover choice and recovers through %s', async (_label, successorId, other) => {
     const user = userEvent.setup()
     const base = detail.fields[0]
     if (!base) throw new Error('cover stale fixture requires a field')
@@ -4068,15 +4069,20 @@ describe('Library route', () => {
             targetFingerprint: `fingerprint-${id}`,
           },
         },
+        ...(other ? [base] : []),
       ],
     })
     const initial = coverDetail('case-1', '2')
     const current = coverDetail(successorId ?? 'case-1', '3')
     let stale = false
     let failCurrentLookup = true
-    const recordDecision = vi.fn<ReviewHttp['recordDecision']>(async () => {
-      stale = true
-      throw new ApiError(409, 'stale')
+    const defaultHttp = createHttp()
+    const recordDecision = vi.fn<ReviewHttp['recordDecision']>(async (...args) => {
+      if (!stale) {
+        stale = true
+        throw new ApiError(409, 'stale')
+      }
+      return await defaultHttp.recordDecision(...args)
     })
     const http: ReviewHttp = {
       ...createHttp(),
@@ -4113,6 +4119,30 @@ describe('Library route', () => {
       ),
     ).toBeVisible()
     expect(screen.getByRole('button', { name: 'Review current comparison' })).toBeEnabled()
+
+    if (successorId === null) {
+      const currentAlternative = screen.getByRole('button', {
+        name: /Alternative 1 cover/u,
+      })
+      expect(within(currentAlternative).getByRole('img')).toHaveAttribute(
+        'src',
+        expect.stringContaining(`cover_transport_ref_${'3'.repeat(64)}`),
+      )
+      await user.click(currentAlternative)
+      await waitFor(() => expect(recordDecision).toHaveBeenCalledTimes(2))
+      expect(
+        screen.queryByText(
+          'This cover comparison changed before your choice was recorded. No cover was changed.',
+        ),
+      ).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Review current comparison' })).toBeNull()
+      if (other) {
+        expect(await screen.findByRole('button', { name: /Title.*Needs review/u })).toBeVisible()
+      } else {
+        expect(await screen.findByText('Review complete')).toBeVisible()
+      }
+      return
+    }
 
     await user.click(screen.getByRole('button', { name: 'Review current comparison' }))
     const currentAlternative = await screen.findByRole('button', {

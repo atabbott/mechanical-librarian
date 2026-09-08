@@ -5,6 +5,7 @@ import hashlib
 import json
 import sqlite3
 import tempfile
+import threading
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -23,6 +24,7 @@ from mechanical_librarian.adapters.field_effect_fakes import (
     FakeDependencyCurrentness,
     FakeForwardReevaluation,
     FakeTargetService,
+    PrivateCoverRecoveryStore,
 )
 from mechanical_librarian.adapters.field_effect_runtime import PersistedEffectConsent
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
@@ -47,6 +49,9 @@ from mechanical_librarian.application.configuration import (
 from mechanical_librarian.application.contained_reviewer_contract import COVER_MODEL
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
+)
+from mechanical_librarian.application.cover_consideration import (
+    cover_consideration_is_current,
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.field_effects import (
@@ -192,6 +197,7 @@ from tests.unit.test_cover_packets import (
 from tests.unit.test_cover_packets import (
     _source as _cover_source,
 )
+from tests.unit.test_provider_recovery import _job as _provider_recovery_job
 from tests.unit.test_rich_metadata_preview import (
     _automatic_series_report,
     _series_claims,
@@ -612,6 +618,7 @@ def _qualified_cover_report(
     incumbent_index: int = 1,
     candidate_index: int = 2,
     incumbent_size: tuple[int, int] | None = None,
+    incumbent_duplicate_size: tuple[int, int] | None = None,
     candidate_size: tuple[int, int] | None = None,
     candidate_designation: CoverDesignation = CoverDesignation.EXACT_EDITION,
     typed_timeout: bool = False,
@@ -632,6 +639,16 @@ def _qualified_cover_report(
         "image/png",
         *incumbent_dimensions,
     )
+    incumbent_duplicate_artifact = (
+        CoverArtifact.create(
+            b"duplicate-original",
+            incumbent_payload,
+            "image/png",
+            *incumbent_duplicate_size,
+        )
+        if incumbent_duplicate_size is not None
+        else incumbent_artifact
+    )
     candidate_artifact = CoverArtifact.create(
         f"original-{candidate_index}".encode(),
         candidate_payload,
@@ -644,7 +661,7 @@ def _qualified_cover_report(
     )
     incumbent_corroboration = replace(
         _cover_source(1, incumbent_payload, embedded=True),
-        artifact=incumbent_artifact,
+        artifact=incumbent_duplicate_artifact,
     )
     candidate = replace(
         _cover_source(3, candidate_payload),
@@ -716,10 +733,15 @@ def _qualified_cover_report(
         cover_sources=tuple(sorted(sources, key=lambda value: value.source_id)),
     )
     artifacts = CoverArtifactStore(root / "artifacts")
-    for source, payload, original in (
+    staged = [
         (incumbent, incumbent_payload, f"original-{incumbent_index}".encode()),
         (candidate, candidate_payload, f"original-{candidate_index}".encode()),
-    ):
+    ]
+    if incumbent_duplicate_size is not None:
+        staged.append(
+            (incumbent_corroboration, incumbent_payload, b"duplicate-original")
+        )
+    for source, payload, original in staged:
         assert source.artifact is not None
         artifacts.stage(source.artifact, original, payload)
     return report, evaluate_report(report)
@@ -3770,7 +3792,7 @@ def test_composed_projection_without_reviewer_persists_unavailable_before_f22() 
         repository.close()
 
 
-@pytest.mark.parametrize("effect_state", ("planned", "claimed", "applying"))
+@pytest.mark.parametrize("effect_state", ("planned", "claimed", "applying", "applied"))
 def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
     effect_state: str,
 ) -> None:
@@ -3778,7 +3800,12 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
         root = Path(temporary)
         database = root / "reports.sqlite"
         repository = open_repository(database)
-        report, _ = _qualified_cover_report(root)
+        report, _ = _qualified_cover_report(
+            root,
+            incumbent_size=(300, 450),
+            incumbent_duplicate_size=(2_000, 3_000),
+            candidate_size=(1_000, 1_500),
+        )
         options = dict(DEFAULT_OPTIONS)
         options["cover_order"] = "fixed_source_order"
         destinations = {
@@ -3959,7 +3986,9 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
             authority_adapter,
             FakeDependencyCurrentness(),
             PersistedEffectConsent(repository),
-            SimpleNamespace(),
+            PrivateCoverRecoveryStore(
+                root / "recovery", lambda _plan: b"incumbent-original"
+            ),
             FakeForwardReevaluation(),
             lambda: 10,
         )
@@ -3977,6 +4006,13 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
             capability_digest="c" * 64,
         )
         assert operation is not None
+        if effect_state == "applied":
+            target.seed(operation.plan)
+            assert field_application.apply(operation.plan.plan_id).state == "verified"
+            assert target.read(operation.plan).value == automatic.artifact_id
+            supervisor.stop()
+            repository.close()
+            return
         if effect_state in {"claimed", "applying"}:
             repository.claim_field_effect(
                 operation.plan.plan_id, "planned", "a" * 64, 10
@@ -4464,6 +4500,139 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
                 profile_contract.stop()
             if profile_reader is not None:
                 profile_reader.stop()
+
+
+def test_live_cover_fetching_currentness_drives_attention_without_lock_inversion() -> (
+    None
+):
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        repository = open_repository(root / "reports.sqlite", cross_thread=True)
+        recovery = composition.SQLiteProviderRecoveryStore.open(
+            root / "provider-recovery.sqlite"
+        )
+        report, _qualified = _qualified_cover_report(root)
+        proposal = evaluate_report(report)
+        repository.enter_shadow_preview(1)
+        repository.publish(report, lambda: True)
+        repository.publish_proposal(proposal)
+        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+        review_case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(case_id))["case"]
+        )
+        cover_proposal = next(
+            value for value in review_case.proposals if value["destination"] == "cover"
+        )
+        recovery.enqueue_jobs(
+            (
+                replace(
+                    _provider_recovery_job("target"),
+                    target_connection=report.target.connection,
+                    library=report.target.library,
+                    item=report.target.item,
+                    source_report_id=report.report_id,
+                    package_report_id=report.report_id,
+                ),
+            ),
+            enqueued_at=3,
+        )
+        considerations = composition._compose_cover_considerations(
+            repository,
+            root / "artifacts",
+            _pipeline_configuration().review,
+            _test_reviewer_access(repository),
+            recovery,
+        )
+        considerations.ensure(case_id, report.to_json(), cover_proposal)
+
+        def suspension_membership(expected: bool) -> None:
+            transaction = repository._field_effects._transaction(
+                "cover_currentness_probe"
+            )
+            transaction.begin()
+            try:
+                changed = repository._field_effects.suspend_field_effect_capability(
+                    scope="destination",
+                    connection=report.target.connection,
+                    destination="cover",
+                    reason="field_unavailable",
+                    changed_at=15,
+                )
+                assert (case_id in changed) is expected
+            finally:
+                transaction.rollback()
+
+        suspension_membership(True)
+        claimed = recovery.claim_one(generation=1, now=7203, token="owner")
+        assert claimed is not None
+        suspension_membership(False)
+        considerations.ensure(case_id, report.to_json(), cover_proposal)
+        suspension_membership(False)
+        recovery.complete(
+            token="owner",
+            recovery=claimed,
+            now=7204,
+            failure="transient",
+        )
+        suspension_membership(False)
+        considerations.ensure(case_id, report.to_json(), cover_proposal)
+        suspension_membership(True)
+
+        inside_sql = threading.Event()
+        setup_locked = threading.Event()
+        finished: list[str] = []
+        errors: list[BaseException] = []
+
+        def coordinated_provider_fetching(value: MetadataReport) -> bool:
+            inside_sql.set()
+            if not setup_locked.wait(2):
+                raise AssertionError("setup lock was not acquired")
+            return recovery.cover_fetching(
+                target_connection=value.target.connection,
+                library=value.target.library,
+                item=value.target.item,
+                source_report_id=value.report_id,
+            )
+
+        repository.bind_cover_consideration_currentness(
+            lambda document, replay_reference: cover_consideration_is_current(
+                document,
+                replay_reference,
+                coordinated_provider_fetching,
+            )
+        )
+
+        def read_attention() -> None:
+            try:
+                assert repository.count_current_attention_fields(None) >= 1
+                finished.append("read")
+            except BaseException as error:
+                errors.append(error)
+
+        def read_reviewer_authority() -> None:
+            try:
+                if not inside_sql.wait(2):
+                    raise AssertionError("currentness callback was not entered")
+                with repository._setup_serialization_lock:
+                    setup_locked.set()
+                    repository.reviewer_access_store().snapshot()
+                    finished.append("reviewer")
+            except BaseException as error:
+                errors.append(error)
+
+        reader = threading.Thread(target=read_attention, daemon=True)
+        reviewer = threading.Thread(target=read_reviewer_authority, daemon=True)
+        reader.start()
+        reviewer.start()
+        reader.join(2)
+        reviewer.join(2)
+
+        assert not reader.is_alive()
+        assert not reviewer.is_alive()
+        assert errors == []
+        assert sorted(finished) == ["read", "reviewer"]
+        recovery.close()
+        repository.close()
 
 
 @pytest.mark.parametrize(

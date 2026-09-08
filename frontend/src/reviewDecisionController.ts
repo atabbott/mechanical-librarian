@@ -68,6 +68,7 @@ export const useReviewDecisionController = ({
   active,
   onAdvance,
   onComplete,
+  onRecorded,
   onStale,
 }: {
   reviewCaseId: string
@@ -75,6 +76,7 @@ export const useReviewDecisionController = ({
   active: (destination: string) => boolean
   onAdvance: (field: string) => Promise<void> | void
   onComplete?: (fields: CaseDetailView['fields']) => Promise<void> | void
+  onRecorded?: (caseId: string, destination: string) => Promise<void> | void
   onStale: () => Promise<void> | void
 }) => {
   const { http, queryClient } = useReviewContext()
@@ -233,6 +235,7 @@ export const useReviewDecisionController = ({
       }
       mark(command, 'confirmed')
       announce(reviewCaseId, command.destination, 'Decision recorded from the authoritative case.')
+      await onRecorded?.(reviewCaseId, command.destination)
       const next = nextUnresolved(
         order.current,
         refreshed.fields,

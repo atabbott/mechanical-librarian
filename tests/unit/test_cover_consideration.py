@@ -12,6 +12,8 @@ from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationError,
     CoverConsiderationService,
     ReviewRunner,
+    cover_consideration_is_current,
+    cover_consideration_replay_digest,
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.review_web import _needs_attention
@@ -20,6 +22,7 @@ from mechanical_librarian.application.reviewer_access import (
 )
 from mechanical_librarian.application.reviewer_contracts import ReviewerDispatch
 from mechanical_librarian.domain.cover_evidence import CoverSourceKind
+from mechanical_librarian.domain.metadata_report import MetadataReport
 from tests.unit.test_cover_packets import (
     _audiobook_cover_source,
     _audiobook_report,
@@ -415,6 +418,72 @@ def test_changed_reviewer_contract_makes_the_prior_consideration_noncurrent(
     assert first["consideration_id"] == successor["supersedes_id"]
 
 
+def test_prior_packet_producer_consideration_is_historical_and_superseded_once(
+    case: _Case,
+) -> None:
+    case_id = "review_case_" + "p" * 64
+    first = case.service.ensure(case_id, case.report.to_json(), case.proposal)
+    prior_replay = (
+        "cover_replay_b296772d7cdce148b5baaff5c3a95217ee58b52fd3940e1231a40d519b263c99"
+    )
+    persisted = json.loads(case.store.current[case_id])
+    persisted["replay_reference"] = prior_replay
+    persisted["replay_digest"] = cover_consideration_replay_digest(
+        case_id,
+        persisted["report_id"],
+        provider_fetching=persisted["provider_fetching"],
+        replay_reference=prior_replay,
+    )
+    case.store.current[case_id] = json.dumps(persisted)
+
+    assert (
+        case.service.project_historical(case.store.current[case_id])["current"] is False
+    )
+    assert case.service.current(case_id) is None
+    successor = case.service.ensure(case_id, case.report.to_json(), case.proposal)
+    replay = case.service.ensure(case_id, case.report.to_json(), case.proposal)
+
+    assert successor["supersedes_id"] == first["consideration_id"]
+    assert replay["consideration_id"] == successor["consideration_id"]
+    assert [event["kind"] for event in case.store.events] == [
+        "automatic_prepared",
+        "superseded",
+        "automatic_prepared",
+    ]
+
+
+@pytest.mark.parametrize(
+    "document,replay_reference",
+    (("[]", "cover_replay_" + "1" * 64), ("{}", "invalid"), ("not-json", "x")),
+)
+def test_shared_consideration_currentness_fails_closed(
+    document: str, replay_reference: str
+) -> None:
+    assert (
+        cover_consideration_is_current(
+            document, replay_reference, lambda _report: False
+        )
+        is False
+    )
+
+
+def test_shared_consideration_currentness_fails_closed_when_recovery_is_unavailable(
+    case: _Case,
+) -> None:
+    case_id = "review_case_" + "q" * 64
+    case.service.ensure(case_id, case.report.to_json(), case.proposal)
+
+    def unavailable(_report: MetadataReport) -> bool:
+        raise RuntimeError("synthetic recovery store failure")
+
+    assert (
+        cover_consideration_is_current(
+            case.store.current[case_id], case.service.replay_reference, unavailable
+        )
+        is False
+    )
+
+
 def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
     case: _Case,
 ) -> None:
@@ -435,7 +504,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
         clock=lambda: case.now + 1,
     )
     assert model_free.replay_reference == (
-        "cover_replay_b296772d7cdce148b5baaff5c3a95217ee58b52fd3940e1231a40d519b263c99"
+        "cover_replay_1bb7c8633829342bff0bf0677cb5499269449e42151854fdc190bcd658688130"
     )
     assert (
         model_free.ensure(case_id, case.report.to_json(), case.proposal)[
@@ -478,7 +547,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
     assert len(dispatches) == 1
     replayed_qualified = qualified()
     assert replayed_qualified.replay_reference == (
-        "cover_replay_b3653407352cacacafce4fa9595f7dd78ec6f91c7dca2dae33bf8f3fa97ce689"
+        "cover_replay_627bdd7d96e8d7e27f26216d203c6d6ba35ec59bd87fff670382cd9f3dda2240"
     )
     assert (
         replayed_qualified.ensure(

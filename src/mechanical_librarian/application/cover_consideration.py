@@ -32,6 +32,9 @@ from mechanical_librarian.application.cover_packet_semantics import (
     canonical_packet_json,
 )
 from mechanical_librarian.application.cover_packets import (
+    PRODUCER_REVISION as PACKET_PRODUCER_REVISION,
+)
+from mechanical_librarian.application.cover_packets import (
     SCHEMA_VERSION as PACKET_SCHEMA_VERSION,
 )
 from mechanical_librarian.application.cover_packets import (
@@ -68,6 +71,69 @@ from mechanical_librarian.domain.metadata_report import (
 
 SCHEMA_VERSION = "cover-consideration-v4"
 _IDENTITY_ELIGIBLE = frozenset({"verified_manifestation_match", "verified_work_match"})
+
+
+def cover_consideration_replay_digest(
+    review_case_id: str,
+    report_id: str,
+    *,
+    provider_fetching: bool,
+    replay_reference: str,
+) -> str:
+    """Bind one consideration replay to its captured producer authority."""
+    return hashlib.sha256(
+        canonical_packet_json(
+            {
+                "replay_reference": replay_reference,
+                "report": report_id,
+                "review_case_id": review_case_id,
+                "provider_fetching": provider_fetching,
+            }
+        ).encode()
+    ).hexdigest()
+
+
+def cover_consideration_is_current(
+    document: str,
+    replay_reference: str,
+    provider_fetching: Callable[[MetadataReport], bool],
+) -> bool:
+    """Check one persisted consideration against captured live authority."""
+    if type(document) is not str or type(replay_reference) is not str:
+        return False
+    try:
+        value = json.loads(document)
+        if type(value) is not dict:
+            return False
+        review_case_id = value.get("review_case_id")
+        report_id = value.get("report_id")
+        report_document = value.get("report_document")
+        fetching = value.get("provider_fetching")
+        if (
+            type(review_case_id) is not str
+            or type(report_id) is not str
+            or type(report_document) is not str
+            or type(fetching) is not bool
+        ):
+            return False
+        report = MetadataReport.from_json(report_document)
+    except (TypeError, ValueError):
+        return False
+    try:
+        current_fetching = provider_fetching(report)
+    except Exception:
+        return False
+    return (
+        value.get("replay_reference") == replay_reference
+        and value.get("replay_digest")
+        == cover_consideration_replay_digest(
+            review_case_id,
+            report_id,
+            provider_fetching=fetching,
+            replay_reference=replay_reference,
+        )
+        and fetching == current_fetching
+    )
 
 
 class CoverConsiderationError(RuntimeError):
@@ -248,6 +314,7 @@ class CoverConsiderationService:
                 ).hexdigest(),
                 "observation_schema": OBSERVATION_SCHEMA_VERSION,
                 "observer_output_schema": OUTPUT_SCHEMA_VERSION,
+                "packet_producer_revision": PACKET_PRODUCER_REVISION,
                 "packet_schema": PACKET_SCHEMA_VERSION,
                 "policy_report_schema": POLICY_REPORT_SCHEMA_VERSION,
                 "policy_schema": POLICY_SCHEMA_VERSION,
@@ -279,16 +346,12 @@ class CoverConsiderationService:
         provider_fetching: bool,
         replay_reference: str | None = None,
     ) -> str:
-        return hashlib.sha256(
-            canonical_packet_json(
-                {
-                    "replay_reference": replay_reference or self.replay_reference,
-                    "report": report_id,
-                    "review_case_id": review_case_id,
-                    "provider_fetching": provider_fetching,
-                }
-            ).encode()
-        ).hexdigest()
+        return cover_consideration_replay_digest(
+            review_case_id,
+            report_id,
+            provider_fetching=provider_fetching,
+            replay_reference=replay_reference or self.replay_reference,
+        )
 
     def existing(
         self, review_case_id: str, report_document: str
@@ -1004,23 +1067,10 @@ class CoverConsiderationService:
         )
 
     def _document_current(self, value: dict[str, object]) -> bool:
-        review_case_id = value.get("review_case_id")
-        report_id = value.get("report_id")
-        return (
-            type(review_case_id) is str
-            and type(report_id) is str
-            and value.get("replay_reference") == self.replay_reference
-            and type(value.get("provider_fetching")) is bool
-            and value.get("replay_digest")
-            == self._replay_digest(
-                review_case_id,
-                report_id,
-                provider_fetching=bool(value["provider_fetching"]),
-            )
-            and value["provider_fetching"]
-            == self._provider_fetching(
-                MetadataReport.from_json(str(value.get("report_document")))
-            )
+        return cover_consideration_is_current(
+            canonical_packet_json(value),
+            self.replay_reference,
+            self._provider_fetching,
         )
 
     def project_historical(self, document: str) -> dict[str, object]:
