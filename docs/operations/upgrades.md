@@ -34,11 +34,12 @@ dispatch and field-application lineage, so a v36 report is not exact-current.
 Rebuild an absent application database; no adoption is supplied.
 
 #1000 advances the report discriminator from `metadata-report-v37` to
-`metadata-report-v38`: provider candidate sets now retain whether every member
-proves the target work, explicitly contradicts it, or lacks enough identity
-evidence. That state controls bounded WORK fallback and downstream field
-authority, so a v37 report is not exact-current. Rebuild an absent application
-database; no adoption is supplied.
+`metadata-report-v38`: authority evaluation now derives whether each provider
+candidate proves the target work, explicitly contradicts it, or lacks enough
+identity evidence from the retained normalized claims. No classification state
+is serialized, and the v37 and v38 payload field shapes are unchanged; the old
+discriminator is not exact-current because that interpretation changed. Rebuild
+an absent application database; no adoption is supplied.
 
 #896 advances the exact proposal policy from `fixed-conservative-v18` to
 `fixed-conservative-v19` because decoration-equivalent titles collapse into one
