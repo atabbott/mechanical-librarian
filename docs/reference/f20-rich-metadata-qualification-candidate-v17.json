@@ -52,7 +52,7 @@
       },
       "current_byte_bindings": {
         "frontend/src/reviewDecisionController.ts": "b8e8edfe18ee3e13d410146ad8e2efbf1e3fbe2f1c3479679a9fce1e85f77db3",
-        "frontend/src/routes/LibraryPage.tsx": "f70e7867b0e94c8585ea68008065820baf0d0b2a0e07d15128e0eeed262e097f",
+        "frontend/src/routes/LibraryPage.tsx": "dacabf84210abc425c31377853702f6113d64180ff13de3713afaaaec13ae0e5",
         "scripts/cold_start_report.py": "cb8ce6ede7b59057b5c57b6b5a22db25b36a3c5626ad003beffb9c0a5186d456",
         "scripts/persistence_census.py": "d2dd7a7948afa9d884de98b40d9230abefc7d7cfbf94c7873dfea75edcd224d6",
         "src/mechanical_librarian/adapters/persistence/metadata_reports.py": "36d24fbac5133b64ef3c0267a0fe5f0b69c5fe8fb263e6742d3174abacf1864c",

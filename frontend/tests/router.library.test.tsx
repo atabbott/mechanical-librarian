@@ -4082,7 +4082,7 @@ describe('Library route', () => {
     let stale = false
     let failCurrentLookup = true
     let successfulDecisions = 0
-    let recordedRefreshFailed = false
+    let recordedRefreshAvailable = false
     const defaultHttp = createHttp()
     const recordDecision = vi.fn<ReviewHttp['recordDecision']>(async (...args) => {
       if (!stale) {
@@ -4098,8 +4098,7 @@ describe('Library route', () => {
       recordDecision,
       getCaseDetail: vi.fn(async (id) => {
         if (!stale) return initial
-        if (failRecordedRefresh && successfulDecisions === 1 && !recordedRefreshFailed) {
-          recordedRefreshFailed = true
+        if (failRecordedRefresh && successfulDecisions === 1 && !recordedRefreshAvailable) {
           throw new Error('recorded current case refresh unavailable')
         }
         if (id === current.id) return current
@@ -4150,15 +4149,30 @@ describe('Library route', () => {
       ).toBeNull()
       expect(screen.queryByRole('button', { name: 'Review current comparison' })).toBeNull()
       if (failRecordedRefresh) {
-        expect(await screen.findByText('Selected work could not be loaded.')).toBeVisible()
-        expect(queryClient.getQueryData(reconciliationKey('case-1'))).toEqual({
-          destination: 'cover',
-          message:
+        expect(
+          await screen.findByText(
             'Decision recorded, but the current case could not be refreshed. Reload before reviewing another value.',
-          detailUpdatedAt: expect.any(Number),
-        })
+          ),
+        ).toBeVisible()
+        expect(screen.queryByRole('button', { name: /Alternative 1 cover/u })).toBeNull()
+        const reconciliation = queryClient.getQueryData<{
+          destination: string
+          message: string
+          detailUpdatedAt: number
+        }>(reconciliationKey('case-1'))
+        expect(reconciliation?.destination).toBe('cover')
+        expect(reconciliation?.message).toBe(
+          'Decision recorded, but the current case could not be refreshed. Reload before reviewing another value.',
+        )
+        expect(typeof reconciliation?.detailUpdatedAt).toBe('number')
         expect(recordDecision).toHaveBeenCalledTimes(2)
         expect(successfulDecisions).toBe(1)
+        recordedRefreshAvailable = true
+        await user.click(screen.getByRole('button', { name: 'Try again' }))
+        expect(await screen.findByRole('button', { name: /Alternative 1 cover/u })).toBeVisible()
+        await waitFor(() =>
+          expect(queryClient.getQueryData(reconciliationKey('case-1'))).toBeNull(),
+        )
         return
       }
       if (other) {

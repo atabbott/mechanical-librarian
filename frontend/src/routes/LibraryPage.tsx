@@ -2856,7 +2856,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
             staleCoverNotice
           ) : detail.isError ? (
             <p role="alert">
-              Selected work could not be loaded.{' '}
+              {controller.messageFor(search.field ?? selected?.destination ?? '') ??
+                'Selected work could not be loaded.'}{' '}
               <button
                 ref={selectedDetailRetryButton}
                 onClick={() => {
