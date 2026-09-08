@@ -2807,9 +2807,7 @@ describe('Library route', () => {
       ).toBeDisabled()
       expect(screen.getByRole('button', { name: /Alternative 1 cover/u })).toBeEnabled()
       await user.click(screen.getByRole('button', { name: /Evidence for Current cover/u }))
-      expect(
-        screen.queryByRole('button', { name: 'Choose Current cover' }),
-      ).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Choose Current cover' })).not.toBeInTheDocument()
       expect(acceptOnlyHttp.recordDecision).not.toHaveBeenCalled()
     },
   )
