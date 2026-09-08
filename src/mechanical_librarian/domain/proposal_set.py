@@ -4035,6 +4035,7 @@ def _ordinary_description_values(
         for candidate in provider.candidates
         for claim in candidate.claims
         if claim.reference in references
+        and claim.value is not None
         and ordinary_provider_description_source_is_safe(claim, candidate)
         and provider_candidate_represents_target_work(report, provider, candidate)
     )
