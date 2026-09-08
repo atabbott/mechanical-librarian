@@ -7,7 +7,15 @@ grant effect consent, construct a target write, or change provider selection.
 
 ## Cover-choice source rotation (#999)
 
-The [v16 candidate](../reference/f20-rich-metadata-qualification-candidate-v16.json)
+The [v17 candidate](../reference/f20-rich-metadata-qualification-candidate-v17.json)
+binds the incumbent-artifact and live cover-currentness follow-up. All 35 F20
+behavior-source hashes were reviewed: the only changes in that closure are
+cover-attention repository wiring and read-only recognition of v16. Proposal,
+election, admission, option outcomes and non-cover scoring inputs are unchanged,
+so the retained non-cover receipts remain bound without a fresh holdout claim.
+V16 remains byte-identical and readable for historical decisions.
+
+The historical [v16 candidate](../reference/f20-rich-metadata-qualification-candidate-v16.json)
 rotates the exact authority after the proposal contract learned to retain a
 usable confirmed cover across an incomplete sibling source. That branch is
 cover-only. Both 49-report F20 modes, all 980 non-series previews, all 108
@@ -15,7 +23,7 @@ series previews, and the exposed F37 confirmation and spent holdout replayed
 with complete non-cover equality and no lost correct or gained incorrect
 projection. V15 remains immutable historical evidence whose decisions are
 readable but cannot authorize new writes.
-The current v16 source binding also records the later Activity-only projection
+The v16 source binding also records the later Activity-only projection
 correction that removes a duplicate owner-attributed row for an automatic cover
 selection. It changes no F20 scoring input or option outcome, so the retained
 receipts remain bound to their original measured behavior head.

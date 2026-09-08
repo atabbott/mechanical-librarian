@@ -22,6 +22,13 @@ then pixel area, width and height descending, canonical packet ordinal/source
 precedence, and finally the opaque candidate reference. Exact duplicate
 collapse and every source binding remain upstream inputs; reviewer observations
 are validated and retained but cannot admit, exclude, order, delay, or decide.
+When a duplicate group contains the Audiobookshelf target, that exact target
+artifact supplies the retained reference, source digest and original
+dimensions. A larger sibling with identical preview bytes cannot make the
+incumbent appear larger; maximum dimensions still describe duplicate groups
+that contain no incumbent. The packet producer revision participates in replay
+identity so earlier same-schema considerations remain readable history and are
+superseded once.
 
 Owner readiness requires at least one confirmed non-incumbent candidate and no
 exact persisted provider/report lane actively fetching. Automatic choice is a
@@ -32,6 +39,10 @@ abstain automatically while retaining the owner's ranked choices.
 Checking and running are active; queued retry/backoff waiting is quiescent.
 Readiness, rank and citations are persisted with the consideration. A changed
 fetching state or evidence creates a successor rather than rewriting history.
+Library, Attention, Detail and suspension membership re-evaluate that fetching
+state at each read. SQL receives the replay reference captured before query
+execution and consults only the separate recovery store; it does not call the
+reviewer, Settings, or the application repository while SQLite owns its mutex.
 
 Automatic cover authority remains default-off and is admitted only by the
 frozen aggregate-safe qualification manifest. It uses the same immutable

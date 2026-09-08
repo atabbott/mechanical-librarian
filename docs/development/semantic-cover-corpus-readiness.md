@@ -59,6 +59,14 @@ unavailable. They are not claimed as PASS evidence. This PASS is limited to the
 versioned minimums above and the verified current-schema report, artifact,
 split, review, and adjudication evidence.
 
+The #999 follow-up regenerated all 50 retained qualification packets from the
+immutable archived reports and artifacts after correcting incumbent duplicate
+dimensions. Packet bindings, omissions, references, transport digests and
+independent identity/order/readiness expectations remained within the frozen
+qualification contract. This is retained regression evidence, not a new
+holdout or an acquisition-quality claim; the archive, scorer, selection and
+adjudication inputs remained immutable.
+
 Provider cover outcomes are bounded aggregate observations, not semantic
 quality measurements:
 

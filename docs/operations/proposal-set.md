@@ -34,6 +34,12 @@ This includes a sole usable artifact: the exact cover-only reasons are
 `cover_gallery_incomplete` and `owner_cover_choice_required`. With no usable
 artifact the result remains deferred. The proposal never invents a second
 choice or treats incomplete acquisition as proof that the target is empty.
+If another source has the same normalized preview as the Audiobookshelf target,
+the resulting consideration remains bound to the target's actual artifact,
+source digest and original dimensions. Larger duplicate-source dimensions do
+not qualify a replacement; distinct alternatives retain their own dimensions.
+The packet producer revision is part of consideration replay authority, so an
+older same-schema result is historical and receives one current successor.
 
 Success is exactly one canonical `proposal-set-v7` JSON document plus a
 newline. Failure emits no document and one value-free diagnostic.

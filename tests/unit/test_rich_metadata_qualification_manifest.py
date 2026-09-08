@@ -39,8 +39,9 @@ V12_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v12
 V13_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v13.json")
 V14_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v14.json")
 V15_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v15.json")
+V16_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v16.json")
 CURRENT_MANIFEST = MANIFEST.with_name(
-    "f20-rich-metadata-qualification-candidate-v16.json"
+    "f20-rich-metadata-qualification-candidate-v17.json"
 )
 HISTORICAL_MANIFEST = (
     Path(__file__).parents[2]
@@ -83,9 +84,9 @@ RICH_FIELDS = (
 )
 
 
-def test_v16_binds_current_source_and_preserves_historical_v11_to_v15_bytes() -> None:
+def test_v17_binds_current_source_and_preserves_historical_v11_to_v16_bytes() -> None:
     manifest = json.loads(CURRENT_MANIFEST.read_bytes())
-    assert manifest["schema"] == "f20-rich-metadata-qualification-candidate-v16"
+    assert manifest["schema"] == "f20-rich-metadata-qualification-candidate-v17"
     assert manifest["automatic_authority"] == "decision_only"
     prior = hashlib.sha256(MANIFEST.read_bytes()).hexdigest()
     assert prior == "4ede15a2aa84e8726ea2dff4e4f9f0d04b27a70276ed53c400c2de5f7619d445"
@@ -121,7 +122,15 @@ def test_v16_binds_current_source_and_preserves_historical_v11_to_v15_bytes() ->
         ]
         == v14
     )
-    assert manifest["authority_rotation"]["prior_manifest_sha256"] == v15
+    v16 = hashlib.sha256(V16_MANIFEST.read_bytes()).hexdigest()
+    assert v16 == "14061bb1d1df8305d75cc2330ce37a931d01c954f1be3cd03e7587558704fbfc"
+    assert (
+        json.loads(V16_MANIFEST.read_bytes())["authority_rotation"][
+            "prior_manifest_sha256"
+        ]
+        == v15
+    )
+    assert manifest["authority_rotation"]["prior_manifest_sha256"] == v16
     assert prior != F20_QUALIFICATION_CANDIDATE_SHA256
     sources = manifest["frozen_contract"]["behavior_sources"]
     assert {
@@ -142,7 +151,7 @@ def test_v16_binds_current_source_and_preserves_historical_v11_to_v15_bytes() ->
     rotation = manifest["authority_rotation"]
     assert (
         rotation["measured_candidate_head"]
-        == "0deedf50da25e11fd49f173d95f72251283b1a3f"
+        == "27b2f646e050a498289b9a35368688695ad89b9b"
     )
     assert rotation["measured_behavior_sources"] == {
         "src/mechanical_librarian/domain/proposal_set.py": "d34802c10673a8269c66b7a9a9fc14437177617a20d9e6e51f82ee3feaee00ce",
@@ -151,43 +160,26 @@ def test_v16_binds_current_source_and_preserves_historical_v11_to_v15_bytes() ->
         sources[name] == digest
         for name, digest in rotation["measured_behavior_sources"].items()
     )
-    projection = rotation["post_measurement_projection_delta"]
-    assert projection == {
-        "change": "Suppress the duplicate human-attributed Activity safeguard row "
-        "when the immutable cover selection authority identifies the same selected "
-        "event as automatic.",
-        "classification": "read_model_projection_only",
-        "current_sha256": sources[projection["identity"]],
-        "f20_option_outcomes_changed": False,
-        "f20_scoring_inputs_changed": False,
-        "identity": "src/mechanical_librarian/adapters/persistence/field_effect_activity.py",
-        "measured_sha256": "c995a1f38b442104e795fed90608caf20d23b284e2016058b3d1b66671d97b8b",
-        "proof": "The exact source diff changes only Activity UNION row inclusion. "
-        "Real automatic-cover pipeline regression proves one automatic origin with "
-        "no duplicate owner row; complete retained F20 scoring receipts remain bound "
-        "to measured candidate 0deedf50.",
+    closure = rotation["source_closure"]
+    assert closure["f20_option_outcomes_changed"] is False
+    assert closure["f20_scoring_inputs_changed"] is False
+    assert len(closure["bound_source_classification"]) == 35
+    assert set(closure["bound_source_classification"]) == set(sources)
+    assert set(closure["bound_source_classification"].values()) == {
+        "unchanged",
+        "cover_currentness_read_model_wiring",
+        "historical_v16_reader_only",
     }
-    currentness = rotation["post_measurement_currentness_wiring_delta"]
-    assert currentness == {
-        "change": "Bind the atomically current cover policy and replay references "
-        "into Library, Attention, Detail and suspension read-model membership.",
-        "classification": "read_model_projection_only",
-        "current_sha256": sources[currentness["identity"]],
-        "f20_option_outcomes_changed": False,
-        "f20_scoring_inputs_changed": False,
-        "identity": "src/mechanical_librarian/adapters/persistence/metadata_reports.py",
-        "measured_sha256": "9fcf7c35bc7037d559104e9d048f1eda74217e662084d4c81ea7b162ceed8081",
-        "proof": "The exact source diff only supplies the already validated live cover "
-        "authority pair to read-model repositories. Policy and replay rotation "
-        "regressions prove obsolete considerations leave every attention view and a "
-        "refreshed consideration returns; proposal, election, admission and F20 "
-        "scoring inputs remain unchanged.",
-    }
+    for source, digest in closure["current_byte_bindings"].items():
+        assert (
+            hashlib.sha256((MANIFEST.parents[2] / source).read_bytes()).hexdigest()
+            == digest
+        )
     history = rotation["historical_reader_delta"]
     assert history["current_sha256"] == sources[history["identity"]]
     assert (
         history["measured_sha256"]
-        == json.loads(V15_MANIFEST.read_bytes())["frozen_contract"]["behavior_sources"][
+        == json.loads(V16_MANIFEST.read_bytes())["frozen_contract"]["behavior_sources"][
             history["identity"]
         ]
     )
@@ -557,9 +549,16 @@ def test_v12_separates_membership_sequence_and_distinct_book_support(
 
 @pytest.mark.parametrize(
     "manifest_path",
-    (V12_MANIFEST, V13_MANIFEST, V14_MANIFEST, V15_MANIFEST, CURRENT_MANIFEST),
+    (
+        V12_MANIFEST,
+        V13_MANIFEST,
+        V14_MANIFEST,
+        V15_MANIFEST,
+        V16_MANIFEST,
+        CURRENT_MANIFEST,
+    ),
 )
-def test_v12_to_v16_retain_non_series_dispositions_and_historical_metrics(
+def test_v12_to_v17_retain_non_series_dispositions_and_historical_metrics(
     manifest_path: Path,
 ) -> None:
     historical = json.loads(MANIFEST.read_bytes())
