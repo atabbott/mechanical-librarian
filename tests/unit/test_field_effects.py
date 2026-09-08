@@ -2567,6 +2567,7 @@ def test_qualified_automatic_origin_uses_the_identical_plan_and_effect_path(
         "4ede15a2aa84e8726ea2dff4e4f9f0d04b27a70276ed53c400c2de5f7619d445",
         "091cdf7f08f60e9e4e1860ff574a9c04c405c914d498560e9802294b69c53a30",
         "70563a47e768fe51cb911511ca67849893e4495266c84bb2e9fc7f6165ed2879",
+        "4a89dfc24a27bbe2a548a9b0c5ad2793cf2da1a2b0445f9dd1ad2f9323822bc9",
     ),
 )
 @pytest.mark.parametrize(

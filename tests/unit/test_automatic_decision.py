@@ -295,6 +295,7 @@ def test_prior_f20_decision_remains_readable_without_granting_new_authority() ->
         "1315e324edd78e698587e14497aa0ab11e33fd65612f00cd8a78a462fd6445fd",
         "c8843d96dfda862b04f6269fd1ab3ab202338815ed5d0efbc0c4c480293adea3",
         "70563a47e768fe51cb911511ca67849893e4495266c84bb2e9fc7f6165ed2879",
+        "4a89dfc24a27bbe2a548a9b0c5ad2793cf2da1a2b0445f9dd1ad2f9323822bc9",
     )
     for prior_digest in prior_digests:
         prior_core = {
