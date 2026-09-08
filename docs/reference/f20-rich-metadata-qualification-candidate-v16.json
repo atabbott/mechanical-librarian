@@ -10,6 +10,16 @@
       "src/mechanical_librarian/domain/proposal_set.py": "d34802c10673a8269c66b7a9a9fc14437177617a20d9e6e51f82ee3feaee00ce"
     },
     "measured_candidate_head": "0deedf50da25e11fd49f173d95f72251283b1a3f",
+    "post_measurement_projection_delta": {
+      "change": "Suppress the duplicate human-attributed Activity safeguard row when the immutable cover selection authority identifies the same selected event as automatic.",
+      "classification": "read_model_projection_only",
+      "current_sha256": "8986b39c743225b9b98ef39b28ee62fc856ded4c97380e8c1b05c3d04e9d4cf8",
+      "f20_option_outcomes_changed": false,
+      "f20_scoring_inputs_changed": false,
+      "identity": "src/mechanical_librarian/adapters/persistence/field_effect_activity.py",
+      "measured_sha256": "c995a1f38b442104e795fed90608caf20d23b284e2016058b3d1b66671d97b8b",
+      "proof": "The exact source diff changes only Activity UNION row inclusion. Real automatic-cover pipeline regression proves one automatic origin with no duplicate owner row; complete retained F20 scoring receipts remain bound to measured candidate 0deedf50."
+    },
     "prior_manifest_sha256": "a7af724b0711177ff04ff1ae56c8a7db42c1166fe97390c29e60fed506440500",
     "scope": "Preserve all qualified non-cover outcomes while proposal policy v22 retains a usable confirmed cover across an incomplete sibling source, binds actual target cover state, and rotates current decision authority."
   },
@@ -725,7 +735,7 @@
       "src/mechanical_librarian/adapters/field_effect_runtime.py": "cfcc6edea33937d3e8c9ed85371c5f15dca434b85642bde37184d12cf5797c19",
       "src/mechanical_librarian/adapters/library_services/audiobookshelf_field_effect.py": "85f289ca2c97c97be2cc0476f963e2b366ba40fcc549160a2183541151b92953",
       "src/mechanical_librarian/adapters/persistence/documents.py": "eeb855cafe56a39b6adc318eff41c42225553bf5d544d91b8ab9405486410baa",
-      "src/mechanical_librarian/adapters/persistence/field_effect_activity.py": "c995a1f38b442104e795fed90608caf20d23b284e2016058b3d1b66671d97b8b",
+      "src/mechanical_librarian/adapters/persistence/field_effect_activity.py": "8986b39c743225b9b98ef39b28ee62fc856ded4c97380e8c1b05c3d04e9d4cf8",
       "src/mechanical_librarian/adapters/persistence/field_effect_validation.py": "196479934ea0cdcc155645c50e36f0fdbf28170b1062bca1fb8db1f650f39617",
       "src/mechanical_librarian/adapters/persistence/metadata_reports.py": "9fcf7c35bc7037d559104e9d048f1eda74217e662084d4c81ea7b162ceed8081",
       "src/mechanical_librarian/adapters/persistence/transactions.py": "d925b8d8829c4b06d9b8ebd22eb85bdf4dfefd2de918997253312554c09f2ab9",

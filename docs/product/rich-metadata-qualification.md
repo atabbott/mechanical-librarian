@@ -15,6 +15,10 @@ series previews, and the exposed F37 confirmation and spent holdout replayed
 with complete non-cover equality and no lost correct or gained incorrect
 projection. V15 remains immutable historical evidence whose decisions are
 readable but cannot authorize new writes.
+The current v16 source binding also records the later Activity-only projection
+correction that removes a duplicate owner-attributed row for an automatic cover
+selection. It changes no F20 scoring input or option outcome, so the retained
+receipts remain bound to their original measured behavior head.
 
 ## Exact description sources (#1001)
 

@@ -151,6 +151,22 @@ def test_v16_binds_current_source_and_preserves_historical_v11_to_v15_bytes() ->
         sources[name] == digest
         for name, digest in rotation["measured_behavior_sources"].items()
     )
+    projection = rotation["post_measurement_projection_delta"]
+    assert projection == {
+        "change": "Suppress the duplicate human-attributed Activity safeguard row "
+        "when the immutable cover selection authority identifies the same selected "
+        "event as automatic.",
+        "classification": "read_model_projection_only",
+        "current_sha256": sources[projection["identity"]],
+        "f20_option_outcomes_changed": False,
+        "f20_scoring_inputs_changed": False,
+        "identity": "src/mechanical_librarian/adapters/persistence/field_effect_activity.py",
+        "measured_sha256": "c995a1f38b442104e795fed90608caf20d23b284e2016058b3d1b66671d97b8b",
+        "proof": "The exact source diff changes only Activity UNION row inclusion. "
+        "Real automatic-cover pipeline regression proves one automatic origin with "
+        "no duplicate owner row; complete retained F20 scoring receipts remain bound "
+        "to measured candidate 0deedf50.",
+    }
     history = rotation["historical_reader_delta"]
     assert history["current_sha256"] == sources[history["identity"]]
     assert (
