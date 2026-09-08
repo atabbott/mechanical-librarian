@@ -35,7 +35,7 @@ from mechanical_librarian.application.configuration import (
 )
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
-    cover_consideration_is_current,
+    cover_consideration_currentness,
 )
 from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.domain.metadata_report import (
@@ -160,7 +160,7 @@ def _publish_current_cover_consideration(
         clock=lambda: 1,
     )
     repository.bind_cover_consideration_currentness(
-        lambda document, replay_reference: cover_consideration_is_current(
+        lambda document, replay_reference: cover_consideration_currentness(
             document, replay_reference, lambda _report: False
         )
     )

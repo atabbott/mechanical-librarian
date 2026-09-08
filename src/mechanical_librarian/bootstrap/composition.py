@@ -156,7 +156,7 @@ from mechanical_librarian.application.continuous_field_effects import (
 )
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
-    cover_consideration_is_current,
+    cover_consideration_currentness,
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.decision_preview import preview_shadow_decision
@@ -4063,7 +4063,7 @@ def _compose_cover_considerations(
         provider_fetching=provider_fetching,
     )
     repository.bind_cover_consideration_currentness(
-        lambda document, replay_reference: cover_consideration_is_current(
+        lambda document, replay_reference: cover_consideration_currentness(
             document,
             replay_reference,
             provider_fetching,

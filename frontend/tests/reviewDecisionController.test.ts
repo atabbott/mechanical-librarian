@@ -37,6 +37,16 @@ describe('review decision failure contract', () => {
     if (!field) throw new Error('decision fixture requires one field')
     expect(actionable(field)).toBe(true)
     expect(actionable({ ...field, decisionActions: [], needsAttention: true })).toBe(false)
+    expect(
+      actionable({
+        ...field,
+        destination: 'cover',
+        decisionActions: [],
+        editable: true,
+        needsAttention: true,
+        coverConsideration: null,
+      }),
+    ).toBe(true)
     expect(choiceAvailable({ ...field, needsAttention: false })).toBe(true)
     expect(choiceAvailable({ ...field, editable: false, needsAttention: false })).toBe(false)
   })

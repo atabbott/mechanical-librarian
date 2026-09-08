@@ -3187,6 +3187,51 @@ describe('Library route', () => {
     expect(screen.getByText('Choices').nextElementSibling).toHaveTextContent('2')
   })
 
+  it('offers only preparation for an authenticated historical cover comparison', async () => {
+    const base = detail.fields[0]
+    if (!base) throw new Error('cover fixture requires a field')
+    const historical: CaseDetailView['fields'][number] = {
+      ...base,
+      destination: 'cover',
+      decisionActions: [],
+      editable: true,
+      needsAttention: true,
+      coverConsideration: {
+        id: `cover_consideration_${'h'.repeat(64)}`,
+        current: false,
+        choiceContexts: [],
+        candidates: [],
+        incumbent: { reference: null, state: 'absent' },
+        omissions: [],
+        policy: null,
+        policyPreferences: {
+          avoidPromotionalText: false,
+          avoidTieInBranding: false,
+          preferMinimalComposition: false,
+        },
+        policyReference: `cover_policy_${'h'.repeat(64)}`,
+        providerFetching: false,
+        ready: true,
+        reviewerAccessRevision: null,
+        reviewerEngine: null,
+        reviewerModel: null,
+        reviewerStatus: 'completed',
+        reviewerUnavailableReason: null,
+        targetFingerprint: 'fingerprint-1',
+      },
+    }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [historical] })),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+
+    expect(await screen.findByRole('button', { name: 'Prepare cover comparison' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Keep current cover' })).toBeNull()
+    expect(screen.queryByLabelText('Choose a cover')).toBeNull()
+    expect(http.recordDecision).not.toHaveBeenCalled()
+  })
+
   it('keeps retained per-choice provenance in Library without loading diagnostic evidence', async () => {
     const user = userEvent.setup()
     const titleField = detail.fields[0]

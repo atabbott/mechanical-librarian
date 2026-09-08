@@ -51,7 +51,7 @@ from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
 from mechanical_librarian.application.cover_consideration import (
-    cover_consideration_is_current,
+    cover_consideration_currentness,
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.field_effects import (
@@ -4403,32 +4403,95 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
                     reviewer_access,
                 )
 
+            if authority_change == "replay":
+
+                def observe_once(calls: list[str]) -> Callable[[str, str], str]:
+                    def currentness(document: str, _replay_reference: str) -> str:
+                        calls.append(document)
+                        return "refresh_required" if len(calls) == 1 else "inactive"
+
+                    return currentness
+
+                for attention_filter, expected_rows in (
+                    (None, 1),
+                    (True, 1),
+                    (False, 0),
+                ):
+                    calls: list[str] = []
+                    repository.bind_cover_consideration_currentness(observe_once(calls))
+                    assert (
+                        len(
+                            repository.list_current_review_case_documents(
+                                "item", 1, 0, attention_filter
+                            )
+                        )
+                        == expected_rows
+                    )
+                    assert len(calls) == 1
+
+                calls = []
+                repository.bind_cover_consideration_currentness(observe_once(calls))
+                attentive_rows = repository.list_current_attention_documents(
+                    "item", 1, 0
+                )
+                assert len(attentive_rows) == 1
+                assert attentive_rows[0][3] == 1
+                assert len(calls) == 1
+
+                calls = []
+                repository.bind_cover_consideration_currentness(observe_once(calls))
+                assert (
+                    repository.list_current_review_case_documents(
+                        "no matching work", 1, 0, None
+                    )
+                    == ()
+                )
+                assert calls == []
+                assert (
+                    repository.list_current_attention_documents(
+                        "no matching work", 1, 0
+                    )
+                    == ()
+                )
+                assert calls == []
+
+                def provider_fetching(value: MetadataReport) -> bool:
+                    return recovery.cover_fetching(
+                        target_connection=value.target.connection,
+                        library=value.target.library,
+                        item=value.target.item,
+                        source_report_id=value.report_id,
+                    )
+
+                repository.bind_cover_consideration_currentness(
+                    lambda document, replay_reference: cover_consideration_currentness(
+                        document,
+                        replay_reference,
+                        provider_fetching,
+                    )
+                )
+
             stale_library = BrowseReviewLibrary(repository).library(
                 lens="all", search="item", limit=1, cursor=None
             )
-            assert stale_library["counts"]["needs_attention"] == 0
+            refresh_required = authority_change == "replay"
+            assert stale_library["counts"]["needs_attention"] == int(refresh_required)
             assert len(stale_library["items"]) == 1
-            assert stale_library["items"][0]["attention_count"] == 0
-            assert (
-                BrowseReviewLibrary(repository).library(
-                    lens="needs_attention", search=None, limit=1, cursor=None
-                )["items"]
-                == []
+            assert stale_library["items"][0]["attention_count"] == int(refresh_required)
+            attention_lens = BrowseReviewLibrary(repository).library(
+                lens="needs_attention", search=None, limit=1, cursor=None
             )
-            assert (
-                len(
-                    BrowseReviewLibrary(repository).library(
-                        lens="no_attention_needed", search=None, limit=1, cursor=None
-                    )["items"]
-                )
-                == 1
+            no_attention_lens = BrowseReviewLibrary(repository).library(
+                lens="no_attention_needed", search=None, limit=1, cursor=None
             )
+            assert len(attention_lens["items"]) == int(refresh_required)
+            assert len(no_attention_lens["items"]) == int(not refresh_required)
             stale_attention = BrowseReviewLibrary(repository).attention(
                 search="item", limit=1, cursor=None
             )
-            assert stale_attention["items"] == []
+            assert len(stale_attention["items"]) == int(refresh_required)
             assert stale_attention["next_cursor"] is None
-            assert stale_attention["total"] == 0
+            assert stale_attention["total"] == int(refresh_required)
             stale_detail = InspectCurrentReviewCase(
                 repository, cover_considerations
             ).run(current_work["review_case_id"])
@@ -4437,18 +4500,21 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
                 for field in stale_detail["fields"]
                 if field["destination"] == "cover"
             )
-            assert stale_cover["needs_attention"] is False
-            assert stale_cover["cover_consideration"] is None
-            assert (
-                repository.suspend_field_effect_capability(
-                    scope="destination",
-                    connection=successor_report.target.connection,
-                    destination="cover",
-                    reason="field_unavailable",
-                    changed_at=20,
-                )
-                == ()
-            )
+            assert stale_cover["needs_attention"] is refresh_required
+            if refresh_required:
+                assert stale_cover["cover_consideration"]["current"] is False
+                assert stale_cover["cover_consideration"]["ready"] is True
+                assert stale_cover["decision_actions"] == []
+                assert stale_cover["editable"] is True
+            else:
+                assert stale_cover["cover_consideration"] is None
+            assert repository.suspend_field_effect_capability(
+                scope="destination",
+                connection=successor_report.target.connection,
+                destination="cover",
+                reason="field_unavailable",
+                changed_at=20,
+            ) == ((current_work["review_case_id"],) if refresh_required else ())
             repository.clear_field_effect_capability_suspension(
                 scope="destination",
                 connection=successor_report.target.connection,
@@ -4474,6 +4540,12 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
                 retry=True,
             )
             assert refreshed["ready"] is True
+            replayed = cover_considerations.ensure(
+                current_work["review_case_id"],
+                successor_report.to_json(),
+                {"proposal_id": cover_proposal["proposal_id"]},
+            )
+            assert replayed["consideration_id"] == refreshed["consideration_id"]
             assert (
                 BrowseReviewLibrary(repository).library(
                     lens="needs_attention", search=None, limit=1, cursor=None
@@ -4595,7 +4667,7 @@ def test_live_cover_fetching_currentness_drives_attention_without_lock_inversion
             )
 
         repository.bind_cover_consideration_currentness(
-            lambda document, replay_reference: cover_consideration_is_current(
+            lambda document, replay_reference: cover_consideration_currentness(
                 document,
                 replay_reference,
                 coordinated_provider_fetching,

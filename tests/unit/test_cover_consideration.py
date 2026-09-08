@@ -12,8 +12,12 @@ from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationError,
     CoverConsiderationService,
     ReviewRunner,
+    cover_consideration_currentness,
     cover_consideration_is_current,
     cover_consideration_replay_digest,
+)
+from mechanical_librarian.application.cover_packet_semantics import (
+    canonical_packet_json,
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.review_web import _needs_attention
@@ -422,7 +426,7 @@ def test_prior_packet_producer_consideration_is_historical_and_superseded_once(
     case: _Case,
 ) -> None:
     case_id = "review_case_" + "p" * 64
-    first = case.service.ensure(case_id, case.report.to_json(), case.proposal)
+    case.service.ensure(case_id, case.report.to_json(), case.proposal)
     prior_replay = (
         "cover_replay_b296772d7cdce148b5baaff5c3a95217ee58b52fd3940e1231a40d519b263c99"
     )
@@ -434,7 +438,15 @@ def test_prior_packet_producer_consideration_is_historical_and_superseded_once(
         provider_fetching=persisted["provider_fetching"],
         replay_reference=prior_replay,
     )
-    case.store.current[case_id] = json.dumps(persisted)
+    identity = dict(persisted)
+    identity.pop("consideration_id")
+    identity.pop("created_at")
+    persisted["consideration_id"] = (
+        "cover_consideration_"
+        + hashlib.sha256(canonical_packet_json(identity).encode()).hexdigest()
+    )
+    case.store.current[case_id] = canonical_packet_json(persisted)
+    prior_consideration_id = persisted["consideration_id"]
 
     assert (
         case.service.project_historical(case.store.current[case_id])["current"] is False
@@ -443,7 +455,7 @@ def test_prior_packet_producer_consideration_is_historical_and_superseded_once(
     successor = case.service.ensure(case_id, case.report.to_json(), case.proposal)
     replay = case.service.ensure(case_id, case.report.to_json(), case.proposal)
 
-    assert successor["supersedes_id"] == first["consideration_id"]
+    assert successor["supersedes_id"] == prior_consideration_id
     assert replay["consideration_id"] == successor["consideration_id"]
     assert [event["kind"] for event in case.store.events] == [
         "automatic_prepared",
@@ -482,6 +494,84 @@ def test_shared_consideration_currentness_fails_closed_when_recovery_is_unavaila
         )
         is False
     )
+
+
+def test_shared_consideration_currentness_distinguishes_current_and_refresh(
+    case: _Case,
+) -> None:
+    case_id = "review_case_" + "r" * 64
+    case.service.ensure(case_id, case.report.to_json(), case.proposal)
+    document = case.store.current[case_id]
+
+    assert (
+        cover_consideration_currentness(
+            document, case.service.replay_reference, lambda _report: False
+        )
+        == "current"
+    )
+    assert (
+        cover_consideration_currentness(
+            document, "cover_replay_" + "0" * 64, lambda _report: False
+        )
+        == "refresh_required"
+    )
+
+
+@pytest.mark.parametrize("live_fetching", (True, 0, None))
+def test_shared_consideration_currentness_rejects_fetching_mismatch_and_non_bool(
+    case: _Case, live_fetching: object
+) -> None:
+    case_id = "review_case_" + "s" * 64
+    case.service.ensure(case_id, case.report.to_json(), case.proposal)
+
+    assert (
+        cover_consideration_currentness(
+            case.store.current[case_id],
+            "cover_replay_" + "0" * 64,
+            lambda _report: cast("bool", live_fetching),
+        )
+        == "inactive"
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("unexpected", True),
+        ("replay_digest", "0" * 64),
+        ("policy_document", "{}"),
+        ("provider_fetching", 0),
+    ),
+)
+def test_shared_consideration_currentness_rejects_malformed_authenticated_shapes(
+    case: _Case, field: str, value: object
+) -> None:
+    case_id = "review_case_" + "t" * 64
+    case.service.ensure(case_id, case.report.to_json(), case.proposal)
+    persisted = json.loads(case.store.current[case_id])
+    persisted[field] = value
+    identity = dict(persisted)
+    identity.pop("consideration_id")
+    identity.pop("created_at")
+    persisted["consideration_id"] = (
+        "cover_consideration_"
+        + hashlib.sha256(canonical_packet_json(identity).encode()).hexdigest()
+    )
+    calls: list[MetadataReport] = []
+
+    def provider_fetching(report: MetadataReport) -> bool:
+        calls.append(report)
+        return False
+
+    assert (
+        cover_consideration_currentness(
+            canonical_packet_json(persisted),
+            "cover_replay_" + "0" * 64,
+            provider_fetching,
+        )
+        == "inactive"
+    )
+    assert calls == []
 
 
 def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(

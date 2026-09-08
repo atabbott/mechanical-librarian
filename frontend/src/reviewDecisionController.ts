@@ -8,7 +8,9 @@ import { beginDecisionEcho, endDecisionEcho, settleDecisionEcho } from './decisi
 import { detailQuery, useReviewContext } from './router'
 
 export const actionable = (field: CaseDetailView['fields'][number]) =>
-  field.needsAttention && field.decisionActions.length > 0
+  field.needsAttention &&
+  (field.decisionActions.length > 0 ||
+    (field.destination === 'cover' && field.editable && field.coverConsideration?.current !== true))
 export const choiceAvailable = (field: CaseDetailView['fields'][number]) =>
   field.editable && field.decisionActions.length > 0
 export const reconciliationKey = (id: string) => ['decision-reconciliation', id] as const
