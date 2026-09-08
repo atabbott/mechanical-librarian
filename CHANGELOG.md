@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Equivalent local description evidence no longer replaces an eligible
+  provider's exact text or makes a qualified automatic fill disappear. Source
+  provenance and owner choices remain visible, and existing installs require a
+  clean `fixed-conservative-v21` rebuild. (#1001)
+
 - An ISBN hit about a different work no longer suppresses bounded title-and-author
   discovery or lends publication-date or automatic-genre authority. The retained
   evidence stays inspectable, including cases where exact work identity cannot be

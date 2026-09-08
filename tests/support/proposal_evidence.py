@@ -425,6 +425,7 @@ def _target_work_report(
     ],
     *,
     target_authors: tuple[str, ...] | None = ("Mick Herron",),
+    additional_local_claims: tuple[LocalClaim, ...] = (),
 ) -> MetadataReport:
     fields = _fields(
         "Real Tigers",
@@ -467,7 +468,7 @@ def _target_work_report(
     return _report(
         title="Real Tigers",
         fields=fields,
-        local_claims=local_isbns,
+        local_claims=(*local_isbns, *additional_local_claims),
         providers=providers,
     )
 
@@ -485,6 +486,22 @@ def _local_subtitle(value: str, scope: ClaimScope) -> LocalClaim:
         checksum="not_applicable",
         applicability_basis="not_applicable",
         occurrence=0,
+    )
+
+
+def _local_description(value: str, *, occurrence: int = 0) -> LocalClaim:
+    return LocalClaim.create(
+        kind=ClaimKind.DESCRIPTION,
+        observed=value,
+        canonical=value,
+        state=FieldState.VALID,
+        scope=ClaimScope.WORK,
+        basis="package_metadata",
+        excerpt=value,
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        occurrence=occurrence,
     )
 
 

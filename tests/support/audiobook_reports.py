@@ -44,6 +44,7 @@ __all__ = [
     "audio_local_claims",
     "audio_target_fields",
     "audiobook_candidate",
+    "manual_audiobook_observation",
     "qualified_audiobook",
 ]
 
@@ -185,6 +186,23 @@ def qualified_audiobook(
     )
 
 
+def manual_audiobook_observation(
+    provider: str,
+    authority: str,
+    candidate: ProviderCandidate,
+) -> ProviderObservation:
+    """Retain one provider candidate for review without granting audio authority."""
+    return ProviderObservation(
+        provider,
+        ProviderStatus.CANDIDATES,
+        (),
+        (candidate,),
+        ProviderQueryKind.WORK,
+        authority,
+        dispatch_lineage=_audio_work_dispatch("Project Hail Mary", ("Andy Weir",)),
+    )
+
+
 def admitted_audiobook_report(
     local_claims: tuple[LocalClaim, ...] | None = None,
     *,
@@ -193,6 +211,7 @@ def admitted_audiobook_report(
     item: str = "item-1",
     identity: str = "a" * 64,
     content_digest: str = "b" * 64,
+    additional_providers: tuple[ProviderObservation, ...] = (),
 ) -> MetadataReport:
     """One published recording whose work identity the runtime band admits.
 
@@ -207,7 +226,12 @@ def admitted_audiobook_report(
         file=FileFacts(0, identity, content_digest, "m4b"),
         local_claims=claims,
         local_reasons=("embedded_tag_duration",),
-        providers=(qualified_audiobook(claims),),
+        providers=tuple(
+            sorted(
+                (qualified_audiobook(claims), *additional_providers),
+                key=lambda value: value.provider,
+            )
+        ),
         audio=single_track_audio_facts(content_digest),
     )
 

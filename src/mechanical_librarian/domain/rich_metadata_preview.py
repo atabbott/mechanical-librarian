@@ -27,6 +27,7 @@ from mechanical_librarian.domain.proposal_set import (
     BibliographicSelectionKind, ProposalAlternative, ProposalAssessment,
     ProposalOutcome, ProposalResult, ProposalSet,
     ProposalValueKind, VERIFIED_MANIFESTATION_ISBN_REASON,
+    ordinary_provider_description_source_is_safe,
     provider_candidate_represents_target_work,
     provider_candidate_represents_target_series_work,
     series_name_equivalence_key,
@@ -846,14 +847,10 @@ def _ordinary_description_reference(
     return bool(
         retained is not None
         and type(retained.claim) is ProviderClaim
-        and retained.claim.kind is ClaimKind.DESCRIPTION
-        and retained.claim.scope is ClaimScope.WORK
         and retained.claim.value == alternative.value.value
-        and retained.candidate is not None
-        and not any(
-            evidence.kind is ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION
-            and evidence.scope is ClaimScope.WORK
-            for evidence in retained.candidate.evidence
+        and type(retained.candidate) is ProviderCandidate
+        and ordinary_provider_description_source_is_safe(
+            retained.claim, retained.candidate
         )
     )
 

@@ -28,7 +28,9 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderEvidenceKind,
     ProviderQueryKind,
     ProviderStatus,
+    TargetDestination,
 )
+from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchRung,
     WorkTitleTransformationFamily,
@@ -39,6 +41,10 @@ from tests.support.audiobook_providers import (
     local_runtime_claim,
     payload,
     work_plan,
+)
+from tests.support.audiobook_reports import (
+    admitted_audiobook_report,
+    manual_audiobook_observation,
 )
 
 _ASIN = "B08G9PRS1K"
@@ -391,6 +397,22 @@ def test_a_markup_summary_projects_as_visible_plain_text() -> None:
             candidate, ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION
         )
     )
+    report = admitted_audiobook_report(
+        local_claims(),
+        additional_providers=(
+            manual_audiobook_observation("audible", "audible_catalog", candidate),
+        ),
+    )
+    result = next(
+        value
+        for value in evaluate_report(report).results
+        if value.destination is TargetDestination.DESCRIPTION
+    )
+    assert ProposalOutcome.PROPOSE_CHANGE is result.outcome
+    assert [description.value] == [value.value.value for value in result.alternatives]
+    assert [(description.reference,)] == [
+        value.evidence_references for value in result.alternatives
+    ]
 
 
 def test_markup_the_renderer_refuses_stays_unprojectable_rather_than_absent() -> None:
