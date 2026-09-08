@@ -13,7 +13,7 @@ uv run python scripts/cold_start_report.py \
     --mount-root books=/host/path/to/mount
 ```
 
-It writes nothing and prints one `cold-start-report-v1` JSON document. It can
+It writes nothing and prints one `cold-start-report-v2` JSON document. It can
 run at any point during or after preparation, repeatedly. `--mount-root`
 remaps a configured mount name to a host path for the extension census,
 because the configuration records container paths.
@@ -24,7 +24,17 @@ names, closed reason codes, file extensions, and counts. It never contains a
 title, author, filename, media path, or item identifier, and the attention
 predicate is not re-derived: the queries compose the same shared SQL fragments
 the Attention surface executes, so the report cannot disagree with the
-interface about which field needs attention.
+interface about which field needs attention when that predicate is available.
+The offline workbench has no live reviewer revision, model profile, or cover
+policy/replay binding. If a current library item points to a cover
+consideration, that library therefore reports `works.attention`, `works.quiet`,
+and `attention_fields` as `null`, with
+`attention_unavailable_reason: current_cover_authority_unavailable`. It does
+not treat the missing runtime authority as evidence that the cover is quiet.
+The library's total works, preparation state, provider outcomes, timing, and
+catalogue measurements remain available. Historical cover considerations do
+not trigger this state, and an unavailable unconfigured library does not make
+the configured headline totals unavailable.
 
 Per configured library the document reports: the latest preparation scan
 (state, discovered total, timestamps); work counts (current, attention, quiet,
@@ -47,7 +57,10 @@ provider sources corroborate the chosen candidate (0, 1, 2, 3_plus).
 
 Top-level totals give the quiet fraction — the headline first-boot attention
 rate is its complement and includes only libraries still present in the loaded
-configuration. The determinism block compares works in the same configured
+configuration. If any configured library has unavailable cover authority, the
+top-level attention, quiet, and quiet-fraction aggregates are also `null` with
+the same closed reason; the exact total-work count remains available. The
+determinism block compares works in the same configured
 library that share a content digest: members are bucketed by their current
 target-field context first, and a group counts as divergent only when members
 with identical bytes and identical context carry different persisted proposal
