@@ -18,6 +18,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
 from tests.support.proposal_evidence import (
+    _claim,
     _contradictory_publication_provider,
     _fields,
     _provider,
@@ -76,6 +77,90 @@ def _publication(values: tuple[str, str], *, current_year: str | None = None):
             ),
         )
     )
+
+
+def _wrong_work_publication_provider(name: str, authority: str):
+    provider = _publication_provider(
+        name, f"{name}-edition", ("2001-02-03",), authority=authority
+    )
+    candidate = provider.candidates[0]
+    return replace(
+        provider,
+        candidates=(
+            replace(
+                candidate,
+                claims=(
+                    _claim(
+                        name,
+                        candidate.identity,
+                        ClaimKind.TITLE,
+                        "Different Book",
+                        scope=ClaimScope.WORK,
+                    ),
+                    _claim(
+                        name,
+                        candidate.identity,
+                        ClaimKind.CREATOR,
+                        "Other Author",
+                        scope=ClaimScope.WORK,
+                        role="author",
+                    ),
+                    *candidate.claims,
+                ),
+            ),
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "complete_identity", (False, True), ids=("unavailable", "contradictory")
+)
+def test_only_explicit_wrong_work_evidence_loses_publication_votes(
+    complete_identity: bool,
+) -> None:
+    providers = (
+        (
+            _wrong_work_publication_provider("alpha", "hardcover"),
+            _wrong_work_publication_provider("beta", "open_library"),
+        )
+        if complete_identity
+        else (
+            _publication_provider(
+                "alpha", "alpha-edition", ("2001-02-03",), authority="hardcover"
+            ),
+            _publication_provider(
+                "beta", "beta-edition", ("2001-02-03",), authority="open_library"
+            ),
+        )
+    )
+    report = _report(
+        title="Example Book",
+        fields=_fields(
+            "Example Book",
+            authors=TargetField(
+                TargetDestination.AUTHORS,
+                TargetFieldState.VALUE,
+                ("Ada Example",),
+            ),
+            published_date=TargetField(
+                TargetDestination.PUBLISHED_DATE, TargetFieldState.MISSING
+            ),
+        ),
+        local_claims=(
+            _publication_local_isbn(),
+            _local_date("2001-02-03", DatePrecision.DAY),
+        ),
+        providers=providers,
+    )
+
+    result = _result(evaluate_report(report), TargetDestination.PUBLISHED_DATE)
+
+    assert 2 == len(report.providers)
+    assert (
+        ProposalOutcome.INELIGIBLE
+        if complete_identity
+        else ProposalOutcome.PROPOSE_CHANGE
+    ) is result.outcome
 
 
 def test_strongest_shared_year_month_and_day_are_one_canonical_date_fact() -> None:

@@ -77,7 +77,7 @@ def _identifier_first_plan() -> MetadataDiscoveryPlan:
     )
 
 
-def test_identifier_candidate_suppresses_hardcover_discovery() -> None:
+def test_identifier_candidate_without_creator_preserves_hardcover_discovery() -> None:
     operations: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -95,9 +95,11 @@ def test_identifier_candidate_suppresses_hardcover_discovery() -> None:
         "catalogue", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
     ).observe(_identifier_first_plan())
 
-    assert ["MetadataEvidenceByIsbn"] == operations
-    assert [ProviderQueryKind.ISBN] == [lane.kind for lane in observation.lanes]
-    assert 1 == observation.request_accounting.logical_requests
+    assert ["MetadataEvidenceByIsbn", "MetadataEvidenceByWork"] == operations
+    assert {ProviderQueryKind.ISBN, ProviderQueryKind.WORK} == {
+        lane.kind for lane in observation.lanes
+    }
+    assert 2 == observation.request_accounting.logical_requests
 
 
 def test_identifier_no_match_falls_back_to_hardcover_discovery() -> None:

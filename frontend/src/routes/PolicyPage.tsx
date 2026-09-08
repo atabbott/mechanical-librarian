@@ -462,6 +462,8 @@ const humanReason = (reason: string | null) => {
   if (reason === 'explicit_unsupported') return 'this destination is not currently supported'
   if (reason === 'verified_manifestation_isbn')
     return 'deterministic identity evidence binds it to this file’s work'
+  if (reason === 'target_work_contradicted')
+    return 'the retained provider evidence names a different work'
   if (reason === 'target_preserved' || reason === 'unchanged')
     return 'the exact current value is preserved'
   return 'no supported value found'
@@ -522,6 +524,13 @@ export const policyImpactDisplay = (field: PolicyPreviewField): PolicyImpactDisp
       changed: false,
       title: 'No supported value found',
       detail: `${current} remains — ${humanReason(field.reason)}`,
+      technicalDetail,
+    }
+  if (field.reason === 'target_work_contradicted')
+    return {
+      changed: false,
+      title: 'No supported value found',
+      detail: `${currentIsDisplayable ? `${current} remains` : 'remains empty'} — ${humanReason(field.reason)}`,
       technicalDetail,
     }
   if (field.outcome === 'no_op' || sameMetadataValue(field.current_value, field.desired_value))

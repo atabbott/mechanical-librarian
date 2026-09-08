@@ -5,9 +5,23 @@ rich-metadata qualification contract and its exact option-level decisions. It
 grants decision-only Automatic authority to the passing options; it does not
 grant effect consent, construct a target write, or change provider selection.
 
+## Contradictory work evidence (#1000)
+
+The [v14 candidate](../reference/f20-rich-metadata-qualification-candidate-v14.json)
+binds the target-work contradiction guard for publication dates and automatic
+genres. Claims about another work remain inspectable, but they cannot become a
+field decision or persisted candidate outcome. Where identity proof is absent,
+the candidate stays unresolved rather than being promoted or discarded. The
+same successor preserves every previously qualified option through the existing
+non-series and exact-source continuity routes. The series route replays the
+original 24-work confirmation and 12-work final captures. Their canonical v37
+documents are relabelled to v38 with a recomputed content-derived report
+identity; every other field, sealed input binding, truth label, scorer and
+threshold remains unchanged.
+
 ## Qualified series fill (#895)
 
-The [v13 candidate](../reference/f20-rich-metadata-qualification-candidate-v13.json)
+The historical [v13 candidate](../reference/f20-rich-metadata-qualification-candidate-v13.json)
 binds the applicability repair: it refuses unrelated ISBN work candidates while
 permitting the bounded
 [source-attested identity formatting rule](../architecture/decisions/0070-isbn-backed-series-identity.md).
@@ -65,16 +79,20 @@ including convention-qualified views of the same grouping, six correct sequence
 occurrences and one unknown; its support denominator is still five books.
 Actual target values are scored separately from full qualified memberships.
 
-The runtime binds the v13 digest, source dependencies, closed option
+The runtime binds the v14 digest, source dependencies, closed option
 matrix and tested zero-tolerance controls. Metrics alone do not authorize
-activation. Historical v11/v12 bytes and decisions remain readable, while fresh
+activation. Historical v11/v12/v13 bytes and decisions remain readable, while fresh
 decisions and guarded effects require the exact current qualification. Retained
-historical non-series compiler evidence compares 980 serialized observations unchanged;
-the rotation intentionally changes authority-derived identities. The earlier
+historical non-series compiler evidence for v13 compared 980 serialized
+observations unchanged. V14 changes 18 genre previews in the two-scenario
+continuity replay, restoring the 15 correct same-mode option projections that
+the first #1000 candidate withheld; no other field changes. The rotation also
+changes authority-derived identities. The earlier
 50-case gold programme and operator evidence remain retained evidence, not 50
-new cases. Exact-clean-head postrotation retained replay, supported isolated
-field effects and installed acceptance remain required delivery checks; the
-manifest does not claim a future receipt or replace those checks.
+new cases. The exact-clean-head retained series and non-series replays are bound
+in v14. Supported isolated field effects and installed acceptance remain
+required delivery checks; the manifest does not claim a future receipt or
+replace those checks.
 
 ## Historical qualification record
 

@@ -513,6 +513,87 @@ def test_exact_multi_isbn_work_keeps_all_automatic_work_fields() -> None:
     }
 
 
+@pytest.mark.parametrize(
+    ("identity", "expected_outcome", "expected_reason"),
+    (
+        ("applicable", "projected", None),
+        ("display_variant", "projected", None),
+        ("malformed_display", "abstain", "target_work_contradicted"),
+        ("contradictory", "abstain", "target_work_contradicted"),
+        ("unavailable", "projected", None),
+    ),
+)
+def test_automatic_genre_rejects_only_explicit_work_contradiction(
+    identity: str,
+    expected_outcome: str,
+    expected_reason: str | None,
+) -> None:
+    candidate = _target_work_candidate("catalogue", "edition-1", "work-1")
+    identity_claims = (
+        (
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.TITLE,
+                "Different Book" if identity == "contradictory" else "Real Tigers",
+                scope=ClaimScope.WORK,
+            ),
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.CREATOR,
+                (
+                    "Other Author"
+                    if identity == "contradictory"
+                    else ". B. Herron"
+                    if identity == "malformed_display"
+                    else "Mick J Herron"
+                    if identity == "display_variant"
+                    else "Mick Herron"
+                ),
+                scope=ClaimScope.WORK,
+                role="author",
+            ),
+        )
+        if identity != "unavailable"
+        else ()
+    )
+    candidate = replace(
+        candidate,
+        claims=(
+            *identity_claims,
+            *(
+                claim
+                for claim in candidate.claims
+                if claim.kind not in {ClaimKind.TITLE, ClaimKind.CREATOR}
+            ),
+        ),
+    )
+    report = _target_work_report(
+        (("catalogue", "hardcover", (candidate,), True),),
+        target_authors=(". Herron",)
+        if identity == "malformed_display"
+        else ("Mick Herron",),
+    )
+
+    _, fields = _target_work_preview(report)
+
+    assert expected_outcome == fields["genres"].outcome
+    assert expected_reason == fields["genres"].reason
+    assert any(
+        claim.kind is ClaimKind.GENRE
+        for claim in report.providers[0].candidates[0].claims
+    )
+    if identity == "display_variant":
+        assert {
+            field: (fields[field].outcome, fields[field].reason)
+            for field in ("description_fill", "tags")
+        } == {
+            "description_fill": ("abstain", "target_work_applicability_unproved"),
+            "tags": ("abstain", "target_work_applicability_unproved"),
+        }
+
+
 def test_automatic_description_filters_applicability_before_floor_and_order() -> None:
     unproved = _description_candidate(
         "preferred",

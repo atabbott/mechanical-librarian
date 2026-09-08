@@ -5,10 +5,13 @@ merge on reopen, and publication preconditions.
 
 from __future__ import annotations
 
+import json
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
+import httpx
 import pytest
 
 from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import (
@@ -19,6 +22,12 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_locatio
 )
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_repository,
+)
+from mechanical_librarian.adapters.providers.google_books_metadata import (
+    GoogleBooksMetadataProvider,
+)
+from mechanical_librarian.adapters.providers.hardcover_metadata import (
+    HardcoverMetadataProvider,
 )
 from mechanical_librarian.application.configuration import (
     LibraryConfiguration,
@@ -63,11 +72,19 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceState,
     cover_source_id,
 )
+from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 from mechanical_librarian.domain.failure_diagnostics import (
     FailureCategory,
     FailureComponent,
     FailureDiagnostic,
     FailureStage,
+)
+from mechanical_librarian.domain.metadata_policy import (
+    DEFAULT_OPTIONS,
+    OPTION_CATALOGUE,
+    MetadataPolicyProfile,
+    human_review_destinations,
+    resolve_policy,
 )
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -91,10 +108,16 @@ from mechanical_librarian.domain.metadata_report import (
     default_target_fields,
     finalize_candidate_comparisons,
 )
+from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.rich_metadata_preview import (
+    compile_rich_metadata_preview,
+)
+from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     work_query_ladder,
 )
+from tests.support.hardcover_evidence import hardcover_envelope
 from tests.support.metadata_report_doubles import (
     FakeAudioInspector,
     FakeInspector,
@@ -103,6 +126,277 @@ from tests.support.metadata_report_doubles import (
     audio_result,
     single_track_audio_facts,
 )
+
+
+def test_wrong_work_adapter_evidence_stays_inspectable_but_cannot_reopen_authority() -> (
+    None
+):
+    requests: list[tuple[str, str]] = []
+
+    payload = hardcover_envelope(
+        [
+            {
+                "id": 1,
+                "book_id": 10,
+                "isbn_13": "9780306406157",
+                "release_date": "2031-01-02",
+            }
+        ],
+        [
+            {
+                "id": 10,
+                "title": "Different Book",
+                "release_date": "2031-01-02",
+                "contributions": [
+                    {
+                        "id": 1,
+                        "contribution": "Author",
+                        "author": {"id": 7, "name": "Other Author"},
+                    }
+                ],
+                "taggings": [
+                    {
+                        "id": 1,
+                        "tag": {
+                            "id": 11,
+                            "tag": "Wrong Work Genre",
+                            "tag_category": {"id": 2, "category": "Genre"},
+                        },
+                    }
+                ],
+            }
+        ],
+    )
+
+    def provider(
+        name: str,
+    ) -> HardcoverMetadataProvider | GoogleBooksMetadataProvider:
+        if name == "secondary_catalogue":
+
+            def google_response(request: httpx.Request) -> httpx.Response:
+                requests.append((name, request.url.params.get("q", "")))
+                return httpx.Response(
+                    200,
+                    json={
+                        "totalItems": 1,
+                        "items": [
+                            {
+                                "id": "wrong_volume",
+                                "volumeInfo": {
+                                    "title": "Different Book",
+                                    "authors": ["Other Author"],
+                                    "publishedDate": "2031-01-02",
+                                    "industryIdentifiers": [
+                                        {
+                                            "type": "ISBN_13",
+                                            "identifier": "9780306406157",
+                                        }
+                                    ],
+                                    "categories": ["Wrong Work Genre"],
+                                    "printType": "BOOK",
+                                    "language": "en",
+                                },
+                            }
+                        ],
+                    },
+                )
+
+            return GoogleBooksMetadataProvider(
+                name,
+                httpx.Client(transport=httpx.MockTransport(google_response)),
+                65_536,
+            )
+
+        def hardcover_response(request: httpx.Request) -> httpx.Response:
+            operation = json.loads(request.content)["operationName"]
+            requests.append((name, operation))
+            return httpx.Response(200, json=payload)
+
+        return HardcoverMetadataProvider(
+            name,
+            httpx.Client(transport=httpx.MockTransport(hardcover_response)),
+            65_536,
+        )
+
+    isbn = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780306406157",
+        canonical="9780306406157",
+        excerpt="ISBN 9780306406157",
+        applicability="ebook",
+        basis="opening_matter",
+        checksum="valid_isbn_13",
+        applicability_basis="ebook",
+        scope=ClaimScope.EDITION,
+    )
+    publication_date = LocalClaim.create(
+        kind=ClaimKind.PUBLICATION_DATE,
+        observed="2031-01-02",
+        canonical="2031-01-02",
+        excerpt="2031-01-02",
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.EDITION,
+        date_event=DateEvent.MANIFESTATION_PUBLICATION,
+        date_precision=DatePrecision.DAY,
+    )
+    fields = tuple(
+        replace(
+            field,
+            state=TargetFieldState.VALUE,
+            value=("Ada Example",),
+        )
+        if field.destination is TargetDestination.AUTHORS
+        else field
+        for field in default_target_fields("Example Book")
+    )
+    selected = TargetFile("a" * 64, "book.epub", "epub")
+    snapshot = TargetSnapshot("ebook", "Example Book", (selected,), fields=fields)
+
+    with tempfile.TemporaryDirectory() as directory:
+        database = Path(directory) / "reports.sqlite3"
+        report_document = GenerateMetadataReport(
+            target=FakeTarget([snapshot, snapshot]),
+            inspector=FakeInspector(
+                InspectionResult("c" * 64, (isbn, publication_date))
+            ),
+            repository_factory=lambda: open_repository(database),
+            providers=(
+                ProviderBinding(
+                    "catalogue",
+                    True,
+                    lambda: provider("catalogue"),
+                    authority="hardcover",
+                ),
+                ProviderBinding(
+                    "secondary_catalogue",
+                    True,
+                    lambda: provider("secondary_catalogue"),
+                    authority="google_books",
+                ),
+            ),
+            connection=TargetConnectionConfiguration(
+                "primary", "https://example.invalid", "/private/target"
+            ),
+            library=LibraryConfiguration(
+                "ebooks",
+                "primary",
+                "library-id",
+                "ebook",
+                "books",
+                ("catalogue", "secondary_catalogue"),
+            ),
+            mount=MediaMountConfiguration("books", "/media", "/library", True),
+            limits=ReportLimits(),
+        ).run("item-1", 0)
+
+        report = MetadataReport.from_json(report_document)
+        report_id = report.report_id
+        options = dict(DEFAULT_OPTIONS)
+        options["genres"] = "fill_empty"
+        destinations = {
+            name: "unsupported" if name == "explicit" else "ask"
+            for name in OPTION_CATALOGUE
+        }
+        destinations["genres"] = "automatic"
+        profile = MetadataPolicyProfile.create(
+            "Wrong-work refusal", options, destinations
+        )
+        resolved = resolve_policy(profile, report.target.library)
+        proposal = evaluate_report(
+            report,
+            resolved.resolved_id,
+            human_review_destinations(resolved),
+        )
+        preview = compile_rich_metadata_preview(resolved, report, proposal)
+
+        repository = open_repository(database)
+        repository.enter_shadow_preview(1)
+        repository.create_metadata_policy_draft(profile.canonical_json)
+        repository.activate_metadata_policy(
+            profile.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            (
+                (
+                    report.target.library,
+                    resolved.resolved_id,
+                    resolved.canonical_json,
+                ),
+            ),
+            2,
+        )
+        repository.activate_qualified_automatic(3)
+        repository.publish(report, lambda: True)
+        repository.publish_proposal(proposal)
+        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+        document = repository.persist_shadow_outcome(case_id, 4)
+        outcome = ShadowOutcomeSet.from_json(document)
+        genre_outcome = next(
+            value for value in outcome.outcomes if value.destination == "genres"
+        )
+        decisions = repository.get_review_case_decisions(case_id)
+        repository.close()
+
+        repository = open_repository(database)
+        assert repository.get(report_id) == report.to_json()
+        assert repository.get_proposal(proposal.proposal_set_id) == proposal.to_json()
+        assert repository.get_review_case_decisions(case_id) == decisions
+        assert repository.persist_shadow_outcome(case_id, 5) == document
+        assert repository.list_shadow_outcomes(1)[0][0] == document
+        assert repository.pending_field_effect_decision_documents(10) == ()
+        repository.close()
+
+    genre = next(field for field in preview.fields if field.field == "genres")
+    publication = next(
+        result
+        for result in proposal.results
+        if result.destination is TargetDestination.PUBLISHED_DATE
+    )
+    assert requests == [
+        ("catalogue", "MetadataEvidenceByIsbn"),
+        ("catalogue", "MetadataEvidenceByWork"),
+        ("secondary_catalogue", "isbn:9780306406157"),
+        (
+            "secondary_catalogue",
+            'intitle:"Example Book" inauthor:"Ada Example"',
+        ),
+    ]
+    assert [provider.authority for provider in report.providers] == [
+        "hardcover",
+        "google_books",
+    ]
+    assert all(
+        provider.request_accounting.logical_requests == 2
+        for provider in report.providers
+    )
+    assert (
+        sum(
+            claim.kind is ClaimKind.GENRE
+            for provider in report.providers
+            for candidate in provider.candidates
+            for claim in candidate.claims
+        )
+        == 1
+    )
+    assert (
+        sum(
+            claim.kind is ClaimKind.PUBLICATION_DATE
+            for provider in report.providers
+            for candidate in provider.candidates
+            for claim in candidate.claims
+        )
+        == 2
+    )
+    assert publication.alternatives == ()
+    assert genre.outcome == "abstain"
+    assert genre.reason == "target_work_contradicted"
+    assert genre.option == "fill_empty"
+    assert genre.source_candidate_id is None
+    assert genre.source_evidence_references == ()
+    assert genre_outcome.disposition == "abstention"
+    assert genre_outcome.candidate_id is None
+    assert decisions == ()
 
 
 def test_final_currentness_rejects_absent_abs_source_that_becomes_bytes() -> None:

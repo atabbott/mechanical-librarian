@@ -138,6 +138,44 @@ def _work_dispatch(
     )
 
 
+def _identity_candidate(
+    title: str = "Example Book",
+    authors: tuple[str, ...] = ("Ada Example",),
+    *,
+    identity: str = "edition-1",
+    work_identity: str = "work-1",
+) -> ProviderCandidate:
+    return ProviderCandidate(
+        identity,
+        work_identity,
+        (
+            ProviderClaim.create(
+                provider="catalogue",
+                candidate=identity,
+                kind=ClaimKind.TITLE,
+                value=title,
+                state=FieldState.VALID,
+                scope=ClaimScope.WORK,
+                applicability="not_applicable",
+            ),
+            *(
+                ProviderClaim.create(
+                    provider="catalogue",
+                    candidate=identity,
+                    kind=ClaimKind.CREATOR,
+                    value=author,
+                    state=FieldState.VALID,
+                    scope=ClaimScope.WORK,
+                    applicability="not_applicable",
+                    role="author",
+                    raw_order=index + 1,
+                )
+                for index, author in enumerate(authors)
+            ),
+        ),
+    )
+
+
 def test_multiple_usable_families_keep_provider_lane_order() -> None:
     first = LocalClaim.create(
         kind=ClaimKind.ISBN,
@@ -256,7 +294,7 @@ def test_nonusable_isbn_does_not_reorder_or_suppress_discovery(
             ProviderLaneResult(
                 plan.lanes[1],
                 ProviderStatus.CANDIDATES,
-                (ProviderCandidate("edition-1", "work-1", ()),),
+                (_identity_candidate(),),
             )
         ],
         plan.lanes[0],
@@ -312,7 +350,7 @@ def test_one_usable_family_precedes_nonusable_identifier_lanes() -> None:
             ProviderLaneResult(
                 usable_lane,
                 ProviderStatus.CANDIDATES,
-                (ProviderCandidate("edition-1", "work-1", ()),),
+                (_identity_candidate(),),
             )
         ],
         work,
@@ -323,7 +361,7 @@ def test_one_usable_family_precedes_nonusable_identifier_lanes() -> None:
             ProviderLaneResult(
                 print_lane,
                 ProviderStatus.CANDIDATES,
-                (ProviderCandidate("edition-1", "work-1", ()),),
+                (_identity_candidate(),),
             )
         ],
         work,
@@ -334,9 +372,136 @@ def test_one_usable_family_precedes_nonusable_identifier_lanes() -> None:
             ProviderLaneResult(
                 usable_lane,
                 ProviderStatus.CANDIDATES,
-                (ProviderCandidate("edition-1", "work-1", ()),),
+                (_identity_candidate(),),
             ),
             ProviderLaneResult(print_lane, ProviderStatus.UNAVAILABLE),
+        ],
+        work,
+    )
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    (_identity_candidate("Different Book"), _identity_candidate(authors=())),
+    ids=("contradictory", "unavailable"),
+)
+def test_contradictory_or_unavailable_isbn_identity_preserves_work_fallback(
+    candidate: ProviderCandidate,
+) -> None:
+    usable = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780306406157",
+        canonical="9780306406157",
+        excerpt="ISBN 9780306406157",
+        applicability="ebook",
+        checksum="valid_isbn_13",
+        applicability_basis="ebook",
+    )
+    work = MetadataDiscoveryLane(
+        "lane_" + "1" * 64,
+        ProviderQueryKind.WORK,
+        (usable.reference,),
+        title="Example Book",
+        authors=("Ada Example",),
+    )
+    isbn = MetadataDiscoveryLane(
+        "lane_" + "2" * 64,
+        ProviderQueryKind.ISBN,
+        (usable.reference,),
+        matched_family="9780306406157",
+        canonical_isbns=("9780306406157",),
+    )
+    plan = MetadataDiscoveryPlan((usable,), (work, isbn))
+
+    assert not identifier_suppresses_discovery(
+        plan,
+        [ProviderLaneResult(isbn, ProviderStatus.CANDIDATES, (candidate,))],
+        work,
+    )
+
+
+@pytest.mark.parametrize(
+    "candidates",
+    (
+        (_identity_candidate(), _identity_candidate("Different Book")),
+        (_identity_candidate(), _identity_candidate(authors=())),
+        (
+            _identity_candidate(),
+            _identity_candidate(identity="edition-2", work_identity="work-2"),
+        ),
+    ),
+    ids=("contradictory", "unavailable", "multiple_work_identities"),
+)
+def test_mixed_isbn_candidate_set_preserves_work_fallback(
+    candidates: tuple[ProviderCandidate, ...],
+) -> None:
+    usable = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780306406157",
+        canonical="9780306406157",
+        excerpt="ISBN 9780306406157",
+        applicability="ebook",
+        checksum="valid_isbn_13",
+        applicability_basis="ebook",
+    )
+    work = MetadataDiscoveryLane(
+        "lane_" + "1" * 64,
+        ProviderQueryKind.WORK,
+        (usable.reference,),
+        title="Example Book",
+        authors=("Ada Example",),
+    )
+    isbn = MetadataDiscoveryLane(
+        "lane_" + "2" * 64,
+        ProviderQueryKind.ISBN,
+        (usable.reference,),
+        matched_family="9780306406157",
+        canonical_isbns=("9780306406157",),
+    )
+
+    assert not identifier_suppresses_discovery(
+        MetadataDiscoveryPlan((usable,), (work, isbn)),
+        [ProviderLaneResult(isbn, ProviderStatus.CANDIDATES, candidates)],
+        work,
+    )
+
+
+def test_one_work_candidate_set_suppresses_redundant_work_fallback() -> None:
+    usable = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780306406157",
+        canonical="9780306406157",
+        excerpt="ISBN 9780306406157",
+        applicability="ebook",
+        checksum="valid_isbn_13",
+        applicability_basis="ebook",
+    )
+    work = MetadataDiscoveryLane(
+        "lane_" + "1" * 64,
+        ProviderQueryKind.WORK,
+        (usable.reference,),
+        title="Example Book",
+        authors=("Ada Example",),
+    )
+    isbn = MetadataDiscoveryLane(
+        "lane_" + "2" * 64,
+        ProviderQueryKind.ISBN,
+        (usable.reference,),
+        matched_family="9780306406157",
+        canonical_isbns=("9780306406157",),
+    )
+
+    assert identifier_suppresses_discovery(
+        MetadataDiscoveryPlan((usable,), (work, isbn)),
+        [
+            ProviderLaneResult(
+                isbn,
+                ProviderStatus.CANDIDATES,
+                (
+                    _identity_candidate(),
+                    _identity_candidate(identity="edition-2"),
+                ),
+            )
         ],
         work,
     )
@@ -930,7 +1095,7 @@ def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
             "stage": "lookup",
         }
     ]
-    assert "metadata-report-v37" == report.schema_version
+    assert "metadata-report-v38" == report.schema_version
     previous = report.to_data()
     previous["schema_version"] = "metadata-report-v22"
     with pytest.raises(ReportValueError):

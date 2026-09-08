@@ -39,14 +39,194 @@ from mechanical_librarian.domain.metadata_report import (
     PublicationDateRelation,
     ReportValueError,
     TargetFacts,
+    WorkIdentityContradiction,
     canonical_json,
     comparison_links,
     default_target_fields,
     finalize_candidate_comparisons,
     normalize_date_value,
     normalize_title,
+    provider_candidate_work_identity_contradiction,
     publication_date_relation,
 )
+
+
+def _work_identity_candidate(
+    title: str = "Example Book",
+    authors: tuple[tuple[str, str | None], ...] = (("Ada Example", "author"),),
+) -> ProviderCandidate:
+    claims = (
+        ProviderClaim.create(
+            provider="catalogue",
+            candidate="edition",
+            kind=ClaimKind.TITLE,
+            value=title,
+            state=FieldState.VALID,
+            scope=ClaimScope.WORK,
+            applicability="not_applicable",
+        ),
+        *(
+            ProviderClaim.create(
+                provider="catalogue",
+                candidate="edition",
+                kind=ClaimKind.CREATOR,
+                value=value,
+                state=FieldState.VALID,
+                scope=ClaimScope.WORK,
+                applicability="not_applicable",
+                role=role,
+                raw_order=index + 1,
+            )
+            for index, (value, role) in enumerate(authors)
+        ),
+    )
+    return ProviderCandidate("edition", "work", claims)
+
+
+@pytest.mark.parametrize(
+    ("candidate", "expected", "target_title"),
+    (
+        (
+            _work_identity_candidate(),
+            WorkIdentityContradiction.NOT_CONTRADICTED,
+            "Example Book",
+        ),
+        (
+            _work_identity_candidate("Plain Work"),
+            WorkIdentityContradiction.NOT_CONTRADICTED,
+            "Ada Example - Plain_Work",
+        ),
+        (
+            _work_identity_candidate("Different Book"),
+            WorkIdentityContradiction.EXPLICIT,
+            "Example Book",
+        ),
+        (
+            _work_identity_candidate(authors=()),
+            WorkIdentityContradiction.UNAVAILABLE,
+            "Example Book",
+        ),
+        (
+            _work_identity_candidate(
+                authors=(("Ada Example", "author"), ("Editor Example", None))
+            ),
+            WorkIdentityContradiction.UNAVAILABLE,
+            "Example Book",
+        ),
+        (
+            ProviderCandidate(
+                "edition",
+                "work",
+                (
+                    *_work_identity_candidate().claims,
+                    ProviderClaim.create(
+                        provider="catalogue",
+                        candidate="edition",
+                        kind=ClaimKind.TITLE,
+                        value="Another Possible Title",
+                        state=FieldState.VALID,
+                        scope=ClaimScope.WORK,
+                        applicability="not_applicable",
+                        raw_order=2,
+                    ),
+                ),
+            ),
+            WorkIdentityContradiction.UNAVAILABLE,
+            "Example Book",
+        ),
+        (
+            _work_identity_candidate("Example Book"),
+            WorkIdentityContradiction.UNAVAILABLE,
+            "Example Book: A Novel",
+        ),
+        (
+            _work_identity_candidate("Example Book: Abridged"),
+            WorkIdentityContradiction.UNAVAILABLE,
+            "Example Book",
+        ),
+    ),
+    ids=(
+        "applicable",
+        "qualified_compound",
+        "contradictory",
+        "incomplete",
+        "mixed_roles",
+        "multiple_titles",
+        "unqualified_query_match",
+        "variant",
+    ),
+)
+def test_work_identity_contradiction_requires_complete_unambiguous_evidence(
+    candidate: ProviderCandidate,
+    expected: WorkIdentityContradiction,
+    target_title: str,
+) -> None:
+    assert expected is provider_candidate_work_identity_contradiction(
+        candidate, target_title, ("Ada Example",)
+    )
+
+
+@pytest.mark.parametrize(
+    ("target_authors", "provider_authors", "expected"),
+    (
+        (("Ada Example",), ("Ada L Example",), WorkIdentityContradiction.UNAVAILABLE),
+        (("Ada L Example",), ("Ada Example",), WorkIdentityContradiction.UNAVAILABLE),
+        (
+            ("Ada L. Example",),
+            ("Ada L Example",),
+            WorkIdentityContradiction.UNAVAILABLE,
+        ),
+        (("Ada L Example",), ("Ada M Example",), WorkIdentityContradiction.EXPLICIT),
+        (("Ada Example",), ("Other Author",), WorkIdentityContradiction.EXPLICIT),
+        (
+            ("Ada Example", "Bob B Example"),
+            ("Bob Example", "Ada A Example"),
+            WorkIdentityContradiction.UNAVAILABLE,
+        ),
+        (
+            ("Ada Example", "Ada B Example"),
+            ("Ada Example", "Ada B. Example"),
+            WorkIdentityContradiction.UNAVAILABLE,
+        ),
+        (
+            (". Example",),
+            (". B. Example",),
+            WorkIdentityContradiction.EXPLICIT,
+        ),
+    ),
+    ids=(
+        "target_omits_middle",
+        "provider_omits_middle",
+        "optional_period",
+        "unequal_initials",
+        "disjoint",
+        "permutation",
+        "ambiguous_complete_pairings",
+        "punctuation_is_not_a_given_name",
+    ),
+)
+def test_work_identity_contradiction_uses_creator_display_only_for_negative_proof(
+    target_authors: tuple[str, ...],
+    provider_authors: tuple[str, ...],
+    expected: WorkIdentityContradiction,
+) -> None:
+    candidate = _work_identity_candidate(
+        authors=tuple((author, "author") for author in provider_authors)
+    )
+
+    assert expected is provider_candidate_work_identity_contradiction(
+        candidate, "Example Book", target_authors
+    )
+
+
+def test_creator_display_possibility_requires_existing_title_query_overlap() -> None:
+    assert WorkIdentityContradiction.EXPLICIT is (
+        provider_candidate_work_identity_contradiction(
+            _work_identity_candidate("Different Book", (("Ada L Example", "author"),)),
+            "Example Book",
+            ("Ada Example",),
+        )
+    )
 
 
 def test_comparison_links_are_complete_per_local_claim_and_canonical() -> None:
