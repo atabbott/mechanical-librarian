@@ -3999,11 +3999,13 @@ describe('Library route', () => {
   })
 
   it.each([
-    ['a replacement consideration on the same case', null, false],
-    ['a replacement consideration beside another unresolved field', null, true],
-    ['a successor case', 'case-2', false],
-  ])('retains a stale cover choice and recovers through %s', async (_label, successorId, other) => {
+    ['a direct replacement choice on the same case', null, false],
+    ['a direct replacement choice beside another unresolved field', null, true],
+    ['an explicit replacement recovery on the same case', null, false],
+    ['an explicit successor-case recovery', 'case-2', false],
+  ])('retains a stale cover choice and recovers through %s', async (label, successorId, other) => {
     const user = userEvent.setup()
+    const directChoice = label.startsWith('a direct')
     const base = detail.fields[0]
     if (!base) throw new Error('cover stale fixture requires a field')
     const candidate = (suffix: string, incumbent: boolean) => ({
@@ -4120,7 +4122,7 @@ describe('Library route', () => {
     ).toBeVisible()
     expect(screen.getByRole('button', { name: 'Review current comparison' })).toBeEnabled()
 
-    if (successorId === null) {
+    if (directChoice) {
       const currentAlternative = screen.getByRole('button', {
         name: /Alternative 1 cover/u,
       })
