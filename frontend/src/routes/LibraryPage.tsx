@@ -1440,8 +1440,10 @@ function LibraryCoverChoicesContent({
                 type="button"
                 aria-pressed={choiceSelected(field, progress, 'keep_current')}
                 className={`library-cover-card is-current${choiceSelected(field, progress, 'keep_current') ? ' is-selected' : ''}`}
-                disabled={disabled}
-                onClick={() => choose('keep_current')}
+                disabled={disabled || !keeps}
+                onClick={() => {
+                  if (keeps) choose('keep_current')
+                }}
               >
                 <span
                   className="library-cover-image"
@@ -1485,7 +1487,7 @@ function LibraryCoverChoicesContent({
                   context={currentContext}
                   evidenceId="cover-evidence-current-unavailable"
                   label="Current cover"
-                  {...(disabled ? {} : { onChoose: () => choose('keep_current') })}
+                  {...(disabled || !keeps ? {} : { onChoose: () => choose('keep_current') })}
                 />
               ) : null}
             </article>

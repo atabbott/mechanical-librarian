@@ -2792,6 +2792,25 @@ describe('Library route', () => {
         'false',
       )
       expect(screen.getByText('Choices').nextElementSibling).toHaveTextContent('2')
+
+      cleanup()
+      const acceptOnlyHttp = {
+        ...createHttp(),
+        getCaseDetail: vi.fn(async () => ({
+          ...detail,
+          fields: [{ ...coverField, decisionActions: ['accept' as const] }],
+        })),
+      }
+      renderRoute('/library?lens=all&preview=case-1&field=cover', acceptOnlyHttp)
+      expect(
+        await screen.findByRole('button', { name: /Current cover.*Unavailable/u }),
+      ).toBeDisabled()
+      expect(screen.getByRole('button', { name: /Alternative 1 cover/u })).toBeEnabled()
+      await user.click(screen.getByRole('button', { name: /Evidence for Current cover/u }))
+      expect(
+        screen.queryByRole('button', { name: 'Choose Current cover' }),
+      ).not.toBeInTheDocument()
+      expect(acceptOnlyHttp.recordDecision).not.toHaveBeenCalled()
     },
   )
 

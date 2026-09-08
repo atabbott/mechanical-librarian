@@ -4191,6 +4191,150 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
             open_repository(database)
 
 
+def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        database = root / "reports.sqlite"
+        repository = open_repository(database)
+        report, _ = _qualified_cover_report(root)
+        options = dict(DEFAULT_OPTIONS)
+        options["cover_order"] = "fixed_source_order"
+        destinations = {
+            category: "unsupported" if category == "explicit" else "ask"
+            for category in OPTION_CATALOGUE
+        }
+        destinations["cover_order"] = "automatic"
+        profile = MetadataPolicyProfile.create(
+            "Deterministic confirmed covers", options, destinations
+        )
+        resolved = resolve_policy(profile, report.target.library)
+        proposal = evaluate_report(
+            report, resolved.resolved_id, human_review_destinations(resolved)
+        )
+        repository.enter_shadow_preview(1)
+        repository.create_metadata_policy_draft(profile.canonical_json)
+        repository.activate_metadata_policy(
+            profile.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            2,
+        )
+        repository.activate_qualified_automatic(3)
+        recovery = composition.SQLiteProviderRecoveryStore.open(
+            root / "provider-recovery.sqlite"
+        )
+        supervisor = composition.create_review_pipeline(
+            _pipeline_configuration(),
+            database,
+            root / "catalogue.sqlite",
+            root / "artifacts",
+            _test_reviewer_access(repository),
+            database_authority=repository.authority,
+            provider_recovery=recovery,
+        )
+        try:
+            with patch.object(composition, "run_cover_packet_reviewer") as dispatch:
+                pipeline = _run_qualified_cover_pipeline(
+                    repository, root, report, proposal, supervisor
+                )
+                advances = 0
+                while pipeline.run_next(1):
+                    advances += 1
+                    assert advances < 10
+            dispatch.assert_not_called()
+            selected = repository._connection.execute(
+                "SELECT selection.document FROM current_cover_selection_authorities current "
+                "JOIN cover_selection_authorities selection "
+                "ON selection.selection_id=current.selection_id"
+            ).fetchone()
+            assert selected is not None
+            automatic = CoverAutomaticDecision.from_json(
+                json.loads(selected[0])["decision_document"]
+            )
+
+            candidate_sources = tuple(
+                source
+                for source in report.cover_sources
+                if source.artifact is not None
+                and source.artifact.artifact_id == automatic.artifact_id
+            )
+            assert len(candidate_sources) == 1
+            successor_report = MetadataReport.create(
+                target=report.target,
+                file=FileFacts(1, "c" * 64, "d" * 64),
+                local_claims=report.local_claims,
+                local_reasons=report.local_reasons,
+                providers=report.providers,
+                cover_sources=candidate_sources,
+            )
+            successor_proposal = evaluate_report(
+                successor_report,
+                resolved.resolved_id,
+                human_review_destinations(resolved),
+            )
+            with patch.object(composition, "run_cover_packet_reviewer") as dispatch:
+                pipeline = _run_qualified_cover_pipeline(
+                    repository,
+                    root,
+                    successor_report,
+                    successor_proposal,
+                    supervisor,
+                )
+                advances = 0
+                while pipeline.run_next(1):
+                    advances += 1
+                    assert advances < 10
+            dispatch.assert_not_called()
+
+            assert repository._connection.execute(
+                "SELECT count(*) FROM cover_selection_authorities"
+            ).fetchone() == (1,)
+            library = BrowseReviewLibrary(repository).library(
+                lens="all", search=None, limit=50, cursor=None
+            )
+            assert library["counts"]["needs_attention"] == 1
+            assert len(library["items"]) == 1
+            current_work = library["items"][0]
+            assert current_work["review_case_id"] != automatic.review_case_id
+            assert current_work["attention_count"] == 1
+            attention = BrowseReviewLibrary(repository).attention(
+                search=None, limit=50, cursor=None
+            )
+            assert attention["total"] == 1
+            assert len(attention["items"]) == 1
+            attention_item = attention["items"][0]
+            assert (
+                attention_item["review_case_id"],
+                attention_item["destination"],
+                attention_item["detail_url"],
+            ) == (
+                current_work["review_case_id"],
+                "cover",
+                f"/review/{current_work['review_case_id']}?field=cover",
+            )
+            cover_considerations = composition._compose_cover_considerations(
+                repository,
+                root / "artifacts",
+                _pipeline_configuration().review,
+                _test_reviewer_access(repository),
+            )
+            detail = InspectCurrentReviewCase(repository, cover_considerations).run(
+                current_work["review_case_id"]
+            )
+            cover = next(
+                field for field in detail["fields"] if field["destination"] == "cover"
+            )
+            assert cover["automatic_decision"] is None
+            assert cover["cover_consideration"]["ready"] is True
+            assert cover["cover_consideration"]["policy"]["status"] == "abstained"
+            assert cover["cover_consideration"]["policy"]["reasons"] == [
+                "actual_target_unverified"
+            ]
+        finally:
+            supervisor.stop()
+            repository.close()
+
+
 @pytest.mark.parametrize(
     ("later_candidate_index", "owner_final", "expected_kind", "expected_rows"),
     (
