@@ -411,7 +411,10 @@ def test_replay_preserves_credential_free_google_books_requests() -> None:
     )
 
 
-def test_replay_preserves_inventaire_repeated_query_parameters() -> None:
+@pytest.mark.parametrize("missing_isbn", (False, True))
+def test_replay_preserves_inventaire_repeated_query_parameters(
+    missing_isbn: bool,
+) -> None:
     base = _configuration()
     inventaire = ProviderConnectionConfiguration(
         "inventaire", True, True, None, "inventaire", None
@@ -440,6 +443,12 @@ def test_replay_preserves_inventaire_repeated_query_parameters() -> None:
                 "redirects": {"isbn:9780306406157": "inv:edition-one"},
             }
         )
+        if missing_isbn and request.url.path == "/api/entities/by-uris":
+            payload = {
+                "entities": {},
+                "redirects": {},
+                "notFound": ["isbn:9780306406157"],
+            }
         return httpx.Response(200, json=payload, request=request)
 
     recorder = replay.RecordingTransport(

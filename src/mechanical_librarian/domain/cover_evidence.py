@@ -19,7 +19,7 @@ from mechanical_librarian.domain.evidence_bounds import (
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _ARTIFACT_ID = re.compile(r"^cover_[0-9a-f]{64}$")
 _SOURCE_ID = re.compile(
-    r"^(?:abs|audible_catalog|epub|hardcover|itunes_search|open_library)"
+    r"^(?:abs|audible_catalog|epub|hardcover|inventaire|itunes_search|open_library)"
     r"_[0-9a-f]{64}$"
 )
 _IDENTITY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")

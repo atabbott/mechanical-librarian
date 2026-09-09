@@ -770,3 +770,35 @@ def test_an_insufficient_input_audiobook_lane_records_no_provider_health() -> No
     )
 
     assert [] == observer.calls
+
+
+@pytest.mark.parametrize(
+    "status",
+    (
+        ProviderStatus.MALFORMED,
+        ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+        ProviderStatus.INSUFFICIENT_INPUT,
+        ProviderStatus.NO_MATCH,
+    ),
+)
+def test_inventaire_nontransient_lanes_never_enroll_recovery(
+    status: ProviderStatus,
+) -> None:
+    configuration = replace(
+        _CONFIGURATION,
+        providers=(
+            ProviderConnectionConfiguration(
+                "catalogue-a", True, False, None, "inventaire"
+            ),
+            _CONFIGURATION.providers[1],
+        ),
+    )
+    assert (
+        provider_recovery_jobs(
+            _report(_observation("catalogue-a", status, _lane("lane", status))),
+            package=(None, "report-1", None, None, "report_only"),
+            configuration=configuration,
+            scope="books",
+        )
+        == ()
+    )

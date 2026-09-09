@@ -17,7 +17,10 @@ from mechanical_librarian.application.field_effects import (
     GuardedFieldApplication,
     TargetServiceUnavailable,
 )
-from mechanical_librarian.domain.automatic_decision import AutomaticDecision
+from mechanical_librarian.domain.automatic_decision import (
+    F19A_QUALIFICATION_MANIFEST_SHA256,
+    AutomaticDecision,
+)
 from mechanical_librarian.domain.field_effect import (
     SUPPORTED_DESTINATIONS,
     FieldEffectError,
@@ -774,7 +777,7 @@ def test_preplan_cover_authority_drift_retires_the_selected_consideration() -> N
     assert repository.retired == [(decision.decision_id, 102)]
 
 
-def _prior_f20_decision() -> AutomaticDecision:
+def _prior_qualification_decision(prior_digest: str) -> AutomaticDecision:
     def digest(value: object) -> str:
         return hashlib.sha256(
             json.dumps(
@@ -785,30 +788,34 @@ def _prior_f20_decision() -> AutomaticDecision:
             ).encode("utf-8")
         ).hexdigest()
 
+    f19a = (
+        prior_digest
+        == "7f0bfa050ec5956f9d21fcb521f5c06f3a9310cbee42fd7e206a4ec2d71be1e6"
+    )
     current = AutomaticDecision.create(
         review_case_id="review_case_" + "1" * 64,
         report_id="report_" + "2" * 64,
         proposal_set_id="proposal_set_" + "3" * 64,
         proposal_id="review_proposal_" + "4" * 64,
         target_fingerprint="b" * 64,
-        destination="genres",
+        destination="title" if f19a else "genres",
         outcome="candidate",
         candidate_id="alternative_" + "5" * 64,
         resolved_policy_id="resolved_policy_" + "6" * 64,
         policy_generation=1,
         rule_id="shadow_rule_" + "7" * 64,
-        policy_category="genres",
-        policy_option="add",
-        qualification_manifest_sha256=F20_QUALIFICATION_CANDIDATE_SHA256,
+        policy_category="title" if f19a else "genres",
+        policy_option="replace_target:decoration_tidy" if f19a else "add",
+        qualification_manifest_sha256=F19A_QUALIFICATION_MANIFEST_SHA256
+        if f19a
+        else F20_QUALIFICATION_CANDIDATE_SHA256,
         source_outcome_id="shadow_outcome_" + "8" * 64,
         bundle_id=None,
         occurred_at=1,
     )
     core = {
         **current._core(),
-        "qualification_manifest_sha256": (
-            "901e25432750d3f02df1cd311f5a7146e56d5686bd4b6bc0ac589e5db3eb221a"
-        ),
+        "qualification_manifest_sha256": (prior_digest),
     }
     return AutomaticDecision(
         decision_id="automatic_decision_" + digest({**core, "occurred_at": 1}),
@@ -908,8 +915,18 @@ def test_unbindable_decision_is_named_and_stepped_over_not_left_to_starve(
     assert transitions[-1] == ("activity", None)
 
 
-def test_schedule_skips_prior_f20_before_no_change_authority_or_capability() -> None:
-    decision = _prior_f20_decision()
+@pytest.mark.parametrize(
+    "prior_digest",
+    (
+        "901e25432750d3f02df1cd311f5a7146e56d5686bd4b6bc0ac589e5db3eb221a",
+        "10b10aa37008e6cfeb01745ebe75eed15913ca2e7c325517e110dbaf30bbdb74",
+        "7f0bfa050ec5956f9d21fcb521f5c06f3a9310cbee42fd7e206a4ec2d71be1e6",
+    ),
+)
+def test_schedule_skips_prior_qualification_before_no_change_authority_or_capability(
+    prior_digest: str,
+) -> None:
+    decision = _prior_qualification_decision(prior_digest)
     assert AutomaticDecision.from_json(decision.to_json()) == decision
 
     class Repository(_PagedRepository):

@@ -329,3 +329,16 @@ Detail, Library counts and Attention use that original policy consistently;
 Automatic precedence and recorded owner decisions remain unchanged. This review
 projection follow-up changes no scoring input or option outcome, so the retained
 measurements remain bound to their original measured source commit.
+
+## Inventaire preparation source closure (#1006)
+
+The [v19 F20](../reference/f20-rich-metadata-qualification-candidate-v19.json)
+and [v7 F19a](../reference/f19a-qualification-manifest-v7.json) successors bind
+canonical Inventaire cover references through report and proposal admission,
+validated missing ISBN responses and bounded WORK identity filtering.
+All 980 non-series and 108 series retained previews match the current baseline.
+The proposal evaluator changes only its evidence-reference prefix literal;
+F19a's historical measurements remain unchanged, with no fresh scoring or
+holdout claim. Synthetic proposal roundtrip and persisted case admission cover
+the repaired consumer. Prior v6/v18 decisions remain readable but cannot regain
+current effect authority. Policy v23, qualified options and schemas are unchanged.

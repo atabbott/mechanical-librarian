@@ -12,6 +12,15 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
     open_repository,
 )
+from mechanical_librarian.domain.cover_evidence import (
+    CoverArtifact,
+    CoverDesignation,
+    CoverProvenance,
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
+)
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
@@ -39,6 +48,7 @@ from mechanical_librarian.domain.review_case import (
     ReviewCaseValueError,
     ReviewTransition,
 )
+from tests.support.proposal_evidence import _report as _cover_report
 from tests.support.review_cases import _report
 
 _CASE_ID = "review_case_" + "c" * 64
@@ -789,3 +799,41 @@ def test_disk_full_equivalent_rolls_back_every_review_row() -> None:
                 f"SELECT COUNT(*) FROM {table}"
             ).fetchone()
         repository.close()
+
+
+def test_retrieved_inventaire_proposal_reopens_admits_and_browses(
+    tmp_path: Path,
+) -> None:
+    artifact = CoverArtifact.create(b"cover", b"preview", "image/png", 10, 20)
+    source = CoverSource(
+        cover_source_id(CoverSourceKind.INVENTAIRE, "synthetic-cover"),
+        CoverSourceKind.INVENTAIRE,
+        CoverSourceState.RETRIEVED,
+        artifact,
+        provenance=CoverProvenance(
+            "inventaire", CoverDesignation.WORK, "inventaire-work-wd-Q1"
+        ),
+    )
+    report = _cover_report(covers=(source,))
+    original = report.to_json()
+    path = tmp_path / "reports.sqlite"
+    repository = open_repository(path)
+    repository.publish(report, lambda: True)
+    proposal = evaluate_report(report)
+    repository.publish_proposal(proposal)
+    repository.close()
+    repository = open_repository(path)
+    reopened = ProposalSet.from_json(repository.get_proposal(proposal.proposal_set_id))
+    assert proposal == reopened
+    alternative = next(
+        result for result in reopened.results if result.destination.value == "cover"
+    ).alternatives[0]
+    assert (source.source_id,) == alternative.evidence_references
+    assert artifact.artifact_id == alternative.value.value
+    admitted = json.loads(repository.admit_review_case(reopened))
+    assert admitted["status"] == "admitted"
+    case = json.loads(repository.get_review_case(admitted["review_case_id"]))
+    assert proposal.proposal_set_id == case["case"]["proposal_set_id"]
+    assert len(repository.list_current_review_case_documents(None, 50, 0, None)) == 1
+    assert original == repository.get(report.report_id)
+    repository.close()

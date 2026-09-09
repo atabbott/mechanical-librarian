@@ -169,3 +169,64 @@ def test_a_perceptual_hash_is_a_64_bit_lower_case_hex_value_or_absent() -> None:
     for invalid in ("0F1E2D3C4B5A6978", "0f1e2d3c4b5a697", "0f1e2d3c4b5a69789", "zz"):
         with pytest.raises(CoverEvidenceError):
             CoverArtifact.create(b"a", b"b", "image/png", 2, 3, invalid)
+
+
+@pytest.mark.parametrize("kind", tuple(CoverSourceKind))
+def test_canonical_source_vocabulary_is_admitted(kind: CoverSourceKind) -> None:
+    source = CoverSource(cover_source_id(kind, "work-1"), kind, CoverSourceState.ABSENT)
+    assert source.source_id.startswith(kind.value + "_")
+
+
+@pytest.mark.parametrize("state", tuple(CoverSourceState))
+def test_inventaire_all_acquisition_states(state: CoverSourceState) -> None:
+    from mechanical_librarian.domain.cover_evidence import CoverTruncationReason
+
+    provenance = (
+        CoverProvenance(
+            "inventaire",
+            CoverDesignation.TRUNCATION,
+            truncation_reason=CoverTruncationReason.PROVIDER_LIMIT,
+        )
+        if state is CoverSourceState.TRUNCATED
+        else CoverProvenance(
+            "inventaire", CoverDesignation.WORK, "inventaire-work-wd-Q1"
+        )
+    )
+    source = CoverSource(
+        cover_source_id(CoverSourceKind.INVENTAIRE, "work-1"),
+        CoverSourceKind.INVENTAIRE,
+        state,
+        artifact=CoverArtifact.create(b"original", b"preview", "image/png", 2, 3)
+        if state is CoverSourceState.RETRIEVED
+        else None,
+        timeout_scope="attempted" if state is CoverSourceState.TIMEOUT else None,
+        provenance=provenance,
+    )
+    assert publication_ready((source,))
+    assert source.to_data()["state"] == state.value
+
+
+@pytest.mark.parametrize(
+    "source_id",
+    (
+        "unknown_" + "a" * 64,
+        "inventaire_" + "A" * 64,
+        "inventaire_" + "a" * 63,
+        "inventaire_" + "a" * 65,
+        "inventaire_" + "g" * 64,
+    ),
+)
+def test_invalid_inventaire_source_identity_is_rejected(source_id: str) -> None:
+    with pytest.raises(CoverEvidenceError, match="^cover source is invalid$"):
+        CoverSource(source_id, CoverSourceKind.INVENTAIRE, CoverSourceState.ABSENT)
+
+
+def test_inventaire_source_kind_must_match_identity() -> None:
+    with pytest.raises(
+        CoverEvidenceError, match="^cover source identity is inconsistent$"
+    ):
+        CoverSource(
+            cover_source_id(CoverSourceKind.INVENTAIRE, "work-1"),
+            CoverSourceKind.HARDCOVER,
+            CoverSourceState.ABSENT,
+        )

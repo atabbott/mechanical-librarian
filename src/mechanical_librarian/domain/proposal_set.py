@@ -98,7 +98,7 @@ _ALTERNATIVE_ID = re.compile(r"^alternative_[0-9a-f]{64}$")
 _COMBINATION_ID = re.compile(r"^bibliographic_combination_[0-9a-f]{64}$")
 _REPRESENTATION_ID = re.compile(r"^representation_[0-9a-f]{64}$")
 _EVIDENCE_REFERENCE = re.compile(
-    r"^(?:local|provider|evidence|abs|epub|hardcover|open_library)_[0-9a-f]{64}$"
+    r"^(?:local|provider|evidence|abs|epub|hardcover|open_library|inventaire)_[0-9a-f]{64}$"
 )
 _CORRELATION = re.compile(r"^correlation_[0-9a-f]{64}$")
 _REASON = re.compile(r"^[a-z][a-z0-9_]{0,63}$")

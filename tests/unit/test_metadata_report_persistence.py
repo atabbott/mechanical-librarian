@@ -1747,3 +1747,56 @@ def test_startup_rejects_malformed_reviewer_access_content(
         connection.execute(mutation)
     with pytest.raises(MetadataReportError, match="reviewer access state"):
         open_repository(path)
+
+
+@pytest.mark.parametrize("state", tuple(CoverSourceState))
+def test_inventaire_cover_outcome_survives_publication_and_reopen(
+    tmp_path: Path, state: CoverSourceState
+) -> None:
+    from mechanical_librarian.domain.cover_evidence import (
+        CoverDesignation,
+        CoverProvenance,
+        CoverTruncationReason,
+    )
+
+    source = CoverSource(
+        cover_source_id(CoverSourceKind.INVENTAIRE, "synthetic-work"),
+        CoverSourceKind.INVENTAIRE,
+        state,
+        artifact=CoverArtifact.create(
+            b"synthetic original", b"synthetic preview", "image/png", 2, 3
+        )
+        if state is CoverSourceState.RETRIEVED
+        else None,
+        timeout_scope="attempted" if state is CoverSourceState.TIMEOUT else None,
+        provenance=CoverProvenance(
+            "inventaire",
+            CoverDesignation.TRUNCATION,
+            truncation_reason=CoverTruncationReason.PROVIDER_LIMIT,
+        )
+        if state is CoverSourceState.TRUNCATED
+        else CoverProvenance(
+            "inventaire", CoverDesignation.WORK, "inventaire-work-wd-Q1"
+        ),
+    )
+    seed = synthetic_report()
+    report = MetadataReport.create(
+        target=seed.target,
+        file=seed.file,
+        local_claims=seed.local_claims,
+        local_reasons=seed.local_reasons,
+        providers=seed.providers,
+        cover_sources=(source,),
+    )
+    path = tmp_path / "reports.sqlite"
+    repository = open_repository(path)
+    repository.publish(report, lambda: True)
+    repository.close()
+    reopened = open_repository(path, create=False)
+    try:
+        restored = MetadataReport.from_json(reopened.get(report.report_id))
+        assert restored == report
+        assert restored.cover_sources == (source,)
+        assert restored.schema_version == "metadata-report-v38"
+    finally:
+        reopened.close()

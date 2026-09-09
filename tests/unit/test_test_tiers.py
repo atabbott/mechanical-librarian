@@ -248,15 +248,22 @@ def test_the_probe_cohort_is_exactly_the_audio_probe_slice_of_slow() -> None:
     )
 
 
-def test_required_installed_adds_the_exact_wheel_scale_node_to_fast_contracts() -> None:
+def test_required_installed_adds_explicit_preparation_nodes_to_fast() -> None:
     root = Path(__file__).resolve().parents[2]
     fast = set(collect_cohort(root, "fast"))
-    installed = set(collect_cohort(root, "required-installed"))
+    installed_nodes = list(collect_cohort(root, "required-installed"))
+    installed = set(installed_nodes)
+    installed_only = {
+        "test_continuous_review_scale.test_installed_owner_decision_activity_smoke",
+        "test_continuous_review_scale.test_inventaire_failure_then_authenticated_reprepare_starts_new_run.retrieved",
+        "test_continuous_review_scale.test_inventaire_failure_then_authenticated_reprepare_starts_new_run.absent",
+        "test_continuous_review_scale.test_inventaire_failure_then_authenticated_reprepare_starts_new_run.unavailable",
+        "test_continuous_review_scale.test_inventaire_failure_then_authenticated_reprepare_starts_new_run.timeout",
+    }
     assert installed
-    scale = "test_continuous_review_scale.test_installed_owner_decision_activity_smoke"
-    assert scale not in fast
-    assert list(collect_cohort(root, "required-installed")).count(scale) == 1
-    assert installed - {scale} < fast
+    assert installed_only.isdisjoint(fast)
+    assert all(installed_nodes.count(node) == 1 for node in installed_only)
+    assert installed - installed_only < fast
 
 
 def test_the_tier_inventory_lists_standalone_and_a_bare_invocation_refuses() -> None:
